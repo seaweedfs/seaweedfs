@@ -145,3 +145,62 @@ func TestCollectCollectionInfoMixed(t *testing.T) {
 		t.Errorf("VolumeCount: got %d, want 2", cif.VolumeCount)
 	}
 }
+
+// TestCollectCollectionInfoRegularVolumeDedupesReplicas verifies that a
+// regular volume replicated across three nodes is counted once in
+// VolumeCount (logical, like the S3 metrics path and the EC branch) rather
+// than three times (one per replica presence).
+func TestCollectCollectionInfoRegularVolumeDedupesReplicas(t *testing.T) {
+	// 001 = one-copy replication placement byte; three copies of volume id=7
+	// on three distinct nodes. Per-replica Size/FileCount are divided by
+	// copyCount so summing yields the whole-volume totals.
+	makeNode := func() *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"disk1": {
+					VolumeInfos: []*master_pb.VolumeInformationMessage{
+						{
+							Id:               7,
+							Collection:       "bucket-rep",
+							Size:             3000,
+							FileCount:        30,
+							DeleteCount:      3,
+							DeletedByteCount: 300,
+							ReplicaPlacement: 002, // 0x02 = 3 total copies
+						},
+					},
+				},
+			},
+		}
+	}
+
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{makeNode(), makeNode(), makeNode()},
+					},
+				},
+			},
+		},
+	}
+
+	infos := make(map[string]*CollectionInfo)
+	collectCollectionInfo(topo, infos)
+
+	cif, ok := infos["bucket-rep"]
+	if !ok {
+		t.Fatalf("expected collection bucket-rep in infos, got: %v", infos)
+	}
+	if cif.VolumeCount != 1 {
+		t.Errorf("VolumeCount: got %d, want 1 (deduped by volume id)", cif.VolumeCount)
+	}
+	// Per-replica values are Size/3, summed across 3 replicas gives 3000.
+	if cif.Size != 3000 {
+		t.Errorf("Size: got %.0f, want 3000", cif.Size)
+	}
+	if cif.FileCount != 30 {
+		t.Errorf("FileCount: got %.0f, want 30", cif.FileCount)
+	}
+}

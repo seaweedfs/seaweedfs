@@ -85,7 +85,21 @@ func ListCollectionNames(commandEnv *CommandEnv, includeNormalVolumes, includeEc
 	return
 }
 
-func addToCollection(collectionInfos map[string]*CollectionInfo, vif *master_pb.VolumeInformationMessage) {
+// volumeKey uniquely identifies a volume for per-collection dedupe. Volume
+// IDs are scoped to a collection, so we key by (collection, volumeId) to
+// avoid cross-collection aliasing if the same numeric ID is ever reused.
+type volumeKey struct {
+	collection string
+	volumeId   uint32
+}
+
+// addToCollection folds one replica of a regular volume into the collection
+// totals. Size/FileCount/DeleteCount/DeletedByteCount are divided by the
+// replication factor so that summing over all replicas yields the whole-
+// volume value. VolumeCount is deduped across replicas via seenVolumes so
+// it reports logical volumes (same semantics as the S3 bucket metrics
+// collector and the EC branch below), not shard/replica presences.
+func addToCollection(collectionInfos map[string]*CollectionInfo, seenVolumes map[volumeKey]bool, vif *master_pb.VolumeInformationMessage) {
 	c := vif.Collection
 	cif, found := collectionInfos[c]
 	if !found {
@@ -98,7 +112,12 @@ func addToCollection(collectionInfos map[string]*CollectionInfo, vif *master_pb.
 	cif.DeleteCount += float64(vif.DeleteCount) / copyCount
 	cif.FileCount += float64(vif.FileCount) / copyCount
 	cif.DeletedByteCount += float64(vif.DeletedByteCount) / copyCount
-	cif.VolumeCount++
+
+	key := volumeKey{collection: c, volumeId: vif.Id}
+	if !seenVolumes[key] {
+		seenVolumes[key] = true
+		cif.VolumeCount++
+	}
 }
 
 // ecCollectionAgg accumulates per-EC-volume counts across the shard holders.
@@ -111,13 +130,14 @@ type ecCollectionAgg struct {
 }
 
 func collectCollectionInfo(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
-	ecVolumes := make(map[uint32]*ecCollectionAgg)
+	seenVolumes := make(map[volumeKey]bool)
+	ecVolumes := make(map[volumeKey]*ecCollectionAgg)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, diskInfo := range dn.DiskInfos {
 					for _, vi := range diskInfo.VolumeInfos {
-						addToCollection(collectionInfos, vi)
+						addToCollection(collectionInfos, seenVolumes, vi)
 					}
 					for _, esi := range diskInfo.EcShardInfos {
 						c := esi.Collection
@@ -129,13 +149,13 @@ func collectCollectionInfo(t *master_pb.TopologyInfo, collectionInfos map[string
 
 						// EC shards are node-local, so data-shard sizes sum
 						// across nodes to give the logical volume size.
-						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(esi)
-						cif.Size += float64(shards.MinusParityShards().TotalSize())
+						cif.Size += float64(erasure_coding.EcShardsDataSize(esi))
 
-						agg, ok := ecVolumes[esi.Id]
+						key := volumeKey{collection: c, volumeId: esi.Id}
+						agg, ok := ecVolumes[key]
 						if !ok {
 							agg = &ecCollectionAgg{collection: c}
-							ecVolumes[esi.Id] = agg
+							ecVolumes[key] = agg
 							cif.VolumeCount++
 						}
 						if esi.FileCount > agg.fileCount {

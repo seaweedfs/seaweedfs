@@ -89,6 +89,44 @@ func GetShardCount(vi *master_pb.VolumeEcShardInformationMessage) int {
 	return ShardBits(vi.EcIndexBits).Count()
 }
 
+// EcShardsTotalSize returns the sum of all shard sizes (data + parity) in
+// the message. Walks vi.ShardSizes directly rather than materializing a
+// ShardsInfo, which is significantly cheaper for callers that only need the
+// aggregate size.
+func EcShardsTotalSize(vi *master_pb.VolumeEcShardInformationMessage) int64 {
+	if vi == nil {
+		return 0
+	}
+	var total int64
+	for _, s := range vi.ShardSizes {
+		total += s
+	}
+	return total
+}
+
+// EcShardsDataSize returns the sum of sizes for data shards only (parity
+// shards excluded). Walks the shard bitmap alongside vi.ShardSizes to keep
+// the DataShardsCount dependency encapsulated here instead of leaking it to
+// every caller.
+func EcShardsDataSize(vi *master_pb.VolumeEcShardInformationMessage) int64 {
+	if vi == nil {
+		return 0
+	}
+	var total int64
+	var id ShardId
+	var j int
+	for bitmap := vi.EcIndexBits; bitmap != 0; bitmap >>= 1 {
+		if bitmap&1 != 0 {
+			if int(id) < DataShardsCount && j < len(vi.ShardSizes) {
+				total += vi.ShardSizes[j]
+			}
+			j++
+		}
+		id++
+	}
+	return total
+}
+
 // Returns a string representation for a ShardsInfo.
 func (sp *ShardsInfo) String() string {
 	sp.mu.RLock()

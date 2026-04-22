@@ -321,6 +321,89 @@ func TestShardsInfo_FromVolumeEcShardInformationMessage(t *testing.T) {
 	}
 }
 
+func TestEcShardsTotalSize(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  *master_pb.VolumeEcShardInformationMessage
+		want int64
+	}{
+		{name: "nil message", msg: nil, want: 0},
+		{
+			name: "all shards present",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				EcIndexBits: (1 << 0) | (1 << 1) | (1 << 10),
+				ShardSizes:  []int64{1000, 2000, 3000},
+			},
+			want: 6000,
+		},
+		{
+			name: "only parity shards",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				EcIndexBits: (1 << 10) | (1 << 11),
+				ShardSizes:  []int64{500, 500},
+			},
+			want: 1000,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := EcShardsTotalSize(tt.msg); got != tt.want {
+				t.Errorf("EcShardsTotalSize() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEcShardsDataSize(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  *master_pb.VolumeEcShardInformationMessage
+		want int64
+	}{
+		{name: "nil message", msg: nil, want: 0},
+		{
+			name: "data shards only",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				EcIndexBits: (1 << 0) | (1 << 1) | (1 << 9),
+				ShardSizes:  []int64{1000, 2000, 500},
+			},
+			want: 3500,
+		},
+		{
+			name: "mixed data and parity",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				// shards 7, 8, 9 are data; 10..13 are parity.
+				EcIndexBits: (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12) | (1 << 13),
+				ShardSizes:  []int64{1000, 1000, 500, 2000, 2000, 2000, 2000},
+			},
+			want: 2500,
+		},
+		{
+			name: "only parity shards (excluded)",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				EcIndexBits: (1 << 10) | (1 << 11),
+				ShardSizes:  []int64{500, 500},
+			},
+			want: 0,
+		},
+		{
+			name: "missing sizes tolerated",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				EcIndexBits: (1 << 0) | (1 << 3),
+				ShardSizes:  []int64{1000},
+			},
+			want: 1000,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := EcShardsDataSize(tt.msg); got != tt.want {
+				t.Errorf("EcShardsDataSize() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShardsInfo_String(t *testing.T) {
 	si := NewShardsInfo()
 	si.Set(ShardInfo{Id: 0, Size: 1024})

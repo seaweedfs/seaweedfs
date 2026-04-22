@@ -266,9 +266,8 @@ func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfo
 						// physical and logical shard sizes sum across nodes
 						// without any dedupe. Logical size excludes parity
 						// shards; physical size includes them.
-						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(esi)
-						cif.PhysicalSize += float64(shards.TotalSize())
-						cif.Size += float64(shards.MinusParityShards().TotalSize())
+						cif.PhysicalSize += float64(erasure_coding.EcShardsTotalSize(esi))
+						cif.Size += float64(erasure_coding.EcShardsDataSize(esi))
 
 						key := volumeKey{collection: c, volumeId: esi.Id}
 						agg, ok := ecVolumes[key]
