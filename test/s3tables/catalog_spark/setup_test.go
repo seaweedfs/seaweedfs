@@ -323,8 +323,11 @@ spark = (SparkSession.builder
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	masterGrpcPort := env.masterPort + 10000
-	cmd := exec.Command("weed", "shell",
+	cmd := exec.CommandContext(ctx, "weed", "shell",
 		fmt.Sprintf("-master=localhost:%d.%d", env.masterPort, masterGrpcPort),
 	)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
