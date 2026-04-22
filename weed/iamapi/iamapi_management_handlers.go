@@ -1110,15 +1110,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	safeValues := url.Values{}
-	for k, v := range values {
-		if k == "SecretAccessKey" {
-			safeValues[k] = []string{"[REDACTED]"}
-		} else {
-			safeValues[k] = v
-		}
-	}
-	glog.V(4).Infof("DoActions: %+v", safeValues)
+	glog.V(4).Infof("DoActions: %+v", iamlib.RedactSensitiveFormValues(values))
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch r.Form.Get("Action") {

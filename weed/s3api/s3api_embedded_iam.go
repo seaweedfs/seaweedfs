@@ -2108,15 +2108,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInternalError).Code, Error: fmt.Errorf("failed to get s3 api configuration: %v", err)}
 	}
 
-	safeValues := url.Values{}
-	for k, v := range values {
-		if k == "SecretAccessKey" {
-			safeValues[k] = []string{"[REDACTED]"}
-		} else {
-			safeValues[k] = v
-		}
-	}
-	glog.V(4).Infof("IAM ExecuteAction: %+v", safeValues)
+	glog.V(4).Infof("IAM ExecuteAction: %+v", iamlib.RedactSensitiveFormValues(values))
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch values.Get("Action") {
