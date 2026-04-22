@@ -562,6 +562,16 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 
 			// Create file path based on file info
 			if fileInfo.IsEcVolume {
+				// os.Create below truncates in place; a mounted EcVolume
+				// holds fds on the same inodes, so overwriting corrupts
+				// live readers.
+				if _, mounted := vs.store.FindEcVolume(needle.VolumeId(fileInfo.VolumeId)); mounted {
+					glog.Errorf("ReceiveFile: ec volume %d is mounted; refusing overwrite for %s", fileInfo.VolumeId, fileInfo.Ext)
+					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+						Error: fmt.Sprintf("ec volume %d is mounted; unmount before ReceiveFile", fileInfo.VolumeId),
+					})
+				}
+
 				// Find storage location for EC shard
 				var targetLocation *storage.DiskLocation
 				for _, location := range vs.store.Locations {
