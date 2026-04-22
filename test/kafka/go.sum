@@ -61,8 +61,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/FilenCloudDienste/filen-sdk-go v0.0.37 h1:W8S9TrAyZ4//3PXsU6+Bi+fe/6uIL986GyS7PVzIDL4=
-github.com/FilenCloudDienste/filen-sdk-go v0.0.37/go.mod h1:0cBhKXQg49XbKZZfk5TCDa3sVLP+xMxZTWL+7KY0XR0=
+github.com/FilenCloudDienste/filen-sdk-go v0.0.38 h1:YCyHs3wUXEe2BEWn40vcoyaQ2ruHNmNwkasfo3Th16A=
+github.com/FilenCloudDienste/filen-sdk-go v0.0.38/go.mod h1:0cBhKXQg49XbKZZfk5TCDa3sVLP+xMxZTWL+7KY0XR0=
 github.com/Files-com/files-sdk-go/v3 v3.2.264 h1:lMHTplAYI9FtmCo/QOcpRxmPA5REVAct1r2riQmDQKw=
 github.com/Files-com/files-sdk-go/v3 v3.2.264/go.mod h1:wGqkOzRu/ClJibvDgcfuJNAqI2nLhe8g91tPlDKRCdE=
 github.com/IBM/go-sdk-core/v5 v5.21.0 h1:DUnYhvC4SoC8T84rx5omnhY3+xcQg/Whyoa3mDPIMkk=
@@ -112,8 +112,8 @@ github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc h1:LoL75er
 github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc/go.mod h1:w648aMHEgFYS6xb0KVMMtZ2uMeemhiKCuD2vj6gY52A=
 github.com/aws/aws-sdk-go v1.55.8 h1:JRmEUbU52aJQZ2AjX4q4Wu7t4uZjOu71uyNmaWlUkJQ=
 github.com/aws/aws-sdk-go v1.55.8/go.mod h1:ZkViS9AqA6otK+JBBNH2++sx1sgxrPKcSzPPvQkUtXk=
-github.com/aws/aws-sdk-go-v2 v1.41.5 h1:dj5kopbwUsVUVFgO4Fi5BIT3t4WyqIDjGKCangnV/yY=
-github.com/aws/aws-sdk-go-v2 v1.41.5/go.mod h1:mwsPRE8ceUUpiTgF7QmQIJ7lgsKUPQOUl3o72QBrE1o=
+github.com/aws/aws-sdk-go-v2 v1.41.6 h1:1AX0AthnBQzMx1vbmir3Y4WsnJgiydmnJjiLu+LvXOg=
+github.com/aws/aws-sdk-go-v2 v1.41.6/go.mod h1:dy0UzBIfwSeot4grGvY1AqFWN5zgziMmWGzysDnHFcQ=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 h1:eBMB84YGghSocM7PsjmmPffTa+1FBUeNvGvFou6V/4o=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8/go.mod h1:lyw7GFp3qENLh7kwzf7iMzAxDn+NzjXEAGjKS2UOKqI=
 github.com/aws/aws-sdk-go-v2/config v1.32.14 h1:opVIRo/ZbbI8OIqSOKmpFaY7IwfFUOCCXBsUpJOwDdI=
@@ -122,8 +122,8 @@ github.com/aws/aws-sdk-go-v2/credentials v1.19.14 h1:n+UcGWAIZHkXzYt87uMFBv/l8TH
 github.com/aws/aws-sdk-go-v2/credentials v1.19.14/go.mod h1:cJKuyWB59Mqi0jM3nFYQRmnHVQIcgoxjEMAbLkpr62w=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 h1:NUS3K4BTDArQqNu2ih7yeDLaS3bmHD0YndtA6UP884g=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21/go.mod h1:YWNWJQNjKigKY1RHVJCuupeWDrrHjRqHm0N9rdrWzYI=
-github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.12 h1:Zy6Tme1AA13kX8x3CnkHx5cqdGWGaj/anwOiWGnA0Xo=
-github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.12/go.mod h1:ql4uXYKoTM9WUAUSmthY4AtPVrlTBZOvnBJTiCUdPxI=
+github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.1 h1:IbWiN670htmBioc+Zj32vSpJgQ2+OYSlvTvfQ1nCORQ=
+github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.1/go.mod h1:tw/B596EUhBWDFGdDGuLC21fVU4A3s4/5Efy8S39W18=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 h1:Rgg6wvjjtX8bNHcvi9OnXWwcE0a2vGpbwmtICOsvcf4=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21/go.mod h1:A/kJFst/nm//cyqonihbdpQZwiUhhzpqTsdbhDdRF9c=
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 h1:PEgGVtPoB6NTpPrBgqSE5hE/o47Ij9qk/SEZFbUOe9A=
@@ -150,8 +150,8 @@ github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19 h1:dzztQ1YmfPrxdrOiuZRMF6f
 github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19/go.mod h1:YO8TrYtFdl5w/4vmjL8zaBSsiNp3w0L1FfKVKenZT7w=
 github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 h1:p8ogvvLugcR/zLBXTXrTkj0RYBUdErbMnAFFp12Lm/U=
 github.com/aws/aws-sdk-go-v2/service/sts v1.41.10/go.mod h1:60dv0eZJfeVXfbT1tFJinbHrDfSJ2GZl4Q//OSSNAVw=
-github.com/aws/smithy-go v1.24.2 h1:FzA3bu/nt/vDvmnkg+R8Xl46gmzEDam6mZ1hzmwXFng=
-github.com/aws/smithy-go v1.24.2/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
+github.com/aws/smithy-go v1.25.0 h1:Sz/XJ64rwuiKtB6j98nDIPyYrV1nVNJ4YU74gttcl5U=
+github.com/aws/smithy-go v1.25.0/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
 github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xWbdbCW3pNTGyYg=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
@@ -281,8 +281,8 @@ github.com/go-darwin/apfs v0.0.0-20211011131704-f84b94dbf348 h1:JnrjqG5iR07/8k7N
 github.com/go-darwin/apfs v0.0.0-20211011131704-f84b94dbf348/go.mod h1:Czxo/d1g948LtrALAZdL04TL/HnkopquAjxYUuI02bo=
 github.com/go-errors/errors v1.5.1 h1:ZwEMSLRCapFLflTpT7NKaAc7ukJ8ZPEjzlxt8rPN8bk=
 github.com/go-errors/errors v1.5.1/go.mod h1:sIVyrIiJhuEF+Pj9Ebtd6P/rEYROXFi3BopGUQ5a5Og=
-github.com/go-git/go-billy/v5 v5.6.2 h1:6Q86EsPXMa7c3YZ3aLAQsMA0VlWmy43r6FHqa/UNbRM=
-github.com/go-git/go-billy/v5 v5.6.2/go.mod h1:rcFC2rAsp/erv7CMz9GczHcuD0D32fWzH+MJAU+jaUU=
+github.com/go-git/go-billy/v5 v5.8.0 h1:I8hjc3LbBlXTtVuFNJuwYuMiHvQJDq1AT6u4DwDzZG0=
+github.com/go-git/go-billy/v5 v5.8.0/go.mod h1:RpvI/rw4Vr5QA+Z60c6d6LXH0rYJo0uD5SqfmrrheCY=
 github.com/go-gl/glfw v0.0.0-20190409004039-e6da0acd62b1/go.mod h1:vR7hzQXu2zJy9AVAgeJqvqgH9Q5CA+iKCZ2gyEVpxRU=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20191125211704-12ad95a8df72/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20200222043503-6f7a984d4dc4/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
@@ -427,8 +427,8 @@ github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpO
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/internxt/rclone-adapter v0.0.0-20260213125353-6f59c89fcb7c h1:r+KtxPyrhsYeNbsfeqTfEM8xRdwgV6LuNhLZxpXecb4=
-github.com/internxt/rclone-adapter v0.0.0-20260213125353-6f59c89fcb7c/go.mod h1:vdPya4AIcDjvng4ViaAzqjegJf0VHYpYHQguFx5xBp0=
+github.com/internxt/rclone-adapter v0.0.0-20260220172730-613f4cc8b8fd h1:dSIuz2mpJAPQfhHYtG57D0qwSkgC/vQ69gHfeyQ4kxA=
+github.com/internxt/rclone-adapter v0.0.0-20260220172730-613f4cc8b8fd/go.mod h1:vdPya4AIcDjvng4ViaAzqjegJf0VHYpYHQguFx5xBp0=
 github.com/jcmturner/aescts/v2 v2.0.0 h1:9YKLH6ey7H4eDBXW8khjYslgyqG2xZikXP0EQFKrle8=
 github.com/jcmturner/aescts/v2 v2.0.0/go.mod h1:AiaICIRyfYg35RUkr8yESTqvSy7csK90qZ5xfvvsoNs=
 github.com/jcmturner/dnsutils/v2 v2.0.0 h1:lltnkeZGL0wILNvrNiVCR6Ro5PGU/SeBvVO/8c/iPbo=
@@ -594,8 +594,8 @@ github.com/rclone/Proton-API-Bridge v1.0.1-0.20260127174007-77f974840d11 h1:4MI2
 github.com/rclone/Proton-API-Bridge v1.0.1-0.20260127174007-77f974840d11/go.mod h1:3HLX7dwZgvB7nt+Yl/xdzVPcargQ1yBmJEUg3n+jMKM=
 github.com/rclone/go-proton-api v1.0.1-0.20260127173028-eb465cac3b18 h1:Lc+d3ISfQaMJKWZOE7z4ZSY4RVmdzbn1B0IM8xN18qM=
 github.com/rclone/go-proton-api v1.0.1-0.20260127173028-eb465cac3b18/go.mod h1:LB2kCEaZMzNn3ocdz+qYfxXmuLxxN0ka62KJd2x53Bc=
-github.com/rclone/rclone v1.73.1 h1:FCGZUd7sXO8+nIpbuXGPkd+f23o/ZACefrHtRGDAiDM=
-github.com/rclone/rclone v1.73.1/go.mod h1:T9HeSXv/SI9qJFkYLqsjY/5ljIFWJTVmTrG7H/4JrPY=
+github.com/rclone/rclone v1.73.5 h1:r8a9JHYIWUqk7hNRJuMJ3cROkKfB2zmfkADg8ZLYh6I=
+github.com/rclone/rclone v1.73.5/go.mod h1:WVv8gvA/lEl/Y37e8I8yosm7ZY+Szq7ujXbJS8Ol63o=
 github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 h1:bsUq1dX0N8AOIL7EB/X911+m4EHsnWEHeJ0c+3TTBrg=
 github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
 github.com/rdleal/intervalst v1.5.0 h1:SEB9bCFz5IqD1yhfH1Wv8IBnY/JQxDplwkxHjT6hamU=
