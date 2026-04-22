@@ -10,19 +10,37 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
 	"time"
 
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 )
 
+// RefreshIntervalEnv names an environment variable that overrides the
+// refresh cadence. Accepts any time.ParseDuration value (e.g. "30m",
+// "500ms"). Primarily a hook for integration tests that need rotation
+// to complete in seconds, but also useful in production when paired
+// with short-lived certs (e.g. Vault-issued).
+const RefreshIntervalEnv = "WEED_TLS_CERT_REFRESH_INTERVAL"
+
 // DefaultRefreshInterval is the cadence at which the pemfile provider
 // stats cert/key files on disk. It re-parses only when mtime/contents
 // change, so the hot path (KeyMaterial() on each TLS handshake) stays
 // cheap.
 //
-// 5 hours matches the prior constant used for gRPC mTLS.
-const DefaultRefreshInterval = 5 * time.Hour
+// 5 hours matches the prior constant used for gRPC mTLS. Resolved once
+// at process start from RefreshIntervalEnv if set.
+var DefaultRefreshInterval = resolveRefreshInterval(5 * time.Hour)
+
+func resolveRefreshInterval(fallback time.Duration) time.Duration {
+	if s := os.Getenv(RefreshIntervalEnv); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
+}
 
 // NewServerGetCertificate returns a callback suitable for
 // tls.Config.GetCertificate. It reloads certFile and keyFile from disk

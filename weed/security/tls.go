@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security/certreload"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"google.golang.org/grpc"
@@ -24,7 +24,11 @@ import (
 	"google.golang.org/grpc/security/advancedtls"
 )
 
-const CredRefreshingInterval = time.Duration(5) * time.Hour
+// CredRefreshingInterval is the refresh cadence for gRPC mTLS certs.
+// Shares its source of truth with certreload.DefaultRefreshInterval so
+// a single WEED_TLS_CERT_REFRESH_INTERVAL env var tunes both gRPC and
+// HTTPS cert reload.
+var CredRefreshingInterval = certreload.DefaultRefreshInterval
 
 type Authenticator struct {
 	AllowedWildcardDomain string
