@@ -706,27 +706,59 @@ func TestCreateAccessKeyRejectsCollision(t *testing.T) {
 	// Use a distinctive owner name ("ownerAlpha") that shares no substring
 	// with the expected error message so the leak assertion is meaningful.
 	const ownerName = "ownerAlpha"
-	s3cfg := &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{
-			{
-				Name: ownerName,
-				Credentials: []*iam_pb.Credential{
-					{AccessKey: "takenkey", SecretKey: "existingsecret"},
+
+	t.Run("identity credential", func(t *testing.T) {
+		s3cfg := &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{
+					Name: ownerName,
+					Credentials: []*iam_pb.Credential{
+						{AccessKey: "takenkey", SecretKey: "existingsecret"},
+					},
+				},
+				{Name: "newuser"},
+			},
+		}
+		values := url.Values{
+			"UserName":        []string{"newuser"},
+			"AccessKeyId":     []string{"takenkey"},
+			"SecretAccessKey": []string{"newsecret123"},
+		}
+		_, iamErr := iama.CreateAccessKey(s3cfg, values)
+		assert.NotNil(t, iamErr)
+		assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
+		assert.NotContains(t, iamErr.Error.Error(), ownerName, "should not leak owner name")
+		assert.Len(t, s3cfg.Identities[1].Credentials, 0)
+	})
+
+	t.Run("service account credential", func(t *testing.T) {
+		const saId = "svcAlpha"
+		s3cfg := &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{Name: "newuser"},
+			},
+			ServiceAccounts: []*iam_pb.ServiceAccount{
+				{
+					Id:         saId,
+					Credential: &iam_pb.Credential{AccessKey: "takenkey", SecretKey: "existingsecret"},
 				},
 			},
-			{Name: "newuser"},
-		},
-	}
-	values := url.Values{
-		"UserName":        []string{"newuser"},
-		"AccessKeyId":     []string{"takenkey"},
-		"SecretAccessKey": []string{"newsecret123"},
-	}
-	_, iamErr := iama.CreateAccessKey(s3cfg, values)
-	assert.NotNil(t, iamErr)
-	assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
-	assert.NotContains(t, iamErr.Error.Error(), ownerName, "should not leak owner name")
-	assert.Len(t, s3cfg.Identities[1].Credentials, 0)
+		}
+		values := url.Values{
+			"UserName":        []string{"newuser"},
+			"AccessKeyId":     []string{"takenkey"},
+			"SecretAccessKey": []string{"newsecret123"},
+		}
+		_, iamErr := iama.CreateAccessKey(s3cfg, values)
+		assert.NotNil(t, iamErr)
+		assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
+		assert.NotContains(t, iamErr.Error.Error(), saId, "should not leak owner id")
+		// The service account's existing credential must be untouched, and
+		// no new credential should be attached to the identity.
+		assert.Equal(t, "takenkey", s3cfg.ServiceAccounts[0].Credential.AccessKey)
+		assert.Equal(t, "existingsecret", s3cfg.ServiceAccounts[0].Credential.SecretKey)
+		assert.Len(t, s3cfg.Identities[0].Credentials, 0)
+	})
 }
 
 func TestCreateAccessKeyBoundary(t *testing.T) {
