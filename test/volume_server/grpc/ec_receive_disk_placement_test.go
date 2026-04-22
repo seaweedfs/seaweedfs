@@ -164,7 +164,7 @@ func TestReceiveFileEcShardRejectsInvalidDiskID(t *testing.T) {
 	}
 	resp, err := stream.CloseAndRecv()
 	if err != nil {
-		return
+		t.Fatalf("ReceiveFile close: %v", err)
 	}
 	if resp.GetError() == "" {
 		t.Fatalf("expected invalid disk_id rejection, got success response: %+v", resp)
