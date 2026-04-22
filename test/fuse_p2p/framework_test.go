@@ -208,8 +208,6 @@ func (c *p2pTestCluster) startFiler(configDir string) error {
 		"-port.grpc="+strconv.Itoa(c.filerGrpcPort),
 		"-master="+c.masterAddress(),
 		"-defaultStoreDir="+filerDir,
-		// default is -mount.p2p=true; be explicit so the intent is grep-able.
-		"-mount.p2p=true",
 	)
 	return c.startCmd(c.filerCmd, "filer")
 }

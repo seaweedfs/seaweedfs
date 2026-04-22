@@ -8,24 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-func TestMountRegister_DisabledIsNoOp(t *testing.T) {
-	fs := &FilerServer{} // mountPeerRegistry nil → registry disabled
-	_, err := fs.MountRegister(context.Background(), &filer_pb.MountRegisterRequest{
-		PeerAddr:   "mount-a:18080",
-		TtlSeconds: 30,
-	})
-	if err != nil {
-		t.Fatalf("MountRegister returned error with disabled registry: %v", err)
-	}
-	resp, err := fs.MountList(context.Background(), &filer_pb.MountListRequest{})
-	if err != nil {
-		t.Fatalf("MountList returned error with disabled registry: %v", err)
-	}
-	if len(resp.Mounts) != 0 {
-		t.Errorf("expected empty list from disabled registry, got %d", len(resp.Mounts))
-	}
-}
-
 func TestMountRegister_EnabledStoresAndLists(t *testing.T) {
 	fs := &FilerServer{mountPeerRegistry: filer.NewMountPeerRegistry()}
 
