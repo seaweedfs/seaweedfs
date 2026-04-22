@@ -596,7 +596,6 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 		}
 	}
 
-	// Report results
 	if len(deleteErrors) > 0 {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":      t.volumeID,
@@ -605,15 +604,18 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 			"total_replicas": len(replicas),
 			"success_rate":   float64(successCount) / float64(len(replicas)) * 100,
 			"errors":         deleteErrors,
-		}).Warning("Some volume deletions failed")
-		// Don't return error - EC task should still be considered successful if shards are mounted
-	} else {
-		t.GetLogger().WithFields(map[string]interface{}{
-			"volume_id":       t.volumeID,
-			"replica_count":   len(replicas),
-			"replica_servers": replicas,
-		}).Info("Successfully deleted volume from all replica servers")
+		}).Error("Failed to delete some original volume replicas after EC encoding")
+		// A surviving source replica lets a later detection scan re-propose
+		// EC on the same volume, which retries over mounted shards.
+		return fmt.Errorf("failed to delete %d of %d original volume replicas for volume %d: %s",
+			len(deleteErrors), len(replicas), t.volumeID, strings.Join(deleteErrors, "; "))
 	}
+
+	t.GetLogger().WithFields(map[string]interface{}{
+		"volume_id":       t.volumeID,
+		"replica_count":   len(replicas),
+		"replica_servers": replicas,
+	}).Info("Successfully deleted volume from all replica servers")
 
 	return nil
 }
