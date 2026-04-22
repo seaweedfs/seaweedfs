@@ -88,8 +88,15 @@ func StartSingleVolumeClusterWithDataDirs(t testing.TB, profile matrix.Profile, 
 	logsDir := filepath.Join(baseDir, "logs")
 	masterDataDir := filepath.Join(baseDir, "master")
 	volumeDataDirs := make([]string, dataDirCount)
+	// Single-dir layout stays at baseDir/volume so existing fixtures
+	// (CorruptDatFile etc.) that hardcode that path keep working. Only
+	// multi-dir clusters get the "volumeN" layout.
 	for i := 0; i < dataDirCount; i++ {
-		volumeDataDirs[i] = filepath.Join(baseDir, fmt.Sprintf("volume%d", i))
+		if dataDirCount == 1 {
+			volumeDataDirs[i] = filepath.Join(baseDir, "volume")
+		} else {
+			volumeDataDirs[i] = filepath.Join(baseDir, fmt.Sprintf("volume%d", i))
+		}
 	}
 	setupDirs := append([]string{configDir, logsDir, masterDataDir}, volumeDataDirs...)
 	for _, dir := range setupDirs {
