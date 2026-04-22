@@ -1236,6 +1236,7 @@ func TestEmbeddedIamCreateAccessKeyBoundary(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	// 129-char SecretAccessKey — should fail
+	api.mockConfig.Identities[0].Credentials = nil
 	form.Set("AccessKeyId", "validkey")
 	form.Set("SecretAccessKey", strings.Repeat("s", 129))
 

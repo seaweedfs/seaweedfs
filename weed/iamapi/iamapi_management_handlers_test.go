@@ -835,6 +835,7 @@ func TestCreateAccessKeyBoundary(t *testing.T) {
 	assert.Equal(t, "12345678", *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
 
 	// 129-char SecretAccessKey - should fail
+	s3cfg.Identities[0].Credentials = nil
 	values = url.Values{
 		"UserName":        []string{"alice"},
 		"AccessKeyId":     []string{"validkey"},
