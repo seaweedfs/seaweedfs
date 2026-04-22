@@ -561,6 +561,16 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize)
 
 			if fileInfo.IsEcVolume {
+				// os.Create below truncates in place; a mounted EcVolume
+				// holds fds on the same inodes, so overwriting corrupts
+				// live readers.
+				if _, mounted := vs.store.FindEcVolume(needle.VolumeId(fileInfo.VolumeId)); mounted {
+					glog.Errorf("ReceiveFile: ec volume %d is mounted; refusing overwrite for %s", fileInfo.VolumeId, fileInfo.Ext)
+					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+						Error: fmt.Sprintf("ec volume %d is mounted; unmount before ReceiveFile", fileInfo.VolumeId),
+					})
+				}
+
 				// disk_id=0 means "unset" (protobuf default), so auto-select
 				// mirrors VolumeEcShardsCopy: prefer a disk already holding
 				// this volume's shards, then any HDD, then any disk.
