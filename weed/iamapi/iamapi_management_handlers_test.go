@@ -3,6 +3,7 @@ package iamapi
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -732,8 +733,8 @@ func TestCreateAccessKeyBoundary(t *testing.T) {
 	}
 	// Exactly 4 chars - should pass
 	values := url.Values{
-		"UserName":       []string{"alice"},
-		"AccessKeyId":    []string{"abcd"},
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"abcd"},
 		"SecretAccessKey": []string{"secretkey123"},
 	}
 	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
@@ -743,9 +744,55 @@ func TestCreateAccessKeyBoundary(t *testing.T) {
 	// Exactly 3 chars - should fail
 	s3cfg.Identities[0].Credentials = nil
 	values = url.Values{
-		"UserName":       []string{"alice"},
-		"AccessKeyId":    []string{"abc"},
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"abc"},
 		"SecretAccessKey": []string{"secretkey123"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// Exactly 128 chars - should pass
+	s3cfg.Identities[0].Credentials = nil
+	ak128 := strings.Repeat("a", 128)
+	sk128 := strings.Repeat("s", 128)
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{ak128},
+		"SecretAccessKey": []string{sk128},
+	}
+	resp, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, ak128, *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.Equal(t, sk128, *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+
+	// 129 chars AccessKeyId - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{strings.Repeat("a", 129)},
+		"SecretAccessKey": []string{sk128},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// 7-char SecretAccessKey - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
+		"SecretAccessKey": []string{"1234567"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// 129-char SecretAccessKey - should fail
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
+		"SecretAccessKey": []string{strings.Repeat("s", 129)},
 	}
 	_, iamErr = iama.CreateAccessKey(s3cfg, values)
 	assert.NotNil(t, iamErr)

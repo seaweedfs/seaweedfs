@@ -1137,6 +1137,66 @@ func TestEmbeddedIamCreateAccessKeyBoundary(t *testing.T) {
 	apiRouter.ServeHTTP(rr, req)
 	assert.NotEqual(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "alphanumeric")
+
+	// Exactly 128 chars — should pass
+	api.mockConfig.Identities[0].Credentials = nil
+	ak128 := strings.Repeat("a", 128)
+	sk128 := strings.Repeat("s", 128)
+	form.Set("AccessKeyId", ak128)
+	form.Set("SecretAccessKey", sk128)
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// 129 chars AccessKeyId — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", strings.Repeat("a", 129))
+	form.Set("SecretAccessKey", sk128)
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "alphanumeric")
+
+	// 7-char SecretAccessKey — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", "1234567")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
+
+	// 129-char SecretAccessKey — should fail
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", strings.Repeat("s", 129))
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
 }
 
 // TestEmbeddedIamDeleteAccessKey tests deleting an access key via direct form post
