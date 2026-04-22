@@ -911,6 +911,34 @@ func TestEmbeddedIamCreateAccessKey(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1)
 }
 
+// TestEmbeddedIamCreateAccessKeyRejectsMissingUser verifies CreateAccessKey
+// returns NoSuchEntity for an unknown user without mutating the config.
+func TestEmbeddedIamCreateAccessKeyRejectsMissingUser(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "ExistingUser"}},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "GhostUser")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	// No new identity and no credential appended to the existing one.
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
+}
+
 // TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys tests creating an access key with caller-supplied credentials
 func TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
