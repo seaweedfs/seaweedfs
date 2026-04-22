@@ -566,7 +566,7 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				// this volume's shards, then any HDD, then any disk.
 				var targetLocation *storage.DiskLocation
 				if fileInfo.DiskId > 0 {
-					if int(fileInfo.DiskId) >= len(vs.store.Locations) {
+					if fileInfo.DiskId >= uint32(len(vs.store.Locations)) {
 						glog.Errorf("ReceiveFile: invalid disk_id %d: only have %d disks", fileInfo.DiskId, len(vs.store.Locations))
 						return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
 							Error: fmt.Sprintf("invalid disk_id %d: only have %d disks", fileInfo.DiskId, len(vs.store.Locations)),
