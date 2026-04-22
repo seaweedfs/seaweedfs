@@ -258,14 +258,18 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 			return nil, fmt.Errorf("%s: %w", err.Error(), ErrInvalidInput)
 		}
 	}
+	// Enforce the both-or-none rule to match the IAM API and embedded IAM
+	// paths — silently generating the missing half lets a caller end up
+	// with a credential they did not fully choose.
+	if (req.AccessKey != "") != (req.SecretKey != "") {
+		return nil, fmt.Errorf("access key and secret key must be supplied together: %w", ErrInvalidInput)
+	}
 
 	// Use provided keys or generate new ones
 	accessKey := req.AccessKey
+	secretKey := req.SecretKey
 	if accessKey == "" {
 		accessKey = generateAccessKey()
-	}
-	secretKey := req.SecretKey
-	if secretKey == "" {
 		secretKey = generateSecretKey()
 	}
 
