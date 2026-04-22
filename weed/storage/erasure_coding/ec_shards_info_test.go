@@ -356,27 +356,30 @@ func TestEcShardsTotalSize(t *testing.T) {
 
 func TestEcShardsDataSize(t *testing.T) {
 	tests := []struct {
-		name string
-		msg  *master_pb.VolumeEcShardInformationMessage
-		want int64
+		name       string
+		msg        *master_pb.VolumeEcShardInformationMessage
+		dataShards int
+		want       int64
 	}{
-		{name: "nil message", msg: nil, want: 0},
+		{name: "nil message", msg: nil, dataShards: 0, want: 0},
 		{
 			name: "data shards only",
 			msg: &master_pb.VolumeEcShardInformationMessage{
 				EcIndexBits: (1 << 0) | (1 << 1) | (1 << 9),
 				ShardSizes:  []int64{1000, 2000, 500},
 			},
-			want: 3500,
+			dataShards: 0, // default 10+4
+			want:       3500,
 		},
 		{
-			name: "mixed data and parity",
+			name: "mixed data and parity (default 10+4)",
 			msg: &master_pb.VolumeEcShardInformationMessage{
 				// shards 7, 8, 9 are data; 10..13 are parity.
 				EcIndexBits: (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12) | (1 << 13),
 				ShardSizes:  []int64{1000, 1000, 500, 2000, 2000, 2000, 2000},
 			},
-			want: 2500,
+			dataShards: 0,
+			want:       2500,
 		},
 		{
 			name: "only parity shards (excluded)",
@@ -384,7 +387,8 @@ func TestEcShardsDataSize(t *testing.T) {
 				EcIndexBits: (1 << 10) | (1 << 11),
 				ShardSizes:  []int64{500, 500},
 			},
-			want: 0,
+			dataShards: 0,
+			want:       0,
 		},
 		{
 			name: "missing sizes tolerated",
@@ -392,13 +396,48 @@ func TestEcShardsDataSize(t *testing.T) {
 				EcIndexBits: (1 << 0) | (1 << 3),
 				ShardSizes:  []int64{1000},
 			},
-			want: 1000,
+			dataShards: 0,
+			want:       1000,
+		},
+		{
+			name: "custom 6+3 ratio: shards 0..5 are data, 6..8 are parity",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				// shards 0..8 all present. With dataShards=6, only 0..5
+				// are data (6*1000 = 6000); 6..8 are parity and excluded.
+				// Under the default 10+4, 0..8 would all count as data and
+				// return 9000 instead — this test pins the custom-ratio
+				// path.
+				EcIndexBits: (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8),
+				ShardSizes:  []int64{1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000},
+			},
+			dataShards: 6,
+			want:       6000,
+		},
+		{
+			name: "custom 16+6 ratio: shard id 12 is data, not parity",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				// Shards 10..12 present. Under default 10+4 these would
+				// all be parity (size 0). Under 16+6, all three are data.
+				EcIndexBits: (1 << 10) | (1 << 11) | (1 << 12),
+				ShardSizes:  []int64{2000, 2000, 2000},
+			},
+			dataShards: 16,
+			want:       6000,
+		},
+		{
+			name: "negative dataShards falls back to default",
+			msg: &master_pb.VolumeEcShardInformationMessage{
+				EcIndexBits: (1 << 0) | (1 << 1) | (1 << 10),
+				ShardSizes:  []int64{1000, 1000, 1000},
+			},
+			dataShards: -1,
+			want:       2000,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EcShardsDataSize(tt.msg); got != tt.want {
-				t.Errorf("EcShardsDataSize() = %d, want %d", got, tt.want)
+			if got := EcShardsDataSize(tt.msg, tt.dataShards); got != tt.want {
+				t.Errorf("EcShardsDataSize(%d) = %d, want %d", tt.dataShards, got, tt.want)
 			}
 		})
 	}

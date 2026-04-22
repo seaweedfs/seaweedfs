@@ -265,9 +265,12 @@ func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfo
 						// EC shards are node-local (no replication), so both
 						// physical and logical shard sizes sum across nodes
 						// without any dedupe. Logical size excludes parity
-						// shards; physical size includes them.
+						// shards; physical size includes them. Upstream OSS
+						// uses the fixed 10+4 ratio (dataShards=0 → default);
+						// forks with per-volume ratio metadata can pass the
+						// configured value here.
 						cif.PhysicalSize += float64(erasure_coding.EcShardsTotalSize(esi))
-						cif.Size += float64(erasure_coding.EcShardsDataSize(esi))
+						cif.Size += float64(erasure_coding.EcShardsDataSize(esi, 0))
 
 						key := volumeKey{collection: c, volumeId: esi.Id}
 						agg, ok := ecVolumes[key]
