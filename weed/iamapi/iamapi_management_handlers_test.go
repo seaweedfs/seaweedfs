@@ -703,10 +703,13 @@ func TestCreateAccessKeyRejectsWeakKeys(t *testing.T) {
 
 func TestCreateAccessKeyRejectsCollision(t *testing.T) {
 	iama := newTestIamApiServer(Policies{})
+	// Use a distinctive owner name ("ownerAlpha") that shares no substring
+	// with the expected error message so the leak assertion is meaningful.
+	const ownerName = "ownerAlpha"
 	s3cfg := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
-				Name: "existing",
+				Name: ownerName,
 				Credentials: []*iam_pb.Credential{
 					{AccessKey: "takenkey", SecretKey: "existingsecret"},
 				},
@@ -715,14 +718,14 @@ func TestCreateAccessKeyRejectsCollision(t *testing.T) {
 		},
 	}
 	values := url.Values{
-		"UserName":       []string{"newuser"},
-		"AccessKeyId":    []string{"takenkey"},
+		"UserName":        []string{"newuser"},
+		"AccessKeyId":     []string{"takenkey"},
 		"SecretAccessKey": []string{"newsecret123"},
 	}
 	_, iamErr := iama.CreateAccessKey(s3cfg, values)
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
-	assert.NotContains(t, iamErr.Error.Error(), "existing", "should not leak owner name")
+	assert.NotContains(t, iamErr.Error.Error(), ownerName, "should not leak owner name")
 	assert.Len(t, s3cfg.Identities[1].Credentials, 0)
 }
 
@@ -787,6 +790,17 @@ func TestCreateAccessKeyBoundary(t *testing.T) {
 	_, iamErr = iama.CreateAccessKey(s3cfg, values)
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// Exactly 8-char SecretAccessKey - should pass (lower boundary)
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
+		"SecretAccessKey": []string{"12345678"},
+	}
+	resp, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "12345678", *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
 
 	// 129-char SecretAccessKey - should fail
 	values = url.Values{

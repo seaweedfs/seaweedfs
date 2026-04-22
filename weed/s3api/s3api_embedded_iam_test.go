@@ -1041,10 +1041,13 @@ func TestEmbeddedIamCreateAccessKeyRejectsWeakKeys(t *testing.T) {
 // TestEmbeddedIamCreateAccessKeyRejectsCollision tests that duplicate access keys are rejected
 func TestEmbeddedIamCreateAccessKeyRejectsCollision(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
+	// Use a distinctive owner name ("ownerAlpha") so the leak assertion
+	// cannot accidentally match a word embedded in the error body.
+	const ownerName = "ownerAlpha"
 	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
-				Name: "ExistingUser",
+				Name: ownerName,
 				Credentials: []*iam_pb.Credential{
 					{AccessKey: "takenkey", SecretKey: "existingsecret"},
 				},
@@ -1071,6 +1074,7 @@ func TestEmbeddedIamCreateAccessKeyRejectsCollision(t *testing.T) {
 
 	assert.NotEqual(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "already in use")
+	assert.NotContains(t, rr.Body.String(), ownerName, "should not leak owner name")
 
 	// Verify no credentials were added to NewUser
 	assert.Len(t, api.mockConfig.Identities[1].Credentials, 0)
@@ -1211,6 +1215,20 @@ func TestEmbeddedIamCreateAccessKeyBoundary(t *testing.T) {
 	apiRouter.ServeHTTP(rr, req)
 	assert.NotEqual(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
+
+	// Exactly 8-char SecretAccessKey — should pass (lower boundary)
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", "12345678")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
 
 	// 129-char SecretAccessKey — should fail
 	form.Set("AccessKeyId", "validkey")
