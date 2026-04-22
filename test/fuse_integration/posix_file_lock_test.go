@@ -82,9 +82,25 @@ func TestFcntlLockHelper(t *testing.T) {
 	start, _ := strconv.ParseInt(os.Getenv("LOCK_START"), 10, 64)
 	length, _ := strconv.ParseInt(os.Getenv("LOCK_LEN"), 10, 64)
 
-	f, err := os.OpenFile(filePath, os.O_RDWR, 0)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "open: %v\n", err)
+	// The parent test process created the file on the FUSE mount just before
+	// spawning this subprocess. A fresh lookup from a different process can
+	// briefly return ENOENT while the mount's dentry state propagates, so
+	// retry on ENOENT before giving up.
+	var f *os.File
+	var openErr error
+	for attempt := 0; attempt < 40; attempt++ {
+		f, openErr = os.OpenFile(filePath, os.O_RDWR, 0)
+		if openErr == nil {
+			break
+		}
+		if !errors.Is(openErr, os.ErrNotExist) && !errors.Is(openErr, syscall.ENOENT) {
+			break
+		}
+		_, _ = os.ReadDir(filepath.Dir(filePath))
+		time.Sleep(50 * time.Millisecond)
+	}
+	if openErr != nil {
+		fmt.Fprintf(os.Stderr, "open: %v\n", openErr)
 		os.Exit(1)
 	}
 	defer f.Close()
