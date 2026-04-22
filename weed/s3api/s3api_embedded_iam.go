@@ -402,49 +402,27 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	return resp, nil
 }
 
-func isValidCallerSuppliedAccessKeyId(accessKeyId string) bool {
-	if len(accessKeyId) < 4 || len(accessKeyId) > 128 {
-		return false
-	}
-	for _, r := range accessKeyId {
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
-			return false
-		}
-	}
-	return true
-}
-
 // CreateAccessKey creates an access key for a user.
 func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamCreateAccessKeyResponse, *iamError) {
 	resp := &iamCreateAccessKeyResponse{}
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
-	// Use caller-supplied keys if provided, otherwise generate random ones
+
 	accessKeyId := values.Get("AccessKeyId")
 	secretAccessKey := values.Get("SecretAccessKey")
-	// Validate caller-supplied keys
-	if accessKeyId != "" && !isValidCallerSuppliedAccessKeyId(accessKeyId) {
-		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId must be 4 to 128 alphanumeric characters")}
-	}
-	if secretAccessKey != "" && (len(secretAccessKey) < 8 || len(secretAccessKey) > 128) {
-		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("SecretAccessKey must be between 8 and 128 characters")}
-	}
-	// Check for access key collision across identities and service accounts
 	if accessKeyId != "" {
-		for _, ident := range s3cfg.Identities {
-			for _, cred := range ident.Credentials {
-				if cred.AccessKey == accessKeyId {
-					glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by user %s", ident.Name)
-					return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
-				}
-			}
+		if err := iamlib.ValidateCallerSuppliedAccessKeyId(accessKeyId); err != nil {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 		}
-		for _, sa := range s3cfg.ServiceAccounts {
-			if sa.Credential != nil && sa.Credential.AccessKey == accessKeyId {
-				glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by service account %s", sa.Id)
-				return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
-			}
+	}
+	if secretAccessKey != "" {
+		if err := iamlib.ValidateCallerSuppliedSecretAccessKey(secretAccessKey); err != nil {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 		}
+	}
+	if owner := iamlib.FindAccessKeyOwner(s3cfg, accessKeyId); owner != nil {
+		glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by %s %s", owner.Type, owner.Name)
+		return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
 	}
 	if (accessKeyId != "") != (secretAccessKey != "") {
 		glog.Warningf("CreateAccessKey: partial caller-supplied credentials for user %s (AccessKeyId=%t, SecretAccessKey=%t) — missing key will be auto-generated",
