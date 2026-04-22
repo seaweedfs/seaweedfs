@@ -89,6 +89,51 @@ func GetShardCount(vi *master_pb.VolumeEcShardInformationMessage) int {
 	return ShardBits(vi.EcIndexBits).Count()
 }
 
+// EcShardsTotalSize returns the sum of all shard sizes (data + parity) in
+// the message. Walks vi.ShardSizes directly rather than materializing a
+// ShardsInfo, which is significantly cheaper for callers that only need the
+// aggregate size.
+func EcShardsTotalSize(vi *master_pb.VolumeEcShardInformationMessage) int64 {
+	if vi == nil {
+		return 0
+	}
+	var total int64
+	for _, s := range vi.ShardSizes {
+		total += s
+	}
+	return total
+}
+
+// EcShardsDataSize returns the sum of sizes for data shards only (parity
+// shards excluded). Data shards are those with id < dataShards; all higher
+// shard ids are treated as parity. Passing dataShards <= 0 falls back to
+// the upstream default of DataShardsCount (10), which is correct for the
+// fixed 10+4 layout. Forks with per-volume ratio metadata (e.g. the
+// data_shards field carried on an extended VolumeEcShardInformationMessage)
+// should pass the per-volume value so logical sizes remain accurate under
+// custom EC policies like 6+3 or 16+6.
+func EcShardsDataSize(vi *master_pb.VolumeEcShardInformationMessage, dataShards int) int64 {
+	if vi == nil {
+		return 0
+	}
+	if dataShards <= 0 {
+		dataShards = DataShardsCount
+	}
+	var total int64
+	var id ShardId
+	var j int
+	for bitmap := vi.EcIndexBits; bitmap != 0; bitmap >>= 1 {
+		if bitmap&1 != 0 {
+			if int(id) < dataShards && j < len(vi.ShardSizes) {
+				total += vi.ShardSizes[j]
+			}
+			j++
+		}
+		id++
+	}
+	return total
+}
+
 // Returns a string representation for a ShardsInfo.
 func (sp *ShardsInfo) String() string {
 	sp.mu.RLock()
