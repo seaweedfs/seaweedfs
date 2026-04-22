@@ -941,12 +941,12 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 			return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 		}
 	}
+	if (accessKeyId != "") != (secretAccessKey != "") {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
+	}
 	if owner := iamlib.FindAccessKeyOwner(s3cfg, accessKeyId); owner != nil {
 		glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by %s %s", owner.Type, owner.Name)
 		return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
-	}
-	if (accessKeyId != "") != (secretAccessKey != "") {
-		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
 	}
 	if accessKeyId == "" {
 		var err error

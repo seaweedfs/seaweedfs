@@ -837,4 +837,26 @@ func TestCreateAccessKeyRejectsPartialSupply(t *testing.T) {
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
 	assert.Len(t, s3cfg.Identities[0].Credentials, 0)
+
+	// Partial supply wins over collision: only AccessKeyId supplied, and
+	// it matches an existing credential. We must see InvalidInput, not
+	// EntityAlreadyExists — the both-or-none rule is more fundamental.
+	s3cfg = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "ownerAlpha",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "takenkey", SecretKey: "s"},
+				},
+			},
+			{Name: "alice"},
+		},
+	}
+	values = url.Values{
+		"UserName":    []string{"alice"},
+		"AccessKeyId": []string{"takenkey"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
 }
