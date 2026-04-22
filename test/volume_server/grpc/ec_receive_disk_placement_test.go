@@ -13,18 +13,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
-// TestReceiveFileEcShardAlwaysPlacedOnFirstDisk reproduces the disk placement
-// bug described in https://github.com/seaweedfs/seaweedfs/issues/9184: when the
-// plugin-worker EC task sends shards via ReceiveFile, the server-side handler
-// at volume_grpc_copy.go:ReceiveFile picks Locations[0] as the target directory
-// for every EC shard regardless of DiskID. ReceiveFileInfo has no disk_id
-// field, so the admin-planned placement cannot be honored.
-//
-// This test asserts the current (buggy) behavior: across multiple data dirs,
-// every shard lands in the first one. When the fix for #9184 adds disk_id to
-// ReceiveFileInfo and the handler honors it, this test will need to be
-// updated to assert the planned disk is respected instead.
-func TestReceiveFileEcShardAlwaysPlacedOnFirstDisk(t *testing.T) {
+// Sends EC shards with disk_id={1, 2, 0} and verifies each lands on the
+// requested disk (0 → auto-select → disk 0 for a fresh volume).
+func TestReceiveFileEcShardHonorsDiskID(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -45,79 +36,137 @@ func TestReceiveFileEcShardAlwaysPlacedOnFirstDisk(t *testing.T) {
 	const volumeID = uint32(9184)
 	const collection = "ec-disk-placement"
 
-	// Send three EC shard files to the server. In production the admin planner
-	// would assign each shard to a distinct target disk; the plugin-worker
-	// path has no way to communicate that intent, so all three should land on
-	// the same disk — dir[0].
-	shardIDs := []uint32{0, 5, 13}
+	shards := []struct {
+		shardID        uint32
+		requestedDisk  uint32
+		expectedDirIdx int
+	}{
+		{shardID: 0, requestedDisk: 1, expectedDirIdx: 1},
+		{shardID: 5, requestedDisk: 2, expectedDirIdx: 2},
+		{shardID: 13, requestedDisk: 0, expectedDirIdx: 0},
+	}
 	shardExt := func(id uint32) string { return fmt.Sprintf(".ec%02d", id) }
 
-	for _, shardID := range shardIDs {
-		payload := []byte(fmt.Sprintf("ec-shard-payload-%02d", shardID))
+	for _, s := range shards {
+		payload := []byte(fmt.Sprintf("ec-shard-payload-%02d", s.shardID))
 		stream, err := grpcClient.ReceiveFile(ctx)
 		if err != nil {
-			t.Fatalf("ReceiveFile stream create for shard %d: %v", shardID, err)
+			t.Fatalf("ReceiveFile stream create for shard %d: %v", s.shardID, err)
 		}
 		if err = stream.Send(&volume_server_pb.ReceiveFileRequest{
 			Data: &volume_server_pb.ReceiveFileRequest_Info{
 				Info: &volume_server_pb.ReceiveFileInfo{
 					VolumeId:   volumeID,
-					Ext:        shardExt(shardID),
+					Ext:        shardExt(s.shardID),
 					Collection: collection,
 					IsEcVolume: true,
-					ShardId:    shardID,
+					ShardId:    s.shardID,
 					FileSize:   uint64(len(payload)),
+					DiskId:     s.requestedDisk,
 				},
 			},
 		}); err != nil {
-			t.Fatalf("ReceiveFile send info for shard %d: %v", shardID, err)
+			t.Fatalf("ReceiveFile send info for shard %d: %v", s.shardID, err)
 		}
 		if err = stream.Send(&volume_server_pb.ReceiveFileRequest{
 			Data: &volume_server_pb.ReceiveFileRequest_FileContent{FileContent: payload},
 		}); err != nil {
-			t.Fatalf("ReceiveFile send content for shard %d: %v", shardID, err)
+			t.Fatalf("ReceiveFile send content for shard %d: %v", s.shardID, err)
 		}
 		resp, err := stream.CloseAndRecv()
 		if err != nil {
-			t.Fatalf("ReceiveFile close for shard %d: %v", shardID, err)
+			t.Fatalf("ReceiveFile close for shard %d: %v", s.shardID, err)
 		}
 		if resp.GetError() != "" {
-			t.Fatalf("ReceiveFile shard %d error response: %s", shardID, resp.GetError())
+			t.Fatalf("ReceiveFile shard %d error response: %s", s.shardID, resp.GetError())
 		}
 		if resp.GetBytesWritten() != uint64(len(payload)) {
 			t.Fatalf("ReceiveFile shard %d bytes_written mismatch: got %d want %d",
-				shardID, resp.GetBytesWritten(), len(payload))
+				s.shardID, resp.GetBytesWritten(), len(payload))
 		}
 	}
 
 	// Scan every data dir and record which shard files live where.
 	perDirShards := make(map[int][]uint32)
 	for dirIdx, dir := range dataDirs {
-		for _, shardID := range shardIDs {
-			shardPath := filepath.Join(dir, fmt.Sprintf("%s_%d%s", collection, volumeID, shardExt(shardID)))
+		for _, s := range shards {
+			shardPath := filepath.Join(dir, fmt.Sprintf("%s_%d%s", collection, volumeID, shardExt(s.shardID)))
 			if _, err := os.Stat(shardPath); err == nil {
-				perDirShards[dirIdx] = append(perDirShards[dirIdx], shardID)
+				perDirShards[dirIdx] = append(perDirShards[dirIdx], s.shardID)
 			} else if !os.IsNotExist(err) {
 				t.Fatalf("unexpected stat error for %s: %v", shardPath, err)
 			}
 		}
 	}
 
-	// BUG #9184: every shard should land on dir[0] because ReceiveFile ignores
-	// disk placement and unconditionally picks Locations[0]. When the fix
-	// lands, update this assertion to reflect the spread across disks that a
-	// disk_id-aware handler should produce.
-	if got := perDirShards[0]; len(got) != len(shardIDs) {
-		t.Fatalf("bug #9184 regression: expected all %d shards on dir[0], got %v (full layout: %v)",
-			len(shardIDs), got, perDirShards)
-	}
-	for dirIdx := 1; dirIdx < dataDirCount; dirIdx++ {
-		if got := perDirShards[dirIdx]; len(got) != 0 {
-			t.Fatalf("bug #9184 regression: expected no shards on dir[%d], got %v (full layout: %v)",
-				dirIdx, got, perDirShards)
+	for _, s := range shards {
+		found := false
+		for _, got := range perDirShards[s.expectedDirIdx] {
+			if got == s.shardID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("shard %d (requestedDisk=%d) expected on dir[%d], full layout: %v",
+				s.shardID, s.requestedDisk, s.expectedDirIdx, perDirShards)
+		}
+		for dirIdx, ids := range perDirShards {
+			if dirIdx == s.expectedDirIdx {
+				continue
+			}
+			for _, id := range ids {
+				if id == s.shardID {
+					t.Fatalf("shard %d leaked onto dir[%d]: full layout: %v", s.shardID, dirIdx, perDirShards)
+				}
+			}
 		}
 	}
 
-	t.Logf("bug #9184 reproduced: all EC shards placed on dir[0]=%s; dirs 1..%d empty",
-		dataDirs[0], dataDirCount-1)
+	t.Logf("disk_id honored: shard placement = %v", perDirShards)
+}
+
+func TestReceiveFileEcShardRejectsInvalidDiskID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	const dataDirCount = 2
+	clusterHarness := framework.StartSingleVolumeClusterWithDataDirs(t, matrix.P1(), dataDirCount)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const volumeID = uint32(91840)
+	const collection = "ec-invalid-disk"
+	payload := []byte("invalid-disk-id-payload")
+
+	stream, err := grpcClient.ReceiveFile(ctx)
+	if err != nil {
+		t.Fatalf("ReceiveFile stream create: %v", err)
+	}
+	if err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_Info{
+			Info: &volume_server_pb.ReceiveFileInfo{
+				VolumeId:   volumeID,
+				Ext:        ".ec00",
+				Collection: collection,
+				IsEcVolume: true,
+				ShardId:    0,
+				FileSize:   uint64(len(payload)),
+				DiskId:     99,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send info: %v", err)
+	}
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return
+	}
+	if resp.GetError() == "" {
+		t.Fatalf("expected invalid disk_id rejection, got success response: %+v", resp)
+	}
 }
