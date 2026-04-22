@@ -85,17 +85,12 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 		t.Fatalf("write security config: %v", err)
 	}
 
-	miniPorts, err := testutil.AllocateMiniPorts(1)
-	if err != nil {
-		t.Fatalf("allocate master port pair: %v", err)
-	}
-	masterPort := miniPorts[0]
-	masterGrpcPort := masterPort + testutil.GrpcPortOffset
-
-	ports, err := testutil.AllocatePorts(3)
+	miniPorts, ports, err := testutil.AllocatePortSet(1, 3)
 	if err != nil {
 		t.Fatalf("allocate ports: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	c := &Cluster{
 		testingTB:      t,

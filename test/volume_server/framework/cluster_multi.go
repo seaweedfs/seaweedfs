@@ -75,13 +75,6 @@ func StartMultiVolumeCluster(t testing.TB, profile matrix.Profile, serverCount i
 		t.Fatalf("write security config: %v", err)
 	}
 
-	miniPorts, err := testutil.AllocateMiniPorts(1)
-	if err != nil {
-		t.Fatalf("allocate master port pair: %v", err)
-	}
-	masterPort := miniPorts[0]
-	masterGrpcPort := masterPort + testutil.GrpcPortOffset
-
 	// Allocate ports for all volume servers (3 ports per server: admin, grpc, public)
 	// If SplitPublicPort is true, we need an additional port per server
 	portsPerServer := 3
@@ -89,10 +82,12 @@ func StartMultiVolumeCluster(t testing.TB, profile matrix.Profile, serverCount i
 		portsPerServer = 4
 	}
 	totalPorts := serverCount * portsPerServer
-	ports, err := testutil.AllocatePorts(totalPorts)
+	miniPorts, ports, err := testutil.AllocatePortSet(1, totalPorts)
 	if err != nil {
-		t.Fatalf("allocate volume ports: %v", err)
+		t.Fatalf("allocate ports: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	c := &MultiVolumeCluster{
 		testingTB:         t,

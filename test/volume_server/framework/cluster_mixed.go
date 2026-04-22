@@ -93,22 +93,17 @@ func StartMixedVolumeCluster(t testing.TB, profile matrix.Profile, goCount, rust
 		t.Fatalf("write security config: %v", err)
 	}
 
-	miniPorts, err := testutil.AllocateMiniPorts(1)
-	if err != nil {
-		t.Fatalf("allocate master port pair: %v", err)
-	}
-	masterPort := miniPorts[0]
-	masterGrpcPort := masterPort + testutil.GrpcPortOffset
-
 	// 2 ports per server (admin, grpc); add 1 more when public port is split out.
 	portsPerServer := 2
 	if profile.SplitPublicPort {
 		portsPerServer = 3
 	}
-	ports, err := testutil.AllocatePorts(total * portsPerServer)
+	miniPorts, ports, err := testutil.AllocatePortSet(1, total*portsPerServer)
 	if err != nil {
-		t.Fatalf("allocate volume ports: %v", err)
+		t.Fatalf("allocate ports: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	isRust := make([]bool, total)
 	for i := goCount; i < total; i++ {

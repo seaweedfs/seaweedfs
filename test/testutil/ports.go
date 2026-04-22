@@ -118,3 +118,63 @@ func MustFreeMiniPort(t *testing.T, name string) int {
 	t.Helper()
 	return MustFreeMiniPorts(t, []string{name})[0]
 }
+
+// AllocatePortSet atomically allocates miniCount master-style port pairs (each
+// with port and port+GrpcPortOffset reserved) plus regularCount additional
+// distinct ports. All listeners are held open until the entire batch is
+// allocated, so a mini gRPC port cannot be recycled as a regular port mid-batch.
+func AllocatePortSet(miniCount, regularCount int) (mini []int, regular []int, err error) {
+	const (
+		minPort = 10000
+		maxPort = 55000
+	)
+	reserved := make(map[int]bool)
+	mini = make([]int, 0, miniCount)
+	var listeners []net.Listener
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
+
+	for idx := 0; idx < miniCount; idx++ {
+		found := false
+		for i := 0; i < 1000; i++ {
+			port := minPort + rand.Intn(maxPort-minPort)
+			grpcPort := port + GrpcPortOffset
+			if reserved[port] || reserved[grpcPort] {
+				continue
+			}
+			l1, lErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if lErr != nil {
+				continue
+			}
+			l2, lErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
+			if lErr != nil {
+				l1.Close()
+				continue
+			}
+			listeners = append(listeners, l1, l2)
+			reserved[port] = true
+			reserved[grpcPort] = true
+			mini = append(mini, port)
+			found = true
+			break
+		}
+		if !found {
+			return nil, nil, fmt.Errorf("failed to allocate mini port %d of %d", idx+1, miniCount)
+		}
+	}
+
+	regular = make([]int, 0, regularCount)
+	for i := 0; i < regularCount; i++ {
+		l, lErr := net.Listen("tcp", "127.0.0.1:0")
+		if lErr != nil {
+			return nil, nil, lErr
+		}
+		listeners = append(listeners, l)
+		regular = append(regular, l.Addr().(*net.TCPAddr).Port)
+	}
+
+	return mini, regular, nil
+}
