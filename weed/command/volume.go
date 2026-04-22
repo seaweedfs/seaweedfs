@@ -472,10 +472,14 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	if certFile != "" && keyFile != "" {
-		getCert, _, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		getCert, certProvider, err := security.NewReloadingServerCertificate(certFile, keyFile)
 		if err != nil {
 			glog.Fatalf("Volume server failed to load TLS certificate: %v", err)
 		}
+		// This helper returns while the server is still running; hook the
+		// provider close into the global interrupt so the refresh goroutine
+		// is torn down on shutdown rather than leaked.
+		grace.OnInterrupt(certProvider.Close)
 		if httpS.TLSConfig == nil {
 			httpS.TLSConfig = &tls.Config{}
 		}

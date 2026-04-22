@@ -403,10 +403,11 @@ func (s3opt *S3Options) startS3Server() bool {
 			glog.Fatalf("S3 API Server error: -s3.port.https (%d) cannot be the same as -s3.port (%d)", *s3opt.portHttps, *s3opt.port)
 		}
 
-		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
+		getCert, certProvider, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
 		if err != nil {
 			glog.Fatalf("S3 API Server failed to load HTTPS certificate: %v", err)
 		}
+		grace.OnInterrupt(certProvider.Close)
 
 		caCertPool := x509.NewCertPool()
 		if *s3opt.tlsCACertificate != "" {

@@ -151,10 +151,11 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	if *wo.tlsPrivateKey != "" {
 		glog.V(0).Infof("Start Seaweed WebDav Server %s at https %s", version.Version(), listenAddress)
-		getCert, _, err := security.NewReloadingServerCertificate(*wo.tlsCertificate, *wo.tlsPrivateKey)
+		getCert, certProvider, err := security.NewReloadingServerCertificate(*wo.tlsCertificate, *wo.tlsPrivateKey)
 		if err != nil {
 			glog.Fatalf("WebDav Server failed to load TLS certificate: %v", err)
 		}
+		defer certProvider.Close()
 		httpS.TLSConfig = &tls.Config{GetCertificate: getCert}
 		if err = httpS.ServeTLS(webDavListener, "", ""); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("WebDav Server Fail to serve: %v", err)

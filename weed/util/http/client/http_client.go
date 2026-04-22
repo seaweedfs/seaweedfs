@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	"google.golang.org/grpc/credentials/tls/certprovider"
+
 	"github.com/seaweedfs/seaweedfs/weed/security/certreload"
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
@@ -24,6 +26,25 @@ type HTTPClient struct {
 	Client            *http.Client
 	Transport         *http.Transport
 	expectHttpsScheme bool
+	// certProvider, when non-nil, owns a background refresh goroutine for
+	// the client mTLS cert/key pair. Close() must be called to stop it.
+	certProvider certprovider.Provider
+}
+
+// Close stops any background cert refresh goroutine. Safe to call on a
+// client that was constructed without mTLS. Existing pooled connections
+// are also closed via CloseIdleConnections.
+func (httpClient *HTTPClient) Close() {
+	if httpClient == nil {
+		return
+	}
+	if httpClient.certProvider != nil {
+		httpClient.certProvider.Close()
+		httpClient.certProvider = nil
+	}
+	if httpClient.Client != nil {
+		httpClient.Client.CloseIdleConnections()
+	}
 }
 
 func (httpClient *HTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -123,11 +144,12 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 			}
 
 			if hasClientCert {
-				getClientCert, _, err := certreload.NewClientGetCertificate(certFileName, keyFileName)
+				getClientCert, provider, err := certreload.NewClientGetCertificate(certFileName, keyFileName)
 				if err != nil {
 					return nil, fmt.Errorf("error loading client certificate and key: %s", err)
 				}
 				tlsConfig.GetClientCertificate = getClientCert
+				httpClient.certProvider = provider
 			}
 		}
 
@@ -214,21 +236,33 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify b
 
 	var getClientCert func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
 	if certFile != "" && keyFile != "" {
-		cb, _, err := certreload.NewClientGetCertificate(certFile, keyFile)
+		cb, provider, err := certreload.NewClientGetCertificate(certFile, keyFile)
 		if err != nil {
 			return nil, fmt.Errorf("error loading client certificate and key: %s", err)
 		}
 		getClientCert = cb
+		httpClient.certProvider = provider
+	}
+	// closeProviderOnError ensures the cert reloader's background refresh
+	// goroutine is shut down if any subsequent step fails before we hand
+	// the client back to the caller.
+	closeProviderOnError := func() {
+		if httpClient.certProvider != nil {
+			httpClient.certProvider.Close()
+			httpClient.certProvider = nil
+		}
 	}
 
 	var caCertPool *x509.CertPool
 	if caFile != "" {
 		caCert, err := os.ReadFile(caFile)
 		if err != nil {
+			closeProviderOnError()
 			return nil, fmt.Errorf("error reading CA cert %s: %s", caFile, err)
 		}
 		caCertPool, err = createHTTPClientCertPool(caCert, caFile)
 		if err != nil {
+			closeProviderOnError()
 			return nil, err
 		}
 	}

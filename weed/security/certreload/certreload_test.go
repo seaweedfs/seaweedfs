@@ -52,22 +52,30 @@ func TestServerGetCertificatePicksUpNewFile(t *testing.T) {
 		t.Fatalf("write second cert: %v", err)
 	}
 
+	// The pemfile poller can briefly observe a mismatched cert/key pair
+	// during rotation (cert written before key). Tolerate transient errors
+	// and only fail at the deadline; keep the last error for diagnostics.
+	var lastErr error
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		c2, err := getCert(nil)
 		if err != nil {
-			t.Fatalf("getCert after rotation: %v", err)
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 		parsed, err := x509.ParseCertificate(c2.Certificate[0])
 		if err != nil {
-			t.Fatalf("parse rotated cert: %v", err)
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 		if parsed.Subject.CommonName == "second" {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("reloader did not pick up rotated cert within timeout")
+	t.Fatalf("reloader did not pick up rotated cert within timeout; last error: %v", lastErr)
 }
 
 func writeSelfSigned(certPath, keyPath, commonName string) error {

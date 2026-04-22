@@ -488,10 +488,11 @@ func (fo *FilerOptions) startFiler() {
 		caCertFile := viper.GetString("https.filer.ca")
 		disbaleTlsVerifyClientCert := viper.GetBool("https.filer.disable_tls_verify_client_cert")
 
-		getCert, _, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		getCert, certProvider, err := security.NewReloadingServerCertificate(certFile, keyFile)
 		if err != nil {
 			glog.Fatalf("Filer failed to load HTTPS certificate: %v", err)
 		}
+		defer certProvider.Close()
 
 		caCertPool := x509.NewCertPool()
 		if caCertFile != "" {

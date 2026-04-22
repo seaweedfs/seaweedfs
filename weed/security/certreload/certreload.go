@@ -38,8 +38,15 @@ func newServerGetCertificate(certFile, keyFile string, refresh time.Duration) (f
 	if err != nil {
 		return nil, nil, err
 	}
-	get := func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-		return current(provider, certFile)
+	get := func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		// KeyMaterial blocks until the pemfile provider has read the files
+		// for the first time. Use the handshake context so a stuck read
+		// bounds the handshake instead of hanging it forever.
+		ctx := context.Background()
+		if hello != nil {
+			ctx = hello.Context()
+		}
+		return current(ctx, provider, certFile)
 	}
 	return get, provider, nil
 }
@@ -57,8 +64,12 @@ func newClientGetCertificate(certFile, keyFile string, refresh time.Duration) (f
 	if err != nil {
 		return nil, nil, err
 	}
-	get := func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-		return current(provider, certFile)
+	get := func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		ctx := context.Background()
+		if cri != nil {
+			ctx = cri.Context()
+		}
+		return current(ctx, provider, certFile)
 	}
 	return get, provider, nil
 }
@@ -78,8 +89,8 @@ func newProvider(certFile, keyFile string, refresh time.Duration) (certprovider.
 	return provider, nil
 }
 
-func current(provider certprovider.Provider, certFile string) (*tls.Certificate, error) {
-	km, err := provider.KeyMaterial(context.Background())
+func current(ctx context.Context, provider certprovider.Provider, certFile string) (*tls.Certificate, error) {
+	km, err := provider.KeyMaterial(ctx)
 	if err != nil {
 		return nil, err
 	}
