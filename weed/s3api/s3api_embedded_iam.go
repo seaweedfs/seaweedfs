@@ -410,32 +410,61 @@ func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
 
-	// Generate AWS-standard access key: AKIA prefix + 16 random uppercase chars = 20 total
-	randomPart, err := iamStringWithCharset(AccessKeyLength-len(UserAccessKeyPrefix), iamCharsetUpper)
-	if err != nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	accessKeyId := values.Get("AccessKeyId")
+	secretAccessKey := values.Get("SecretAccessKey")
+	if accessKeyId != "" {
+		if err := iamlib.ValidateCallerSuppliedAccessKeyId(accessKeyId); err != nil {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+		}
 	}
-	accessKeyId := UserAccessKeyPrefix + randomPart
-
-	secretAccessKey, err := iamStringWithCharset(SecretKeyLength, iamCharset)
-	if err != nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	if secretAccessKey != "" {
+		if err := iamlib.ValidateCallerSuppliedSecretAccessKey(secretAccessKey); err != nil {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+		}
+	}
+	if (accessKeyId != "") != (secretAccessKey != "") {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
 	}
 
+	// Find the target user before touching the RNG or scanning for collisions,
+	// so a missing user fails fast without consuming entropy.
+	var target *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if userName == ident.Name {
+			target = ident
+			break
+		}
+	}
+	if target == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	}
+
+	if owner := iamlib.FindAccessKeyOwner(s3cfg, accessKeyId); owner != nil {
+		glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by %s %s", owner.Type, owner.Name)
+		return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+	}
+	if accessKeyId == "" {
+		randomPart, err := iamStringWithCharset(AccessKeyLength-len(UserAccessKeyPrefix), iamCharsetUpper)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+		}
+		accessKeyId = UserAccessKeyPrefix + randomPart
+	}
+	if secretAccessKey == "" {
+		var err error
+		secretAccessKey, err = iamStringWithCharset(SecretKeyLength, iamCharset)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+		}
+	}
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
 	resp.CreateAccessKeyResult.AccessKey.SecretAccessKey = &secretAccessKey
 	resp.CreateAccessKeyResult.AccessKey.UserName = &userName
 	resp.CreateAccessKeyResult.AccessKey.Status = &status
 
-	for _, ident := range s3cfg.Identities {
-		if userName == ident.Name {
-			ident.Credentials = append(ident.Credentials,
-				&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey, Status: iamAccessKeyStatusActive})
-			return resp, nil
-		}
-	}
-	// User not found - return error instead of implicitly creating the user
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	target.Credentials = append(target.Credentials,
+		&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey, Status: iamAccessKeyStatusActive})
+	return resp, nil
 }
 
 // DeleteAccessKey deletes an access key for a user.
@@ -2102,7 +2131,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInternalError).Code, Error: fmt.Errorf("failed to get s3 api configuration: %v", err)}
 	}
 
-	glog.V(4).Infof("IAM ExecuteAction: %+v", values)
+	glog.V(4).Infof("IAM ExecuteAction: %+v", iamlib.RedactSensitiveFormValues(values))
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch values.Get("Action") {
