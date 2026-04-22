@@ -1425,6 +1425,16 @@ impl VolumeServer for VolumeGrpcService {
                         // Determine file path
                         let path = if info.is_ec_volume {
                             let store = self.state.store.read().unwrap();
+                            // std::fs::File::create truncates in place; a mounted
+                            // EcVolume holds fds on the same inodes, so overwriting
+                            // corrupts live readers.
+                            if store.has_ec_volume(VolumeId(info.volume_id)) {
+                                resp_error = Some(format!(
+                                    "ec volume {} is mounted; unmount before ReceiveFile",
+                                    info.volume_id
+                                ));
+                                break;
+                            }
                             // Go prefers a HardDriveType location, then falls back to first
                             let dir = store
                                 .locations
