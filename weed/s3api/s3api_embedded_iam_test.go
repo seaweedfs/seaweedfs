@@ -970,11 +970,16 @@ func TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
 	var out iamCreateAccessKeyResponse
 	err := xml.Unmarshal(rr.Body.Bytes(), &out)
 	require.NoError(t, err, "failed to unmarshal CreateAccessKey response")
+	require.NotNil(t, out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	require.NotNil(t, out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	require.NotNil(t, out.CreateAccessKeyResult.AccessKey.UserName)
 	assert.Equal(t, "myapp", *out.CreateAccessKeyResult.AccessKey.AccessKeyId)
 	assert.Equal(t, "mysecret123", *out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
 	assert.Equal(t, "TestUser", *out.CreateAccessKeyResult.AccessKey.UserName)
 
 	// Verify credentials were persisted with caller-supplied keys
+	require.Len(t, api.mockConfig.Identities, 1)
+	require.Len(t, api.mockConfig.Identities[0].Credentials, 1)
 	assert.Equal(t, "myapp", api.mockConfig.Identities[0].Credentials[0].AccessKey)
 	assert.Equal(t, "mysecret123", api.mockConfig.Identities[0].Credentials[0].SecretKey)
 }
