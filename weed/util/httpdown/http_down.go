@@ -289,10 +289,15 @@ func (s *server) manage() {
 
 func (s *server) serve() {
 	stats.BumpSum(s.stats, "serve", 1)
-	if s.certFile == "" && s.keyFile == "" {
-		s.serveErr <- s.server.Serve(s.listener)
-	} else {
+	switch {
+	case s.certFile != "" || s.keyFile != "":
 		s.serveErr <- s.server.ServeTLS(s.listener, s.certFile, s.keyFile)
+	case s.server.TLSConfig != nil && (len(s.server.TLSConfig.Certificates) > 0 || s.server.TLSConfig.GetCertificate != nil):
+		// TLSConfig carries the certificate source (e.g. a hot-reloading
+		// GetCertificate callback). Pass empty file args so ServeTLS uses it.
+		s.serveErr <- s.server.ServeTLS(s.listener, "", "")
+	default:
+		s.serveErr <- s.server.Serve(s.listener)
 	}
 	close(s.serveDone)
 	close(s.serveErr)

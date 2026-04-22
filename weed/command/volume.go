@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
@@ -312,7 +313,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// starting the cluster http server
-	clusterHttpServer := v.startClusterHttpService(volumeMux)
+	clusterHttpServer, closeCert := v.startClusterHttpService(volumeMux)
 
 	grace.OnReload(volumeServer.LoadNewVolumes)
 	grace.OnReload(volumeServer.Reload)
@@ -329,6 +330,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 
 		shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+		if closeCert != nil {
+			closeCert()
+		}
 		stopChan <- true
 	})
 
@@ -337,6 +341,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		case <-stopChan:
 		case <-v.shutdownCtx.Done():
 			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+			if closeCert != nil {
+				closeCert()
+			}
 		}
 	} else {
 		select {
@@ -442,7 +449,13 @@ func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdo
 	return publicHttpDown
 }
 
-func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpdown.Server {
+// startClusterHttpService starts the volume cluster HTTP server and
+// returns it along with a close func for the cert reloader's refresh
+// goroutine (nil when HTTPS is disabled). The caller is responsible
+// for invoking the close func on every shutdown path — both the
+// SIGTERM/grace.OnInterrupt path and the shutdownCtx path used by
+// mini/integration tests.
+func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (httpdown.Server, func()) {
 	var (
 		certFile, keyFile string
 	)
@@ -461,8 +474,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	httpDown := httpdown.HTTP{
 		KillTimeout: time.Minute,
 		StopTimeout: 30 * time.Second,
-		CertFile:    certFile,
-		KeyFile:     keyFile}
+	}
 	httpS := &http.Server{Handler: handler}
 
 	if viper.GetString("https.volume.ca") != "" {
@@ -471,11 +483,24 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 		security.FixTlsConfig(util.GetViper(), httpS.TLSConfig)
 	}
 
+	var closeCert func()
+	if certFile != "" && keyFile != "" {
+		getCert, certProvider, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("Volume server failed to load TLS certificate: %v", err)
+		}
+		closeCert = certProvider.Close
+		if httpS.TLSConfig == nil {
+			httpS.TLSConfig = &tls.Config{}
+		}
+		httpS.TLSConfig.GetCertificate = getCert
+	}
+
 	clusterHttpServer := httpDown.Serve(httpS, listener)
 	go func() {
 		if e := clusterHttpServer.Wait(); e != nil {
 			glog.Fatalf("Volume server fail to serve: %v", e)
 		}
 	}()
-	return clusterHttpServer
+	return clusterHttpServer, closeCert
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -411,43 +412,57 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		Handler: handler,
 	}
 
+	// Decide TLS configuration BEFORE launching the server goroutine, so a
+	// bad cert or a missing key surfaces as a startup error instead of a
+	// silently returned goroutine that leaves startAdminServer blocked on
+	// ctx.Done() with no listener.
+	var (
+		clientCertFile,
+		certFile,
+		keyFile string
+	)
+	useTLS := false
+	useMTLS := false
+
+	if viper.GetString("https.admin.key") != "" {
+		useTLS = true
+		certFile = viper.GetString("https.admin.cert")
+		keyFile = viper.GetString("https.admin.key")
+	}
+
+	if viper.GetString("https.admin.ca") != "" {
+		useMTLS = true
+		clientCertFile = viper.GetString("https.admin.ca")
+	}
+
+	if useMTLS {
+		server.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+	}
+
+	if useTLS {
+		getCert, certProvider, certErr := security.NewReloadingServerCertificate(certFile, keyFile)
+		if certErr != nil {
+			return fmt.Errorf("load admin HTTPS certificate: %w", certErr)
+		}
+		defer certProvider.Close()
+		if server.TLSConfig == nil {
+			server.TLSConfig = &tls.Config{}
+		}
+		server.TLSConfig.GetCertificate = getCert
+	}
+
 	// Start server
 	go func() {
 		log.Printf("Starting SeaweedFS Admin Server on port %d", *options.port)
-
-		// start http or https server with security.toml
-		var (
-			clientCertFile,
-			certFile,
-			keyFile string
-		)
-		useTLS := false
-		useMTLS := false
-
-		if viper.GetString("https.admin.key") != "" {
-			useTLS = true
-			certFile = viper.GetString("https.admin.cert")
-			keyFile = viper.GetString("https.admin.key")
-		}
-
-		if viper.GetString("https.admin.ca") != "" {
-			useMTLS = true
-			clientCertFile = viper.GetString("https.admin.ca")
-		}
-
-		if useMTLS {
-			server.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
-		}
-
+		var serveErr error
 		if useTLS {
 			log.Printf("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
-			err = server.ListenAndServeTLS(certFile, keyFile)
+			serveErr = server.ListenAndServeTLS("", "")
 		} else {
-			err = server.ListenAndServe()
+			serveErr = server.ListenAndServe()
 		}
-
-		if err != nil && err != http.ErrServerClosed {
-			log.Printf("Failed to start server: %v", err)
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			log.Printf("Failed to start server: %v", serveErr)
 		}
 	}()
 

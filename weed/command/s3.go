@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"google.golang.org/grpc/credentials/tls/certprovider"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -62,7 +60,6 @@ type S3Options struct {
 	localFilerSocket          *string
 	dataCenter                *string
 	localSocket               *string
-	certProvider              certprovider.Provider
 	idleTimeout               *int
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
@@ -226,15 +223,6 @@ func runS3(cmd *Command, args []string) bool {
 
 	return s3StandaloneOptions.startS3Server()
 
-}
-
-// GetCertificateWithUpdate Auto refreshing TSL certificate
-func (s3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	certs, err := s3opt.certProvider.KeyMaterial(context.Background())
-	if certs == nil {
-		return nil, err
-	}
-	return &certs.Certs[0], err
 }
 
 // resolveExternalUrl returns the external URL from the flag or falls back to the S3_EXTERNAL_URL env var.
@@ -415,14 +403,11 @@ func (s3opt *S3Options) startS3Server() bool {
 			glog.Fatalf("S3 API Server error: -s3.port.https (%d) cannot be the same as -s3.port (%d)", *s3opt.portHttps, *s3opt.port)
 		}
 
-		pemfileOptions := pemfile.Options{
-			CertFile:        *s3opt.tlsCertificate,
-			KeyFile:         *s3opt.tlsPrivateKey,
-			RefreshDuration: security.CredRefreshingInterval,
+		getCert, certProvider, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
+		if err != nil {
+			glog.Fatalf("S3 API Server failed to load HTTPS certificate: %v", err)
 		}
-		if s3opt.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
-		}
+		grace.OnInterrupt(certProvider.Close)
 
 		caCertPool := x509.NewCertPool()
 		if *s3opt.tlsCACertificate != "" {
@@ -440,7 +425,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 
 		tlsConfig := &tls.Config{
-			GetCertificate: s3opt.GetCertificateWithUpdate,
+			GetCertificate: getCert,
 			ClientAuth:     clientAuth,
 			ClientCAs:      caCertPool,
 		}

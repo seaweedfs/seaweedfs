@@ -328,7 +328,20 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	if useTLS {
-		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, certFile, keyFile)
+		getCert, certProvider, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("failed to load master HTTPS certificate: %v", err)
+		}
+		// Master runs ServeTLS in a goroutine and this function then blocks
+		// on shutdownCtx / select{}; tie the pem refresh goroutine to the
+		// existing interrupt hook instead of a local defer that would fire
+		// while the server is still running.
+		grace.OnInterrupt(certProvider.Close)
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{}
+		}
+		tlsConfig.GetCertificate = getCert
+		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, "", "")
 	} else {
 		go newHttpServer(r, nil).Serve(masterListener)
 	}
