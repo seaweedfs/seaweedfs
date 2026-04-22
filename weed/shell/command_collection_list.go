@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
@@ -100,7 +101,17 @@ func addToCollection(collectionInfos map[string]*CollectionInfo, vif *master_pb.
 	cif.VolumeCount++
 }
 
+// ecCollectionAgg accumulates per-EC-volume counts across the shard holders.
+// fileCount is volume-wide (every holder reports the same .ecx count) so it
+// is deduped via max; deleteCount is node-local to each .ecj and summed.
+type ecCollectionAgg struct {
+	collection  string
+	fileCount   uint64
+	deleteCount uint64
+}
+
 func collectCollectionInfo(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
+	ecVolumes := make(map[uint32]*ecCollectionAgg)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
@@ -108,11 +119,41 @@ func collectCollectionInfo(t *master_pb.TopologyInfo, collectionInfos map[string
 					for _, vi := range diskInfo.VolumeInfos {
 						addToCollection(collectionInfos, vi)
 					}
-					//for _, ecShardInfo := range diskInfo.EcShardInfos {
-					//
-					//}
+					for _, esi := range diskInfo.EcShardInfos {
+						c := esi.Collection
+						cif, found := collectionInfos[c]
+						if !found {
+							cif = &CollectionInfo{}
+							collectionInfos[c] = cif
+						}
+
+						// EC shards are node-local, so data-shard sizes sum
+						// across nodes to give the logical volume size.
+						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(esi)
+						cif.Size += float64(shards.MinusParityShards().TotalSize())
+
+						agg, ok := ecVolumes[esi.Id]
+						if !ok {
+							agg = &ecCollectionAgg{collection: c}
+							ecVolumes[esi.Id] = agg
+							cif.VolumeCount++
+						}
+						if esi.FileCount > agg.fileCount {
+							agg.fileCount = esi.FileCount
+						}
+						agg.deleteCount += esi.DeleteCount
+					}
 				}
 			}
 		}
+	}
+
+	for _, agg := range ecVolumes {
+		cif := collectionInfos[agg.collection]
+		if cif == nil {
+			continue
+		}
+		cif.FileCount += float64(agg.fileCount)
+		cif.DeleteCount += float64(agg.deleteCount)
 	}
 }
