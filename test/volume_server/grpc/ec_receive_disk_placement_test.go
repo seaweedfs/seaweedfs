@@ -36,6 +36,12 @@ func TestReceiveFileEcShardHonorsDiskID(t *testing.T) {
 	const volumeID = uint32(9184)
 	const collection = "ec-disk-placement"
 
+	// DiskId=0 triggers auto-select. Since this test never calls
+	// VolumeEcShardsMount, loc.FindEcVolume returns false on every disk, so
+	// the "already holds shards" preference is skipped and auto-select falls
+	// through to the first HDD (dir 0). If shards get mounted between uploads
+	// in a future revision, the expected dir for DiskId=0 becomes the first
+	// disk that already holds a shard.
 	shards := []struct {
 		shardID        uint32
 		requestedDisk  uint32
