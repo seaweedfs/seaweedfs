@@ -66,7 +66,7 @@
 
 - Mid-T batches (T3a, T3b, T3c) used QA single-sign per §8C.2 — accelerated cadence.
 - T3-end requires three-sign per §8C.1 (architect + PM + QA) — this report is the artifact.
-- Discovery Bridge: no §8C.3 triggers fired during T3; all scope changes (Addendum A additions to T3.0 audit) went through QA single-sign.
+- Discovery Bridge: §8C.3 trigger #1 (unknown-unknown architectural bug — V2/V3 shape-level mismatch, BUG-001 class) **fired once** during T3, on BUG-005 discovery in Path B (session-layer `Backend.Close` cleared Provider-cached Backend across sessions — V3 introduced `frontend.Backend.Close()` abstraction without carrying V2's implicit Subsystem.Dev registry-ownership contract into interface godoc). Handled per §8C.3: architect + PM notified same-day; bug log entry at `bugs/005_backend_close_cross_session.md`; fix `42b045a`; catalogue §2.3 drift-event row added; `feedback_porting_discipline.md` updated with "new-abstraction ownership drift" as third citation. No other §8C.3 triggers fired. All remaining scope changes (Addendum A additions to T3.0 audit) went through mid-T QA single-sign per §8C.2.
 
 ---
 
