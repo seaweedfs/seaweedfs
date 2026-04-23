@@ -26,6 +26,11 @@ type Option struct {
 	AllowedClients     []string
 	VolumeServerAccess string
 	GrpcDialOption     grpc.DialOption
+	// PortmapBind, when non-empty, enables a built-in portmap v2 responder
+	// on <PortmapBind>:111 advertising the NFS v3 and MOUNT v3 services at
+	// Port. Empty (the default) disables portmap; clients must then bypass
+	// portmap with mount -o port=,mountport=,proto=tcp,mountproto=tcp.
+	PortmapBind string
 }
 
 type Server struct {
@@ -93,7 +98,39 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen nfs on %s:%d: %w", s.option.BindIp, s.option.Port, err)
 	}
 
+	var portmap *portmapServer
+	if s.option.PortmapBind != "" {
+		portmap = newPortmapServer(s.option.PortmapBind, portmapPort, uint32(s.option.Port))
+		if pmErr := portmap.Start(); pmErr != nil {
+			_ = listener.Close()
+			return fmt.Errorf("start portmap: %w", pmErr)
+		}
+		glog.V(0).Infof("NFS portmap responder listening on %s:%d (NFS v3 tcp=%d, MOUNT v3 tcp=%d)",
+			s.option.PortmapBind, portmapPort, s.option.Port, s.option.Port)
+		defer func() {
+			if portmap != nil {
+				_ = portmap.Close()
+			}
+		}()
+	}
+
+	s.logMountHint()
 	return s.serve(listener)
+}
+
+// logMountHint prints a copy-pasteable Linux mount command so operators can
+// see at startup how to mount the export from a client. The go-nfs library
+// does not run portmap, so without -portmap.bind the client must bypass
+// portmap via -o port=,mountport=,proto=tcp,mountproto=tcp.
+func (s *Server) logMountHint() {
+	exportPath := string(s.exportRoot)
+	if s.option.PortmapBind != "" {
+		glog.V(0).Infof("mount example: mount -t nfs -o nfsvers=3,nolock <host>:%s <mountpoint>", exportPath)
+		return
+	}
+	glog.V(0).Infof("mount example (bypasses portmap): mount -t nfs -o nfsvers=3,nolock,noacl,port=%d,mountport=%d,proto=tcp,mountproto=tcp <host>:%s <mountpoint>",
+		s.option.Port, s.option.Port, exportPath)
+	glog.V(0).Infof("tip: pass -portmap.bind to enable the built-in portmap responder on port 111 so plain `mount -t nfs host:%s /mnt` works.", exportPath)
 }
 
 func (s *Server) serve(listener net.Listener) error {
