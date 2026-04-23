@@ -70,9 +70,10 @@ const (
 	portmapTCPIdleTimeout = 30 * time.Second
 	portmapTCPIOTimeout   = 10 * time.Second
 
-	// Back-off applied before retrying after a non-fatal Accept error
-	// (e.g. EMFILE) so we don't busy-loop when the host is out of fds.
-	portmapAcceptBackoff = 50 * time.Millisecond
+	// Back-off applied before retrying after a non-fatal listener error
+	// (e.g. EMFILE on TCP Accept, or a transient UDP read failure) so we
+	// don't busy-loop when the host is under pressure.
+	portmapRetryBackoff = 50 * time.Millisecond
 )
 
 type portmapEntry struct {
@@ -216,7 +217,7 @@ func (ps *portmapServer) serveTCP() {
 			// Non-fatal (e.g. EMFILE, EINTR): log and back off rather
 			// than tear the listener down on a transient resource blip.
 			glog.V(1).Infof("portmap tcp accept: %v", err)
-			time.Sleep(portmapAcceptBackoff)
+			time.Sleep(portmapRetryBackoff)
 			continue
 		}
 		if !ps.addConn(conn) {
@@ -277,8 +278,11 @@ func (ps *portmapServer) serveUDP() {
 			if ps.isClosed() {
 				return
 			}
+			// Transient read failure: log, back off, and keep the
+			// responder alive instead of taking UDP portmap down.
 			glog.V(1).Infof("portmap udp read: %v", err)
-			return
+			time.Sleep(portmapRetryBackoff)
+			continue
 		}
 		reply := ps.handleCall(buf[:n])
 		if reply == nil {
@@ -331,7 +335,9 @@ func (ps *portmapServer) handleCall(callBuf []byte) []byte {
 		binary.BigEndian.PutUint32(body, port)
 		return encodeAcceptedReply(xid, rpcAcceptSuccess, body)
 	case pmapProcDump:
-		body := make([]byte, 0, 4+len(ps.entries)*24)
+		// Each entry is 4-byte value_follows + 16-byte mapping = 20 bytes,
+		// plus a 4-byte terminator value_follows=FALSE.
+		body := make([]byte, 0, 20*len(ps.entries)+4)
 		for _, e := range ps.entries {
 			chunk := make([]byte, 20)
 			binary.BigEndian.PutUint32(chunk[0:4], 1) // value_follows = TRUE
