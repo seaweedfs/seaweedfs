@@ -54,3 +54,15 @@ func TestShouldInvalidateConnection_TransportErrorsStillInvalidate(t *testing.T)
 		}
 	}
 }
+
+// TestIsClientSideMarshalError_RequiresGrpcStatus ensures the carve-out is
+// type-based (via errors.As on the grpc status interface), not a naive
+// string match against arbitrary errors that happen to mention marshaling.
+// A plain errors.New(...) with the same prefix must NOT be treated as a
+// per-request marshal error — we have no evidence the connection is healthy.
+func TestIsClientSideMarshalError_RequiresGrpcStatus(t *testing.T) {
+	impostor := fmt.Errorf("grpc: error while marshaling: synthetic non-status error")
+	if isClientSideMarshalError(impostor) {
+		t.Fatalf("plain error must not match the marshal-error carve-out")
+	}
+}

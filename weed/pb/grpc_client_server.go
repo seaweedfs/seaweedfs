@@ -2,6 +2,7 @@ package pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net"
@@ -265,6 +266,21 @@ func InvalidateGrpcConnection(address string) {
 	}
 }
 
+// grpcMarshalErrorPrefix is the library-owned prefix gRPC prepends to every
+// client-side proto marshal failure; see grpc-go rpc_util.go encode():
+//   status.Errorf(codes.Internal, "grpc: error while marshaling: %v", ...)
+// The "grpc:" token is reserved for gRPC internal diagnostics and will not
+// collide with user-produced Internal statuses.
+const grpcMarshalErrorPrefix = "grpc: error while marshaling"
+
+// grpcStatusError is the minimal interface every gRPC status error satisfies.
+// Using it with errors.As lets us reach through arbitrary fmt.Errorf("...: %w")
+// wrapping to pull out the *original* gRPC Status — important because
+// status.FromError rewrites Status.Message with the outermost err.Error()
+// whenever it has to unwrap, which would defeat a prefix check on the
+// library-owned message.
+type grpcStatusError interface{ GRPCStatus() *status.Status }
+
 // isClientSideMarshalError reports whether err originates from gRPC failing to
 // marshal the outgoing request on the client side. These errors are surfaced
 // with codes.Internal (because gRPC has no better code for them) but do NOT
@@ -274,16 +290,23 @@ func InvalidateGrpcConnection(address string) {
 // seen in seaweedfs#9139 when a single file with invalid-UTF-8 bytes in its
 // name produces an avalanche of "connection is closing" errors on unrelated
 // LookupEntry / ReadDirAll / UpdateEntry calls.
+//
+// errors.Is against a proto-level sentinel is not viable: gRPC's encode()
+// collapses the inner proto error with "%v" before wrapping it in a Status,
+// so the original error type does not survive. The structural signal that
+// *does* survive is the Status itself — we recover it via errors.As and
+// match the library-owned "grpc:" prefix to disambiguate from a server-side
+// application Internal status that genuinely warrants invalidation.
 func isClientSideMarshalError(err error) bool {
-	if err == nil {
+	var gse grpcStatusError
+	if !errors.As(err, &gse) {
 		return false
 	}
-	// The Go gRPC library wraps marshal failures with this exact prefix; see
-	// google.golang.org/grpc/internal/transport. Matching on substring is
-	// robust to wrapping via fmt.Errorf(%w).
-	msg := err.Error()
-	return strings.Contains(msg, "error while marshaling") ||
-		strings.Contains(msg, "string field contains invalid UTF-8")
+	s := gse.GRPCStatus()
+	if s == nil {
+		return false
+	}
+	return s.Code() == codes.Internal && strings.HasPrefix(s.Message(), grpcMarshalErrorPrefix)
 }
 
 // shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
