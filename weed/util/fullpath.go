@@ -15,7 +15,11 @@ func NewFullPath(dir, name string) FullPath {
 
 func (fp FullPath) DirAndName() (string, string) {
 	dir, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
+	// Replace invalid-UTF-8 bytes with '_' (URL-safe, single-byte). Avoid '?'
+	// which is the URL query-string delimiter and would corrupt the name the
+	// first time it lands in an HTTP URL (volume-server upload, filer HTTP
+	// API, S3/WebDAV gateways).
+	name = strings.ToValidUTF8(name, "_")
 	if dir == "/" {
 		return dir, name
 	}
@@ -27,7 +31,7 @@ func (fp FullPath) DirAndName() (string, string) {
 
 func (fp FullPath) Name() string {
 	_, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
+	name = strings.ToValidUTF8(name, "_")
 	return name
 }
 

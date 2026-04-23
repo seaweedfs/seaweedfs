@@ -19,8 +19,15 @@ func TestSanitizeFuseName_InvalidBytesReplaced(t *testing.T) {
 	if !utf8.ValidString(out) {
 		t.Fatalf("sanitizeFuseName returned non-UTF-8: %q", out)
 	}
+	// The replacement must be URL-safe: these sanitized names flow into HTTP
+	// URLs (volume-server uploads, filer HTTP API, S3/WebDAV gateways), so a
+	// '?' would be interpreted as the query-string delimiter and split the
+	// path. Explicitly assert the replacement char is neither '?' nor U+FFFD.
+	if strings.ContainsRune(out, '?') {
+		t.Fatalf("sanitizer produced non-URL-safe '?' in %q", out)
+	}
 	if strings.ContainsRune(out, 0xFFFD) {
-		t.Fatalf("expected '?' replacement to match util.FullPath.DirAndName, got U+FFFD")
+		t.Fatalf("expected single-byte replacement, got U+FFFD in %q", out)
 	}
 	// Valid bytes (\x10, \x3D '=', \x5C '\\', \x7F) must be preserved; only
 	// \x98 and \x8A — the standalone continuation bytes — get replaced.

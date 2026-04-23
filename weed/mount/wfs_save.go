@@ -79,7 +79,7 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 }
 
 // sanitizeFuseName replaces any invalid-UTF-8 byte in a name arriving from the
-// kernel with '?'. Linux (and macOS) pass raw bytes for filenames; apps like
+// kernel with '_'. Linux (and macOS) pass raw bytes for filenames; apps like
 // GNOME Trash produce partial files whose names contain binary payloads. Proto3
 // `string` fields require valid UTF-8, so an unsanitized name causes gRPC to
 // fail the whole AssignVolume / CreateEntry / DeleteEntry RPC with
@@ -88,13 +88,15 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 // filer RPCs marshalable and prevents a single ill-named file from poisoning
 // the shared gRPC channel for every other in-flight request.
 //
-// '?' is used for consistency with util.FullPath.DirAndName; the replacement is
-// the same length so length checks downstream remain valid.
+// '_' is chosen because the sanitized name is also used downstream in HTTP
+// URLs (volume-server uploads, filer HTTP API, S3/WebDAV gateways); '?' would
+// be interpreted as a query-string delimiter and split the path. The
+// replacement is single-byte so length checks downstream remain valid.
 func sanitizeFuseName(name string) string {
 	if utf8.ValidString(name) {
 		return name
 	}
-	return strings.ToValidUTF8(name, "?")
+	return strings.ToValidUTF8(name, "_")
 }
 
 func checkName(name string) (string, fuse.Status) {

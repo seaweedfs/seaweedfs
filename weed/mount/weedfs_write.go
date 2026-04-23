@@ -19,10 +19,11 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 	// inodeToPath, but async flush paths (e.g. writebackCache, handles whose
 	// RememberPath was set from an older code path) may still carry bytes
 	// that predate sanitization. Proto3 string fields require valid UTF-8,
-	// so scrub the path once here before every AssignVolume call.
+	// so scrub the path once here before every AssignVolume call. Use '_'
+	// (URL-safe) because the path also flows through HTTP URLs downstream.
 	assignPath := string(fullPath)
 	if !utf8.ValidString(assignPath) {
-		assignPath = strings.ToValidUTF8(assignPath, "?")
+		assignPath = strings.ToValidUTF8(assignPath, "_")
 	}
 
 	return func(reader io.Reader, filename string, offset int64, tsNs int64, _ uint64) (chunk *filer_pb.FileChunk, err error) {
