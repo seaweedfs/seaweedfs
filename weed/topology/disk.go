@@ -23,6 +23,12 @@ type Disk struct {
 	ecShardsLock sync.RWMutex
 }
 
+// ecShardSlots returns the number of volume slots consumed by the given
+// number of EC shards, rounded up to whole-volume equivalents.
+func ecShardSlots(ecShardCount int64) int64 {
+	return (ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount
+}
+
 func NewDisk(diskType string) *Disk {
 	s := &Disk{}
 	s.id = NodeId(diskType)
@@ -67,7 +73,7 @@ func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 		m := &master_pb.DiskInfo{
 			VolumeCount:       diskUsageCounts.volumeCount,
 			MaxVolumeCount:    diskUsageCounts.maxVolumeCount,
-			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - (diskUsageCounts.ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount,
+			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - ecShardSlots(diskUsageCounts.ecShardCount),
 			ActiveVolumeCount: diskUsageCounts.activeVolumeCount,
 			RemoteVolumeCount: diskUsageCounts.remoteVolumeCount,
 		}
@@ -111,9 +117,7 @@ func (a *DiskUsageCounts) addDiskUsageCounts(b *DiskUsageCounts) {
 }
 
 func (a *DiskUsageCounts) FreeSpace() int64 {
-	freeVolumeSlotCount := a.maxVolumeCount + a.remoteVolumeCount - a.volumeCount
-	freeVolumeSlotCount -= (a.ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount
-	return freeVolumeSlotCount
+	return a.maxVolumeCount + a.remoteVolumeCount - a.volumeCount - ecShardSlots(a.ecShardCount)
 }
 
 func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
@@ -263,7 +267,7 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		Type:              string(d.Id()),
 		VolumeCount:       diskUsage.volumeCount,
 		MaxVolumeCount:    diskUsage.maxVolumeCount,
-		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - (diskUsage.ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount,
+		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - ecShardSlots(diskUsage.ecShardCount),
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 		DiskId:            diskId,
