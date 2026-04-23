@@ -4,7 +4,9 @@ package command
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
+	"unicode/utf8"
 
 	jsoniter "github.com/json-iterator/go"
 	elastic "github.com/olivere/elastic/v7"
@@ -13,16 +15,17 @@ import (
 )
 
 type EsDocument struct {
-	Dir         string `json:"dir,omitempty"`
-	Name        string `json:"name,omitempty"`
-	IsDirectory bool   `json:"isDir,omitempty"`
-	Size        uint64 `json:"size,omitempty"`
-	Uid         uint32 `json:"uid,omitempty"`
-	Gid         uint32 `json:"gid,omitempty"`
-	UserName    string `json:"userName,omitempty"`
-	Crtime      int64  `json:"crtime,omitempty"`
-	Mtime       int64  `json:"mtime,omitempty"`
-	Mime        string `json:"mime,omitempty"`
+	Dir         string            `json:"dir,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	IsDirectory bool              `json:"isDir,omitempty"`
+	Size        uint64            `json:"size,omitempty"`
+	Uid         uint32            `json:"uid,omitempty"`
+	Gid         uint32            `json:"gid,omitempty"`
+	UserName    string            `json:"userName,omitempty"`
+	Crtime      int64             `json:"crtime,omitempty"`
+	Mtime       int64             `json:"mtime,omitempty"`
+	Mime        string            `json:"mime,omitempty"`
+	Extended    map[string]string `json:"extended,omitempty"`
 }
 
 func toEsEntry(event *filer_pb.EventNotification) (*EsDocument, string) {
@@ -40,8 +43,28 @@ func toEsEntry(event *filer_pb.EventNotification) (*EsDocument, string) {
 		Crtime:      entry.Attributes.Crtime,
 		Mtime:       entry.Attributes.Mtime,
 		Mime:        entry.Attributes.Mime,
+		Extended:    toExtendedStrings(entry.Extended),
 	}
 	return esEntry, id
+}
+
+// toExtendedStrings converts the xattr map (e.g. S3 user metadata like
+// X-Amz-Meta-*) to string values so Elasticsearch indexes them as text
+// instead of base64-encoding the raw bytes. Non-UTF-8 values fall back to
+// base64 so the document still round-trips.
+func toExtendedStrings(extended map[string][]byte) map[string]string {
+	if len(extended) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(extended))
+	for k, v := range extended {
+		if utf8.Valid(v) {
+			result[k] = string(v)
+		} else {
+			result[k] = base64.StdEncoding.EncodeToString(v)
+		}
+	}
+	return result
 }
 
 func sendToElasticSearchFunc(servers string, esIndex string) (func(resp *filer_pb.SubscribeMetadataResponse) error, error) {
