@@ -273,9 +273,7 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	t := n.getOrCreateDisk(option.DiskType)
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
 	ecShardCount := atomic.LoadInt64(&t.ecShardCount)
-	if ecShardCount > 0 {
-		freeVolumeSlotCount = freeVolumeSlotCount - ecShardCount/erasure_coding.DataShardsCount - 1
-	}
+	freeVolumeSlotCount -= (ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount
 	return freeVolumeSlotCount
 }
 

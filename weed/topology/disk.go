@@ -67,7 +67,7 @@ func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 		m := &master_pb.DiskInfo{
 			VolumeCount:       diskUsageCounts.volumeCount,
 			MaxVolumeCount:    diskUsageCounts.maxVolumeCount,
-			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - (diskUsageCounts.ecShardCount+1)/erasure_coding.DataShardsCount,
+			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - (diskUsageCounts.ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount,
 			ActiveVolumeCount: diskUsageCounts.activeVolumeCount,
 			RemoteVolumeCount: diskUsageCounts.remoteVolumeCount,
 		}
@@ -112,9 +112,7 @@ func (a *DiskUsageCounts) addDiskUsageCounts(b *DiskUsageCounts) {
 
 func (a *DiskUsageCounts) FreeSpace() int64 {
 	freeVolumeSlotCount := a.maxVolumeCount + a.remoteVolumeCount - a.volumeCount
-	if a.ecShardCount > 0 {
-		freeVolumeSlotCount = freeVolumeSlotCount - a.ecShardCount/erasure_coding.DataShardsCount - 1
-	}
+	freeVolumeSlotCount -= (a.ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount
 	return freeVolumeSlotCount
 }
 
@@ -265,7 +263,7 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		Type:              string(d.Id()),
 		VolumeCount:       diskUsage.volumeCount,
 		MaxVolumeCount:    diskUsage.maxVolumeCount,
-		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - (diskUsage.ecShardCount+1)/erasure_coding.DataShardsCount,
+		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - (diskUsage.ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount,
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 		DiskId:            diskId,
