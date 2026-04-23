@@ -265,9 +265,37 @@ func InvalidateGrpcConnection(address string) {
 	}
 }
 
+// isClientSideMarshalError reports whether err originates from gRPC failing to
+// marshal the outgoing request on the client side. These errors are surfaced
+// with codes.Internal (because gRPC has no better code for them) but do NOT
+// reflect a problem with the TCP/HTTP2 connection: the request never left the
+// process. Tearing down the shared cached ClientConn in response would cancel
+// every other in-flight RPC on that connection — which is exactly the cascade
+// seen in seaweedfs#9139 when a single file with invalid-UTF-8 bytes in its
+// name produces an avalanche of "connection is closing" errors on unrelated
+// LookupEntry / ReadDirAll / UpdateEntry calls.
+func isClientSideMarshalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// The Go gRPC library wraps marshal failures with this exact prefix; see
+	// google.golang.org/grpc/internal/transport. Matching on substring is
+	// robust to wrapping via fmt.Errorf(%w).
+	msg := err.Error()
+	return strings.Contains(msg, "error while marshaling") ||
+		strings.Contains(msg, "string field contains invalid UTF-8")
+}
+
 // shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
 func shouldInvalidateConnection(err error) bool {
 	if err == nil {
+		return false
+	}
+
+	// Client-side marshal errors (e.g. invalid UTF-8 in a proto string field)
+	// are per-request bugs, not connection failures. Do not poison the shared
+	// ClientConn because of them.
+	if isClientSideMarshalError(err) {
 		return false
 	}
 

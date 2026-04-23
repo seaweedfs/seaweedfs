@@ -3,6 +3,8 @@ package mount
 import (
 	"fmt"
 	"io"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -12,6 +14,16 @@ import (
 )
 
 func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
+
+	// Backstop: FUSE entry points sanitize names before they reach
+	// inodeToPath, but async flush paths (e.g. writebackCache, handles whose
+	// RememberPath was set from an older code path) may still carry bytes
+	// that predate sanitization. Proto3 string fields require valid UTF-8,
+	// so scrub the path once here before every AssignVolume call.
+	assignPath := string(fullPath)
+	if !utf8.ValidString(assignPath) {
+		assignPath = strings.ToValidUTF8(assignPath, "?")
+	}
 
 	return func(reader io.Reader, filename string, offset int64, tsNs int64, _ uint64) (chunk *filer_pb.FileChunk, err error) {
 		uploader, err := operation.NewUploader()
@@ -43,7 +55,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 				TtlSec:      wfs.option.TtlSec,
 				DiskType:    string(wfs.option.DiskType),
 				DataCenter:  wfs.option.DataCenter,
-				Path:        string(fullPath),
+				Path:        assignPath,
 			},
 			uploadOption, genFileUrlFn, reader,
 		)
