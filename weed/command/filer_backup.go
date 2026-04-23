@@ -161,11 +161,13 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	// create filer sink
 	filerSource := &source.FilerSource{}
-	filerSource.DoInitialize(
+	if err := filerSource.DoInitialize(
 		sourceFiler.ToHttpAddress(),
 		sourceFiler.ToGrpcAddress(),
 		sourcePath,
-		*backupOption.proxyByFiler)
+		*backupOption.proxyByFiler); err != nil {
+		return fmt.Errorf("filersource initialization failed: %v", err)
+	}
 
 	if err := repl_util.InitializeSSEForReplication(filerSource); err != nil {
 		return fmt.Errorf("SSE initialization failed: %v", err)

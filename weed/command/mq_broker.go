@@ -116,7 +116,9 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	glog.V(0).Infof("MQ Broker listening on %s:%d", *mqBrokerOpt.ip, *mqBrokerOpt.port)
-	grpcS.Serve(grpcL)
+	if err := grpcS.Serve(grpcL); err != nil {
+		glog.Errorf("Failed to serve MQ Broker: %v", err)
+	}
 
 	return true
 

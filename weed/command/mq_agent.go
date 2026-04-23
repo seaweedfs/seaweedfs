@@ -84,7 +84,9 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	}
 
 	glog.Infof("Start Seaweed Message Queue Agent on %s:%d", *mqAgentOpt.ip, *mqAgentOpt.port)
-	grpcS.Serve(grpcL)
+	if err := grpcS.Serve(grpcL); err != nil {
+		glog.Errorf("MQ Agent failed to start: %v", err)
+	}
 
 	return true
 

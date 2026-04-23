@@ -229,6 +229,10 @@ func fetchPluginWorkerGrpcPort(host string, httpPort int) (int, error) {
 			WorkerGrpcPort int `json:"worker_grpc_port"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+		if decodeErr != nil {
+			lastErr = decodeErr
+			continue
+		}
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
