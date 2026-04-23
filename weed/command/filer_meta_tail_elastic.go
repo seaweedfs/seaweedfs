@@ -50,8 +50,9 @@ func toEsEntry(event *filer_pb.EventNotification) (*EsDocument, string) {
 
 // toExtendedStrings converts the xattr map (e.g. S3 user metadata like
 // X-Amz-Meta-*) to string values so Elasticsearch indexes them as text
-// instead of base64-encoding the raw bytes. Non-UTF-8 values fall back to
-// base64 so the document still round-trips.
+// instead of base64-encoding the raw bytes. Non-UTF-8 values are prefixed
+// with "base64:" so consumers can distinguish encoded bytes from plain
+// strings that happen to look like base64.
 func toExtendedStrings(extended map[string][]byte) map[string]string {
 	if len(extended) == 0 {
 		return nil
@@ -61,7 +62,7 @@ func toExtendedStrings(extended map[string][]byte) map[string]string {
 		if utf8.Valid(v) {
 			result[k] = string(v)
 		} else {
-			result[k] = base64.StdEncoding.EncodeToString(v)
+			result[k] = "base64:" + base64.StdEncoding.EncodeToString(v)
 		}
 	}
 	return result
