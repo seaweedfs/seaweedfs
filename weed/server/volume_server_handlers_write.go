@@ -57,6 +57,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
 		SetEtag(w, reqNeedle.Etag())
+		w.Header().Set("Content-MD5", contentMd5)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
