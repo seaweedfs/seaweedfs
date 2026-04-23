@@ -96,7 +96,10 @@ type portmapServer struct {
 	mu     sync.Mutex
 	closed bool
 	conns  map[net.Conn]struct{}
-	wg     sync.WaitGroup
+	// done is closed exactly once by Close() so that background loops can
+	// interrupt a retry-backoff sleep instead of waiting it out.
+	done chan struct{}
+	wg   sync.WaitGroup
 }
 
 // newPortmapServer builds a responder advertising the NFS services the caller
@@ -110,6 +113,7 @@ func newPortmapServer(bindIP string, port int, nfsTCPPort uint32) *portmapServer
 	return &portmapServer{
 		bindIP: bindIP,
 		port:   port,
+		done:   make(chan struct{}),
 		entries: []portmapEntry{
 			{Program: nfsProgram, Version: 3, Protocol: ipProtoTCP, Port: nfsTCPPort},
 			{Program: mountProgram, Version: 3, Protocol: ipProtoTCP, Port: nfsTCPPort},
@@ -158,6 +162,7 @@ func (ps *portmapServer) Close() error {
 	ps.closed = true
 	conns := ps.conns
 	ps.conns = nil
+	close(ps.done)
 	ps.mu.Unlock()
 
 	var first error
@@ -216,9 +221,14 @@ func (ps *portmapServer) serveTCP() {
 			}
 			// Non-fatal (e.g. EMFILE, EINTR): log and back off rather
 			// than tear the listener down on a transient resource blip.
+			// Wake early if Close() fires during the sleep.
 			glog.V(1).Infof("portmap tcp accept: %v", err)
-			time.Sleep(portmapRetryBackoff)
-			continue
+			select {
+			case <-ps.done:
+				return
+			case <-time.After(portmapRetryBackoff):
+				continue
+			}
 		}
 		if !ps.addConn(conn) {
 			_ = conn.Close()
@@ -280,9 +290,14 @@ func (ps *portmapServer) serveUDP() {
 			}
 			// Transient read failure: log, back off, and keep the
 			// responder alive instead of taking UDP portmap down.
+			// Wake early if Close() fires during the sleep.
 			glog.V(1).Infof("portmap udp read: %v", err)
-			time.Sleep(portmapRetryBackoff)
-			continue
+			select {
+			case <-ps.done:
+				return
+			case <-time.After(portmapRetryBackoff):
+				continue
+			}
 		}
 		reply := ps.handleCall(buf[:n])
 		if reply == nil {
