@@ -409,8 +409,11 @@ func parseRPCCall(buf []byte) (xid, prog, vers, proc uint32, args []byte, err er
 }
 
 // encodeAcceptedReply builds a MSG_ACCEPTED reply with the given accept_stat.
-// body is the already-XDR-encoded procedure result (nil when the accept_stat
-// is itself an error).
+// body is the already-XDR-encoded data that follows accept_stat in the reply.
+// For SUCCESS it is the procedure result; it is nil for most error
+// accept_stat values (PROG_UNAVAIL, PROC_UNAVAIL, GARBAGE_ARGS) but is
+// non-nil for PROG_MISMATCH, which carries a struct { uint32 low; uint32
+// high; } mismatch_info range per RFC 5531 §9.
 func encodeAcceptedReply(xid, acceptStat uint32, body []byte) []byte {
 	out := make([]byte, 24+len(body))
 	binary.BigEndian.PutUint32(out[0:4], xid)
