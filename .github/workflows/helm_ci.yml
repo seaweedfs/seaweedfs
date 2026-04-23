@@ -301,6 +301,19 @@ jobs:
                       failed = True
                   else:
                       print(f"✓ {label}: no TLS args emitted, main -port stays HTTP")
+
+              # bash -n: pin down that the rendered script parses. Guards against
+              # a future helper change that leaves a dangling `\` with nothing
+              # after it (every current caller already exits cleanly because
+              # bash treats trailing `\<newline><EOF>` as line-continuation to
+              # an empty line — but keep the contract explicit).
+              parse = subprocess.run(["bash", "-n"], input=script, text=True,
+                                     capture_output=True)
+              if parse.returncode != 0:
+                  print(f"FAIL: {label}: bash -n rejected rendered script: {parse.stderr.strip()}",
+                        file=sys.stderr)
+                  failed = True
+
           sys.exit(1 if failed else 0)
           PYEOF
 
