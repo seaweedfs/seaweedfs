@@ -929,13 +929,38 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
 
-	accessKeyId, err := StringWithCharset(21, charsetUpper)
-	if err != nil {
-		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	accessKeyId := values.Get("AccessKeyId")
+	secretAccessKey := values.Get("SecretAccessKey")
+	if accessKeyId != "" {
+		if err := iamlib.ValidateCallerSuppliedAccessKeyId(accessKeyId); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+		}
 	}
-	secretAccessKey, err := StringWithCharset(42, charset)
-	if err != nil {
-		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	if secretAccessKey != "" {
+		if err := iamlib.ValidateCallerSuppliedSecretAccessKey(secretAccessKey); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+		}
+	}
+	if (accessKeyId != "") != (secretAccessKey != "") {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
+	}
+	if owner := iamlib.FindAccessKeyOwner(s3cfg, accessKeyId); owner != nil {
+		glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by %s %s", owner.Type, owner.Name)
+		return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+	}
+	if accessKeyId == "" {
+		var err error
+		accessKeyId, err = StringWithCharset(21, charsetUpper)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+		}
+	}
+	if secretAccessKey == "" {
+		var err error
+		secretAccessKey, err = StringWithCharset(42, charset)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+		}
 	}
 
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
@@ -1085,7 +1110,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	glog.V(4).Infof("DoActions: %+v", values)
+	glog.V(4).Infof("DoActions: %+v", iamlib.RedactSensitiveFormValues(values))
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch r.Form.Get("Action") {
