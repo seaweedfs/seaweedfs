@@ -1081,8 +1081,18 @@ func TestEmbeddedIamCreateAccessKeyRejectsCollision(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "already in use")
 	assert.NotContains(t, rr.Body.String(), ownerName, "should not leak owner name")
 
-	// Verify no credentials were added to NewUser
-	assert.Len(t, api.mockConfig.Identities[1].Credentials, 0)
+	// Verify no credentials were added to NewUser. Look up by name because the
+	// memory store backs LoadConfiguration with a map, so Identities order is
+	// not stable across a save/load round trip.
+	var newUser *iam_pb.Identity
+	for _, ident := range api.mockConfig.Identities {
+		if ident.Name == "NewUser" {
+			newUser = ident
+			break
+		}
+	}
+	require.NotNil(t, newUser, "NewUser identity should still exist")
+	assert.Len(t, newUser.Credentials, 0)
 }
 
 // TestEmbeddedIamCreateAccessKeyRejectsPartialSupply tests that supplying only
