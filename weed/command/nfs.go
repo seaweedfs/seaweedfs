@@ -23,6 +23,7 @@ type NfsOptions struct {
 	readOnly           *bool
 	allowedClients     *string
 	volumeServerAccess *string
+	portmapBind        *string
 }
 
 func init() {
@@ -34,6 +35,7 @@ func init() {
 	nfsStandaloneOptions.readOnly = cmdNfs.Flag.Bool("readOnly", false, "export the filer path as read only")
 	nfsStandaloneOptions.allowedClients = cmdNfs.Flag.String("allowedClients", "", "comma-separated client IPs, hostnames, or CIDRs allowed to connect")
 	nfsStandaloneOptions.volumeServerAccess = cmdNfs.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
+	nfsStandaloneOptions.portmapBind = cmdNfs.Flag.String("portmap.bind", "", "when set, bind a built-in portmap v2 responder on <ip>:111 so plain `mount -t nfs` works without client-side portmap bypass. Empty disables it. Binding port 111 requires root or CAP_NET_BIND_SERVICE and must not conflict with a system rpcbind.")
 }
 
 var cmdNfs = &Command{
@@ -53,6 +55,26 @@ Safer defaults (since export ACLs are still not implemented):
 
 Override -ip.bind to a routable address only after you have reviewed
 -allowedClients and the readiness of the rest of your deployment.
+
+Mounting from a Linux client
+----------------------------
+The server does not run portmap/rpcbind by default. That means Linux
+mount.nfs, which queries portmap on port 111 first, will fail with
+"portmap query failed" against the plain form:
+
+    mount -t nfs -o nfsvers=3,nolock <host>:/export /mnt
+
+Either tell the client to bypass portmap:
+
+    mount -t nfs -o nfsvers=3,nolock,port=2049,mountport=2049,\
+        proto=tcp,mountproto=tcp <host>:/export /mnt
+
+or enable the built-in portmap responder on the server:
+
+    weed nfs ... -portmap.bind=0.0.0.0
+
+Binding port 111 requires root or CAP_NET_BIND_SERVICE and must not
+collide with a system rpcbind.
 	`,
 }
 
@@ -85,6 +107,7 @@ func runNfs(cmd *Command, args []string) bool {
 		AllowedClients:     util.StringSplit(*nfsStandaloneOptions.allowedClients, ","),
 		VolumeServerAccess: *nfsStandaloneOptions.volumeServerAccess,
 		GrpcDialOption:     grpcDialOption,
+		PortmapBind:        *nfsStandaloneOptions.portmapBind,
 	})
 	if err != nil {
 		glog.Errorf("NFS Server startup error: %v", err)
