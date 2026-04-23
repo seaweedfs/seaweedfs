@@ -8,6 +8,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -147,21 +148,45 @@ func (s *FileStore) GetUser(username string) (*User, error) {
 	return user, nil
 }
 
-// ValidatePassword checks if the password is valid for the user
+// ValidatePassword checks if the password is valid for the user. Legacy
+// plaintext entries are transparently upgraded to bcrypt on successful match.
 func (s *FileStore) ValidatePassword(username string, password []byte) bool {
 	user, err := s.GetUser(username)
 	if err != nil {
 		return false
 	}
 
-	if user.CheckPassword(string(password)) {
-		// If legacy password was migrated to bcrypt, persist the change
-		if user.HashedPassword != "" && user.Password == "" {
-			_ = s.saveUsers()
-		}
-		return true
+	ok, legacy := user.CheckPassword(string(password))
+	if !ok {
+		return false
 	}
-	return false
+	if legacy {
+		s.migrateLegacyPassword(user, string(password))
+	}
+	return true
+}
+
+// migrateLegacyPassword re-hashes a legacy plaintext password under a write
+// lock and persists the user store. The FileStore mutex guards both the
+// re-hash (to avoid a data race with concurrent logins) and the double-check
+// that another goroutine hasn't already migrated. Failures are logged but
+// not surfaced — auth has already succeeded and the next login will retry.
+func (s *FileStore) migrateLegacyPassword(user *User, password string) {
+	s.mu.Lock()
+	if user.HashedPassword != "" {
+		s.mu.Unlock()
+		return
+	}
+	if err := user.SetPassword(password); err != nil {
+		s.mu.Unlock()
+		glog.V(0).Infof("sftpd: failed to upgrade legacy password for %s: %v", user.Username, err)
+		return
+	}
+	s.mu.Unlock()
+
+	if err := s.saveUsers(); err != nil {
+		glog.V(0).Infof("sftpd: failed to persist upgraded password for %s: %v", user.Username, err)
+	}
 }
 
 // ValidatePublicKey checks if the public key is valid for the user
@@ -245,25 +270,21 @@ func (s *FileStore) ListUsers() ([]string, error) {
 
 // CreateUser creates a new user with the given username and password
 func (s *FileStore) CreateUser(username, password string) (*User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check if user already exists
-	if _, exists := s.users[username]; exists {
-		return nil, fmt.Errorf("user already exists: %s", username)
-	}
-
-	// Create new user
 	user := NewUser(username)
-
-	// Hash password with bcrypt
-	user.SetPassword(password)
-
-	// Add default permissions
+	if err := user.SetPassword(password); err != nil {
+		return nil, err
+	}
 	user.Permissions[user.HomeDir] = []string{"all"}
 
-	// Save the user
+	s.mu.Lock()
+	if _, exists := s.users[username]; exists {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("user already exists: %s", username)
+	}
 	s.users[username] = user
+	s.mu.Unlock()
+
+	// saveUsers acquires RLock, so we must release the write lock above first.
 	if err := s.saveUsers(); err != nil {
 		return nil, err
 	}

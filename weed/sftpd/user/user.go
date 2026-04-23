@@ -2,6 +2,8 @@
 package user
 
 import (
+	"crypto/subtle"
+	"fmt"
 	"math/rand/v2"
 	"path/filepath"
 
@@ -11,8 +13,8 @@ import (
 // User represents an SFTP user with authentication and permission details
 type User struct {
 	Username       string              `json:"Username"`
-	HashedPassword string              `json:"HashedPassword"`          // bcrypt hash
-	Password       string              `json:"Password,omitempty"`      // deprecated: plaintext, migrated on next save
+	HashedPassword string              `json:"HashedPassword"`     // bcrypt hash
+	Password       string              `json:"Password,omitempty"` // deprecated: plaintext, migrated to HashedPassword on first successful login
 	PublicKeys     []string            `json:"PublicKeys,omitempty"`
 	HomeDir        string              `json:"HomeDir"`
 	Permissions    map[string][]string `json:"Permissions,omitempty"`
@@ -36,29 +38,31 @@ func NewUser(username string) *User {
 	}
 }
 
-// SetPassword hashes and stores the password using bcrypt
-func (u *User) SetPassword(password string) {
+// SetPassword hashes and stores the password using bcrypt. It clears any
+// legacy plaintext value. Returns an error if the password cannot be hashed
+// (e.g. exceeds bcrypt's 72-byte limit).
+func (u *User) SetPassword(password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		// bcrypt only errors on passwords > 72 bytes; truncate if needed
-		hash, _ = bcrypt.GenerateFromPassword([]byte(password[:72]), bcrypt.DefaultCost)
+		return fmt.Errorf("hash password: %w", err)
 	}
 	u.HashedPassword = string(hash)
-	u.Password = "" // clear any legacy plaintext
+	u.Password = ""
+	return nil
 }
 
-// CheckPassword verifies a password against the stored hash.
-// It transparently handles legacy plaintext passwords by upgrading them on match.
-func (u *User) CheckPassword(password string) bool {
+// CheckPassword verifies a password against the stored credentials without
+// mutating the receiver. The legacy return is true when the match succeeded
+// via the deprecated plaintext field; the caller is expected to re-hash and
+// persist the password under an appropriate lock.
+func (u *User) CheckPassword(password string) (ok bool, legacy bool) {
 	if u.HashedPassword != "" {
-		return bcrypt.CompareHashAndPassword([]byte(u.HashedPassword), []byte(password)) == nil
+		return bcrypt.CompareHashAndPassword([]byte(u.HashedPassword), []byte(password)) == nil, false
 	}
-	// Legacy plaintext migration path
-	if u.Password != "" && u.Password == password {
-		u.SetPassword(password) // upgrade to bcrypt
-		return true
+	if u.Password != "" && subtle.ConstantTimeCompare([]byte(u.Password), []byte(password)) == 1 {
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 // AddPublicKey adds a public key to the user
