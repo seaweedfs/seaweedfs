@@ -154,7 +154,7 @@ Added per architect F1: RebuildBitmap has independent on-disk schema and indepen
 | Cross-session behavior | **NOT durable across crash** (matches session volatility per §2.6). On primary or replica restart, sidecar file is discarded; rebuild restarts. **WAL hydration** (§2.6 invariant): if recovery shows `TargetLSN != BaseLSN`, bitmap is re-populated from recovered WAL entries to avoid re-applying stale base blocks; hydration guard fails closed if local checkpoint > base LSN. |
 | Authority coupling | Indirect — bitmap bit-set happens only AFTER successful WAL `append` (per §2.6 invariant). Epoch validation is upstream (in `ApplyWALEntry`); bitmap itself is epoch-agnostic. |
 | Network protocol surface | None — bitmap is local-only state. Conflict resolution happens inside `ApplyBaseBlock` on the replica. |
-| Known tricky invariants | (1) **WAL-wins-over-base conflict resolution**: `ShouldApplyBase(lba)` returns false if the bit is set; `ApplyBaseBlock` becomes a no-op (not an error). (2) **Hydration guard** fails closed: prevents unsound recovery if local checkpoint has advanced past the requested base LSN. (3) **Sidecar schema** is an independent on-disk format (84 LOC worth of serialization); any L2 REBUILD verdict would need to decide whether V3 keeps the same on-disk layout for wire-compat / recovery replay. (4) **Bit-set precedes ACK**: bitmap bit is set before the session emits `emitRebuildSessionAck()` (§2.6), so primary sees a consistent "LBA is WAL-owned now" view when it gets the ack. |
+| Known tricky invariants | (1) **WAL-wins-over-base conflict resolution**: `ShouldApplyBase(lba)` returns false if the bit is set; `ApplyBaseBlock` becomes a no-op (not an error). (2) **Hydration guard** fails closed: prevents unsound recovery if local checkpoint has advanced past the requested base LSN. (3) **NO on-disk representation** (sw round-2 correction 2026-04-22): `rebuild_bitmap.go` has zero file I/O; bitmap is purely in-memory. Post-crash recovery rehydrates from WAL scan via `hydrateBitmapFromRecoveredWAL` (`rebuild_session.go:102`), NOT from a sidecar. The ~84 LOC is serialization-free bit-ops. Earlier L1 draft incorrectly cited a "sidecar schema" — retracted. (4) **Bit-set precedes ACK**: bitmap bit is set before the session emits `emitRebuildSessionAck()` (§2.6), so primary sees a consistent "LBA is WAL-owned now" view when it gets the ack. |
 
 ---
 
@@ -188,17 +188,56 @@ These are patterns visible at L1 that will drive L2 bridge verdicts. **Not** rec
 
 13. **Replica-side bypasses `Backend` entirely** (sw-added 2026-04-22 from pre-scan; structural finding). The `frontend.Backend` interface is designed for per-session host-client backends (iSCSI / NVMe session consumes it). Replica-side ingest uses `LogicalStorage.ApplyEntry` which is *below* `Backend`. Primary-side traffic goes through `Backend` (session → handler → Backend → LogicalStorage); replica-side traffic bypasses `Backend` entirely (network frame → ReplicaReceiver → LogicalStorage). V3 already assumes this asymmetry by putting ApplyEntry on `LogicalStorage`, not on `Backend`. L2 implication: replica-side `DurableProvider.Open()` does not return a `Backend` in the traditional host-session sense — it returns a replica-ingest handle (or it's a separate Provider method). This asymmetry is structural, not an L2 choice — it's already locked by V3 existing shape. Explicit here so L2 builds on it rather than fighting it.
 
+14. **`AllBlocks()` reads through dirty map; V2 `readBlockFromExtent` bypasses it** (sw-added 2026-04-22 round 3; semantic-divergence hazard for §2.7 RebuildServer bridge). V3 `WALStore.AllBlocks()` (`walstore.go:565`) and `smartwal.Store.AllBlocks()` (`store.go:367`) both call `s.Read(lba)` per LBA — and `Read` is dirty-map-aware (returns unflushed WAL bytes, not just extent). V2 `rebuild.go:handleExtentStream` uses `readBlockFromExtent` which explicitly **bypasses the dirty map** (reads only flushed extent bytes; avoids serving unflushed WAL data to a rebuilding replica). Concrete divergence:
+
+    - **V2 semantics**: base stream contains flushed bytes only. Primary's own unflushed WAL is NOT streamed. Bitmap's WAL-wins rule covers the concurrent-flusher-advance race between stream start and stream end.
+    - **V3 `AllBlocks()` semantics**: base stream contains latest-written bytes (including unflushed WAL). If primary crashes before its own fsync, replica received bytes that no longer exist on primary after recovery — replica's copy is "newer" than primary's recovered state.
+
+    **Hazard**: with V3 AllBlocks + epoch fencing, the replica's too-new copy is protected (on primary recovery-and-reconnect with a fresh epoch, the replica's mismatched epoch forces rebuild). Bitmap's WAL-wins rule still prevents corruption. But the invariant is now "eventually consistent via epoch churn" instead of V2's "base stream never contains unflushed bytes". These are different contracts — same end-state, different reasoning, different debug surfaces.
+
+    **L2 call needed** for §2.7 RebuildServer bridge:
+    - **Keep V3 `AllBlocks()` semantics**: update RebuildServer's bridge to rely on epoch fencing + bitmap instead of V2's flushed-only invariant. Needs an explicit non-claim in the §2.7 bridge row ("base stream may contain unflushed bytes; replica's copy is subject to epoch-driven invalidation on primary crash").
+    - **Add a flushed-only variant**: introduce e.g. `LogicalStorage.AllBlocksFlushed()` that reads raw extent. Preserves V2 invariant; costs one interface addition.
+
+    L1 flags but doesn't decide. L2 picks, couples to H5 epoch-ack-window decision (if H5 goes "primary maintains per-replica epoch cache", the epoch-invalidation path gets cleaner and AllBlocks semantics become safer).
+
+---
+
+### §3.a L2-locked pairs (pre-coupled by V3 existing shape)
+
+To save L2 cycles, these decisions are coupled — deciding one forces the other:
+
+- **H6 + H7 coupled**: if H6 locks Option C (Provider-level replication, leading candidate), then H7 locks on H7b (Provider intercepts Write at LogicalStorage layer, captures LSN in same call) automatically. The inverse is not true — if architect picks H6 A or B, H7 must be re-evaluated. For documentation discipline (per BUG-005 lesson), L2 should record this as an **explicit LOCKED pair** rather than leaving H7 implicit: "H6-C + H7b are jointly chosen to keep replication-path out of `Backend`; `frontend.Backend.Write` intentionally does not carry LSN so the interface stays host-session-facing, not replication-facing."
+
+- **§3.14 + H5 coupled**: if H5 locks on "primary maintains per-replica epoch cache" (cleaner layering), the AllBlocks-through-dirty-map hazard becomes safer because primary-side epoch-invalidation on restart is a direct path. If H5 locks on "wire frame carries epoch" (V2-compat), epoch invalidation requires reconnect + ack-with-fresh-epoch — slightly more indirect but still sound.
+
+These couplings are L1 observations of V3 existing shape forcing the link, not L2 preference.
+
 ---
 
 ## §4 Open questions for review
 
 For sw / architect / PM before L1 sign:
 
-1. **Scope completeness**: is the 10-entity set complete (post architect F1 adding RebuildBitmap as §2.10)? Anything still missed — `sync_all_reconnect_protocol` logic (not a distinct type but a cross-entity invariant)? `split_brain_*` tests reference a primary-takeover arbiter — is that an entity or just a protocol handshake?
-2. **Scope accuracy**: any entity I've categorized at the wrong scope? Notably, **ReplicaReceiver** I've marked "per-volume replica-side" (survives demote/promote). Verify against V2 teardown code — if receiver is actually per-assignment, L2 verdicts change.
-3. **RebuildSession volatility stance**: V2 documented "does NOT survive crash". Is there any post-4A work that made rebuild sessions durable? If yes, that changes the Provider-cache lesson in §3 observation 5.
-4. **DistGroupCommit residence**: at L1 this is a closure bound to `vol.writeSync`. L2 will ask: does V3 put this inside DurableProvider, next to it as a new entity, or somewhere else entirely? Opinions now save a revision cycle later.
-5. **Protocol-frame stability** for `repl_proto.go` message types (MsgWALEntry 0x01, MsgBarrierReq/Resp, MsgRebuildReq 0x10, etc.) — V3 can keep wire-compatible (replicate V2 replicas) OR break cleanly (V3 cluster only). This is an L2 REBUILD-vs-PRESERVE call that needs an architect-line decision.
+1. **Scope completeness** (sw-resolved 2026-04-22 round 3): is the 10-entity set complete? **Answer: yes.** V2 grep confirms `sync_all_*` exists only as three test files (`sync_all_adversarial_test.go`, `sync_all_bug_test.go`, `sync_all_protocol_test.go`) — no production `sync_all_reconnect_protocol.go`. Split-brain / takeover / arbiter: zero production files. These are **cross-entity invariants tested via shipper + receiver interactions**, not distinct types. 10-entity set stands.
+
+2. **Scope accuracy — ReplicaReceiver lifecycle** (sw-resolved 2026-04-22 round 3): verified via V2 grep. `v.replRecv` is assigned exactly once in `blockvol.go:1515` inside `StartReplicaReceiver()`; **no `replRecv = nil` anywhere in the codebase**. Receiver is constructed-once, per-BlockVol-instance (= per-volume-process-lifetime). Confirms L1 §2.3 "persists across primary demote/promote cycles (same receiver instance)". Scope rating stands.
+
+3. **RebuildSession volatility stance** (sw-resolved 2026-04-22 round 3): V2 grep on `rebuild_session.go` + `rebuild_bitmap.go` for `os.Open / os.Create / WriteFile / ReadFile / persist / sidecar` returns EMPTY. No post-4A durability was added. Rebuild session AND bitmap are both pure in-memory; recovery path is WAL hydration via `hydrateBitmapFromRecoveredWAL` (`rebuild_session.go:102`), not a sidecar file. **L1 §2.10 invariant #3 "Sidecar schema is an independent on-disk format" was WRONG** — retracted and corrected to "NO on-disk representation". Volatility stance in L1 §2.6 + §2.10 stands; §2.10 invariant #3 rewritten.
+
+4. **DistGroupCommit residence** (effectively answered by §3.11 Option C): with H6 leading toward Option C (replication lives in `DurableProvider`), DistGroupCommit closure naturally becomes a Provider-internal durability wrapper. L2 should write this explicitly into the §2.5 catalogue row rather than leave it as "answered by inference".
+
+5. **Protocol-frame stability** for `repl_proto.go` message types (MsgWALEntry 0x01, MsgBarrierReq/Resp, MsgRebuildReq 0x10, etc.) — **architect-line decision pending**. V3 can keep wire-compatible (replicate V2 replicas) OR break cleanly (V3 cluster only). This is an L2 REBUILD-vs-PRESERVE call. **Unblock pair**: Q5 + H5 (§3.10 epoch-ack-window wire shape) are independent but related — both govern `repl_proto.go` bridge verdicts. QA to draft a one-page arch-decision memo per round-2 offer.
+
+**Blocking L2 start** (architect-line):
+- H5 §3.10 — cross-node epoch ack window
+- Q5 above — protocol-frame wire-compat stance
+
+**NOT blocking L2** (sw-resolved or self-answered by V3 shape):
+- Q1 scope completeness ✓
+- Q2 ReplicaReceiver scope ✓
+- Q3 RebuildSession volatility ✓
+- Q4 DistGroupCommit residence ✓ (via §3.11 Option C)
 
 ---
 
@@ -243,6 +282,7 @@ Per §8C.8, there is only **one** three-sign — at **T4 T-start** on the bundle
 **Feedback-round log** (informal; appended in §6 change log as received):
 - 2026-04-22 round 1 — architect F1/F2/F3 + H5/H6 + sw pre-scan gate (landed in `seaweedfs@d2588f5`).
 - 2026-04-22 round 2 — sw pre-scan performed; output filled into §5 step 1; §3 gains H7 (LSN surface-up) + §3.13 (replica-side Backend bypass); §3.11 H6 narrowed per V3 existing-shape evidence.
+- 2026-04-22 round 3 — sw V2 verification of Q1-Q3 + V3 AllBlocks semantics check. Q1/Q2/Q3 resolved ✓. §2.10 RebuildBitmap invariant #3 corrected (no sidecar — was wrong in round 1/2 drafts). §3.14 new: AllBlocks dirty-map-aware in V3 vs flushed-only in V2 — semantic divergence hazard flagged for §2.7 RebuildServer bridge. §3.a new: L2-locked-pairs section (H6+H7 coupled; §3.14+H5 coupled) per architect concern #2 language.
 
 ---
 
@@ -253,4 +293,5 @@ Per §8C.8, there is only **one** three-sign — at **T4 T-start** on the bundle
 | 2026-04-22 | Initial L1 survey drafted post-T3 close; 9 entities identified; 9 L1-level observations recorded; 5 open questions raised for sw/architect/PM review | QA Owner |
 | 2026-04-22 | Architect feedback round 1 incorporated: F1 split RebuildBitmap into standalone §2.10 (10 entities total); F2 ShipperGroup gains "External deps" row citing master-assignment-provided RF as cross-entity contract; F3 ReplicaBarrier scope rewritten to "per-request call-closure BUT queue-state shared per-volume via cond.Wait"; H5 (cross-node epoch ack window) and H6 (Options A/B/C for write-path vs replication-path residence) added to §3 observations; §5 updated to require sw V3 pre-scan as blocking step before L1 three-sign | QA Owner |
 | 2026-04-22 | sw pre-scan round 2 landed: §5 step 1 output filled (5-row checklist table + net summary against L2); §3.11 H6 narrowed — Option B ruled out by existing V3 `LogicalStorage.ApplyEntry`/`AdvanceFrontier`/`AllBlocks` primitives at `walstore.go`/`smartwal/store.go`, Option A unlikely, Option C leading; §3.12 H7 added (LSN-surface-up: `Backend.Write` discards LSN from `LogicalStorage.Write`; H7a/b/c options, resolution coupled to H6); §3.13 added (replica-side bypasses `Backend` entirely — structural finding already locked by V3 shape, L2 builds on it rather than chooses) | sw |
+| 2026-04-22 | sw round 3 on QA concerns + Q1-Q3 verify: Q1 scope complete (sync_all is test-only; split-brain has no prod entity); Q2 ReplicaReceiver constructed-once per BlockVol confirmed (`blockvol.go:1515`, no nil reset anywhere); Q3 RebuildSession/Bitmap no sidecar confirmed (zero file I/O in `rebuild_bitmap.go`); §2.10 invariant #3 corrected (removed wrong "sidecar schema" language); §3.14 added (`AllBlocks()` in V3 reads through dirty map per `walstore.go:565` + `smartwal/store.go:367` — different from V2 `readBlockFromExtent` which bypasses dirty map; L2 bridge hazard for §2.7 RebuildServer); §3.a added (H6+H7 locked-pair + §3.14+H5 locked-pair documentation per QA concern #2) | sw |
 | 2026-04-22 | Architect scraped back governance overhead: no separate L1 three-sign (I had invented one not in §8C.8). Only one three-sign exists — at T4 T-start on bundled L1+L2+L3. §5 rewritten as lightweight cadence: sw pre-scan → sw+QA iterate on L2 → sw+QA draft L3 → T-start three-sign. Review rounds are informal, logged in this change-log as they happen | QA Owner |
