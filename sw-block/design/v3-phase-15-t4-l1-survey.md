@@ -193,24 +193,27 @@ For sw / architect / PM before L1 sign:
 
 ---
 
-## §5 Next steps (ordered; each a gate for the next)
+## §5 Next steps (lightweight cadence per architect direction)
 
-1. **sw V3 pre-scan** (blocks L1 sign; ~5 min) — sw greps `core/frontend/durable/` + `core/frontend/*.go` for pre-baked replication-adjacent assumptions. Minimum checklist:
+Per §8C.8, there is only **one** three-sign — at **T4 T-start** on the bundled L1+L2+L3 package. No separate L1 sign. L1 is a drafting artifact; sw + QA iterate on it informally until L2/L3 are ready.
+
+1. **sw V3 pre-scan** (~5 min) — sw greps `core/frontend/durable/` + `core/frontend/*.go` for pre-baked replication-adjacent assumptions. Prerequisite to L2 so BUG-005-class latent drift doesn't hide behind V3 implicit conventions. Checklist:
    - Any `SetReplicaAddrs`, `ReplicaAddrs`, or similar field on `DurableProvider` / `LogicalStorage` / `StorageBackend`?
    - Any `Sync` / `Write` return type or callback that implies waiting on remote acks?
    - Does `LogicalStorage.Write` return a pure-local LSN or something that looks coordinated across nodes?
    - Any `Ship`, `Replicate`, `Quorum`, `Barrier`, `Durability` identifiers in V3 code today?
    - Any stub / comment referencing a future replication surface?
 
-   Output: one line "V3 has no pre-baked replication assumptions" OR a list of "V3 has X at Y, L2 must align/override". Rationale per architect feedback: BUG-005's latent drift came from "V3 already has implicit convention more opaque than V2 contract" — L1 must surface any such convention BEFORE L2 verdicts lock.
+   Output: one line "V3 has no pre-baked replication assumptions" OR a short list "V3 has X at Y, L2 must align/override". Reply inline; no doc needed.
 
-2. **L1 three-sign** — architect + PM + QA sign this doc, with sw pre-scan result attached. Triggers L2 work.
+2. **sw + QA iterate on L2** — QA drafts bridge verdicts into `v2-v3-contract-bridge-catalogue.md` §3 Replication (shape tag + V3 embedding note + per-contract PRESERVE/REBUILD/BREAK verdicts) with H5 + H6 answers from architect in hand. sw reviews inline, comments lead to catalogue edits. No formal sign between rounds; iterate until both sides comfortable.
 
-3. **L2** — Fill `v2-v3-contract-bridge-catalogue.md` §3 Replication with per-entity bridge rows (shape tag + V3 embedding note + per-contract verdicts). Must LOCK answers to H5 (cross-node epoch ack window) and H6 (Options A/B/C for write-path vs replication-path residence) from §3. Reference V3's five model shifts (event / storage / authority / lifecycle / concurrency) explicitly in embedding notes.
+3. **sw + QA draft L3** — `v3-phase-15-t4-port-plan-sketch.md` (scope / V2 file classification / V3 target files / non-claims / test strategy / provisional ledger rows) derived from L1 + L2.
 
-4. **L3** — Derive `v3-phase-15-t4-port-plan-sketch.md` structure: scope / V2 file classification / V3 target files / non-claims / test strategy / provisional ledger rows.
+4. **T4 T-start three-sign** — architect + PM + QA on the bundled L1 + L2 + L3 package. This is the only governance event for the track start.
 
-5. **T4 T-start three-sign** — architect + PM + QA on the combined L1 + L2 + L3 package.
+**Feedback-round log** (informal; appended in §6 change log as received):
+- 2026-04-22 round 1 — architect F1/F2/F3 + H5/H6 + sw pre-scan gate (landed in `seaweedfs@d2588f5`).
 
 ---
 
@@ -220,3 +223,4 @@ For sw / architect / PM before L1 sign:
 |---|---|---|
 | 2026-04-22 | Initial L1 survey drafted post-T3 close; 9 entities identified; 9 L1-level observations recorded; 5 open questions raised for sw/architect/PM review | QA Owner |
 | 2026-04-22 | Architect feedback round 1 incorporated: F1 split RebuildBitmap into standalone §2.10 (10 entities total); F2 ShipperGroup gains "External deps" row citing master-assignment-provided RF as cross-entity contract; F3 ReplicaBarrier scope rewritten to "per-request call-closure BUT queue-state shared per-volume via cond.Wait"; H5 (cross-node epoch ack window) and H6 (Options A/B/C for write-path vs replication-path residence) added to §3 observations; §5 updated to require sw V3 pre-scan as blocking step before L1 three-sign | QA Owner |
+| 2026-04-22 | Architect scraped back governance overhead: no separate L1 three-sign (I had invented one not in §8C.8). Only one three-sign exists — at T4 T-start on bundled L1+L2+L3. §5 rewritten as lightweight cadence: sw pre-scan → sw+QA iterate on L2 → sw+QA draft L3 → T-start three-sign. Review rounds are informal, logged in this change-log as they happen | QA Owner |
