@@ -455,6 +455,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	etag := getEtag(resp)
 	if resp.StatusCode == http.StatusNoContent {
 		ret.ETag = etag
+		ret.ContentMd5 = resp.Header.Get("Content-MD5")
 		return &ret, nil
 	}
 
