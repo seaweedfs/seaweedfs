@@ -583,7 +583,15 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 		// our IsDirectoryCached check and FindEntry (e.g. markDirectoryReadThrough).
 		// If it's no longer cached, fall through to the filer lookup below.
 		if wfs.metaCache.IsDirectoryCached(dirPath) {
-			glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
+			// If the kernel is still tracking this path's inode, the entry
+			// was known to exist recently; a cached-dir miss here suggests
+			// metaCache/parent-cache coherence drift. Log visibly so the
+			// next occurrence shows up in mount.log without -v=4.
+			if _, inodeFound := wfs.inodeToPath.GetInode(fullpath); inodeFound {
+				glog.Warningf("lookupEntry: %s missing from cache while parent %s is cached; inode still tracked (possible coherence bug)", fullpath, dirPath)
+			} else {
+				glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
+			}
 			return nil, fuse.ENOENT
 		}
 	}
