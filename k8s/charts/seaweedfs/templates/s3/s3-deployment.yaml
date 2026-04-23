@@ -127,8 +127,8 @@ spec:
               {{- if .Values.global.seaweedfs.enableSecurity }}
               {{- if .Values.s3.httpsPort }}
               -port.https={{ .Values.s3.httpsPort }} \
-              {{- end }}
               {{- include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "") | nindent 14 }}
+              {{- end }}
               {{- end }}
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
