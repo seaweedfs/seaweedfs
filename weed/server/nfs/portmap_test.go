@@ -312,6 +312,60 @@ func TestPortmapServer_UDPGetPort(t *testing.T) {
 	}
 }
 
+func TestPortmapServer_CloseEvictsIdleTCPConn(t *testing.T) {
+	port := pickFreePort(t)
+	ps := newPortmapServer("127.0.0.1", port, 2049)
+	if err := ps.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		_ = ps.Close()
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Issue one call and read its reply so the server-side connection is
+	// definitely registered before we trigger shutdown.
+	msg := buildRPCCall(t, 1, portmapProgram, portmapVersion, pmapProcNull, nil, nil, nil)
+	var mark [4]byte
+	binary.BigEndian.PutUint32(mark[:], uint32(len(msg))|(1<<31))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write(mark[:]); err != nil {
+		t.Fatalf("write mark: %v", err)
+	}
+	if _, err := conn.Write(msg); err != nil {
+		t.Fatalf("write msg: %v", err)
+	}
+	if _, err := io.ReadFull(conn, mark[:]); err != nil {
+		t.Fatalf("read mark: %v", err)
+	}
+	rlen := binary.BigEndian.Uint32(mark[:]) &^ (1 << 31)
+	if _, err := io.ReadFull(conn, make([]byte, rlen)); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	// Close must return long before the TCP idle deadline (30s) — in
+	// other words, the server must actively close the idle conn rather
+	// than wait for the deadline or for the client to disconnect.
+	done := make(chan error, 1)
+	go func() { done <- ps.Close() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return within 2s; in-flight conn not evicted")
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	if _, err := conn.Read(make([]byte, 4)); err == nil {
+		t.Fatal("expected read error on client conn after server Close")
+	}
+}
+
 func TestPortmapServer_TCPGetPort(t *testing.T) {
 	port := pickFreePort(t)
 	ps := newPortmapServer("127.0.0.1", port, 2049)

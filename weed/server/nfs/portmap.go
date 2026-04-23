@@ -7,7 +7,7 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -61,6 +61,18 @@ const (
 	// Defensive limits. Portmap messages are tiny in practice; these caps
 	// protect the responder from large or slow reads.
 	portmapMaxRecord = 64 * 1024
+
+	// Per-connection read/write deadlines on the TCP listener. The idle
+	// timeout bounds how long we wait for the next request on an otherwise
+	// quiet connection; the IO timeout bounds a single read or write once
+	// one is in flight. Both guard against slowloris-style stalls on the
+	// privileged port 111.
+	portmapTCPIdleTimeout = 30 * time.Second
+	portmapTCPIOTimeout   = 10 * time.Second
+
+	// Back-off applied before retrying after a non-fatal Accept error
+	// (e.g. EMFILE) so we don't busy-loop when the host is out of fds.
+	portmapAcceptBackoff = 50 * time.Millisecond
 )
 
 type portmapEntry struct {
@@ -77,8 +89,13 @@ type portmapServer struct {
 
 	tcpListener net.Listener
 	udpConn     *net.UDPConn
-	closed      atomic.Bool
-	wg          sync.WaitGroup
+
+	// mu guards closed and conns. It is held only for bookkeeping, never
+	// across network IO.
+	mu     sync.Mutex
+	closed bool
+	conns  map[net.Conn]struct{}
+	wg     sync.WaitGroup
 }
 
 // newPortmapServer builds a responder advertising the NFS services the caller
@@ -132,9 +149,16 @@ func (ps *portmapServer) Start() error {
 }
 
 func (ps *portmapServer) Close() error {
-	if !ps.closed.CompareAndSwap(false, true) {
+	ps.mu.Lock()
+	if ps.closed {
+		ps.mu.Unlock()
 		return nil
 	}
+	ps.closed = true
+	conns := ps.conns
+	ps.conns = nil
+	ps.mu.Unlock()
+
 	var first error
 	if ps.tcpListener != nil {
 		if err := ps.tcpListener.Close(); err != nil {
@@ -146,21 +170,65 @@ func (ps *portmapServer) Close() error {
 			first = err
 		}
 	}
+	// Evict in-flight TCP handlers so Close() does not block on idle
+	// clients; their read goroutines will unwind on the closed conn.
+	for c := range conns {
+		_ = c.Close()
+	}
 	ps.wg.Wait()
 	return first
+}
+
+func (ps *portmapServer) isClosed() bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.closed
+}
+
+// addConn registers c for shutdown eviction. It returns false (and the
+// caller must drop c) if the server has already started shutting down.
+func (ps *portmapServer) addConn(c net.Conn) bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.closed {
+		return false
+	}
+	if ps.conns == nil {
+		ps.conns = make(map[net.Conn]struct{})
+	}
+	ps.conns[c] = struct{}{}
+	return true
+}
+
+func (ps *portmapServer) removeConn(c net.Conn) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	delete(ps.conns, c)
 }
 
 func (ps *portmapServer) serveTCP() {
 	for {
 		conn, err := ps.tcpListener.Accept()
 		if err != nil {
-			if ps.closed.Load() {
+			if ps.isClosed() {
 				return
 			}
+			// Non-fatal (e.g. EMFILE, EINTR): log and back off rather
+			// than tear the listener down on a transient resource blip.
 			glog.V(1).Infof("portmap tcp accept: %v", err)
-			return
+			time.Sleep(portmapAcceptBackoff)
+			continue
 		}
-		go ps.handleTCPConn(conn)
+		if !ps.addConn(conn) {
+			_ = conn.Close()
+			continue
+		}
+		ps.wg.Add(1)
+		go func(c net.Conn) {
+			defer ps.wg.Done()
+			defer ps.removeConn(c)
+			ps.handleTCPConn(c)
+		}(conn)
 	}
 }
 
@@ -168,6 +236,7 @@ func (ps *portmapServer) handleTCPConn(conn net.Conn) {
 	defer conn.Close()
 	hdr := make([]byte, 4)
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(portmapTCPIdleTimeout))
 		if _, err := io.ReadFull(conn, hdr); err != nil {
 			return
 		}
@@ -182,6 +251,7 @@ func (ps *portmapServer) handleTCPConn(conn net.Conn) {
 			return
 		}
 		buf := make([]byte, recLen)
+		_ = conn.SetReadDeadline(time.Now().Add(portmapTCPIOTimeout))
 		if _, err := io.ReadFull(conn, buf); err != nil {
 			return
 		}
@@ -192,6 +262,7 @@ func (ps *portmapServer) handleTCPConn(conn net.Conn) {
 		out := make([]byte, 4+len(reply))
 		binary.BigEndian.PutUint32(out[0:4], uint32(len(reply))|(1<<31))
 		copy(out[4:], reply)
+		_ = conn.SetWriteDeadline(time.Now().Add(portmapTCPIOTimeout))
 		if _, err := conn.Write(out); err != nil {
 			return
 		}
@@ -203,7 +274,7 @@ func (ps *portmapServer) serveUDP() {
 	for {
 		n, addr, err := ps.udpConn.ReadFromUDP(buf)
 		if err != nil {
-			if ps.closed.Load() {
+			if ps.isClosed() {
 				return
 			}
 			glog.V(1).Infof("portmap udp read: %v", err)
@@ -313,11 +384,13 @@ func parseRPCCall(buf []byte) (xid, prog, vers, proc uint32, args []byte, err er
 			return
 		}
 		authLen := binary.BigEndian.Uint32(buf[p+4 : p+8])
-		padded := (authLen + 3) &^ 3
-		if padded > uint32(portmapMaxRecord) {
+		// Validate before applying the XDR 4-byte padding so that
+		// lengths near uint32 max can't wrap to a tiny padded value.
+		if authLen > uint32(portmapMaxRecord) {
 			err = errors.New("opaque_auth length exceeds limit")
 			return
 		}
+		padded := (authLen + 3) &^ 3
 		end := uint64(p) + 8 + uint64(padded)
 		if end > uint64(len(buf)) {
 			err = fmt.Errorf("truncated opaque_auth body at offset %d (len=%d)", p, authLen)
