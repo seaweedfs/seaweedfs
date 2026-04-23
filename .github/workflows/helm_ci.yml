@@ -217,6 +217,93 @@ jobs:
           print("✓ No blank lines in security+S3 command blocks")
           PYEOF
 
+          echo ""
+          echo "=== Testing security+S3: -cert.file/-key.file gated on httpsPort (issue #9202) ==="
+          # Regression test: when enableSecurity=true but *.httpsPort is 0 (the default),
+          # the chart must NOT emit -cert.file / -key.file to the S3 frontend. Passing
+          # them promotes weed s3's main -port to HTTPS (see weed/command/s3.go), which
+          # makes the HTTP readinessProbe spam "TLS handshake error ... client sent an
+          # HTTP request to an HTTPS server" into the pod log.
+          #
+          # When *.httpsPort > 0, both -port.https and cert/key args MUST be emitted
+          # together so the opt-in HTTPS listener actually has credentials.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def script_of(manifest, kind_name):
+              for doc in yaml.safe_load_all(manifest):
+                  if not doc or doc.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  if doc["metadata"]["name"] != kind_name:
+                      continue
+                  for c in doc["spec"]["template"]["spec"]["containers"]:
+                      cmd = c.get("command", [])
+                      if len(cmd) >= 3 and cmd[0] == "/bin/sh" and cmd[1] == "-ec":
+                          return cmd[2]
+              raise AssertionError(f"no container script for {kind_name}")
+
+          cases = [
+              # (values, workload-name, httpsPort-set?, arg-prefix)
+              ({"global.seaweedfs.enableSecurity": "true",
+                "s3.enabled": "true"},
+               "test-seaweedfs-s3", False, ""),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "s3.enabled": "true",
+                "s3.httpsPort": "8443"},
+               "test-seaweedfs-s3", True, ""),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "filer.s3.enabled": "true"},
+               "test-seaweedfs-filer", False, "s3."),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "filer.s3.enabled": "true",
+                "filer.s3.httpsPort": "8444"},
+               "test-seaweedfs-filer", True, "s3."),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "allInOne.enabled": "true",
+                "allInOne.s3.enabled": "true"},
+               "test-seaweedfs-all-in-one", False, "s3."),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "allInOne.enabled": "true",
+                "allInOne.s3.enabled": "true",
+                "allInOne.s3.httpsPort": "8445"},
+               "test-seaweedfs-all-in-one", True, "s3."),
+          ]
+
+          failed = False
+          for values, name, https_on, prefix in cases:
+              script = script_of(render(values), name)
+              cert_flag = f"-{prefix}cert.file="
+              key_flag = f"-{prefix}key.file="
+              https_flag = f"-{prefix}port.https="
+              has_cert = cert_flag in script
+              has_key = key_flag in script
+              has_https = https_flag in script
+              label = f"{name} (httpsPort {'set' if https_on else 'unset'})"
+              if https_on:
+                  if not (has_cert and has_key and has_https):
+                      print(f"FAIL: {label}: expected {cert_flag}, {key_flag}, {https_flag} all present "
+                            f"(got cert={has_cert} key={has_key} https={has_https})", file=sys.stderr)
+                      failed = True
+                  else:
+                      print(f"✓ {label}: cert/key/https args emitted together")
+              else:
+                  if has_cert or has_key or has_https:
+                      print(f"FAIL: {label}: expected none of {cert_flag}/{key_flag}/{https_flag}; "
+                            f"main S3 -port would silently become HTTPS and break HTTP probes "
+                            f"(got cert={has_cert} key={has_key} https={has_https})", file=sys.stderr)
+                      failed = True
+                  else:
+                      print(f"✓ {label}: no TLS args emitted, main -port stays HTTP")
+          sys.exit(1 if failed else 0)
+          PYEOF
+
           echo "✅ All template rendering tests passed!"
 
       - name: Create kind cluster
