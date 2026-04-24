@@ -1814,6 +1814,33 @@ func TestEmbeddedIamGetActionsFromPolicy(t *testing.T) {
 	assert.Contains(t, actions, "Write:mybucket")
 }
 
+// TestEmbeddedIamPutUserPolicyAllResourceWildcard reproduces issue #9209:
+// an AWS-style policy using "Action":"s3:*" with a bare "Resource":"*" is
+// valid AWS IAM syntax (meaning "any resource") but was rejected with
+// "no valid actions found in policy document" because the resource parser
+// required a full ARN.
+func TestEmbeddedIamPutUserPolicyAllResourceWildcard(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	// From issue #9209: bare "*" resource and bare "s3:*" action.
+	policyDoc := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Sid": "AllowS3Admin",
+			"Effect": "Allow",
+			"Action": "s3:*",
+			"Resource": "*"
+		}]
+	}`
+
+	policy, err := api.GetPolicyDocument(&policyDoc)
+	require.NoError(t, err)
+
+	actions, err := api.getActions(&policy)
+	require.NoError(t, err, "getActions must accept bare \"*\" resource")
+	assert.Contains(t, actions, ACTION_ADMIN, "s3:* should map to admin action")
+}
+
 // TestEmbeddedIamSetUserStatus tests enabling/disabling a user
 func TestEmbeddedIamSetUserStatus(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
