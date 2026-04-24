@@ -591,9 +591,13 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 	if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for attempt := 1; attempt <= manifestAssignAttempts; attempt++ {
 			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
-				Count:            1,
-				Collection:       collection,
-				Path:             string(entryPath),
+				Count:      1,
+				Collection: collection,
+				// entryPath is built from entry.Name returned by the filer. Filers
+				// written through gRPC already hold valid UTF-8, but legacy or
+				// directly-imported entries may not — sanitize so one bad name
+				// does not fail the whole merge pass.
+				Path:             entryPath.Sanitized(),
 				ExpectedDataSize: uint64(len(data)),
 			})
 			if err != nil {

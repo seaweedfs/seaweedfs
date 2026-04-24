@@ -256,7 +256,8 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// Always let the filer decide whether to delete chunks based on its authoritative data.
 	// The filer has the correct hard link count and will only delete chunks when appropriate.
 	deleteReq := &filer_pb.DeleteEntryRequest{
-		Directory:    string(dirFullPath),
+		// See weedfs_dir_mkrm.go Mkdir for why Directory is sanitized.
+		Directory:    dirFullPath.Sanitized(),
 		Name:         name,
 		IsDeleteData: true,
 		Signatures:   []int32{wfs.signature},
