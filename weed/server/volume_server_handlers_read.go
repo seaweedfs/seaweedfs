@@ -35,11 +35,13 @@ import (
 const reqIsProxied = "proxied"
 
 func NotFound(w http.ResponseWriter) {
+	stats.VolumeServerFileReadFailures.Inc()
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
 	w.WriteHeader(http.StatusNotFound)
 }
 
 func InternalError(w http.ResponseWriter) {
+	stats.VolumeServerFileReadFailures.Inc()
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
 	w.WriteHeader(http.StatusInternalServerError)
 }
