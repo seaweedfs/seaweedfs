@@ -2761,13 +2761,8 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 	// Create readers for each chunk, decrypting them independently
 	var readers []io.Reader
 
-	// Get key manager and SSE-S3 key from entry metadata
+	// Get key manager for deserializing per-chunk SSE-S3 metadata
 	keyManager := GetSSES3KeyManager()
-	keyData := entry.Extended[s3_constants.SeaweedFSSSES3Key]
-	sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize SSE-S3 key from entry metadata: %v", err)
-	}
 
 	for _, chunk := range chunks {
 		// Get this chunk's encrypted data
@@ -2794,10 +2789,10 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 			// Use the IV from the chunk metadata
 			iv := chunkSSES3Metadata.IV
 			glog.V(4).Infof("Decrypting SSE-S3 chunk %s with KeyID=%s, IV length=%d",
-				chunk.GetFileIdString(), sseS3Key.KeyID, len(iv))
+				chunk.GetFileIdString(), chunkSSES3Metadata.KeyID, len(iv))
 
 			// Create decrypted reader for this chunk
-			decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, sseS3Key, iv)
+			decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, chunkSSES3Metadata, iv)
 			if decErr != nil {
 				chunkReader.Close()
 				return nil, fmt.Errorf("failed to decrypt SSE-S3 chunk: %v", decErr)
