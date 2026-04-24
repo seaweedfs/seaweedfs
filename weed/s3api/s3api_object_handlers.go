@@ -2593,8 +2593,11 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 // Note: encryptedStream parameter is unused (always nil) as this function fetches chunks directly to avoid double I/O.
 // It's kept in the signature for API consistency with non-Direct versions.
 func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Context, encryptedStream io.ReadCloser, customerKey *SSECustomerKey, entry *filer_pb.Entry) (io.Reader, error) {
-	// Sort chunks by offset to ensure correct order
-	chunks := entry.GetChunks()
+	// Sort a copy of the slice so entry.Chunks is not reordered (other code
+	// paths, e.g. ETag computation, can rely on the original chunk order).
+	originalChunks := entry.GetChunks()
+	chunks := make([]*filer_pb.FileChunk, len(originalChunks))
+	copy(chunks, originalChunks)
 	sort.Slice(chunks, func(i, j int) bool {
 		return chunks[i].GetOffset() < chunks[j].GetOffset()
 	})
@@ -2629,6 +2632,13 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 			if err != nil {
 				chunkReader.Close()
 				return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+			// Guard cipher.NewCTR against a missing/short IV (base64 decode of
+			// an empty or malformed field would otherwise reach it and panic).
+			if len(chunkIV) != s3_constants.AESBlockSize {
+				chunkReader.Close()
+				return nil, fmt.Errorf("SSE-C chunk %s has invalid IV length %d (expected %d)",
+					chunk.GetFileIdString(), len(chunkIV), s3_constants.AESBlockSize)
 			}
 
 			glog.V(4).Infof("Decrypting SSE-C chunk %s with IV=%x, PartOffset=%d",
@@ -2683,8 +2693,12 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 // Note: encryptedStream parameter is unused (always nil) as this function fetches chunks directly to avoid double I/O.
 // It's kept in the signature for API consistency with non-Direct versions.
 func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.Context, encryptedStream io.ReadCloser, entry *filer_pb.Entry) (io.Reader, error) {
-	// Sort chunks by offset to ensure correct order
-	chunks := entry.GetChunks()
+	// Sort a copy of the slice so entry.Chunks is not reordered (other code
+	// paths, e.g. ETag computation, can rely on the original chunk order).
+	// IV length is validated inside CreateSSEKMSDecryptedReader via ValidateIV.
+	originalChunks := entry.GetChunks()
+	chunks := make([]*filer_pb.FileChunk, len(originalChunks))
+	copy(chunks, originalChunks)
 	sort.Slice(chunks, func(i, j int) bool {
 		return chunks[i].GetOffset() < chunks[j].GetOffset()
 	})
@@ -2752,22 +2766,14 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 // Note: encryptedStream parameter is unused (always nil) as this function fetches chunks directly to avoid double I/O.
 // It's kept in the signature for API consistency with non-Direct versions.
 func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Context, encryptedStream io.ReadCloser, entry *filer_pb.Entry) (io.Reader, error) {
-	reader, err := buildMultipartSSES3Reader(entry.GetChunks(), GetSSES3KeyManager(), func(chunk *filer_pb.FileChunk) (io.ReadCloser, error) {
+	// Close the original encrypted stream since chunks are fetched individually.
+	if encryptedStream != nil {
+		defer encryptedStream.Close()
+	}
+
+	return buildMultipartSSES3Reader(entry.GetChunks(), GetSSES3KeyManager(), func(chunk *filer_pb.FileChunk) (io.ReadCloser, error) {
 		return s3a.createEncryptedChunkReader(ctx, chunk)
 	})
-	if err != nil {
-		if encryptedStream != nil {
-			encryptedStream.Close()
-		}
-		return nil, err
-	}
-
-	// Close the original encrypted stream since we're reading chunks individually
-	if encryptedStream != nil {
-		encryptedStream.Close()
-	}
-
-	return reader, nil
 }
 
 // buildMultipartSSES3Reader composes a decrypted reader from a set of multipart
