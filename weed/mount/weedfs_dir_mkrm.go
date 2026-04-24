@@ -26,7 +26,8 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
@@ -65,7 +66,12 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	// explicitly below instead of using defer so the kernel gets local values.
 
 	request := &filer_pb.CreateEntryRequest{
-		Directory:                string(dirFullPath),
+		// Defensive: dirFullPath is clean by construction for mount-originated
+		// mutations, but could carry invalid-UTF-8 bytes if metaCache was
+		// populated from a non-gRPC source (direct store write, legacy import).
+		// Sanitizing here keeps the marshal strictly per-request on the off
+		// chance invalid bytes do reach us.
+		Directory:                dirFullPath.Sanitized(),
 		Entry:                    newEntry,
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
@@ -123,6 +129,9 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	if name == ".." {
 		return fuse.Status(syscall.ENOTEMPTY)
 	}
+
+	// Sanitize before it reaches DeleteEntryRequest.Name; see sanitizeFuseName.
+	name = sanitizeFuseName(name)
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {

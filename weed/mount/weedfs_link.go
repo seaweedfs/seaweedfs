@@ -31,7 +31,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 

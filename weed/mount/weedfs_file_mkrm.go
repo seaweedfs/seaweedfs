@@ -27,7 +27,8 @@ import (
  * will be called instead.
  */
 func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, out *fuse.CreateOut) (code fuse.Status) {
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
@@ -140,7 +141,8 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
  */
 func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
@@ -166,6 +168,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 
 /** Remove a file */
 func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
+
+	// Sanitize before it reaches DeleteEntryRequest.Name; see sanitizeFuseName.
+	name = sanitizeFuseName(name)
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
@@ -251,7 +256,8 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// Always let the filer decide whether to delete chunks based on its authoritative data.
 	// The filer has the correct hard link count and will only delete chunks when appropriate.
 	deleteReq := &filer_pb.DeleteEntryRequest{
-		Directory:    string(dirFullPath),
+		// See weedfs_dir_mkrm.go Mkdir for why Directory is sanitized.
+		Directory:    dirFullPath.Sanitized(),
 		Name:         name,
 		IsDeleteData: true,
 		Signatures:   []int32{wfs.signature},

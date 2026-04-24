@@ -18,7 +18,8 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 

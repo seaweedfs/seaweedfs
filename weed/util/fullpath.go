@@ -4,9 +4,35 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 type FullPath string
+
+// invalidUTF8Replacement is the single-byte replacement used everywhere a name
+// or path from an untrusted source (kernel FUSE input, external clients, store
+// imports) may contain bytes that are not valid UTF-8. Proto3 `string` fields
+// require valid UTF-8, so any such bytes must be substituted before the value
+// enters a gRPC request; otherwise marshaling fails for the whole RPC.
+//
+// '_' is URL-safe: these sanitized strings also flow into HTTP URLs
+// (volume-server uploads, filer HTTP API, S3/WebDAV gateways). Using '?'
+// would cause it to be interpreted as the query-string delimiter the first
+// time the name lands in a URL and split the path.
+const invalidUTF8Replacement = "_"
+
+// SanitizeUTF8Name replaces every invalid-UTF-8 byte in s with
+// invalidUTF8Replacement. For the common, valid-UTF-8 case the input is
+// returned unchanged with no allocation. Use this for any byte sequence
+// that will be assigned to a proto string field (names, paths) from an
+// untrusted source; centralising the replacement keeps the chosen character
+// consistent across the codebase.
+func SanitizeUTF8Name(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, invalidUTF8Replacement)
+}
 
 func NewFullPath(dir, name string) FullPath {
 	name = strings.TrimSuffix(name, "/")
@@ -15,7 +41,7 @@ func NewFullPath(dir, name string) FullPath {
 
 func (fp FullPath) DirAndName() (string, string) {
 	dir, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
+	name = SanitizeUTF8Name(name)
 	if dir == "/" {
 		return dir, name
 	}
@@ -25,10 +51,22 @@ func (fp FullPath) DirAndName() (string, string) {
 	return dir[:len(dir)-1], name
 }
 
+// Name returns the last path component, with any invalid-UTF-8 bytes replaced
+// via SanitizeUTF8Name so the result is always safe to place in a proto
+// string field or HTTP URL.
 func (fp FullPath) Name() string {
 	_, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
-	return name
+	return SanitizeUTF8Name(name)
+}
+
+// Sanitized returns the full path with every invalid-UTF-8 byte — in any
+// component, not just the last — replaced via SanitizeUTF8Name. Use this
+// before assigning the path to a proto string field (e.g. Directory,
+// AssignVolumeRequest.Path) when the path may have been produced from
+// sources that do not enforce UTF-8 (cache populated from an external
+// store, legacy metadata, shell traversals of existing filer entries).
+func (fp FullPath) Sanitized() string {
+	return SanitizeUTF8Name(string(fp))
 }
 
 func (fp FullPath) IsLongerFileName(maxFilenameLength uint32) bool {
