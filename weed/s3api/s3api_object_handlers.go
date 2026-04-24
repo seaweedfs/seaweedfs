@@ -2603,12 +2603,23 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 	})
 
 	// Create readers for each chunk, decrypting them independently
-	var readers []io.Reader
+	readers := make([]io.Reader, 0, len(chunks))
+
+	// Close any readers already appended to `readers` on error paths, to avoid
+	// leaking volume-server HTTP connections.
+	closeAppendedReaders := func() {
+		for _, r := range readers {
+			if closer, ok := r.(io.Closer); ok {
+				closer.Close()
+			}
+		}
+	}
 
 	for _, chunk := range chunks {
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(ctx, chunk)
 		if err != nil {
+			closeAppendedReaders()
 			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
 		}
 
@@ -2617,6 +2628,7 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 			// Check if this chunk has per-chunk SSE-C metadata
 			if len(chunk.GetSseMetadata()) == 0 {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("SSE-C chunk %s missing per-chunk metadata", chunk.GetFileIdString())
 			}
 
@@ -2624,6 +2636,7 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 			ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
 			if err != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			}
 
@@ -2631,12 +2644,14 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 			chunkIV, err := base64.StdEncoding.DecodeString(ssecMetadata.IV)
 			if err != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), err)
 			}
 			// Guard cipher.NewCTR against a missing/short IV (base64 decode of
 			// an empty or malformed field would otherwise reach it and panic).
 			if len(chunkIV) != s3_constants.AESBlockSize {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("SSE-C chunk %s has invalid IV length %d (expected %d)",
 					chunk.GetFileIdString(), len(chunkIV), s3_constants.AESBlockSize)
 			}
@@ -2657,11 +2672,13 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 			partOffset := ssecMetadata.PartOffset
 			if partOffset < 0 {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", partOffset, chunk.GetFileIdString())
 			}
 			decryptedChunkReader, decErr := CreateSSECDecryptedReaderWithOffset(chunkReader, customerKey, chunkIV, uint64(partOffset))
 			if decErr != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
 			}
 
@@ -2704,12 +2721,23 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 	})
 
 	// Create readers for each chunk, decrypting them independently
-	var readers []io.Reader
+	readers := make([]io.Reader, 0, len(chunks))
+
+	// Close any readers already appended to `readers` on error paths, to avoid
+	// leaking volume-server HTTP connections.
+	closeAppendedReaders := func() {
+		for _, r := range readers {
+			if closer, ok := r.(io.Closer); ok {
+				closer.Close()
+			}
+		}
+	}
 
 	for _, chunk := range chunks {
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(ctx, chunk)
 		if err != nil {
+			closeAppendedReaders()
 			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
 		}
 
@@ -2718,6 +2746,7 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 			// Check if this chunk has per-chunk SSE-KMS metadata
 			if len(chunk.GetSseMetadata()) == 0 {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("SSE-KMS chunk %s missing per-chunk metadata", chunk.GetFileIdString())
 			}
 
@@ -2725,6 +2754,7 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 			if err != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			}
 
@@ -2735,6 +2765,7 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 			decryptedChunkReader, decErr := CreateSSEKMSDecryptedReader(chunkReader, kmsKey)
 			if decErr != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
 			}
 
