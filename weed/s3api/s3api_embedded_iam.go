@@ -819,9 +819,18 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 			return nil, fmt.Errorf("not a valid effect: '%s'. Only 'Allow' is possible", statement.Effect)
 		}
 		for _, resource := range statement.Resource.Strings() {
-			res := strings.Split(resource, ":")
-			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
-				continue
+			// AWS IAM treats a bare "*" as "any resource". Normalize it to the
+			// full-wildcard S3 ARN so it flows through the same path as
+			// "arn:aws:s3:::*" instead of being dropped as malformed.
+			var resourcePath string
+			if resource == "*" {
+				resourcePath = "*"
+			} else {
+				res := strings.Split(resource, ":")
+				if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
+					continue
+				}
+				resourcePath = res[5]
 			}
 			for _, action := range statement.Action.Strings() {
 				act := strings.Split(action, ":")
@@ -833,7 +842,6 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 					return nil, fmt.Errorf("not a valid action: '%s'", act[1])
 				}
 
-				resourcePath := res[5]
 				if resourcePath == "*" {
 					// Wildcard - applies to all buckets
 					actions = append(actions, statementAction)
