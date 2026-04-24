@@ -2752,8 +2752,27 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 // Note: encryptedStream parameter is unused (always nil) as this function fetches chunks directly to avoid double I/O.
 // It's kept in the signature for API consistency with non-Direct versions.
 func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Context, encryptedStream io.ReadCloser, entry *filer_pb.Entry) (io.Reader, error) {
+	reader, err := buildMultipartSSES3Reader(entry.GetChunks(), GetSSES3KeyManager(), func(chunk *filer_pb.FileChunk) (io.ReadCloser, error) {
+		return s3a.createEncryptedChunkReader(ctx, chunk)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Close the original encrypted stream since we're reading chunks individually
+	if encryptedStream != nil {
+		encryptedStream.Close()
+	}
+
+	return reader, nil
+}
+
+// buildMultipartSSES3Reader composes a decrypted reader from a set of multipart
+// SSE-S3 chunks. Chunks are fetched via fetchChunk and decrypted using their
+// per-chunk metadata (each multipart part has its own DEK and IV). Exposed as a
+// standalone helper so tests can inject a mock chunk fetcher.
+func buildMultipartSSES3Reader(chunks []*filer_pb.FileChunk, keyManager *SSES3KeyManager, fetchChunk func(*filer_pb.FileChunk) (io.ReadCloser, error)) (io.Reader, error) {
 	// Sort chunks by offset to ensure correct order
-	chunks := entry.GetChunks()
 	sort.Slice(chunks, func(i, j int) bool {
 		return chunks[i].GetOffset() < chunks[j].GetOffset()
 	})
@@ -2771,12 +2790,9 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 		}
 	}
 
-	// Get key manager for deserializing per-chunk SSE-S3 metadata
-	keyManager := GetSSES3KeyManager()
-
 	for _, chunk := range chunks {
 		// Get this chunk's encrypted data
-		chunkReader, err := s3a.createEncryptedChunkReader(ctx, chunk)
+		chunkReader, err := fetchChunk(chunk)
 		if err != nil {
 			closeAppendedReaders()
 			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
@@ -2799,8 +2815,16 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 				return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			}
 
-			// Use the IV from the chunk metadata
+			// Use the IV from the chunk metadata. DeserializeSSES3Metadata does
+			// not require an IV, so validate the length here before it reaches
+			// cipher.NewCTR, which would otherwise panic on a nil or short IV.
 			iv := chunkSSES3Metadata.IV
+			if len(iv) != s3_constants.AESBlockSize {
+				chunkReader.Close()
+				closeAppendedReaders()
+				return nil, fmt.Errorf("SSE-S3 chunk %s has invalid IV length %d (expected %d)",
+					chunk.GetFileIdString(), len(iv), s3_constants.AESBlockSize)
+			}
 			glog.V(4).Infof("Decrypting SSE-S3 chunk %s with KeyID=%s, IV length=%d",
 				chunk.GetFileIdString(), chunkSSES3Metadata.KeyID, len(iv))
 
@@ -2826,11 +2850,6 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 			readers = append(readers, chunkReader)
 			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
 		}
-	}
-
-	// Close the original encrypted stream since we're reading chunks individually
-	if encryptedStream != nil {
-		encryptedStream.Close()
 	}
 
 	return NewMultipartSSEReader(readers), nil
