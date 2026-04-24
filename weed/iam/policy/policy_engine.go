@@ -23,7 +23,11 @@ const (
 
 var (
 	policyVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
-	safePolicyVariables   = map[string]bool{
+	// safePolicyVariables is the explicit allowlist of fixed-name variables.
+	// Identity claims published under jwt:/saml:/oidc: are additionally accepted
+	// as dynamic variables (see isSafePolicyVariable) so that any claim from a
+	// cryptographically verified federated token can be used in policies.
+	safePolicyVariables = map[string]bool{
 		// AWS standard identity variables
 		"aws:username":             true,
 		"aws:userid":               true,
@@ -32,20 +36,6 @@ var (
 		"aws:principaltype":        true,
 		"aws:FederatedProvider":    true,
 		"aws:PrincipalServiceName": true,
-		// SAML identity variables
-		"saml:username": true,
-		"saml:sub":      true,
-		"saml:aud":      true,
-		"saml:iss":      true,
-		// OIDC/JWT identity variables
-		"oidc:sub": true,
-		"oidc:aud": true,
-		"oidc:iss": true,
-		// JWT identity variables
-		"jwt:preferred_username": true,
-		"jwt:sub":                true,
-		"jwt:iss":                true,
-		"jwt:aud":                true,
 		// AWS request context (not from headers)
 		"aws:SourceIp":        true,
 		"aws:SecureTransport": true,
@@ -55,6 +45,20 @@ var (
 		"s3:max-keys":         true,
 	}
 )
+
+// isSafePolicyVariable reports whether a policy variable may be substituted
+// with a value from RequestContext. The fixed allowlist covers AWS-defined
+// variables; any jwt:/saml:/oidc: claim is also allowed because those come
+// from a validated identity token (the STS session JWT or federated assertion)
+// and the claim set is controlled by the trusted identity provider.
+func isSafePolicyVariable(variable string) bool {
+	if safePolicyVariables[variable] {
+		return true
+	}
+	return strings.HasPrefix(variable, "jwt:") ||
+		strings.HasPrefix(variable, "saml:") ||
+		strings.HasPrefix(variable, "oidc:")
+}
 
 // PolicyEngine evaluates policies against requests
 type PolicyEngine struct {
@@ -1240,23 +1244,57 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		// Extract variable name from ${variable}
 		variable := match[2 : len(match)-1]
 
-		// Only substitute if variable is in the safe allowlist
-		if !safePolicyVariables[variable] {
-			return match // Leave unsafe variables as-is
+		// Only substitute if the variable is in the allowlist or is a dynamic
+		// identity-claim variable (jwt:/saml:/oidc:)
+		if !isSafePolicyVariable(variable) {
+			return match // Leave unrecognised variables as-is
 		}
 
 		// Get value from request context
-		if value, exists := evalCtx.RequestContext[variable]; exists {
-			if str, ok := value.(string); ok {
-				return str
-			}
+		value, exists := evalCtx.RequestContext[variable]
+		if !exists {
+			return match // Variable not supplied: leave placeholder so statement won't match
 		}
 
-		// Variable not found or not a string, leave as-is
+		if str, ok := stringifyClaimValue(value); ok {
+			return str
+		}
+
+		// Value is a non-scalar (array/object) we can't meaningfully substitute
 		return match
 	})
 
 	return result
+}
+
+// stringifyClaimValue converts a claim value to its string form for policy
+// variable substitution. Returns (value, true) for scalar types that a JWT
+// claim can produce after JSON decoding, and ("", false) for slices/maps/nil.
+func stringifyClaimValue(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case bool:
+		return strconv.FormatBool(v), true
+	case float64:
+		// JSON-decoded numbers are float64; render integers without a decimal point
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10), true
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64), true
+	case float32:
+		return strconv.FormatFloat(float64(v), 'g', -1, 32), true
+	case int:
+		return strconv.FormatInt(int64(v), 10), true
+	case int32:
+		return strconv.FormatInt(int64(v), 10), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	case json.Number:
+		return v.String(), true
+	default:
+		return "", false
+	}
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
