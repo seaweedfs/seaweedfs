@@ -4,6 +4,12 @@ import (
 	"strings"
 )
 
+// DiskId identifies a single physical disk on a volume server, matching the
+// uint32 index into Store.Locations that the volume server assigns per mount
+// point. It is carried on the wire as uint32 in VolumeEcShardInformationMessage
+// and VolumeInformationMessage.
+type DiskId uint32
+
 type DiskType string
 
 const (
