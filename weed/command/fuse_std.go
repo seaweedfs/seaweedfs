@@ -244,7 +244,7 @@ func runFuse(cmd *Command, args []string) bool {
 			fusermountPath = parameter.value
 		case "config_dir":
 			if err := util.ConfigurationFileDirectory.Set(parameter.value); err != nil {
-				panic(fmt.Errorf("Could not set config file directory %s: %v", parameter.value, err))
+				panic(fmt.Errorf("config_dir %s: %w", parameter.value, err))
 			}
 		// FUSE performance options
 		case "writebackCache":

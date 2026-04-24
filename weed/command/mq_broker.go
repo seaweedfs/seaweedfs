@@ -1,6 +1,7 @@
 package command
 
 import (
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -116,7 +117,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	glog.V(0).Infof("MQ Broker listening on %s:%d", *mqBrokerOpt.ip, *mqBrokerOpt.port)
-	if err := grpcS.Serve(grpcL); err != nil {
+	if err := grpcS.Serve(grpcL); err != nil && err != grpc.ErrServerStopped {
 		glog.Errorf("Failed to serve MQ Broker: %v", err)
 	}
 

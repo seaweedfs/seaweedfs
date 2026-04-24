@@ -3,6 +3,7 @@ package command
 import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/agent"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -84,7 +85,7 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	}
 
 	glog.Infof("Start Seaweed Message Queue Agent on %s:%d", *mqAgentOpt.ip, *mqAgentOpt.port)
-	if err := grpcS.Serve(grpcL); err != nil {
+	if err := grpcS.Serve(grpcL); err != nil && err != grpc.ErrServerStopped {
 		glog.Errorf("MQ Agent failed to start: %v", err)
 	}
 

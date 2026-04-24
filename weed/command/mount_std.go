@@ -167,7 +167,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	if err := unmount.Unmount(dir); err != nil {
-		glog.Errorf("failed to unmount %s:%v", dir, err)
+		glog.V(1).Infof("pre-mount cleanup unmount %s: %v", dir, err)
 	}
 
 	// start on local unix socket
