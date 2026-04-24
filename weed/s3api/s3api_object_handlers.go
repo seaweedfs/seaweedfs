@@ -2759,7 +2759,17 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 	})
 
 	// Create readers for each chunk, decrypting them independently
-	var readers []io.Reader
+	readers := make([]io.Reader, 0, len(chunks))
+
+	// Close any readers already appended to `readers` on error paths, to avoid
+	// leaking volume-server HTTP connections.
+	closeAppendedReaders := func() {
+		for _, r := range readers {
+			if closer, ok := r.(io.Closer); ok {
+				closer.Close()
+			}
+		}
+	}
 
 	// Get key manager for deserializing per-chunk SSE-S3 metadata
 	keyManager := GetSSES3KeyManager()
@@ -2768,6 +2778,7 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(ctx, chunk)
 		if err != nil {
+			closeAppendedReaders()
 			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
 		}
 
@@ -2776,6 +2787,7 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 			// Check if this chunk has per-chunk SSE-S3 metadata
 			if len(chunk.GetSseMetadata()) == 0 {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("SSE-S3 chunk %s missing per-chunk metadata", chunk.GetFileIdString())
 			}
 
@@ -2783,6 +2795,7 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 			chunkSSES3Metadata, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
 			if err != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			}
 
@@ -2795,6 +2808,7 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 			decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, chunkSSES3Metadata, iv)
 			if decErr != nil {
 				chunkReader.Close()
+				closeAppendedReaders()
 				return nil, fmt.Errorf("failed to decrypt SSE-S3 chunk: %v", decErr)
 			}
 
