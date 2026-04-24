@@ -18,8 +18,13 @@ import (
 
 type Disk struct {
 	NodeImpl
-	volumes      map[needle.VolumeId]storage.VolumeInfo
-	ecShards     map[needle.VolumeId]*erasure_coding.EcVolumeInfo
+	volumes map[needle.VolumeId]storage.VolumeInfo
+	// ecShards is nested so the same volume can retain separate entries per
+	// physical disk id. A single topology Disk represents one DiskType on a
+	// DataNode and may front multiple physical disks of that type, so EC
+	// shards of one volume can legitimately live on several of them. The
+	// outer key is the volume id; the inner key is the physical disk id.
+	ecShards     map[needle.VolumeId]map[types.DiskId]*erasure_coding.EcVolumeInfo
 	ecShardsLock sync.RWMutex
 }
 
@@ -35,7 +40,7 @@ func NewDisk(diskType string) *Disk {
 	s.nodeType = "Disk"
 	s.diskUsages = newDiskUsages()
 	s.volumes = make(map[needle.VolumeId]storage.VolumeInfo, 2)
-	s.ecShards = make(map[needle.VolumeId]*erasure_coding.EcVolumeInfo, 2)
+	s.ecShards = make(map[needle.VolumeId]map[types.DiskId]*erasure_coding.EcVolumeInfo, 2)
 	s.NodeImpl.value = s
 	return s
 }
