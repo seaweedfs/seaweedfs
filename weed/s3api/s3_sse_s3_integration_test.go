@@ -401,6 +401,10 @@ func TestBuildMultipartSSES3Reader_PerChunkKeys(t *testing.T) {
 	}
 	// Pass chunks out of order to verify offset-based sort.
 	shuffled := []*filer_pb.FileChunk{chunks[1], chunks[0]}
+	// Snapshot the input ordering; the helper must not mutate the caller's
+	// slice, which is backed by entry.Chunks and relied on elsewhere (e.g.
+	// ETag computation).
+	shuffledOrderBefore := []*filer_pb.FileChunk{shuffled[0], shuffled[1]}
 
 	fetched := map[string]int{}
 	chunkData := map[string][]byte{
@@ -433,6 +437,12 @@ func TestBuildMultipartSSES3Reader_PerChunkKeys(t *testing.T) {
 	}
 	if fetched["1,aaa"] != 1 || fetched["2,bbb"] != 1 {
 		t.Errorf("expected each chunk fetched once, got %v", fetched)
+	}
+	for i := range shuffledOrderBefore {
+		if shuffled[i] != shuffledOrderBefore[i] {
+			t.Errorf("caller's chunk slice was reordered at index %d: before=%s after=%s",
+				i, shuffledOrderBefore[i].GetFileIdString(), shuffled[i].GetFileIdString())
+		}
 	}
 }
 

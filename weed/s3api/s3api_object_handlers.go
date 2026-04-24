@@ -2756,6 +2756,9 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 		return s3a.createEncryptedChunkReader(ctx, chunk)
 	})
 	if err != nil {
+		if encryptedStream != nil {
+			encryptedStream.Close()
+		}
 		return nil, err
 	}
 
@@ -2772,10 +2775,15 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 // per-chunk metadata (each multipart part has its own DEK and IV). Exposed as a
 // standalone helper so tests can inject a mock chunk fetcher.
 func buildMultipartSSES3Reader(chunks []*filer_pb.FileChunk, keyManager *SSES3KeyManager, fetchChunk func(*filer_pb.FileChunk) (io.ReadCloser, error)) (io.Reader, error) {
-	// Sort chunks by offset to ensure correct order
-	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	// Sort a copy of the slice so callers do not observe their input chunks
+	// reordered (the backing array is shared with entry.Chunks, which other
+	// code may rely on being in its original order, e.g. for ETag computation).
+	sortedChunks := make([]*filer_pb.FileChunk, len(chunks))
+	copy(sortedChunks, chunks)
+	sort.Slice(sortedChunks, func(i, j int) bool {
+		return sortedChunks[i].GetOffset() < sortedChunks[j].GetOffset()
 	})
+	chunks = sortedChunks
 
 	// Create readers for each chunk, decrypting them independently
 	readers := make([]io.Reader, 0, len(chunks))
