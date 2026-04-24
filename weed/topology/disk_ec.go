@@ -9,7 +9,13 @@ import (
 func (d *Disk) GetEcShards() (ret []*erasure_coding.EcVolumeInfo) {
 	d.ecShardsLock.RLock()
 	defer d.ecShardsLock.RUnlock()
-	ret = make([]*erasure_coding.EcVolumeInfo, 0, len(d.ecShards))
+	// Total entries = sum of per-volume per-disk entries, which typically
+	// exceeds the number of unique volumes once shards span multiple disks.
+	total := 0
+	for _, byDisk := range d.ecShards {
+		total += len(byDisk)
+	}
+	ret = make([]*erasure_coding.EcVolumeInfo, 0, total)
 	for _, byDisk := range d.ecShards {
 		for _, ecVolumeInfo := range byDisk {
 			ret = append(ret, ecVolumeInfo)

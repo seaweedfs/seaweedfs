@@ -46,7 +46,14 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		actualByKey[key] = &clone
 	}
 
-	existingEcShards := dn.GetEcShards()
+	// Hold dn.Lock for the full read-diff-write cycle so concurrent heartbeats,
+	// getOrCreateDisk calls, and UpAdjustDiskUsageDelta updates on this data
+	// node are serialized with us — matching UpdateVolumes' locking model.
+	// Internal helpers below assume the caller holds dn.Lock.
+	dn.Lock()
+	defer dn.Unlock()
+
+	existingEcShards := dn.getEcShardsLocked()
 
 	// find out the newShards and deletedShards
 	for _, ecShards := range existingEcShards {
@@ -100,10 +107,21 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 
 	if len(newShards) > 0 || len(deletedShards) > 0 {
 		// if changed, set to the new ec shard map
-		dn.doUpdateEcShards(actualByKey)
+		dn.doUpdateEcShardsLocked(actualByKey)
 	}
 
 	return
+}
+
+// getEcShardsLocked returns the flat list of per-physical-disk EC shard
+// entries across all children. Caller MUST hold dn.Lock (or RLock); each
+// disk's ecShardsLock is taken internally via Disk.GetEcShards.
+func (dn *DataNode) getEcShardsLocked() (ret []*erasure_coding.EcVolumeInfo) {
+	for _, c := range dn.children {
+		disk := c.(*Disk)
+		ret = append(ret, disk.GetEcShards()...)
+	}
+	return ret
 }
 
 func (dn *DataNode) HasEcShards(volumeId needle.VolumeId) (found bool) {
@@ -111,29 +129,38 @@ func (dn *DataNode) HasEcShards(volumeId needle.VolumeId) (found bool) {
 	defer dn.RUnlock()
 	for _, c := range dn.children {
 		disk := c.(*Disk)
-		if byDisk, ok := disk.ecShards[volumeId]; ok && len(byDisk) > 0 {
+		disk.ecShardsLock.RLock()
+		byDisk, ok := disk.ecShards[volumeId]
+		has := ok && len(byDisk) > 0
+		disk.ecShardsLock.RUnlock()
+		if has {
 			return true
 		}
 	}
 	return
 }
 
-func (dn *DataNode) doUpdateEcShards(actualByKey map[ecShardKey]*erasure_coding.EcVolumeInfo) {
-	dn.Lock()
+// doUpdateEcShardsLocked rewrites disk.ecShards from actualByKey. Caller
+// MUST hold dn.Lock; each disk's ecShardsLock is taken internally around
+// the read-modify-write of its ecShards map.
+func (dn *DataNode) doUpdateEcShardsLocked(actualByKey map[ecShardKey]*erasure_coding.EcVolumeInfo) {
 	for _, c := range dn.children {
 		disk := c.(*Disk)
+		disk.ecShardsLock.Lock()
 		disk.ecShards = make(map[needle.VolumeId]map[types.DiskId]*erasure_coding.EcVolumeInfo)
+		disk.ecShardsLock.Unlock()
 	}
 	for _, shard := range actualByKey {
 		disk := dn.getOrCreateDisk(shard.DiskType)
+		disk.ecShardsLock.Lock()
 		byDisk, ok := disk.ecShards[shard.VolumeId]
 		if !ok {
 			byDisk = make(map[types.DiskId]*erasure_coding.EcVolumeInfo, 1)
 			disk.ecShards[shard.VolumeId] = byDisk
 		}
 		byDisk[types.DiskId(shard.DiskId)] = shard
+		disk.ecShardsLock.Unlock()
 	}
-	dn.Unlock()
 }
 
 func (dn *DataNode) DeltaUpdateEcShards(newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
