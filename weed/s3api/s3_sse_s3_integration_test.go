@@ -2,7 +2,11 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -322,4 +326,256 @@ func TestSSES3EndToEndWithDetectPrimaryType(t *testing.T) {
 			}
 		})
 	}
+}
+
+// initSSES3KeyManagerForTest resets the global SSE-S3 key manager and seeds it
+// with a deterministic super key suitable for envelope-encrypt/decrypt cycles
+// inside tests. Returns the freshly initialized manager.
+func initSSES3KeyManagerForTest(t *testing.T) *SSES3KeyManager {
+	t.Helper()
+	globalSSES3KeyManager = NewSSES3KeyManager()
+	t.Cleanup(func() { globalSSES3KeyManager = NewSSES3KeyManager() })
+	km := GetSSES3KeyManager()
+	km.superKey = make([]byte, 32)
+	for i := range km.superKey {
+		km.superKey[i] = byte(i)
+	}
+	return km
+}
+
+// encryptSSES3Part encrypts data with a freshly generated DEK and returns the
+// ciphertext plus serialized per-chunk metadata (DEK + IV). Mirrors what the
+// multipart upload path writes into each part's chunk metadata.
+func encryptSSES3Part(t *testing.T, data []byte) (ciphertext, metadata []byte) {
+	t.Helper()
+	key, err := GenerateSSES3Key()
+	if err != nil {
+		t.Fatalf("GenerateSSES3Key: %v", err)
+	}
+	encReader, iv, err := CreateSSES3EncryptedReader(bytes.NewReader(data), key)
+	if err != nil {
+		t.Fatalf("CreateSSES3EncryptedReader: %v", err)
+	}
+	ciphertext, err = io.ReadAll(encReader)
+	if err != nil {
+		t.Fatalf("ReadAll ciphertext: %v", err)
+	}
+	key.IV = iv
+	metadata, err = SerializeSSES3Metadata(key)
+	if err != nil {
+		t.Fatalf("SerializeSSES3Metadata: %v", err)
+	}
+	return ciphertext, metadata
+}
+
+// TestBuildMultipartSSES3Reader_PerChunkKeys locks in the fix from PR #9211:
+// each multipart part has its own DEK and IV, and the direct multipart reader
+// must decrypt each chunk with its own per-chunk metadata (not the entry-level
+// key). Before the fix, using a shared entry key produced garbled output.
+func TestBuildMultipartSSES3Reader_PerChunkKeys(t *testing.T) {
+	keyManager := initSSES3KeyManagerForTest(t)
+
+	// Two parts with distinct sizes (including a short final part) and
+	// independent DEKs/IVs to exercise the per-chunk key plumbing.
+	part1Plaintext := bytes.Repeat([]byte("ABCDEFGHIJKLMNOP"), 16) // 256 bytes
+	part2Plaintext := []byte("short tail part")                    // 15 bytes
+
+	cipher1, meta1 := encryptSSES3Part(t, part1Plaintext)
+	cipher2, meta2 := encryptSSES3Part(t, part2Plaintext)
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId:      "1,aaa",
+			Offset:      0,
+			Size:        uint64(len(cipher1)),
+			SseType:     filer_pb.SSEType_SSE_S3,
+			SseMetadata: meta1,
+		},
+		{
+			FileId:      "2,bbb",
+			Offset:      int64(len(part1Plaintext)),
+			Size:        uint64(len(cipher2)),
+			SseType:     filer_pb.SSEType_SSE_S3,
+			SseMetadata: meta2,
+		},
+	}
+	// Pass chunks out of order to verify offset-based sort.
+	shuffled := []*filer_pb.FileChunk{chunks[1], chunks[0]}
+	// Snapshot the input ordering; the helper must not mutate the caller's
+	// slice, which is backed by entry.Chunks and relied on elsewhere (e.g.
+	// ETag computation).
+	shuffledOrderBefore := []*filer_pb.FileChunk{shuffled[0], shuffled[1]}
+
+	fetched := map[string]int{}
+	chunkData := map[string][]byte{
+		"1,aaa": cipher1,
+		"2,bbb": cipher2,
+	}
+	fetch := func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
+		fetched[c.GetFileIdString()]++
+		data, ok := chunkData[c.GetFileIdString()]
+		if !ok {
+			return nil, fmt.Errorf("unexpected chunk %s", c.GetFileIdString())
+		}
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+
+	reader, err := buildMultipartSSES3Reader(shuffled, keyManager, fetch)
+	if err != nil {
+		t.Fatalf("buildMultipartSSES3Reader: %v", err)
+	}
+
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll reader: %v", err)
+	}
+
+	want := append(append([]byte{}, part1Plaintext...), part2Plaintext...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("decrypted output mismatch\n want (len=%d): %q\n  got (len=%d): %q",
+			len(want), want, len(got), got)
+	}
+	if fetched["1,aaa"] != 1 || fetched["2,bbb"] != 1 {
+		t.Errorf("expected each chunk fetched once, got %v", fetched)
+	}
+	for i := range shuffledOrderBefore {
+		if shuffled[i] != shuffledOrderBefore[i] {
+			t.Errorf("caller's chunk slice was reordered at index %d: before=%s after=%s",
+				i, shuffledOrderBefore[i].GetFileIdString(), shuffled[i].GetFileIdString())
+		}
+	}
+}
+
+// TestBuildMultipartSSES3Reader_InvalidIVLength verifies that per-chunk metadata
+// with a missing or short IV is rejected with a clear error instead of
+// panicking inside cipher.NewCTR. The short-IV case is crafted by encoding the
+// metadata JSON directly, since SerializeSSES3Metadata refuses to emit a bad
+// IV; this simulates corrupted or legacy on-disk metadata.
+func TestBuildMultipartSSES3Reader_InvalidIVLength(t *testing.T) {
+	keyManager := initSSES3KeyManagerForTest(t)
+
+	// Pre-encrypt the DEK with the current super key so Deserialize can unwrap
+	// it successfully and we reach the IV-length check.
+	dek := bytes.Repeat([]byte{0x42}, s3_constants.AESKeySize)
+	encryptedDEK, nonce, err := keyManager.encryptKeyWithSuperKey(dek)
+	if err != nil {
+		t.Fatalf("encryptKeyWithSuperKey: %v", err)
+	}
+
+	makeMetadata := func(iv []byte) []byte {
+		meta := map[string]string{
+			"algorithm":    s3_constants.SSEAlgorithmAES256,
+			"keyId":        "test-key",
+			"encryptedDEK": base64.StdEncoding.EncodeToString(encryptedDEK),
+			"nonce":        base64.StdEncoding.EncodeToString(nonce),
+		}
+		if iv != nil {
+			meta["iv"] = base64.StdEncoding.EncodeToString(iv)
+		}
+		out, err := json.Marshal(meta)
+		if err != nil {
+			t.Fatalf("marshal metadata: %v", err)
+		}
+		return out
+	}
+
+	cases := []struct {
+		name string
+		iv   []byte
+	}{
+		{"missing IV", nil},
+		{"short IV", []byte("too-short")}, // 9 bytes, not 16
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			closed := false
+			fetch := func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
+				return &closeTrackingReadCloser{Reader: bytes.NewReader([]byte("whatever")), closed: &closed}, nil
+			}
+
+			chunks := []*filer_pb.FileChunk{
+				{
+					FileId:      "1,bad",
+					Offset:      0,
+					Size:        8,
+					SseType:     filer_pb.SSEType_SSE_S3,
+					SseMetadata: makeMetadata(tc.iv),
+				},
+			}
+
+			_, err := buildMultipartSSES3Reader(chunks, keyManager, fetch)
+			if err == nil {
+				t.Fatal("expected error for invalid IV length, got nil")
+			}
+			if !strings.Contains(err.Error(), "invalid IV length") {
+				t.Errorf("expected 'invalid IV length' in error, got: %v", err)
+			}
+			if !closed {
+				t.Error("chunk reader for the bad chunk was not closed on error")
+			}
+		})
+	}
+}
+
+// TestBuildMultipartSSES3Reader_ClosesAppendedOnError verifies that when a
+// later chunk fails (e.g., malformed metadata), readers already appended for
+// earlier valid chunks are closed so volume-server HTTP connections do not leak.
+func TestBuildMultipartSSES3Reader_ClosesAppendedOnError(t *testing.T) {
+	keyManager := initSSES3KeyManagerForTest(t)
+
+	// First chunk: valid SSE-S3 chunk.
+	cipher1, meta1 := encryptSSES3Part(t, []byte("first chunk plaintext"))
+
+	// Second chunk: missing per-chunk metadata, triggers error after first is
+	// already appended.
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId:      "1,good",
+			Offset:      0,
+			Size:        uint64(len(cipher1)),
+			SseType:     filer_pb.SSEType_SSE_S3,
+			SseMetadata: meta1,
+		},
+		{
+			FileId:      "2,bad",
+			Offset:      int64(len(cipher1)),
+			Size:        1,
+			SseType:     filer_pb.SSEType_SSE_S3,
+			SseMetadata: nil, // triggers "missing per-chunk metadata"
+		},
+	}
+
+	firstClosed := false
+	secondClosed := false
+	fetch := func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
+		switch c.GetFileIdString() {
+		case "1,good":
+			return &closeTrackingReadCloser{Reader: bytes.NewReader(cipher1), closed: &firstClosed}, nil
+		case "2,bad":
+			return &closeTrackingReadCloser{Reader: bytes.NewReader([]byte("x")), closed: &secondClosed}, nil
+		}
+		return nil, fmt.Errorf("unexpected chunk %s", c.GetFileIdString())
+	}
+
+	_, err := buildMultipartSSES3Reader(chunks, keyManager, fetch)
+	if err == nil {
+		t.Fatal("expected error from missing chunk metadata, got nil")
+	}
+	if !firstClosed {
+		t.Error("previously appended chunk reader was not closed on error")
+	}
+	if !secondClosed {
+		t.Error("chunk reader for the failing chunk was not closed on error")
+	}
+}
+
+type closeTrackingReadCloser struct {
+	io.Reader
+	closed *bool
+}
+
+func (r *closeTrackingReadCloser) Close() error {
+	*r.closed = true
+	return nil
 }
