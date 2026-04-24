@@ -39,7 +39,7 @@ func TestOffsetManagement(t *testing.T) {
 	})
 
 	t.Run("ConsumerGroupResumption", func(t *testing.T) {
-		testConsumerGroupResumption(t, addr, topic2, groupID+"2")
+		testConsumerGroupResumption(t, gateway, addr, topic2, groupID+"2")
 	})
 }
 
@@ -78,7 +78,7 @@ func testBasicOffsetCommitFetch(t *testing.T, addr, topic, groupID string) {
 	t.Logf("SUCCESS: Offset management test completed - consumed %d + %d messages", len(consumed1), len(consumed2))
 }
 
-func testConsumerGroupResumption(t *testing.T, addr, topic, groupID string) {
+func testConsumerGroupResumption(t *testing.T, gateway *testutil.GatewayTestServer, addr, topic, groupID string) {
 	client := testutil.NewKafkaGoClient(t, addr)
 	msgGen := testutil.NewMessageGenerator()
 
@@ -97,10 +97,18 @@ func testConsumerGroupResumption(t *testing.T, addr, topic, groupID string) {
 	for i, msg := range consumed1 {
 		t.Logf("  Message %d: offset=%d, partition=%d, value=%s", i, msg.Offset, msg.Partition, string(msg.Value))
 	}
+	gateway.LogConsumerGroupSnapshot(groupID)
 
 	// Simulate consumer restart by consuming remaining messages with same group ID
 	t.Logf("=== Phase 3: Second consumer (simulated restart) - consuming remaining messages with same group %s ===", groupID)
-	consumed2, err := client.ConsumeWithGroup(topic, groupID, 2)
+	consumed2, err := client.ConsumeWithGroupDebug(topic, groupID, 2, func(info testutil.ConsumeGroupRetryDebug) {
+		t.Logf("Consumer restart attempt %d/%d for group %s failed before receiving any messages: %v",
+			info.Attempt, info.MaxAttempts, info.GroupID, info.Err)
+		gateway.LogConsumerGroupSnapshot(groupID)
+	})
+	if err != nil {
+		gateway.LogConsumerGroupSnapshot(groupID)
+	}
 	testutil.AssertNoError(t, err, "Failed to consume after restart")
 	t.Logf("Second consumer consumed %d messages:", len(consumed2))
 	for i, msg := range consumed2 {

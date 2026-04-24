@@ -187,8 +187,14 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 
 	// Log what we got back - DETAILED for diagnostics
 	if len(recordBatch) == 0 {
-		glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned EMPTY (offset=%d, hwm=%d)",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, result.highWaterMark)
+		if req.requestedOffset < result.highWaterMark {
+			glog.Warningf("[%s] FETCH GAP for %s[%d]: group=%s member=%s requested offset=%d below HWM=%d but readRecords returned empty (maxWaitMs=%d)",
+				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, pr.connCtx.ConsumerGroup, pr.connCtx.MemberID,
+				req.requestedOffset, result.highWaterMark, req.maxWaitMs)
+		} else {
+			glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned EMPTY (offset=%d, hwm=%d)",
+				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, result.highWaterMark)
+		}
 		result.recordBatch = []byte{}
 	} else {
 		result.recordBatch = recordBatch

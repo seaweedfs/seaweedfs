@@ -31,6 +31,15 @@ type SaramaClient struct {
 	t          *testing.T
 }
 
+type ConsumeGroupRetryDebug struct {
+	Attempt       int
+	MaxAttempts   int
+	Topic         string
+	GroupID       string
+	ExpectedCount int
+	Err           error
+}
+
 // NewKafkaGoClient creates a new kafka-go test client
 func NewKafkaGoClient(t *testing.T, brokerAddr string) *KafkaGoClient {
 	return &KafkaGoClient{
@@ -142,6 +151,14 @@ func (k *KafkaGoClient) ConsumeMessages(topicName string, expectedCount int) ([]
 // member's LeaveGroup / session cleanup and can surface as an i/o timeout on
 // the first FetchMessage.
 func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCount int) ([]kafka.Message, error) {
+	return k.consumeWithGroup(topicName, groupID, expectedCount, nil)
+}
+
+func (k *KafkaGoClient) ConsumeWithGroupDebug(topicName, groupID string, expectedCount int, onRetry func(ConsumeGroupRetryDebug)) ([]kafka.Message, error) {
+	return k.consumeWithGroup(topicName, groupID, expectedCount, onRetry)
+}
+
+func (k *KafkaGoClient) consumeWithGroup(topicName, groupID string, expectedCount int, onRetry func(ConsumeGroupRetryDebug)) ([]kafka.Message, error) {
 	k.t.Helper()
 
 	const maxJoinAttempts = 5
@@ -157,6 +174,16 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 		// full retry (which would start over from the last committed offset).
 		if progressed {
 			return messages, err
+		}
+		if onRetry != nil {
+			onRetry(ConsumeGroupRetryDebug{
+				Attempt:       attempt,
+				MaxAttempts:   maxJoinAttempts,
+				Topic:         topicName,
+				GroupID:       groupID,
+				ExpectedCount: expectedCount,
+				Err:           err,
+			})
 		}
 		if attempt == maxJoinAttempts {
 			break
