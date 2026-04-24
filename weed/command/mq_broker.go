@@ -110,7 +110,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		reflection.Register(localGrpcS)
 		go func() {
 			glog.V(0).Infof("MQ Broker listening on localhost:%d", *mqBrokerOpt.port)
-			if err := localGrpcS.Serve(localL); err != nil {
+			if err := localGrpcS.Serve(localL); err != nil && err != grpc.ErrServerStopped {
 				glog.Errorf("MQ Broker localhost listener error: %v", err)
 			}
 		}()
