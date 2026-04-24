@@ -480,7 +480,9 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 	if viper.GetString("https.volume.ca") != "" {
 		clientCertFile := viper.GetString("https.volume.ca")
 		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
-		security.FixTlsConfig(util.GetViper(), httpS.TLSConfig)
+		if err := security.FixTlsConfig(util.GetViper(), httpS.TLSConfig); err != nil {
+			glog.Fatalf("Could not fix TLS config: %v", err)
+		}
 	}
 
 	var closeCert func()

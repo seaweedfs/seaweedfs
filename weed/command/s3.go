@@ -364,7 +364,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			if err != nil {
 				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
-			newHttpServer(router, nil).Serve(s3SocketListener)
+			if err := newHttpServer(router, nil).Serve(s3SocketListener); err != nil && err != http.ErrServerClosed {
+				glog.Fatalf("Failed to start S3 http server: %v", err)
+			}
 		}()
 	}
 

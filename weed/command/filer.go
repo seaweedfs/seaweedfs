@@ -511,7 +511,10 @@ func (fo *FilerOptions) startFiler() {
 			ClientCAs:      caCertPool,
 		}
 
-		security.FixTlsConfig(util.GetViper(), tlsConfig)
+		err = security.FixTlsConfig(util.GetViper(), tlsConfig)
+		if err != nil {
+			glog.Fatalf("Filer failed to fix TLS config: %v", err)
+		}
 
 		var localTLSServer *http.Server
 		if filerLocalListener != nil {
@@ -534,10 +537,16 @@ func (fo *FilerOptions) startFiler() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			if socketServer != nil {
-				socketServer.Shutdown(shutdownCtx)
+				err = socketServer.Shutdown(shutdownCtx)
+				if err != nil {
+					glog.Warningf("socket server shutdown: %v", err)
+				}
 			}
 			if localTLSServer != nil {
-				localTLSServer.Shutdown(shutdownCtx)
+				err = localTLSServer.Shutdown(shutdownCtx)
+				if err != nil {
+					glog.Warningf("local TLS server shutdown: %v", err)
+				}
 			}
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTPS server shutdown: %v", err)

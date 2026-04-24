@@ -166,7 +166,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return false
 	}
 
-	unmount.Unmount(dir)
+	if err := unmount.Unmount(dir); err != nil {
+		glog.V(1).Infof("pre-mount cleanup unmount %s: %v", dir, err)
+	}
 
 	// start on local unix socket
 	if *option.localSocket == "" {
@@ -186,7 +188,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
-		os.MkdirAll(dir, os.FileMode(0777)&^umask)
+		if err := os.MkdirAll(dir, os.FileMode(0777)&^umask); err != nil {
+			glog.Fatalf("failed to create directory %s:%v", dir, err)
+		}
 	}
 	fileInfo, err := os.Stat(dir)
 
@@ -357,8 +361,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
 		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
 		// Peer chunk sharing
-		PeerEnabled:   option.peerEnabled != nil && *option.peerEnabled,
-		PeerListen:    peerStringOrEmpty(option.peerListen),
+		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
+		PeerListen:     peerStringOrEmpty(option.peerListen),
 		PeerAdvertise:  peerStringOrEmpty(option.peerAdvertise),
 		PeerDataCenter: peerStringOrEmpty(option.peerDataCenter),
 		PeerRack:       peerStringOrEmpty(option.peerRack),
@@ -381,7 +385,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		glog.Fatalf("Mount fail: %v", err)
 	}
 	grace.OnInterrupt(func() {
-		unmount.Unmount(dir)
+		if err := unmount.Unmount(dir); err != nil {
+			glog.Errorf("failed to unmount %s: %v", dir, err)
+		}
 	})
 
 	if mountOptions.fuseCommandPid != 0 {

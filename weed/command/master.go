@@ -148,7 +148,9 @@ func runMaster(cmd *Command, args []string) bool {
 
 	parent, _ := util.FullPath(*m.metaFolder).DirAndName()
 	if util.FileExists(string(parent)) && !util.FileExists(*m.metaFolder) {
-		os.MkdirAll(*m.metaFolder, 0755)
+		if err := os.MkdirAll(*m.metaFolder, 0755); err != nil {
+			glog.Fatalf("Could not create Meta Folder %s: %v", *m.metaFolder, err)
+		}
 	}
 	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
@@ -324,7 +326,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	var tlsConfig *tls.Config
 	if useMTLS {
 		tlsConfig = security.LoadClientTLSHTTP(clientCertFile)
-		security.FixTlsConfig(util.GetViper(), tlsConfig)
+		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
+			glog.Fatalf("failed to fix TLS config: %v", err)
+		}
 	}
 
 	if useTLS {
