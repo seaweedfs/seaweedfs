@@ -1270,6 +1270,10 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 // stringifyClaimValue converts a claim value to its string form for policy
 // variable substitution. Returns (value, true) for scalar types that a JWT
 // claim can produce after JSON decoding, and ("", false) for slices/maps/nil.
+// JSON's generic decoder only produces float64 / json.Number for numbers, but
+// RequestContext can also be populated from typed sources (e.g., custom
+// providers or internal code), so all common integer widths — signed and
+// unsigned — are handled explicitly.
 func stringifyClaimValue(value interface{}) (string, bool) {
 	switch v := value.(type) {
 	case string:
@@ -1286,10 +1290,24 @@ func stringifyClaimValue(value interface{}) (string, bool) {
 		return strconv.FormatFloat(float64(v), 'g', -1, 32), true
 	case int:
 		return strconv.FormatInt(int64(v), 10), true
+	case int8:
+		return strconv.FormatInt(int64(v), 10), true
+	case int16:
+		return strconv.FormatInt(int64(v), 10), true
 	case int32:
 		return strconv.FormatInt(int64(v), 10), true
 	case int64:
 		return strconv.FormatInt(v, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint64:
+		return strconv.FormatUint(v, 10), true
 	case json.Number:
 		return v.String(), true
 	default:
