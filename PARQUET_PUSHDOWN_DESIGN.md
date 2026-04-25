@@ -749,7 +749,12 @@ Position deletes name `(data_file, row_position)` pairs. The set of position-del
 }
 ```
 
-Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
+For each applicable delete file, the bitmap builder reads its rows and adds row positions to the per-data-file bitmap as follows:
+
+- when `pdf.ReferencedDataFile == data_file.Path` (single-target), every row contributes its `position` value;
+- when `pdf.ReferencedDataFile` is empty (multi-target file), each row carries its own `(file_path, position)` pair, and only rows where `file_path == data_file.Path` contribute. Skipping the row-level `file_path` filter would over-delete by attributing every row in the delete file to every applicable data file.
+
+Pushdown merges the filtered rows into a per-data-file roaring bitmap and caches it as a side index:
 
 ```text
 <parquet_parent>/.index/<file_name>/<identity>/deletes.position.bitmap
