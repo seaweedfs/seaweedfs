@@ -204,18 +204,32 @@ row_group.max < predicate_min OR row_group.min > predicate_max
 
 ### 3. Page-Level Index
 
-Stores min/max and offsets per page.
+Wraps Parquet's native `ColumnIndex` (per-page min/max/null-count) and `OffsetIndex` (per-page byte offset, length, and `first_row_index` within the row group). The side index materializes both for fast access without re-parsing the footer.
 
 Useful when row groups are large and predicates are selective.
 
-Example:
+Predicate evaluation example:
 
 ```text
 row_group_3 / column_timestamp:
-  page_0 min=2026-01-01 max=2026-01-02
-  page_1 min=2026-01-03 max=2026-01-04
-  page_2 min=2026-01-05 max=2026-01-06
+  page_0 first_row=0       min=2026-01-01 max=2026-01-02
+  page_1 first_row=120000  min=2026-01-03 max=2026-01-04
+  page_2 first_row=240000  min=2026-01-05 max=2026-01-06
 ```
+
+Page pruning is *row-range-driven*, not byte-range-driven. The flow:
+
+1. Apply the predicate against the predicate column's `ColumnIndex` to pick surviving pages.
+2. Translate surviving pages to row ranges using `first_row_index` (e.g. pages 1–2 above → row range `[120000, 360000)` within row group 3).
+3. For each *projected* column, walk that column's `OffsetIndex` and select the pages whose `[first_row_index, next_first_row_index)` intersects the surviving row ranges. Page boundaries do not align across columns within a row group, so this translation step is mandatory; reusing the predicate column's page numbers as if they were column-independent is wrong.
+4. Return per-column page byte ranges in the response.
+
+Two Parquet-specific pitfalls the index must handle:
+
+- **Dictionary pages.** A column chunk may begin with a dictionary page that is not described by `OffsetIndex` (which lists data pages only). The dictionary page must still be fetched whenever any data page from that column chunk is read, so the byte range returned for a surviving page set must include the dictionary page region of the chunk.
+- **Repeated/nested fields.** For columns where one Parquet record spans multiple values (lists, maps), `first_row_index` refers to row positions in the row group, not value positions; row-range translation across columns still works because rows are aligned per row group, but downstream consumers must remember that data-page row counts and value counts are not the same.
+
+If the file was written without `ColumnIndex`/`OffsetIndex`, page-level pruning is unavailable and the planner falls back to row-group pruning.
 
 ### 4. Bloom Filter Index
 
