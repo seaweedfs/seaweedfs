@@ -593,17 +593,42 @@ If the identity of a Parquet file changes, its indexes are invalidated and rebui
 
 ## Handling Iceberg Deletes
 
-Iceberg uses two delete mechanisms, with different implications for indexing:
+Iceberg's delete model has evolved across spec versions. Pushdown must support all three forms:
 
-### Position deletes (precomputable)
+| Form | Iceberg spec | Storage | Per-data-file? | Precomputable? |
+|---|---|---|---|---|
+| Position delete files | v2 | Parquet/Avro/ORC of `(file_path, position)` rows | No (one delete file may target many) | Yes (merge to bitmap) |
+| Equality delete files | v2 | Parquet/Avro/ORC of equality-key rows | No (predicate scope by sequence number) | No (must evaluate per query) |
+| Deletion vectors | v3 | Puffin blob (`deletion-vector-v1`) holding a roaring bitmap | Yes (one DV per data file) | Yes (it *is* the bitmap) |
 
-Position deletes name `(data_file, row_position)` pairs. They can be merged into a per-data-file roaring bitmap and cached as a side index:
+### Position delete files (v2; precomputable)
+
+Position deletes name `(data_file, row_position)` pairs. The set of position-delete files that apply to a given data file is `{ pdf : pdf.data_sequence_number >= data_file.data_sequence_number AND pdf.referenced_data_file in {NULL, data_file.path} }`. Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
 
 ```text
 <system-prefix>/<table_uuid>/.../<identity>/deletes.position.bitmap
 ```
 
+The cached bitmap is only valid for the exact set of position-delete files that produced it — see [Cache key](#position-delete-bitmap-cache-key) below.
+
 Pushdown subtracts this bitmap from candidate row sets before returning results.
+
+### Deletion vectors (v3; precomputable)
+
+Iceberg v3 replaces position delete *files* with deletion *vectors*: a roaring bitmap of file-absolute row positions for one specific data file, stored as a Puffin blob of type `deletion-vector-v1`. Because each DV already targets a single data file and is already a bitmap, no merge is needed — the cached form is just the decoded bitmap, keyed by the DV blob's content (offset, length, hash) inside its Puffin file.
+
+Multiple DV blobs may live in one Puffin file, so the per-data-file pointer is `(puffin_file_path, blob_offset, blob_length)`, not just a file path. The pushdown request must carry that triple per data file (see [DeleteFileRef](#pushdown-request)).
+
+Strategy:
+
+```text
+1. resolve referenced Puffin file + blob offset/length from the manifest
+2. range-GET the Puffin blob
+3. decode roaring bitmap (cached)
+4. subtract from candidate row sets
+```
+
+For tables that mix v2 position-delete files and v3 DVs (legal during migration), pushdown applies both: union the DV bitmap with the merged-position-delete bitmap before subtracting.
 
 ### Equality deletes (must evaluate at query time)
 
