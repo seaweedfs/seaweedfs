@@ -479,20 +479,18 @@ Spark/Trino/DuckDB connector
 
 ## Index Consistency
 
-Indexes must be tied to immutable file identity:
+Indexes must be tied to a stable file identity. Preferred identity, in order of strength:
 
 ```text
-file path
-file size
-etag/version
-modification time
-Iceberg snapshot id
-content hash, optional
+1. Iceberg manifest fields: file_path + file_size_in_bytes + record_count
+   (+ snapshot id for cross-snapshot lookups)
+2. S3 ETag (canonical for raw S3 access without an Iceberg manifest)
+3. Content hash (optional; expensive but fully unambiguous)
 ```
 
-If the Parquet file changes, indexes are invalidated and rebuilt.
+Modification time is intentionally not used as identity: replication, re-upload, and metadata-only operations can change mtime without changing content, and content can change without mtime moving on some backends.
 
-For Iceberg tables, this is easier because data files are generally immutable. New snapshots add or remove files rather than modifying files in place.
+If the identity of a Parquet file changes, its indexes are invalidated and rebuilt. Iceberg makes this cheap because data files are immutable; new snapshots add or remove files rather than modifying files in place.
 
 ## Handling Iceberg Deletes
 
