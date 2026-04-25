@@ -578,12 +578,14 @@ Pushdown subtracts this bitmap from candidate row sets before returning results.
 
 ### Equality deletes (must evaluate at query time)
 
-Equality deletes carry a predicate (e.g. `id = 42`) and apply to all data files in scope of the delete file's sequence number. They cannot be precomputed as a static bitmap per data file because:
+Equality deletes carry a predicate (e.g. `id = 42`) and apply only to data files whose Iceberg sequence number is **strictly less than** the delete file's sequence number. Data files added at or after the delete file's sequence number are not affected — those rows simply never existed when the delete was written. This is why the per-data-file pushdown request must carry both the data file's sequence number and the delete files attached to it: the planner has already resolved this scoping using sequence numbers.
 
-- one equality delete file can affect many data files
-- new data files added later may need to be filtered by the same delete predicate until compaction
+Equality deletes cannot be precomputed as a static bitmap per data file because:
 
-Strategy: evaluate equality-delete predicates at query time, accelerated by the same scalar indexes (bloom, bitmap, B-tree). Optionally cache materialized result bitmaps keyed by `(data_file_id, equality_delete_file_id)` and invalidate on snapshot change.
+- one equality delete file can affect many older data files
+- the predicate must be re-evaluated against current row content; a bitmap captured at one snapshot will not be reusable at a later snapshot if other equality deletes (or row-level updates expressed as deletes) alter the visible set
+
+Strategy: evaluate equality-delete predicates at query time, accelerated by the same scalar indexes (bloom, bitmap, B-tree). Optionally cache materialized result bitmaps keyed by `(data_file_id, equality_delete_file_id, snapshot_id)` and invalidate on snapshot change.
 
 ### End-to-end flow
 
