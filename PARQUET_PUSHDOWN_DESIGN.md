@@ -306,7 +306,7 @@ Possible index types:
 Index layout:
 
 ```text
-/table/_seaweed_index/.../vector.embedding.ivf/
+<system-prefix>/<table_uuid>/.../<identity>/vector.embedding.ivf/
   centroids
   list_000001
   list_000002
@@ -571,7 +571,7 @@ Iceberg uses two delete mechanisms, with different implications for indexing:
 Position deletes name `(data_file, row_position)` pairs. They can be merged into a per-data-file roaring bitmap and cached as a side index:
 
 ```text
-/table/_seaweed_index/.../deletes.position.bitmap
+<system-prefix>/<table_uuid>/.../<identity>/deletes.position.bitmap
 ```
 
 Pushdown subtracts this bitmap from candidate row sets before returning results.
