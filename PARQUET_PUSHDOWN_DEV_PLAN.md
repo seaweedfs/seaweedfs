@@ -32,7 +32,7 @@ These are commitments unless an open question below changes them.
 
 - **Residency: separate `weed pushdown` daemon.** The pushdown service runs as its own process, scaled and operated independently of the filer. It talks to the filer over the existing filer gRPC API to read Parquet data and side-index blobs, and to the Iceberg catalog (via the existing internal package — see decision 6 below) for snapshot resolution and request validation. Rationale: pushdown availability and resource consumption (cache memory, predicate evaluation CPU, per-tenant index loads) decouple from the filer's hot path, and the daemon can scale horizontally without touching the storage layer. The daemon is stateless on disk: caches are in-memory; durable side indexes live in the filer per [Side-index path](#side-index-path).
 - **Wire protocol: gRPC.** New service definition `parquet_pushdown_pb.ParquetPushdown` in `weed/pb/parquet_pushdown_pb/`. REST/HTTP shim only if a connector requires it. JSON variant deferred.
-- **Trust mode for v1: connector-trusted.** The pushdown endpoint is reachable only inside the trust boundary. `PushdownStats.TrustMode = "connector-trusted"`. Catalog-validated mode is built as Phase 1.5, behind a flag, before any external exposure. Manifest-signed is not on the roadmap.
+- **Trust mode for v1: catalog-validated, with connector-trusted as a developer-only flag.** The default deployment validates every request's `DataFiles` and `Deletes` against the Iceberg catalog at the requested snapshot before serving (full rules in [Trust Model](./PARQUET_PUSHDOWN_DESIGN.md#trust-model-and-catalog-validation)). Connector-trusted is supported but only enabled by an explicit flag for local development and benchmarks; it is not the default and is rejected in production builds. Manifest-signed is not on the roadmap.
 - **Predicate engine for v1: built-in subset evaluator.** The wire format accepts Substrait `ExtendedExpression`, but v1 implements only: comparisons (`=, !=, <, <=, >, >=`), `IN`, `BETWEEN`, `IS NULL`, and boolean `AND/OR/NOT` over them. Anything outside this subset returns `unsupported predicate`, and the connector falls back to a standard scan. Full Substrait evaluation lands in Phase 2.
 - **Side-index physical location:** under a separate filer namespace `/__pushdown__/<table_uuid>/...`, governed by the same filer ACLs. Out of any user-visible bucket prefix. Path layout matches the design's `<system-prefix>/<table_uuid>/.../<identity>/` shape.
 - **Parquet library: `parquet-go/parquet-go`** (already in use elsewhere in the repo). Apache `arrow-go/v18/parquet` is *not* introduced.
@@ -116,14 +116,16 @@ Each milestone is a shippable PR (or small chain of PRs). M0–M2 together imple
   - Predicate `WHERE timestamp BETWEEN t1 AND t2` against a 5M-row partitioned Iceberg table prunes to the expected row groups (verified by counting `RowGroupRef`).
   - `unsupported predicate` returns a status the connector can recognize and fall back from.
 
-**End of design Phase 1.**
+### M3 — Catalog-validated trust mode (1 PR; required for Phase 1)
 
-### M3 — Catalog-validated trust mode (1 PR; optional before external exposure)
+Lands before M2 ships externally. Sequenced after M1 because catalog validation needs the parsed-footer cache to verify `RecordCount` and column-chunk metadata against the manifest.
 
-- `catalog/validator.go`: read the Iceberg snapshot, verify `(Path, SizeBytes, RecordCount, DataSequenceNumber, PartitionSpecId, PartitionValues)` for each `DataFile` and that the `Deletes` list matches the manifest's attached delete files.
-- Configurable per-endpoint: `pushdown.trust=connector-trusted|catalog-validated`.
-- Cache validated planning result keyed by `SnapshotId` to amortize manifest reads.
-- Acceptance: a tampered request (omitted delete file, wrong sequence number, file not in manifest) is rejected with `permission_denied`.
+- `catalog/validator.go`: read the Iceberg snapshot via the existing internal Iceberg package (decision 6 below), verify `(Path, SizeBytes, RecordCount, DataSequenceNumber, PartitionSpecId, PartitionValues)` for each `DataFile` and that the `Deletes` list matches the manifest's attached delete files.
+- Configurable per-endpoint: `pushdown.trust=catalog-validated|connector-trusted` (default `catalog-validated`; `connector-trusted` requires an explicit dev-mode flag).
+- Cache validated planning result keyed by `(table, SnapshotId)` to amortize manifest reads across requests in the same snapshot.
+- Acceptance: a tampered request (omitted delete file, wrong sequence number, file not in manifest, wrong partition values) is rejected with `permission_denied`. Cache hit/miss visible in `PushdownStats`.
+
+**End of design Phase 1.** Phase 1 does not ship without M3.
 
 ### M4 — Bloom-filter side index (1–2 PRs; design Phase 2 starts)
 
