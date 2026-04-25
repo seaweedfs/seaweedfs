@@ -498,10 +498,16 @@ type DeleteFileRef struct {
 
     // Puffin-only fields, used when Content == PositionDeletes and
     // FileFormat == FileFormatPuffin (deletion vectors). The DV blob
-    // lives at (Path, BlobOffset, BlobLength).
+    // lives at (Path, BlobOffset, BlobLength). BlobCRC32 is the
+    // CRC-32 the Puffin footer records for this blob's
+    // (decompressed) bytes; populated when present, used as a
+    // tamper / corruption check, NOT as a content hash for cache
+    // identity. Cache identity is (puffin file identity per Index
+    // Consistency, BlobOffset, BlobLength) — Puffin files are
+    // immutable, so that triple is sufficient.
     BlobOffset int64
     BlobLength int64
-    BlobDigest []byte
+    BlobCRC32  uint32
 
     // ReferencedDataFile is set when this delete file targets a single
     // data file (mandatory for v3 deletion vectors; optional for v2
@@ -693,9 +699,9 @@ Pushdown subtracts this bitmap from candidate row sets before returning results.
 
 ### Deletion vectors (v3; precomputable)
 
-Iceberg v3 replaces position delete *files* with deletion *vectors*: a roaring bitmap of file-absolute row positions for one specific data file, stored as a Puffin blob of type `deletion-vector-v1`. Because each DV already targets a single data file and is already a bitmap, no merge is needed — the cached form is just the decoded bitmap, keyed by the DV blob's content (offset, length, hash) inside its Puffin file.
+Iceberg v3 replaces position delete *files* with deletion *vectors*: a roaring bitmap of file-absolute row positions for one specific data file, stored as a Puffin blob of type `deletion-vector-v1`. Because each DV already targets a single data file and is already a bitmap, no merge is needed — the cached form is just the decoded bitmap, keyed by the immutable triple `(puffin_file_identity, blob_offset, blob_length)`.
 
-Multiple DV blobs may live in one Puffin file, so the per-data-file pointer is `(puffin_file_path, blob_offset, blob_length)`, not just a file path. The pushdown request must carry that triple per data file (see [DeleteFileRef](#pushdown-request)).
+Multiple DV blobs may live in one Puffin file, so the per-data-file pointer is `(puffin_file_path, blob_offset, blob_length)`, not just a file path. The pushdown request must carry that triple per data file (see [DeleteFileRef](#pushdown-request)). The Puffin footer also records a CRC-32 per blob, which the server may verify on read; the CRC is *not* a content hash usable for cross-table cache lookup, only for tamper detection.
 
 Strategy:
 
@@ -721,7 +727,7 @@ key = (
 )
 ```
 
-Equivalent shorthand for v3 DVs, which are intrinsically per-data-file: `(data_file_identity, puffin_blob_digest)` where `puffin_blob_digest` is the Puffin-recorded content hash of the DV blob.
+Equivalent shorthand for v3 DVs, which are intrinsically per-data-file: `(data_file_identity, puffin_file_identity, blob_offset, blob_length)`. Because Puffin files are immutable, that quadruple is sufficient — no separate content hash is required, and no such hash is exposed by Puffin metadata anyway. The Puffin per-blob CRC-32, when present, is used only to detect corruption on read.
 
 `snapshot_id` is *not* a sufficient key — different snapshots can produce the same bitmap, and pinning the cache to snapshot id wastes work after no-op snapshots. Conversely, snapshot_id alone is *insufficient* across tables because position-delete files are not uniquely identified by snapshot number.
 
