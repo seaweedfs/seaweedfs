@@ -802,7 +802,16 @@ When pushdown receives a request, it computes the key from the position-delete e
 
 ### Equality deletes (must evaluate at query time)
 
-Equality deletes carry a predicate (e.g. `id = 42`). The applicability rule is:
+An equality-delete file is *not* a serialized SQL predicate. It is a list of rows, each carrying values for a fixed set of equality-key columns (the file's `equality_ids`). A data row in scope is deleted if its values for those columns match any row in the delete file.
+
+Execution model:
+
+1. Read the equality-key columns from the data file (using projection / page-level pruning over those columns only).
+2. Read the equality-key rows from each applicable delete file. The set of these rows can be loaded once and reused across queries against the same data file (see [cache reusability](#equality-delete-bitmap-cache-reusability) below).
+3. For each data row, look up its key tuple in the delete-file key set. Use Iceberg's equality semantics: `NULL` values match `NULL` (unlike SQL `NULL = NULL`), and floating-point comparisons follow Iceberg's documented rules (`NaN` is a single class for equality matching). Decimal, timestamp, and date types compare by canonical encoded value.
+4. Mark matching data rows for deletion.
+
+The applicability rule for which equality-delete files apply is:
 
 ```text
 { edf :
