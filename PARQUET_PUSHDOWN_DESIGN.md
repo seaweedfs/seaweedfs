@@ -507,9 +507,8 @@ type ParquetPushdownResponse struct {
     FileRanges []FileRange
     RowGroups  []RowGroupRef
     Pages      []PageRef
-    RowIds     []RowRef // optional; empty unless RequestRowIds set and within MaxRowIds
-    Scores     []float32
-    Truncated  bool     // true if row-id list was omitted/truncated due to size cap
+    RowRefs    []ScoredRowRef // optional; empty unless RequestRowIds set and within MaxRowIds
+    Truncated  bool           // true if row-ref list was omitted/truncated due to size cap
     Stats      PushdownStats
 }
 
@@ -533,12 +532,28 @@ type PageRef struct {
     Length   int64
 }
 
+// RowRef identifies a single row by its file-absolute row position,
+// matching Iceberg's position-delete semantics. RowGroup is included
+// for fast locality but is derivable from FilePosition + the file's
+// row-group boundaries.
 type RowRef struct {
-    File     string
-    RowGroup int
-    RowId    int64
+    File        string
+    RowGroup    int   // row group containing FilePosition
+    FilePosition int64 // 0-based row index within the file (file-absolute)
+}
+
+// ScoredRowRef pairs a row reference with its similarity score. Used
+// for vector-search results so score order is unambiguous; non-vector
+// queries leave Score zero.
+type ScoredRowRef struct {
+    Ref   RowRef
+    Score float32
 }
 ```
+
+Row identity uses **file-absolute** position (matching Iceberg position-delete files), not row-group-local. Row-group-local indexing is exposed via the convenience `RowGroup` field but is not authoritative — clients converting a `RowRef` back to a Parquet read should locate the row by `FilePosition` against the parsed footer's row-group boundaries.
+
+`Scores` is no longer a parallel array. Pairing each score with its row ref via `ScoredRowRef` removes the ordering constraint and lets a single response mix scored (vector) and unscored (scalar) results without ambiguity.
 
 ## Connector Behavior
 
