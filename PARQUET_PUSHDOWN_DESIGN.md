@@ -665,13 +665,15 @@ In all cases, pushdown must degrade gracefully: if the requested side index is m
 
 Pushdown is not free. Each request adds a planning round-trip and forces the server to load and evaluate side indexes. For small or unselective queries this is a net loss versus a direct ranged GET.
 
+The relevant cost input is the **planned scan after Iceberg pruning**, not the table's total size. A 100 TiB table where Iceberg planning has already narrowed the query to a single 4 MiB file is a poor candidate for pushdown; a 50 GiB table where Iceberg planning produces 5,000 surviving files is a great candidate even if each individual file is small.
+
 Connectors should skip the pushdown API when:
 
-- the table is small enough that a single Parquet scan is cheaper than the planning round-trip (rule of thumb: total file size below a few footer reads, ~10 MiB)
+- the planned scan is small enough that a direct ranged GET is cheaper than the planning round-trip (rule of thumb: total planned scan bytes below ~10 MiB *and* surviving file count ≤ 1)
 - the predicate is non-selective (estimated selectivity > ~0.5) and no projection prunes meaningful columns
 - the query has no predicate and no vector clause — file pruning by Iceberg metadata alone already does the job
 
-The pushdown API should expose its own selectivity and cost estimates in the response stats so connectors can learn when to use it; explicit configuration knobs (`min_table_size`, `min_selectivity`) can act as a fallback.
+The pushdown API should expose its own selectivity and cost estimates in the response stats so connectors can learn when to use it; explicit configuration knobs (`min_planned_scan_bytes`, `min_planned_file_count`, `min_selectivity`) can act as a fallback.
 
 ## Security and Access Control
 
