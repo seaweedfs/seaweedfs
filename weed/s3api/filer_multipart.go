@@ -189,10 +189,17 @@ type multipartPartBoundary struct {
 	ETag       string `json:"etag"`
 }
 
+type multipartSSES3Info struct {
+	keyData []byte
+	key     *SSES3Key
+	baseIV  []byte
+}
+
 type multipartCompletionState struct {
 	deleteEntries      []*filer_pb.Entry
 	partEntries        map[int][]*filer_pb.Entry
 	pentry             *filer_pb.Entry
+	sses3Info          *multipartSSES3Info
 	mime               string
 	finalParts         []*filer_pb.FileChunk
 	offset             int64
@@ -219,6 +226,102 @@ func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadI
 		}
 	}
 	return result
+}
+
+func extractMultipartSSES3Info(entry *filer_pb.Entry) (*multipartSSES3Info, error) {
+	if entry == nil || entry.Extended == nil {
+		return nil, nil
+	}
+	if encryptionType := string(entry.Extended[s3_constants.SeaweedFSSSES3Encryption]); encryptionType != s3_constants.SSEAlgorithmAES256 {
+		return nil, nil
+	}
+
+	baseIVEncoded := entry.Extended[s3_constants.SeaweedFSSSES3BaseIV]
+	if len(baseIVEncoded) == 0 {
+		return nil, fmt.Errorf("missing SSE-S3 multipart base IV")
+	}
+	baseIV, err := base64.StdEncoding.DecodeString(string(baseIVEncoded))
+	if err != nil {
+		return nil, fmt.Errorf("decode SSE-S3 multipart base IV: %w", err)
+	}
+	if len(baseIV) != s3_constants.AESBlockSize {
+		return nil, fmt.Errorf("invalid SSE-S3 multipart base IV length %d", len(baseIV))
+	}
+
+	keyDataEncoded := entry.Extended[s3_constants.SeaweedFSSSES3KeyData]
+	if len(keyDataEncoded) == 0 {
+		return nil, fmt.Errorf("missing SSE-S3 multipart key data")
+	}
+	keyData, err := base64.StdEncoding.DecodeString(string(keyDataEncoded))
+	if err != nil {
+		return nil, fmt.Errorf("decode SSE-S3 multipart key data: %w", err)
+	}
+
+	key, err := DeserializeSSES3Metadata(keyData, GetSSES3KeyManager())
+	if err != nil {
+		return nil, fmt.Errorf("deserialize SSE-S3 multipart key data: %w", err)
+	}
+
+	return &multipartSSES3Info{
+		keyData: keyData,
+		key:     key,
+		baseIV:  baseIV,
+	}, nil
+}
+
+func completedMultipartChunk(chunk *filer_pb.FileChunk, offset int64, sses3Info *multipartSSES3Info) (*filer_pb.FileChunk, error) {
+	finalChunk := &filer_pb.FileChunk{
+		FileId:       chunk.GetFileIdString(),
+		Offset:       offset,
+		Size:         chunk.Size,
+		ModifiedTsNs: chunk.ModifiedTsNs,
+		CipherKey:    chunk.CipherKey,
+		ETag:         chunk.ETag,
+		IsCompressed: chunk.IsCompressed,
+		SseType:      chunk.SseType,
+		SseMetadata:  chunk.SseMetadata,
+	}
+
+	if sses3Info == nil {
+		return finalChunk, nil
+	}
+	if finalChunk.GetSseType() != filer_pb.SSEType_NONE && finalChunk.GetSseType() != filer_pb.SSEType_SSE_S3 {
+		return finalChunk, nil
+	}
+	// Trust existing per-chunk SSE-S3 metadata: if the part went through
+	// putToFiler's chunk loop with a non-nil sseS3Key it carries an offset
+	// derived IV that we cannot recover from the upload-entry alone. We do
+	// not validate that the embedded IV equals calculateIVWithOffset(baseIV,
+	// chunk.Offset); only completely missing metadata is backfilled. This
+	// keeps healthy parts untouched and limits backfill to the cases that
+	// caused #8908.
+	if finalChunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(finalChunk.GetSseMetadata()) > 0 {
+		return finalChunk, nil
+	}
+
+	// IV uses the chunk's offset within its part, with no partNumber term.
+	// This mirrors the encryption side: putToFiler hardcodes partOffset=0 when
+	// it calls handleSSES3MultipartEncryption for every part, so each part's
+	// encrypted stream begins at IV = calculateIVWithOffset(baseIV, 0) = baseIV.
+	// Each chunk within that stream is then at IV =
+	// calculateIVWithOffset(baseIV, chunk.Offset_part_local). Any deviation
+	// (e.g. adding (partNumber-1)*PartOffsetMultiplier) would produce IVs that
+	// do not match the actual encryption and would corrupt decryption.
+	chunkIV, _ := calculateIVWithOffset(sses3Info.baseIV, chunk.GetOffset())
+	chunkKey := &SSES3Key{
+		Key:       sses3Info.key.Key,
+		KeyID:     sses3Info.key.KeyID,
+		Algorithm: sses3Info.key.Algorithm,
+		IV:        chunkIV,
+	}
+	chunkMetadata, err := SerializeSSES3Metadata(chunkKey)
+	if err != nil {
+		return nil, fmt.Errorf("serialize SSE-S3 chunk metadata for %s: %w", chunk.GetFileIdString(), err)
+	}
+
+	finalChunk.SseType = filer_pb.SSEType_SSE_S3
+	finalChunk.SseMetadata = chunkMetadata
+	return finalChunk, nil
 }
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
@@ -312,6 +415,11 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 	if pentry.Attributes != nil {
 		mime = pentry.Attributes.Mime
 	}
+	sses3Info, sses3Err := extractMultipartSSES3Info(pentry)
+	if sses3Err != nil {
+		glog.Errorf("completeMultipartUpload %s %s SSE-S3 metadata error: %v", *input.Bucket, *input.UploadId, sses3Err)
+		return nil, nil, s3err.ErrInternalError
+	}
 	finalParts := make([]*filer_pb.FileChunk, 0)
 	partBoundaries := make([]multipartPartBoundary, 0, len(completedPartNumbers))
 	var offset int64
@@ -339,17 +447,12 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			partETag := filer.ETag(entry)
 
 			for _, chunk := range entry.GetChunks() {
-				finalParts = append(finalParts, &filer_pb.FileChunk{
-					FileId:       chunk.GetFileIdString(),
-					Offset:       offset,
-					Size:         chunk.Size,
-					ModifiedTsNs: chunk.ModifiedTsNs,
-					CipherKey:    chunk.CipherKey,
-					ETag:         chunk.ETag,
-					IsCompressed: chunk.IsCompressed,
-					SseType:      chunk.SseType,
-					SseMetadata:  chunk.SseMetadata,
-				})
+				finalChunk, chunkErr := completedMultipartChunk(chunk, offset, sses3Info)
+				if chunkErr != nil {
+					glog.Errorf("completeMultipartUpload %s %s SSE-S3 chunk metadata error: %v", *input.Bucket, *input.UploadId, chunkErr)
+					return nil, nil, s3err.ErrInternalError
+				}
+				finalParts = append(finalParts, finalChunk)
 				offset += int64(chunk.Size)
 			}
 
@@ -387,6 +490,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		deleteEntries:      deleteEntries,
 		partEntries:        partEntries,
 		pentry:             pentry,
+		sses3Info:          sses3Info,
 		mime:               mime,
 		finalParts:         finalParts,
 		offset:             offset,
