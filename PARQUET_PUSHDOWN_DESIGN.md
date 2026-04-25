@@ -690,18 +690,22 @@ type RowRef struct {
     FilePosition int64 // 0-based row index within the file (file-absolute)
 }
 
-// ScoredRowRef pairs a row reference with its similarity score. Used
-// for vector-search results so score order is unambiguous; non-vector
-// queries leave Score zero.
+// ScoredRowRef pairs a row reference with an optional similarity
+// score. HasScore distinguishes "no score available" from "score is
+// 0.0", which is a legal vector-similarity value (a perfect cosine
+// match has Score == 1, but L2 distance and dot products commonly
+// produce 0.0 for nontrivial inputs). Non-vector queries leave
+// HasScore false; vector queries always set it true.
 type ScoredRowRef struct {
-    Ref   RowRef
-    Score float32
+    Ref      RowRef
+    HasScore bool
+    Score    float32
 }
 ```
 
 Row identity uses **file-absolute** position (matching Iceberg position-delete files), not row-group-local. Row-group-local indexing is exposed via the convenience `RowGroup` field but is not authoritative — clients converting a `RowRef` back to a Parquet read should locate the row by `FilePosition` against the parsed footer's row-group boundaries.
 
-`Scores` is no longer a parallel array. Pairing each score with its row ref via `ScoredRowRef` removes the ordering constraint and lets a single response mix scored (vector) and unscored (scalar) results without ambiguity.
+`Scores` is no longer a parallel array. Pairing each score with its row ref via `ScoredRowRef` removes the ordering constraint, and the explicit `HasScore` flag lets a single response mix scored (vector) and unscored (scalar) results without aliasing valid zero-valued scores onto "no score".
 
 ## Connector Behavior
 

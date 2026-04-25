@@ -220,7 +220,12 @@ message RowRef {
 
 message ScoredRowRef {
     RowRef ref = 1;
-    float score = 2;
+    // has_score distinguishes "no score available" from "score is
+    // 0.0", which is a legal vector-similarity value (zero L2
+    // distance, zero dot product). Non-vector queries leave
+    // has_score false; vector queries always set it true.
+    bool has_score = 2;
+    float score = 3;
 }
 
 message PushdownStats {

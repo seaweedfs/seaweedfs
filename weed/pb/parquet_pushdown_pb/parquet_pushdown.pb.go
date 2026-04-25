@@ -1189,9 +1189,14 @@ func (x *RowRef) GetFilePosition() int64 {
 }
 
 type ScoredRowRef struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *RowRef                `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Score         float32                `protobuf:"fixed32,2,opt,name=score,proto3" json:"score,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ref   *RowRef                `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	// has_score distinguishes "no score available" from "score is
+	// 0.0", which is a legal vector-similarity value (zero L2
+	// distance, zero dot product). Non-vector queries leave
+	// has_score false; vector queries always set it true.
+	HasScore      bool    `protobuf:"varint,2,opt,name=has_score,json=hasScore,proto3" json:"has_score,omitempty"`
+	Score         float32 `protobuf:"fixed32,3,opt,name=score,proto3" json:"score,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1231,6 +1236,13 @@ func (x *ScoredRowRef) GetRef() *RowRef {
 		return x.Ref
 	}
 	return nil
+}
+
+func (x *ScoredRowRef) GetHasScore() bool {
+	if x != nil {
+		return x.HasScore
+	}
+	return false
 }
 
 func (x *ScoredRowRef) GetScore() float32 {
@@ -1444,10 +1456,11 @@ const file_parquet_pushdown_proto_rawDesc = "" +
 	"\x06RowRef\x12\x12\n" +
 	"\x04file\x18\x01 \x01(\tR\x04file\x12\x1b\n" +
 	"\trow_group\x18\x02 \x01(\x05R\browGroup\x12#\n" +
-	"\rfile_position\x18\x03 \x01(\x03R\ffilePosition\"S\n" +
+	"\rfile_position\x18\x03 \x01(\x03R\ffilePosition\"p\n" +
 	"\fScoredRowRef\x12-\n" +
-	"\x03ref\x18\x01 \x01(\v2\x1b.parquet_pushdown_pb.RowRefR\x03ref\x12\x14\n" +
-	"\x05score\x18\x02 \x01(\x02R\x05score\"\x81\x03\n" +
+	"\x03ref\x18\x01 \x01(\v2\x1b.parquet_pushdown_pb.RowRefR\x03ref\x12\x1b\n" +
+	"\thas_score\x18\x02 \x01(\bR\bhasScore\x12\x14\n" +
+	"\x05score\x18\x03 \x01(\x02R\x05score\"\x81\x03\n" +
 	"\rPushdownStats\x12\x1d\n" +
 	"\n" +
 	"trust_mode\x18\x01 \x01(\tR\ttrustMode\x12,\n" +
