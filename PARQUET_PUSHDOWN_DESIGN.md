@@ -399,23 +399,42 @@ Execution:
 
 ```go
 type ParquetPushdownRequest struct {
-    Table       string
-    SnapshotId  int64
-    Files       []string
-    Columns     []string
-    Predicate   []byte
-    VectorQuery *VectorQuery
-    Limit       int
+    Table          string
+    SnapshotId     int64
+    Files          []string
+    Columns        []string
+    PredicateKind  PredicateKind // SUBSTRAIT or ICEBERG_EXPRESSION
+    Predicate      []byte        // serialized per PredicateKind
+    VectorQuery    *VectorQuery
+    Limit          int
 }
+
+type PredicateKind int32
+
+const (
+    PredicateUnspecified PredicateKind = 0
+    PredicateSubstrait   PredicateKind = 1 // Substrait ExtendedExpression protobuf
+    PredicateIceberg     PredicateKind = 2 // Iceberg Expression JSON
+)
+
+type VectorMetric int32
+
+const (
+    MetricL2     VectorMetric = 0
+    MetricCosine VectorMetric = 1
+    MetricDot    VectorMetric = 2
+)
 
 type VectorQuery struct {
     Column string
     Vector []float32
-    Metric string // l2, cosine, dot
+    Metric VectorMetric
     TopK   int
     NProbe int
 }
 ```
+
+v1 implementations should accept Substrait as the canonical wire format. Iceberg Expression JSON is supported as a convenience for connectors that already produce it.
 
 ### Pushdown Response
 
