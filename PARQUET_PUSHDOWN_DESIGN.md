@@ -393,6 +393,16 @@ Execution:
 6. projected columns are fetched
 ```
 
+#### Filtered-ANN strategy
+
+Step 3 hides a real engineering choice: most off-the-shelf IVF and HNSW indexes do not natively accept arbitrary scalar pre-filters. Three common strategies, in order of v1 preference:
+
+- **Partitioned IVF (preferred for v1).** Build separate IVF indexes per partition key (e.g. one per `tenant_id`). Scalar filters that align with the partition key reduce search to a single partition; non-aligned filters fall back to post-filter.
+- **Post-filter with overscan.** Search the full vector index for `k * overscan_factor` candidates, then apply scalar predicates and trim to `k`. Works for any scalar predicate but accuracy degrades when the scalar predicate is highly selective.
+- **Filtered HNSW (e.g. ACORN-style).** Inline scalar predicate evaluation during graph traversal. Most flexible, but requires a custom index and is deferred past v1.
+
+The pushdown planner picks per query: if the scalar predicate is aligned with a partitioned index, use strategy 1; otherwise fall back to strategy 2 with an overscan factor derived from estimated selectivity.
+
 ## API Sketch
 
 ### Pushdown Request
