@@ -475,11 +475,12 @@ type DeleteFileRef struct {
 
     // DataSequenceNumber is the delete file's data_sequence_number.
     // The scope rule is: this delete file applies to a data file iff
-    //   data_file.DataSequenceNumber  <  delete_file.DataSequenceNumber
-    // for equality deletes / DVs, and
     //   data_file.DataSequenceNumber  <=  delete_file.DataSequenceNumber
-    // for position deletes (a position delete may target a data file
-    // committed in the same snapshot).
+    // for position deletes and deletion vectors (both are
+    // position-based and may target data files committed in the same
+    // snapshot), and
+    //   data_file.DataSequenceNumber  <   delete_file.DataSequenceNumber
+    // for equality deletes (predicate-based; only filters older data).
     DataSequenceNumber int64
 
     // Content type matches Iceberg manifest "content" field.
