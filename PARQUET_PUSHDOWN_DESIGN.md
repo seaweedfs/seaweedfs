@@ -117,15 +117,15 @@ Logical layout per data file:
 ```text
 <system-prefix>/<table_uuid>/data/ds=2026-01-01/part-00001.parquet/<identity>/
   footer.cache
-  page_index.timestamp
-  bloom.user_id
-  bitmap.tenant_id
-  btree.timestamp
-  inverted.message
-  vector.embedding.ivf
+  page_index.fid_3      # column "timestamp", field id 3
+  bloom.fid_5           # column "user_id", field id 5
+  bitmap.fid_7          # column "tenant_id", field id 7
+  btree.fid_3           # column "timestamp", field id 3
+  inverted.fid_11       # column "message", field id 11
+  vector.fid_42.ivf     # column "embedding", field id 42
 ```
 
-`<identity>` is derived from the index identity rules in [Index Consistency](#index-consistency). The original Parquet file is not modified.
+Per-column index files are keyed by Iceberg field ID, not column name. A rename (e.g. `tenant_id` → `org_id`) does not invalidate the index, and a column dropped-and-re-added with the same name (a different field ID) does not silently reuse the wrong index. Side-index metadata may carry the human-readable name as a hint for logging. `<identity>` is derived from the index identity rules in [Index Consistency](#index-consistency). The original Parquet file is not modified.
 
 ## Logical View for Planning
 
@@ -320,7 +320,7 @@ Possible index types:
 Index layout:
 
 ```text
-<system-prefix>/<table_uuid>/.../<identity>/vector.embedding.ivf/
+<system-prefix>/<table_uuid>/.../<identity>/vector.fid_42.ivf/
   centroids
   list_000001
   list_000002
@@ -440,7 +440,7 @@ type ParquetPushdownRequest struct {
     // Iceberg planning.
     DataFiles      []DataFileDescriptor
 
-    Columns        []string
+    Columns        []ColumnRef
     PredicateKind  PredicateKind // SUBSTRAIT or ICEBERG_EXPRESSION
     Predicate      []byte        // serialized per PredicateKind
     VectorQuery    *VectorQuery
@@ -544,11 +544,24 @@ const (
 )
 
 type VectorQuery struct {
-    Column string
+    Column ColumnRef
     Vector []float32
     Metric VectorMetric
     TopK   int
     NProbe int
+}
+
+// ColumnRef identifies a column by Iceberg field ID, which is stable
+// across rename and reordering. The Path is an optional hint (the
+// dotted Iceberg name path, e.g. "user.address.zip") for logging and
+// for engines that cannot resolve field IDs; the server must trust
+// FieldId when it is set and only fall back to Path when FieldId is
+// zero (unspecified) — for example, when querying tables that were
+// not written through Iceberg and have no field IDs in the Parquet
+// file metadata.
+type ColumnRef struct {
+    FieldId int32  // Iceberg field ID; 0 means "use Path"
+    Path    string // dotted Iceberg name path, optional hint
 }
 ```
 
@@ -588,7 +601,7 @@ type RowGroupRef struct {
 type PageRef struct {
     File     string
     RowGroup int
-    Column   string
+    Column   ColumnRef
     Page     int
     Offset   int64
     Length   int64
