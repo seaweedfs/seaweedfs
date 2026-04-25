@@ -790,11 +790,16 @@ Strategy: evaluate equality-delete predicates at query time, accelerated by the 
 ### End-to-end flow
 
 ```text
-1. Iceberg catalog returns data files plus position+equality delete files
+1. Iceberg catalog returns data files plus their attached delete files
+   (v2 position-delete files, v2 equality-delete files, v3 deletion
+   vectors), each tagged with PartitionSpecId / PartitionValues /
+   DataSequenceNumber so applicability is already resolved.
 2. For each data file:
-     a. apply cached position-delete bitmap
-     b. evaluate live equality-delete predicates against side indexes
-3. Pushdown execution returns candidate sets minus the union of (a) and (b)
+     a. apply cached merged position-delete bitmap (v2 position-delete files)
+     b. apply DV bitmap (v3 PositionDeletes + FileFormatPuffin entries)
+     c. evaluate live equality-delete predicates against side indexes
+3. Pushdown execution returns candidate sets minus the union of (a),
+   (b), and (c).
 ```
 
 ## Compaction and Maintenance
@@ -879,9 +884,11 @@ For v1, side indexes inherit the same access controls as the underlying Parquet 
 
 ### Phase 4: Iceberg Delete Integration
 
-- position delete masks
-- equality delete masks
-- snapshot-aware index validity
+- v2 position-delete file ingestion and merged-bitmap caching
+- v3 deletion-vector (Puffin `deletion-vector-v1`) ingestion and bitmap caching
+- v2 equality-delete evaluation accelerated by Phase 2 scalar indexes
+- partition-spec / partition-value matching in the applicability rule
+- snapshot-aware index validity (data-file identity + delete-file-set keying)
 
 ### Phase 5: Vector Indexes
 
