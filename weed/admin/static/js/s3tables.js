@@ -23,6 +23,15 @@ function getCSRFToken() {
     return tokenMeta.getAttribute('content') || '';
 }
 
+function s3tWriteHeaders(extra) {
+    const headers = Object.assign({}, extra || {});
+    const csrfToken = getCSRFToken();
+    if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+    }
+    return headers;
+}
+
 /**
  * Initialize S3 Tables Buckets Page
  */
@@ -104,7 +113,7 @@ function initS3TablesBuckets() {
             try {
                 const response = await fetch(s3tBasePath('/api/s3tables/buckets'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -133,7 +142,7 @@ function initS3TablesBuckets() {
             try {
                 const response = await fetch(s3tBasePath('/api/s3tables/bucket-policy'), {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ bucket_arn: bucketArn, policy: policy })
                 });
                 const data = await response.json();
@@ -239,7 +248,7 @@ function initS3TablesTables() {
             try {
                 const response = await fetch(s3tBasePath('/api/s3tables/tables'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -267,7 +276,7 @@ function initS3TablesTables() {
             try {
                 const response = await fetch(s3tBasePath('/api/s3tables/table-policy'), {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ bucket_arn: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value, policy: policy })
                 });
                 const data = await response.json();
@@ -530,7 +539,7 @@ async function deleteS3TablesBucket() {
     const bucketArn = document.getElementById('deleteS3TablesBucketModal').dataset.bucketArn;
     if (!bucketArn) return;
     try {
-        const response = await fetch(s3tBasePath(`/api/s3tables/buckets?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/buckets?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete bucket');
@@ -561,7 +570,7 @@ async function deleteS3TablesBucketPolicy() {
     const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
     if (!bucketArn) return;
     try {
-        const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete policy');
@@ -590,7 +599,7 @@ async function deleteS3TablesTable() {
         query.set('version', versionToken);
     }
     try {
-        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete table');
@@ -665,7 +674,7 @@ async function deleteS3TablesTablePolicy() {
     const dataNamespace = dataContainer.dataset.namespace || '';
     const query = new URLSearchParams({ bucket: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value });
     try {
-        const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`), { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete policy');
@@ -872,7 +881,7 @@ async function updateS3TablesTags(resourceArn, tags) {
     try {
         const response = await fetch(s3tBasePath('/api/s3tables/tags'), {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ resource_arn: resourceArn, tags: tags })
         });
         const data = await response.json();
@@ -899,7 +908,7 @@ async function deleteS3TablesTags() {
     try {
         const response = await fetch(s3tBasePath('/api/s3tables/tags'), {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ resource_arn: resourceArn, tag_keys: tagKeys })
         });
         const data = await response.json();
