@@ -455,15 +455,62 @@ type DataFileDescriptor struct {
     RecordCount    int64  // Iceberg manifest record_count
     ETag           string // optional, used when no Iceberg manifest is available
     SequenceNumber int64  // Iceberg sequence number, drives equality-delete scope
-    PositionDeletes []DeleteFileRef // delete files that apply to this data file
-    EqualityDeletes []DeleteFileRef
+
+    // Deletes is the union of position-delete files, equality-delete
+    // files, and deletion vectors that apply to this data file.
+    // Content type is discriminated by DeleteFileRef.Content.
+    Deletes        []DeleteFileRef
 }
 
 type DeleteFileRef struct {
     Path           string
     SizeBytes      int64
     SequenceNumber int64
+
+    // Content type matches Iceberg manifest "content" field.
+    Content        DeleteContent
+
+    // FileFormat is the on-disk format of this delete file.
+    FileFormat     FileFormat
+
+    // EqualityFieldIds carries the Iceberg field IDs the equality
+    // predicate is keyed on. Required for Content == EqualityDeletes;
+    // empty for position deletes and deletion vectors.
+    EqualityFieldIds []int32
+
+    // Puffin-only fields, used when Content == DeletionVector and
+    // FileFormat == FileFormatPuffin. The DV blob lives at
+    // (Path, BlobOffset, BlobLength) and BlobDigest is the Puffin
+    // blob's recorded content hash, used to key the bitmap cache.
+    BlobOffset int64
+    BlobLength int64
+    BlobDigest []byte
+
+    // ReferencedDataFile is set when this delete file targets a single
+    // data file (mandatory for v3 deletion vectors; optional for v2
+    // position-delete files). Empty when the delete file may target
+    // many data files.
+    ReferencedDataFile string
 }
+
+type DeleteContent int32
+
+const (
+    DeleteContentUnspecified DeleteContent = 0
+    PositionDeletes          DeleteContent = 1 // Iceberg manifest content=1
+    EqualityDeletes          DeleteContent = 2 // Iceberg manifest content=2
+    DeletionVector           DeleteContent = 3 // Iceberg v3 Puffin DV
+)
+
+type FileFormat int32
+
+const (
+    FileFormatUnspecified FileFormat = 0
+    FileFormatParquet     FileFormat = 1
+    FileFormatAvro        FileFormat = 2
+    FileFormatOrc         FileFormat = 3
+    FileFormatPuffin      FileFormat = 4
+)
 
 type PredicateKind int32
 
@@ -494,7 +541,7 @@ The client is responsible for Iceberg planning (resolving the snapshot to data f
 
 - enough identity (`SizeBytes`, `RecordCount`, optional `ETag`) for the server to verify a cached side index still matches the file,
 - the Iceberg `SequenceNumber` so equality-delete scope can be resolved correctly,
-- the position and equality delete files attached to this data file by the client's planner.
+- the `Deletes` list of position-delete files, equality-delete files, and deletion vectors that the client's planner has attached to this data file. Each entry carries the Iceberg `Content` discriminator (`PositionDeletes`, `EqualityDeletes`, `DeletionVector`), the on-disk `FileFormat`, and any content-specific fields (equality field IDs, Puffin blob offset/length/digest).
 
 v1 implementations should accept Substrait as the canonical wire format. Iceberg Expression JSON is supported as a convenience for connectors that already produce it.
 
@@ -647,7 +694,7 @@ Equivalent shorthand for v3 DVs, which are intrinsically per-data-file: `(data_f
 
 `snapshot_id` is *not* a sufficient key — different snapshots can produce the same bitmap, and pinning the cache to snapshot id wastes work after no-op snapshots. Conversely, snapshot_id alone is *insufficient* across tables because position-delete files are not uniquely identified by snapshot number.
 
-When pushdown receives a request, it computes the key from the request's `PositionDeletes` list (already supplied by the client's planner) and looks up or builds the bitmap. Cache eviction follows file identity: when a data file or any of its delete files goes out of scope (snapshot expiration, compaction), the corresponding cache entries are reclaimable.
+When pushdown receives a request, it computes the key from the position-delete entries of the data file's `Deletes` list (already supplied by the client's planner) and looks up or builds the bitmap. Cache eviction follows file identity: when a data file or any of its delete files goes out of scope (snapshot expiration, compaction), the corresponding cache entries are reclaimable.
 
 ### Equality deletes (must evaluate at query time)
 
