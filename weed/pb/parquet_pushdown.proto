@@ -1,0 +1,234 @@
+syntax = "proto3";
+
+package parquet_pushdown_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/parquet_pushdown_pb";
+
+// SeaweedParquetPushdown is the gRPC surface of the standalone
+// `weed pushdown` daemon. See PARQUET_PUSHDOWN_DESIGN.md and
+// PARQUET_PUSHDOWN_DEV_PLAN.md for the surrounding design.
+service SeaweedParquetPushdown {
+    // Ping returns daemon liveness information. Cheap; intended for
+    // smoke tests and connector health checks.
+    rpc Ping (PingRequest) returns (PingResponse);
+
+    // Pushdown takes a planner-resolved set of Iceberg data files and
+    // returns the byte ranges, row groups, pages, and (optionally) row
+    // refs that satisfy the request's predicate and vector clauses.
+    // M0 returns Unimplemented; later milestones fill in pruning logic.
+    rpc Pushdown (ParquetPushdownRequest) returns (ParquetPushdownResponse);
+}
+
+// -- Ping --------------------------------------------------------------------
+
+message PingRequest {}
+
+message PingResponse {
+    string version = 1;
+    // TrustMode the daemon is configured for: "catalog-validated" or
+    // "connector-trusted". Connector-trusted is dev-only.
+    string trust_mode = 2;
+}
+
+// -- Request -----------------------------------------------------------------
+
+message ParquetPushdownRequest {
+    string table = 1;
+    int64 snapshot_id = 2;
+
+    // The authoritative list of files to scan, already resolved by the
+    // client's Iceberg planner. The server validates these against the
+    // catalog when running in catalog-validated trust mode.
+    repeated DataFileDescriptor data_files = 3;
+
+    // Columns to project. Identified by Iceberg field id (preferred)
+    // or path hint (fallback for non-Iceberg-managed Parquet).
+    repeated ColumnRef columns = 4;
+
+    PredicateKind predicate_kind = 5;
+    bytes predicate = 6; // serialized per predicate_kind
+
+    VectorQuery vector_query = 7;
+
+    int32 limit = 8;
+
+    // If true, the response may include per-row refs (RowRef list).
+    // Bounded by max_row_ids.
+    bool request_row_ids = 9;
+    int32 max_row_ids = 10;
+}
+
+message DataFileDescriptor {
+    string path = 1;
+    int64 size_bytes = 2;       // Iceberg manifest file_size_in_bytes
+    int64 record_count = 3;     // Iceberg manifest record_count
+    string etag = 4;            // optional, when no Iceberg manifest
+
+    // Iceberg manifest entry's data_sequence_number; drives
+    // delete-file applicability (NOT file_sequence_number).
+    int64 data_sequence_number = 5;
+
+    // Partition spec id and serialized partition values; required to
+    // match delete-file applicability for partitioned tables.
+    int32 partition_spec_id = 6;
+    bytes partition_values = 7;
+
+    // Position-delete files, equality-delete files, and deletion
+    // vectors that apply to this data file. Discriminated by
+    // DeleteFileRef.content + DeleteFileRef.file_format.
+    repeated DeleteFileRef deletes = 8;
+}
+
+message DeleteFileRef {
+    string path = 1;
+    int64 size_bytes = 2;
+
+    // Iceberg manifest entry's data_sequence_number for this delete
+    // file. Applicability rule:
+    //   data_file.seq <= delete_file.seq  for position deletes / DVs
+    //   data_file.seq <  delete_file.seq  for equality deletes
+    int64 data_sequence_number = 3;
+
+    // Partition spec id and serialized partition values; must match
+    // the data file's partition for the delete to apply.
+    int32 partition_spec_id = 4;
+    bytes partition_values = 5;
+
+    DeleteContent content = 6;     // POSITION_DELETES / EQUALITY_DELETES
+    FileFormat file_format = 7;    // PARQUET / AVRO / ORC / PUFFIN
+
+    // Required for content == EQUALITY_DELETES, empty otherwise.
+    repeated int32 equality_field_ids = 8;
+
+    // Puffin-only: when content == POSITION_DELETES and file_format
+    // == PUFFIN (deletion vectors), the DV blob lives at
+    // (path, blob_offset, blob_length). blob_crc32 is the Puffin
+    // footer's per-blob CRC, used for tamper detection (not as
+    // identity for cache lookup).
+    int64 blob_offset = 9;
+    int64 blob_length = 10;
+    uint32 blob_crc32 = 11;
+
+    // When this delete file targets one specific data file (mandatory
+    // for v3 deletion vectors). Empty when the delete file may target
+    // many data files.
+    string referenced_data_file = 12;
+}
+
+enum DeleteContent {
+    DELETE_CONTENT_UNSPECIFIED = 0;
+    POSITION_DELETES = 1; // Iceberg manifest content=1 (file or DV)
+    EQUALITY_DELETES = 2; // Iceberg manifest content=2
+    // Iceberg v3 deletion vectors are POSITION_DELETES with
+    // file_format == PUFFIN; there is no separate enum value.
+}
+
+enum FileFormat {
+    FILE_FORMAT_UNSPECIFIED = 0;
+    FILE_FORMAT_PARQUET = 1;
+    FILE_FORMAT_AVRO = 2;
+    FILE_FORMAT_ORC = 3;
+    FILE_FORMAT_PUFFIN = 4;
+}
+
+enum PredicateKind {
+    PREDICATE_KIND_UNSPECIFIED = 0;
+    PREDICATE_KIND_SUBSTRAIT = 1; // Substrait ExtendedExpression protobuf
+    PREDICATE_KIND_ICEBERG = 2;   // Iceberg Expression JSON
+}
+
+enum VectorMetric {
+    VECTOR_METRIC_UNSPECIFIED = 0;
+    VECTOR_METRIC_L2 = 1;
+    VECTOR_METRIC_COSINE = 2;
+    VECTOR_METRIC_DOT = 3;
+}
+
+message VectorQuery {
+    ColumnRef column = 1;
+    repeated float vector = 2;
+    VectorMetric metric = 3;
+    int32 top_k = 4;
+    int32 nprobe = 5;
+}
+
+// ColumnRef identifies a column by Iceberg field id (stable across
+// rename and reordering). Path is an optional hint used only when
+// field_id == 0 (e.g. non-Iceberg Parquet that has no field ids).
+message ColumnRef {
+    int32 field_id = 1;
+    string path = 2;
+}
+
+// -- Response ----------------------------------------------------------------
+
+message ParquetPushdownResponse {
+    repeated FileRange file_ranges = 1;
+    repeated RowGroupRef row_groups = 2;
+    repeated PageRef pages = 3;
+
+    // Optional, emitted only when request.request_row_ids is true and
+    // the result fits within request.max_row_ids.
+    repeated ScoredRowRef row_refs = 4;
+
+    // True if a row-ref list was omitted or truncated due to size cap.
+    bool truncated = 5;
+
+    PushdownStats stats = 6;
+}
+
+message FileRange {
+    string file = 1;
+    int64 offset = 2;
+    int64 length = 3;
+}
+
+message RowGroupRef {
+    string file = 1;
+    int32 row_group = 2;
+}
+
+message PageRef {
+    string file = 1;
+    int32 row_group = 2;
+    ColumnRef column = 3;
+    int32 page = 4;
+    int64 offset = 5;
+    int64 length = 6;
+}
+
+// RowRef identifies a row by file-absolute position (matching Iceberg
+// position-delete semantics). row_group is a locality hint, not
+// authoritative.
+message RowRef {
+    string file = 1;
+    int32 row_group = 2;
+    int64 file_position = 3;
+}
+
+message ScoredRowRef {
+    RowRef ref = 1;
+    float score = 2;
+}
+
+message PushdownStats {
+    // The trust mode that serviced this request.
+    string trust_mode = 1;
+
+    // Server-side wall time spent on this request, in microseconds.
+    int64 server_time_micros = 2;
+
+    // Filled in by later milestones as the corresponding subsystems
+    // come online. Names use the design doc's per-feature labels.
+    int64 footer_cache_hits = 3;
+    int64 footer_cache_misses = 4;
+    int64 row_groups_pruned = 5;
+    int64 pages_pruned = 6;
+    int64 bytes_planned_scan = 7;
+
+    // Side indexes consulted vs missing, by index kind ("bloom",
+    // "bitmap", "btree", "page", "vector", ...). Useful both for
+    // observability and for the connector's cost-model feedback loop.
+    repeated string indexes_used = 8;
+    repeated string indexes_missing = 9;
+}

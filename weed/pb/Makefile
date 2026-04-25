@@ -18,6 +18,8 @@ gen:
 	protoc worker.proto --go_out=./worker_pb --go-grpc_out=./worker_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	mkdir -p ./plugin_pb
 	protoc plugin.proto --go_out=./plugin_pb --go-grpc_out=./plugin_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	mkdir -p ./parquet_pushdown_pb
+	protoc parquet_pushdown.proto --go_out=./parquet_pushdown_pb --go-grpc_out=./parquet_pushdown_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	# protoc filer.proto --java_out=../../other/java/client/src/main/java
 	cp filer.proto ../../other/java/client/src/main/proto
 	cp volume_server.proto master.proto remote.proto ../../seaweed-volume/proto/
