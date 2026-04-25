@@ -823,12 +823,21 @@ The applicability rule for which equality-delete files apply is:
 
 The sequence rule is strict: data files whose `data_sequence_number` is equal to or greater than the delete file's are not affected — those rows simply never existed when the delete was written. (The Iceberg manifest entry's `file_sequence_number` is the commit-time sequence number for the manifest entry itself and is not used for delete scoping.) Partition matching is required as well: equality-delete files are written per partition, and a delete in one partition does not delete from another, even if the sequence rule matches. This is why the per-data-file pushdown request must carry both the data file's `DataSequenceNumber` / `PartitionSpecId` / `PartitionValues` and the delete files attached to it: the planner has already resolved this scoping.
 
-Equality deletes cannot be precomputed as a static bitmap per data file because:
+#### Equality-delete bitmap cache reusability
 
-- one equality delete file can affect many older data files
-- the predicate must be re-evaluated against current row content; a bitmap captured at one snapshot will not be reusable at a later snapshot if other equality deletes (or row-level updates expressed as deletes) alter the visible set
+A single union-of-all-applicable-deletes bitmap *is* snapshot-dependent (the set of applicable delete files changes as snapshots add new ones), but the building blocks are not.
 
-Strategy: evaluate equality-delete predicates at query time, accelerated by the same scalar indexes (bloom, bitmap, B-tree). Optionally cache materialized result bitmaps keyed by `(data_file_id, equality_delete_file_id, snapshot_id)` and invalidate on snapshot change.
+The cache lives at the **per-pair** level, keyed by `(data_file_identity, equality_delete_file_identity)`. A per-pair bitmap captures "which positions in this data file are deleted by *this one* equality-delete file" — that fact is determined by the immutable contents of the two files and never changes after both files are written. Per-pair bitmaps are reusable across snapshots, sessions, and queries.
+
+The per-query work is a cheap union over the pre-built per-pair bitmaps for the delete files that apply at this snapshot. New snapshots only require building bitmaps for newly added delete files (against the same data file), not recomputing existing ones.
+
+Eviction follows file identity: a per-pair entry is reclaimable when either side of the pair goes out of scope (snapshot expiration, compaction).
+
+Strategy summary:
+
+- per-pair bitmaps are computed once and cached durably keyed by `(data_file_identity, equality_delete_file_identity)`;
+- per-query response unions the applicable per-pair bitmaps (resolved by the snapshot-time applicability rule above) and subtracts from candidate row sets;
+- equality-delete *evaluation* (the hash-join over key tuples that produces a per-pair bitmap) is accelerated by the same scalar indexes (bloom, bitmap, B-tree) the planner already uses.
 
 ### End-to-end flow
 
