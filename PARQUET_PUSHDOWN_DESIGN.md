@@ -68,6 +68,8 @@ SeaweedFS Volume Servers
 Parquet data needles
 ```
 
+The "local filtering" step on volume servers is new infrastructure introduced by this design. Today's volume servers serve byte ranges only; the pushdown path adds a filter/index-evaluation component colocated with the data. Where exactly it runs (volume server in-process, sidecar, or a separate index-serving tier) is covered in [Index Residency](#index-residency-and-failure-model).
+
 There are two access modes:
 
 ### 1. Standard Object Access
@@ -268,11 +270,13 @@ optional row ids
 
 Useful for logs, text, tags, and JSON fields.
 
-Examples:
+Examples (engine-side translations, since standard SQL has no `CONTAINS`):
 
 ```sql
-WHERE message CONTAINS 'timeout'
-WHERE tags CONTAINS 'gpu'
+-- substring search:    LIKE '%timeout%' or full-text MATCH
+WHERE message LIKE '%timeout%'
+-- array element match: array_contains(tags, 'gpu') / 'gpu' = ANY(tags)
+WHERE array_contains(tags, 'gpu')
 ```
 
 Index structure:
@@ -283,7 +287,7 @@ token -> candidate row groups/pages/row ids
 
 ### 8. Vector Index
 
-Useful for embedding columns stored inside Parquet.
+The embedding column is stored as a regular column inside the Parquet file. The vector index itself is a side file built from that column and stored alongside the other side indexes.
 
 Example:
 
@@ -584,6 +588,40 @@ new indexes are built lazily or eagerly
 ```
 
 Garbage collection can remove indexes for files no longer referenced by active snapshots.
+
+## Index Residency and Failure Model
+
+Open question to resolve before Phase 2: where the side indexes physically live and how pushdown behaves when they are absent or stale.
+
+Options:
+
+- **Filer-managed.** Index metadata stored in the filer; index payloads stored as ordinary needles. Simplest. Read amplification is similar to a normal SeaweedFS file read.
+- **Colocated on volume servers.** Index payloads live next to the data needles for the file they index, so filter evaluation runs on the same node that holds the data. Lowest network cost, highest deployment complexity.
+- **Separate index-serving tier.** A pool of stateless workers that load index payloads from the filer on demand. Easiest to scale independently of storage.
+
+In all cases, pushdown must degrade gracefully: if the requested side index is missing, stale, or unreachable, the server falls back to row-group-level pruning using the parsed footer (or, in the worst case, returns the request unmodified so the client performs a standard scan). The response should carry a `Stats` field indicating which indexes were used, missed, or skipped, so the client can decide whether to retry or just proceed.
+
+## Cost Model and When Not to Push Down
+
+Pushdown is not free. Each request adds a planning round-trip and forces the server to load and evaluate side indexes. For small or unselective queries this is a net loss versus a direct ranged GET.
+
+Connectors should skip the pushdown API when:
+
+- the table is small enough that a single Parquet scan is cheaper than the planning round-trip (rule of thumb: total file size below a few footer reads, ~10 MiB)
+- the predicate is non-selective (estimated selectivity > ~0.5) and no projection prunes meaningful columns
+- the query has no predicate and no vector clause — file pruning by Iceberg metadata alone already does the job
+
+The pushdown API should expose its own selectivity and cost estimates in the response stats so connectors can learn when to use it; explicit configuration knobs (`min_table_size`, `min_selectivity`) can act as a fallback.
+
+## Security and Access Control
+
+Side indexes can leak information that the underlying object's ACL would otherwise hide:
+
+- zone maps and B-trees expose min/max values, which can reveal date ranges or identifier ranges to clients with column-level but not row-level visibility
+- bloom filters allow probing for the presence of specific values
+- inverted indexes expose token vocabularies
+
+For v1, side indexes inherit the same access controls as the underlying Parquet object — a client that cannot read the file cannot query its indexes either. Row- and column-level access policies (e.g. masking, row filters) are out of scope; tables that depend on row-level security should disable pushdown until a finer-grained authorization story exists.
 
 ## Rollout Plan
 
