@@ -355,6 +355,17 @@ Use row group statistics, bloom filters, and side indexes.
 
 Use page-level indexes to read only matching pages.
 
+#### Connector consumability
+
+Returning `[]PageRef` as `(file, row_group, column, page, offset, length)` is only useful to readers that can issue page-granular I/O on a single Parquet file. That includes parquet-go's `ColumnChunkReader.ReadPage`, Arrow C++/PyArrow with `parquet::PageReader`, and DuckDB's internal Parquet reader; it does *not* include a stock S3-aware Parquet client that only supports row-group-level reads. Two consumption modes are supported:
+
+- **Page-aware reader (preferred when available).** The connector issues range reads matching the returned page byte ranges plus the column chunk's dictionary-page region (already merged into the response per [Page-Level Index](#3-page-level-index)). It decodes only the surviving pages.
+- **Row-group reader with row-selection.** Connectors without page-aware I/O ignore the `Pages` list and consume `RowGroups` instead. They then apply the same predicate locally, or call back for a row-selection vector (the planner can emit one — see below — keyed on row-group-local row position) to filter post-decode without re-evaluating the predicate.
+
+When the response carries `Pages` but the connector cannot consume them, it must drop to `RowGroups` granularity rather than reinterpret page byte ranges as row-group ranges. The page byte ranges do not align to row-group boundaries and are not safe to feed to a row-group-only reader.
+
+Future revision (post-M6): the response may add an optional row-selection bitmap per row group so a row-group reader can apply page-level pruning without a page-aware decoder. v1 returns `Pages` only; downstream consumers fall back as described above.
+
 ### Column Pruning
 
 Read only requested columns and predicate columns.
