@@ -199,6 +199,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
 					WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
+					// goleveldb defaults this cache to 500 FDs per DB; with
+					// thousands of volumes per server that ceiling stacks up
+					// and starves WAL rotation (open .../00000N.log: too many
+					// open files). CompactionTableSizeMultiplier=10 already
+					// keeps the SST count low, so a small cache is sufficient.
+					OpenFilesCacheCapacity: 16,
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb index", v.FileName(".ldb"))
@@ -214,6 +220,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
 					WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
+					OpenFilesCacheCapacity:        32,              // default 500; bound per-DB FD usage on busy servers
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb medium index", v.FileName(".ldb"))
@@ -229,6 +236,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
 					WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
+					OpenFilesCacheCapacity:        64,              // default 500; bound per-DB FD usage on busy servers
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb large index", v.FileName(".ldb"))
