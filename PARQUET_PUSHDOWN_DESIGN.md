@@ -630,6 +630,25 @@ Strategy:
 
 For tables that mix v2 position-delete files and v3 DVs (legal during migration), pushdown applies both: union the DV bitmap with the merged-position-delete bitmap before subtracting.
 
+### Position-delete bitmap cache key
+
+The merged position-delete bitmap is a *function of the set of position-delete files that target the data file at the requested snapshot*, not of the data file alone. New snapshots add or compact away position-delete files, which silently changes the merged result. A cache keyed only by data-file identity will hand back stale bitmaps after the first new position-delete file lands.
+
+Cache key per data file:
+
+```text
+key = (
+    data_file_identity,                  // see Index Consistency
+    sorted_set_of_input_delete_file_ids, // each = (path, size, content_hash)
+)
+```
+
+Equivalent shorthand for v3 DVs, which are intrinsically per-data-file: `(data_file_identity, puffin_blob_digest)` where `puffin_blob_digest` is the Puffin-recorded content hash of the DV blob.
+
+`snapshot_id` is *not* a sufficient key — different snapshots can produce the same bitmap, and pinning the cache to snapshot id wastes work after no-op snapshots. Conversely, snapshot_id alone is *insufficient* across tables because position-delete files are not uniquely identified by snapshot number.
+
+When pushdown receives a request, it computes the key from the request's `PositionDeletes` list (already supplied by the client's planner) and looks up or builds the bitmap. Cache eviction follows file identity: when a data file or any of its delete files goes out of scope (snapshot expiration, compaction), the corresponding cache entries are reclaimable.
+
 ### Equality deletes (must evaluate at query time)
 
 Equality deletes carry a predicate (e.g. `id = 42`) and apply only to data files whose Iceberg sequence number is **strictly less than** the delete file's sequence number. Data files added at or after the delete file's sequence number are not affected — those rows simply never existed when the delete was written. This is why the per-data-file pushdown request must carry both the data file's sequence number and the delete files attached to it: the planner has already resolved this scoping using sequence numbers.
