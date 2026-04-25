@@ -441,6 +441,16 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			strings.Contains(post_err.Error(), "use of closed network connection") {
 			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, postErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
+			// The first attempt already consumed (or partially consumed) the
+			// body, so retrying with the same *http.Request would send 0 bytes
+			// and Go's transport would surface "ContentLength=N with Body
+			// length 0". http.NewRequestWithContext sets GetBody for
+			// *bytes.Reader bodies; use it to attach a fresh body for retry.
+			if req.GetBody != nil {
+				if newBody, gbErr := req.GetBody(); gbErr == nil {
+					req.Body = newBody
+				}
+			}
 			resp, post_err = uploader.httpClient.Do(req)
 			defer util_http.CloseResponse(resp)
 		}
