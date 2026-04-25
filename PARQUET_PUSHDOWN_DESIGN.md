@@ -122,9 +122,9 @@ SeaweedFS may store side indexes internally or in a hidden namespace:
 
 The original Parquet file is not modified.
 
-## SeaweedFS-Aware Internal Mapping
+## Logical View for Planning
 
-A Parquet file can be represented internally as:
+The Parquet object on disk is unchanged. For planning and pushdown purposes, SeaweedFS exposes a logical view of the file derived from the footer:
 
 ```text
 Parquet file
@@ -141,19 +141,19 @@ Parquet file
       └── column chunk: payload
 ```
 
-SeaweedFS needle mapping may be:
+Each leaf maps to a `(file, offset, length)` byte range inside the original object:
 
 ```text
-footer                         -> cached metadata needle
-row_group_0 / column_id         -> data needle(s)
-row_group_0 / column_timestamp  -> data needle(s)
-row_group_0 / column_tenant_id  -> data needle(s)
-row_group_0 / column_payload    -> data needle(s)
-row_group_1 / column_id         -> data needle(s)
+footer                          -> (file, footer_offset, footer_length)
+row_group_0 / column_id         -> (file, offset, length)
+row_group_0 / column_timestamp  -> (file, offset, length)
+row_group_0 / column_tenant_id  -> (file, offset, length)
+row_group_0 / column_payload    -> (file, offset, length)
+row_group_1 / column_id         -> (file, offset, length)
 ...
 ```
 
-This does not require physically splitting the Parquet file for compatibility. SeaweedFS can also map byte ranges inside one object to the underlying needles.
+This is a planning abstraction only. The Parquet file is not split into per-column-chunk needles, and the on-disk object is not modified. Reads are still issued as ranged GETs against the original object.
 
 ## Side Index Types
 
