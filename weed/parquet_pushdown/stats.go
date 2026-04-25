@@ -7,19 +7,23 @@ import (
 )
 
 // statsRecorder accumulates per-request stats and converts to the
-// wire form when the handler returns. M0 only records trust mode and
-// elapsed server time; later milestones extend it with cache hits,
-// pruning counts, and indexes-used / indexes-missing labels.
+// wire form when the handler returns. Counts here are scoped to a
+// single Pushdown call, not process-wide.
 type statsRecorder struct {
-	start          time.Time
-	trustMode      TrustMode
-	indexesUsed    []string
-	indexesMissing []string
+	start             time.Time
+	trustMode         TrustMode
+	footerCacheHits   int64
+	footerCacheMisses int64
+	indexesUsed       []string
+	indexesMissing    []string
 }
 
 func newStats(trustMode TrustMode) *statsRecorder {
 	return &statsRecorder{start: time.Now(), trustMode: trustMode}
 }
+
+func (r *statsRecorder) recordFooterCacheHit()  { r.footerCacheHits++ }
+func (r *statsRecorder) recordFooterCacheMiss() { r.footerCacheMisses++ }
 
 func (r *statsRecorder) markIndexUsed(kind string) {
 	r.indexesUsed = append(r.indexesUsed, kind)
@@ -31,9 +35,11 @@ func (r *statsRecorder) markIndexMissing(kind string) {
 
 func (r *statsRecorder) toProto() *pb.PushdownStats {
 	return &pb.PushdownStats{
-		TrustMode:        string(r.trustMode),
-		ServerTimeMicros: time.Since(r.start).Microseconds(),
-		IndexesUsed:      r.indexesUsed,
-		IndexesMissing:   r.indexesMissing,
+		TrustMode:         string(r.trustMode),
+		ServerTimeMicros:  time.Since(r.start).Microseconds(),
+		FooterCacheHits:   r.footerCacheHits,
+		FooterCacheMisses: r.footerCacheMisses,
+		IndexesUsed:       r.indexesUsed,
+		IndexesMissing:    r.indexesMissing,
 	}
 }

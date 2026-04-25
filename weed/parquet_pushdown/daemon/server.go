@@ -43,6 +43,9 @@ func Run(cfg Config) error {
 	svc := parquet_pushdown.New(parquet_pushdown.Options{
 		Version:   cfg.Version,
 		TrustMode: cfg.TrustMode,
+		// M1 uses LocalLoader; the filer-backed Loader lands when the
+		// catalog-validated path needs to fetch real data files (M2+).
+		Loader: parquet_pushdown.LocalLoader{},
 	})
 
 	grpcL, localL, err := util.NewIpAndLocalListeners(cfg.IP, cfg.Port, 0)

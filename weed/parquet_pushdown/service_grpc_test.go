@@ -97,6 +97,10 @@ func TestPing_DefaultsTrustModeToCatalogValidated(t *testing.T) {
 	}
 }
 
+// As of M1 the Unimplemented path is reserved for predicate /
+// vector requests (file/range-level pushdown is implemented). Use a
+// predicate-bearing request to exercise the Unimplemented + stats
+// detail wire format.
 func TestPushdown_ReturnsUnimplementedWithStats(t *testing.T) {
 	client, cleanup := startTestServer(t, Options{
 		Version:   "test",
@@ -113,7 +117,10 @@ func TestPushdown_ReturnsUnimplementedWithStats(t *testing.T) {
 		DataFiles: []*pb.DataFileDescriptor{
 			{Path: "s3://b/p.parquet", SizeBytes: 1, RecordCount: 1},
 		},
-		Columns: []*pb.ColumnRef{{FieldId: 1}},
+		Columns:       []*pb.ColumnRef{{FieldId: 1, Path: "id"}},
+		PredicateKind: pb.PredicateKind_PREDICATE_KIND_SUBSTRAIT,
+		Predicate:     []byte("bound"),
+		SchemaId:      1,
 	}
 
 	_, err := client.Pushdown(ctx, req)
