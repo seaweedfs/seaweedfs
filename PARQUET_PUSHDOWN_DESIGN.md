@@ -407,6 +407,8 @@ type ParquetPushdownRequest struct {
     Predicate      []byte        // serialized per PredicateKind
     VectorQuery    *VectorQuery
     Limit          int
+    RequestRowIds  bool          // include per-row refs in response (default false)
+    MaxRowIds      int           // cap on returned row refs; server may truncate
 }
 
 type PredicateKind int32
@@ -438,13 +440,16 @@ v1 implementations should accept Substrait as the canonical wire format. Iceberg
 
 ### Pushdown Response
 
+The response is range-oriented. Row-id lists are optional and bounded — they are returned only when the request opts in (e.g. for vector top-K) and the planner can verify the result fits within `MaxRowIds`.
+
 ```go
 type ParquetPushdownResponse struct {
     FileRanges []FileRange
     RowGroups  []RowGroupRef
     Pages      []PageRef
-    RowIds     []RowRef
+    RowIds     []RowRef // optional; empty unless RequestRowIds set and within MaxRowIds
     Scores     []float32
+    Truncated  bool     // true if row-id list was omitted/truncated due to size cap
     Stats      PushdownStats
 }
 
