@@ -107,25 +107,37 @@ The user-visible layout remains normal Iceberg/Parquet layout:
       part-00002.parquet
 ```
 
-SeaweedFS stores side indexes outside the table's S3 prefix so they do not appear in Iceberg listings or interfere with snapshot expiration / orphan-file removal. Two acceptable placements:
+SeaweedFS stores side indexes in a hidden `.index/` directory co-located with the Parquet files they describe. Iceberg, Spark, and Hadoop ecosystems treat dot-prefixed paths as hidden by convention — they are skipped by table listings, snapshot expiration, and orphan-file cleanup — so co-location does not interfere with normal table operations while keeping each index next to the data it indexes (the same backup/replication policy applies; lifecycle is automatic).
 
-- a separate system bucket or filer mount (preferred), keyed by `(table_uuid, file_path, file_identity)`
-- the same bucket under a top-level prefix that engines are configured to ignore (`/_sw_index/...`), never under the table prefix
+Index scope determines whether `.index/` lives next to the file or next to the folder:
 
-Logical layout per data file:
+- **File-scoped indexes** (footer cache, per-file column indexes, per-file bloom filters, per-file deletion bitmaps): under `.index/<file_name>/<identity>/...` next to the data file's parent.
+- **Folder-scoped indexes** (table-wide or partition-wide indexes that span multiple files, e.g. a single B-tree covering all files in a partition): under `.index/<identity>/...` directly inside `.index/`, with the index payload naming the files it indexes.
+
+Logical layout for a partition:
 
 ```text
-<system-prefix>/<table_uuid>/data/ds=2026-01-01/part-00001.parquet/<identity>/
-  footer.cache
-  page_index.fid_3      # column "timestamp", field id 3
-  bloom.fid_5           # column "user_id", field id 5
-  bitmap.fid_7          # column "tenant_id", field id 7
-  btree.fid_3           # column "timestamp", field id 3
-  inverted.fid_11       # column "message", field id 11
-  vector.fid_42.ivf     # column "embedding", field id 42
+/table/data/ds=2026-01-01/
+  part-00001.parquet
+  part-00002.parquet
+  .index/
+    part-00001.parquet/<identity>/
+      footer.cache
+      page_index.fid_3      # column "timestamp", field id 3
+      bloom.fid_5           # column "user_id", field id 5
+      bitmap.fid_7          # column "tenant_id", field id 7
+      btree.fid_3           # column "timestamp", field id 3
+      inverted.fid_11       # column "message", field id 11
+      vector.fid_42.ivf     # column "embedding", field id 42
+    part-00002.parquet/<identity>/
+      ...
+    <identity>/             # folder-scoped, optional
+      partition_btree.fid_3
 ```
 
 Per-column index files are keyed by Iceberg field ID, not column name. A rename (e.g. `tenant_id` → `org_id`) does not invalidate the index, and a column dropped-and-re-added with the same name (a different field ID) does not silently reuse the wrong index. Side-index metadata may carry the human-readable name as a hint for logging. `<identity>` is derived from the index identity rules in [Index Consistency](#index-consistency). The original Parquet file is not modified.
+
+For tables that are read by tools that do *not* respect the dot-prefix convention, deployments can override `.index/` to a configurable hidden-prefix name or relocate indexes to a separate filer mount; the design otherwise assumes dot-prefix is hidden.
 
 ## Logical View for Planning
 
@@ -320,7 +332,7 @@ Possible index types:
 Index layout:
 
 ```text
-<system-prefix>/<table_uuid>/.../<identity>/vector.fid_42.ivf/
+<parquet_parent>/.index/<file_name>/<identity>/vector.fid_42.ivf/
   centroids
   list_000001
   list_000002
@@ -740,7 +752,7 @@ Position deletes name `(data_file, row_position)` pairs. The set of position-del
 Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
 
 ```text
-<system-prefix>/<table_uuid>/.../<identity>/deletes.position.bitmap
+<parquet_parent>/.index/<file_name>/<identity>/deletes.position.bitmap
 ```
 
 The cached bitmap is only valid for the exact set of position-delete files that produced it — see [Cache key](#position-delete-bitmap-cache-key) below.
