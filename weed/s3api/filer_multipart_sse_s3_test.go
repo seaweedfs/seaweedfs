@@ -91,6 +91,72 @@ func TestCompletedMultipartChunkPreservesExistingSSES3Metadata(t *testing.T) {
 	}
 }
 
+// TestApplyMultipartSSES3HeadersFromUploadEntry pins the canonical object-level
+// SSE-S3 attributes onto the completed entry: SeaweedFSSSES3Key (used by
+// IsSSES3EncryptedInternal and the read-side decryption-key lookup) and
+// X-Amz-Server-Side-Encryption (used by detectPrimarySSEType for non-chunked
+// reads). Pre-existing values must not be clobbered.
+func TestApplyMultipartSSES3HeadersFromUploadEntry(t *testing.T) {
+	initSSES3KeyManagerForTest(t)
+
+	key, err := GenerateSSES3Key()
+	if err != nil {
+		t.Fatalf("GenerateSSES3Key: %v", err)
+	}
+	keyData, err := SerializeSSES3Metadata(key)
+	if err != nil {
+		t.Fatalf("SerializeSSES3Metadata: %v", err)
+	}
+
+	baseIV := []byte("1234567890abcdef")
+	uploadEntry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.SeaweedFSSSES3Encryption: []byte(s3_constants.SSEAlgorithmAES256),
+			s3_constants.SeaweedFSSSES3BaseIV:     []byte(base64.StdEncoding.EncodeToString(baseIV)),
+			s3_constants.SeaweedFSSSES3KeyData:    []byte(base64.StdEncoding.EncodeToString(keyData)),
+		},
+	}
+	sses3Info, err := extractMultipartSSES3Info(uploadEntry)
+	if err != nil {
+		t.Fatalf("extractMultipartSSES3Info: %v", err)
+	}
+
+	t.Run("backfills missing canonical attributes", func(t *testing.T) {
+		finalEntry := &filer_pb.Entry{Extended: map[string][]byte{}}
+		applyMultipartSSES3HeadersFromUploadEntry(finalEntry, sses3Info)
+		if !bytes.Equal(finalEntry.Extended[s3_constants.SeaweedFSSSES3Key], keyData) {
+			t.Fatal("final entry did not receive object-level SSE-S3 key metadata")
+		}
+		if got := string(finalEntry.Extended[s3_constants.AmzServerSideEncryption]); got != s3_constants.SSEAlgorithmAES256 {
+			t.Fatalf("final entry SSE header = %q, want %q", got, s3_constants.SSEAlgorithmAES256)
+		}
+	})
+
+	t.Run("does not clobber existing canonical attributes", func(t *testing.T) {
+		existingKey := []byte("existing-key-bytes")
+		existingHeader := []byte("aws:kms")
+		finalEntry := &filer_pb.Entry{Extended: map[string][]byte{
+			s3_constants.SeaweedFSSSES3Key:      existingKey,
+			s3_constants.AmzServerSideEncryption: existingHeader,
+		}}
+		applyMultipartSSES3HeadersFromUploadEntry(finalEntry, sses3Info)
+		if !bytes.Equal(finalEntry.Extended[s3_constants.SeaweedFSSSES3Key], existingKey) {
+			t.Fatal("existing SSE-S3 key was overwritten")
+		}
+		if !bytes.Equal(finalEntry.Extended[s3_constants.AmzServerSideEncryption], existingHeader) {
+			t.Fatal("existing X-Amz-Server-Side-Encryption was overwritten")
+		}
+	})
+
+	t.Run("nil info is a no-op", func(t *testing.T) {
+		finalEntry := &filer_pb.Entry{Extended: map[string][]byte{}}
+		applyMultipartSSES3HeadersFromUploadEntry(finalEntry, nil)
+		if len(finalEntry.Extended) != 0 {
+			t.Fatalf("nil sses3Info should not write any keys, got %d", len(finalEntry.Extended))
+		}
+	})
+}
+
 // TestCompletedMultipartChunkBackfilledIVDecryptsActualCiphertext is a round
 // trip across the encryption boundary: it encrypts simulated multipart parts
 // using the same call path putToFiler uses (CreateSSES3EncryptedReaderWithBaseIV

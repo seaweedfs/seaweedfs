@@ -324,6 +324,29 @@ func completedMultipartChunk(chunk *filer_pb.FileChunk, offset int64, sses3Info 
 	return finalChunk, nil
 }
 
+// applyMultipartSSES3HeadersFromUploadEntry writes the canonical object-level
+// SSE-S3 attributes (SeaweedFSSSES3Key / X-Amz-Server-Side-Encryption) onto a
+// completed multipart entry when they are missing. detectPrimarySSEType uses
+// the object-level X-Amz-Server-Side-Encryption header to recognize SSE-S3 on
+// inline / small-object reads, and IsSSES3EncryptedInternal requires both keys
+// to consider an object encrypted at all. Without this, an object whose first
+// part lacked the canonical attributes (e.g. a part written through a path
+// that did not set them) would be served as unencrypted on GET.
+func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *multipartSSES3Info) {
+	if dst == nil || sses3Info == nil {
+		return
+	}
+	if dst.Extended == nil {
+		dst.Extended = make(map[string][]byte)
+	}
+	if _, exists := dst.Extended[s3_constants.SeaweedFSSSES3Key]; !exists {
+		dst.Extended[s3_constants.SeaweedFSSSES3Key] = sses3Info.keyData
+	}
+	if _, exists := dst.Extended[s3_constants.AmzServerSideEncryption]; !exists {
+		dst.Extended[s3_constants.AmzServerSideEncryption] = []byte(s3_constants.SSEAlgorithmAES256)
+	}
+}
+
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
 	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key); err == nil && entry != nil && entry.Extended != nil {
 		if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
@@ -597,6 +620,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					firstPartEntry := completionState.partEntries[completedPartNumbers[0]][0]
 					copySSEHeadersFromFirstPart(versionEntry, firstPartEntry, "versioned")
 				}
+				applyMultipartSSES3HeadersFromUploadEntry(versionEntry, completionState.sses3Info)
 				if completionState.pentry.Attributes != nil && completionState.pentry.Attributes.Mime != "" {
 					versionEntry.Attributes.Mime = completionState.pentry.Attributes.Mime
 				} else if completionState.mime != "" {
@@ -682,6 +706,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					firstPartEntry := completionState.partEntries[completedPartNumbers[0]][0]
 					copySSEHeadersFromFirstPart(entry, firstPartEntry, "suspended versioning")
 				}
+				applyMultipartSSES3HeadersFromUploadEntry(entry, completionState.sses3Info)
 				// Persist ETag to ensure subsequent HEAD/GET uses the same value
 				entry.Extended[s3_constants.ExtETagKey] = []byte(completionState.multipartETag)
 				// Store composite checksum if computed from per-part checksums
@@ -744,6 +769,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				firstPartEntry := completionState.partEntries[completedPartNumbers[0]][0]
 				copySSEHeadersFromFirstPart(entry, firstPartEntry, "non-versioned")
 			}
+			applyMultipartSSES3HeadersFromUploadEntry(entry, completionState.sses3Info)
 			// Persist ETag to ensure subsequent HEAD/GET uses the same value
 			entry.Extended[s3_constants.ExtETagKey] = []byte(completionState.multipartETag)
 			// Store composite checksum if computed from per-part checksums
