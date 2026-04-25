@@ -418,7 +418,14 @@ The pushdown planner picks per query: if the scalar predicate is aligned with a 
 type ParquetPushdownRequest struct {
     Table          string
     SnapshotId     int64
-    Files          []string
+
+    // DataFiles is the authoritative list of files to scan. Each entry
+    // carries enough identity for the server to validate that its cached
+    // side indexes still apply, and enough delete-file context that the
+    // server can compute the correct visible row set without re-running
+    // Iceberg planning.
+    DataFiles      []DataFileDescriptor
+
     Columns        []string
     PredicateKind  PredicateKind // SUBSTRAIT or ICEBERG_EXPRESSION
     Predicate      []byte        // serialized per PredicateKind
@@ -426,6 +433,22 @@ type ParquetPushdownRequest struct {
     Limit          int
     RequestRowIds  bool          // include per-row refs in response (default false)
     MaxRowIds      int           // cap on returned row refs; server may truncate
+}
+
+type DataFileDescriptor struct {
+    Path           string
+    SizeBytes      int64  // Iceberg manifest file_size_in_bytes
+    RecordCount    int64  // Iceberg manifest record_count
+    ETag           string // optional, used when no Iceberg manifest is available
+    SequenceNumber int64  // Iceberg sequence number, drives equality-delete scope
+    PositionDeletes []DeleteFileRef // delete files that apply to this data file
+    EqualityDeletes []DeleteFileRef
+}
+
+type DeleteFileRef struct {
+    Path           string
+    SizeBytes      int64
+    SequenceNumber int64
 }
 
 type PredicateKind int32
@@ -452,6 +475,12 @@ type VectorQuery struct {
     NProbe int
 }
 ```
+
+The client is responsible for Iceberg planning (resolving the snapshot to data files and delete files) and passes the resolved set in `DataFiles`. The server treats this list as authoritative and does not re-read the catalog. Each descriptor carries:
+
+- enough identity (`SizeBytes`, `RecordCount`, optional `ETag`) for the server to verify a cached side index still matches the file,
+- the Iceberg `SequenceNumber` so equality-delete scope can be resolved correctly,
+- the position and equality delete files attached to this data file by the client's planner.
 
 v1 implementations should accept Substrait as the canonical wire format. Iceberg Expression JSON is supported as a convenience for connectors that already produce it.
 
