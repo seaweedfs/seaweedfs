@@ -4,7 +4,7 @@ Companion to [PARQUET_PUSHDOWN_DESIGN.md](./PARQUET_PUSHDOWN_DESIGN.md). The des
 
 ## Status
 
-Draft. Open questions remain — see [Open Questions](#open-questions). Coding does not start until those are resolved.
+Open questions resolved (see [Decisions Recorded](#decisions-recorded)). M0 is unblocked.
 
 ## Goals for the implementation
 
@@ -171,20 +171,20 @@ Lands before M2 ships externally. Sequenced after M1 because catalog validation 
 - **Correctness oracle:** every milestone validates that pushdown output is a *strict subset* of a brute-force Iceberg+Parquet scan with the same predicate, and that the projected-column byte ranges decode to the same rows. The oracle is the safety net that lets us refactor index internals freely.
 - **Performance suite:** runs in CI weekly, not on every PR. Tracks footer-cache hit rate, row-group reduction, page reduction, end-to-end query latency vs a baseline standard scan.
 
-## Open Questions
+## Decisions Recorded
 
-These need answers before M0 starts. Most have defaults proposed above; confirm or override.
+These were the open questions before M0. All have been resolved; recording for traceability and to anchor future amendments.
 
-1. **Residency for v1 — confirm filer-managed?** Alternative: a separate `weed pushdown` daemon. Filer-managed is simpler but couples pushdown availability to filer availability. *Default: filer-managed.*
-2. **Service surface — extend `filer_pb` or new `parquet_pushdown_pb` package?** New package is cleaner but adds a discovery hop for clients. *Default: new package.*
-3. **Trust mode for the very first integration tests — connector-trusted only, or do we need M3 (catalog-validated) before any test exercises the trust boundary?** *Default: connector-trusted for M0–M2, M3 lands before any external connector PoC (M12).*
-4. **Side-index path root.** `/__pushdown__/` is my proposal; is there an existing convention I should match? (I see `/.snapshots/`, `/.iam/`, etc. in other parts of the repo.)
-5. **Predicate evaluator scope for v1 — confirm the subset listed above (`=, !=, <, <=, >, >=`, `IN`, `BETWEEN`, `IS NULL`, boolean ops)?** Anything else you want supported up-front (e.g. `LIKE`)? *Default: subset above; `LIKE` deferred to inverted-index milestone.*
-6. **Iceberg snapshot integration in M3 — use `iceberg-go` directly, or call into the existing `weed/s3api/iceberg/` and `weed/plugin/worker/iceberg/` code?** The latter has table cache + lock support already. *Default: route through the existing internal package, do not add a parallel iceberg-go integration.*
-7. **Auth surface for the gRPC endpoint — reuse the filer's existing auth (mTLS / JWT), or add a pushdown-specific token?** *Default: reuse filer auth; the request principal must have read access to every `DataFile` listed.*
-8. **Test corpus for M1.** Is there an existing Iceberg-with-deletes fixture in `test/` we should standardize on, or do we generate one from scratch in `test/parquet_pushdown/fixtures/`? *Default: generate from scratch, parameterized over (with-position-deletes, with-equality-deletes, with-DVs, partitioned/unpartitioned).*
-9. **Phase 1 acceptance bar.** What's the definition of done that lets us call Phase 1 shipped — passing tests in CI, a benchmark showing measurable I/O reduction on a reference query, or a connector PoC? *Default: tests + I/O-reduction benchmark; PoC slips to M12.*
-10. **Performance regression budget.** Pushdown adds work on the read path. What overhead is acceptable when the predicate misses everything (worst case for pushdown)? *Default: ≤10% added latency vs a direct ranged GET on a 10 MiB single-file scan.*
+1. **Residency:** standalone `weed pushdown` daemon. (See [Architectural decisions](#architectural-decisions-for-v1).)
+2. **Service surface:** new `weed/pb/parquet_pushdown_pb/` package; not extending `filer_pb`.
+3. **Trust mode:** catalog-validated is the default and required for Phase 1 shipping; connector-trusted is a dev-only flag rejected in production builds.
+4. **Side-index path:** co-located in a hidden `.index/` directory next to the Parquet data, under the same parent folder. File-scoped: `<parquet_parent>/.index/<file_name>/<identity>/...`. Folder-scoped: `<parquet_parent>/.index/<identity>/...`. Hidden-prefix name configurable for non-dot-aware readers.
+5. **Predicate subset for v1:** `=`, `!=`, `<`, `<=`, `>`, `>=`, `IN`, `BETWEEN`, `IS NULL`, boolean `AND/OR/NOT`. `LIKE` deferred to the inverted-index milestone. Wire format is Substrait `ExtendedExpression` from M0.
+6. **Iceberg snapshot integration:** route through the existing internal Iceberg packages (`weed/s3api/iceberg/`, `weed/plugin/worker/iceberg/`); do not add a parallel `iceberg-go` integration in `weed/parquet_pushdown/`.
+7. **Auth:** reuse the filer's existing auth. The request principal must have read access to every `DataFile` listed; the daemon enforces this by re-using the filer's authorization on every blob fetch.
+8. **Test corpus:** generated from scratch in `test/parquet_pushdown/fixtures/`, parameterized over (with-position-deletes, with-equality-deletes, with-DVs, partitioned/unpartitioned).
+9. **Phase 1 done bar:** passing CI tests + an I/O-reduction benchmark on a reference query. Connector PoC slips to M12.
+10. **Performance regression budget for v1:** ≤10% added latency vs a direct ranged GET on a 10 MiB single-file scan in the worst case (predicate prunes nothing). The threshold is exposed as a configuration knob (`pushdown.max_overhead_pct`, default `10`) so deployments can tighten or loosen it without code changes.
 
 ## Risk register
 
