@@ -46,7 +46,12 @@ message ParquetPushdownRequest {
     repeated ColumnRef columns = 4;
 
     PredicateKind predicate_kind = 5;
-    bytes predicate = 6; // serialized per predicate_kind
+
+    // Predicate is a *bound* expression: every column reference must
+    // resolve to an Iceberg field id (Substrait field-reference IDs
+    // matching schema_id, or Iceberg Expression JSON with id-based
+    // references). Name-only references are rejected.
+    bytes predicate = 6;
 
     VectorQuery vector_query = 7;
 
@@ -56,6 +61,13 @@ message ParquetPushdownRequest {
     // Bounded by max_row_ids.
     bool request_row_ids = 9;
     int32 max_row_ids = 10;
+
+    // schema_id is the Iceberg schema id the predicate (and any
+    // ColumnRef.field_id values) are bound to. The server confirms it
+    // matches the snapshot's current_schema_id (or a known historical
+    // schema) before evaluating. Field IDs not present in this schema
+    // cause the request to be rejected.
+    int32 schema_id = 11;
 }
 
 message DataFileDescriptor {

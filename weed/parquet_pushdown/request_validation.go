@@ -49,6 +49,13 @@ func validateRequest(req *pb.ParquetPushdownRequest) error {
 	if (req.PredicateKind != pb.PredicateKind_PREDICATE_KIND_UNSPECIFIED) != (len(req.Predicate) > 0) {
 		return status.Error(codes.InvalidArgument, "predicate_kind and predicate must be set together")
 	}
+	// A bound predicate is meaningless without naming the schema its
+	// field references resolve under, so require schema_id whenever a
+	// predicate is present. The deeper check (every field id is in
+	// the snapshot's schema) needs catalog access and runs in M3.
+	if len(req.Predicate) > 0 && req.SchemaId == 0 {
+		return status.Error(codes.InvalidArgument, "predicate requires schema_id so field references can be bound")
+	}
 	if req.MaxRowIds < 0 || req.MaxRowIds > maxRowIdsCap {
 		return status.Errorf(codes.InvalidArgument, "max_row_ids must be in [0, %d]", maxRowIdsCap)
 	}

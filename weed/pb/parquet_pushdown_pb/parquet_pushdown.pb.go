@@ -328,13 +328,23 @@ type ParquetPushdownRequest struct {
 	// or path hint (fallback for non-Iceberg-managed Parquet).
 	Columns       []*ColumnRef  `protobuf:"bytes,4,rep,name=columns,proto3" json:"columns,omitempty"`
 	PredicateKind PredicateKind `protobuf:"varint,5,opt,name=predicate_kind,json=predicateKind,proto3,enum=parquet_pushdown_pb.PredicateKind" json:"predicate_kind,omitempty"`
-	Predicate     []byte        `protobuf:"bytes,6,opt,name=predicate,proto3" json:"predicate,omitempty"` // serialized per predicate_kind
-	VectorQuery   *VectorQuery  `protobuf:"bytes,7,opt,name=vector_query,json=vectorQuery,proto3" json:"vector_query,omitempty"`
-	Limit         int32         `protobuf:"varint,8,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Predicate is a *bound* expression: every column reference must
+	// resolve to an Iceberg field id (Substrait field-reference IDs
+	// matching schema_id, or Iceberg Expression JSON with id-based
+	// references). Name-only references are rejected.
+	Predicate   []byte       `protobuf:"bytes,6,opt,name=predicate,proto3" json:"predicate,omitempty"`
+	VectorQuery *VectorQuery `protobuf:"bytes,7,opt,name=vector_query,json=vectorQuery,proto3" json:"vector_query,omitempty"`
+	Limit       int32        `protobuf:"varint,8,opt,name=limit,proto3" json:"limit,omitempty"`
 	// If true, the response may include per-row refs (RowRef list).
 	// Bounded by max_row_ids.
 	RequestRowIds bool  `protobuf:"varint,9,opt,name=request_row_ids,json=requestRowIds,proto3" json:"request_row_ids,omitempty"`
 	MaxRowIds     int32 `protobuf:"varint,10,opt,name=max_row_ids,json=maxRowIds,proto3" json:"max_row_ids,omitempty"`
+	// schema_id is the Iceberg schema id the predicate (and any
+	// ColumnRef.field_id values) are bound to. The server confirms it
+	// matches the snapshot's current_schema_id (or a known historical
+	// schema) before evaluating. Field IDs not present in this schema
+	// cause the request to be rejected.
+	SchemaId      int32 `protobuf:"varint,11,opt,name=schema_id,json=schemaId,proto3" json:"schema_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -435,6 +445,13 @@ func (x *ParquetPushdownRequest) GetRequestRowIds() bool {
 func (x *ParquetPushdownRequest) GetMaxRowIds() int32 {
 	if x != nil {
 		return x.MaxRowIds
+	}
+	return 0
+}
+
+func (x *ParquetPushdownRequest) GetSchemaId() int32 {
+	if x != nil {
+		return x.SchemaId
 	}
 	return 0
 }
@@ -1347,7 +1364,7 @@ const file_parquet_pushdown_proto_rawDesc = "" +
 	"\fPingResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1d\n" +
 	"\n" +
-	"trust_mode\x18\x02 \x01(\tR\ttrustMode\"\xdd\x03\n" +
+	"trust_mode\x18\x02 \x01(\tR\ttrustMode\"\xfa\x03\n" +
 	"\x16ParquetPushdownRequest\x12\x14\n" +
 	"\x05table\x18\x01 \x01(\tR\x05table\x12\x1f\n" +
 	"\vsnapshot_id\x18\x02 \x01(\x03R\n" +
@@ -1361,7 +1378,8 @@ const file_parquet_pushdown_proto_rawDesc = "" +
 	"\x05limit\x18\b \x01(\x05R\x05limit\x12&\n" +
 	"\x0frequest_row_ids\x18\t \x01(\bR\rrequestRowIds\x12\x1e\n" +
 	"\vmax_row_ids\x18\n" +
-	" \x01(\x05R\tmaxRowIds\"\xc5\x02\n" +
+	" \x01(\x05R\tmaxRowIds\x12\x1b\n" +
+	"\tschema_id\x18\v \x01(\x05R\bschemaId\"\xc5\x02\n" +
 	"\x12DataFileDescriptor\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n" +
 	"\n" +

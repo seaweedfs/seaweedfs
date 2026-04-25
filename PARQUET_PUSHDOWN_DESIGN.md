@@ -445,6 +445,15 @@ type ParquetPushdownRequest struct {
     Table          string
     SnapshotId     int64
 
+    // SchemaId is the Iceberg schema id the predicate is bound to —
+    // the schema the connector used when resolving column-name
+    // references to field IDs. The server confirms it matches the
+    // snapshot's current_schema_id (or a known historical schema)
+    // before evaluating the predicate. If the predicate refers to
+    // field IDs that are not present in this schema, the request is
+    // rejected.
+    SchemaId int32
+
     // DataFiles is the authoritative list of files to scan. Each entry
     // carries enough identity for the server to validate that its cached
     // side indexes still apply, and enough delete-file context that the
@@ -454,7 +463,17 @@ type ParquetPushdownRequest struct {
 
     Columns        []ColumnRef
     PredicateKind  PredicateKind // SUBSTRAIT or ICEBERG_EXPRESSION
-    Predicate      []byte        // serialized per PredicateKind
+
+    // Predicate is a *bound* expression: every column reference must
+    // resolve to an Iceberg field id (Substrait field-reference IDs
+    // matching this request's SchemaId, or Iceberg Expression JSON
+    // with id-based references). Name-only references — the kind a
+    // SQL parser emits — are rejected; the connector is responsible
+    // for binding before sending. This avoids name-resolution
+    // ambiguity under schema evolution and removes a server-side
+    // dependency on the catalog's symbol table.
+    Predicate      []byte
+
     VectorQuery    *VectorQuery
     Limit          int
     RequestRowIds  bool          // include per-row refs in response (default false)

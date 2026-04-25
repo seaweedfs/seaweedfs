@@ -44,6 +44,11 @@ func TestValidateRequest_RejectsEmpty(t *testing.T) {
 		{"predicate kind without bytes", func(r *pb.ParquetPushdownRequest) {
 			r.PredicateKind = pb.PredicateKind_PREDICATE_KIND_SUBSTRAIT
 		}},
+		{"predicate without schema_id", func(r *pb.ParquetPushdownRequest) {
+			r.PredicateKind = pb.PredicateKind_PREDICATE_KIND_SUBSTRAIT
+			r.Predicate = []byte("bound expression")
+			r.SchemaId = 0
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
