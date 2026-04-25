@@ -494,26 +494,35 @@ If the identity of a Parquet file changes, its indexes are invalidated and rebui
 
 ## Handling Iceberg Deletes
 
-Iceberg may use:
+Iceberg uses two delete mechanisms, with different implications for indexing:
 
-- position delete files
-- equality delete files
+### Position deletes (precomputable)
 
-SeaweedFS-aware pushdown should apply delete information when available.
-
-Possible strategy:
-
-```text
-1. Iceberg catalog returns data files and delete files
-2. SeaweedFS builds delete masks per data file
-3. Pushdown execution removes deleted rows from candidate sets
-```
-
-Delete masks can be stored as side indexes:
+Position deletes name `(data_file, row_position)` pairs. They can be merged into a per-data-file roaring bitmap and cached as a side index:
 
 ```text
 /table/_seaweed_index/.../deletes.position.bitmap
-/table/_seaweed_index/.../deletes.equality.bitmap
+```
+
+Pushdown subtracts this bitmap from candidate row sets before returning results.
+
+### Equality deletes (must evaluate at query time)
+
+Equality deletes carry a predicate (e.g. `id = 42`) and apply to all data files in scope of the delete file's sequence number. They cannot be precomputed as a static bitmap per data file because:
+
+- one equality delete file can affect many data files
+- new data files added later may need to be filtered by the same delete predicate until compaction
+
+Strategy: evaluate equality-delete predicates at query time, accelerated by the same scalar indexes (bloom, bitmap, B-tree). Optionally cache materialized result bitmaps keyed by `(data_file_id, equality_delete_file_id)` and invalidate on snapshot change.
+
+### End-to-end flow
+
+```text
+1. Iceberg catalog returns data files plus position+equality delete files
+2. For each data file:
+     a. apply cached position-delete bitmap
+     b. evaluate live equality-delete predicates against side indexes
+3. Pushdown execution returns candidate sets minus the union of (a) and (b)
 ```
 
 ## Compaction and Maintenance
