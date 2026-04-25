@@ -454,7 +454,14 @@ type DataFileDescriptor struct {
     SizeBytes      int64  // Iceberg manifest file_size_in_bytes
     RecordCount    int64  // Iceberg manifest record_count
     ETag           string // optional, used when no Iceberg manifest is available
-    SequenceNumber int64  // Iceberg sequence number, drives equality-delete scope
+
+    // DataSequenceNumber is the Iceberg manifest entry's
+    // data_sequence_number — the sequence number assigned when the
+    // file's data was logically added. This is the field that drives
+    // equality-delete and DV scope. It is NOT the same as
+    // file_sequence_number (commit-time sequence number for the
+    // manifest entry itself).
+    DataSequenceNumber int64
 
     // Deletes is the union of position-delete files, equality-delete
     // files, and deletion vectors that apply to this data file.
@@ -465,7 +472,15 @@ type DataFileDescriptor struct {
 type DeleteFileRef struct {
     Path           string
     SizeBytes      int64
-    SequenceNumber int64
+
+    // DataSequenceNumber is the delete file's data_sequence_number.
+    // The scope rule is: this delete file applies to a data file iff
+    //   data_file.DataSequenceNumber  <  delete_file.DataSequenceNumber
+    // for equality deletes / DVs, and
+    //   data_file.DataSequenceNumber  <=  delete_file.DataSequenceNumber
+    // for position deletes (a position delete may target a data file
+    // committed in the same snapshot).
+    DataSequenceNumber int64
 
     // Content type matches Iceberg manifest "content" field.
     Content        DeleteContent
@@ -540,7 +555,7 @@ type VectorQuery struct {
 The client is responsible for Iceberg planning (resolving the snapshot to data files and delete files) and passes the resolved set in `DataFiles`. The server treats this list as authoritative and does not re-read the catalog. Each descriptor carries:
 
 - enough identity (`SizeBytes`, `RecordCount`, optional `ETag`) for the server to verify a cached side index still matches the file,
-- the Iceberg `SequenceNumber` so equality-delete scope can be resolved correctly,
+- the Iceberg `DataSequenceNumber` (the manifest entry's `data_sequence_number`, not `file_sequence_number`) so equality-delete and DV scope can be resolved correctly,
 - the `Deletes` list of position-delete files, equality-delete files, and deletion vectors that the client's planner has attached to this data file. Each entry carries the Iceberg `Content` discriminator (`PositionDeletes`, `EqualityDeletes`, `DeletionVector`), the on-disk `FileFormat`, and any content-specific fields (equality field IDs, Puffin blob offset/length/digest).
 
 v1 implementations should accept Substrait as the canonical wire format. Iceberg Expression JSON is supported as a convenience for connectors that already produce it.
@@ -650,7 +665,7 @@ Iceberg's delete model has evolved across spec versions. Pushdown must support a
 
 ### Position delete files (v2; precomputable)
 
-Position deletes name `(data_file, row_position)` pairs. The set of position-delete files that apply to a given data file is `{ pdf : pdf.data_sequence_number >= data_file.data_sequence_number AND pdf.referenced_data_file in {NULL, data_file.path} }`. Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
+Position deletes name `(data_file, row_position)` pairs. The set of position-delete files that apply to a given data file is `{ pdf : pdf.DataSequenceNumber >= data_file.DataSequenceNumber AND pdf.ReferencedDataFile in {empty, data_file.Path} }`. Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
 
 ```text
 <system-prefix>/<table_uuid>/.../<identity>/deletes.position.bitmap
@@ -698,7 +713,7 @@ When pushdown receives a request, it computes the key from the position-delete e
 
 ### Equality deletes (must evaluate at query time)
 
-Equality deletes carry a predicate (e.g. `id = 42`) and apply only to data files whose Iceberg sequence number is **strictly less than** the delete file's sequence number. Data files added at or after the delete file's sequence number are not affected — those rows simply never existed when the delete was written. This is why the per-data-file pushdown request must carry both the data file's sequence number and the delete files attached to it: the planner has already resolved this scoping using sequence numbers.
+Equality deletes carry a predicate (e.g. `id = 42`) and apply only to data files whose `data_sequence_number` is **strictly less than** the delete file's `data_sequence_number`. Data files whose `data_sequence_number` is equal to or greater than the delete file's are not affected — those rows simply never existed when the delete was written. (The Iceberg manifest entry's `file_sequence_number` is the commit-time sequence number for the manifest entry itself and is not used for delete scoping.) This is why the per-data-file pushdown request must carry both the data file's `DataSequenceNumber` and the delete files attached to it: the planner has already resolved this scoping using `data_sequence_number`.
 
 Equality deletes cannot be precomputed as a static bitmap per data file because:
 
