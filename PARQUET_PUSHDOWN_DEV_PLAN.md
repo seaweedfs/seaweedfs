@@ -30,7 +30,7 @@ The dependencies needed for v1 (`parquet-go`, `iceberg-go`, `RoaringBitmap/roari
 
 These are commitments unless an open question below changes them.
 
-- **Residency: filer-managed.** The pushdown service runs inside the filer process. Rationale: simplest operational story; reuses filer auth, replication, and metadata; matches Phase 1's I/O profile (read footers and small side indexes). Volume-server colocation and a separate index-serving tier are deferred to Phase 2/3 once we have measurements.
+- **Residency: separate `weed pushdown` daemon.** The pushdown service runs as its own process, scaled and operated independently of the filer. It talks to the filer over the existing filer gRPC API to read Parquet data and side-index blobs, and to the Iceberg catalog (via the existing internal package — see decision 6 below) for snapshot resolution and request validation. Rationale: pushdown availability and resource consumption (cache memory, predicate evaluation CPU, per-tenant index loads) decouple from the filer's hot path, and the daemon can scale horizontally without touching the storage layer. The daemon is stateless on disk: caches are in-memory; durable side indexes live in the filer per [Side-index path](#side-index-path).
 - **Wire protocol: gRPC.** New service definition `parquet_pushdown_pb.ParquetPushdown` in `weed/pb/parquet_pushdown_pb/`. REST/HTTP shim only if a connector requires it. JSON variant deferred.
 - **Trust mode for v1: connector-trusted.** The pushdown endpoint is reachable only inside the trust boundary. `PushdownStats.TrustMode = "connector-trusted"`. Catalog-validated mode is built as Phase 1.5, behind a flag, before any external exposure. Manifest-signed is not on the roadmap.
 - **Predicate engine for v1: built-in subset evaluator.** The wire format accepts Substrait `ExtendedExpression`, but v1 implements only: comparisons (`=, !=, <, <=, >, >=`), `IN`, `BETWEEN`, `IS NULL`, and boolean `AND/OR/NOT` over them. Anything outside this subset returns `unsupported predicate`, and the connector falls back to a standard scan. Full Substrait evaluation lands in Phase 2.
@@ -70,14 +70,18 @@ weed/parquet_pushdown/
   storage/
     filer_blob_store.go       # read/write side-index blobs through filer
   stats.go                    # PushdownStats accumulation
+  daemon/
+    server.go                 # gRPC server bootstrap for the pushdown daemon
+    config.go                 # flag parsing for the `weed pushdown` subcommand
+    filer_client.go           # filer gRPC client for reading data + side-index blobs
 
 weed/pb/parquet_pushdown_pb/
   parquet_pushdown.proto      # request/response messages
   parquet_pushdown.pb.go      # generated
   parquet_pushdown_grpc.pb.go # generated
 
-weed/server/filer_grpc_pushdown.go   # filer mounts the pushdown service
-weed/command/                         # `weed pushdown` subcommands (build/inspect indexes)
+weed/command/pushdown.go      # `weed pushdown` daemon entry point
+                              #   plus build/inspect side-index subcommands
 ```
 
 Tests live alongside the code (`*_test.go`). Integration tests for end-to-end paths land in `test/parquet_pushdown/`.
@@ -90,9 +94,9 @@ Each milestone is a shippable PR (or small chain of PRs). M0–M2 together imple
 
 - `parquet_pushdown.proto` with `Pushdown` RPC, request/response messages mirroring [API Sketch](./PARQUET_PUSHDOWN_DESIGN.md#api-sketch). Generate Go bindings.
 - Empty service implementation that validates request shape (size limits, MaxRowIds cap, trust-mode tag) and returns `unimplemented` for the actual work.
-- Filer wiring: register the gRPC service on the filer's existing gRPC server. Add a feature flag `-pushdown.enabled` so the service is off by default in the filer binary.
-- `weed pushdown ping` CLI command for smoke testing.
-- Acceptance: integration test calls `Pushdown` over gRPC, gets the expected `unimplemented` error path with stats populated.
+- New `weed pushdown` subcommand: standalone daemon binary that boots its own gRPC server, opens a filer client connection (master + filer endpoints from flags, mirroring the existing pattern in `weed mount` / `weed s3`), and registers the pushdown service. Daemon is off by default; users start it explicitly.
+- `weed pushdown ping` CLI subcommand for smoke testing the running daemon.
+- Acceptance: integration test starts a filer + a pushdown daemon, calls `Pushdown` over gRPC, gets the expected `unimplemented` error path with stats populated. Daemon shuts down cleanly on SIGTERM.
 
 ### M1 — Parsed-footer cache + file/range-level pushdown (1 PR)
 
