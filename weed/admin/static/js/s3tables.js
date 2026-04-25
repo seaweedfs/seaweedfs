@@ -315,10 +315,6 @@ function initIcebergNamespaces() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const catalogName = container.dataset.catalogName || '';
-    const csrfTokenInput = document.getElementById('icebergNamespaceCsrfToken');
-    if (csrfTokenInput) {
-        csrfTokenInput.value = getCSRFToken();
-    }
 
     const namespaceInput = document.getElementById('icebergNamespaceName');
     if (namespaceInput) {
@@ -339,14 +335,9 @@ function initIcebergNamespaces() {
                 return;
             }
             try {
-                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
-                const headers = { 'Content-Type': 'application/json' };
-                if (csrfToken) {
-                    headers['X-CSRF-Token'] = csrfToken;
-                }
                 const response = await fetch(s3tBasePath('/api/s3tables/namespaces'), {
                     method: 'POST',
-                    headers: headers,
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ bucket_arn: bucketArn, name: name })
                 });
                 const data = await response.json();
@@ -442,10 +433,6 @@ function initIcebergTables() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const namespace = container.dataset.namespace || '';
-    const csrfTokenInput = document.getElementById('icebergTableCsrfToken');
-    if (csrfTokenInput) {
-        csrfTokenInput.value = getCSRFToken();
-    }
 
     initIcebergDeleteModal();
 
@@ -485,14 +472,9 @@ function initIcebergTables() {
                 payload.metadata = metadata;
             }
             try {
-                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
-                const headers = { 'Content-Type': 'application/json' };
-                if (csrfToken) {
-                    headers['X-CSRF-Token'] = csrfToken;
-                }
                 const response = await fetch(s3tBasePath('/api/s3tables/tables'), {
                     method: 'POST',
-                    headers: headers,
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -630,12 +612,7 @@ async function deleteIcebergTable() {
         query.set('version', versionToken);
     }
     try {
-        const csrfToken = getCSRFToken();
-        const requestOptions = { method: 'DELETE' };
-        if (csrfToken) {
-            requestOptions.headers = { 'X-CSRF-Token': csrfToken };
-        }
-        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), requestOptions);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to drop table');
