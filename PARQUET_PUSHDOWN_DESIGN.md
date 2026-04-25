@@ -105,22 +105,25 @@ The user-visible layout remains normal Iceberg/Parquet layout:
       part-00002.parquet
 ```
 
-SeaweedFS may store side indexes internally or in a hidden namespace:
+SeaweedFS stores side indexes outside the table's S3 prefix so they do not appear in Iceberg listings or interfere with snapshot expiration / orphan-file removal. Two acceptable placements:
+
+- a separate system bucket or filer mount (preferred), keyed by `(table_uuid, file_path, file_identity)`
+- the same bucket under a top-level prefix that engines are configured to ignore (`/_sw_index/...`), never under the table prefix
+
+Logical layout per data file:
 
 ```text
-/table/_seaweed_index/
-  data/ds=2026-01-01/part-00001.parquet/
-    footer.cache
-    row_group_stats
-    page_index.timestamp
-    bloom.user_id
-    bitmap.tenant_id
-    btree.timestamp
-    inverted.message
-    vector.embedding.ivf
+<system-prefix>/<table_uuid>/data/ds=2026-01-01/part-00001.parquet/<identity>/
+  footer.cache
+  page_index.timestamp
+  bloom.user_id
+  bitmap.tenant_id
+  btree.timestamp
+  inverted.message
+  vector.embedding.ivf
 ```
 
-The original Parquet file is not modified.
+`<identity>` is derived from the index identity rules in [Index Consistency](#index-consistency). The original Parquet file is not modified.
 
 ## Logical View for Planning
 
@@ -586,8 +589,7 @@ Garbage collection can remove indexes for files no longer referenced by active s
 
 ### Phase 1: Metadata Acceleration
 
-- Parquet footer cache
-- row group stats cache
+- parsed-footer cache (row group stats already live in the footer; the win is avoiding repeated Thrift decode and offset lookups, not building new index data)
 - column chunk range optimization
 - expose file/range-level pushdown
 
