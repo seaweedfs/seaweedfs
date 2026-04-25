@@ -483,7 +483,9 @@ type DeleteFileRef struct {
     // for equality deletes (predicate-based; only filters older data).
     DataSequenceNumber int64
 
-    // Content type matches Iceberg manifest "content" field.
+    // Content matches Iceberg manifest "content" field. DVs are
+    // POSITION_DELETES with FileFormat == FileFormatPuffin; there is
+    // no separate "deletion vector" content value in Iceberg.
     Content        DeleteContent
 
     // FileFormat is the on-disk format of this delete file.
@@ -491,13 +493,12 @@ type DeleteFileRef struct {
 
     // EqualityFieldIds carries the Iceberg field IDs the equality
     // predicate is keyed on. Required for Content == EqualityDeletes;
-    // empty for position deletes and deletion vectors.
+    // empty for position deletes (file or DV).
     EqualityFieldIds []int32
 
-    // Puffin-only fields, used when Content == DeletionVector and
-    // FileFormat == FileFormatPuffin. The DV blob lives at
-    // (Path, BlobOffset, BlobLength) and BlobDigest is the Puffin
-    // blob's recorded content hash, used to key the bitmap cache.
+    // Puffin-only fields, used when Content == PositionDeletes and
+    // FileFormat == FileFormatPuffin (deletion vectors). The DV blob
+    // lives at (Path, BlobOffset, BlobLength).
     BlobOffset int64
     BlobLength int64
     BlobDigest []byte
@@ -513,10 +514,11 @@ type DeleteContent int32
 
 const (
     DeleteContentUnspecified DeleteContent = 0
-    PositionDeletes          DeleteContent = 1 // Iceberg manifest content=1
+    PositionDeletes          DeleteContent = 1 // Iceberg manifest content=1 (file or DV)
     EqualityDeletes          DeleteContent = 2 // Iceberg manifest content=2
-    DeletionVector           DeleteContent = 3 // Iceberg v3 Puffin DV
 )
+// Iceberg v3 deletion vectors are POSITION_DELETES with
+// FileFormat == FileFormatPuffin; there is no separate enum value.
 
 type FileFormat int32
 
@@ -570,7 +572,7 @@ The client is responsible for Iceberg planning (resolving the snapshot to data f
 
 - enough identity (`SizeBytes`, `RecordCount`, optional `ETag`) for the server to verify a cached side index still matches the file,
 - the Iceberg `DataSequenceNumber` (the manifest entry's `data_sequence_number`, not `file_sequence_number`) so equality-delete and DV scope can be resolved correctly,
-- the `Deletes` list of position-delete files, equality-delete files, and deletion vectors that the client's planner has attached to this data file. Each entry carries the Iceberg `Content` discriminator (`PositionDeletes`, `EqualityDeletes`, `DeletionVector`), the on-disk `FileFormat`, and any content-specific fields (equality field IDs, Puffin blob offset/length/digest).
+- the `Deletes` list of position-delete files, equality-delete files, and deletion vectors that the client's planner has attached to this data file. Each entry carries the Iceberg `Content` discriminator (`PositionDeletes` or `EqualityDeletes`) plus the on-disk `FileFormat`, with the pair `(PositionDeletes, FileFormatPuffin)` denoting a v3 deletion vector. Content-specific fields cover equality field IDs and Puffin blob offset/length.
 
 v1 implementations should accept Substrait as the canonical wire format. Iceberg Expression JSON is supported as a convenience for connectors that already produce it.
 
