@@ -463,6 +463,17 @@ type DataFileDescriptor struct {
     // manifest entry itself).
     DataSequenceNumber int64
 
+    // PartitionSpecId and PartitionValues identify the partition this
+    // data file belongs to, in the partition spec used at write time.
+    // Required for delete applicability: a delete file with a
+    // different (PartitionSpecId, PartitionValues) does not apply,
+    // even if its sequence number rule matches. PartitionValues are
+    // serialized as a Substrait/Iceberg literal map keyed by partition
+    // field id, encoded the same way the planner sees them in the
+    // manifest.
+    PartitionSpecId int32
+    PartitionValues []byte
+
     // Deletes is the union of position-delete files, equality-delete
     // files, and deletion vectors that apply to this data file.
     // Content type is discriminated by DeleteFileRef.Content.
@@ -472,6 +483,17 @@ type DataFileDescriptor struct {
 type DeleteFileRef struct {
     Path           string
     SizeBytes      int64
+
+    // PartitionSpecId and PartitionValues match the partition this
+    // delete file was written for. A delete file applies to a data
+    // file only when (delete.PartitionSpecId, delete.PartitionValues)
+    // == (data.PartitionSpecId, data.PartitionValues). This holds for
+    // both position-delete files and equality-delete files; deletion
+    // vectors set ReferencedDataFile and so the partition match is
+    // implicit but the fields should still be populated for
+    // consistency.
+    PartitionSpecId int32
+    PartitionValues []byte
 
     // DataSequenceNumber is the delete file's data_sequence_number.
     // The scope rule is: this delete file applies to a data file iff
@@ -687,7 +709,18 @@ Iceberg's delete model has evolved across spec versions. Pushdown must support a
 
 ### Position delete files (v2; precomputable)
 
-Position deletes name `(data_file, row_position)` pairs. The set of position-delete files that apply to a given data file is `{ pdf : pdf.DataSequenceNumber >= data_file.DataSequenceNumber AND pdf.ReferencedDataFile in {empty, data_file.Path} }`. Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
+Position deletes name `(data_file, row_position)` pairs. The set of position-delete files that apply to a given data file is
+
+```text
+{ pdf :
+    pdf.DataSequenceNumber  >=  data_file.DataSequenceNumber           // sequence
+    AND pdf.PartitionSpecId  ==  data_file.PartitionSpecId             // same spec
+    AND pdf.PartitionValues  ==  data_file.PartitionValues             // same partition
+    AND pdf.ReferencedDataFile in { empty, data_file.Path }            // file scope
+}
+```
+
+Pushdown merges that set into a per-data-file roaring bitmap and caches it as a side index:
 
 ```text
 <system-prefix>/<table_uuid>/.../<identity>/deletes.position.bitmap
@@ -735,7 +768,17 @@ When pushdown receives a request, it computes the key from the position-delete e
 
 ### Equality deletes (must evaluate at query time)
 
-Equality deletes carry a predicate (e.g. `id = 42`) and apply only to data files whose `data_sequence_number` is **strictly less than** the delete file's `data_sequence_number`. Data files whose `data_sequence_number` is equal to or greater than the delete file's are not affected — those rows simply never existed when the delete was written. (The Iceberg manifest entry's `file_sequence_number` is the commit-time sequence number for the manifest entry itself and is not used for delete scoping.) This is why the per-data-file pushdown request must carry both the data file's `DataSequenceNumber` and the delete files attached to it: the planner has already resolved this scoping using `data_sequence_number`.
+Equality deletes carry a predicate (e.g. `id = 42`). The applicability rule is:
+
+```text
+{ edf :
+    edf.DataSequenceNumber  >  data_file.DataSequenceNumber            // strict; sequence
+    AND edf.PartitionSpecId ==  data_file.PartitionSpecId              // same spec
+    AND edf.PartitionValues ==  data_file.PartitionValues              // same partition
+}
+```
+
+The sequence rule is strict: data files whose `data_sequence_number` is equal to or greater than the delete file's are not affected — those rows simply never existed when the delete was written. (The Iceberg manifest entry's `file_sequence_number` is the commit-time sequence number for the manifest entry itself and is not used for delete scoping.) Partition matching is required as well: equality-delete files are written per partition, and a delete in one partition does not delete from another, even if the sequence rule matches. This is why the per-data-file pushdown request must carry both the data file's `DataSequenceNumber` / `PartitionSpecId` / `PartitionValues` and the delete files attached to it: the planner has already resolved this scoping.
 
 Equality deletes cannot be precomputed as a static bitmap per data file because:
 
