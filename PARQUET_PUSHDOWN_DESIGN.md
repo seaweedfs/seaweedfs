@@ -596,7 +596,7 @@ type ColumnRef struct {
 }
 ```
 
-The client is responsible for Iceberg planning (resolving the snapshot to data files and delete files) and passes the resolved set in `DataFiles`. The server treats this list as authoritative and does not re-read the catalog. Each descriptor carries:
+The client is responsible for Iceberg planning (resolving the snapshot to data files and delete files) and passes the resolved set in `DataFiles`. The server treats this list as authoritative and does not re-read the catalog. See [Trust Model](#trust-model-and-catalog-validation) below for the security implications and the validation modes a deployment can choose between. Each descriptor carries:
 
 - enough identity (`SizeBytes`, `RecordCount`, optional `ETag`) for the server to verify a cached side index still matches the file,
 - the Iceberg `DataSequenceNumber` (the manifest entry's `data_sequence_number`, not `file_sequence_number`) so equality-delete and DV scope can be resolved correctly,
@@ -681,6 +681,23 @@ Spark/Trino/DuckDB connector
   -> receive candidate row groups/pages/ranges/row ids
   -> read only needed Parquet ranges
 ```
+
+## Trust Model and Catalog Validation
+
+The pushdown server treats the request's `DataFiles` and `Deletes` as authoritative — it does not re-resolve the snapshot against the Iceberg catalog. That is fine when the caller is a trusted query engine that has just done its own planning, but it is unsafe when the caller is untrusted: a hostile client could omit delete files (returning rows that should be invisible), point at data files outside the table, or claim a snapshot id that does not match the request.
+
+A deployment must pick one of the following modes per endpoint, and the choice should be visible in the pushdown response stats:
+
+- **Connector-trusted (default for v1).** The pushdown API is reachable only by trusted connectors (Spark/Trino/DuckDB inside the same trust boundary as the catalog). The connector is responsible for honest planning; the server does not validate. Use mTLS, a signed service token, or a network boundary to enforce the trust assumption. Fastest path; appropriate for an internal data plane.
+- **Catalog-validated.** The server validates the request against the Iceberg catalog before serving. For each `DataFileDescriptor` it confirms `(Path, SizeBytes, RecordCount, DataSequenceNumber, PartitionSpecId, PartitionValues)` against the manifest at `SnapshotId`, and confirms the `Deletes` list matches the manifest's attached delete files. Slower (one catalog read per request, cacheable per snapshot) but safe to expose to untrusted clients.
+- **Manifest-signed (future).** The connector includes a catalog-signed token containing a hash of the resolved planning output; the server verifies the signature without re-reading the catalog. Lowest validation cost on the hot path; requires catalog support that does not exist today, so it is listed as a future option only.
+
+Independent of mode, the server always enforces:
+
+- the underlying object's ACL — a client that cannot read the Parquet file cannot query its indexes (see [Security and Access Control](#security-and-access-control));
+- request-shape limits (`MaxRowIds`, predicate complexity caps, request size cap) so a malformed request cannot consume unbounded server resources.
+
+The chosen mode is reported in `PushdownStats` so the connector and the human operator can verify which trust level actually serviced a request.
 
 ## Index Consistency
 
