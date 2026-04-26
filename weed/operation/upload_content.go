@@ -446,13 +446,21 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			// and Go's transport would surface "ContentLength=N with Body
 			// length 0". http.NewRequestWithContext sets GetBody for
 			// *bytes.Reader bodies; use it to attach a fresh body for retry.
+			// If we can't rewind, skip the inner retry and let the outer
+			// retriedUploadData loop reissue the request with a fresh body —
+			// retrying here with a consumed body would mask the original
+			// "connection reset" error with a misleading "Body length 0".
 			if req.GetBody != nil {
 				if newBody, gbErr := req.GetBody(); gbErr == nil {
 					req.Body = newBody
+					resp, post_err = uploader.httpClient.Do(req)
+					defer util_http.CloseResponse(resp)
+				} else {
+					glog.V(1).InfofCtx(ctx, "skip inner retry for %s: GetBody returned %v", option.UploadUrl, gbErr)
 				}
+			} else {
+				glog.V(1).InfofCtx(ctx, "skip inner retry for %s: req.GetBody is nil", option.UploadUrl)
 			}
-			resp, post_err = uploader.httpClient.Do(req)
-			defer util_http.CloseResponse(resp)
 		}
 	}
 	if post_err != nil {
