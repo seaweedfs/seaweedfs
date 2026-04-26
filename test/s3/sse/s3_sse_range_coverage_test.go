@@ -24,7 +24,7 @@ import (
 // and the read path has to stitch keystreams across chunks correctly.
 const internalChunkSize = 8 * 1024 * 1024
 
-// TestSSERangeReadCoverageMatrix is the canonical end-to-end coverage matrix
+// TestSSERangeReadIntegration is the canonical end-to-end coverage matrix
 // for HTTP range GETs across SSE modes, object size classes, and range
 // patterns. It supplements the per-SSE-mode TestSSExxxRangeRequests tests
 // (which are scoped to small single-chunk objects, ≤1MB) by also exercising
@@ -34,11 +34,17 @@ const internalChunkSize = 8 * 1024 * 1024
 // pinning range correctness here protects against any future regression in
 // per-chunk IV / PartOffset plumbing for partial reads.
 //
-// For SSE-KMS, the test probes once with a 1-byte SSE-KMS PUT and skips the
-// SSE-KMS subtests with a clear message if the local server has no KMS
-// provider configured (the default `weed mini` setup does not include one;
-// the Makefile's `test-with-kms` target does).
-func TestSSERangeReadCoverageMatrix(t *testing.T) {
+// The function name ends in "Integration" so it is matched by the existing
+// `TestSSE.*Integration` pattern that the test/s3/sse Makefile and the
+// .github/workflows/s3-sse-tests.yml CI flow use to discover SSE integration
+// tests; both flows already start the server using s3-config-template.json,
+// which configures the embedded `local` KMS provider with on-demand DEK
+// creation, so the sse_kms subtests run end-to-end in CI.
+//
+// For ad-hoc local runs against a server without any KMS provider, the test
+// probes once with a 1-byte SSE-KMS PUT and t.Skip's the sse_kms subtree
+// with a clear message rather than producing a 5xx-storm in the logs.
+func TestSSERangeReadIntegration(t *testing.T) {
 	ctx := context.Background()
 	client, err := createS3Client(ctx, defaultConfig)
 	require.NoError(t, err, "create S3 client")
