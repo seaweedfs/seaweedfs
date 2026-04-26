@@ -606,13 +606,15 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 			// the local store when an open file handle or pending async flush
 			// confirms the entry is genuinely local-only; otherwise a stale
 			// cache hit could resurrect a deleted/renamed entry.
-			if inode, inodeFound := wfs.inodeToPath.GetInode(fullpath); inodeFound {
-				hasDirtyHandle := false
+			inode, inodeFound := wfs.inodeToPath.GetInode(fullpath)
+			hasDirtyHandle := false
+			hasPendingFlush := false
+			if inodeFound {
 				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
 					hasDirtyHandle = true
 				}
 				wfs.pendingAsyncFlushMu.Lock()
-				_, hasPendingFlush := wfs.pendingAsyncFlush[inode]
+				_, hasPendingFlush = wfs.pendingAsyncFlush[inode]
 				wfs.pendingAsyncFlushMu.Unlock()
 
 				if hasDirtyHandle || hasPendingFlush {
@@ -622,7 +624,21 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 					}
 				}
 			}
-			glog.V(4).Infof("lookupEntry not found %s", fullpath)
+			if inodeFound {
+				// Filer reports ErrNotFound for a path the kernel/local map
+				// still tracks, with no in-flight create or flush to excuse
+				// it. Log loudly (Warningf, not V(4)) so flake captures show
+				// up without -v=4 — and include layer-by-layer state so the
+				// next failed run pinpoints which layer dropped the entry.
+				localPresent := false
+				if localEntry, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+					localPresent = true
+				}
+				glog.Warningf("lookupEntry: filer ErrNotFound for tracked path %s (inode=%d dirtyHandle=%v pendingFlush=%v localCache=%v dirCached=%v) — possible coherence bug",
+					fullpath, inode, hasDirtyHandle, hasPendingFlush, localPresent, wfs.metaCache.IsDirectoryCached(dirPath))
+			} else {
+				glog.V(4).Infof("lookupEntry not found %s", fullpath)
+			}
 			return nil, fuse.ENOENT
 		}
 		glog.Warningf("lookupEntry GetEntry %s: %v", fullpath, err)
