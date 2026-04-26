@@ -52,7 +52,13 @@ func TestSSERangeReadIntegration(t *testing.T) {
 
 	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"range-matrix-")
 	require.NoError(t, err, "create test bucket")
-	defer cleanupTestBucket(ctx, client, bucketName)
+	// MUST be t.Cleanup, not defer: the mode/size subtests below call
+	// t.Parallel(), which pauses them and yields back to this function. If
+	// we used defer, the for loop would finish scheduling, the function
+	// would return, and defer would fire BEFORE any parallel subtest body
+	// has run -- deleting the bucket out from under them. t.Cleanup waits
+	// until the test AND all its subtests complete.
+	t.Cleanup(func() { cleanupTestBucket(ctx, client, bucketName) })
 
 	modes := []sseRangeMode{
 		newRangeModeNone(),
@@ -360,20 +366,24 @@ func (m *rangeModeSSEKMS) probe(t *testing.T, ctx context.Context, client *s3.Cl
 		SSEKMSKeyId:          aws.String(m.keyID),
 	})
 	if err != nil {
-		// Treat any error from the probe as "no KMS configured here": this
-		// surface includes 5xx ("InternalError" / generic provider failure),
-		// 501 NotImplemented, 4xx KMS.NotConfigured, and any error message
-		// that mentions KMS not being configured. The test environments
-		// where SSE-KMS is expected to work (the Makefile's
-		// `start-seaweedfs-ci` target via s3-config-template.json, or
-		// `test-with-kms` via OpenBao) configure a provider; ad-hoc local
-		// `weed mini` setups may not. Either way, the caller t.Skips the
-		// SSE-KMS subtree -- the friendlier "not configured" framing is
-		// just for diagnostics in CI logs.
+		// "KMS provider not configured" is the friendly diagnostic that
+		// causes the caller to t.Skip the SSE-KMS subtree. We use it for
+		// two narrow categories:
+		//   1. 5xx responses -- the s3api InternalError surface when no KMS
+		//      provider is wired up at server start.
+		//   2. Specific error strings ("KMS.NotConfigured" /
+		//      "NotImplemented" / "not configured") regardless of status,
+		//      to catch other servers that may use a 4xx/501 to signal the
+		//      same condition.
+		// We deliberately do NOT auto-skip on a generic 4xx: a real
+		// SSE-KMS misconfiguration in the test request itself (bad keyID
+		// format, missing header, etc.) also surfaces as a 400, and the
+		// CI-meaningful path -- where the server IS configured for KMS --
+		// must fail loudly in that case rather than silently skip the
+		// integration coverage.
 		var apiErr *smithyhttp.ResponseError
 		if errors.As(err, &apiErr) {
-			code := apiErr.HTTPStatusCode()
-			if code >= 500 || code == 501 || code == 400 {
+			if code := apiErr.HTTPStatusCode(); code >= 500 {
 				return fmt.Sprintf("KMS provider not configured (PutObject returned %d)", code)
 			}
 		}
