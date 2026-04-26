@@ -385,27 +385,40 @@ func (e *EmbeddedIamApi) UpdateUser(ctx context.Context, s3cfg *iam_pb.S3ApiConf
 		}
 	}
 
-	// Copy stored inline policies onto the new username before the rename
-	// takes effect. SaveConfiguration prunes the old username after this
-	// handler returns and ON DELETE CASCADE on user_inline_policies would
-	// otherwise drop the documents — observable as a silent data loss in
-	// GetUserPolicy / ListUserPolicies after the rename. We copy here and
-	// let the subsequent prune CASCADE clean up the old-name rows.
+	// Migrate the credential store's view of this user before the rename
+	// takes effect. Stores with referential integrity (Postgres) MUST
+	// implement UserRenamer: per-row Put / Get / Delete migration would
+	// violate the FK on user_inline_policies(username) at statement time
+	// because the new users row does not exist yet. UserRenamer does the
+	// rename, credential re-pointing and inline-policy re-pointing inside
+	// a single transaction.
+	//
+	// For stores that don't have FK enforcement (memory, filer_etc) the
+	// renamer is also implemented as a plain rebinding so the regression
+	// test exercises the same code path.
 	if e.credentialManager != nil {
-		policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
-		if err != nil {
-			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
-		}
-		for _, policyName := range policyNames {
-			doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
+		switch supported, err := e.credentialManager.RenameUser(ctx, userName, newUserName); {
+		case err != nil:
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("rename user %s -> %s: %w", userName, newUserName, err)}
+		case !supported:
+			// Fallback: copy the inline policies under the new name and
+			// let the subsequent SaveConfiguration prune CASCADE the old
+			// rows. Only safe for stores without FK enforcement.
+			policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
 			if err != nil {
-				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("read inline policy %s for %s: %w", policyName, userName, err)}
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
 			}
-			if doc == nil {
-				continue
-			}
-			if err := e.credentialManager.PutUserInlinePolicy(ctx, newUserName, policyName, *doc); err != nil {
-				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("copy inline policy %s to %s: %w", policyName, newUserName, err)}
+			for _, policyName := range policyNames {
+				doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
+				if err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("read inline policy %s for %s: %w", policyName, userName, err)}
+				}
+				if doc == nil {
+					continue
+				}
+				if err := e.credentialManager.PutUserInlinePolicy(ctx, newUserName, policyName, *doc); err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("copy inline policy %s to %s: %w", policyName, newUserName, err)}
+				}
 			}
 		}
 	}

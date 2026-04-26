@@ -464,6 +464,81 @@ func (store *PostgresStore) DeleteUser(ctx context.Context, username string) err
 	return nil
 }
 
+// RenameUser atomically renames oldName to newName, re-pointing every
+// FK-backed dependent row in a single transaction. The schema's foreign
+// keys (credentials.username, user_inline_policies.username) reference
+// users.username with ON DELETE CASCADE and the default ON UPDATE
+// NO ACTION, which means a plain UPDATE users SET username = newName
+// would fail because the children still reference the old name. Instead:
+//  1. Insert the new users row by copying every non-key column from old.
+//  2. Re-point the dependent tables (credentials, user_inline_policies)
+//     to the new username — both rows now exist so the FK is satisfied.
+//  3. Delete the old users row, which has no remaining dependents.
+//
+// Implements credential.UserRenamer.
+func (store *PostgresStore) RenameUser(ctx context.Context, oldName, newName string) error {
+	if !store.configured {
+		return fmt.Errorf("store not configured")
+	}
+	if oldName == newName {
+		return nil
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Refuse if oldName is missing or newName already exists, so the
+	// caller surfaces a recognisable error instead of a constraint
+	// violation midway through.
+	var oldExists, newExists bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", oldName).Scan(&oldExists); err != nil {
+		return fmt.Errorf("failed to check old user %s: %w", oldName, err)
+	}
+	if !oldExists {
+		return credential.ErrUserNotFound
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", newName).Scan(&newExists); err != nil {
+		return fmt.Errorf("failed to check new user %s: %w", newName, err)
+	}
+	if newExists {
+		return credential.ErrUserAlreadyExists
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO users (username, email, account_data, actions, policy_names, created_at, updated_at)
+		 SELECT $1, email, account_data, actions, policy_names, created_at, CURRENT_TIMESTAMP
+		 FROM users WHERE username = $2`,
+		newName, oldName); err != nil {
+		return fmt.Errorf("failed to insert renamed user %s: %w", newName, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE credentials SET username = $1 WHERE username = $2", newName, oldName); err != nil {
+		return fmt.Errorf("failed to re-point credentials to %s: %w", newName, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE user_inline_policies SET username = $1 WHERE username = $2", newName, oldName); err != nil {
+		return fmt.Errorf("failed to re-point inline policies to %s: %w", newName, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM users WHERE username = $1", oldName); err != nil {
+		return fmt.Errorf("failed to drop old user %s: %w", oldName, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		glog.Errorf("credential postgres: RenameUser commit failed %s -> %s: %v", oldName, newName, err)
+		return fmt.Errorf("failed to commit rename %s -> %s: %w", oldName, newName, err)
+	}
+
+	glog.V(0).Infof("credential postgres: RenameUser %s -> %s", oldName, newName)
+	return nil
+}
+
 func (store *PostgresStore) ListUsers(ctx context.Context) ([]string, error) {
 	if !store.configured {
 		return nil, fmt.Errorf("store not configured")
