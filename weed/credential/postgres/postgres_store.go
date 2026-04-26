@@ -3,14 +3,30 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/seaweedfs/seaweedfs/weed/util/pgxutil"
 )
+
+const (
+	defaultMaxOpenConns        = 25
+	defaultMaxIdleConns        = 5
+	defaultConnMaxLifetimeSecs = 300
+)
+
+// jsonbParam adapts JSON bytes for an ExecContext call against a JSONB
+// column. Returns nil (so the driver writes SQL NULL) when b is nil or
+// empty; otherwise returns string(b) so pgx drives it as JSONB text — []byte
+// would be encoded as bytea under simple_protocol (pgbouncer mode) and
+// rejected by Postgres with "invalid input syntax for type json".
+func jsonbParam(b []byte) interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	return string(b)
+}
 
 func init() {
 	credential.Stores = append(credential.Stores, &PostgresStore{})
@@ -41,9 +57,12 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	sslcert := configuration.GetString(prefix + "sslcert")
 	sslkey := configuration.GetString(prefix + "sslkey")
 	sslrootcert := configuration.GetString(prefix + "sslrootcert")
+	sslcrl := configuration.GetString(prefix + "sslcrl")
 	pgbouncerCompatible := configuration.GetBool(prefix + "pgbouncer_compatible")
+	maxIdle := configuration.GetInt(prefix + "connection_max_idle")
+	maxOpen := configuration.GetInt(prefix + "connection_max_open")
+	maxLifetimeSeconds := configuration.GetInt(prefix + "connection_max_lifetime_seconds")
 
-	// Set defaults
 	if hostname == "" {
 		hostname = "localhost"
 	}
@@ -53,50 +72,47 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	if sslmode == "" {
 		sslmode = "disable"
 	}
+	if maxOpen == 0 {
+		maxOpen = defaultMaxOpenConns
+	}
+	if maxIdle == 0 {
+		maxIdle = defaultMaxIdleConns
+	}
+	if maxLifetimeSeconds == 0 {
+		maxLifetimeSeconds = defaultConnMaxLifetimeSecs
+	}
 
 	glog.V(0).Infof("credential postgres: initializing store host=%s port=%d user=%s db=%s sslmode=%s pgbouncer=%v",
 		hostname, port, username, database, sslmode, pgbouncerCompatible)
 
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		hostname, port, username, password, database, sslmode)
-	if schema != "" {
-		connStr += fmt.Sprintf(" search_path=%s", schema)
-	}
-	if sslcert != "" {
-		connStr += fmt.Sprintf(" sslcert=%s", sslcert)
-	}
-	if sslkey != "" {
-		connStr += fmt.Sprintf(" sslkey=%s", sslkey)
-	}
-	if sslrootcert != "" {
-		connStr += fmt.Sprintf(" sslrootcert=%s", sslrootcert)
-	}
-	if pgbouncerCompatible {
-		connStr += " default_query_exec_mode=simple_protocol"
-	}
+	dsn, adaptedDSN := pgxutil.BuildDSN(pgxutil.DSNOptions{
+		Hostname:            hostname,
+		Port:                port,
+		User:                username,
+		Password:            password,
+		Database:            database,
+		Schema:              schema,
+		SSLMode:             sslmode,
+		SSLCert:             sslcert,
+		SSLKey:              sslkey,
+		SSLRootCert:         sslrootcert,
+		SSLCRL:              sslcrl,
+		PgBouncerCompatible: pgbouncerCompatible,
+	})
 
-	db, err := sql.Open("pgx", connStr)
+	db, err := pgxutil.OpenDB(dsn, adaptedDSN, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
 	if err != nil {
 		glog.Errorf("credential postgres: failed to open database: %v", err)
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
-		db.Close()
-		glog.Errorf("credential postgres: failed to ping database: %v", err)
-		return fmt.Errorf("failed to ping database: %w", err)
-	}
-
 	glog.V(0).Infof("credential postgres: connection established")
-
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
 
 	store.db = db
 
 	if err := store.createTables(); err != nil {
 		db.Close()
+		store.db = nil
 		glog.Errorf("credential postgres: failed to create tables: %v", err)
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
