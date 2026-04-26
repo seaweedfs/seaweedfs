@@ -509,8 +509,11 @@ func TestBuildMultipartSSES3Reader_InvalidIVLength(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error for invalid IV length, got nil")
 			}
-			if !strings.Contains(err.Error(), "invalid IV length") {
-				t.Errorf("expected 'invalid IV length' in error, got: %v", err)
+			// ValidateIV's error format is "invalid <name> length: ...";
+			// match on the part of the message that's stable across the
+			// shared helper's wording.
+			if !strings.Contains(err.Error(), "IV length") {
+				t.Errorf("expected 'IV length' in error, got: %v", err)
 			}
 			// Validation runs upfront before any chunk fetch, so no volume-server
 			// HTTP connection should have been opened on the failure path.

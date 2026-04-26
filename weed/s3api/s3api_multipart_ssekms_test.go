@@ -173,18 +173,20 @@ func TestBuildMultipartSSEKMSReader_RejectsUnparseableMetadataBeforeAnyFetch(t *
 	}
 }
 
-// TestBuildMultipartSSEKMSReader_SortsByOffset is a smoke test that the prep
-// loop reorders chunks by Offset before constructing the lazy reader, matching
-// the documented contract and the SSE-S3 helper. It does not exercise actual
-// decryption (that requires a live KMS provider); it just verifies the
-// chunk-fetch order observed by the fetch callback once the lazy reader is
-// drained matches ascending offset, regardless of input order.
+// TestBuildMultipartSSEKMSReader_SortsByOffset verifies that the prep loop
+// reorders chunks by Offset before constructing the lazy reader, matching
+// the documented contract and the SSE-S3 helper.
+//
+// Driving the reader's Read() to observe fetch order does not work as a full
+// ordering check: CreateSSEKMSDecryptedReader requires a live KMS provider to
+// unwrap the encrypted DEK, which is unavailable in this unit test, so the
+// wrap closure fails on the first chunk and the lazy reader marks itself
+// finished -- only one fetch is ever observed. Instead, since the lazy
+// reader and its prepared chunks live in the same package, we type-assert
+// the returned reader to *lazyMultipartChunkReader and inspect the prepared
+// chunks slice directly. This is a stronger check (the entire ordering, not
+// just the first element) and does not depend on KMS availability.
 func TestBuildMultipartSSEKMSReader_SortsByOffset(t *testing.T) {
-	// Build three chunks with valid SSE-KMS metadata, deliberately out of
-	// offset order on the way in. We never actually decrypt -- the chunks
-	// hold dummy ciphertext and we make CreateSSEKMSDecryptedReader fail
-	// inside the wrap closure by reading 0 bytes; we only care about the
-	// order in which fetch is invoked.
 	makeChunk := func(fid string, offset int64) *filer_pb.FileChunk {
 		key := &SSEKMSKey{
 			KeyID:            "test-kms-key",
@@ -209,33 +211,37 @@ func TestBuildMultipartSSEKMSReader_SortsByOffset(t *testing.T) {
 		makeChunk("c1", 100),
 	}
 
-	var fetchOrder []string
+	fetchCalled := false
 	fetch := func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
-		fetchOrder = append(fetchOrder, c.GetFileIdString())
-		// Return an error so we don't actually try to decrypt the dummy
-		// payload; we only care that fetch was reached for each chunk.
-		return nil, fmt.Errorf("synthetic stop after fetch order recorded")
+		fetchCalled = true
+		return nil, fmt.Errorf("fetch must not be called: ordering is checked via prepared chunks")
 	}
 
 	reader, err := buildMultipartSSEKMSReader(chunks, fetch)
 	if err != nil {
 		t.Fatalf("buildMultipartSSEKMSReader: %v", err)
 	}
-	// Drive the reader: each Read should advance through chunks in offset
-	// order. We expect the first Read to record c0, then on the next iteration
-	// after the synthetic fetch error the reader marks itself finished.
-	buf := make([]byte, 1)
-	for i := 0; i < 4; i++ {
-		_, err := reader.Read(buf)
-		if err != nil {
-			break
-		}
+	if fetchCalled {
+		t.Fatal("fetch must not be invoked during prep; ordering is verified statically")
 	}
 
-	if len(fetchOrder) == 0 {
-		t.Fatal("expected at least one fetch call, got none")
+	lazy, ok := reader.(*lazyMultipartChunkReader)
+	if !ok {
+		t.Fatalf("expected *lazyMultipartChunkReader, got %T", reader)
 	}
-	if fetchOrder[0] != "c0" {
-		t.Errorf("expected first fetch to be c0 (offset 0), got %v", fetchOrder)
+	if len(lazy.chunks) != 3 {
+		t.Fatalf("expected 3 prepared chunks, got %d", len(lazy.chunks))
+	}
+	gotOrder := []string{
+		lazy.chunks[0].chunk.GetFileIdString(),
+		lazy.chunks[1].chunk.GetFileIdString(),
+		lazy.chunks[2].chunk.GetFileIdString(),
+	}
+	wantOrder := []string{"c0", "c1", "c2"}
+	for i, want := range wantOrder {
+		if gotOrder[i] != want {
+			t.Errorf("prepared chunks not in offset order: got %v, want %v", gotOrder, wantOrder)
+			break
+		}
 	}
 }

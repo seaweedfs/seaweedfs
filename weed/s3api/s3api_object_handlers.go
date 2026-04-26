@@ -2611,9 +2611,10 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 		}
 		// Guard cipher.NewCTR against a missing/short IV (base64 decode of
 		// an empty or malformed field would otherwise reach it and panic).
-		if len(chunkIV) != s3_constants.AESBlockSize {
-			return nil, fmt.Errorf("SSE-C chunk %s has invalid IV length %d (expected %d)",
-				chunk.GetFileIdString(), len(chunkIV), s3_constants.AESBlockSize)
+		// Uses the shared ValidateIV helper so all three SSE prep paths
+		// (SSE-S3, SSE-KMS, SSE-C) enforce IV length identically.
+		if err := ValidateIV(chunkIV, fmt.Sprintf("SSE-C chunk %s IV", chunk.GetFileIdString())); err != nil {
+			return nil, err
 		}
 		if ssecMetadata.PartOffset < 0 {
 			return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", ssecMetadata.PartOffset, chunk.GetFileIdString())
@@ -2778,10 +2779,11 @@ func buildMultipartSSES3Reader(chunks []*filer_pb.FileChunk, keyManager *SSES3Ke
 		}
 		// DeserializeSSES3Metadata does not require an IV, so validate the
 		// length here before it reaches cipher.NewCTR, which would otherwise
-		// panic on a nil or short IV.
-		if len(meta.IV) != s3_constants.AESBlockSize {
-			return nil, fmt.Errorf("SSE-S3 chunk %s has invalid IV length %d (expected %d)",
-				chunk.GetFileIdString(), len(meta.IV), s3_constants.AESBlockSize)
+		// panic on a nil or short IV. Uses the shared ValidateIV helper so
+		// all three SSE prep paths (SSE-S3, SSE-KMS, SSE-C) enforce IV
+		// length identically.
+		if err := ValidateIV(meta.IV, fmt.Sprintf("SSE-S3 chunk %s IV", chunk.GetFileIdString())); err != nil {
+			return nil, err
 		}
 		// Capture meta and chunk by-value into the wrap closure so each
 		// prepared entry decrypts with its own per-chunk key + IV.
@@ -2877,6 +2879,14 @@ func (l *lazyMultipartChunkReader) Read(p []byte) (int, error) {
 				glog.V(2).Infof("Error closing chunk reader: %v", closeErr)
 			}
 			continue
+		}
+		if err != nil {
+			// Non-EOF read error: the underlying chunk body is in an
+			// indeterminate state. Mark ourselves finished so a retried
+			// Read does not try to drain the same broken stream; let
+			// Close() release the chunk body. This matches the failure
+			// semantics of the fetch and wrap error paths above.
+			l.finished = true
 		}
 		return n, err
 	}
