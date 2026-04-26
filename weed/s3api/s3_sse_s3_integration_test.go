@@ -489,9 +489,10 @@ func TestBuildMultipartSSES3Reader_InvalidIVLength(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			closed := false
+			fetchCalled := false
 			fetch := func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
-				return &closeTrackingReadCloser{Reader: bytes.NewReader([]byte("whatever")), closed: &closed}, nil
+				fetchCalled = true
+				return io.NopCloser(bytes.NewReader([]byte("whatever"))), nil
 			}
 
 			chunks := []*filer_pb.FileChunk{
@@ -508,27 +509,35 @@ func TestBuildMultipartSSES3Reader_InvalidIVLength(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error for invalid IV length, got nil")
 			}
-			if !strings.Contains(err.Error(), "invalid IV length") {
-				t.Errorf("expected 'invalid IV length' in error, got: %v", err)
+			// ValidateIV's error format is "invalid <name> length: ...";
+			// match on the part of the message that's stable across the
+			// shared helper's wording.
+			if !strings.Contains(err.Error(), "IV length") {
+				t.Errorf("expected 'IV length' in error, got: %v", err)
 			}
-			if !closed {
-				t.Error("chunk reader for the bad chunk was not closed on error")
+			// Validation runs upfront before any chunk fetch, so no volume-server
+			// HTTP connection should have been opened on the failure path.
+			if fetchCalled {
+				t.Error("fetchChunk was called for an invalid-IV chunk; metadata validation should fail before any fetch")
 			}
 		})
 	}
 }
 
-// TestBuildMultipartSSES3Reader_ClosesAppendedOnError verifies that when a
-// later chunk fails (e.g., malformed metadata), readers already appended for
-// earlier valid chunks are closed so volume-server HTTP connections do not leak.
-func TestBuildMultipartSSES3Reader_ClosesAppendedOnError(t *testing.T) {
+// TestBuildMultipartSSES3Reader_RejectsBadChunkBeforeAnyFetch verifies that
+// when any chunk's metadata is malformed, the helper returns an error WITHOUT
+// having opened a volume-server HTTP connection for any chunk. Per-chunk
+// metadata is validated upfront precisely so a bad chunk in position N does
+// not leak open HTTP responses for chunks 0..N-1 (the original eager
+// implementation depended on a closeAppendedReaders cleanup path; this test
+// pins the stronger contract: nothing is opened in the first place).
+func TestBuildMultipartSSES3Reader_RejectsBadChunkBeforeAnyFetch(t *testing.T) {
 	keyManager := initSSES3KeyManagerForTest(t)
 
 	// First chunk: valid SSE-S3 chunk.
 	cipher1, meta1 := encryptSSES3Part(t, []byte("first chunk plaintext"))
 
-	// Second chunk: missing per-chunk metadata, triggers error after first is
-	// already appended.
+	// Second chunk: missing per-chunk metadata, triggers error.
 	chunks := []*filer_pb.FileChunk{
 		{
 			FileId:      "1,good",
@@ -546,36 +555,20 @@ func TestBuildMultipartSSES3Reader_ClosesAppendedOnError(t *testing.T) {
 		},
 	}
 
-	firstClosed := false
-	secondClosed := false
+	fetched := map[string]int{}
 	fetch := func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
-		switch c.GetFileIdString() {
-		case "1,good":
-			return &closeTrackingReadCloser{Reader: bytes.NewReader(cipher1), closed: &firstClosed}, nil
-		case "2,bad":
-			return &closeTrackingReadCloser{Reader: bytes.NewReader([]byte("x")), closed: &secondClosed}, nil
-		}
-		return nil, fmt.Errorf("unexpected chunk %s", c.GetFileIdString())
+		fetched[c.GetFileIdString()]++
+		return io.NopCloser(bytes.NewReader([]byte("x"))), nil
 	}
 
 	_, err := buildMultipartSSES3Reader(chunks, keyManager, fetch)
 	if err == nil {
 		t.Fatal("expected error from missing chunk metadata, got nil")
 	}
-	if !firstClosed {
-		t.Error("previously appended chunk reader was not closed on error")
+	if !strings.Contains(err.Error(), "missing per-chunk metadata") {
+		t.Errorf("expected 'missing per-chunk metadata' in error, got: %v", err)
 	}
-	if !secondClosed {
-		t.Error("chunk reader for the failing chunk was not closed on error")
+	if len(fetched) != 0 {
+		t.Errorf("expected no chunks fetched on validation failure, got %v", fetched)
 	}
-}
-
-type closeTrackingReadCloser struct {
-	io.Reader
-	closed *bool
-}
-
-func (r *closeTrackingReadCloser) Close() error {
-	*r.closed = true
-	return nil
 }

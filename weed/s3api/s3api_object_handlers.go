@@ -2563,10 +2563,22 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 // createMultipartSSECDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-C objects (direct volume path)
 // Note: encryptedStream parameter is unused (always nil) as this function fetches chunks directly to avoid double I/O.
 // It's kept in the signature for API consistency with non-Direct versions.
+//
+// Per-chunk metadata is validated upfront (so a malformed chunk fails fast
+// without opening any HTTP connections); chunk fetches happen LAZILY through
+// lazyMultipartChunkReader, so at most one volume-server connection is open
+// at a time. See buildMultipartSSES3Reader for the rationale (issue #8908).
+//
+// SSE-C multipart behavior (differs from SSE-KMS/SSE-S3):
+//   - Upload: CreateSSECEncryptedReader generates a RANDOM IV per part (no base IV + offset).
+//   - Metadata: PartOffset tracks position within the encrypted stream.
+//   - Decryption: use stored IV and advance the CTR stream by PartOffset.
+//
+// SSE-KMS/SSE-S3 instead use base IV + calculateIVWithOffset(partOffset) at
+// encryption time. CopyObject currently applies calculateIVWithOffset to SSE-C
+// as well, which may be incorrect (TODO: investigate consistency).
 func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Context, encryptedStream io.ReadCloser, customerKey *SSECustomerKey, entry *filer_pb.Entry) (io.Reader, error) {
 	// Close the original encrypted stream since chunks are fetched individually.
-	// Defer so the stream is closed on every return path (including error
-	// returns from inside the per-chunk loop), matching the SSE-S3 helper.
 	if encryptedStream != nil {
 		defer encryptedStream.Close()
 	}
@@ -2580,192 +2592,135 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 		return chunks[i].GetOffset() < chunks[j].GetOffset()
 	})
 
-	// Create readers for each chunk, decrypting them independently
-	readers := make([]io.Reader, 0, len(chunks))
-
-	// Close any readers already appended to `readers` on error paths, to avoid
-	// leaking volume-server HTTP connections.
-	closeAppendedReaders := func() {
-		for _, r := range readers {
-			if closer, ok := r.(io.Closer); ok {
-				closer.Close()
-			}
-		}
-	}
-
+	preparedChunks := make([]preparedMultipartChunk, 0, len(chunks))
 	for _, chunk := range chunks {
-		// Get this chunk's encrypted data
-		chunkReader, err := s3a.createEncryptedChunkReader(ctx, chunk)
+		if chunk.GetSseType() != filer_pb.SSEType_SSE_C {
+			preparedChunks = append(preparedChunks, preparedMultipartChunk{chunk: chunk})
+			continue
+		}
+		if len(chunk.GetSseMetadata()) == 0 {
+			return nil, fmt.Errorf("SSE-C chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+		}
+		ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
 		if err != nil {
-			closeAppendedReaders()
-			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+			return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 		}
-
-		// Handle based on chunk's encryption type
-		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
-			// Check if this chunk has per-chunk SSE-C metadata
-			if len(chunk.GetSseMetadata()) == 0 {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("SSE-C chunk %s missing per-chunk metadata", chunk.GetFileIdString())
-			}
-
-			// Deserialize the SSE-C metadata
-			ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
-			if err != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), err)
-			}
-
-			// Decode the IV from the metadata
-			chunkIV, err := base64.StdEncoding.DecodeString(ssecMetadata.IV)
-			if err != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), err)
-			}
-			// Guard cipher.NewCTR against a missing/short IV (base64 decode of
-			// an empty or malformed field would otherwise reach it and panic).
-			if len(chunkIV) != s3_constants.AESBlockSize {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("SSE-C chunk %s has invalid IV length %d (expected %d)",
-					chunk.GetFileIdString(), len(chunkIV), s3_constants.AESBlockSize)
-			}
-
-			glog.V(4).Infof("Decrypting SSE-C chunk %s with IV=%x, PartOffset=%d",
-				chunk.GetFileIdString(), chunkIV[:8], ssecMetadata.PartOffset)
-
-			// Note: SSE-C multipart behavior (differs from SSE-KMS/SSE-S3):
-			// - Upload: CreateSSECEncryptedReader generates RANDOM IV per part (no base IV + offset)
-			// - Metadata: PartOffset tracks position within the encrypted stream
-			// - Decryption: Use stored IV and advance CTR stream by PartOffset
-			//
-			// This differs from:
-			// - SSE-KMS/SSE-S3: Use base IV + calculateIVWithOffset(partOffset) during encryption
-			// - CopyObject: Applies calculateIVWithOffset to SSE-C (which may be incorrect)
-			//
-			// TODO: Investigate CopyObject SSE-C PartOffset handling for consistency
-			partOffset := ssecMetadata.PartOffset
-			if partOffset < 0 {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", partOffset, chunk.GetFileIdString())
-			}
-			decryptedChunkReader, decErr := CreateSSECDecryptedReaderWithOffset(chunkReader, customerKey, chunkIV, uint64(partOffset))
-			if decErr != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
-			}
-
-			// Use the streaming decrypted reader directly
-			readers = append(readers, struct {
-				io.Reader
-				io.Closer
-			}{
-				Reader: decryptedChunkReader,
-				Closer: chunkReader,
-			})
-			glog.V(4).Infof("Added streaming decrypted reader for SSE-C chunk %s", chunk.GetFileIdString())
-		} else {
-			// Non-SSE-C chunk, use as-is
-			readers = append(readers, chunkReader)
-			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		chunkIV, err := base64.StdEncoding.DecodeString(ssecMetadata.IV)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), err)
 		}
+		// Guard cipher.NewCTR against a missing/short IV (base64 decode of
+		// an empty or malformed field would otherwise reach it and panic).
+		// Uses the shared ValidateIV helper so all three SSE prep paths
+		// (SSE-S3, SSE-KMS, SSE-C) enforce IV length identically.
+		if err := ValidateIV(chunkIV, fmt.Sprintf("SSE-C chunk %s IV", chunk.GetFileIdString())); err != nil {
+			return nil, err
+		}
+		if ssecMetadata.PartOffset < 0 {
+			return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", ssecMetadata.PartOffset, chunk.GetFileIdString())
+		}
+		// Capture per-chunk values into the wrap closure.
+		fileId := chunk.GetFileIdString()
+		ivCopy := chunkIV
+		partOffset := uint64(ssecMetadata.PartOffset)
+		preparedChunks = append(preparedChunks, preparedMultipartChunk{
+			chunk: chunk,
+			wrap: func(raw io.ReadCloser) (io.Reader, error) {
+				glog.V(4).Infof("Decrypting SSE-C chunk %s with IV=%x, PartOffset=%d",
+					fileId, ivCopy[:8], partOffset)
+				dec, decErr := CreateSSECDecryptedReaderWithOffset(raw, customerKey, ivCopy, partOffset)
+				if decErr != nil {
+					return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+				}
+				return dec, nil
+			},
+		})
 	}
 
-	return NewMultipartSSEReader(readers), nil
+	return &lazyMultipartChunkReader{
+		chunks: preparedChunks,
+		fetch: func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
+			return s3a.createEncryptedChunkReader(ctx, c)
+		},
+	}, nil
 }
 
 // createMultipartSSEKMSDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-KMS objects (direct volume path)
 // Note: encryptedStream parameter is unused (always nil) as this function fetches chunks directly to avoid double I/O.
 // It's kept in the signature for API consistency with non-Direct versions.
+//
+// Per-chunk metadata is validated upfront (so a malformed chunk fails fast
+// without opening any HTTP connections); chunk fetches happen LAZILY through
+// lazyMultipartChunkReader, so at most one volume-server connection is open
+// at a time. See buildMultipartSSES3Reader for the rationale (issue #8908).
 func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.Context, encryptedStream io.ReadCloser, entry *filer_pb.Entry) (io.Reader, error) {
 	// Close the original encrypted stream since chunks are fetched individually.
-	// Defer so the stream is closed on every return path (including error
-	// returns from inside the per-chunk loop), matching the SSE-S3 helper.
 	if encryptedStream != nil {
 		defer encryptedStream.Close()
 	}
 
-	// Sort a copy of the slice so entry.Chunks is not reordered (other code
-	// paths, e.g. ETag computation, can rely on the original chunk order).
-	// IV length is validated inside CreateSSEKMSDecryptedReader via ValidateIV.
-	originalChunks := entry.GetChunks()
-	chunks := make([]*filer_pb.FileChunk, len(originalChunks))
-	copy(chunks, originalChunks)
-	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	return buildMultipartSSEKMSReader(entry.GetChunks(), func(chunk *filer_pb.FileChunk) (io.ReadCloser, error) {
+		return s3a.createEncryptedChunkReader(ctx, chunk)
+	})
+}
+
+// buildMultipartSSEKMSReader composes a decrypted reader from a set of
+// multipart SSE-KMS chunks. Mirrors buildMultipartSSES3Reader: chunks are
+// validated upfront (per-chunk metadata parses, IV has the right length) and
+// fetched + decrypted lazily through lazyMultipartChunkReader, so at most one
+// volume-server HTTP body is live at a time. Exposed as a free function so
+// tests can inject a mock chunk fetcher and pin the "no fetch on bad
+// metadata" contract without spinning up an S3ApiServer.
+func buildMultipartSSEKMSReader(chunks []*filer_pb.FileChunk, fetchChunk func(*filer_pb.FileChunk) (io.ReadCloser, error)) (io.Reader, error) {
+	sortedChunks := make([]*filer_pb.FileChunk, len(chunks))
+	copy(sortedChunks, chunks)
+	sort.Slice(sortedChunks, func(i, j int) bool {
+		return sortedChunks[i].GetOffset() < sortedChunks[j].GetOffset()
 	})
 
-	// Create readers for each chunk, decrypting them independently
-	readers := make([]io.Reader, 0, len(chunks))
-
-	// Close any readers already appended to `readers` on error paths, to avoid
-	// leaking volume-server HTTP connections.
-	closeAppendedReaders := func() {
-		for _, r := range readers {
-			if closer, ok := r.(io.Closer); ok {
-				closer.Close()
-			}
+	preparedChunks := make([]preparedMultipartChunk, 0, len(sortedChunks))
+	for _, chunk := range sortedChunks {
+		if chunk.GetSseType() != filer_pb.SSEType_SSE_KMS {
+			preparedChunks = append(preparedChunks, preparedMultipartChunk{chunk: chunk})
+			continue
 		}
-	}
-
-	for _, chunk := range chunks {
-		// Get this chunk's encrypted data
-		chunkReader, err := s3a.createEncryptedChunkReader(ctx, chunk)
+		if len(chunk.GetSseMetadata()) == 0 {
+			return nil, fmt.Errorf("SSE-KMS chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+		}
+		kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 		if err != nil {
-			closeAppendedReaders()
-			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+			return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 		}
-
-		// Handle based on chunk's encryption type
-		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
-			// Check if this chunk has per-chunk SSE-KMS metadata
-			if len(chunk.GetSseMetadata()) == 0 {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("SSE-KMS chunk %s missing per-chunk metadata", chunk.GetFileIdString())
-			}
-
-			// Use the per-chunk SSE-KMS metadata
-			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
-			if err != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
-			}
-
-			glog.V(4).Infof("Decrypting SSE-KMS chunk %s with KeyID=%s",
-				chunk.GetFileIdString(), kmsKey.KeyID)
-
-			// Create decrypted reader for this chunk
-			decryptedChunkReader, decErr := CreateSSEKMSDecryptedReader(chunkReader, kmsKey)
-			if decErr != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
-			}
-
-			// Use the streaming decrypted reader directly
-			readers = append(readers, struct {
-				io.Reader
-				io.Closer
-			}{
-				Reader: decryptedChunkReader,
-				Closer: chunkReader,
-			})
-			glog.V(4).Infof("Added streaming decrypted reader for SSE-KMS chunk %s", chunk.GetFileIdString())
-		} else {
-			// Non-SSE-KMS chunk, use as-is
-			readers = append(readers, chunkReader)
-			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		// Validate IV length up front, mirroring the SSE-S3 / SSE-C
+		// preparation paths. CreateSSEKMSDecryptedReader does call
+		// ValidateIV internally, but only when the wrap closure runs --
+		// after the chunk's volume-server fetch has already started. We
+		// want the "reject malformed chunks before any fetch" contract to
+		// hold for SSE-KMS too, so a missing or short IV must fail here
+		// in the prep loop rather than turn into a mid-stream error.
+		if err := ValidateIV(kmsKey.IV, fmt.Sprintf("SSE-KMS chunk %s IV", chunk.GetFileIdString())); err != nil {
+			return nil, err
 		}
+		// Capture kmsKey and chunk into the wrap closure so each prepared
+		// entry decrypts with its own per-chunk SSE-KMS key.
+		fileId := chunk.GetFileIdString()
+		preparedChunks = append(preparedChunks, preparedMultipartChunk{
+			chunk: chunk,
+			wrap: func(raw io.ReadCloser) (io.Reader, error) {
+				glog.V(4).Infof("Decrypting SSE-KMS chunk %s with KeyID=%s", fileId, kmsKey.KeyID)
+				dec, decErr := CreateSSEKMSDecryptedReader(raw, kmsKey)
+				if decErr != nil {
+					return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+				}
+				return dec, nil
+			},
+		})
 	}
 
-	return NewMultipartSSEReader(readers), nil
+	return &lazyMultipartChunkReader{
+		chunks: preparedChunks,
+		fetch:  fetchChunk,
+	}, nil
 }
 
 // createMultipartSSES3DecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-S3 objects (direct volume path)
@@ -2786,6 +2741,15 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReaderDirect(ctx context.Co
 // SSE-S3 chunks. Chunks are fetched via fetchChunk and decrypted using their
 // per-chunk metadata (each multipart part has its own DEK and IV). Exposed as a
 // standalone helper so tests can inject a mock chunk fetcher.
+//
+// All per-chunk metadata is validated upfront so a malformed chunk fails fast
+// without opening any HTTP connections to volume servers. The actual chunk
+// fetch and decryption happens LAZILY as the returned reader is read: at most
+// one chunk's HTTP connection is open at a time. Eagerly opening every chunk's
+// HTTP response (the previous behavior) caused later chunks' connections to
+// sit idle while earlier chunks were still being consumed, which under load
+// could trip volume-server idle/keepalive limits and yield truncated reads
+// (issue #8908).
 func buildMultipartSSES3Reader(chunks []*filer_pb.FileChunk, keyManager *SSES3KeyManager, fetchChunk func(*filer_pb.FileChunk) (io.ReadCloser, error)) (io.Reader, error) {
 	// Sort a copy of the slice so callers do not observe their input chunks
 	// reordered (the backing array is shared with entry.Chunks, which other
@@ -2796,82 +2760,147 @@ func buildMultipartSSES3Reader(chunks []*filer_pb.FileChunk, keyManager *SSES3Ke
 		return sortedChunks[i].GetOffset() < sortedChunks[j].GetOffset()
 	})
 
-	// Create readers for each chunk, decrypting them independently
-	readers := make([]io.Reader, 0, len(sortedChunks))
-
-	// Close any readers already appended to `readers` on error paths, to avoid
-	// leaking volume-server HTTP connections.
-	closeAppendedReaders := func() {
-		for _, r := range readers {
-			if closer, ok := r.(io.Closer); ok {
-				closer.Close()
-			}
-		}
-	}
-
+	// Validate every chunk's SSE-S3 metadata before returning a reader. This
+	// keeps the eager-validation contract that callers and tests rely on
+	// (malformed metadata fails immediately), without holding open any
+	// volume-server HTTP connections.
+	preparedChunks := make([]preparedMultipartChunk, 0, len(sortedChunks))
 	for _, chunk := range sortedChunks {
-		// Get this chunk's encrypted data
-		chunkReader, err := fetchChunk(chunk)
+		if chunk.GetSseType() != filer_pb.SSEType_SSE_S3 {
+			preparedChunks = append(preparedChunks, preparedMultipartChunk{chunk: chunk})
+			continue
+		}
+		if len(chunk.GetSseMetadata()) == 0 {
+			return nil, fmt.Errorf("SSE-S3 chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+		}
+		meta, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
 		if err != nil {
-			closeAppendedReaders()
-			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+			return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 		}
-
-		// Handle based on chunk's encryption type
-		if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
-			// Check if this chunk has per-chunk SSE-S3 metadata
-			if len(chunk.GetSseMetadata()) == 0 {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("SSE-S3 chunk %s missing per-chunk metadata", chunk.GetFileIdString())
-			}
-
-			// Deserialize the per-chunk SSE-S3 metadata to get the IV
-			chunkSSES3Metadata, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
-			if err != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
-			}
-
-			// Use the IV from the chunk metadata. DeserializeSSES3Metadata does
-			// not require an IV, so validate the length here before it reaches
-			// cipher.NewCTR, which would otherwise panic on a nil or short IV.
-			iv := chunkSSES3Metadata.IV
-			if len(iv) != s3_constants.AESBlockSize {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("SSE-S3 chunk %s has invalid IV length %d (expected %d)",
-					chunk.GetFileIdString(), len(iv), s3_constants.AESBlockSize)
-			}
-			glog.V(4).Infof("Decrypting SSE-S3 chunk %s with KeyID=%s, IV length=%d",
-				chunk.GetFileIdString(), chunkSSES3Metadata.KeyID, len(iv))
-
-			// Create decrypted reader for this chunk
-			decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, chunkSSES3Metadata, iv)
-			if decErr != nil {
-				chunkReader.Close()
-				closeAppendedReaders()
-				return nil, fmt.Errorf("failed to decrypt SSE-S3 chunk: %v", decErr)
-			}
-
-			// Use the streaming decrypted reader directly
-			readers = append(readers, struct {
-				io.Reader
-				io.Closer
-			}{
-				Reader: decryptedChunkReader,
-				Closer: chunkReader,
-			})
-			glog.V(4).Infof("Added streaming decrypted reader for SSE-S3 chunk %s", chunk.GetFileIdString())
-		} else {
-			// Non-SSE-S3 chunk, use as-is
-			readers = append(readers, chunkReader)
-			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		// DeserializeSSES3Metadata does not require an IV, so validate the
+		// length here before it reaches cipher.NewCTR, which would otherwise
+		// panic on a nil or short IV. Uses the shared ValidateIV helper so
+		// all three SSE prep paths (SSE-S3, SSE-KMS, SSE-C) enforce IV
+		// length identically.
+		if err := ValidateIV(meta.IV, fmt.Sprintf("SSE-S3 chunk %s IV", chunk.GetFileIdString())); err != nil {
+			return nil, err
 		}
+		// Capture meta and chunk by-value into the wrap closure so each
+		// prepared entry decrypts with its own per-chunk key + IV.
+		fileId := chunk.GetFileIdString()
+		preparedChunks = append(preparedChunks, preparedMultipartChunk{
+			chunk: chunk,
+			wrap: func(raw io.ReadCloser) (io.Reader, error) {
+				glog.V(4).Infof("Decrypting SSE-S3 chunk %s with KeyID=%s, IV length=%d",
+					fileId, meta.KeyID, len(meta.IV))
+				dec, err := CreateSSES3DecryptedReader(raw, meta, meta.IV)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt SSE-S3 chunk: %v", err)
+				}
+				return dec, nil
+			},
+		})
 	}
 
-	return NewMultipartSSEReader(readers), nil
+	return &lazyMultipartChunkReader{
+		chunks: preparedChunks,
+		fetch:  fetchChunk,
+	}, nil
+}
+
+// preparedMultipartChunk pairs a chunk with the per-SSE wrapping logic the
+// lazy reader applies to its raw HTTP body. wrap is nil for chunks that
+// stream as-is (no SSE on the chunk, even though the object is multipart-SSE);
+// otherwise wrap is the SSE-specific decryption setup, which receives the
+// already-opened raw chunk body and returns the plaintext reader.
+type preparedMultipartChunk struct {
+	chunk *filer_pb.FileChunk
+	wrap  func(raw io.ReadCloser) (io.Reader, error)
+}
+
+// lazyMultipartChunkReader streams a sequence of multipart chunks one at a
+// time. It opens each chunk's underlying HTTP fetch (and applies the
+// SSE-specific decryption wrapper) only when the previous chunk has been
+// fully consumed, so volume-server connections do not pile up for large
+// objects. This is the same shape used by all three SSE multipart read
+// paths (SSE-S3, SSE-KMS, SSE-C); only the per-chunk wrap closure differs.
+type lazyMultipartChunkReader struct {
+	chunks   []preparedMultipartChunk
+	fetch    func(*filer_pb.FileChunk) (io.ReadCloser, error)
+	idx      int
+	current  io.Reader // current chunk's plaintext reader (or raw reader for non-SSE chunks)
+	closer   io.Closer // current chunk's underlying HTTP body, to close on advance/Close
+	finished bool
+}
+
+func (l *lazyMultipartChunkReader) Read(p []byte) (int, error) {
+	for {
+		if l.finished {
+			return 0, io.EOF
+		}
+		if l.current == nil {
+			if l.idx >= len(l.chunks) {
+				l.finished = true
+				return 0, io.EOF
+			}
+			pc := l.chunks[l.idx]
+			l.idx++
+			chunkReader, err := l.fetch(pc.chunk)
+			if err != nil {
+				l.finished = true
+				return 0, fmt.Errorf("failed to create chunk reader: %v", err)
+			}
+			if pc.wrap == nil {
+				// Non-SSE chunk in an otherwise SSE-multipart object: stream
+				// raw bytes through.
+				l.current = chunkReader
+				l.closer = chunkReader
+				glog.V(4).Infof("Streaming non-encrypted chunk %s", pc.chunk.GetFileIdString())
+			} else {
+				wrapped, wrapErr := pc.wrap(chunkReader)
+				if wrapErr != nil {
+					chunkReader.Close()
+					l.finished = true
+					return 0, wrapErr
+				}
+				l.current = wrapped
+				l.closer = chunkReader
+			}
+		}
+		n, err := l.current.Read(p)
+		if err == io.EOF {
+			closeErr := l.closer.Close()
+			l.current = nil
+			l.closer = nil
+			if n > 0 {
+				return n, nil
+			}
+			if closeErr != nil {
+				glog.V(2).Infof("Error closing chunk reader: %v", closeErr)
+			}
+			continue
+		}
+		if err != nil {
+			// Non-EOF read error: the underlying chunk body is in an
+			// indeterminate state. Mark ourselves finished so a retried
+			// Read does not try to drain the same broken stream; let
+			// Close() release the chunk body. This matches the failure
+			// semantics of the fetch and wrap error paths above.
+			l.finished = true
+		}
+		return n, err
+	}
+}
+
+func (l *lazyMultipartChunkReader) Close() error {
+	l.finished = true
+	if l.closer != nil {
+		err := l.closer.Close()
+		l.current = nil
+		l.closer = nil
+		return err
+	}
+	return nil
 }
 
 // createEncryptedChunkReader creates a reader for a single encrypted chunk
