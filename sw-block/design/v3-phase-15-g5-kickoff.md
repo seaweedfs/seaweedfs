@@ -153,6 +153,30 @@ QA reviews mini-plan + scenario catalogue + m01 script; sw reviews framework-pri
 
 ---
 
+## §7a m01 + M02 infrastructure verification (QA pre-ratification check 2026-04-26)
+
+QA verified m01 + M02 infrastructure readiness for G5-4 before architect ratifies the batch shape. Findings:
+
+| Surface | m01 (192.168.1.181) | M02 (192.168.1.184) |
+|---|---|---|
+| Reachability | ✅ 32-day uptime; healthy load avg 0.5 | ✅ 0.92ms ping latency from m01 |
+| Kernel | 6.17.0-19-generic | same |
+| Disk space | 177 GiB free on /opt | 178 GiB free on /opt |
+| Sudo | ✅ password-less (iptables manipulation OK for fault injection) | not verified yet |
+| iptables | ✅ runnable | ✅ same kernel; assume same |
+| Network namespaces | ✅ supported | ✅ same kernel |
+| Multi-process tools | ✅ pgrep / lsof / fuser / ss / netstat | ✅ same kernel |
+| CPUs / memory | 16 cores / 19 GiB free | not verified |
+| **Go installed** | ✅ Go 1.26.2 at /snap/bin/go | ❌ **NOT installed** |
+| T2 m01 script template | ✅ `iterate-m01-nvme.sh` 18.5 KiB | (pattern confirmed) |
+| Existing build artifacts | (clean for G5) | `iscsi-target-linux` + `nvme-test-linux` (T2 binaries deployed cross-node) |
+
+**Implication for G5-4 script design**: build binaries on m01 (Go installed), then `scp` to M02 (no Go installed). T2 already uses this cross-node binary pattern for its iSCSI target testing — G5-4 inherits the pattern. **Skeleton at `seaweed_block/scripts/iterate-m01-replicated-write.sh` (DRAFT v0.1) implements this build-then-scp flow.**
+
+**No infrastructure blockers for G5-4.** The architecture is ready for G5-4 hardware first-light as soon as G5 mini-plan ratifies the scenario list.
+
+---
+
 ## §8 Open issues blocking ratification
 
 1. **Architect resolution of §2** — accept §2.1/§2.2 scope boundary
