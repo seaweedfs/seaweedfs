@@ -385,6 +385,32 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 		}
 	}
 
+	// Copy stored inline policies onto the new username before the rename
+	// takes effect. SaveConfiguration prunes the old username after this
+	// handler returns and ON DELETE CASCADE on user_inline_policies would
+	// otherwise drop the documents — observable as a silent data loss in
+	// GetUserPolicy / ListUserPolicies after the rename. We copy here and
+	// let the subsequent prune CASCADE clean up the old-name rows.
+	if e.credentialManager != nil {
+		ctx := context.Background()
+		policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
+		}
+		for _, policyName := range policyNames {
+			doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
+			if err != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("read inline policy %s for %s: %w", policyName, userName, err)}
+			}
+			if doc == nil {
+				continue
+			}
+			if err := e.credentialManager.PutUserInlinePolicy(ctx, newUserName, policyName, *doc); err != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("copy inline policy %s to %s: %w", policyName, newUserName, err)}
+			}
+		}
+	}
+
 	sourceIdent.Name = newUserName
 	// Update group membership references
 	for _, g := range s3cfg.Groups {
