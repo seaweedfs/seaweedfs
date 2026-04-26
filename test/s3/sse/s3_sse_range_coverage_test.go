@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -93,9 +94,16 @@ func TestSSERangeReadIntegration(t *testing.T) {
 		},
 	}
 
+	// Each (mode, size) pair uploads an independent object key under the
+	// shared bucket and exercises range reads against it. The four modes
+	// have no shared state (each one carries its own SSE-C key, KMS keyID,
+	// or none); within a mode each size class also writes a unique key.
+	// That makes both levels safe to t.Parallel(), which substantially cuts
+	// CI wall time on the matrix (~45MB of data per mode).
 	for _, mode := range modes {
 		mode := mode
 		t.Run(mode.name(), func(t *testing.T) {
+			t.Parallel()
 			if reason := mode.probe(t, ctx, client, bucketName); reason != "" {
 				t.Skipf("%s unsupported in this test environment: %s", mode.name(), reason)
 			}
@@ -103,6 +111,7 @@ func TestSSERangeReadIntegration(t *testing.T) {
 			for _, sz := range sizes {
 				sz := sz
 				t.Run(sz.name, func(t *testing.T) {
+					t.Parallel()
 					objectKey := fmt.Sprintf("%s/%s", mode.name(), sz.name)
 					var data []byte
 					if len(sz.multipartParts) > 0 {
@@ -351,13 +360,28 @@ func (m *rangeModeSSEKMS) probe(t *testing.T, ctx context.Context, client *s3.Cl
 		SSEKMSKeyId:          aws.String(m.keyID),
 	})
 	if err != nil {
-		// Treat any 5xx / "InternalError" / connection-level failure as
-		// "no KMS configured here". The test environments where SSE-KMS is
-		// expected to work (Makefile target `test-with-kms`) configure a
-		// provider; default `weed mini` does not.
+		// Treat any error from the probe as "no KMS configured here": this
+		// surface includes 5xx ("InternalError" / generic provider failure),
+		// 501 NotImplemented, 4xx KMS.NotConfigured, and any error message
+		// that mentions KMS not being configured. The test environments
+		// where SSE-KMS is expected to work (the Makefile's
+		// `start-seaweedfs-ci` target via s3-config-template.json, or
+		// `test-with-kms` via OpenBao) configure a provider; ad-hoc local
+		// `weed mini` setups may not. Either way, the caller t.Skips the
+		// SSE-KMS subtree -- the friendlier "not configured" framing is
+		// just for diagnostics in CI logs.
 		var apiErr *smithyhttp.ResponseError
-		if errors.As(err, &apiErr) && apiErr.HTTPStatusCode() >= 500 {
-			return fmt.Sprintf("KMS provider not configured (PutObject returned %d)", apiErr.HTTPStatusCode())
+		if errors.As(err, &apiErr) {
+			code := apiErr.HTTPStatusCode()
+			if code >= 500 || code == 501 || code == 400 {
+				return fmt.Sprintf("KMS provider not configured (PutObject returned %d)", code)
+			}
+		}
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "KMS.NotConfigured") ||
+			strings.Contains(errMsg, "NotImplemented") ||
+			strings.Contains(errMsg, "not configured") {
+			return fmt.Sprintf("KMS provider not configured: %v", err)
 		}
 		return fmt.Sprintf("KMS PutObject probe failed: %v", err)
 	}
@@ -519,8 +543,14 @@ func verifyRangeRead(t *testing.T, ctx context.Context, client *s3.Client, mode 
 
 	expected := source[rc.start : rc.end+1]
 	expectedLen := rc.end - rc.start + 1
-	assert.Equal(t, len(expected), len(got),
-		"body length mismatch for %s range=%s (source size=%d)", key, rc.rangeHeader, totalLen)
+	// Body-length check is `require` rather than `assert` because the bug
+	// fixed in #8908 surfaces as a fully-readable body that is shorter than
+	// requested -- a "truncation regression". Comparing different-length
+	// slices with assertDataEqual below would just produce a noisy byte-diff
+	// on top of the underlying truncation; bailing here keeps the failure
+	// log focused on the symptom that actually matters.
+	require.Equal(t, len(expected), len(got),
+		"body length mismatch for %s range=%s (source size=%d) — likely truncation regression", key, rc.rangeHeader, totalLen)
 	assert.Equal(t, expectedLen, aws.ToInt64(resp.ContentLength),
 		"Content-Length header mismatch for %s range=%s", key, rc.rangeHeader)
 
@@ -534,14 +564,4 @@ func verifyRangeRead(t *testing.T, ctx context.Context, client *s3.Client, mode 
 	assertDataEqual(t, expected, got, "Range body mismatch for %s range=%s", key, rc.rangeHeader)
 
 	mode.verifyGet(t, resp)
-
-	// Sanity: never accidentally truncate. The bug fixed in #8908 shows up
-	// as a fully-readable body that's shorter than expected -- so an
-	// explicit "did we get fewer bytes than asked?" check, even though the
-	// body-equal assertion above subsumes it, makes regressions far easier
-	// to recognize in CI logs than a long byte-diff.
-	if int64(len(got)) != expectedLen {
-		t.Fatalf("range %s of %s returned %d bytes, expected %d (truncation regression)",
-			rc.rangeHeader, key, len(got), expectedLen)
-	}
 }
