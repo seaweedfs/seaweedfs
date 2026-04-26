@@ -49,32 +49,49 @@ SeaweedFS can optimize this process by caching metadata, exposing smarter range 
 
 ## High-Level Architecture
 
+Pushdown is split into two tiers, mapping cleanly onto roles SeaweedFS already has:
+
 ```text
-Spark / Trino / DuckDB / PyArrow / Custom Query Engine
-        |
-        | S3 API or SeaweedFS Pushdown API
-        v
-SeaweedFS S3 Gateway / Filer
-        |
-        | metadata/index lookup
-        v
-SeaweedFS Index Metadata
-        |
-        | range reads / local filtering
-        v
-SeaweedFS Volume Servers
-        |
-        v
-Parquet data needles
+Spark / Trino / DuckDB / PyArrow / SeaweedFS-aware connector
+            |
+            | Pushdown API (planning)
+            v
++-----------------------------+
+|  Catalog Server  (brain)    |
+|  - table discovery          |
+|  - Iceberg snapshot/version |
+|  - Parquet file list        |
+|  - index metadata registry  |
+|  - index freshness tracking |
+|  - planning + pruning       |
++-----------------------------+
+            |
+            | candidate files / row groups / ranges
+            | + side-index pointers
+            v
++-----------------------------+        +-----------------+
+|  Volume Servers  (hands)    |  <---  |  S3 Gateway     |
+|  - range reads              |        |  (compat path)  |
+|  - local index lookup       |        |  for unmodified |
+|  - vector distance compute  |        |  S3 readers     |
+|  - local top-K              |        +-----------------+
++-----------------------------+
+            |
+            v
+        Parquet data needles
 ```
 
-The "local filtering" step on volume servers is new infrastructure introduced by this design. Today's volume servers serve byte ranges only; the pushdown path adds a filter/index-evaluation component colocated with the data. Where exactly it runs (volume server in-process, sidecar, or a separate index-serving tier) is covered in [Index Residency](#index-residency-and-failure-model).
+- **Catalog Server = brain.** Existing role: holds table metadata, resolves Iceberg snapshots, maps tables to data files. Pushdown adds: an *index registry* (which side indexes exist for which files at which identities), a *planner* that turns a request into candidate files/row groups/ranges/index pointers, and *index freshness* state. The catalog server does not read Parquet payload bytes; it returns plans, not rows.
+- **Volume Servers = hands.** Existing role: serve byte ranges from needles. Pushdown adds: local side-index lookup, scalar predicate evaluation against indexes, vector distance compute, and local top-K so the volume server returns small result sets instead of raw bytes for hot paths.
+- **S3 Gateway = compatibility path.** Unmodified S3 readers continue to work via plain ranged GETs against the gateway. The gateway never participates in pushdown planning.
+
+What deliberately stays *out* of the catalog server: large scans, vector ANN computation, side-index building over big files, heavy bitmap merges. Those run on the volume servers next to the data, so the planner stays cheap and one busy table cannot bottleneck planning across the cluster.
 
 There are two access modes:
 
 ### 1. Standard Object Access
 
-Existing engines read Parquet through the normal S3-compatible API.
+Existing engines read Parquet through the normal S3-compatible API. The S3 gateway never sees a pushdown call.
 
 ```text
 engine -> SeaweedFS S3 -> Parquet object ranges
@@ -84,13 +101,15 @@ This preserves compatibility.
 
 ### 2. SeaweedFS-Aware Pushdown Access
 
-Optimized connectors call a SeaweedFS pushdown API before reading data.
+Optimized connectors call the catalog server's pushdown API before reading data.
 
 ```text
-engine -> Iceberg planning -> SeaweedFS pushdown API -> candidate files/ranges/rows
+engine -> SeaweedFS-aware connector -> Catalog Server pushdown API
+       -> receive candidate ranges + (for hot paths) volume-server endpoints
+       -> execute remaining work on volume servers OR read Parquet ranges directly
 ```
 
-The engine still reads standard Parquet data, but reads much less of it.
+The catalog server's response always includes byte ranges the connector can fetch through the S3 path, so a connector that does not want to chat with volume servers still gets the file/row-group/page pruning win. Volume-server-side execution is opt-in per request and used for vector ANN, large bitmap unions, and other workloads where the data-locality win outweighs the extra hop.
 
 ## Physical Layout
 
@@ -913,15 +932,19 @@ Garbage collection can remove indexes for files no longer referenced by active s
 
 ## Index Residency and Failure Model
 
-Open question to resolve before Phase 2: where the side indexes physically live and how pushdown behaves when they are absent or stale.
+Side indexes have two residencies that match the two-tier architecture:
 
-Options:
+- **Catalog server holds the index *registry*.** For every `(table, file_identity, index_kind, field_id)` triple, the catalog records: where the index payload lives (`.index/...` path under the data parent), the identity it was built against, when it was last refreshed, and whether it is healthy. This is metadata only — small per-file rows that the planner consults to decide which indexes to use for a request. The catalog never reads index payload bytes.
+- **Volume servers hold the index *payloads*.** Index files live in `.index/<file_name>/<identity>/...` next to the data needles, so the volume server that owns a chunk of a Parquet file also owns the corresponding side-index chunks. Local lookup, scalar predicate evaluation, and vector compute happen on the volume server, returning small results (bitmaps, top-K row refs) instead of moving raw bytes.
 
-- **Filer-managed.** Index metadata stored in the filer; index payloads stored as ordinary needles. Simplest. Read amplification is similar to a normal SeaweedFS file read.
-- **Colocated on volume servers.** Index payloads live next to the data needles for the file they index, so filter evaluation runs on the same node that holds the data. Lowest network cost, highest deployment complexity.
-- **Separate index-serving tier.** A pool of stateless workers that load index payloads from the filer on demand. Easiest to scale independently of storage.
+Failure modes follow the same split:
 
-In all cases, pushdown must degrade gracefully: if the requested side index is missing, stale, or unreachable, the server falls back to row-group-level pruning using the parsed footer (or, in the worst case, returns the request unmodified so the client performs a standard scan). The response should carry a `Stats` field indicating which indexes were used, missed, or skipped, so the client can decide whether to retry or just proceed.
+- **Missing or stale index payload (volume side):** the planner requests an index, the volume server reports `index_missing` or `index_stale`. The catalog server downgrades the plan: row-group pruning falls back to footer statistics; bloom/bitmap/btree pruning is skipped; vector queries return an explicit "no index" error so the connector can decide whether to read raw vectors or fail. Stats list which indexes were used vs missing.
+- **Catalog registry stale (catalog side):** if the registry says an index exists but the volume server cannot find it, the catalog marks the registry entry stale and returns a downgraded plan; a background reconciler refreshes the entry. This makes the catalog the source of truth for index *intent* while the volume server is the source of truth for index *availability*.
+- **Catalog server unavailable:** the connector falls back to standard S3 access; pushdown is unavailable but reads still work.
+- **Volume server unavailable:** standard SeaweedFS replication / re-routing handles the byte-range read; the catalog returns a plan referencing whichever volume servers can serve the file.
+
+In all cases, the response carries a `Stats.indexes_used` / `Stats.indexes_missing` list so the connector observes degradations and can decide whether to retry or just proceed with the lighter plan.
 
 ## Cost Model and When Not to Push Down
 
