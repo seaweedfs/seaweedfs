@@ -16,6 +16,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// Per-DB caps on goleveldb's open SST file cache. The library default is 500
+// per DB, but a volume server hosts one DB per volume — easily thousands —
+// so the per-DB default sums into FD exhaustion (`open .../00000N.log: too
+// many open files`) even with generous ulimits, especially when leveldb is
+// rotating its WAL.
+//
+// The trade-off: a larger cache lowers re-open overhead on cold reads, a
+// smaller cache bounds total FD usage. CompactionTableSizeMultiplier=10
+// already keeps SST counts low (~10x larger SSTs => ~10x fewer files), so
+// even the small-volume cap is enough to keep the working set hot while
+// leaving headroom for thousands of co-resident DBs.
+const (
+	LevelDbOpenFilesCacheCapacity       = 16
+	LevelDbMediumOpenFilesCacheCapacity = 32
+	LevelDbLargeOpenFilesCacheCapacity  = 64
+)
+
 func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, ver needle.Version) (v *Volume, err error) {
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = super_block.SuperBlock{}
@@ -196,9 +213,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 			case NeedleMapLevelDb:
 				opts := &opt.Options{
-					BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
-					WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
-					CompactionTableSizeMultiplier: 10,              // default value is 1
+					BlockCacheCapacity:            2 * 1024 * 1024,               // default value is 8MiB
+					WriteBuffer:                   1 * 1024 * 1024,               // default value is 4MiB
+					CompactionTableSizeMultiplier: 10,                            // default value is 1
+					OpenFilesCacheCapacity:        LevelDbOpenFilesCacheCapacity, // see package-level docs
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb index", v.FileName(".ldb"))
@@ -211,9 +229,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 			case NeedleMapLevelDbMedium:
 				opts := &opt.Options{
-					BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
-					WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
-					CompactionTableSizeMultiplier: 10,              // default value is 1
+					BlockCacheCapacity:            4 * 1024 * 1024,                     // default value is 8MiB
+					WriteBuffer:                   2 * 1024 * 1024,                     // default value is 4MiB
+					CompactionTableSizeMultiplier: 10,                                  // default value is 1
+					OpenFilesCacheCapacity:        LevelDbMediumOpenFilesCacheCapacity, // see package-level docs
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb medium index", v.FileName(".ldb"))
@@ -226,9 +245,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 			case NeedleMapLevelDbLarge:
 				opts := &opt.Options{
-					BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
-					WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
-					CompactionTableSizeMultiplier: 10,              // default value is 1
+					BlockCacheCapacity:            8 * 1024 * 1024,                    // default value is 8MiB
+					WriteBuffer:                   4 * 1024 * 1024,                    // default value is 4MiB
+					CompactionTableSizeMultiplier: 10,                                 // default value is 1
+					OpenFilesCacheCapacity:        LevelDbLargeOpenFilesCacheCapacity, // see package-level docs
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb large index", v.FileName(".ldb"))
