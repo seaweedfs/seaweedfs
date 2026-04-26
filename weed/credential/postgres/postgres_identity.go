@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -17,9 +18,9 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 
 	config := &iam_pb.S3ApiConfiguration{}
 
-	// Query all users
 	rows, err := store.db.QueryContext(ctx, "SELECT username, email, account_data, actions, policy_names FROM users")
 	if err != nil {
+		glog.Errorf("credential postgres: LoadConfiguration query failed: %v", err)
 		return nil, fmt.Errorf("failed to query users: %w", err)
 	}
 	defer rows.Close()
@@ -29,6 +30,7 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		var accountDataJSON, actionsJSON, policyNamesJSON []byte
 
 		if err := rows.Scan(&username, &email, &accountDataJSON, &actionsJSON, &policyNamesJSON); err != nil {
+			glog.Errorf("credential postgres: LoadConfiguration scan failed: %v", err)
 			return nil, fmt.Errorf("failed to scan user row: %w", err)
 		}
 
@@ -36,28 +38,24 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 			Name: username,
 		}
 
-		// Parse account data
 		if len(accountDataJSON) > 0 {
 			if err := json.Unmarshal(accountDataJSON, &identity.Account); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal account data for user %s: %v", username, err)
 			}
 		}
 
-		// Parse actions
 		if len(actionsJSON) > 0 {
 			if err := json.Unmarshal(actionsJSON, &identity.Actions); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal actions for user %s: %v", username, err)
 			}
 		}
 
-		// Parse policy names
 		if len(policyNamesJSON) > 0 {
 			if err := json.Unmarshal(policyNamesJSON, &identity.PolicyNames); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal policy names for user %s: %v", username, err)
 			}
 		}
 
-		// Query credentials for this user
 		credRows, err := store.db.QueryContext(ctx, "SELECT access_key, secret_key FROM credentials WHERE username = $1", username)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query credentials for user %s: %v", username, err)
@@ -76,10 +74,16 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 			})
 		}
 		credRows.Close()
-
+		if err := credRows.Err(); err != nil {
+			return nil, fmt.Errorf("failed iterating credential rows for user %s: %w", username, err)
+		}
 		config.Identities = append(config.Identities, identity)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating user rows: %w", err)
+	}
 
+	glog.V(0).Infof("credential postgres: LoadConfiguration loaded %d identities", len(config.Identities))
 	return config, nil
 }
 
@@ -88,59 +92,62 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 		return fmt.Errorf("store not configured")
 	}
 
-	// Start transaction
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Clear existing data
-	if _, err := tx.ExecContext(ctx, "DELETE FROM credentials"); err != nil {
-		return fmt.Errorf("failed to clear credentials: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM users"); err != nil {
-		return fmt.Errorf("failed to clear users: %w", err)
-	}
+	// Track which usernames are in the incoming config for pruning
+	configUsernames := make(map[string]bool, len(config.Identities))
 
-	// Insert all identities
 	for _, identity := range config.Identities {
-		// Marshal account data
-		var accountDataJSON []byte
+		configUsernames[identity.Name] = true
+
+	var accountDataParam any
 		if identity.Account != nil {
-			accountDataJSON, err = json.Marshal(identity.Account)
+			b, err := json.Marshal(identity.Account)
 			if err != nil {
 				return fmt.Errorf("failed to marshal account data for user %s: %v", identity.Name, err)
 			}
+			accountDataParam = string(b)
 		}
-
-		// Marshal actions
-		var actionsJSON []byte
+		var actionsParam any
 		if identity.Actions != nil {
-			actionsJSON, err = json.Marshal(identity.Actions)
+			b, err := json.Marshal(identity.Actions)
 			if err != nil {
 				return fmt.Errorf("failed to marshal actions for user %s: %v", identity.Name, err)
 			}
+			actionsParam = string(b)
 		}
-
-		// Marshal policy names
-		var policyNamesJSON []byte
+		var policyNamesParam any
 		if identity.PolicyNames != nil {
-			policyNamesJSON, err = json.Marshal(identity.PolicyNames)
+			b, err := json.Marshal(identity.PolicyNames)
 			if err != nil {
 				return fmt.Errorf("failed to marshal policy names for user %s: %v", identity.Name, err)
 			}
+			policyNamesParam = string(b)
 		}
-
-		// Insert user
-		_, err := tx.ExecContext(ctx,
-			"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
-			identity.Name, "", accountDataJSON, actionsJSON, policyNamesJSON)
+		// Upsert user — preserves the row (and its CASCADE dependents) if it already exists
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO users (username, email, account_data, actions, policy_names)
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (username) DO UPDATE SET
+				email = EXCLUDED.email,
+				account_data = EXCLUDED.account_data,
+				actions = EXCLUDED.actions,
+				policy_names = EXCLUDED.policy_names,
+				updated_at = CURRENT_TIMESTAMP`,
+			identity.Name, "", accountDataParam, actionsParam, policyNamesParam)
 		if err != nil {
-			return fmt.Errorf("failed to insert user %s: %v", identity.Name, err)
+			return fmt.Errorf("failed to upsert user %s: %v", identity.Name, err)
 		}
 
-		// Insert credentials
+		// Replace credentials for this user — credentials carry no independent
+		// state worth preserving (unlike inline policies)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM credentials WHERE username = $1", identity.Name); err != nil {
+			return fmt.Errorf("failed to clear credentials for user %s: %v", identity.Name, err)
+		}
 		for _, cred := range identity.Credentials {
 			_, err := tx.ExecContext(ctx,
 				"INSERT INTO credentials (username, access_key, secret_key) VALUES ($1, $2, $3)",
@@ -151,6 +158,35 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 		}
 	}
 
+	// Prune users no longer in config — CASCADE correctly removes their
+	// credentials and inline policies since they were intentionally deleted
+	rows, err := tx.QueryContext(ctx, "SELECT username FROM users")
+	if err != nil {
+		return fmt.Errorf("failed to list existing users for pruning: %w", err)
+	}
+	var toDelete []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan username for pruning: %w", err)
+		}
+		if !configUsernames[username] {
+			toDelete = append(toDelete, username)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed iterating user rows for pruning: %w", err)
+	}
+
+	for _, username := range toDelete {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE username = $1", username); err != nil {
+			return fmt.Errorf("failed to prune user %s: %v", username, err)
+		}
+	}
+
+	glog.V(0).Infof("credential postgres: SaveConfiguration saved %d identities, pruned %d", len(config.Identities), len(toDelete))
 	return tx.Commit()
 }
 
@@ -159,69 +195,72 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 		return fmt.Errorf("store not configured")
 	}
 
-	// Check if user already exists
 	var count int
 	err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE username = $1", identity.Name).Scan(&count)
 	if err != nil {
+		glog.Errorf("credential postgres: CreateUser check failed user=%s: %v", identity.Name, err)
 		return fmt.Errorf("failed to check user existence: %w", err)
 	}
 	if count > 0 {
+		glog.V(1).Infof("credential postgres: CreateUser user=%s already exists", identity.Name)
 		return credential.ErrUserAlreadyExists
 	}
 
-	// Start transaction
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Marshal account data
-	var accountDataJSON []byte
+	var accountDataParam any
 	if identity.Account != nil {
-		accountDataJSON, err = json.Marshal(identity.Account)
+		b, err := json.Marshal(identity.Account)
 		if err != nil {
 			return fmt.Errorf("failed to marshal account data: %w", err)
 		}
+		accountDataParam = string(b)
 	}
-
-	// Marshal actions
-	var actionsJSON []byte
+	var actionsParam any
 	if identity.Actions != nil {
-		actionsJSON, err = json.Marshal(identity.Actions)
+		b, err := json.Marshal(identity.Actions)
 		if err != nil {
 			return fmt.Errorf("failed to marshal actions: %w", err)
 		}
+		actionsParam = string(b)
 	}
-
-	// Marshal policy names
-	var policyNamesJSON []byte
+	var policyNamesParam any
 	if identity.PolicyNames != nil {
-		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
+		b, err := json.Marshal(identity.PolicyNames)
 		if err != nil {
 			return fmt.Errorf("failed to marshal policy names: %w", err)
 		}
+		policyNamesParam = string(b)
 	}
-
-	// Insert user
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
-		identity.Name, "", accountDataJSON, actionsJSON, policyNamesJSON)
+		identity.Name, "", accountDataParam, actionsParam, policyNamesParam)
 	if err != nil {
+		glog.Errorf("credential postgres: CreateUser insert failed user=%s: %v", identity.Name, err)
 		return fmt.Errorf("failed to insert user: %w", err)
 	}
 
-	// Insert credentials
 	for _, cred := range identity.Credentials {
 		_, err = tx.ExecContext(ctx,
 			"INSERT INTO credentials (username, access_key, secret_key) VALUES ($1, $2, $3)",
 			identity.Name, cred.AccessKey, cred.SecretKey)
 		if err != nil {
+			glog.Errorf("credential postgres: CreateUser insert credential failed user=%s accessKey=%s: %v", identity.Name, cred.AccessKey, err)
 			return fmt.Errorf("failed to insert credential: %w", err)
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		glog.Errorf("credential postgres: CreateUser commit failed user=%s: %v", identity.Name, err)
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	glog.V(0).Infof("credential postgres: CreateUser user=%s credentials=%d actions=%d", identity.Name, len(identity.Credentials), len(identity.Actions))
+	return nil
 }
 
 func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
@@ -237,8 +276,10 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 		username).Scan(&email, &accountDataJSON, &actionsJSON, &policyNamesJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			glog.V(2).Infof("credential postgres: GetUser user=%s not found", username)
 			return nil, credential.ErrUserNotFound
 		}
+		glog.Errorf("credential postgres: GetUser query failed user=%s: %v", username, err)
 		return nil, fmt.Errorf("failed to query user: %w", err)
 	}
 
@@ -246,28 +287,24 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 		Name: username,
 	}
 
-	// Parse account data
 	if len(accountDataJSON) > 0 {
 		if err := json.Unmarshal(accountDataJSON, &identity.Account); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal account data: %w", err)
 		}
 	}
 
-	// Parse actions
 	if len(actionsJSON) > 0 {
 		if err := json.Unmarshal(actionsJSON, &identity.Actions); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal actions: %w", err)
 		}
 	}
 
-	// Parse policy names
 	if len(policyNamesJSON) > 0 {
 		if err := json.Unmarshal(policyNamesJSON, &identity.PolicyNames); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal policy names: %w", err)
 		}
 	}
 
-	// Query credentials
 	rows, err := store.db.QueryContext(ctx, "SELECT access_key, secret_key FROM credentials WHERE username = $1", username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query credentials: %w", err)
@@ -279,29 +316,31 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 		if err := rows.Scan(&accessKey, &secretKey); err != nil {
 			return nil, fmt.Errorf("failed to scan credential: %w", err)
 		}
-
 		identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
 			AccessKey: accessKey,
 			SecretKey: secretKey,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating credential rows: %w", err)
+	}
 
+	glog.V(2).Infof("credential postgres: GetUser user=%s credentials=%d actions=%d", username, len(identity.Credentials), len(identity.Actions))
 	return identity, nil
 }
+
 
 func (store *PostgresStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
 	}
 
-	// Start transaction
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Check if user exists
 	var count int
 	err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE username = $1", username).Scan(&count)
 	if err != nil {
@@ -311,48 +350,43 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 		return credential.ErrUserNotFound
 	}
 
-	// Marshal account data
-	var accountDataJSON []byte
+	var accountDataParam any
 	if identity.Account != nil {
-		accountDataJSON, err = json.Marshal(identity.Account)
+		b, err := json.Marshal(identity.Account)
 		if err != nil {
 			return fmt.Errorf("failed to marshal account data: %w", err)
 		}
+		accountDataParam = string(b)
 	}
-
-	// Marshal actions
-	var actionsJSON []byte
+	var actionsParam any
 	if identity.Actions != nil {
-		actionsJSON, err = json.Marshal(identity.Actions)
+		b, err := json.Marshal(identity.Actions)
 		if err != nil {
 			return fmt.Errorf("failed to marshal actions: %w", err)
 		}
+		actionsParam = string(b)
 	}
-
-	// Marshal policy names
-	var policyNamesJSON []byte
+	var policyNamesParam any
 	if identity.PolicyNames != nil {
-		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
+		b, err := json.Marshal(identity.PolicyNames)
 		if err != nil {
 			return fmt.Errorf("failed to marshal policy names: %w", err)
 		}
+		policyNamesParam = string(b)
 	}
-
-	// Update user
 	_, err = tx.ExecContext(ctx,
 		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
-		username, "", accountDataJSON, actionsJSON, policyNamesJSON)
+		username, "", accountDataParam, actionsParam, policyNamesParam)
 	if err != nil {
+		glog.Errorf("credential postgres: UpdateUser failed user=%s: %v", username, err)
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 
-	// Delete existing credentials
 	_, err = tx.ExecContext(ctx, "DELETE FROM credentials WHERE username = $1", username)
 	if err != nil {
 		return fmt.Errorf("failed to delete existing credentials: %w", err)
 	}
 
-	// Insert new credentials
 	for _, cred := range identity.Credentials {
 		_, err = tx.ExecContext(ctx,
 			"INSERT INTO credentials (username, access_key, secret_key) VALUES ($1, $2, $3)",
@@ -362,7 +396,13 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		glog.Errorf("credential postgres: UpdateUser commit failed user=%s: %v", username, err)
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	glog.V(0).Infof("credential postgres: UpdateUser user=%s credentials=%d", username, len(identity.Credentials))
+	return nil
 }
 
 func (store *PostgresStore) DeleteUser(ctx context.Context, username string) error {
@@ -372,6 +412,7 @@ func (store *PostgresStore) DeleteUser(ctx context.Context, username string) err
 
 	result, err := store.db.ExecContext(ctx, "DELETE FROM users WHERE username = $1", username)
 	if err != nil {
+		glog.Errorf("credential postgres: DeleteUser failed user=%s: %v", username, err)
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
@@ -381,9 +422,11 @@ func (store *PostgresStore) DeleteUser(ctx context.Context, username string) err
 	}
 
 	if rowsAffected == 0 {
+		glog.V(1).Infof("credential postgres: DeleteUser user=%s not found", username)
 		return credential.ErrUserNotFound
 	}
 
+	glog.V(0).Infof("credential postgres: DeleteUser user=%s", username)
 	return nil
 }
 
@@ -394,6 +437,7 @@ func (store *PostgresStore) ListUsers(ctx context.Context) ([]string, error) {
 
 	rows, err := store.db.QueryContext(ctx, "SELECT username FROM users ORDER BY username")
 	if err != nil {
+		glog.Errorf("credential postgres: ListUsers query failed: %v", err)
 		return nil, fmt.Errorf("failed to query users: %w", err)
 	}
 	defer rows.Close()
@@ -406,7 +450,11 @@ func (store *PostgresStore) ListUsers(ctx context.Context) ([]string, error) {
 		}
 		usernames = append(usernames, username)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating user rows: %w", err)
+	}
 
+	glog.V(1).Infof("credential postgres: ListUsers count=%d", len(usernames))
 	return usernames, nil
 }
 
@@ -419,11 +467,14 @@ func (store *PostgresStore) GetUserByAccessKey(ctx context.Context, accessKey st
 	err := store.db.QueryRowContext(ctx, "SELECT username FROM credentials WHERE access_key = $1", accessKey).Scan(&username)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			glog.V(2).Infof("credential postgres: GetUserByAccessKey accessKey=%s not found", accessKey)
 			return nil, credential.ErrAccessKeyNotFound
 		}
+		glog.Errorf("credential postgres: GetUserByAccessKey query failed accessKey=%s: %v", accessKey, err)
 		return nil, fmt.Errorf("failed to query access key: %w", err)
 	}
 
+	glog.V(2).Infof("credential postgres: GetUserByAccessKey accessKey=%s resolved to user=%s", accessKey, username)
 	return store.GetUser(ctx, username)
 }
 
@@ -432,7 +483,6 @@ func (store *PostgresStore) CreateAccessKey(ctx context.Context, username string
 		return fmt.Errorf("store not configured")
 	}
 
-	// Check if user exists
 	var count int
 	err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE username = $1", username).Scan(&count)
 	if err != nil {
@@ -442,14 +492,15 @@ func (store *PostgresStore) CreateAccessKey(ctx context.Context, username string
 		return credential.ErrUserNotFound
 	}
 
-	// Insert credential
 	_, err = store.db.ExecContext(ctx,
 		"INSERT INTO credentials (username, access_key, secret_key) VALUES ($1, $2, $3)",
 		username, cred.AccessKey, cred.SecretKey)
 	if err != nil {
+		glog.Errorf("credential postgres: CreateAccessKey failed user=%s accessKey=%s: %v", username, cred.AccessKey, err)
 		return fmt.Errorf("failed to insert credential: %w", err)
 	}
 
+	glog.V(0).Infof("credential postgres: CreateAccessKey user=%s accessKey=%s", username, cred.AccessKey)
 	return nil
 }
 
@@ -462,6 +513,7 @@ func (store *PostgresStore) DeleteAccessKey(ctx context.Context, username string
 		"DELETE FROM credentials WHERE username = $1 AND access_key = $2",
 		username, accessKey)
 	if err != nil {
+		glog.Errorf("credential postgres: DeleteAccessKey failed user=%s accessKey=%s: %v", username, accessKey, err)
 		return fmt.Errorf("failed to delete access key: %w", err)
 	}
 
@@ -471,7 +523,6 @@ func (store *PostgresStore) DeleteAccessKey(ctx context.Context, username string
 	}
 
 	if rowsAffected == 0 {
-		// Check if user exists
 		var count int
 		err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE username = $1", username).Scan(&count)
 		if err != nil {
@@ -483,22 +534,20 @@ func (store *PostgresStore) DeleteAccessKey(ctx context.Context, username string
 		return credential.ErrAccessKeyNotFound
 	}
 
+	glog.V(0).Infof("credential postgres: DeleteAccessKey user=%s accessKey=%s", username, accessKey)
 	return nil
 }
 
-// AttachUserPolicy attaches a managed policy to a user by policy name
 func (store *PostgresStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
 	}
 
-	// Get user
 	identity, err := store.GetUser(ctx, username)
 	if err != nil {
 		return err
 	}
 
-	// Verify policy exists
 	policy, err := store.GetPolicy(ctx, policyName)
 	if err != nil {
 		return err
@@ -507,31 +556,31 @@ func (store *PostgresStore) AttachUserPolicy(ctx context.Context, username strin
 		return credential.ErrPolicyNotFound
 	}
 
-	// Check if already attached
 	for _, p := range identity.PolicyNames {
 		if p == policyName {
 			return credential.ErrPolicyAlreadyAttached
 		}
 	}
 
-	// Append policy name and update
 	identity.PolicyNames = append(identity.PolicyNames, policyName)
-	return store.UpdateUser(ctx, username, identity)
+	if err := store.UpdateUser(ctx, username, identity); err != nil {
+		return err
+	}
+
+	glog.V(0).Infof("credential postgres: AttachUserPolicy user=%s policy=%s", username, policyName)
+	return nil
 }
 
-// DetachUserPolicy detaches a managed policy from a user
 func (store *PostgresStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
 	}
 
-	// Get user
 	identity, err := store.GetUser(ctx, username)
 	if err != nil {
 		return err
 	}
 
-	// Find and remove policy
 	found := false
 	var newPolicyNames []string
 	for _, p := range identity.PolicyNames {
@@ -547,10 +596,14 @@ func (store *PostgresStore) DetachUserPolicy(ctx context.Context, username strin
 	}
 
 	identity.PolicyNames = newPolicyNames
-	return store.UpdateUser(ctx, username, identity)
+	if err := store.UpdateUser(ctx, username, identity); err != nil {
+		return err
+	}
+
+	glog.V(0).Infof("credential postgres: DetachUserPolicy user=%s policy=%s", username, policyName)
+	return nil
 }
 
-// ListAttachedUserPolicies returns the list of policy names attached to a user
 func (store *PostgresStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
 	if !store.configured {
 		return nil, fmt.Errorf("store not configured")
