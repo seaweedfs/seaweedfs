@@ -27,7 +27,7 @@ func (store *PostgresStore) CreateGroup(ctx context.Context, group *iam_pb.Group
 
 	_, err = store.db.ExecContext(ctx,
 		`INSERT INTO groups (name, members, policy_names, disabled) VALUES ($1, $2, $3, $4)`,
-		group.Name, membersJSON, policyNamesJSON, group.Disabled)
+		group.Name, jsonbParam(membersJSON), jsonbParam(policyNamesJSON), group.Disabled)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -112,7 +112,7 @@ func (store *PostgresStore) UpdateGroup(ctx context.Context, group *iam_pb.Group
 
 	result, err := store.db.ExecContext(ctx,
 		`UPDATE groups SET members = $1, policy_names = $2, disabled = $3, updated_at = CURRENT_TIMESTAMP WHERE name = $4`,
-		membersJSON, policyNamesJSON, group.Disabled, group.Name)
+		jsonbParam(membersJSON), jsonbParam(policyNamesJSON), group.Disabled, group.Name)
 	if err != nil {
 		return fmt.Errorf("failed to update group: %w", err)
 	}

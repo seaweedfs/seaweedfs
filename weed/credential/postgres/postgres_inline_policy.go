@@ -26,7 +26,7 @@ func (store *PostgresStore) PutUserInlinePolicy(ctx context.Context, userName, p
 		 VALUES ($1, $2, $3)
 		 ON CONFLICT (username, policy_name)
 		 DO UPDATE SET document = $3, updated_at = CURRENT_TIMESTAMP`,
-		userName, policyName, string(docJSON))
+		userName, policyName, jsonbParam(docJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: PutUserInlinePolicy failed user=%s policy=%s: %v", userName, policyName, err)
 		return fmt.Errorf("failed to upsert inline policy: %w", err)
@@ -110,7 +110,6 @@ func (store *PostgresStore) ListUserInlinePolicies(ctx context.Context, userName
 	glog.V(1).Infof("credential postgres: ListUserInlinePolicies user=%s count=%d", userName, len(names))
 	return names, nil
 }
-
 
 func (store *PostgresStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
 	if !store.configured {

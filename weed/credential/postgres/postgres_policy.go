@@ -78,7 +78,7 @@ func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, docum
 
 	_, err = store.db.ExecContext(ctx,
 		"INSERT INTO policies (name, document) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET document = $2, updated_at = CURRENT_TIMESTAMP",
-		name, documentJSON)
+		name, jsonbParam(documentJSON))
 	if err != nil {
 		return fmt.Errorf("failed to insert policy: %w", err)
 	}
@@ -104,7 +104,7 @@ func (store *PostgresStore) UpdatePolicy(ctx context.Context, name string, docum
 
 	result, err := store.db.ExecContext(ctx,
 		"UPDATE policies SET document = $2, updated_at = CURRENT_TIMESTAMP WHERE name = $1",
-		name, documentJSON)
+		name, jsonbParam(documentJSON))
 	if err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}

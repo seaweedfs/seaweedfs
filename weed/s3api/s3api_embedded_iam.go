@@ -353,7 +353,7 @@ func (e *EmbeddedIamApi) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName stri
 }
 
 // UpdateUser updates an IAM user.
-func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUpdateUserResponse, *iamError) {
+func (e *EmbeddedIamApi) UpdateUser(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUpdateUserResponse, *iamError) {
 	resp := &iamUpdateUserResponse{}
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
@@ -382,6 +382,44 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == newUserName {
 			return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("user %s already exists", newUserName)}
+		}
+	}
+
+	// Migrate the credential store's view of this user before the rename
+	// takes effect. Stores with referential integrity (Postgres) MUST
+	// implement UserRenamer: per-row Put / Get / Delete migration would
+	// violate the FK on user_inline_policies(username) at statement time
+	// because the new users row does not exist yet. UserRenamer does the
+	// rename, credential re-pointing and inline-policy re-pointing inside
+	// a single transaction.
+	//
+	// For stores that don't have FK enforcement (memory, filer_etc) the
+	// renamer is also implemented as a plain rebinding so the regression
+	// test exercises the same code path.
+	if e.credentialManager != nil {
+		switch supported, err := e.credentialManager.RenameUser(ctx, userName, newUserName); {
+		case err != nil:
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("rename user %s -> %s: %w", userName, newUserName, err)}
+		case !supported:
+			// Fallback: copy the inline policies under the new name and
+			// let the subsequent SaveConfiguration prune CASCADE the old
+			// rows. Only safe for stores without FK enforcement.
+			policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+			if err != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
+			}
+			for _, policyName := range policyNames {
+				doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
+				if err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("read inline policy %s for %s: %w", policyName, userName, err)}
+				}
+				if doc == nil {
+					continue
+				}
+				if err := e.credentialManager.PutUserInlinePolicy(ctx, newUserName, policyName, *doc); err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("copy inline policy %s to %s: %w", policyName, newUserName, err)}
+				}
+			}
 		}
 	}
 
@@ -2167,7 +2205,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		changed = false
 	case "UpdateUser":
 		var iamErr *iamError
-		response, iamErr = e.UpdateUser(s3cfg, values)
+		response, iamErr = e.UpdateUser(ctx, s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
@@ -166,5 +167,100 @@ func TestInlinePolicyOperations(t *testing.T) {
 	}
 	if len(allAfter) != 0 {
 		t.Errorf("Expected empty LoadInlinePolicies after cleanup, got %d users", len(allAfter))
+	}
+}
+
+// TestMemoryRenameUserMovesIdentityAndPolicies exercises the new
+// credential.UserRenamer path on the memory store: the identity row,
+// its access keys, and any inline policies all have to land under the
+// new name in a single operation.
+func TestMemoryRenameUserMovesIdentityAndPolicies(t *testing.T) {
+	ctx := context.Background()
+
+	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
+	if err != nil {
+		t.Fatalf("Failed to create credential manager: %v", err)
+	}
+
+	const (
+		oldName    = "renameme"
+		newName    = "renamed"
+		policyName = "ReadBucket"
+	)
+
+	cred := &iam_pb.Credential{AccessKey: "AKIA-RENAME", SecretKey: "secret"}
+	if err := cm.CreateUser(ctx, &iam_pb.Identity{
+		Name:        oldName,
+		Credentials: []*iam_pb.Credential{cred},
+	}); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	doc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{{
+			Effect:   policy_engine.PolicyEffectAllow,
+			Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+			Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::bucket/*"),
+		}},
+	}
+	if err := cm.PutUserInlinePolicy(ctx, oldName, policyName, doc); err != nil {
+		t.Fatalf("PutUserInlinePolicy failed: %v", err)
+	}
+
+	supported, err := cm.RenameUser(ctx, oldName, newName)
+	if err != nil {
+		t.Fatalf("RenameUser failed: %v", err)
+	}
+	if !supported {
+		t.Fatal("memory store should implement credential.UserRenamer")
+	}
+
+	if _, err := cm.GetUser(ctx, oldName); err == nil {
+		t.Errorf("expected old user %q to be gone after rename", oldName)
+	}
+	got, err := cm.GetUser(ctx, newName)
+	if err != nil {
+		t.Fatalf("GetUser(%q) after rename failed: %v", newName, err)
+	}
+	if got.Name != newName {
+		t.Errorf("renamed identity name = %q, want %q", got.Name, newName)
+	}
+	if len(got.Credentials) != 1 || got.Credentials[0].AccessKey != cred.AccessKey {
+		t.Errorf("renamed identity should still own its access key, got %+v", got.Credentials)
+	}
+
+	gotByKey, err := cm.GetUserByAccessKey(ctx, cred.AccessKey)
+	if err != nil {
+		t.Fatalf("GetUserByAccessKey failed: %v", err)
+	}
+	if gotByKey == nil || gotByKey.Name != newName {
+		t.Errorf("access key should resolve to %q, got %+v", newName, gotByKey)
+	}
+
+	gotPolicy, err := cm.GetUserInlinePolicy(ctx, newName, policyName)
+	if err != nil {
+		t.Fatalf("GetUserInlinePolicy under new name failed: %v", err)
+	}
+	if gotPolicy == nil {
+		t.Fatal("inline policy should be readable under the new name")
+	}
+	if gotPolicy.Statement[0].Effect != policy_engine.PolicyEffectAllow {
+		t.Errorf("policy effect: got %q want %q", gotPolicy.Statement[0].Effect, policy_engine.PolicyEffectAllow)
+	}
+	stalePolicy, err := cm.GetUserInlinePolicy(ctx, oldName, policyName)
+	if err != nil {
+		t.Fatalf("GetUserInlinePolicy under old name failed: %v", err)
+	}
+	if stalePolicy != nil {
+		t.Errorf("inline policy should be gone from the old name, got %+v", stalePolicy)
+	}
+
+	// Clean up — NewCredentialManager hands out a shared MemoryStore singleton
+	// so leftover state would leak into TestMemoryStoreIntegration.
+	if err := cm.DeleteUserInlinePolicy(ctx, newName, policyName); err != nil {
+		t.Fatalf("DeleteUserInlinePolicy cleanup failed: %v", err)
+	}
+	if err := cm.DeleteUser(ctx, newName); err != nil {
+		t.Fatalf("DeleteUser cleanup failed: %v", err)
 	}
 }

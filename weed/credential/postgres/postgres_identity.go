@@ -73,9 +73,10 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 				SecretKey: secretKey,
 			})
 		}
+		credErr := credRows.Err()
 		credRows.Close()
-		if err := credRows.Err(); err != nil {
-			return nil, fmt.Errorf("failed iterating credential rows for user %s: %w", username, err)
+		if credErr != nil {
+			return nil, fmt.Errorf("failed iterating credential rows for user %s: %w", username, credErr)
 		}
 		config.Identities = append(config.Identities, identity)
 	}
@@ -100,34 +101,36 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 
 	// Track which usernames are in the incoming config for pruning
 	configUsernames := make(map[string]bool, len(config.Identities))
-
 	for _, identity := range config.Identities {
 		configUsernames[identity.Name] = true
+	}
 
-	var accountDataParam any
+	// Upsert each user's row.
+	for _, identity := range config.Identities {
+		var accountDataJSON []byte
 		if identity.Account != nil {
-			b, err := json.Marshal(identity.Account)
+			accountDataJSON, err = json.Marshal(identity.Account)
 			if err != nil {
 				return fmt.Errorf("failed to marshal account data for user %s: %v", identity.Name, err)
 			}
-			accountDataParam = string(b)
 		}
-		var actionsParam any
+
+		var actionsJSON []byte
 		if identity.Actions != nil {
-			b, err := json.Marshal(identity.Actions)
+			actionsJSON, err = json.Marshal(identity.Actions)
 			if err != nil {
 				return fmt.Errorf("failed to marshal actions for user %s: %v", identity.Name, err)
 			}
-			actionsParam = string(b)
 		}
-		var policyNamesParam any
+
+		var policyNamesJSON []byte
 		if identity.PolicyNames != nil {
-			b, err := json.Marshal(identity.PolicyNames)
+			policyNamesJSON, err = json.Marshal(identity.PolicyNames)
 			if err != nil {
 				return fmt.Errorf("failed to marshal policy names for user %s: %v", identity.Name, err)
 			}
-			policyNamesParam = string(b)
 		}
+
 		// Upsert user — preserves the row (and its CASCADE dependents) if it already exists
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO users (username, email, account_data, actions, policy_names)
@@ -138,28 +141,20 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 				actions = EXCLUDED.actions,
 				policy_names = EXCLUDED.policy_names,
 				updated_at = CURRENT_TIMESTAMP`,
-			identity.Name, "", accountDataParam, actionsParam, policyNamesParam)
+			identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
 		if err != nil {
 			return fmt.Errorf("failed to upsert user %s: %v", identity.Name, err)
 		}
-
-		// Replace credentials for this user — credentials carry no independent
-		// state worth preserving (unlike inline policies)
-		if _, err := tx.ExecContext(ctx, "DELETE FROM credentials WHERE username = $1", identity.Name); err != nil {
-			return fmt.Errorf("failed to clear credentials for user %s: %v", identity.Name, err)
-		}
-		for _, cred := range identity.Credentials {
-			_, err := tx.ExecContext(ctx,
-				"INSERT INTO credentials (username, access_key, secret_key) VALUES ($1, $2, $3)",
-				identity.Name, cred.AccessKey, cred.SecretKey)
-			if err != nil {
-				return fmt.Errorf("failed to insert credential for user %s: %v", identity.Name, err)
-			}
-		}
 	}
 
-	// Prune users no longer in config — CASCADE correctly removes their
-	// credentials and inline policies since they were intentionally deleted
+	// Prune users no longer in config BEFORE replacing credentials. The
+	// IAM rename path (s3api UpdateUser) renames an identity in place and
+	// keeps its access keys: the renamed user shows up in the incoming
+	// config, the old name shows up in the pruned set. If we inserted the
+	// new credentials first, the renamed user's access keys would still be
+	// owned by the old row in this transaction and the INSERT would
+	// violate the global UNIQUE constraint on credentials.access_key.
+	// CASCADE on the old row releases those keys before the insert.
 	rows, err := tx.QueryContext(ctx, "SELECT username FROM users")
 	if err != nil {
 		return fmt.Errorf("failed to list existing users for pruning: %w", err)
@@ -175,19 +170,59 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 			toDelete = append(toDelete, username)
 		}
 	}
+	scanErr := rows.Err()
 	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("failed iterating user rows for pruning: %w", err)
+	if scanErr != nil {
+		return fmt.Errorf("failed iterating user rows for pruning: %w", scanErr)
 	}
 
-	for _, username := range toDelete {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE username = $1", username); err != nil {
-			return fmt.Errorf("failed to prune user %s: %v", username, err)
+	if len(toDelete) > 0 {
+		var inlineCount int
+		if err := tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM user_inline_policies WHERE username = ANY($1)",
+			toDelete).Scan(&inlineCount); err != nil {
+			glog.Warningf("credential postgres: SaveConfiguration failed to count inline policies for prune candidates: %v", err)
+		} else if inlineCount > 0 {
+			glog.Warningf("credential postgres: SaveConfiguration pruning %d users will CASCADE-remove %d inline policies; if this was a rename, re-create them under the new name", len(toDelete), inlineCount)
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE username = ANY($1)", toDelete); err != nil {
+			return fmt.Errorf("failed to prune users: %w", err)
 		}
 	}
 
-	glog.V(0).Infof("credential postgres: SaveConfiguration saved %d identities, pruned %d", len(config.Identities), len(toDelete))
-	return tx.Commit()
+	// Two-pass credential replace: first clear every user we are about to
+	// rewrite in a single round-trip, then insert. Doing the per-user delete
+	// + insert in a single pass would violate the global UNIQUE constraint
+	// on credentials.access_key when an access key gets reassigned from one
+	// user to another within the same SaveConfiguration call.
+	usernames := make([]string, 0, len(configUsernames))
+	for name := range configUsernames {
+		usernames = append(usernames, name)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM credentials WHERE username = ANY($1)", usernames); err != nil {
+		return fmt.Errorf("failed to clear credentials for incoming users: %w", err)
+	}
+	for _, identity := range config.Identities {
+		for _, cred := range identity.Credentials {
+			if _, err := tx.ExecContext(ctx,
+				"INSERT INTO credentials (username, access_key, secret_key) VALUES ($1, $2, $3)",
+				identity.Name, cred.AccessKey, cred.SecretKey); err != nil {
+				return fmt.Errorf("failed to insert credential for user %s: %v", identity.Name, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		glog.Errorf("credential postgres: SaveConfiguration commit failed: %v", err)
+		return fmt.Errorf("failed to commit SaveConfiguration: %w", err)
+	}
+
+	if len(toDelete) > 0 {
+		glog.Warningf("credential postgres: SaveConfiguration saved %d identities, pruned %d", len(config.Identities), len(toDelete))
+	} else {
+		glog.V(0).Infof("credential postgres: SaveConfiguration saved %d identities", len(config.Identities))
+	}
+	return nil
 }
 
 func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
@@ -212,33 +247,33 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 	}
 	defer tx.Rollback()
 
-	var accountDataParam any
+	var accountDataJSON []byte
 	if identity.Account != nil {
-		b, err := json.Marshal(identity.Account)
+		accountDataJSON, err = json.Marshal(identity.Account)
 		if err != nil {
 			return fmt.Errorf("failed to marshal account data: %w", err)
 		}
-		accountDataParam = string(b)
 	}
-	var actionsParam any
+
+	var actionsJSON []byte
 	if identity.Actions != nil {
-		b, err := json.Marshal(identity.Actions)
+		actionsJSON, err = json.Marshal(identity.Actions)
 		if err != nil {
 			return fmt.Errorf("failed to marshal actions: %w", err)
 		}
-		actionsParam = string(b)
 	}
-	var policyNamesParam any
+
+	var policyNamesJSON []byte
 	if identity.PolicyNames != nil {
-		b, err := json.Marshal(identity.PolicyNames)
+		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
 		if err != nil {
 			return fmt.Errorf("failed to marshal policy names: %w", err)
 		}
-		policyNamesParam = string(b)
 	}
+
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
-		identity.Name, "", accountDataParam, actionsParam, policyNamesParam)
+		identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: CreateUser insert failed user=%s: %v", identity.Name, err)
 		return fmt.Errorf("failed to insert user: %w", err)
@@ -256,7 +291,7 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 
 	if err := tx.Commit(); err != nil {
 		glog.Errorf("credential postgres: CreateUser commit failed user=%s: %v", identity.Name, err)
-		return fmt.Errorf("failed to commit: %w", err)
+		return fmt.Errorf("failed to commit create user %s: %w", identity.Name, err)
 	}
 
 	glog.V(0).Infof("credential postgres: CreateUser user=%s credentials=%d actions=%d", identity.Name, len(identity.Credentials), len(identity.Actions))
@@ -329,7 +364,6 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 	return identity, nil
 }
 
-
 func (store *PostgresStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
@@ -350,33 +384,33 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 		return credential.ErrUserNotFound
 	}
 
-	var accountDataParam any
+	var accountDataJSON []byte
 	if identity.Account != nil {
-		b, err := json.Marshal(identity.Account)
+		accountDataJSON, err = json.Marshal(identity.Account)
 		if err != nil {
 			return fmt.Errorf("failed to marshal account data: %w", err)
 		}
-		accountDataParam = string(b)
 	}
-	var actionsParam any
+
+	var actionsJSON []byte
 	if identity.Actions != nil {
-		b, err := json.Marshal(identity.Actions)
+		actionsJSON, err = json.Marshal(identity.Actions)
 		if err != nil {
 			return fmt.Errorf("failed to marshal actions: %w", err)
 		}
-		actionsParam = string(b)
 	}
-	var policyNamesParam any
+
+	var policyNamesJSON []byte
 	if identity.PolicyNames != nil {
-		b, err := json.Marshal(identity.PolicyNames)
+		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
 		if err != nil {
 			return fmt.Errorf("failed to marshal policy names: %w", err)
 		}
-		policyNamesParam = string(b)
 	}
+
 	_, err = tx.ExecContext(ctx,
 		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
-		username, "", accountDataParam, actionsParam, policyNamesParam)
+		username, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: UpdateUser failed user=%s: %v", username, err)
 		return fmt.Errorf("failed to update user: %w", err)
@@ -398,7 +432,7 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 
 	if err := tx.Commit(); err != nil {
 		glog.Errorf("credential postgres: UpdateUser commit failed user=%s: %v", username, err)
-		return fmt.Errorf("failed to commit: %w", err)
+		return fmt.Errorf("failed to commit update user %s: %w", username, err)
 	}
 
 	glog.V(0).Infof("credential postgres: UpdateUser user=%s credentials=%d", username, len(identity.Credentials))
@@ -427,6 +461,81 @@ func (store *PostgresStore) DeleteUser(ctx context.Context, username string) err
 	}
 
 	glog.V(0).Infof("credential postgres: DeleteUser user=%s", username)
+	return nil
+}
+
+// RenameUser atomically renames oldName to newName, re-pointing every
+// FK-backed dependent row in a single transaction. The schema's foreign
+// keys (credentials.username, user_inline_policies.username) reference
+// users.username with ON DELETE CASCADE and the default ON UPDATE
+// NO ACTION, which means a plain UPDATE users SET username = newName
+// would fail because the children still reference the old name. Instead:
+//  1. Insert the new users row by copying every non-key column from old.
+//  2. Re-point the dependent tables (credentials, user_inline_policies)
+//     to the new username — both rows now exist so the FK is satisfied.
+//  3. Delete the old users row, which has no remaining dependents.
+//
+// Implements credential.UserRenamer.
+func (store *PostgresStore) RenameUser(ctx context.Context, oldName, newName string) error {
+	if !store.configured {
+		return fmt.Errorf("store not configured")
+	}
+	if oldName == newName {
+		return nil
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Refuse if oldName is missing or newName already exists, so the
+	// caller surfaces a recognisable error instead of a constraint
+	// violation midway through.
+	var oldExists, newExists bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", oldName).Scan(&oldExists); err != nil {
+		return fmt.Errorf("failed to check old user %s: %w", oldName, err)
+	}
+	if !oldExists {
+		return credential.ErrUserNotFound
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", newName).Scan(&newExists); err != nil {
+		return fmt.Errorf("failed to check new user %s: %w", newName, err)
+	}
+	if newExists {
+		return credential.ErrUserAlreadyExists
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO users (username, email, account_data, actions, policy_names, created_at, updated_at)
+		 SELECT $1, email, account_data, actions, policy_names, created_at, CURRENT_TIMESTAMP
+		 FROM users WHERE username = $2`,
+		newName, oldName); err != nil {
+		return fmt.Errorf("failed to insert renamed user %s: %w", newName, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE credentials SET username = $1 WHERE username = $2", newName, oldName); err != nil {
+		return fmt.Errorf("failed to re-point credentials to %s: %w", newName, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE user_inline_policies SET username = $1 WHERE username = $2", newName, oldName); err != nil {
+		return fmt.Errorf("failed to re-point inline policies to %s: %w", newName, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM users WHERE username = $1", oldName); err != nil {
+		return fmt.Errorf("failed to drop old user %s: %w", oldName, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		glog.Errorf("credential postgres: RenameUser commit failed %s -> %s: %v", oldName, newName, err)
+		return fmt.Errorf("failed to commit rename %s -> %s: %w", oldName, newName, err)
+	}
+
+	glog.V(0).Infof("credential postgres: RenameUser %s -> %s", oldName, newName)
 	return nil
 }
 
@@ -567,7 +676,7 @@ func (store *PostgresStore) AttachUserPolicy(ctx context.Context, username strin
 		return err
 	}
 
-	glog.V(0).Infof("credential postgres: AttachUserPolicy user=%s policy=%s", username, policyName)
+	glog.V(1).Infof("credential postgres: AttachUserPolicy user=%s policy=%s", username, policyName)
 	return nil
 }
 
@@ -600,7 +709,7 @@ func (store *PostgresStore) DetachUserPolicy(ctx context.Context, username strin
 		return err
 	}
 
-	glog.V(0).Infof("credential postgres: DetachUserPolicy user=%s policy=%s", username, policyName)
+	glog.V(1).Infof("credential postgres: DetachUserPolicy user=%s policy=%s", username, policyName)
 	return nil
 }
 

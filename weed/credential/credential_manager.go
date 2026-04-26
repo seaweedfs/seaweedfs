@@ -305,6 +305,20 @@ func (cm *CredentialManager) ListUserInlinePolicies(ctx context.Context, userNam
 	return nil, nil
 }
 
+// RenameUser atomically renames a user along with all FK-backed
+// dependents (credentials, inline policies, ...) when the underlying
+// store implements UserRenamer. Returns false if the store does not
+// support an atomic rename, in which case the caller is expected to
+// fall back to its own best-effort path. A returned non-nil error
+// always means the rename was attempted and failed.
+func (cm *CredentialManager) RenameUser(ctx context.Context, oldName, newName string) (bool, error) {
+	store, ok := cm.Store.(UserRenamer)
+	if !ok {
+		return false, nil
+	}
+	return true, store.RenameUser(ctx, oldName, newName)
+}
+
 // LoadS3ConfigFile reads a static S3 identity config file and registers
 // the identities so they appear in LoadConfiguration and listing results.
 func (cm *CredentialManager) LoadS3ConfigFile(path string) error {

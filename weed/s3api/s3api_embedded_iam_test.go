@@ -862,6 +862,46 @@ func TestEmbeddedIamUpdateUser(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
+// TestEmbeddedIamUpdateUserPreservesInlinePolicies makes sure renaming a
+// user keeps that user's stored inline policies under the new name.
+// Without the explicit policy migration in UpdateUser, SaveConfiguration
+// prunes the old name and CASCADE drops the policies.
+func TestEmbeddedIamUpdateUserPreservesInlinePolicies(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	const (
+		oldName    = "RenameMe"
+		newName    = "Renamed"
+		policyName = "ReadBucket"
+	)
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: oldName}},
+	}
+	doc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{{
+			Effect:   policy_engine.PolicyEffectAllow,
+			Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+			Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::bucket/*"),
+		}},
+	}
+	require.NoError(t, api.credentialManager.PutUserInlinePolicy(context.Background(), oldName, policyName, doc))
+
+	params := &iam.UpdateUserInput{NewUserName: aws.String(newName), UserName: aws.String(oldName)}
+	req, _ := iam.New(session.New()).UpdateUserRequest(params)
+	_ = req.Build()
+	out := iamUpdateUserResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	got, err := api.credentialManager.GetUserInlinePolicy(context.Background(), newName, policyName)
+	require.NoError(t, err)
+	require.NotNil(t, got, "inline policy should have been migrated to the new username")
+	assert.Equal(t, doc.Version, got.Version)
+	require.Len(t, got.Statement, 1)
+	assert.Equal(t, policy_engine.PolicyEffectAllow, got.Statement[0].Effect)
+}
+
 // TestEmbeddedIamDeleteUser tests deleting a user
 func TestEmbeddedIamDeleteUser(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
