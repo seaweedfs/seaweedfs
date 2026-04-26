@@ -256,7 +256,7 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 
 	if err := tx.Commit(); err != nil {
 		glog.Errorf("credential postgres: CreateUser commit failed user=%s: %v", identity.Name, err)
-		return err
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 
 	glog.V(0).Infof("credential postgres: CreateUser user=%s credentials=%d actions=%d", identity.Name, len(identity.Credentials), len(identity.Actions))
@@ -398,7 +398,7 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 
 	if err := tx.Commit(); err != nil {
 		glog.Errorf("credential postgres: UpdateUser commit failed user=%s: %v", username, err)
-		return err
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 
 	glog.V(0).Infof("credential postgres: UpdateUser user=%s credentials=%d", username, len(identity.Credentials))
