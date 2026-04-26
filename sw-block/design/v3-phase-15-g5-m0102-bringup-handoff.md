@@ -1,10 +1,67 @@
 # G5-4 m01+M02 Cluster Bring-Up — Hand-off to sw
 
-**Date**: 2026-04-26
-**Status**: ⏸ blocked on V3-internal bring-up sequence question
-**From**: QA (round 2026-04-26 cross-node smoke attempt)
+**Date**: 2026-04-26 (v0.2 — RESOLVED via local single-node debug round)
+**Status**: ✅ RESOLVED — root cause was missing `--expected-slots-per-volume 2` flag on blockmaster (default is 3); also documented secondary finding about non-primary replica not becoming "Healthy" via T1 path
+**From**: QA (round 2026-04-26 cross-node smoke attempt → pivoted to local Windows debug)
 **To**: sw (G5-4 framework owner)
 **Context**: G5-4 m01 hardware first-light per [g5-kickoff §3 batch G5-4](v3-phase-15-g5-kickoff.md). Skeleton script committed at `seaweed_block@eabafe8` (`scripts/iterate-m01-replicated-write.sh`).
+
+---
+
+## §0 Resolution (added 2026-04-26 v0.2)
+
+**Root cause** (found via local Windows reproduction — m01/M02 was unnecessary for this debug):
+
+`cmd/blockmaster/main.go:39`:
+```
+fs.IntVar(&f.expectedSlotsPerVol, "expected-slots-per-volume", 3,
+    "RF/expected slot count per volume; the controller rejects observation
+     snapshots whose slot count differs (default 3, set to 2 for 2-node smoke clusters)")
+```
+
+QA's 2-node topology (r1+r2) had **2 slots**; default `expected-slots-per-volume = 3`. Controller silently rejected the observation snapshot → no assignment minted → volumes stuck at "volume not ready".
+
+**Fix**: add `--expected-slots-per-volume 2` to the blockmaster command for 2-node test clusters.
+
+**Verification (local single-node, 3rd attempt):**
+
+```
+---master log---
+{"component":"blockmaster","phase":"listening","addr":"127.0.0.1:9180"}
+---primary log---
+{"component":"blockvolume","phase":"status-listening","status_addr":"127.0.0.1:9290"}
+{"component":"blockvolume","phase":"assignment-received","volume_id":"v1","replica_id":"r1","epoch":1,"endpoint_version":1}
+2026/04/26 10:39:35 storage: recovery defensive scan (head==tail=0 checkpoint=0)
+blockvolume: durable recovered: recovered LSN=0
+---primary status---
+{"VolumeID":"v1","ReplicaID":"r1","Epoch":1,"EndpointVersion":1,"Healthy":true}
+```
+
+✅ Primary fully Healthy + assignment received + durable opened.
+
+**Lesson learned (added to QA process)**: for V3 bring-up debug, **try single-node local reproduction first** before ssh'ing to m01/M02. The "cluster bring-up gate" is V3 logic, not network topology — local reproduces same failure mode in seconds, with full Read/Edit/grep access to source code.
+
+---
+
+## §0a Secondary finding — non-primary replica doesn't reach "Healthy" via T1 path
+
+When the topology has 2 slots (r1 primary, r2 replica), the replica's `--t1-readiness` HealthyPathExecutor sees the assignment but logs:
+
+```
+blockvolume: volume v1 authority is now r1@1 (not this replica r2);
+  recording supersede, not applying to adapter
+```
+
+→ replica's adapter projection never reaches `Healthy=true` → replica stays at `volume not ready`.
+
+This is **architecturally correct** for the T1 minimum-readiness scope (T1 only handles the primary case per `core/host/volume/healthy_executor.go:10-28` godoc). For G5-4's replica-side bring-up, the script must wire the actual T4a-T4d **ReplicationVolume + ReplicaPeer + ReplicaListener** stack — NOT just `--t1-readiness` HealthyPathExecutor.
+
+This is a **G5-4 implementation question for sw**: what's the equivalent flag/setup to bring up a replica that participates in the replication path (vs T1's primary-only path)? Likely needs:
+- The full ReplicationVolume binding (already done via T4d-4 part B `ReplicationVolume↔adapter` wiring)
+- A different executor than `HealthyPathExecutor` — or `HealthyPathExecutor` needs to handle the secondary case
+- Possibly a `--enable-replication` flag or similar
+
+This is the **next gap to surface** for G5-4. The 2-node bring-up itself works (proven above) — the replica just doesn't reach Healthy via T1. Real T4d engine-driven path needs different wiring.
 
 ---
 
