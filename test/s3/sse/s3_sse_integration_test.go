@@ -878,6 +878,25 @@ func uploadAndVerifyMultipartSSEObject(t *testing.T, ctx context.Context, client
 	uploadID := aws.ToString(createResp.UploadId)
 	completedParts := make([]types.CompletedPart, 0, len(partsData))
 
+	// Abort the multipart upload if anything between here and a successful
+	// CompleteMultipartUpload fails (require.NoError calls t.Fatal, which
+	// triggers t.Cleanup but skips inline defers). We use context.Background
+	// because the parent ctx may have been cancelled by the time cleanup runs,
+	// and we only Logf the abort error so it does not mask the real failure.
+	completed := false
+	t.Cleanup(func() {
+		if completed {
+			return
+		}
+		if _, abortErr := client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucketName),
+			Key:      aws.String(objectKey),
+			UploadId: aws.String(uploadID),
+		}); abortErr != nil {
+			t.Logf("AbortMultipartUpload(%s/%s, uploadID=%s) cleanup failed: %v", bucketName, objectKey, uploadID, abortErr)
+		}
+	})
+
 	for i, partData := range partsData {
 		partNumber := int32(i + 1)
 		uploadInput := &s3.UploadPartInput{
@@ -908,6 +927,7 @@ func uploadAndVerifyMultipartSSEObject(t *testing.T, ctx context.Context, client
 		},
 	})
 	require.NoError(t, err, "Failed to complete multipart upload")
+	completed = true
 
 	expectedData := bytes.Join(partsData, nil)
 	getInput := &s3.GetObjectInput{
