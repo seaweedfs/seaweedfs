@@ -33,7 +33,7 @@ func (store *PostgresStore) CreateServiceAccount(ctx context.Context, sa *iam_pb
 
 	_, err = store.db.ExecContext(ctx,
 		"INSERT INTO service_accounts (id, access_key, content) VALUES ($1, $2, $3)",
-		sa.Id, accessKey, data)
+		sa.Id, accessKey, jsonbParam(data))
 	if err != nil {
 		return fmt.Errorf("failed to insert service account: %w", err)
 	}
@@ -63,7 +63,7 @@ func (store *PostgresStore) UpdateServiceAccount(ctx context.Context, id string,
 
 	result, err := store.db.ExecContext(ctx,
 		"UPDATE service_accounts SET access_key = $2, content = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
-		id, accessKey, data)
+		id, accessKey, jsonbParam(data))
 	if err != nil {
 		return fmt.Errorf("failed to update service account: %w", err)
 	}

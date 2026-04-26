@@ -104,29 +104,26 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 	for _, identity := range config.Identities {
 		configUsernames[identity.Name] = true
 
-	var accountDataParam any
+	var accountDataJSON []byte
 		if identity.Account != nil {
-			b, err := json.Marshal(identity.Account)
+			accountDataJSON, err = json.Marshal(identity.Account)
 			if err != nil {
 				return fmt.Errorf("failed to marshal account data for user %s: %v", identity.Name, err)
 			}
-			accountDataParam = string(b)
 		}
-		var actionsParam any
+		var actionsJSON []byte
 		if identity.Actions != nil {
-			b, err := json.Marshal(identity.Actions)
+			actionsJSON, err = json.Marshal(identity.Actions)
 			if err != nil {
 				return fmt.Errorf("failed to marshal actions for user %s: %v", identity.Name, err)
 			}
-			actionsParam = string(b)
 		}
-		var policyNamesParam any
+		var policyNamesJSON []byte
 		if identity.PolicyNames != nil {
-			b, err := json.Marshal(identity.PolicyNames)
+			policyNamesJSON, err = json.Marshal(identity.PolicyNames)
 			if err != nil {
 				return fmt.Errorf("failed to marshal policy names for user %s: %v", identity.Name, err)
 			}
-			policyNamesParam = string(b)
 		}
 		// Upsert user — preserves the row (and its CASCADE dependents) if it already exists
 		_, err = tx.ExecContext(ctx,
@@ -138,7 +135,7 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 				actions = EXCLUDED.actions,
 				policy_names = EXCLUDED.policy_names,
 				updated_at = CURRENT_TIMESTAMP`,
-			identity.Name, "", accountDataParam, actionsParam, policyNamesParam)
+			identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
 		if err != nil {
 			return fmt.Errorf("failed to upsert user %s: %v", identity.Name, err)
 		}
@@ -212,33 +209,30 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 	}
 	defer tx.Rollback()
 
-	var accountDataParam any
+	var accountDataJSON []byte
 	if identity.Account != nil {
-		b, err := json.Marshal(identity.Account)
+		accountDataJSON, err = json.Marshal(identity.Account)
 		if err != nil {
 			return fmt.Errorf("failed to marshal account data: %w", err)
 		}
-		accountDataParam = string(b)
 	}
-	var actionsParam any
+	var actionsJSON []byte
 	if identity.Actions != nil {
-		b, err := json.Marshal(identity.Actions)
+		actionsJSON, err = json.Marshal(identity.Actions)
 		if err != nil {
 			return fmt.Errorf("failed to marshal actions: %w", err)
 		}
-		actionsParam = string(b)
 	}
-	var policyNamesParam any
+	var policyNamesJSON []byte
 	if identity.PolicyNames != nil {
-		b, err := json.Marshal(identity.PolicyNames)
+		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
 		if err != nil {
 			return fmt.Errorf("failed to marshal policy names: %w", err)
 		}
-		policyNamesParam = string(b)
 	}
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
-		identity.Name, "", accountDataParam, actionsParam, policyNamesParam)
+		identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: CreateUser insert failed user=%s: %v", identity.Name, err)
 		return fmt.Errorf("failed to insert user: %w", err)
@@ -350,33 +344,30 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 		return credential.ErrUserNotFound
 	}
 
-	var accountDataParam any
+	var accountDataJSON []byte
 	if identity.Account != nil {
-		b, err := json.Marshal(identity.Account)
+		accountDataJSON, err = json.Marshal(identity.Account)
 		if err != nil {
 			return fmt.Errorf("failed to marshal account data: %w", err)
 		}
-		accountDataParam = string(b)
 	}
-	var actionsParam any
+	var actionsJSON []byte
 	if identity.Actions != nil {
-		b, err := json.Marshal(identity.Actions)
+		actionsJSON, err = json.Marshal(identity.Actions)
 		if err != nil {
 			return fmt.Errorf("failed to marshal actions: %w", err)
 		}
-		actionsParam = string(b)
 	}
-	var policyNamesParam any
+	var policyNamesJSON []byte
 	if identity.PolicyNames != nil {
-		b, err := json.Marshal(identity.PolicyNames)
+		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
 		if err != nil {
 			return fmt.Errorf("failed to marshal policy names: %w", err)
 		}
-		policyNamesParam = string(b)
 	}
 	_, err = tx.ExecContext(ctx,
 		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
-		username, "", accountDataParam, actionsParam, policyNamesParam)
+		username, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: UpdateUser failed user=%s: %v", username, err)
 		return fmt.Errorf("failed to update user: %w", err)
