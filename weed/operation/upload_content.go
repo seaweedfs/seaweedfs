@@ -439,10 +439,28 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
-			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, postErr)
+			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, post_err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
-			resp, post_err = uploader.httpClient.Do(req)
-			defer util_http.CloseResponse(resp)
+			// The first attempt already consumed (or partially consumed) the
+			// body, so retrying with the same *http.Request would send 0 bytes
+			// and Go's transport would surface "ContentLength=N with Body
+			// length 0". http.NewRequestWithContext sets GetBody for
+			// *bytes.Reader bodies; use it to attach a fresh body for retry.
+			// If we can't rewind, skip the inner retry and let the outer
+			// retriedUploadData loop reissue the request with a fresh body —
+			// retrying here with a consumed body would mask the original
+			// "connection reset" error with a misleading "Body length 0".
+			if req.GetBody != nil {
+				if newBody, gbErr := req.GetBody(); gbErr == nil {
+					req.Body = newBody
+					resp, post_err = uploader.httpClient.Do(req)
+					defer util_http.CloseResponse(resp)
+				} else {
+					glog.V(1).InfofCtx(ctx, "skip inner retry for %s: GetBody returned %v", option.UploadUrl, gbErr)
+				}
+			} else {
+				glog.V(1).InfofCtx(ctx, "skip inner retry for %s: req.GetBody is nil", option.UploadUrl)
+			}
 		}
 	}
 	if post_err != nil {
