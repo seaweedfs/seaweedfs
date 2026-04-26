@@ -139,9 +139,9 @@ Single batch, ordered subtasks (each landable on its own commit but reviewed tog
 2. ✅ G5 kickoff v0.3 ratified (architect round-49)
 3. ✅ `--expected-slots-per-volume` flag landed (`f5de7c5`); cross-node smoke can reach the assignment-mint stage
 4. ✅ This mini-plan ratified by QA (round 1) + architect (round 50, with 2 binding clarifications baked into v0.3 §4 #2 + #7 + §7.1)
-5. ⏳ G-1 V3-native PORT read of `cluster.go:357-369` + V2 comparison + architect's 2 G-1-blocking resolutions per §7.1 (replica readiness field; ctrl-addr reuse vs `--repl-addr`)
+5. ~~G-1 V3-native PORT read~~ — **DROPPED at v0.4** per round 51 process call (V3-native batch, no V2 PORT source; mini-plan + PR description sufficient). Architect's 2 binding questions answered inline in PR description per §7.1 v0.4.
 
-Predicate 4 satisfied at architect round 50. Predicate 5 is the next sw step.
+Predicates 1-4 satisfied. Predicate 5 dropped. **Sw cleared to start G5-4.1 code immediately.**
 
 ---
 
@@ -190,12 +190,10 @@ Predicate 4 satisfied at architect round 50. Predicate 5 is the next sw step.
 
 ### §7.1 Pre-merge gates (mandatory; PR blocked until satisfied)
 
-1. **G-1 V3-native PORT read deliverable** — sw reads `core/replication/component/cluster.go:357-369` line-by-line and produces a §-by-§ port map for binary integration. Also reads `weed/storage/blockvol/blockvol.go` (V2) for any binary-level lessons (esp. lifecycle ordering and peer-set update race conditions). G-1 deliverable surfaces:
-   - PORT items: items the binary mirrors verbatim from cluster.go
-   - V3-NATIVE items: items the binary adds on top of cluster.go (CLI/lifecycle/error reporting/log channels)
-   - **Architect binding (round 50)**: G-1 MUST resolve before code starts:
-     - **Replica readiness semantics** — what existing `volume.Status` / `ProjectionView` field expresses "replication-ready" (vs frontend-primary-Healthy)? If none, G-1 either proposes a new field OR specifies precise assertion names for §4 #2 (e.g. `assertReplicaReplicationReady` reading from a TBD field, vs `assertHealthy` which is primary-only)
-     - **`--ctrl-addr` reuse confirmation** — G-1 verifies the ReplicaListener bind on `--ctrl-addr` does NOT conflict with NVMe/iSCSI control-plane traffic on the same port (per §7.2 risk #4). If conflict found, G-1 introduces `--repl-addr` flag (small scope expansion, but contained in this batch)
+1. ~~**G-1 V3-native PORT read deliverable**~~ — **DROPPED at v0.4 (round 51 process call).** G5-4 is V3-native binary integration (not V2 muscle PORT); G-1 ceremony doesn't earn its keep this batch. Mini-plan v0.3 already covers scope + 7 acceptance criteria + 5 inscribed invariants + file map. Sw codes directly per the mini-plan; the 2 architect-binding questions (round 50) are answered **inline in the PR description** rather than as a separate ratified deliverable:
+   - **Replica readiness semantics** — sw cites in PR description: which existing `volume.Status` / `ProjectionView` field is used for "replication-ready" (vs frontend-primary-Healthy). If none exist, sw introduces a new field with explicit name + godoc; if existing field is reused with role-aware semantics, sw cites the field + how the role-split is enforced
+   - **`--ctrl-addr` reuse confirmation** — sw cites in PR description: verification result that ReplicaListener bind on `--ctrl-addr` does NOT conflict with NVMe/iSCSI control-plane traffic. If conflict found, sw introduces `--repl-addr` flag (small scope expansion, contained in this batch)
+   - **Process lesson**: G-1 ceremony earned its keep on T4 V2-PORT batches (caught 3 real architectural pins pre-code); for V3-native batches with already-ratified mini-plan, normal PR review + G-2 godoc + G-3 cumulative-green is sufficient. Future V2-PORT batches still get G-1 ceremony.
    - V2-LESSON items: items learned from V2 that don't map 1:1 but inform implementation choices
 2. **No `core/replication/component` import from `cmd/blockvolume`** — the binary mirrors the component framework's wiring but doesn't import it (component framework is test-only)
 3. **Binary integration test (G5-4.5) passes deterministically + 10× under `-race` on m01**
@@ -218,9 +216,9 @@ Predicate 4 satisfied at architect round 50. Predicate 5 is the next sw step.
 | Stage | Signer | When | Status |
 |---|---|---|---|
 | Mini-plan ratification | architect (pingqiu) + QA | This submission | ✅ DONE 2026-04-26 (QA round 1 + architect round 50 with 2 bindings) |
-| G-1 PORT read deliverable | architect | After §7.1 #1 deliverable (sw produces, must address §7.1 binding subitems) | ⏳ pending |
-| Code start | sw | After mini-plan + G-1 ratify | ⏳ pending |
-| G5-4 close (single sign per §8C.2) | architect (pingqiu) | At final commit + integration test pass + 5 INV-BIN-WIRING-* invariants landed in `v3-invariant-ledger.md` | ⏳ pending |
+| ~~G-1 PORT read deliverable~~ | ~~architect~~ | ~~After §7.1 #1 deliverable~~ | ~~⏳ pending~~ → **DROPPED v0.4** (round 51 process call) |
+| Code start | sw | **Cleared at v0.4** — sw codes per mini-plan; addresses 2 architect bindings inline in PR description | ▶️ unblocked |
+| G5-4 close (single sign per §8C.2) | architect (pingqiu) | At final commit + integration test pass + 5 INV-BIN-WIRING-* invariants landed in `v3-invariant-ledger.md` + PR description cites resolution of 2 architect bindings | ⏳ pending |
 
 ---
 
@@ -231,3 +229,4 @@ Predicate 4 satisfied at architect round 50. Predicate 5 is the next sw step.
 | 2026-04-26 | v0.1 | Initial draft. Submitted for QA + architect ratification. |
 | 2026-04-26 | v0.2 | QA round 1 review responses: §1.3 role inference rewritten to read `fact.ReplicaID == self.ReplicaID` from master-minted field (proto verified at `control.proto:128-148` + master mint at `services.go:198-205`); no lex-smallest fallback. §4 #2 verifier reframed to G5-4.5 in-process test (m01 hardware = G5-5). §5 G5-DECISION-001 contradiction resolved: G5-4 ships Path B runtime + keeps Path A serializability seam open, architect-promotable at G5-6 with no engine-state-shape change. §6 added INV-BIN-WIRING-SESSIONID-VIA-ADAPTER (clarification ask: adapter mints unique sessionIDs via process-wide counter at `adapter.go:70`; binary inherits for free; framework shortcuts that hardcode sessionID=1 are the known gap, must not propagate to binary). |
 | 2026-04-26 | v0.3 | **Architect round 50 RATIFY with 2 binding clarifications.** Architect verbatim: "Role inference, in-process acceptance, G5-DECISION-001 seam, and sessionID discipline are architecturally correct. G-1 must clarify replica readiness semantics and confirm ctrl-addr reuse or introduce repl-addr before code." Bindings baked: (#1) §4 #2 acceptance criterion split by role — Primary `Healthy=true` per existing frontend/write-ready projection; Replica MUST NOT report `Healthy=true` if existing field implies frontend-primary-write-ready; G5-4.5 uses precise assertion names (`assertReplicaReplicationReady` vs `assertPrimaryFrontendReady`) if existing status field is too coarse. (#2) §4 #7 acceptance criterion strengthened: catalogue inscription alone insufficient at close; 5 INV-BIN-WIRING-* invariants MUST land in `v3-invariant-ledger.md` per `v3-quality-system.md` §6 rule "an invariant without a test is a wish"; ledger updated as PR atomic with code. §7.1 G-1 deliverable extended: G-1 MUST resolve replica-readiness-field question + ctrl-addr-reuse-vs-repl-addr question BEFORE code starts. Architect-pre-baked: ratification stays valid; no further mini-plan revisions needed before G-1. | architect |
+| 2026-04-26 | v0.4 | **Round 51 process call: G-1 ceremony DROPPED for G5-4.** User question surfaced the overhead-vs-value of G-1 for V3-native batches. Honest assessment: G-1 ceremony earned its keep on T4 V2-PORT batches (caught 3 real architectural pins pre-code: T4b-4 5 hidden invariants; T4c-2 probe non-mutation; T4d-3 3 placement decisions). For G5-4 (V3-native binary integration, not V2 PORT), G-1 doesn't earn its keep — mini-plan v0.3 already has scope + 7 acceptance criteria + 5 inscribed invariants + file map. Architect's 2 binding questions (round 50) become PR-description deliverables instead of separate ratified G-1 doc. Sw cleared to code immediately. **Process lesson**: don't auto-port T4 governance template to every batch; ask "does this step earn its keep" each time. Future V2-PORT batches still get G-1 ceremony. | QA + sw + user process call |
