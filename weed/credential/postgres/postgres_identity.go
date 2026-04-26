@@ -191,14 +191,16 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 	}
 
 	// Two-pass credential replace: first clear every user we are about to
-	// rewrite, then insert. Doing the per-user delete + insert in a single
-	// pass would violate the global UNIQUE constraint on credentials.access_key
-	// when an access key gets reassigned from one user to another within the
-	// same SaveConfiguration call.
+	// rewrite in a single round-trip, then insert. Doing the per-user delete
+	// + insert in a single pass would violate the global UNIQUE constraint
+	// on credentials.access_key when an access key gets reassigned from one
+	// user to another within the same SaveConfiguration call.
+	usernames := make([]string, 0, len(configUsernames))
 	for name := range configUsernames {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM credentials WHERE username = $1", name); err != nil {
-			return fmt.Errorf("failed to clear credentials for user %s: %v", name, err)
-		}
+		usernames = append(usernames, name)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM credentials WHERE username = ANY($1)", usernames); err != nil {
+		return fmt.Errorf("failed to clear credentials for incoming users: %w", err)
 	}
 	for _, identity := range config.Identities {
 		for _, cred := range identity.Credentials {
