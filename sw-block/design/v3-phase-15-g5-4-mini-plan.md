@@ -1,7 +1,7 @@
 # V3 Phase 15 — G5-4 (Binary T4 Replication Wiring) Mini-Plan
 
-**Date**: 2026-04-26
-**Status**: DRAFT v0.1 — submitted for QA + architect sign per parent kickoff §7 ("G5-4 mini-plan ratified before code")
+**Date**: 2026-04-26 (v0.2 — addresses QA review notes 1-3 + sessionID clarification ask)
+**Status**: DRAFT v0.2 — re-submitted for QA + architect sign per parent kickoff §7 ("G5-4 mini-plan ratified before code")
 **Owner**: sw (implementation); QA (acceptance)
 **Authority sources**:
 - `v3-phase-15-g5-kickoff.md` v0.3 (architect-ratified 2026-04-26 by pingqiu) — G5-4 row in §3 batch table; §7 governance loop
@@ -42,13 +42,22 @@ After G5-4: `cmd/blockvolume` constructs a per-volume `engine.ReplicaState` + `a
 
 ### §1.3 Role inference (kickoff §3 G5-4 design decision (a))
 
-**Decision: assignment-driven, no new CLI flag.**
+**Decision: assignment-driven, no new CLI flag, master-authoritative.**
 
-The volume daemon does not declare its role. Role is per-volume per-assignment-fact. The binary listens for `AssignmentFact` from the master subscription; each fact carries `ReplicaID` + `Peers` (per T4a-5 P-refined). The engine's `applyAssignment` path consumes this and decides:
-- If `assignment.ReplicaID == self.ReplicaID` AND `Peers` non-empty AND topology lex-smallest of the active set → **primary** (ships WAL to peers via outbound `BlockExecutor` instances)
-- Otherwise → **replica** (accepts incoming traffic via local `ReplicaListener`)
+The volume daemon does not declare its role. Role is per-volume per-assignment-fact, read directly from a master-minted field. Per `core/rpc/proto/control.proto:128-148` (verified against `core/host/master/services.go:198-205` mint site):
 
-Both code paths are constructed at startup. Whichever role the assignment selects is the active path; the other stays idle. This matches V3's "master is sole authority" architectural choice — the binary doesn't second-guess role assignment.
+> `AssignmentFact { volume_id, replica_id, epoch, endpoint_version, data_addr, ctrl_addr, peers, peer_set_generation }`
+
+`fact.replica_id` is the **bound primary** for this volume's current line — minted by master. SubscribeAssignments is volume-scoped (`services.go:65`); ALL replicas subscribed to the volume see the SAME stream of facts. Each subscriber self-determines its role:
+
+- `fact.ReplicaID == self.ReplicaID` → **I am the primary for this line**; consume `fact.Peers` as my outbound replication targets
+- `fact.ReplicaID != self.ReplicaID` → **I am a supporting replica**; the primary is at `fact.ReplicaID`. Stay listening; ignore `fact.Peers` (peers list is intended for the primary's use, but volume-scoped fan-out delivers it to all subscribers).
+
+This matches V3's "master is sole authority for assignment truth" rule (T4d §B + INV-AUTH-*). No binary-side tie-breaker, no `lex-smallest` inference — master's `fact.ReplicaID` IS the truth.
+
+(QA Note 1 round 1: the v0.1 "lex-smallest of the active set" phrasing was wrong; corrected here. There is no lex-smallest fallback because master always names exactly one bound replica per volume per line.)
+
+Both code paths (outbound peer manager + inbound listener) are constructed at startup. Whichever role the assignment selects is the active path for that volume; the other stays idle. Role can flip across assignment lines (failover bumps epoch + binds a new replica) without restart.
 
 ### §1.4 Peer discovery (design decision (b))
 
@@ -141,7 +150,7 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 | # | Criterion | Verifier |
 |---|---|---|
 | 1 | `cmd/blockvolume` binary constructs `ReplicationVolume` and passes it via `volume.Config` | code review + sw confirms via `grep ReplicationVolume cmd/blockvolume/` |
-| 2 | 2-node cluster (m01-primary + m02-replica) reaches Healthy on both sides within 5s of bring-up | QA m01 hardware run (G5-5 will exercise this; G5-4 unblocks it) |
+| 2 | In-process 2-volume cluster reaches Healthy on both sides within 5s of bring-up via the production binary code path (NOT component framework fixture) | binary integration test G5-4.5 (m01 hardware verification belongs to G5-5; G5-4 closes on the in-process pin) |
 | 3 | Primary-side live write lands byte-equal on replica's store | binary-level integration test G5-4.5 |
 | 4 | Stop replica mid-flight + restart + replica catches up via T4 engine-driven recovery (NOT framework fixture) | binary-level integration test G5-4.5 |
 | 5 | All existing tests green; no regressions in `core/`, `cmd/`, `core/replication/component` | full V3 suite |
@@ -152,11 +161,10 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 
 ## §5 Non-claims (explicit deferrals within G5-4)
 
-- **G5-DECISION-001 unaffected** — engine state persistence across primary restart stays open (G5-6 closes per architect ruling); G5-4 doesn't take a position
+- **G5-DECISION-001 — G5-4 ships Path B runtime, keeps Path A serializable seam open.** G5-4's runtime engine state is in-memory; on primary restart, the binary reconstructs state from master assignment + probe (Path B). T4d-4 part B's `TestG5Decision001_ReplicaState_RoundTripJSON` already pins that the engine state struct is JSON-serializable. G5-4 preserves that property — it does NOT add a persistence layer, but it does NOT introduce any non-serializable runtime state either. G5-6 architect ratification can promote to Path A by adding a persistence layer on top of the existing struct, with no engine-state-shape change required. This is an architect-promotable seam, not a position on which path wins. (QA Note 3 round 1 contradiction resolved: G5-4 ships Path B *runtime* + keeps Path A *upgrade path* open via serializability.)
 - **No multi-volume-per-binary** — single `--volume-id`; per-binary multi-volume is post-G5
 - **No ALUA / snapshots / multipath** — Phase 5 V2 surface; V3 hasn't picked up
 - **No new metrics** — G5-3 owns metrics/backpressure assessment
-- **No assignment-store persistence at the binary** — engine state is in-memory; reconstructed from master on restart (G5-DECISION-001 Path B)
 - **No graceful peer-set-shrink during in-flight session** — initial peer-set updater serializes adds/removes but doesn't drain mid-session for an aggressive removal; carry to post-G5 if real workloads hit it
 
 ---
@@ -170,10 +178,11 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 - INV-REPL-TRANSPORT-STORAGE-CONTRACT-ONLY (G5-4 stays in this discipline; binary doesn't reach into transport internals)
 
 **New invariants to inscribe at G5-4 close:**
-- INV-BIN-WIRING-ROLE-FROM-ASSIGNMENT — binary doesn't declare role via CLI; role is per-volume per-assignment from master
-- INV-BIN-WIRING-PEER-SET-FROM-ASSIGNMENT-FACT — peer addresses come from `AssignmentFact.Peers`, not CLI
+- INV-BIN-WIRING-ROLE-FROM-ASSIGNMENT — binary doesn't declare role via CLI; role is per-volume per-assignment from master via `fact.ReplicaID == self.ReplicaID`
+- INV-BIN-WIRING-PEER-SET-FROM-ASSIGNMENT-FACT — peer addresses come from `AssignmentFact.Peers`, not CLI; binary never accumulates peers from local observation (option R rejected per T4a-5.0)
 - INV-BIN-WIRING-LISTENER-LIFECYCLE-LIFO — `ReplicaListener` Stop runs BEFORE engine Stop in `host.Close()` (LIFO with construction)
 - INV-BIN-WIRING-ASSIGNMENT-DRIVES-MEMBERPRESENT — the binary doesn't fake MemberPresent; it waits for first `AssignmentFact` to set it via the engine apply path
+- INV-BIN-WIRING-SESSIONID-VIA-ADAPTER — the binary path mints sessionIDs ONLY through `core/adapter` (which uses the process-wide `sessionIDCounter atomic.Uint64` at `adapter.go:70`); binary MUST NOT bypass the adapter with hardcoded sessionIDs the way component-framework shortcuts (`WithLiveShip`, `CatchUpReplica`) do. Adapter-routed dispatch is the production path; framework shortcuts are test conveniences with a known sessionID-collision gap (T4c §I carry; QA G5-1 round 1 SKIP). Pinning this invariant ensures the gap stays test-side and never propagates into the binary. (QA round 1 clarification ask answered: adapter mints unique sessionIDs across all volumes/replicas in the process; binary inherits this for free as long as it always dispatches via the adapter, never via framework shortcuts.)
 
 ---
 
@@ -217,3 +226,4 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 | Date | Version | Change |
 |---|---|---|
 | 2026-04-26 | v0.1 | Initial draft. Submitted for QA + architect ratification. |
+| 2026-04-26 | v0.2 | QA round 1 review responses: §1.3 role inference rewritten to read `fact.ReplicaID == self.ReplicaID` from master-minted field (proto verified at `control.proto:128-148` + master mint at `services.go:198-205`); no lex-smallest fallback. §4 #2 verifier reframed to G5-4.5 in-process test (m01 hardware = G5-5). §5 G5-DECISION-001 contradiction resolved: G5-4 ships Path B runtime + keeps Path A serializability seam open, architect-promotable at G5-6 with no engine-state-shape change. §6 added INV-BIN-WIRING-SESSIONID-VIA-ADAPTER (clarification ask: adapter mints unique sessionIDs via process-wide counter at `adapter.go:70`; binary inherits for free; framework shortcuts that hardcode sessionID=1 are the known gap, must not propagate to binary). |
