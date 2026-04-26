@@ -1648,42 +1648,13 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// IMPORTANT: Calculate adjusted IV using ChunkOffset
-		// SSE-KMS uses base IV + offset calculation (unlike SSE-C which uses random IVs)
-		// This reconstructs the same IV that was used during encryption
-		var adjustedIV []byte
-		var ivSkip int
-		if sseKMSKey.ChunkOffset > 0 {
-			adjustedIV, ivSkip = calculateIVWithOffset(sseKMSKey.IV, sseKMSKey.ChunkOffset)
-		} else {
-			adjustedIV = sseKMSKey.IV
-			ivSkip = 0
-		}
-
-		adjustedKey := &SSEKMSKey{
-			KeyID:             sseKMSKey.KeyID,
-			EncryptedDataKey:  sseKMSKey.EncryptedDataKey,
-			EncryptionContext: sseKMSKey.EncryptionContext,
-			BucketKeyEnabled:  sseKMSKey.BucketKeyEnabled,
-			IV:                adjustedIV,
-			ChunkOffset:       sseKMSKey.ChunkOffset,
-		}
-
-		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(fullChunkReader, adjustedKey)
+		// CreateSSEKMSDecryptedReader applies ChunkOffset to the stored base IV.
+		// Passing a pre-adjusted IV here would apply the offset twice and corrupt
+		// range reads that cross multipart chunk boundaries.
+		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(fullChunkReader, sseKMSKey)
 		if decryptErr != nil {
 			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create KMS decrypted reader: %w", decryptErr)
-		}
-
-		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
-		if ivSkip > 0 {
-			_, err = io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
-			if err != nil {
-				if closer, ok := decryptedReader.(io.Closer); ok {
-					closer.Close()
-				}
-				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, err)
-			}
 		}
 
 		// Skip to position and limit to ViewSize
