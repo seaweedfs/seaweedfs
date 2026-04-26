@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -967,6 +968,82 @@ func uploadAndVerifyMultipartSSEObject(t *testing.T, ctx context.Context, client
 	if opts.verifyGet != nil {
 		opts.verifyGet(rangeResp)
 	}
+}
+
+// TestSSES3MultipartManyChunks_DockerRegistryShape pins the end-to-end fix for
+// issue #8908. A Docker Registry blob upload typically produces a multipart
+// upload with many small parts (5MB each) that totals 100MB+. After the
+// per-chunk metadata fix in #9211 and the completion backfill in #9224, the
+// remaining failure mode reported in #8908 was that GET would return truncated
+// bytes — Docker registry then computed a SHA over the truncated bytes and
+// reported "Digest did not match." The root cause was that
+// buildMultipartSSES3Reader (and its SSE-KMS / SSE-C peers) opened a
+// volume-server HTTP connection for EVERY chunk upfront, then walked them with
+// io.MultiReader; later chunks' connections sat idle while earlier chunks were
+// being consumed and could be closed by the volume server's keep-alive logic
+// under load, producing unexpected EOFs at the S3 client.
+//
+// This test mirrors that shape: 25 parts of 5MB each (125MB total, 25
+// internal chunks since each part is below the 8MB internal chunk size) with
+// bucket-default SSE-S3. The full GET must return exactly the bytes we
+// uploaded, with the SHA-256 matching. The lazy chunk reader keeps at most
+// one volume-server HTTP connection open at a time, which both eliminates the
+// idle-connection failure mode and makes resource usage proportional to one
+// chunk regardless of object size.
+func TestSSES3MultipartManyChunks_DockerRegistryShape(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"sse-s3-many-chunks-")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	_, err = client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+		Bucket: aws.String(bucketName),
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{
+				{
+					ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+						SSEAlgorithm: types.ServerSideEncryptionAes256,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to set bucket default SSE-S3 encryption")
+
+	const numParts = 25
+	const partSize = 5 * 1024 * 1024 // S3 minimum part size
+	parts := make([][]byte, numParts)
+	for i := range parts {
+		parts[i] = generateTestData(partSize)
+	}
+	expected := bytes.Join(parts, nil)
+	expectedHash := sha256.Sum256(expected)
+
+	uploadAndVerifyMultipartSSEObject(t, ctx, client, bucketName, "many-chunks-blob", parts, multipartSSEOptions{
+		verifyGet: func(resp *s3.GetObjectOutput) {
+			assert.Equal(t, types.ServerSideEncryptionAes256, resp.ServerSideEncryption)
+		},
+	})
+
+	// Re-fetch and verify SHA-256 of the entire stream matches what we uploaded.
+	// uploadAndVerifyMultipartSSEObject already does a byte-equal check, but
+	// hashing is what Docker Registry actually does on pull, so pinning that
+	// path here is the most faithful reproduction of #8908's symptom.
+	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("many-chunks-blob"),
+	})
+	require.NoError(t, err, "Failed to GET many-chunks-blob for SHA verification")
+	defer getResp.Body.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, getResp.Body)
+	require.NoError(t, err, "Streaming GET body to SHA hasher must not error (this is the #8908 truncation symptom)")
+	assert.Equal(t, int64(len(expected)), n, "GET stream returned %d bytes, expected %d (truncation reproduces #8908)", n, len(expected))
+	assert.Equal(t, expectedHash, sha256.Sum256(expected), "sanity") // tautology for clarity
+	assert.Equal(t, expectedHash, [32]byte(h.Sum(nil)), "SHA-256 of GET stream must match SHA-256 of uploaded bytes (this is exactly the digest check Docker Registry does)")
 }
 
 // TestDebugSSEMultipart helps debug the multipart SSE-KMS data mismatch
