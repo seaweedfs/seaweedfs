@@ -1,11 +1,12 @@
 # G5 — Replicated Write Path Collective Close — Kick-Off (PROPOSAL)
 
-**Date**: 2026-04-26 (v0.2 — QA-authored revision post m01+M02 bring-up debug; new G5-4 batch surfaced)
-**Status**: ⏸ DRAFT v0.2 — awaiting architect ratification on §2 scope + §3 REVISED batch shape (now 6 batches, was 5; new G5-4 binary T4 wiring promoted from "implicit assumption" to "explicit batch") + §4 acceptance bar + §5 G5-DECISION-001 path choice
+**Date**: 2026-04-26 (v0.3 — architect-ratified shape lock)
+**Status**: ✅ RATIFIED v0.3 — architect sign by pingqiu 2026-04-26 with doc-fix conditions applied. 6-batch shape locked; G5-4 binary T4 replication wiring promoted to explicit batch; G5-1/2/3 parallel-eligible (no architect dependency); G5-4 still gated on its own kickoff/mini-plan/G-1 governance loop.
 
 **Revision history:**
 - v0.1 (2026-04-26 morning) — initial proposal post-T4d close
-- v0.2 (2026-04-26 afternoon) — m01+M02 bring-up smoke surfaced binary T4 replication wiring gap (`cmd/blockvolume/main.go` has zero ReplicationVolume references; `host.go:73 ReplicationVolume` slot was added at T4a-5 but never wired). Promoted binary wiring to its own batch (G5-4) ahead of m01 hardware first-light (now G5-5). Sw confirmed 150-300 LOC + design work — see `v3-phase-15-g5-m0102-bringup-handoff.md` v0.3 §00 for full diagnosis.
+- v0.2 (2026-04-26 afternoon) — m01+M02 bring-up smoke surfaced binary T4 replication wiring gap; promoted binary wiring to its own batch (G5-4) ahead of m01 hardware first-light (now G5-5)
+- v0.3 (2026-04-26 evening, this revision) — architect round-49 ratification with doc fixes applied: stale "5 G5 batches" / "5-batch shape" / forward-carry-table batch numbering / "No G5 code begins" all corrected; sw cleared to start G5-4 mini-plan + G-1 (NOT code); QA cleared to start G5-1 scenario authoring + G5-2 primary-only smoke immediately
 **Predicates met**: T4 batch series closed (T4a + T4b + T4c + T4d batches all signed; T4 T-end three-sign at T4d closure report `seaweedfs@2ee12b2c1`)
 **Reference**: `v3-phase-15-t4d-closure-report.md` §I forward-carries; `v3-phase-15-t4d-mini-plan.md` §5 G5-DECISION-001 named decision record; `v3-phase-15-t4c-closure-report.md` §H m01 deferral
 
@@ -87,7 +88,7 @@ QA recommendation: G5-6 at close, because evidence from G5-1/2/3/4/5 (especially
 
 G5 closes when ALL of (proposed; awaiting ratification):
 
-1. ✅ All 5 G5 batches merged to `phase-15`
+1. ✅ All 6 G5 batches merged to `phase-15` (G5-1, G5-2, G5-3, G5-4 binary wiring, G5-5 m01 first-light, G5-6 G5-DECISION-001 close)
 2. ✅ Unit tests + L2 integration tests green at HEAD
 3. ✅ **m01 hardware L3 first-light green** — replicated write path under real network conditions; multi-replica + disconnect + reconnect + byte-exact convergence
 4. ✅ **Multi-replica RF=3 mixed-state scenarios green** — A live + B catch-up + C rebuild concurrently; engine drives all without cross-lane contamination
@@ -135,21 +136,27 @@ Per T4d closure §I (post-T4 active carries):
 | Carry | Owner | G5 status |
 |---|---|---|
 | `CARRY-T4D-LANE-CONTEXT-001` — true handler/session-context lane signal | sw | NOT in G5; post-G5 hardening backlog (per T4d round-48 architect ruling) |
-| `G5-DECISION-001` — engine recovery state across primary restart | architect at G5 | IN G5 (G5-5 batch resolves it) |
+| `G5-DECISION-001` — engine recovery state across primary restart | architect at G5 | IN G5 (**G5-6** batch resolves it) |
 | walstore flusher cadence verification + tuning policy | sw + architect | IN G5 (G5-2 batch) |
 | `--durable-walsize` CLI flag | sw | NOT in G5; post-G5 / operator hardening |
-| m01 hardware first-light for replicated write path | QA + sw | IN G5 (G5-4 batch) |
+| m01 hardware first-light for replicated write path | QA + sw | IN G5 (**G5-5** batch — depends on G5-4 binary wiring) |
 | Multi-replica concurrent live + recovery scenarios | QA | IN G5 (G5-1 batch) |
 
 ---
 
 ## §7 Status — awaiting architect ratification on §2 + §3 + §4 + §5
 
-**No G5 code work begins until:**
-- §2 scope ratified
-- §3 batch shape + ordering ratified
-- §4 acceptance bar ratified
-- §5 G5-DECISION-001 path choice deferred to G5-5 close OR resolved upfront (architect call)
+**Status (post architect round-49 ratification):** ✅ §2 scope + §3 6-batch shape + §4 acceptance bar + §5 G5-DECISION-001 timing (deferred to G5-6 close) all RATIFIED.
+
+**No G5-4 binary-wiring CODE begins until:**
+- G5-4 mini-plan ratified (sw produces; architect ratifies)
+- G5-4 G-1 V2-native PORT read ratified (sw produces — V3 component framework is the PORT source; QA reviews + signs)
+
+**Cleared to start immediately (no architect dependency):**
+- G5-1 — QA scenario authoring (component-scope; uses T4d-4 part B framework; no binary wiring needed)
+- G5-2 — sw walstore flusher cadence smoke at primary-only scope (binary primary path works today)
+- G5-3 — sw + architect minimal metrics/backpressure assessment (documentation + decision)
+- G5-4 mini-plan + G-1 — sw can start immediately (kickoff already ratified)
 
 **Once ratified, sw + QA produce:**
 1. `v3-phase-15-g5-mini-plan.md` — task list per ratified batch shape
@@ -188,7 +195,7 @@ QA verified m01 + M02 infrastructure readiness for G5-4 before architect ratifie
 ## §8 Open issues blocking ratification
 
 1. **Architect resolution of §2** — accept §2.1/§2.2 scope boundary
-2. **Architect resolution of §3** — 5-batch shape + ordering (especially G5-5 timing)
+2. ~~**Architect resolution of §3** — 5-batch shape + ordering (especially G5-5 timing)~~ → ✅ RATIFIED v0.3: 6-batch shape; G5-6 timing at close
 3. **Architect resolution of §4** — m01 scope, multi-replica RF level, G5-DECISION-001 binding
 4. **Architect resolution of §5 (or defer to G5-5 close)** — Path A vs Path B; QA recommends Path B for MVP
 5. **Architect call on T4 T-end three-sign** — closure report at `seaweedfs@2ee12b2c1` is QA-signed; awaiting architect + PM signs to formally close T4
@@ -204,3 +211,5 @@ QA verified m01 + M02 infrastructure readiness for G5-4 before architect ratifie
 | Date | Change | Author |
 |---|---|---|
 | 2026-04-26 | Initial G5 kickoff PROPOSAL v0.1 drafted from T4d closure §I forward-carries + closure §H findings + T4d-4 part B G5-DECISION-001. 5-batch shape proposed (G5-1 multi-replica scenarios; G5-2 walstore cadence; G5-3 metrics; G5-4 m01 first-light; G5-5 G5-DECISION-001 close + closure report). QA recommendations: Path B for G5-DECISION-001 (cost/benefit favors B for MVP); G5-5 timing at close (so G5-1/2/3/4 evidence informs decision); §2.2 explicit non-claims to prevent G5 scope creep. Awaiting architect ratification on §2 + §3 + §4 + §5. | QA |
+| 2026-04-26 (v0.2) | m01+M02 bring-up smoke surfaced binary T4 replication wiring gap (`cmd/blockvolume/main.go` has zero ReplicationVolume references; `host.go:73 ReplicationVolume` slot was added at T4a-5 but never wired). Sw confirmed real implementation work (150-300 LOC + role/peer/listener/engine design decisions, not 50-LOC patch). Promoted binary wiring to its own batch G5-4 ahead of m01 hardware first-light (now G5-5) and G5-DECISION-001 close (now G5-6). Total batches 5 → 6. Key insight: G5-1/2/3 NOT blocked by G5-4 (component framework already binds T4d-4 part B); component-scope + primary-only work can run in parallel with G5-4 implementation. | QA |
+| 2026-04-26 (v0.3) | **Architect round-49 RATIFY WITH DOC FIXES.** Architect verbatim: "6-batch shape 批准; G5-4 governance loop 批准 (kickoff → mini-plan → G-1 → code); ordering 批准 (G5-1/2/3 可并行; G5-4 blocking G5-5; G5-6 closure last); G5-DECISION-001 timing 放在 G5-6 close 最合适." 5 doc fixes applied: (1) §4 #1 "5 G5 batches" → "6 G5 batches" with explicit batch list; (2) §6 forward-carry table G5-DECISION-001 → G5-6 + m01 → G5-5; (3) §8 stale "5-batch shape" struck through with v0.3 ratify note; (4) handoff doc title + §0 context "G5-4 m01 hardware first-light" → "G5-5 m01 hardware first-light; G5-4 is binary wiring"; (5) §7 status relaxed from "No G5 code begins until ratified" to "No G5-4 code begins until G5-4 mini-plan/G-1 ratifies" + explicit cleared-to-start list (G5-1, G5-2 primary-only, G5-3, G5-4 mini-plan + G-1). | architect |

@@ -1,10 +1,12 @@
-# G5-4 m01+M02 Cluster Bring-Up — Hand-off to sw
+# G5-5 m01+M02 Cluster Bring-Up — Hand-off to sw
+
+> **Note (v0.3 architect round-49)**: this hand-off doc was originally titled "G5-4 m01+M02" when m01 first-light was G5-4. Post architect-ratified G5 v0.3 batch shape: **G5-4 is now binary T4 replication wiring** (newly promoted batch); **G5-5 is m01 hardware first-light** (which depends on G5-4). Hand-off content below remains accurate for the m01 first-light work, just renamed to G5-5.
 
 **Date**: 2026-04-26 (v0.3 — bring-up resolved; binary T4-wiring gap surfaced as G5-4 implementation work)
 **Status**: ✅ Bring-up gate RESOLVED via sw's `--expected-slots-per-volume` flag (`seaweed_block@f5de7c5`) + `seaweedfs@e21c68693` answer doc. **NEW finding**: cmd/blockvolume binary lacks T4a-T4d replication wiring — the `host.go:73 ReplicationVolume` slot was added at T4a-5 but **never wired in main.go**. This is real G5-4 implementation work (150-300 LOC + design), not a config patch.
 **From**: QA (rounds 2026-04-26 — local debug → m01+M02 verification → binary-wiring gap discovery)
 **To**: sw + architect (G5-4 implementation kickoff input)
-**Context**: G5-4 m01 hardware first-light per [g5-kickoff §3 batch G5-4](v3-phase-15-g5-kickoff.md). Skeleton script committed at `seaweed_block@eabafe8` (`scripts/iterate-m01-replicated-write.sh`).
+**Context**: G5-5 m01 hardware first-light (was G5-4 in kickoff v0.1; renumbered to G5-5 in kickoff v0.3 after binary wiring promoted to G5-4) per [g5-kickoff §3 batch G5-5](v3-phase-15-g5-kickoff.md). Skeleton script committed at `seaweed_block@eabafe8` (`scripts/iterate-m01-replicated-write.sh`).
 
 ---
 
