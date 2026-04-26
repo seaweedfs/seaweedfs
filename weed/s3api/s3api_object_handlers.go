@@ -2658,18 +2658,27 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 		defer encryptedStream.Close()
 	}
 
-	// Sort a copy of the slice so entry.Chunks is not reordered (other code
-	// paths, e.g. ETag computation, can rely on the original chunk order).
-	// IV length is validated inside CreateSSEKMSDecryptedReader via ValidateIV.
-	originalChunks := entry.GetChunks()
-	chunks := make([]*filer_pb.FileChunk, len(originalChunks))
-	copy(chunks, originalChunks)
-	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	return buildMultipartSSEKMSReader(entry.GetChunks(), func(chunk *filer_pb.FileChunk) (io.ReadCloser, error) {
+		return s3a.createEncryptedChunkReader(ctx, chunk)
+	})
+}
+
+// buildMultipartSSEKMSReader composes a decrypted reader from a set of
+// multipart SSE-KMS chunks. Mirrors buildMultipartSSES3Reader: chunks are
+// validated upfront (per-chunk metadata parses, IV has the right length) and
+// fetched + decrypted lazily through lazyMultipartChunkReader, so at most one
+// volume-server HTTP body is live at a time. Exposed as a free function so
+// tests can inject a mock chunk fetcher and pin the "no fetch on bad
+// metadata" contract without spinning up an S3ApiServer.
+func buildMultipartSSEKMSReader(chunks []*filer_pb.FileChunk, fetchChunk func(*filer_pb.FileChunk) (io.ReadCloser, error)) (io.Reader, error) {
+	sortedChunks := make([]*filer_pb.FileChunk, len(chunks))
+	copy(sortedChunks, chunks)
+	sort.Slice(sortedChunks, func(i, j int) bool {
+		return sortedChunks[i].GetOffset() < sortedChunks[j].GetOffset()
 	})
 
-	preparedChunks := make([]preparedMultipartChunk, 0, len(chunks))
-	for _, chunk := range chunks {
+	preparedChunks := make([]preparedMultipartChunk, 0, len(sortedChunks))
+	for _, chunk := range sortedChunks {
 		if chunk.GetSseType() != filer_pb.SSEType_SSE_KMS {
 			preparedChunks = append(preparedChunks, preparedMultipartChunk{chunk: chunk})
 			continue
@@ -2680,6 +2689,16 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 		kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+		}
+		// Validate IV length up front, mirroring the SSE-S3 / SSE-C
+		// preparation paths. CreateSSEKMSDecryptedReader does call
+		// ValidateIV internally, but only when the wrap closure runs --
+		// after the chunk's volume-server fetch has already started. We
+		// want the "reject malformed chunks before any fetch" contract to
+		// hold for SSE-KMS too, so a missing or short IV must fail here
+		// in the prep loop rather than turn into a mid-stream error.
+		if err := ValidateIV(kmsKey.IV, fmt.Sprintf("SSE-KMS chunk %s IV", chunk.GetFileIdString())); err != nil {
+			return nil, err
 		}
 		// Capture kmsKey and chunk into the wrap closure so each prepared
 		// entry decrypts with its own per-chunk SSE-KMS key.
@@ -2699,9 +2718,7 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(ctx context.C
 
 	return &lazyMultipartChunkReader{
 		chunks: preparedChunks,
-		fetch: func(c *filer_pb.FileChunk) (io.ReadCloser, error) {
-			return s3a.createEncryptedChunkReader(ctx, c)
-		},
+		fetch:  fetchChunk,
 	}, nil
 }
 
