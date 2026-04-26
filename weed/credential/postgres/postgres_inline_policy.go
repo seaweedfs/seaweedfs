@@ -103,10 +103,14 @@ func (store *PostgresStore) ListUserInlinePolicies(ctx context.Context, userName
 		}
 		names = append(names, name)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating inline policy rows: %w", err)
+	}
 
 	glog.V(1).Infof("credential postgres: ListUserInlinePolicies user=%s count=%d", userName, len(names))
 	return names, nil
 }
+
 
 func (store *PostgresStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
 	if !store.configured {
@@ -141,6 +145,9 @@ func (store *PostgresStore) LoadInlinePolicies(ctx context.Context) (map[string]
 		}
 		result[username][policyName] = doc
 		count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating inline policy rows: %w", err)
 	}
 
 	glog.V(0).Infof("credential postgres: LoadInlinePolicies loaded %d policies for %d users", count, len(result))

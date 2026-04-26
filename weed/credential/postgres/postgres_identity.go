@@ -74,8 +74,13 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 			})
 		}
 		credRows.Close()
-
+		if err := credRows.Err(); err != nil {
+			return nil, fmt.Errorf("failed iterating credential rows for user %s: %w", username, err)
+		}
 		config.Identities = append(config.Identities, identity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating user rows: %w", err)
 	}
 
 	glog.V(0).Infof("credential postgres: LoadConfiguration loaded %d identities", len(config.Identities))
@@ -171,6 +176,9 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 		}
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed iterating user rows for pruning: %w", err)
+	}
 
 	for _, username := range toDelete {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE username = $1", username); err != nil {
@@ -308,16 +316,19 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 		if err := rows.Scan(&accessKey, &secretKey); err != nil {
 			return nil, fmt.Errorf("failed to scan credential: %w", err)
 		}
-
 		identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
 			AccessKey: accessKey,
 			SecretKey: secretKey,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating credential rows: %w", err)
+	}
 
 	glog.V(2).Infof("credential postgres: GetUser user=%s credentials=%d actions=%d", username, len(identity.Credentials), len(identity.Actions))
 	return identity, nil
 }
+
 
 func (store *PostgresStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
 	if !store.configured {
@@ -438,6 +449,9 @@ func (store *PostgresStore) ListUsers(ctx context.Context) ([]string, error) {
 			return nil, fmt.Errorf("failed to scan username: %w", err)
 		}
 		usernames = append(usernames, username)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating user rows: %w", err)
 	}
 
 	glog.V(1).Infof("credential postgres: ListUsers count=%d", len(usernames))

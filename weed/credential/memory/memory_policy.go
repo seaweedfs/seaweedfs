@@ -173,3 +173,23 @@ func (store *MemoryStore) ListUserInlinePolicies(ctx context.Context, userName s
 	}
 	return names, nil
 }
+
+// LoadInlinePolicies returns all inline policies keyed by username then policy name.
+func (store *MemoryStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	result := make(map[string]map[string]policy_engine.PolicyDocument, len(store.inlinePolicies))
+	for userName, userPolicies := range store.inlinePolicies {
+		copied := make(map[string]policy_engine.PolicyDocument, len(userPolicies))
+		for policyName, doc := range userPolicies {
+			copied[policyName] = doc
+		}
+		result[userName] = copied
+	}
+	return result, nil
+}
