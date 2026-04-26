@@ -439,7 +439,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
-			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, postErr)
+			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, post_err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
 			// The first attempt already consumed (or partially consumed) the
 			// body, so retrying with the same *http.Request would send 0 bytes
