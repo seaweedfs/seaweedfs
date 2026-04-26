@@ -40,129 +40,172 @@ These are commitments unless an open question below changes them.
 
 ## Code layout
 
-New code lives under `weed/parquet_pushdown/`:
+Code lives in two trees that match the architecture's two tiers. The proto stays shared.
+
+**Catalog-server side** — registered on the gRPC server hosted by the catalog (today colocated with the S3 gateway's Iceberg REST handlers in `weed/s3api/iceberg/`):
 
 ```text
-weed/parquet_pushdown/
-  service.go                  # gRPC service entry; dispatches to subsystems
+weed/s3api/iceberg/pushdown/
+  service.go                  # SeaweedParquetPushdown service entry
   request_validation.go       # request-shape limits, trust-mode enforcement
-  catalog/                    # Phase 1.5: catalog-validated mode
+  catalog/                    # Phase 1: catalog-validated mode
     validator.go              # cross-checks request DataFiles against manifest
   footer/
     cache.go                  # parsed-footer LRU, keyed by file identity
     parser.go                 # footer + ColumnIndex/OffsetIndex extraction
-  index/
-    types.go                  # SideIndex interface, registry
-    bloom/                    # Phase 2
-    bitmap/                   # Phase 2
-    btree/                    # Phase 2
-    page/                     # Phase 3
-    vector/ivf/               # Phase 5
   predicate/
     substrait_decode.go       # decode Substrait ExtendedExpression
     iceberg_decode.go         # decode Iceberg Expression JSON
     eval_subset.go            # v1 built-in evaluator (comparisons + boolean)
     rowgroup_prune.go         # zone-map pruning for v1
-  delete/
-    position_bitmap.go        # Phase 4 — v2 position-delete merge + cache
-    deletion_vector.go        # Phase 4 — v3 Puffin DV reader + cache
-    equality_eval.go          # Phase 4 — equality-delete evaluator
-  storage/
-    filer_blob_store.go       # read/write side-index blobs through filer
+  registry/                   # Phase 2: side-index registry
+    schema.go                 # registry rows + filer-backed CRUD
+    reconciler.go             # background freshness checker
+  delete/                     # Phase 2: Iceberg delete metadata
+    position.go               # tracks v2 position-delete files + DVs
+    equality.go               # tracks v2 equality-delete files
+  loader.go                   # FileHandle + Loader (filer-backed for production)
   stats.go                    # PushdownStats accumulation
-  daemon/
-    server.go                 # gRPC server bootstrap for the pushdown daemon
-    config.go                 # flag parsing for the `weed pushdown` subcommand
-    filer_client.go           # filer gRPC client for reading data + side-index blobs
-
-weed/pb/parquet_pushdown_pb/
-  parquet_pushdown.proto      # request/response messages
-  parquet_pushdown.pb.go      # generated
-  parquet_pushdown_grpc.pb.go # generated
-
-weed/command/pushdown.go      # `weed pushdown` daemon entry point
-                              #   plus build/inspect side-index subcommands
 ```
 
-Tests live alongside the code (`*_test.go`). Integration tests for end-to-end paths land in `test/parquet_pushdown/`.
+**Volume-server side** (lands in Phase 3) — registered on the volume server's gRPC surface so index lookup, predicate evaluation, and vector compute run colocated with data:
+
+```text
+weed/server/volume_grpc_pushdown.go   # entry point on the volume server
+weed/storage/pushdown/
+  index/
+    bloom/                    # Phase 3
+    bitmap/                   # Phase 3
+    btree/                    # Phase 3
+    page/                     # Phase 3
+    vector/ivf/               # Phase 3
+  exec/
+    predicate.go              # evaluate v1 predicate subset against indexes
+    vector.go                 # local distance + top-K
+    bitmap_merge.go           # delete-bitmap union / subtraction
+```
+
+**Shared proto** stays as today:
+
+```text
+weed/pb/parquet_pushdown.proto      # request/response messages
+weed/pb/parquet_pushdown_pb/        # generated
+```
+
+Tests live alongside the code. Cross-tier integration tests live in `test/parquet_pushdown/`.
+
+> **Existing code at `weed/parquet_pushdown/`** (M0 + M1) was scaffolded under the prior standalone-daemon decision. A code-move commit relocates the package to `weed/s3api/iceberg/pushdown/`, drops the `weed pushdown` subcommand and the standalone-daemon bootstrap, and rewires the service into the existing s3api gRPC server. That move is sequenced as the first task of M2 work in the revised milestones below.
 
 ## Milestones
 
-Each milestone is a shippable PR (or small chain of PRs). M0–M2 together implement the design's Phase 1.
+Milestones are organized by the design's four-phase rollout: catalog candidates, catalog index registry, volume execution, optional workers. M0 and M1 already shipped under the previous standalone-daemon decision; **M2-rebase** is the first task of the revised plan and unblocks everything that follows.
 
-### M0 — Infrastructure (1 PR)
+### Already shipped under the prior architecture
 
-- `parquet_pushdown.proto` with `Pushdown` RPC, request/response messages mirroring [API Sketch](./PARQUET_PUSHDOWN_DESIGN.md#api-sketch). Generate Go bindings.
-- Empty service implementation that validates request shape (size limits, MaxRowIds cap, trust-mode tag) and returns `unimplemented` for the actual work.
-- New `weed pushdown` subcommand: standalone daemon binary that boots its own gRPC server, opens a filer client connection (master + filer endpoints from flags, mirroring the existing pattern in `weed mount` / `weed s3`), and registers the pushdown service. Daemon is off by default; users start it explicitly.
-- `weed pushdown ping` CLI subcommand for smoke testing the running daemon.
-- Acceptance: integration test starts a filer + a pushdown daemon, calls `Pushdown` over gRPC, gets the expected `unimplemented` error path with stats populated. Daemon shuts down cleanly on SIGTERM.
+Two milestones live at `weed/parquet_pushdown/` and need the rebase below before further work:
 
-### M1 — Parsed-footer cache + file/range-level pushdown (1 PR)
+- **M0 (shipped):** proto + service skeleton + bufconn integration test.
+- **M1 (shipped):** parsed-footer cache + file/range-level pushdown for predicate-less requests.
 
-- `footer/parser.go`: open Parquet file via the filer chunk reader, parse footer, ColumnIndex, OffsetIndex.
-- `footer/cache.go`: LRU keyed by `(path, size, etag-or-recordcount)` per [Index Consistency](./PARQUET_PUSHDOWN_DESIGN.md#index-consistency).
-- Service handles requests with `Predicate == nil`: return `FileRanges` covering the requested `Columns` for each `DataFile` (one entry per column chunk), no pruning yet.
-- Acceptance:
-  - Round-trip integration test against a 3-file Iceberg table built in `test/parquet_pushdown/fixtures/`.
-  - Footer cache hit-rate test (second call avoids re-parse; verified via `PushdownStats.FooterCacheHits`).
+### M2-rebase — Move pushdown into the catalog server (1 PR)
 
-### M2 — Row-group zone-map pruning (1 PR)
+- Move `weed/parquet_pushdown/` to `weed/s3api/iceberg/pushdown/`. Update import paths.
+- Drop `weed pushdown` and `weed pushdown.ping`; remove `weed/parquet_pushdown/daemon/`. The standalone-daemon path is retired.
+- Register `SeaweedParquetPushdown` on the s3api gRPC server alongside the existing Iceberg REST handlers, gated by a `-pushdown.enabled` flag (default off until Phase 1 ships).
+- Update the existing M0/M1 tests to exercise the service via the s3api gRPC registration rather than a bufconn-only listener.
+- Acceptance: existing M0/M1 tests pass against the relocated package; `weed s3 -pushdown.enabled` exposes the service.
+
+### Phase 1: Catalog returns candidate files / row groups / ranges
+
+#### M3 — Row-group zone-map pruning (1 PR)
 
 - `predicate/eval_subset.go`: evaluator for the v1 predicate subset.
 - `predicate/rowgroup_prune.go`: read row-group statistics from the parsed footer, drop row groups where the predicate cannot be true, return per-data-file `RowGroupRef` list.
 - `predicate/substrait_decode.go`: decode just enough Substrait to feed the subset evaluator; everything else returns `unsupported`.
 - Acceptance:
-  - Predicate `WHERE timestamp BETWEEN t1 AND t2` against a 5M-row partitioned Iceberg table prunes to the expected row groups (verified by counting `RowGroupRef`).
+  - Predicate `WHERE timestamp BETWEEN t1 AND t2` against a 5M-row partitioned Iceberg table prunes to the expected row groups.
   - `unsupported predicate` returns a status the connector can recognize and fall back from.
 
-### M3 — Catalog-validated trust mode (1 PR; required for Phase 1)
-
-Lands before M2 ships externally. Sequenced after M1 because catalog validation needs the parsed-footer cache to verify `RecordCount` and column-chunk metadata against the manifest.
+#### M4 — Catalog-validated trust mode (1 PR; required for Phase 1)
 
 - `catalog/validator.go`: read the Iceberg snapshot via the existing internal Iceberg package (decision 6 below), verify `(Path, SizeBytes, RecordCount, DataSequenceNumber, PartitionSpecId, PartitionValues)` for each `DataFile` and that the `Deletes` list matches the manifest's attached delete files.
 - Configurable per-endpoint: `pushdown.trust=catalog-validated|connector-trusted` (default `catalog-validated`; `connector-trusted` requires an explicit dev-mode flag).
 - Cache validated planning result keyed by `(table, SnapshotId)` to amortize manifest reads across requests in the same snapshot.
 - Acceptance: a tampered request (omitted delete file, wrong sequence number, file not in manifest, wrong partition values) is rejected with `permission_denied`. Cache hit/miss visible in `PushdownStats`.
 
-**End of design Phase 1.** Phase 1 does not ship without M3.
+**End of design Phase 1.** Phase 1 does not ship without M2-rebase + M3 + M4.
 
-### M4 — Bloom-filter side index (1–2 PRs; design Phase 2 starts)
+### Phase 2: Catalog tracks side-index registry
 
-- `index/bloom/`: builder reads Parquet column chunks, produces a SplitBlock Bloom Filter (Parquet's standard) per column chunk, stores via `storage/filer_blob_store.go` keyed by `bloom.fid_<id>`.
-- Predicate evaluator consults bloom for `=` / `IN` predicates.
-- Background builder triggered on new Iceberg snapshot (hooks into the existing iceberg compaction worker — TODO: confirm hook point).
-- Acceptance: equality predicate with no matches against a 10M-row column reads zero data needles; cache miss and miss-build also tested.
+#### M5 — Index registry schema and CRUD (1 PR)
 
-### M5 — Bitmap and B-tree side indexes (1 PR each)
+- `registry/schema.go`: registry rows of shape `(table, file_identity, kind, field_id) -> (.index path, build identity, build_time, healthy)`. Stored in the filer under a system path, separate from the table's bucket prefix.
+- CRUD APIs (gRPC + internal Go) for register, lookup, mark-stale, delete.
+- Planner consults the registry to know which indexes exist; missing entries fall through gracefully and are reported in stats.
+- Acceptance: register, lookup, list, and delete round-trips pass; planner stats show `indexes_used` / `indexes_missing` correctly populated.
+
+#### M6 — Iceberg delete metadata in the registry (1 PR)
+
+- Register position-delete files, equality-delete files, and v3 deletion vectors as registry entries attached to the data file they target.
+- Planner resolves applicable deletes per the design's applicability rules (sequence + partition + file scope, with per-row `file_path` filter for multi-target position-delete files).
+- Acceptance: planner returns the same data-file → delete-files mapping as a brute-force Iceberg manifest scan.
+
+#### M7 — Background reconciler (1 PR)
+
+- Worker that iterates the registry, verifies each `.index/` payload exists at the recorded path with the recorded identity, marks stale rows, and rebuilds when possible.
+- Compaction / snapshot expiration eviction: registry rows whose `file_identity` is no longer referenced by any active snapshot are reclaimable.
+- Acceptance: tampering with an index payload causes the next request to report it missing; reconciler restores the registry on the next pass.
+
+### Phase 3: Volume servers execute local index/vector pushdown
+
+#### M8 — Volume-server bloom-filter index (1–2 PRs)
+
+- Build path: a worker reads Parquet column chunks and writes SplitBlock Bloom Filters to `.index/<file_name>/<identity>/bloom.fid_<id>` next to the data needles. Registry entry written on completion.
+- Read path: volume server gains a `PushdownExec` gRPC service that, given a (path, identity, kind, field_id, predicate), returns a per-row-group bitmap of surviving rows. Catalog plans for predicates touching bloom-able columns include the volume-server endpoint.
+- Acceptance: equality predicate `WHERE user_id = 'x'` against a 10M-row column with no matches reads zero column-chunk bytes after planning.
+
+#### M9 — Volume-server bitmap and B-tree (1 PR each)
 
 - `index/bitmap/` for low/medium-cardinality columns; integrates with `RoaringBitmap`.
 - `index/btree/` for sortable columns; range and point-lookup predicates.
-- Acceptance: micro-benchmarks vs M2's row-group-only pruning showing ≥10× row-group reduction on the standard test workload.
+- Acceptance: ≥10× row-group reduction vs M3's footer-only pruning on the standard test workload.
 
-### M6 — Page-level pruning (1 PR; design Phase 3)
+#### M10 — Volume-server page-level pruning (1 PR)
 
-- `index/page/`: wraps Parquet's ColumnIndex + OffsetIndex; row-range translation across columns; dictionary-page byte-range inclusion per [Page-Level Index](./PARQUET_PUSHDOWN_DESIGN.md#3-page-level-index).
-- Service returns `PageRef` entries with byte ranges for each projected column.
+- `index/page/`: wraps Parquet's `ColumnIndex` + `OffsetIndex` per [Page-Level Index](./PARQUET_PUSHDOWN_DESIGN.md#3-page-level-index); row-range translation across columns; dictionary-page byte-range inclusion.
+- Volume server returns `PageRef` entries with byte ranges for each projected column.
 - Acceptance: predicate selectivity ≥0.99 returns ≤1 page per surviving row group across all projected columns.
 
-### M7–M9 — Iceberg deletes (3 PRs; design Phase 4)
+#### M11 — Volume-server delete bitmap evaluation (1 PR)
 
-- M7: position-delete bitmap caching, keyed per [Position-delete bitmap cache key](./PARQUET_PUSHDOWN_DESIGN.md#position-delete-bitmap-cache-key).
-- M8: Puffin DV reader + cache (use `iceberg-go` Puffin support if present, otherwise vendor a minimal Puffin parser).
-- M9: equality-delete evaluation accelerated by Phase 2 indexes.
-- Acceptance: reference table with both delete forms returns identical row sets to a Spark scan of the same snapshot.
+- v2 position-delete bitmap merge per the design's filter-by-`file_path` rule; cached with the registry's identity key.
+- v3 deletion-vector (Puffin `deletion-vector-v1`) reader + cache.
+- v2 equality-delete per-pair bitmap evaluation, accelerated by the volume server's scalar indexes.
+- Acceptance: a reference table with both delete forms returns identical row sets to a Spark scan of the same snapshot.
 
-### M10–M11 — Vector indexes (design Phase 5)
+#### M12 — Volume-server vector index (1 PR)
 
-- M10: partitioned IVF index per [Filtered-ANN strategy](./PARQUET_PUSHDOWN_DESIGN.md#filtered-ann-strategy); per-tenant partitions, top-K merge, score correctness vs brute-force.
-- M11: hybrid scalar+vector pushdown; planner selects partitioned-IVF vs post-filter+overscan based on selectivity estimate.
-- Acceptance: recall ≥0.95 vs brute force at top-20, 10× speedup on the standard test set.
+- Partitioned IVF index per [Filtered-ANN strategy](./PARQUET_PUSHDOWN_DESIGN.md#filtered-ann-strategy); per-partition top-K runs entirely on the volume server. Catalog merges per-partition top-Ks across volume servers.
+- Acceptance: recall ≥0.95 vs brute force at top-20, 10× end-to-end speedup on the standard test set.
 
-### M12–M13 — Connector integrations (design Phase 6)
+#### M13 — Hybrid scalar+vector pushdown (1 PR)
 
-- M12: DuckDB extension as PoC; consumes the gRPC API directly.
-- M13: Trino + Spark connectors; both use the same gRPC client.
+- Planner selects partitioned-IVF, post-filter+overscan, or filtered-HNSW per the design's strategy section based on selectivity estimate.
+- Acceptance: hybrid query that combines `tenant_id = 'x' AND timestamp >= t` with `ORDER BY embedding <-> q LIMIT 20` returns recall-correct results in <2× the cost of the lighter clause alone.
+
+**End of design Phase 3.**
+
+### Phase 4: Optional standalone query workers
+
+Built only if profiling shows planning, hot-path coordination, or cross-volume merges become a bottleneck. Out of scope until measurements demand it.
+
+### Connector integrations (parallel with Phases 1–3)
+
+These run in parallel with Phases 1–3 once the catalog API stabilizes (post-M4). Each consumer reads byte ranges directly via S3 (compatibility path) or dispatches to volume-server endpoints (hot path) per request.
+
+- DuckDB extension as PoC; consumes the gRPC API directly.
+- Trino connector pushdown.
+- Spark DataSource / Iceberg integration.
 
 ## Test strategy
 
