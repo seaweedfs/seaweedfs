@@ -1,13 +1,14 @@
 # T4d Forward-Carry Verification Checklist (T4a + T4b + T4c → T4d)
 
-**Date**: 2026-04-25 (v0.2 — aligned with mini-plan v0.2 §6 superset)
-**Status**: ✅ ACTIVE — gates T4d batch close per kickoff §4 #5
+**Date**: 2026-04-26 (v0.3 — T4d batch closed; all per-batch focus rows resolved)
+**Status**: ✅ COMPLETE — T4d batch close evidence; per-batch verification done; G5 collective close inherits this checklist as baseline
 **Owner**: QA
-**Used by**: every T4d batch (T4d-1, T4d-2, T4d-3, T4d-4) at PR review + T4d batch close evidence
+**Used by**: T4d batch close (this revision); G5 collective close uses this checklist as the regression-baseline list
 
 **Revision history:**
 - **v0.1** (2026-04-25 morning) — initial draft from T4c closure §I (6 T4c + 2 T4b + 1 T4a invariants)
 - **v0.2** (2026-04-25 afternoon) — aligned with mini-plan v0.2 §6 superset; adds 3 T4a + 4 T4b + 4 T4c invariants I'd missed; corrects "Engine retry-budget escalation (no formal INV id)" to its actual catalogue name `INV-REPL-CATCHUP-RECYCLE-ESCALATES`; risk grades match mini-plan §6 column
+- **v0.3** (2026-04-26) — T4d batch close: all per-batch focus rows resolved; m01 -race verified across all T4d batches incl. T2A NVMe race fix at `a0be6d5`; checklist transitions from "active gating" to "G5-baseline" status
 
 ---
 
