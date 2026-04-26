@@ -353,7 +353,7 @@ func (e *EmbeddedIamApi) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName stri
 }
 
 // UpdateUser updates an IAM user.
-func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUpdateUserResponse, *iamError) {
+func (e *EmbeddedIamApi) UpdateUser(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUpdateUserResponse, *iamError) {
 	resp := &iamUpdateUserResponse{}
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
@@ -392,7 +392,6 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	// GetUserPolicy / ListUserPolicies after the rename. We copy here and
 	// let the subsequent prune CASCADE clean up the old-name rows.
 	if e.credentialManager != nil {
-		ctx := context.Background()
 		policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
 		if err != nil {
 			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
@@ -2193,7 +2192,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		changed = false
 	case "UpdateUser":
 		var iamErr *iamError
-		response, iamErr = e.UpdateUser(s3cfg, values)
+		response, iamErr = e.UpdateUser(ctx, s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
