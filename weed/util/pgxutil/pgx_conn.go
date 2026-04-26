@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,47 +36,83 @@ type DSNOptions struct {
 	PgBouncerCompatible bool
 }
 
+// quoteDSNValue wraps v per the libpq keyword/value rules: empty values
+// and values containing whitespace, single quotes, or backslashes are
+// single-quoted with internal `'` and `\` escaped. Plain alphanumeric
+// values are returned unchanged. See PostgreSQL docs §"Connection Strings".
+func quoteDSNValue(v string) string {
+	if v == "" {
+		return "''"
+	}
+	needsQuote := false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\'' || c == '\\' {
+			needsQuote = true
+			break
+		}
+	}
+	if !needsQuote {
+		return v
+	}
+	var b strings.Builder
+	b.Grow(len(v) + 2)
+	b.WriteByte('\'')
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '\'' || c == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
+
 // BuildDSN assembles two libpq-style connection strings from opts: the
 // real DSN passed to pgx, and an adapted copy with the password redacted
-// for use in error messages and logs.
+// for use in error messages and logs. Values containing spaces, single
+// quotes, or backslashes are quoted per libpq rules so passwords and
+// cert paths sourced from secret managers can carry arbitrary characters
+// without breaking pgx.ParseConfig.
 func BuildDSN(opts DSNOptions) (dsn, adaptedDSN string) {
 	dsn = "connect_timeout=30"
 	if opts.Hostname != "" {
-		dsn += " host=" + opts.Hostname
+		dsn += " host=" + quoteDSNValue(opts.Hostname)
 	}
 	if opts.Port != 0 {
 		dsn += " port=" + strconv.Itoa(opts.Port)
 	}
 	if opts.SSLMode != "" {
-		dsn += " sslmode=" + opts.SSLMode
+		dsn += " sslmode=" + quoteDSNValue(opts.SSLMode)
 	}
 	if opts.SSLCert != "" {
-		dsn += " sslcert=" + opts.SSLCert
+		dsn += " sslcert=" + quoteDSNValue(opts.SSLCert)
 	}
 	if opts.SSLKey != "" {
-		dsn += " sslkey=" + opts.SSLKey
+		dsn += " sslkey=" + quoteDSNValue(opts.SSLKey)
 	}
 	if opts.SSLRootCert != "" {
-		dsn += " sslrootcert=" + opts.SSLRootCert
+		dsn += " sslrootcert=" + quoteDSNValue(opts.SSLRootCert)
 	}
 	if opts.SSLCRL != "" {
-		dsn += " sslcrl=" + opts.SSLCRL
+		dsn += " sslcrl=" + quoteDSNValue(opts.SSLCRL)
 	}
 	if opts.User != "" {
-		dsn += " user=" + opts.User
+		dsn += " user=" + quoteDSNValue(opts.User)
 	}
 	adaptedDSN = dsn
 	if opts.Password != "" {
-		dsn += " password=" + opts.Password
+		dsn += " password=" + quoteDSNValue(opts.Password)
 		adaptedDSN += " password=ADAPTED"
 	}
 	if opts.Database != "" {
-		dsn += " dbname=" + opts.Database
-		adaptedDSN += " dbname=" + opts.Database
+		dsn += " dbname=" + quoteDSNValue(opts.Database)
+		adaptedDSN += " dbname=" + quoteDSNValue(opts.Database)
 	}
 	if opts.Schema != "" && !opts.PgBouncerCompatible {
-		dsn += " search_path=" + opts.Schema
-		adaptedDSN += " search_path=" + opts.Schema
+		dsn += " search_path=" + quoteDSNValue(opts.Schema)
+		adaptedDSN += " search_path=" + quoteDSNValue(opts.Schema)
 	}
 	return dsn, adaptedDSN
 }
