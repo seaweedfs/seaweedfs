@@ -1,10 +1,46 @@
 # G5-4 m01+M02 Cluster Bring-Up — Hand-off to sw
 
-**Date**: 2026-04-26 (v0.2 — RESOLVED via local single-node debug round)
-**Status**: ✅ RESOLVED — root cause was missing `--expected-slots-per-volume 2` flag on blockmaster (default is 3); also documented secondary finding about non-primary replica not becoming "Healthy" via T1 path
-**From**: QA (round 2026-04-26 cross-node smoke attempt → pivoted to local Windows debug)
-**To**: sw (G5-4 framework owner)
+**Date**: 2026-04-26 (v0.3 — bring-up resolved; binary T4-wiring gap surfaced as G5-4 implementation work)
+**Status**: ✅ Bring-up gate RESOLVED via sw's `--expected-slots-per-volume` flag (`seaweed_block@f5de7c5`) + `seaweedfs@e21c68693` answer doc. **NEW finding**: cmd/blockvolume binary lacks T4a-T4d replication wiring — the `host.go:73 ReplicationVolume` slot was added at T4a-5 but **never wired in main.go**. This is real G5-4 implementation work (150-300 LOC + design), not a config patch.
+**From**: QA (rounds 2026-04-26 — local debug → m01+M02 verification → binary-wiring gap discovery)
+**To**: sw + architect (G5-4 implementation kickoff input)
 **Context**: G5-4 m01 hardware first-light per [g5-kickoff §3 batch G5-4](v3-phase-15-g5-kickoff.md). Skeleton script committed at `seaweed_block@eabafe8` (`scripts/iterate-m01-replicated-write.sh`).
+
+---
+
+## §00 v0.3 finding — binary T4 replication wiring is the actual G5-4 work
+
+After bring-up resolved (§0 below), QA verified the cross-node 2-node cluster on m01+M02 (`192.168.1.181` + `192.168.1.184`):
+
+```
+m01 primary status: {"VolumeID":"v1","ReplicaID":"r1","Epoch":1,"EndpointVersion":1,"Healthy":true}
+M02 replica log:    blockvolume: volume v1 authority is now r1@1 (not this replica r2);
+                    recording supersede, not applying to adapter
+                    blockvolume: durable open: frontend: volume not ready
+```
+
+Primary side fully Healthy; replica side stuck because **`cmd/blockvolume/main.go` has zero references to `ReplicationVolume / ReplicaListener / ReplicaPeer`**.
+
+**Sw-confirmed root** (round 2026-04-26):
+- `--t1-readiness` is primary-only by design (`core/host/volume/healthy_executor.go:10-28` godoc)
+- `volume.Config.ReplicationVolume` slot exists (`host.go:73`) with godoc *"T4a-5 production wiring sets this"* — but **T4a-5 only added the field; the wiring never landed**
+- T4d-4 part B wired `WithEngineDrivenRecovery()` for the **component test framework** (`cluster.go:357-369`), NOT for the binary
+- Result: V3 components compose end-to-end (proven by T4d HARD GATE #3); the production binary still constructs a primary-only data plane
+
+**Why this is real implementation work, not a quick patch** (per sw round 2026-04-26):
+
+| Design decision | Options |
+|---|---|
+| Role inference (primary vs replica) | (a) From `AssignmentInfo.PrimaryReplicaID == self.ReplicaID`; (b) CLI flag operator-declared; (c) topology lookup deterministic |
+| Peer discovery | From `AssignmentFact.Peers` (already exists per T4a-5 P-refined); wire peer-set updater on assignment events |
+| Listener lifecycle | `ReplicaListener` bind addr (probably existing `--data-addr`); Stop on shutdown |
+| Engine instantiation | One engine per volume, fed by assignment subscription |
+
+**Estimate** (sw): 150-300 LOC + tests. **Real design work, not 50-LOC**. Same governance loop T4 used: kickoff → architect ratify → mini-plan → architect ratify → G-1 (vs T4d-4 part B component-framework wiring as V3-native PORT source) → code.
+
+**G5-4 kickoff revision needed** — see `v3-phase-15-g5-kickoff.md` revision (binary-wiring promoted to its own batch ahead of m01 hardware first-light, since the script requires the binary).
+
+**Acceptable interim**: primary-only smoke per sw's option C (G5 scenarios that don't need replica writes — e.g., walstore cadence under sustained primary load) can proceed without the binary wiring. Anything involving real cross-node replication waits.
 
 ---
 

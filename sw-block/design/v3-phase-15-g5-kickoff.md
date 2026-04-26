@@ -1,7 +1,11 @@
 # G5 — Replicated Write Path Collective Close — Kick-Off (PROPOSAL)
 
-**Date**: 2026-04-26 (v0.1 — QA-authored proposal post-T4 close)
-**Status**: ⏸ DRAFT — awaiting architect ratification on §2 scope + §3 batch shape + §4 acceptance bar + §5 G5-DECISION-001 path choice
+**Date**: 2026-04-26 (v0.2 — QA-authored revision post m01+M02 bring-up debug; new G5-4 batch surfaced)
+**Status**: ⏸ DRAFT v0.2 — awaiting architect ratification on §2 scope + §3 REVISED batch shape (now 6 batches, was 5; new G5-4 binary T4 wiring promoted from "implicit assumption" to "explicit batch") + §4 acceptance bar + §5 G5-DECISION-001 path choice
+
+**Revision history:**
+- v0.1 (2026-04-26 morning) — initial proposal post-T4d close
+- v0.2 (2026-04-26 afternoon) — m01+M02 bring-up smoke surfaced binary T4 replication wiring gap (`cmd/blockvolume/main.go` has zero ReplicationVolume references; `host.go:73 ReplicationVolume` slot was added at T4a-5 but never wired). Promoted binary wiring to its own batch (G5-4) ahead of m01 hardware first-light (now G5-5). Sw confirmed 150-300 LOC + design work — see `v3-phase-15-g5-m0102-bringup-handoff.md` v0.3 §00 for full diagnosis.
 **Predicates met**: T4 batch series closed (T4a + T4b + T4c + T4d batches all signed; T4 T-end three-sign at T4d closure report `seaweedfs@2ee12b2c1`)
 **Reference**: `v3-phase-15-t4d-closure-report.md` §I forward-carries; `v3-phase-15-t4d-mini-plan.md` §5 G5-DECISION-001 named decision record; `v3-phase-15-t4c-closure-report.md` §H m01 deferral
 
@@ -56,22 +60,26 @@ G5 closes when these collectively pass + the architect signs off on production-r
 
 ## §3 Proposed batch shape — architect ratification ask
 
-QA proposal for G5 batch decomposition (smaller than T4 batches since G5 is integration / verification heavy, not new-feature heavy):
+QA proposal v0.2 for G5 batch decomposition (6 batches; binary T4 wiring promoted to own batch):
 
 | Batch | Scope | LOC est | Owner |
 |---|---|---|---|
-| **G5-1** Multi-replica concurrent live + recovery scenarios at component scope | Author the QA scenarios catalogued at T4d (#1–#9) as actual test code; add multi-replica RF=3 mixed-state scenarios; component framework primitives needed (`AssertNoPerLBARegression`, `AssertLaneIntegrity`, `RestartReplica`, etc. from T4d QA scenario catalogue §7) | ~50 prod (framework primitives) + ~600 tests (9 scenarios + RF=3 mixed-state + new framework primitives) | QA + sw (framework only) |
-| **G5-2** walstore flusher cadence verification + tuning policy | Production write pressure smoke (sustained 10+ minute write load); identify flusher cadence under pressure; document operational tuning policy (knobs to expose? defaults? what operator should monitor?) | ~80 prod (instrumentation if needed) + ~150 tests (sustained-write + observability) | sw + architect |
-| **G5-3** Minimal metrics/backpressure assessment | Document current observability surface (logs, status endpoint, etc.); identify minimal Prometheus-style metrics needed for production (catch-up progress, retry counters, error rates per kind, session duration); decide what's G5 must-have vs post-G5 | ~50 prod (metrics) + ~50 tests (assertion fences) | sw + architect |
-| **G5-4** m01 hardware first-light + L3 integration | Author `iterate-m01-replicated-write.sh` script (mirroring `iterate-m01-nvme.sh` from T2); drive real 2-node primary↔replica via blockmaster + assignment; iptables-based mid-stream disconnect; verify catch-up + rebuild paths under real network | ~200 (bash script + Go test driver) | QA + sw |
-| **G5-5** G5-DECISION-001 resolution + closure | Architect resolves Path A (persist Recovery state) vs Path B (rebuild from probe after restart); IF Path A: persistence implementation + tests; IF Path B: documentation of retry-budget-resets-on-restart semantic + operator awareness; G5 closure report drafted | varies by path | architect + sw + QA |
+| **G5-1** Multi-replica concurrent live + recovery scenarios at component scope | Author the QA scenarios catalogued at T4d (#1–#9) as actual test code; add multi-replica RF=3 mixed-state scenarios; component framework primitives needed (`AssertNoPerLBARegression`, `AssertLaneIntegrity`, `RestartReplica`, etc. from T4d QA scenario catalogue §7). **Component-scope only — does not depend on G5-4 binary wiring** since component framework already binds T4d-4 part B `WithEngineDrivenRecovery()` directly. | ~50 prod (framework primitives) + ~600 tests | QA + sw (framework only) |
+| **G5-2** walstore flusher cadence verification + tuning policy | Production write pressure smoke (sustained 10+ minute write load); identify flusher cadence under pressure; document operational tuning policy. **Primary-only path** — does not depend on G5-4 binary wiring. | ~80 prod (instrumentation if needed) + ~150 tests | sw + architect |
+| **G5-3** Minimal metrics/backpressure assessment | Document current observability surface (logs, status endpoint, etc.); identify minimal Prometheus-style metrics needed for production; decide what's G5 must-have vs post-G5 | ~50 prod (metrics) + ~50 tests (assertion fences) | sw + architect |
+| **G5-4** **NEW (v0.2): Binary T4 replication wiring** | Mirror `cmd/blockvolume/main.go` to T4d-4 part B's `WithEngineDrivenRecovery()` framework binding. Construct `ReplicationVolume + ReplicaPeer + ReplicaListener`, pass via `volume.Config{ReplicationVolume: ...}`. **Design decisions** (per sw round 2026-04-26): (a) role inference (assignment vs CLI flag vs topology); (b) peer discovery (from `AssignmentFact.Peers`); (c) listener lifecycle (`--data-addr` reuse + Stop); (d) engine instantiation (one engine per volume). **G-1 source**: T4d-4 part B component framework (`cluster.go:357-369`) is V3-native PORT reference. **Surfaced by m01+M02 bring-up smoke** — see `v3-phase-15-g5-m0102-bringup-handoff.md` v0.3 §00. | 150-300 prod + ~150 tests | sw |
+| **G5-5** m01 hardware first-light + L3 integration **(was G5-4 in v0.1)** | Author `iterate-m01-replicated-write.sh` script; drive real 2-node primary↔replica via blockmaster + assignment; iptables-based mid-stream disconnect; verify catch-up + rebuild paths under real network. **DEPENDS on G5-4 binary wiring** — script can't drive replica scenarios until binary supports replicas. | ~200 (bash script + Go test driver) | QA + sw |
+| **G5-6** G5-DECISION-001 resolution + closure **(was G5-5 in v0.1)** | Architect resolves Path A (persist) vs Path B (rebuild from probe); G5 closure report drafted. | varies by path | architect + sw + QA |
 
-**Architect decision asks for §3:**
-1. Confirm 5-batch shape vs alternatives (3-batch dense / 7-batch with mixed-state and rebuild-edge as separate)?
-2. Confirm batch ordering — component-multi-replica → walstore-cadence → metrics → m01 → G5-DECISION-001 close?
-3. Confirm G5-5 ordering — does G5-DECISION-001 resolution happen at the START of G5 (architect call upfront) or at G5 CLOSE (after evidence from G5-1/2/3/4)?
+**Architect decision asks for §3 (v0.2 REVISED):**
+1. Confirm 6-batch shape (was 5; G5-4 binary wiring promoted from "implicit assumption" to explicit batch).
+2. Confirm batch ordering — G5-1/2/3 are all primary-only-OK and parallel-eligible; G5-4 must precede G5-5; G5-5 precedes G5-6.
+3. Confirm G5-4 governance loop — same as T4 (kickoff → architect ratify → mini-plan → architect ratify → G-1 → code) given 150-300 LOC + design decisions.
+4. Confirm G5-6 ordering — does G5-DECISION-001 resolution happen at START of G5 (architect call upfront) or at G5 CLOSE (after evidence from G5-1/2/3/4/5)?
 
-QA recommendation: G5-5 at close, because evidence from G5-1/2/3/4 (especially walstore cadence + production write pressure findings) helps inform Path A vs Path B decision.
+QA recommendation: G5-6 at close, because evidence from G5-1/2/3/4/5 (especially walstore cadence + m01 production write pressure findings) helps inform Path A vs Path B decision.
+
+**Key architectural insight (v0.2)**: G5-1/2/3 are NOT blocked by G5-4. The component framework already binds T4d-4 part B; QA scenarios can author + run at component scope without binary wiring. This means G5 work can start in parallel as soon as architect ratifies — sw works G5-4 binary wiring while QA authors G5-1 scenarios + sw measures G5-2 walstore cadence at component-or-primary-only scope.
 
 ---
 
