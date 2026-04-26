@@ -972,45 +972,54 @@ For v1, side indexes inherit the same access controls as the underlying Parquet 
 
 ## Rollout Plan
 
-### Phase 1: Metadata Acceleration
+The plan follows the architecture: ship the catalog-server brain first, add the index registry, then push heavy execution down to volume servers, and only consider standalone workers if measurements demand it.
+
+### Phase 1: Catalog server returns candidate files / row groups / ranges
+
+Catalog server gains a pushdown planner that, given a snapshot and a request, returns the data files, row groups, and column-chunk byte ranges the connector should read. No side indexes yet — pruning is driven by Iceberg metadata plus the parsed Parquet footer.
 
 - parsed-footer cache (row group stats already live in the footer; the win is avoiding repeated Thrift decode and offset lookups, not building new index data)
-- column chunk range optimization
-- expose file/range-level pushdown
+- column-chunk range optimization
+- file / row-group / range-level pushdown over the footer's existing zone-map statistics
+- catalog-validated trust mode (server checks the request's `DataFiles` against the manifest)
 
-### Phase 2: Scalar Indexes
+### Phase 2: Catalog server tracks side indexes
 
-- bloom filter side index
-- bitmap index
-- B-tree/range index
-- basic predicate API
+Catalog gains an *index registry*: a per-file table of which side indexes exist, their on-disk paths under `.index/`, the data-file identity they were built against, and freshness state. The planner consults the registry to choose which indexes to use; a background reconciler verifies registry entries against volume-server payload availability and rebuilds stale entries.
 
-### Phase 3: Page-Level Pruning
+- index registry schema and CRUD on the catalog
+- registration hooks fired when an index is built
+- reconciler that downgrades stale entries
+- planner consults the registry; missing-index downgrades are reported in stats
+- includes Iceberg delete metadata: position-delete files, equality-delete files, v3 deletion vectors are tracked here so the planner attaches them to data-file plans
 
-- page statistics
-- page offset map
-- return page-level ranges
+### Phase 3: Volume servers execute local index/vector pushdown
 
-### Phase 4: Iceberg Delete Integration
+Side-index *payloads* live next to data needles, and the volume server gains the ability to evaluate predicates and vector queries against them locally. The catalog server's plan now references volume-server endpoints for hot paths, and the connector dispatches to those endpoints to receive pruned bitmaps / row-ref lists / top-K results instead of raw bytes.
 
-- v2 position-delete file ingestion and merged-bitmap caching
-- v3 deletion-vector (Puffin `deletion-vector-v1`) ingestion and bitmap caching
-- v2 equality-delete evaluation accelerated by Phase 2 scalar indexes
-- partition-spec / partition-value matching in the applicability rule
-- snapshot-aware index validity (data-file identity + delete-file-set keying)
+- volume-server-side index reader: bloom, bitmap, B-tree, page index
+- scalar predicate evaluation against indexes (the v1 predicate subset)
+- vector index payload + local distance compute + local top-K
+- catalog plan returns `(volume_endpoint, file, ranges, index_pointers)` tuples for connectors that opt into volume-side execution
+- byte-range-only plans remain available for connectors that prefer to read directly via S3
 
-### Phase 5: Vector Indexes
+### Phase 4: Optional standalone query workers
 
-- IVF side index for embedding columns
-- local top-K search on volume servers
-- global top-K merge
-- hybrid scalar + vector search
+Only built if measurements show planning, hot-path coordination, or cross-volume merges (e.g. global top-K with very high `k`) become a bottleneck. A pool of stateless workers takes plans from the catalog, fans out across volume servers, performs cross-volume merges, and returns results to the connector.
 
-### Phase 6: Query Engine Integrations
+- decoupled scaling: workers grow without touching catalog or volume-server capacity
+- cross-volume merges (global top-K, large bitmap unions) move out of the catalog
+- not on the critical path; remains optional unless profiling demands it
+
+### Connector integrations (cross-cutting)
+
+Connector work runs in parallel with phases 1–3 once the catalog API stabilizes:
 
 - SeaweedFS-aware DuckDB extension
 - Trino connector pushdown
-- Spark DataSource/Iceberg integration
+- Spark DataSource / Iceberg integration
+
+Each connector consumes the catalog's plan and decides per-request whether to read byte ranges directly (compatibility path) or dispatch to volume-server endpoints (hot path).
 
 ## Benefits
 
