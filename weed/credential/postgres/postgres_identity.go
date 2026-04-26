@@ -138,7 +138,7 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 				actions = EXCLUDED.actions,
 				policy_names = EXCLUDED.policy_names,
 				updated_at = CURRENT_TIMESTAMP`,
-			identity.Name, "", accountDataJSON, actionsJSON, policyNamesJSON)
+			identity.Name, "", string(accountDataJSON), string(actionsJSON), string(policyNamesJSON))
 		if err != nil {
 			return fmt.Errorf("failed to upsert user %s: %v", identity.Name, err)
 		}
@@ -238,7 +238,7 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
-		identity.Name, "", accountDataJSON, actionsJSON, policyNamesJSON)
+		identity.Name, "", string(accountDataJSON), string(actionsJSON), string(policyNamesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: CreateUser insert failed user=%s: %v", identity.Name, err)
 		return fmt.Errorf("failed to insert user: %w", err)
@@ -376,7 +376,7 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 
 	_, err = tx.ExecContext(ctx,
 		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
-		username, "", accountDataJSON, actionsJSON, policyNamesJSON)
+		username, "", string(accountDataJSON), string(actionsJSON), string(policyNamesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: UpdateUser failed user=%s: %v", username, err)
 		return fmt.Errorf("failed to update user: %w", err)
