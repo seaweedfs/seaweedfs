@@ -138,10 +138,10 @@ Single batch, ordered subtasks (each landable on its own commit but reviewed tog
 1. ✅ T4d closed (`e642ae8` part C lands; closure report committed)
 2. ✅ G5 kickoff v0.3 ratified (architect round-49)
 3. ✅ `--expected-slots-per-volume` flag landed (`f5de7c5`); cross-node smoke can reach the assignment-mint stage
-4. ⏳ This mini-plan ratified by architect + QA
-5. ⏳ G-1 V3-native PORT read of `cluster.go:357-369` + V2 comparison (see §7.1)
+4. ✅ This mini-plan ratified by QA (round 1) + architect (round 50, with 2 binding clarifications baked into v0.3 §4 #2 + #7 + §7.1)
+5. ⏳ G-1 V3-native PORT read of `cluster.go:357-369` + V2 comparison + architect's 2 G-1-blocking resolutions per §7.1 (replica readiness field; ctrl-addr reuse vs `--repl-addr`)
 
-Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
+Predicate 4 satisfied at architect round 50. Predicate 5 is the next sw step.
 
 ---
 
@@ -150,12 +150,12 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 | # | Criterion | Verifier |
 |---|---|---|
 | 1 | `cmd/blockvolume` binary constructs `ReplicationVolume` and passes it via `volume.Config` | code review + sw confirms via `grep ReplicationVolume cmd/blockvolume/` |
-| 2 | In-process 2-volume cluster reaches Healthy on both sides within 5s of bring-up via the production binary code path (NOT component framework fixture) | binary integration test G5-4.5 (m01 hardware verification belongs to G5-5; G5-4 closes on the in-process pin) |
+| 2 | In-process 2-volume cluster reaches role-appropriate ready state on both sides within 5s of bring-up via the production binary code path (NOT component framework fixture). **Architect binding clarification #1 (round 50)**: "Healthy" must split by role. **Primary**: `Healthy=true` per existing frontend/write-ready projection. **Replica**: replication-ready / listener-bound + at least one `ApplyEntry` byte-equal verified. Replica MUST NOT report `Healthy=true` if "Healthy" implies frontend-primary-write-ready in the existing status field — if the existing status field can't express the distinction, G5-4.5 uses precise assertion names (`assertReplicaReplicationReady`, `assertPrimaryFrontendReady`) instead of a unified `assertHealthy`. | binary integration test G5-4.5 (m01 hardware verification belongs to G5-5; G5-4 closes on the in-process pin) |
 | 3 | Primary-side live write lands byte-equal on replica's store | binary-level integration test G5-4.5 |
 | 4 | Stop replica mid-flight + restart + replica catches up via T4 engine-driven recovery (NOT framework fixture) | binary-level integration test G5-4.5 |
 | 5 | All existing tests green; no regressions in `core/`, `cmd/`, `core/replication/component` | full V3 suite |
 | 6 | 10× stress under `-race` on m01 for the new integration test | QA m01 verification |
-| 7 | New invariants pinned in catalogue (see §6) | sw + QA at batch close |
+| 7 | New invariants pinned in catalogue (see §6) **AND landed in `v3-invariant-ledger.md`** with at least one test pointer or batch-close evidence per row. **Architect binding clarification #2 (round 50)**: catalogue inscription alone is insufficient at G5-4 close; ledger discipline applies (per `v3-quality-system.md` §6 rule "an invariant without a test is a wish"). | sw + QA at batch close; ledger updated as PR atomic with code |
 
 ---
 
@@ -193,6 +193,9 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 1. **G-1 V3-native PORT read deliverable** — sw reads `core/replication/component/cluster.go:357-369` line-by-line and produces a §-by-§ port map for binary integration. Also reads `weed/storage/blockvol/blockvol.go` (V2) for any binary-level lessons (esp. lifecycle ordering and peer-set update race conditions). G-1 deliverable surfaces:
    - PORT items: items the binary mirrors verbatim from cluster.go
    - V3-NATIVE items: items the binary adds on top of cluster.go (CLI/lifecycle/error reporting/log channels)
+   - **Architect binding (round 50)**: G-1 MUST resolve before code starts:
+     - **Replica readiness semantics** — what existing `volume.Status` / `ProjectionView` field expresses "replication-ready" (vs frontend-primary-Healthy)? If none, G-1 either proposes a new field OR specifies precise assertion names for §4 #2 (e.g. `assertReplicaReplicationReady` reading from a TBD field, vs `assertHealthy` which is primary-only)
+     - **`--ctrl-addr` reuse confirmation** — G-1 verifies the ReplicaListener bind on `--ctrl-addr` does NOT conflict with NVMe/iSCSI control-plane traffic on the same port (per §7.2 risk #4). If conflict found, G-1 introduces `--repl-addr` flag (small scope expansion, but contained in this batch)
    - V2-LESSON items: items learned from V2 that don't map 1:1 but inform implementation choices
 2. **No `core/replication/component` import from `cmd/blockvolume`** — the binary mirrors the component framework's wiring but doesn't import it (component framework is test-only)
 3. **Binary integration test (G5-4.5) passes deterministically + 10× under `-race` on m01**
@@ -214,10 +217,10 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 
 | Stage | Signer | When | Status |
 |---|---|---|---|
-| Mini-plan ratification | architect (pingqiu) + QA | This submission | ⏳ pending |
-| G-1 PORT read deliverable | architect | After §7.1 #1 deliverable | ⏳ pending |
+| Mini-plan ratification | architect (pingqiu) + QA | This submission | ✅ DONE 2026-04-26 (QA round 1 + architect round 50 with 2 bindings) |
+| G-1 PORT read deliverable | architect | After §7.1 #1 deliverable (sw produces, must address §7.1 binding subitems) | ⏳ pending |
 | Code start | sw | After mini-plan + G-1 ratify | ⏳ pending |
-| G5-4 close (single sign per §8C.2) | architect (pingqiu) | At final commit + integration test pass | ⏳ pending |
+| G5-4 close (single sign per §8C.2) | architect (pingqiu) | At final commit + integration test pass + 5 INV-BIN-WIRING-* invariants landed in `v3-invariant-ledger.md` | ⏳ pending |
 
 ---
 
@@ -227,3 +230,4 @@ Predicates 1-3 are met. Predicates 4-5 are this submission + the next sw step.
 |---|---|---|
 | 2026-04-26 | v0.1 | Initial draft. Submitted for QA + architect ratification. |
 | 2026-04-26 | v0.2 | QA round 1 review responses: §1.3 role inference rewritten to read `fact.ReplicaID == self.ReplicaID` from master-minted field (proto verified at `control.proto:128-148` + master mint at `services.go:198-205`); no lex-smallest fallback. §4 #2 verifier reframed to G5-4.5 in-process test (m01 hardware = G5-5). §5 G5-DECISION-001 contradiction resolved: G5-4 ships Path B runtime + keeps Path A serializability seam open, architect-promotable at G5-6 with no engine-state-shape change. §6 added INV-BIN-WIRING-SESSIONID-VIA-ADAPTER (clarification ask: adapter mints unique sessionIDs via process-wide counter at `adapter.go:70`; binary inherits for free; framework shortcuts that hardcode sessionID=1 are the known gap, must not propagate to binary). |
+| 2026-04-26 | v0.3 | **Architect round 50 RATIFY with 2 binding clarifications.** Architect verbatim: "Role inference, in-process acceptance, G5-DECISION-001 seam, and sessionID discipline are architecturally correct. G-1 must clarify replica readiness semantics and confirm ctrl-addr reuse or introduce repl-addr before code." Bindings baked: (#1) §4 #2 acceptance criterion split by role — Primary `Healthy=true` per existing frontend/write-ready projection; Replica MUST NOT report `Healthy=true` if existing field implies frontend-primary-write-ready; G5-4.5 uses precise assertion names (`assertReplicaReplicationReady` vs `assertPrimaryFrontendReady`) if existing status field is too coarse. (#2) §4 #7 acceptance criterion strengthened: catalogue inscription alone insufficient at close; 5 INV-BIN-WIRING-* invariants MUST land in `v3-invariant-ledger.md` per `v3-quality-system.md` §6 rule "an invariant without a test is a wish"; ledger updated as PR atomic with code. §7.1 G-1 deliverable extended: G-1 MUST resolve replica-readiness-field question + ctrl-addr-reuse-vs-repl-addr question BEFORE code starts. Architect-pre-baked: ratification stays valid; no further mini-plan revisions needed before G-1. | architect |
