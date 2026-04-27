@@ -22,6 +22,110 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
+// FindEcShardTargetLocation returns the disk that should receive a new
+// shard / index file for (collection, vid). The selection order is:
+//
+//  1. a disk that already has the EC volume mounted (in-memory state),
+//  2. a disk that owns the .ecx file on disk (volume not mounted yet),
+//  3. any HDD with free space,
+//  4. any disk with free space.
+//
+// Step 2 is the missing primitive that pinned subsequent shards to the
+// first-shard disk during ec.rebuild. ec.rebuild only sets CopyEcxFile=true
+// for the first shard, then relies on auto-select to land later shards on
+// the same disk. Without an on-disk check, FindEcVolume returns nothing
+// (no mount yet) and the fallback picks "any HDD with free space" — which
+// can split shards from their index files across disks of the same node
+// and lose them at startup. See issue #9212 and the orphan-shard
+// reconciliation in #9244.
+//
+// dataShardCount is the data-shard count for this volume's EC layout (10
+// for the OSS default, but custom ratios are supported via .vif). Callers
+// pass it explicitly so this helper stays free of package-level constants
+// — easier to mirror into builds that ship a different default ratio.
+//
+// Implementation walks s.Locations once and scores each disk by tier; the
+// highest-tier disk wins, ties broken by free count. The earlier waterfall
+// across four FindFreeLocation passes was equivalent but acquired
+// volumesLock and ecVolumesLock RLocks (via VolumesLen / EcShardCount) up
+// to four times per disk per call.
+func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId, dataShardCount int) *DiskLocation {
+	const (
+		tierAnyDisk = iota + 1
+		tierHDD
+		tierEcxOnDisk
+		tierMounted
+	)
+
+	var (
+		best     *DiskLocation
+		bestTier int
+		bestFree int32
+	)
+	for _, loc := range s.Locations {
+		if loc.isDiskSpaceLow {
+			continue
+		}
+		freeCount := ecFreeShardCount(loc, dataShardCount)
+		if freeCount <= 0 {
+			continue
+		}
+		tier := tierAnyDisk
+		if loc.DiskType == types.HardDriveType {
+			tier = tierHDD
+		}
+		if loc.HasEcxFileOnDisk(collection, vid) {
+			tier = tierEcxOnDisk
+		}
+		if _, mounted := loc.FindEcVolume(vid); mounted {
+			tier = tierMounted
+		}
+		if best == nil || tier > bestTier || (tier == bestTier && freeCount > bestFree) {
+			best = loc
+			bestTier = tier
+			bestFree = freeCount
+		}
+	}
+	return best
+}
+
+// ecFreeShardCount returns the free EC shard capacity of loc, expressed
+// in shard slots (not volume-equivalent slots). dataShardCount is the
+// data-shard count of the EC layout being placed — see
+// FindEcShardTargetLocation's docstring for why it's a parameter.
+//
+// FindFreeLocation in store.go does the same math but divides by
+// DataShardsCount at the end. That truncation can exclude a disk that
+// still has room for several individual shards (e.g. MaxVolumeCount=1,
+// EcShardCount=1, dataShardCount=10 → reports 0 despite 9 free shard
+// slots), which in this helper would re-route subsequent shards off the
+// .ecx-owning disk and re-introduce the orphan-shard layout #9212 is
+// trying to prevent. So we keep the result in shard slots throughout.
+//
+// MaxVolumeCount == 0 is the "unlimited" sentinel used elsewhere in the
+// store (see hasFreeDiskLocation). Reporting a synthetic large free
+// count keeps unlimited disks eligible while still letting tie-breaks
+// prefer the less-loaded one.
+func ecFreeShardCount(loc *DiskLocation, dataShardCount int) int32 {
+	if dataShardCount <= 0 {
+		return 0
+	}
+	if loc.MaxVolumeCount <= 0 {
+		const unlimitedFree = int32(1 << 30)
+		used := int32(loc.VolumesLen())*int32(dataShardCount) + int32(loc.EcShardCount())
+		if used >= unlimitedFree {
+			return 1
+		}
+		return unlimitedFree - used
+	}
+	free := (loc.MaxVolumeCount - int32(loc.VolumesLen())) * int32(dataShardCount)
+	free -= int32(loc.EcShardCount())
+	if free < 0 {
+		return 0
+	}
+	return free
+}
+
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
 	collectionEcShardSize := make(map[string]int64)

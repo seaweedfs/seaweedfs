@@ -92,6 +92,28 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 	return nil, false
 }
 
+// HasEcxFileOnDisk reports whether this disk has a sealed .ecx index file
+// for the given (collection, vid). Unlike FindEcVolume this does not
+// require the EC volume to be mounted in memory, which makes it the right
+// primitive for placement decisions during ec.balance / ec.rebuild flows
+// where shards may arrive before any mount has happened on the receiving
+// disk. Without checking the on-disk state, auto-select can split shards
+// from the .ecx that travels with the first shard, which is the source of
+// the orphan-shard layout reported in #9212.
+func (l *DiskLocation) HasEcxFileOnDisk(collection string, vid needle.VolumeId) bool {
+	idxBase := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
+	if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() {
+		return true
+	}
+	if l.IdxDirectory != l.Directory {
+		dataBase := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
+		if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, error) {
 
 	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
