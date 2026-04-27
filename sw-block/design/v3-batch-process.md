@@ -228,3 +228,31 @@ Based on what actually worked across T4 + G5:
 **Edge case — process changes (this doc):** QA proposes; architect signs (same as any scope-affecting change).
 
 **Edge case — hotfix-class** (per §6.3): sw can self-author + self-merge with QA spot-review. Architect ratifies if invariant-affecting.
+
+---
+
+## §15 Inter-agent communication discipline
+
+Every response from QA, sw, or architect MUST end with an explicit per-agent action list. The user routes messages between agents — communication overhead is real cost.
+
+**Mandatory format at end of every substantive response:**
+
+```
+## Next actions
+
+| Agent | Action |
+|---|---|
+| **architect** | <specific action OR "none — standing by"> |
+| **sw** | <specific action OR "none — standing by"> |
+| **QA** | <specific action OR "none — standing by"> |
+```
+
+Rules:
+1. Every agent gets a row, even if "none — standing by"
+2. Actions must be **concrete + executable** ("commit X", "review Y", "decide path A vs B"), NOT vague ("consider Z")
+3. If an action depends on another agent's prior action, name the dependency: "after sw lands G5-5, run -race ×10 on m01"
+4. Skip the table only for genuinely no-decision-needed acknowledgements (e.g., one-line confirmations)
+
+**Why**: user's current load is ~90% copy-paste routing between agents. Explicit per-agent action lists at end of every response cut routing time. Every agent reads "what's MY action" without parsing a wall of text.
+
+This rule applies to **every agent's outputs**, not just QA's. Sw + architect responses to QA reviews must end with the same per-agent action list.
