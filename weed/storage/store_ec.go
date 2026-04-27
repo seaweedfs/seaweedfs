@@ -89,10 +89,18 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 	return best
 }
 
-// ecFreeShardCount mirrors the free-slot calculation in FindFreeLocation
-// without re-acquiring the location's RLocks for every priority pass.
-// dataShardCount is the data-shard count of the EC layout being placed —
-// see FindEcShardTargetLocation's docstring for why it's a parameter.
+// ecFreeShardCount returns the free EC shard capacity of loc, expressed
+// in shard slots (not volume-equivalent slots). dataShardCount is the
+// data-shard count of the EC layout being placed — see
+// FindEcShardTargetLocation's docstring for why it's a parameter.
+//
+// FindFreeLocation in store.go does the same math but divides by
+// DataShardsCount at the end. That truncation can exclude a disk that
+// still has room for several individual shards (e.g. MaxVolumeCount=1,
+// EcShardCount=1, dataShardCount=10 → reports 0 despite 9 free shard
+// slots), which in this helper would re-route subsequent shards off the
+// .ecx-owning disk and re-introduce the orphan-shard layout #9212 is
+// trying to prevent. So we keep the result in shard slots throughout.
 //
 // MaxVolumeCount == 0 is the "unlimited" sentinel used elsewhere in the
 // store (see hasFreeDiskLocation). Reporting a synthetic large free
@@ -104,16 +112,17 @@ func ecFreeShardCount(loc *DiskLocation, dataShardCount int) int32 {
 	}
 	if loc.MaxVolumeCount <= 0 {
 		const unlimitedFree = int32(1 << 30)
-		used := int32(loc.VolumesLen()) + int32(loc.EcShardCount())/int32(dataShardCount)
+		used := int32(loc.VolumesLen())*int32(dataShardCount) + int32(loc.EcShardCount())
 		if used >= unlimitedFree {
 			return 1
 		}
 		return unlimitedFree - used
 	}
-	free := loc.MaxVolumeCount - int32(loc.VolumesLen())
-	free *= int32(dataShardCount)
+	free := (loc.MaxVolumeCount - int32(loc.VolumesLen())) * int32(dataShardCount)
 	free -= int32(loc.EcShardCount())
-	free /= int32(dataShardCount)
+	if free < 0 {
+		return 0
+	}
 	return free
 }
 

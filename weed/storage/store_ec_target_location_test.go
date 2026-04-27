@@ -112,6 +112,41 @@ func TestFindEcShardTargetLocation_HonoursUnlimitedDisk(t *testing.T) {
 	}
 }
 
+// TestFindEcShardTargetLocation_TightProvisioningKeepsEcxDisk pins the
+// truncation hazard PR #9245 review by @coderabbitai surfaced.
+//
+// With MaxVolumeCount=1, VolumesLen=0, and one EC shard already on the
+// disk, the previous formula (free = (1*10 - 1) / 10 = 0) would treat
+// the disk as full and route subsequent shards to a different disk —
+// exactly the orphan-shard layout this PR exists to prevent. The fix
+// keeps the free count in shard slots, so 9 free slots is reported as
+// 9 rather than rounded down to 0.
+func TestFindEcShardTargetLocation_TightProvisioningKeepsEcxDisk(t *testing.T) {
+	store := newEcTargetTestStore(t, 2)
+	store.Locations[0].MaxVolumeCount = 1
+	store.Locations[1].MaxVolumeCount = 1
+
+	collection := "grafana-loki"
+	vid := needle.VolumeId(5555)
+
+	// Seed disk 1 with a single EC shard for this volume so it owns the
+	// .ecx and has 9 free shard slots remaining; the old formula would
+	// have rounded that to 0.
+	loc1 := store.Locations[1]
+	loc1.ecVolumesLock.Lock()
+	loc1.ecVolumes[vid] = &erasure_coding.EcVolume{
+		VolumeId:   vid,
+		Collection: collection,
+		Shards:     []*erasure_coding.EcVolumeShard{{VolumeId: vid, ShardId: 0, Collection: collection}},
+	}
+	loc1.ecVolumesLock.Unlock()
+
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
+	if got != loc1 {
+		t.Errorf("expected the .ecx-owning disk (1 shard placed, 9 free shard slots) to be picked; got %v", got)
+	}
+}
+
 // newEcTargetTestStore is a leaner cousin of the helper in
 // store_load_balancing_test.go: it spins up an in-memory Store with N
 // HDD disk locations under a single t.TempDir and consumes any heartbeat
