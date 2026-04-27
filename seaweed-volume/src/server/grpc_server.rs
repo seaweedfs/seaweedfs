@@ -16,6 +16,7 @@ use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
+use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 
@@ -1436,8 +1437,14 @@ impl VolumeServer for VolumeGrpcService {
                                 break;
                             }
                             // disk_id=0 means "unset" (protobuf default), so auto-select
-                            // mirrors VolumeEcShardsCopy: prefer a disk already holding
-                            // this volume's shards, then any HDD, then any disk.
+                            // using the same primitive as volume_ec_shards_copy: prefer
+                            // a disk that has the EC volume mounted, then a disk that
+                            // owns the .ecx on disk (volume not yet mounted — relevant
+                            // when shards stream in mid-rebuild before any
+                            // VolumeEcShardsMount has happened; see #9212), then any
+                            // HDD, then any disk. Pass the build's default data-shard
+                            // count for free-slot maths; the helper takes it as a
+                            // parameter so custom-ratio builds can swap it.
                             let vid = VolumeId(info.volume_id);
                             let dir = if info.disk_id > 0 {
                                 let count = store.locations.len();
@@ -1450,17 +1457,13 @@ impl VolumeServer for VolumeGrpcService {
                                 }
                                 Some(store.locations[info.disk_id as usize].directory.clone())
                             } else {
-                                let loc_idx = store
-                                    .find_free_location_predicate(|loc| loc.has_ec_volume(vid))
-                                    .or_else(|| {
-                                        store.find_free_location_predicate(|loc| {
-                                            loc.disk_type == DiskType::HardDrive
-                                        })
-                                    })
-                                    .or_else(|| {
-                                        store.find_free_location_predicate(|_| true)
-                                    });
-                                loc_idx.map(|i| store.locations[i].directory.clone())
+                                store
+                                    .find_ec_shard_target_location(
+                                        &info.collection,
+                                        vid,
+                                        DATA_SHARDS_COUNT as u32,
+                                    )
+                                    .map(|i| store.locations[i].directory.clone())
                             };
                             drop(store);
                             let dir = match dir {
@@ -2250,9 +2253,17 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        // Select target location matching Go's 3-tier fallback:
-        // When disk_id > 0: use that specific location
-        // When disk_id == 0 (unset): (1) location with existing EC shards, (2) any HDD, (3) any
+        // Select target location:
+        //   When disk_id > 0: use that specific location.
+        //   When disk_id == 0 (unset): auto-select via
+        //   find_ec_shard_target_location, which prefers a disk that
+        //   already has the EC volume mounted, then a disk that owns the
+        //   .ecx on disk (volume not yet mounted — relevant for
+        //   ec.rebuild, where only the first shard carries .ecx and
+        //   subsequent shards must land on the same disk; see #9212),
+        //   then any HDD, then any disk. Pass the build's default
+        //   data-shard count; the helper takes it as a parameter so
+        //   custom-ratio builds can swap it.
         let (dest_dir, dest_idx_dir) = {
             let store = self.state.store.read().unwrap();
             let count = store.locations.len();
@@ -2268,20 +2279,11 @@ impl VolumeServer for VolumeGrpcService {
                 let loc = &store.locations[req.disk_id as usize];
                 (loc.directory.clone(), loc.idx_directory.clone())
             } else {
-                // Auto-select: prefer location with existing EC shards for this volume
-                let loc_idx = store
-                    .find_free_location_predicate(|loc| loc.has_ec_volume(vid))
-                    .or_else(|| {
-                        // Fall back to any HDD location
-                        store.find_free_location_predicate(|loc| {
-                            loc.disk_type == DiskType::HardDrive
-                        })
-                    })
-                    .or_else(|| {
-                        // Fall back to any location
-                        store.find_free_location_predicate(|_| true)
-                    });
-                match loc_idx {
+                match store.find_ec_shard_target_location(
+                    &req.collection,
+                    vid,
+                    DATA_SHARDS_COUNT as u32,
+                ) {
                     Some(i) => {
                         let loc = &store.locations[i];
                         (loc.directory.clone(), loc.idx_directory.clone())
