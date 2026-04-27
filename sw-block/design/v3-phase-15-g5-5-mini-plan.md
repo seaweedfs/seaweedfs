@@ -1,7 +1,7 @@
 # V3 Phase 15 — G5-5 (m01 Hardware First-Light + L3 Integration) Mini-Plan
 
-**Date**: 2026-04-26 (v0.3 — §2 acceptance criteria rewritten per architect REVISE round 51-followup; §2 was stale in v0.2 even though §1 body absorbed the bindings)
-**Status**: DRAFT v0.3 — re-submitted for architect §1-§6 ratification. §2 is now the SINGLE SOURCE OF TRUTH for close evidence per `v3-batch-process.md §2`; v0.3 ensures §2 wording matches §1 scope (no drift between the two)
+**Date**: 2026-04-26 (v0.3 — §2 acceptance criteria rewritten per architect REVISE round 51-followup) / **§close appended 2026-04-27 — awaiting architect single-sign**
+**Status**: §close submitted; awaiting architect single-sign per `v3-batch-process.md §5` + §8C.2 (round 14 close decision: 3 of 4 verify steps GREEN on m01 hardware; #4 → G5-5C carry-forward, architect-bound 2026-04-27)
 **Owner**: sw (script + Go driver); QA (m01 verification + scenario authoring)
 **Process**: First trial of compressed `v3-batch-process.md` (one doc, §close appended at batch close)
 **Predecessors**: G5-4 closed (`seaweed_block@c820e17` + `seaweedfs@36ba7b44e`); 5 INV-BIN-WIRING-* invariants ACTIVE in ledger; `--expected-slots-per-volume` flag landed (`f5de7c5`)
@@ -79,20 +79,19 @@ No new truth-domain owner. G5-5 verifies the existing truth-domain map (§4) at 
 
 G5-5 verifies existing invariants on real hardware; it does NOT inscribe new INVs (verification batches don't add invariants — they upgrade existing ones from "component-only" to "Integration-verified" status in the ledger).
 
-**Invariants whose ledger row updates at G5-5 close:**
+**Invariants whose ledger row updated at G5-5 §close (landed 2026-04-27):**
 
-| INV ID | Ledger row update |
-|---|---|
-| `INV-BIN-WIRING-ROLE-FROM-ASSIGNMENT` | Add `iterate-m01-replicated-write.sh` evidence pointer; `Last verified` → 2026-04-DD |
-| `INV-BIN-WIRING-PEER-SET-FROM-ASSIGNMENT-FACT` | Same pattern |
-| `INV-BIN-WIRING-LISTENER-LIFECYCLE-LIFO` | Same pattern |
-| `INV-BIN-WIRING-ASSIGNMENT-DRIVES-MEMBERPRESENT` | Same pattern |
-| `INV-BIN-WIRING-SESSIONID-VIA-ADAPTER` | Same pattern |
-| `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` | Add m01 catch-up scenario as Integration evidence |
-| `INV-REPL-LSN-ORDER-FANOUT-001` (T4a-4) | Add m01 byte-equal evidence as Integration |
-| (any other relevant T4 invariants the catch-up scenario exercises) | sw + QA enumerate at §close |
+| INV ID | Ledger row update | Status |
+|---|---|---|
+| `INV-BIN-WIRING-ROLE-FROM-ASSIGNMENT` | `Last verified` → 2026-04-27 (G5-5 §close — Tier 2 m01 cross-node hardware Integration backstop: `seaweed_block@5c4718f` rounds 1-14) | ✅ ledger updated |
+| `INV-BIN-WIRING-PEER-SET-FROM-ASSIGNMENT-FACT` | Same | ✅ ledger updated |
+| `INV-BIN-WIRING-LISTENER-LIFECYCLE-LIFO` | Same | ✅ ledger updated |
+| `INV-BIN-WIRING-ASSIGNMENT-DRIVES-MEMBERPRESENT` | Same | ✅ ledger updated |
+| `INV-BIN-WIRING-SESSIONID-VIA-ADAPTER` | Same | ✅ ledger updated |
+| `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` | m01 #3 network-disconnect catch-up exercises path; ledger pointer addition deferred to G5-5C close (where the matching test rerun lands as Integration evidence) | ⏳ G5-5C |
+| `INV-REPL-LSN-ORDER-FANOUT-001` (T4a-4) | m01 #2 byte-equal write exercises path; ledger pointer addition deferred to G5-5C close to package both #2 + #4 evidence as one Integration row update | ⏳ G5-5C |
 
-**New INV considered + rejected:** none — verification batches don't introduce new claims.
+**New INV considered + rejected:** none — verification batches don't introduce new claims. G5-5 surfaces a real product finding (peer-recovery trigger after replica restart) which becomes G5-5C scope; the corresponding INV (engine-driven peer recovery re-trigger) is authored at G5-5C close, not here.
 
 ---
 
@@ -109,7 +108,7 @@ G5-4 explicitly deferred to G5-5:
 | G5-4 criterion | G5-5 absorption |
 |---|---|
 | #3 Byte-equal primary→replica via real frontend write | G5-5 §2 #2 (storage-aware verifier per architect REVISE binding round 51) |
-| #4 Stop-restart catch-up convergence | **Split per architect REVISE binding round 51**: network disconnect proves live TCP interruption + recovery (G5-5 §2 #3); process restart proves durable reopen + master resubscribe + recovery reconstruction (G5-5 §2 #4). Both paths consumed by G5-5; neither carries forward. |
+| #4 Stop-restart catch-up convergence | **Split per architect REVISE binding round 51**: network disconnect proves live TCP interruption + recovery (G5-5 §2 #3 — **GREEN on m01 hardware** at round 14, `seaweed_block@5c4718f`); process restart proves durable reopen + master resubscribe + recovery reconstruction (G5-5 §2 #4 — **FAILED on m01 hardware**: replica's LBA[2] does not converge in 30s after restart; primary's `gate-degraded` rejects ships without retry, no runtime trigger re-establishes the peer). **Partially consumed**: network-disconnect path absorbed by G5-5 #3; process-restart path **carries forward to G5-5C** per architect ruling 2026-04-27 (real recovery-path finding, not test flaw). |
 | #6 10× `-race` stress on G5-4 integration test | G5-5 §2 #5 |
 
 Plus the broader G5-4 wiring claim — that the binary-level T4 replication stack composes — gets m01 hardware verification at G5-5 §2 #1 (cluster reaches role-appropriate ready state on real hardware, not subprocess-only).
@@ -326,10 +325,10 @@ To **G5-6** (G5-DECISION-001 close):
 
 ---
 
-## Next actions
+## Next actions (post-§close)
 
 | Agent | Action |
 |---|---|
-| **architect** | Review + ratify §1-§6 of this mini-plan per `v3-batch-process.md §5` (compressed sign cycle: one ratification at start, one at close). Specifically check §1 architecture touchpoints, §2 acceptance criteria coverage, §3 invariant update plan, §6 risks. If §6.3 hotfix-class scope (1-line fix), architect can defer ratification — but G5-5 is ~280 LOC, not hotfix-class, so full §1-§6 ratification expected. |
-| **sw** | After architect ratifies §1-§6: write `scripts/iterate-m01-replicated-write.sh` + `cmd/blockvolume/m01_verify_helper.go` (build-tag `m01verify`). Estimate: ~280 LOC + 1-2 commits. Hand off to QA for m01 run. |
-| **QA** | Run §12 architect review checklist on this mini-plan now (BEFORE forwarding to architect per `v3-batch-process.md §14`); flag any scope/V2/engine/usability concerns. After sw lands script + helper: run on m01, capture artifacts, draft §close evidence pointers (sw + QA co-author per §14). |
+| **architect** | Single-sign §close per `v3-batch-process.md §5` + §8C.2. After sign: ratify G5-5C kickoff/mini-plan when sw drafts (architect bindings already supplied 2026-04-27: reuse engine-driven primitives; define trigger source first; pass criterion = G5-5 #4 failed hardware case). |
+| **sw** | After architect §close sign: (1) update `v3-dev-roadmap.md` for the gate-close per `v3-batch-process.md §8` (G5-5 → CLOSED with G5-5C carry-forward; mark G5-5C as next batch); (2) draft G5-5C mini-plan; (3) optional opportunistic unit test for `EnsureStorage → assignment-arrives → first-Open` Identity-latch round-trip (would have caught round 10/11 bug pre-m01). |
+| **QA** | Optional clean Tier 2 evidence run on `seaweed_block@5c4718f` for §close artifacts; package `g5-artifacts/` as §close evidence record. Standing by for G5-5C mini-plan review when sw drafts. |
