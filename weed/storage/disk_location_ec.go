@@ -395,21 +395,29 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 
 // calculateExpectedShardSize computes the exact expected shard size based on .dat file size
 // The EC encoding process is deterministic:
-// 1. Data is processed in batches of (LargeBlockSize * DataShardsCount) for large blocks
-// 2. Remaining data is processed in batches of (SmallBlockSize * DataShardsCount) for small blocks
+// 1. Data is processed in batches of (LargeBlockSize * dataShardCount) for large blocks
+// 2. Remaining data is processed in batches of (SmallBlockSize * dataShardCount) for small blocks
 // 3. Each shard gets exactly its portion, with zero-padding applied to incomplete blocks
-func calculateExpectedShardSize(datFileSize int64) int64 {
+//
+// dataShardCount is taken as a parameter rather than read from
+// erasure_coding.DataShardsCount so that tests writing a custom layout
+// to .vif compute the matching shard size, and so custom-ratio builds
+// (e.g. enterprise) can swap the default without touching this helper.
+func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
+	if dataShardCount <= 0 {
+		return 0
+	}
 	var shardSize int64
 
-	// Process large blocks (1GB * 10 = 10GB batches)
-	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(erasure_coding.DataShardsCount)
+	// Process large blocks (1GB * dataShardCount per batch)
+	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(dataShardCount)
 	numLargeBatches := datFileSize / largeBatchSize
 	shardSize = numLargeBatches * int64(erasure_coding.ErasureCodingLargeBlockSize)
 	remainingSize := datFileSize - (numLargeBatches * largeBatchSize)
 
-	// Process remaining data in small blocks (1MB * 10 = 10MB batches)
+	// Process remaining data in small blocks (1MB * dataShardCount per batch)
 	if remainingSize > 0 {
-		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(erasure_coding.DataShardsCount)
+		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(dataShardCount)
 		numSmallBatches := (remainingSize + smallBatchSize - 1) / smallBatchSize // Ceiling division
 		shardSize += numSmallBatches * int64(erasure_coding.ErasureCodingSmallBlockSize)
 	}
@@ -429,10 +437,13 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	var expectedShardSize int64 = -1
 	datExists := false
 
-	// If .dat file exists, compute exact expected shard size from it
+	// If .dat file exists, compute exact expected shard size from it.
+	// Pass the build's default data-shard count; calculateExpectedShardSize
+	// takes it as a parameter so tests / enterprise builds can supply
+	// their own.
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
 		datExists = true
-		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size())
+		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), erasure_coding.DataShardsCount)
 	} else if !os.IsNotExist(err) {
 		// If stat fails with unexpected error (permission, I/O), fail validation
 		// Don't treat this as "distributed EC" - it could be a temporary error

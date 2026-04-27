@@ -47,7 +47,7 @@ func TestLoadEcShardsWhenIndexFilesOnDifferentDisk(t *testing.T) {
 	// Use a small but realistic shard size so calculateExpectedShardSize
 	// validation lines up with the .dat-derived size if it ever runs.
 	const datSize int64 = 10 * 1024 * 1024
-	expectedShardSize := calculateExpectedShardSize(datSize)
+	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
 
 	writeShard := func(dir string, shardId int) {
 		t.Helper()
@@ -184,8 +184,9 @@ func TestLoadEcShardsOrphanWithoutSiblingEcx(t *testing.T) {
 
 	collection := "grafana-loki"
 	vid := needle.VolumeId(2222)
+	const dataShards = 10
 	const datSize int64 = 10 * 1024 * 1024
-	expectedShardSize := calculateExpectedShardSize(datSize)
+	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
 
 	base0 := erasure_coding.EcShardFileName(collection, dir0, int(vid))
 	for _, sid := range []int{0, 12} {
@@ -265,7 +266,7 @@ func TestReconcileNoOpWhenEachDiskIsSelfContained(t *testing.T) {
 	vid := needle.VolumeId(3333)
 	const dataShards, parityShards = 10, 4
 	const datSize int64 = 10 * 1024 * 1024
-	expectedShardSize := calculateExpectedShardSize(datSize)
+	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
 
 	writeFullEcLayout := func(dir string, shardIds []int) {
 		base := erasure_coding.EcShardFileName(collection, dir, int(vid))
@@ -371,7 +372,7 @@ func TestLoadEcShardsWhenOwnerEcxIsInDataDir(t *testing.T) {
 	vid := needle.VolumeId(4242)
 	const dataShards, parityShards = 10, 4
 	const datSize int64 = 10 * 1024 * 1024
-	expectedShardSize := calculateExpectedShardSize(datSize)
+	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
 
 	writeShard := func(dir string, shardId int) {
 		t.Helper()
