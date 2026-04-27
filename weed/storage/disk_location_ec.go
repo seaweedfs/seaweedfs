@@ -102,12 +102,12 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 // the orphan-shard layout reported in #9212.
 func (l *DiskLocation) HasEcxFileOnDisk(collection string, vid needle.VolumeId) bool {
 	idxBase := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
-	if _, err := os.Stat(idxBase + ".ecx"); err == nil {
+	if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() {
 		return true
 	}
 	if l.IdxDirectory != l.Directory {
 		dataBase := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
-		if _, err := os.Stat(dataBase + ".ecx"); err == nil {
+		if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() {
 			return true
 		}
 	}
