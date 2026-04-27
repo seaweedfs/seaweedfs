@@ -38,7 +38,7 @@ G1  Master-volume RPC             ✅ closed (T0/T1 implementation)
 G2  Frontend smoke                ✅ closed (T1/T2)
 G3  Real frontends iSCSI+NVMe     ✅ closed (T2)
 G4  Local durable data path       ✅ closed (T3)
-G5  Replicated write path         🟡 closing (T4 done; G5-1..6 close work; G5-4 just closed)
+G5  Replicated write path         🟡 closing (T4 done; G5-1..6 close work; G5-5 just closed at L3, G5-5C carry-forward)
 G6  Incremental WAL catch-up      ⏳ next (T4c muscle done, mostly verification)
 G7  Rebuild / replica re-creation ⏳ (T4d-4 part B/C scaffolding done)
 G8  Failover data continuity      ⏳
@@ -71,7 +71,8 @@ G22 Final cluster validation      ⏳ (release gate; P15 closes here)
 | ↳ G5-2 walstore cadence smoke | ⏳ sw cleared, not started |
 | ↳ G5-3 metrics/backpressure | ⏳ sw cleared, not started |
 | ↳ G5-4 binary T4 wiring | ✅ **CLOSED** at `seaweedfs@daafc8e25` (mini-plan v0.5) |
-| ↳ G5-5 m01 hardware first-light | ▶️ unblocked by G5-4; QA + sw next |
+| ↳ G5-5 m01 hardware first-light | ✅ **CLOSED** at `seaweedfs@c78116fd2` — Product level **L3 Replicated IO** reached on m01/M02 hardware (#1/#2/#3 GREEN; #4 carried to G5-5C) |
+| ↳ G5-5C peer recovery trigger after replica restart | ▶️ **next** — pass criterion bound: G5-5 #4 hardware case (kill replica + write while down + restart same `--durable-root` + byte-equal converges within deadline) |
 | ↳ G5-6 G5-DECISION-001 + closure report | ⏳ at G5 collective close |
 
 ---
@@ -120,6 +121,7 @@ For any specific question, go to the canonical doc:
 | T4d closure report | 2026-04-25 | `seaweedfs@2ee12b2c1` | T4 batch series CLOSED |
 | T2A NVMe race fix | 2026-04-25 | `seaweed_block@a0be6d5` | atomic.Pointer test fixture; -race ×50 PASS |
 | G5-4 binary T4 wiring | 2026-04-26 | `seaweed_block@c820e17` + ledger `seaweedfs@36ba7b44e` + close-lock `daafc8e25` | binary now wires T4 stack; criteria 3+4 relocated to G5-5 |
+| G5-5 m01 hardware first-light | 2026-04-27 | `seaweed_block@5c4718f` + close-doc `seaweedfs@c78116fd2` | L3 Replicated IO on m01/M02 hardware: #1 cluster role split GREEN, #2 live iSCSI replicated write byte-equal GREEN, #3 network partition + heal catch-up GREEN (8s); #4 replica-restart catch-up carried to G5-5C as real recovery-path finding |
 
 ---
 
