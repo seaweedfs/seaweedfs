@@ -1,6 +1,7 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.4.5 — doc-hygiene cleanup of v0.1/v0.2 residue + probe loop placement bound to `core/replication/` per architect ruling 2026-04-27; design unchanged from v0.4)
+**Date**: 2026-04-27 (v0.5 — §1-§6 SINGLE-SIGNED at `seaweedfs@ba7bd0ba4`; pivots §1.A sw recommendation to Option B + adds §1 scope-rule one-liner per architect close-out 2026-04-27)
+**Single-sign**: ✅ **architect signed §1-§6 at `seaweedfs@ba7bd0ba4` 2026-04-27** with Option B bound and probe loop placement = `core/replication/` / `ReplicationVolume` lifecycle. §1.H audit is the next gate before code.
 **Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5`
 **Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (primary-side probe loop + recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
@@ -16,6 +17,8 @@
 ---
 
 ## §1 Scope
+
+> **Scope-rule (architect-bound 2026-04-27)**: *master owns identity / topology; primary + engine own data recovery; the protocol aligns the two via `(PeerSetGeneration, epoch, EndpointVersion)` fences.* G5-5C lives entirely on the primary/engine side under this rule.
 
 G5-5 surfaced a **real recovery-path finding** during hardware verification step #4: when a replica process is killed mid-write, restarted against the same `--durable-root`, and rejoins the cluster, it never receives the LSNs the primary wrote during the down window. The replica reopens its durable storage, resubscribes to the master, and is observed back — but the primary's shipper for that peer remains in `ReplicaDegraded`, and `gate-degraded` rejects ships without retry. The barrier acks at the stale `achievedLSN` of the moment the peer went down. Engine-driven catch-up primitives (T4d-4) exist, but no runtime trigger fires them when a degraded peer becomes reachable again.
 
