@@ -865,9 +865,16 @@ fn parse_collection_volume_id(base: &str) -> Option<(String, VolumeId)> {
     }
 }
 
-/// Recognise EC shard extensions `.ec00`–`.ec999` and return the shard
-/// id. Returns `None` for any other extension. Matches the regex
-/// `\.ec\d{2,3}` from the Go side.
+/// Recognise EC shard extensions `.ec00`–`.ec255` (the ShardId u8
+/// range — see `EcVolumeShard`'s typed shard id) and return the
+/// shard id. Returns `None` for any other extension.
+///
+/// Matches the regex `\.ec\d{2,3}` from the Go side, with the same
+/// per-shard `id <= 255` clamp Go's loader applies via
+/// `strconv.ParseInt(... 10, 64)` followed by the `if shardId < 0 ||
+/// shardId > 255` guard. The 3-digit form (`.ec100`–`.ec255`) is
+/// retained so the parser can still recognise shards from custom
+/// 32+ ratios that fit in a u8 even though OSS only ships 10+4.
 fn parse_ec_shard_extension(ext: &str) -> Option<u32> {
     let rest = ext.strip_prefix(".ec")?;
     if rest.len() < 2 || rest.len() > 3 {
