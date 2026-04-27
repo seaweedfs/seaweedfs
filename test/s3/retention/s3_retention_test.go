@@ -3,6 +3,9 @@ package retention
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -18,24 +21,26 @@ import (
 
 // S3TestConfig holds configuration for S3 tests
 type S3TestConfig struct {
-	Endpoint      string
-	AccessKey     string
-	SecretKey     string
-	Region        string
-	BucketPrefix  string
-	UseSSL        bool
-	SkipVerifySSL bool
+	Endpoint       string
+	MasterEndpoint string
+	AccessKey      string
+	SecretKey      string
+	Region         string
+	BucketPrefix   string
+	UseSSL         bool
+	SkipVerifySSL  bool
 }
 
 // Default test configuration - should match test_config.json
 var defaultConfig = &S3TestConfig{
-	Endpoint:      "http://localhost:8333", // Default SeaweedFS S3 port
-	AccessKey:     "some_access_key1",
-	SecretKey:     "some_secret_key1",
-	Region:        "us-east-1",
-	BucketPrefix:  "test-retention-",
-	UseSSL:        false,
-	SkipVerifySSL: true,
+	Endpoint:       "http://localhost:8333", // Default SeaweedFS S3 port
+	MasterEndpoint: "http://localhost:9333", // Default SeaweedFS master HTTP port
+	AccessKey:      "some_access_key1",
+	SecretKey:      "some_secret_key1",
+	Region:         "us-east-1",
+	BucketPrefix:   "test-retention-",
+	UseSSL:         false,
+	SkipVerifySSL:  true,
 }
 
 // getS3Client creates an AWS S3 client for testing
@@ -105,7 +110,13 @@ func deleteBucket(t *testing.T, client *s3.Client, bucketName string) {
 	// Wait a bit for eventual consistency
 	time.Sleep(100 * time.Millisecond)
 
-	// Try to delete the bucket multiple times in case of eventual consistency issues
+	// Try to delete the bucket multiple times in case of eventual consistency issues.
+	// Always force-drop the underlying collection at the master afterwards: COMPLIANCE-mode
+	// retention can leave undeletable objects, so the S3 DeleteBucket may keep failing with
+	// BucketNotEmpty and leak the collection's volumes. Without this, running enough tests
+	// on a single `weed mini` server exhausts the data node's volume slots and every
+	// subsequent PutObject 500s with "Not enough data nodes found".
+	defer forceDeleteCollection(t, bucketName)
 	for retries := 0; retries < 3; retries++ {
 		_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
 			Bucket: aws.String(bucketName),
@@ -119,6 +130,39 @@ func deleteBucket(t *testing.T, client *s3.Client, bucketName string) {
 		if retries < 2 {
 			time.Sleep(200 * time.Millisecond)
 		}
+	}
+}
+
+// forceDeleteCollection drops the SeaweedFS collection backing a test bucket via the master's
+// /col/delete admin endpoint. The S3 layer normally drops the collection on DeleteBucket, but
+// when retention/legal-hold blocks the bucket cleanup, the collection (and its reserved
+// volumes) leaks. Best-effort: a 400 from the master means the collection was already gone,
+// which is the success path and not an error.
+func forceDeleteCollection(t *testing.T, bucketName string) {
+	if defaultConfig.MasterEndpoint == "" {
+		return
+	}
+	endpoint := strings.TrimRight(defaultConfig.MasterEndpoint, "/") + "/col/delete?collection=" + url.QueryEscape(bucketName)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Logf("Note: building collection delete request for %s failed: %v", bucketName, err)
+		return
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Logf("Note: force-delete collection %s failed: %v", bucketName, err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		t.Logf("Force-deleted collection %s", bucketName)
+	case http.StatusBadRequest:
+		// Collection already gone - normal path when DeleteBucket succeeded.
+	default:
+		t.Logf("Note: force-delete collection %s returned HTTP %d", bucketName, resp.StatusCode)
 	}
 }
 
