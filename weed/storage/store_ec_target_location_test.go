@@ -11,6 +11,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// dataShardCount is the data-shard count threaded into
+// FindEcShardTargetLocation by these tests. Kept as a literal so the test
+// stays valid when enterprise builds use a different default ratio.
+const dataShardCount = 10
+
 // TestFindEcShardTargetLocation_PinsToEcxOnDisk reproduces the placement
 // half of issue #9212. ec.rebuild copies the .ecx alongside the first
 // shard, then sends subsequent shards with CopyEcxFile=false relying on
@@ -35,7 +40,7 @@ func TestFindEcShardTargetLocation_PinsToEcxOnDisk(t *testing.T) {
 		t.Fatalf("seed .ecx on disk 2: %v", err)
 	}
 
-	got := store.FindEcShardTargetLocation(collection, vid)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
 	if got == nil {
 		t.Fatalf("FindEcShardTargetLocation returned nil; expected disk 2")
 	}
@@ -66,7 +71,7 @@ func TestFindEcShardTargetLocation_PrefersMountedOverEcx(t *testing.T) {
 		t.Fatalf("seed .ecx on disk 2: %v", err)
 	}
 
-	got := store.FindEcShardTargetLocation(collection, vid)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
 	if got != loc1 {
 		t.Errorf("placement should follow mounted EC volume on disk 1, got %v", got)
 	}
@@ -80,7 +85,7 @@ func TestFindEcShardTargetLocation_FallsThroughToHddWhenNothingMatches(t *testin
 	collection := "grafana-loki"
 	vid := needle.VolumeId(3333)
 
-	got := store.FindEcShardTargetLocation(collection, vid)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
 	if got == nil {
 		t.Fatalf("FindEcShardTargetLocation returned nil; expected an HDD fallback")
 	}

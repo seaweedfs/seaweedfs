@@ -39,12 +39,17 @@ import (
 // and lose them at startup. See issue #9212 and the orphan-shard
 // reconciliation in #9244.
 //
+// dataShardCount is the data-shard count for this volume's EC layout (10
+// for the OSS default, but custom ratios are supported via .vif). Callers
+// pass it explicitly so this helper stays free of package-level constants
+// — easier to mirror into builds that ship a different default ratio.
+//
 // Implementation walks s.Locations once and scores each disk by tier; the
 // highest-tier disk wins, ties broken by free count. The earlier waterfall
 // across four FindFreeLocation passes was equivalent but acquired
 // volumesLock and ecVolumesLock RLocks (via VolumesLen / EcShardCount) up
 // to four times per disk per call.
-func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId) *DiskLocation {
+func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId, dataShardCount int) *DiskLocation {
 	const (
 		tierAnyDisk = iota + 1
 		tierHDD
@@ -61,7 +66,7 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 		if loc.isDiskSpaceLow {
 			continue
 		}
-		freeCount := ecFreeShardCount(loc)
+		freeCount := ecFreeShardCount(loc, dataShardCount)
 		if freeCount <= 0 {
 			continue
 		}
@@ -86,11 +91,16 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 
 // ecFreeShardCount mirrors the free-slot calculation in FindFreeLocation
 // without re-acquiring the location's RLocks for every priority pass.
-func ecFreeShardCount(loc *DiskLocation) int32 {
+// dataShardCount is the data-shard count of the EC layout being placed —
+// see FindEcShardTargetLocation's docstring for why it's a parameter.
+func ecFreeShardCount(loc *DiskLocation, dataShardCount int) int32 {
+	if dataShardCount <= 0 {
+		return 0
+	}
 	free := loc.MaxVolumeCount - int32(loc.VolumesLen())
-	free *= erasure_coding.DataShardsCount
+	free *= int32(dataShardCount)
 	free -= int32(loc.EcShardCount())
-	free /= erasure_coding.DataShardsCount
+	free /= int32(dataShardCount)
 	return free
 }
 

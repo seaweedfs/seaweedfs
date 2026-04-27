@@ -588,7 +588,10 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 					}
 					targetLocation = vs.store.Locations[fileInfo.DiskId]
 				} else {
-					targetLocation = vs.store.FindEcShardTargetLocation(fileInfo.Collection, needle.VolumeId(fileInfo.VolumeId))
+					// Pass the build's default data-shard count for the helper's
+					// free-slot maths; it's a parameter so custom-ratio builds
+					// (e.g. enterprise) can swap it without touching this file.
+					targetLocation = vs.store.FindEcShardTargetLocation(fileInfo.Collection, needle.VolumeId(fileInfo.VolumeId), erasure_coding.DataShardsCount)
 				}
 				if targetLocation == nil {
 					glog.Errorf("ReceiveFile: no storage location available")

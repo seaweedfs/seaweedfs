@@ -262,7 +262,10 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		// volume hasn't been mounted yet — relevant for ec.rebuild, where
 		// only the first shard carries .ecx and subsequent shards must
 		// land on the same disk; see #9212), then any HDD, then any disk.
-		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId))
+		// Pass the build's default data-shard count for free-slot maths;
+		// the helper takes it as a parameter so custom-ratio builds (e.g.
+		// enterprise) can swap it without touching this file.
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount)
 		if location == nil {
 			return nil, fmt.Errorf("no space left")
 		}
