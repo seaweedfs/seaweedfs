@@ -724,13 +724,19 @@ impl DiskLocation {
 
         let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
         if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids) {
+            // mount_ec_shards adds shards one at a time and increments
+            // the per-shard metric for each. If it fails halfway, plain
+            // ec_volumes.remove(vid) would leak metric increments for
+            // the shards that did mount. Drive cleanup through
+            // unmount_ec_shards which mirror-decrements the metric, then
+            // the empty EcVolume drops itself.
             if dat_exists {
                 warn!(
                     volume_id = vid.0,
                     "Failed to load EC shards and .dat exists ({}), cleaning up EC files to use .dat",
                     e,
                 );
-                let _ = self.ec_volumes.remove(&vid);
+                self.unmount_ec_shards(vid, &shard_ids);
                 self.remove_ec_volume_files(collection, vid);
             } else {
                 warn!(
@@ -738,7 +744,7 @@ impl DiskLocation {
                     "Failed to load EC shards: {} (this may be normal for distributed EC volumes)",
                     e,
                 );
-                let _ = self.ec_volumes.remove(&vid);
+                self.unmount_ec_shards(vid, &shard_ids);
             }
         }
     }
