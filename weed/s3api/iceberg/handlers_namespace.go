@@ -144,7 +144,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	result := CreateNamespaceResponse{
 		Namespace:  Namespace(createResp.Namespace),
-		Properties: normalizeNamespaceProperties(createResp.Properties),
+		Properties: withDefaultNamespaceLocation(createResp.Properties, bucketName, createResp.Namespace),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -188,7 +188,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 
 	result := GetNamespaceResponse{
 		Namespace:  Namespace(getResp.Namespace),
-		Properties: normalizeNamespaceProperties(getResp.Properties),
+		Properties: withDefaultNamespaceLocation(getResp.Properties, bucketName, getResp.Namespace),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
