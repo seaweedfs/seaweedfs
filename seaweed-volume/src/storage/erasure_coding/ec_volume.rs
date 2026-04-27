@@ -351,6 +351,16 @@ impl EcVolume {
         self.shards.iter().filter(|s| s.is_some()).count()
     }
 
+    /// Reports whether `shard_id` is currently registered to this
+    /// EcVolume (used by the cross-disk reconcile to skip already-
+    /// loaded shards).
+    pub fn has_shard(&self, shard_id: u8) -> bool {
+        self.shards
+            .get(shard_id as usize)
+            .map(|s| s.is_some())
+            .unwrap_or(false)
+    }
+
     pub fn is_time_to_destroy(&self) -> bool {
         self.expire_at_sec > 0
             && SystemTime::now()

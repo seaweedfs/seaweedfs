@@ -599,12 +599,34 @@ impl DiskLocation {
         collection: &str,
         shard_ids: &[u32],
     ) -> Result<(), VolumeError> {
-        let dir = self.directory.clone();
         let idx_dir = self.idx_directory.clone();
+        self.mount_ec_shards_with_idx_dir(vid, collection, shard_ids, &idx_dir)
+    }
+
+    /// Mount EC shards but explicitly specify the idx directory the
+    /// EcVolume should pull `.ecx` / `.ecj` / `.vif` from.
+    ///
+    /// Cross-disk reconcile (mirrors `loadEcShardsWithIdxDir` in
+    /// `weed/storage/disk_location_ec.go`): when a volume's shards live
+    /// on this disk but the index files were left on a sibling disk
+    /// (the seaweedfs/seaweedfs#9212 orphan-shard layout), the
+    /// reconciler creates the EcVolume here while pointing it at the
+    /// sibling's idx dir. Each shard still ends up registered in this
+    /// disk's `ec_volumes` map so heartbeat reporting carries the right
+    /// disk_id per shard.
+    pub fn mount_ec_shards_with_idx_dir(
+        &mut self,
+        vid: VolumeId,
+        collection: &str,
+        shard_ids: &[u32],
+        idx_dir: &str,
+    ) -> Result<(), VolumeError> {
+        let dir = self.directory.clone();
+        let idx_dir_owned = idx_dir.to_string();
         let ec_vol = self
             .ec_volumes
             .entry(vid)
-            .or_insert_with(|| EcVolume::new(&dir, &idx_dir, collection, vid).unwrap());
+            .or_insert_with(|| EcVolume::new(&dir, &idx_dir_owned, collection, vid).unwrap());
         ec_vol.disk_type = self.disk_type.clone();
 
         for &shard_id in shard_ids {
@@ -887,6 +909,14 @@ fn calculate_expected_shard_size(dat_file_size: i64) -> i64 {
 /// Mirrors `parseCollectionVolumeId` in
 /// `weed/storage/disk_location.go`. Used when iterating raw filenames
 /// where the extension has already been stripped.
+///
+/// `pub(crate)` companion `parse_collection_volume_id_pub` is exposed
+/// so the cross-disk reconcile in `store_ec_reconcile.rs` can call it
+/// without re-implementing the parser.
+pub(crate) fn parse_collection_volume_id_pub(base: &str) -> Option<(String, VolumeId)> {
+    parse_collection_volume_id(base)
+}
+
 fn parse_collection_volume_id(base: &str) -> Option<(String, VolumeId)> {
     if let Some(pos) = base.rfind('_') {
         let collection = &base[..pos];
@@ -897,6 +927,12 @@ fn parse_collection_volume_id(base: &str) -> Option<(String, VolumeId)> {
         let id: u32 = base.parse().ok()?;
         Some((String::new(), VolumeId(id)))
     }
+}
+
+/// `pub(crate)` re-export of [`parse_ec_shard_extension`] for the
+/// cross-disk reconcile in `store_ec_reconcile.rs`.
+pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<u32> {
+    parse_ec_shard_extension(ext)
 }
 
 /// Recognise EC shard extensions `.ec00`–`.ec255` (the ShardId u8
