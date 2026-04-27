@@ -1008,12 +1008,17 @@ fn ec_free_shard_count(loc: &DiskLocation, data_shard_count: u32) -> i64 {
     let dsc = data_shard_count as i64;
     let max = loc.max_volume_count.load(Ordering::Relaxed) as i64;
     if max <= 0 {
-        const UNLIMITED_FREE: i64 = 1 << 30;
-        let used = (loc.volumes_len() as i64) * dsc + (loc.ec_shard_count() as i64);
-        if used >= UNLIMITED_FREE {
-            return 1;
-        }
-        return UNLIMITED_FREE - used;
+        // Synthetic "unlimited" capacity. Use a large but
+        // well-below-overflow base (1 << 60 ≈ 1.15e18) and saturating
+        // arithmetic so even pathological usage never wraps and
+        // tie-breaks among unlimited disks still meaningfully prefer
+        // the less-loaded one. Clamp to ≥ 1 so the disk stays eligible
+        // for placement no matter how loaded it is.
+        const UNLIMITED_FREE: i64 = 1 << 60;
+        let used = (loc.volumes_len() as i64)
+            .saturating_mul(dsc)
+            .saturating_add(loc.ec_shard_count() as i64);
+        return UNLIMITED_FREE.saturating_sub(used).max(1);
     }
     let mut free = (max - loc.volumes_len() as i64) * dsc;
     free -= loc.ec_shard_count() as i64;
