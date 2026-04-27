@@ -1,6 +1,6 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.4 — architect re-binding to Option B after deeper layering analysis; v0.2/v0.3's Option A path retired)
+**Date**: 2026-04-27 (v0.4.1 — adds §1.D two-feedback-loop ordering-independence statement per architect framing 2026-04-27; design unchanged from v0.4)
 **Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5`
 **Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (primary-side probe loop + recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
@@ -84,6 +84,41 @@ The `gate-degraded` symptom from G5-5 #4 closes by giving primary a runtime mech
 
 `Ship()` short-circuits in `ReplicaDegraded`, so the shipper does not attempt a reconnect that could carry a transport-reconnect signal. C requires an out-of-band reconnect attempt, which is what Option B's probe loop already does — C reduces to B.
 
+### §1.D Two parallel feedback loops — ordering-independence (protocol invariant)
+
+A replica going down (or recovering) triggers feedback in **both** the control plane and the data-control plane. The protocol must treat these as **two independent loops that proceed in parallel without ordering dependencies**:
+
+| Loop | Owner | Inputs | Action |
+|---|---|---|---|
+| **Identity / topology / health loop** | master (control plane) | replica heartbeat / observation freshness | Update observed health, effective RF, peer availability; (future) placement / failover / operator alerts. **Does NOT execute recovery.** |
+| **Data governance loop** | primary (data-control plane) | ship / barrier failure → mark `ReplicaDegraded`; degraded-peer probe loop (this batch) | Probe degraded peer; on success dispatch engine-driven catch-up / rebuild (T4d-4). **Does NOT wait for master re-emit.** |
+
+**Ordering-independence rule**: any of the following five orderings must be safe (no missed recovery, no double recovery, no protocol violation):
+
+1. **Primary detects first** (ship / barrier fails before master sees observation drop) — primary marks degraded, applies durability-mode policy (continue / degraded-write / fail-closed). Master observation later confirms RF reduction.
+2. **Master observes missing first** (observation expires before primary's next ship) — master records reduced health; **does NOT execute recovery**; primary's next ship / probe handles the data path.
+3. **Replica recovers and heartbeats first** (master sees fresh observation before primary probes) — master health updates; primary's probe loop will connect on its next tick and catch up. No master re-emit required.
+4. **Primary probe connects first** (primary's degraded-peer probe succeeds before master's next observation) — catch-up completes; subsequent master observation just confirms healthy.
+5. **Both fire simultaneously** (concurrent observation freshening + concurrent probe success) — primary's recovery manager is **idempotent** under in-flight guard: a peer with an active catch-up / rebuild session is not re-dispatched; a peer in cooldown is skipped. Duplicate triggers are absorbed.
+
+**Alignment surface**: the two loops align via durable identity facts already on the wire — `replicaID`, `epoch`, `endpointVersion`, peer address. Neither loop manufactures new identity; both consume the existing authoritative line.
+
+**Anti-requirements** (what the protocol explicitly does NOT impose):
+
+- Master re-emission of an assignment fact is **NOT a prerequisite** for primary-side recovery to fire.
+- Primary-side recovery is **NOT blocked** on master health update.
+- Neither loop requires the other to have fired first; neither requires the other to fire at all (e.g., a brief network blip might be resolved by primary's probe loop without master ever observing the freshness drop, which is fine).
+
+**Idempotency guarantees** (load-bearing for "both fire simultaneously"):
+
+- `ReplicaPeer.ProbeIfDegraded()` checks state under lock and returns early if not `ReplicaDegraded` or in cooldown.
+- `peer.go` in-flight guard prevents re-dispatch on a peer with an active catch-up / rebuild session.
+- Existing `UpdateReplicaSet` stale-replay rule (unchanged from today) absorbs duplicate assignment-fact replays without disturbing the peer set.
+
+**Future RF-health observability path** (different batch, not G5-5C): master MAY surface "desired RF=N, current effective RF=M" to operators / placement controller. That is observability, not recovery scheduling — it does not change the ordering-independence rule above.
+
+`INV-G5-5C-TWO-LOOPS-ORDERING-INDEPENDENT` (proposed, see §3): no run-order dependency between the two loops; idempotent primary-side dispatch under in-flight guard.
+
 ### §1.B Master protocol — explicitly unchanged
 
 v0.3 proposed a `PeerSetRevision` proto field, an `ObservationStore.obsRev` counter, and a lex-compare upgrade to `UpdateReplicaSet`. **All three are retired in v0.4.** Master assignment publication semantics, `PeerSetGeneration = (epoch<<32)|ev`, and the existing stale-replay rule in `UpdateReplicaSet` (`core/replication/volume.go:194-209`) are preserved exactly as-is.
@@ -146,6 +181,7 @@ Numbered, verifier-named, single source of truth.
 | 5 | `iterate-m01-replicated-write.sh verify_restart_catchup` step turns GREEN on m01/M02 hardware: `LBA[2]=0xef` byte-equal under `m01verify` within 30 s deadline (same as G5-5 #3 network-catchup; budget = ≤1× probe interval (5 s) + catch-up time, comfortably inside 30 s). | Hardware re-run; artifacts archived under `g5-test/logs/artifacts-<timestamp>/` |
 | 6 | No regression on G5-5 #1/#2/#3 — all three remain GREEN in the same hardware run. | Same script, same run |
 | 7 | No master code touched. `git diff --stat` for the close PR shows zero changes under `core/host/master/`, `core/authority/`, `core/rpc/proto/`, `core/rpc/control/`. | Diff inspection at PR review |
+| 8 | **Two-loop ordering independence** (§1.D): a unit test exercises the "simultaneous-fire" case — concurrent assignment-fact replay (master loop) + concurrent `ProbeIfDegraded` dispatch (primary loop) on the same `ReplicaDegraded` peer. Outcome: at most one catch-up / rebuild session installed; no panic; no goroutine leak; final state converges. Cooldown / in-flight guard absorbs the duplicate. | `core/replication/peer_test.go` — simultaneous-fire test (exact name pinned at code-start) |
 
 **File + test names**: §2 #3a/#3b/#4 list (file: TBD at impl) is acceptable for v0.2 ratification per QA review; sw concretizes file path + Go test method name at code-start so QA can grep them in CI later. To be appended to this §2 as a code-start addendum (not requiring re-ratification — it's the same tests, just named).
 
@@ -167,6 +203,7 @@ Numbered, verifier-named, single source of truth.
 | `INV-REPL-PEER-RECOVERY-PROBE-LOOP-001` | Primary runs a per-volume background loop that iterates only over peers in `ReplicaDegraded`, at a bounded interval, with per-peer cooldown and in-flight guard. The loop dispatches probe outcomes into existing engine recovery primitives without inventing new recovery substrate. | `core/replication/probe_loop_test.go` lifecycle + cooldown + only-degraded + dispatch tests |
 | `INV-REPL-PEER-RECOVERY-NO-RETRIGGER-LOOP` | The probe loop does not re-fire on a peer with an active catch-up or rebuild session. Hand-off from catch-up to rebuild is one-way (loop ignores `NeedsRebuild` peers because the existing rebuild path owns them). | `peer_test.go` dispatch-branch tests + component test |
 | `INV-G5-5C-NO-MASTER-PROTOCOL-CHANGE` | G5-5C closes without modifying master assignment publication, `PeerSetGeneration` semantics, `ObservationStore`, `UpdateReplicaSet` stale-replay rule, or any control-plane protocol surface. Runtime peer recovery is a primary-only concern. | §2 #7 diff-inspection at PR review |
+| `INV-G5-5C-TWO-LOOPS-ORDERING-INDEPENDENT` | The control-plane identity/health loop and the data-plane governance loop run in parallel without ordering dependency. All five orderings in §1.D (primary-first, master-first, replica-recovers-first, primary-probe-first, simultaneous) terminate in correct convergence. Idempotency held by `ProbeIfDegraded` early-returns + in-flight guard + existing `UpdateReplicaSet` stale-replay. | `peer_test.go` simultaneous-fire test (concurrent fact-replay + probe dispatch on same peer); `probe_loop_test.go` cooldown / in-flight guard tests cover the simpler orderings. |
 
 **Forward-carry from G5-5 §close (deferred ledger pointers)**:
 - `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — G5-5C hardware re-run exercises this path; ledger pointer added at G5-5C §close (per G5-5 §close binding).
