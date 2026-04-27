@@ -115,6 +115,7 @@ These are first-order references; keep updated as batches close:
 | Doc | Owner | Update trigger |
 |---|---|---|
 | [`v3-dev-roadmap.md`](./v3-dev-roadmap.md) | QA | every gate-close |
+| [`v3-architecture.md`](./v3-architecture.md) | architect | component/responsibility/flow changes |
 | [`v3-phase-15-mvp-scope-gates.md`](./v3-phase-15-mvp-scope-gates.md) | architect | scope changes (e.g. G9A added 2026-04-26) |
 | [`v3-invariant-ledger.md`](./v3-invariant-ledger.md) | sw + QA | every batch-close (PR-atomic) |
 | [`v3-block-behavior-contract-index.md`](./v3-block-behavior-contract-index.md) | architect | new behavior contract ratifications |
@@ -159,7 +160,45 @@ Drop ceremony. Keep discipline.
 
 ---
 
-## §12 Who owns what step
+## §12 Architect review checklist
+
+Architect review is not plan authorship. It is the system-level check that prevents drift.
+
+Every mini-plan ratification and §close sign must answer:
+
+| Check | Question |
+|---|---|
+| Scope truth | What is done, what is explicitly not done, and what product risk remains? |
+| V2 / new-build decision | Is this a full V2 port, partial V2 port, reference-only read, explicit reject, or V3-native design? Does it need a new gate? |
+| Engine / adapter impact | Does this change authority, session fate, recovery, durability, projection, or truth ownership? If yes, where is the invariant and adversarial test? |
+| Product usability level | What can an operator or user actually do end-to-end after this batch? Which test proves it? Which next gate makes it more usable? |
+
+Close signs should include a short statement of:
+
+```text
+Done:
+Not done:
+Product level reached:
+Next gate that makes it usable:
+```
+
+---
+
+## §13 Failure modes this process must prevent
+
+These are the observed sources of waste. Every batch should actively check them.
+
+| Failure mode | Required countermeasure |
+|---|---|
+| V2 porting drift | Top-down mapping: V2 behavior → V3 product contract → truth owner → accepted/rejected semantics → invariant/test |
+| Engine/adapter change without reason | Require reason, truth-domain impact, bad state prevented, and proof test |
+| Function close means happy path only | Acceptance must include stale input, reordering/overlap where relevant, partial progress, retry/restart, and explicit non-claims |
+| Product unusable despite green tests | Mini-plan must name the end-to-end operator/user path and whether it is real, simulated, manual, or deferred |
+| Missing architecture component | If a batch discovers a product component late (for example placement or binary wiring), update `v3-architecture.md` or the gate before continuing |
+
+---
+
+## §14 Who owns what step
 
 Based on what actually worked across T4 + G5:
 
