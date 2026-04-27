@@ -1,7 +1,7 @@
 # V3 Phase 15 — G5-5 (m01 Hardware First-Light + L3 Integration) Mini-Plan
 
-**Date**: 2026-04-26
-**Status**: DRAFT v0.1 — submitted for QA review (§12 architect review checklist) + architect §1-§6 ratification per `v3-batch-process.md`
+**Date**: 2026-04-26 (v0.2 — addresses architect REVISE-BEFORE-CODE requirements)
+**Status**: DRAFT v0.2 — re-submitted for architect §1-§6 ratification per `v3-batch-process.md` after addressing 3 revision requirements (network ≠ process restart; storage-aware byte verifier; named R/H observation source)
 **Owner**: sw (script + Go driver); QA (m01 verification + scenario authoring)
 **Process**: First trial of compressed `v3-batch-process.md` (one doc, §close appended at batch close)
 **Predecessors**: G5-4 closed (`seaweed_block@c820e17` + `seaweedfs@36ba7b44e`); 5 INV-BIN-WIRING-* invariants ACTIVE in ledger; `--expected-slots-per-volume` flag landed (`f5de7c5`)
@@ -24,9 +24,10 @@ G5-5 promotes G5-4's L1 (binary composition) result to L3 (Replicated IO) on rea
 | # | Item | Verifier |
 |---|---|---|
 | 1 | `scripts/iterate-m01-replicated-write.sh` — orchestration script that builds binaries on m01, deploys via SMB share, starts blockmaster + 2× blockvolume cluster, drives a kernel iSCSI write workload from m01, verifies replica's underlying storage matches primary | Manual run on m01 + log artifacts |
-| 2 | Real frontend write byte-equal verification — primary's iSCSI target accepts a kernel write from m01; the same bytes land in replica's walstore on M02; verified by reading replica's storage directly post-write | Step in #1 script + Go assertion helper |
-| 3 | Mid-stream disconnect + catch-up scenario — iptables drops primary↔replica WAL data port mid-write; replica falls behind; iptables restored; verify replica catches up via T4d engine-driven recovery (catch-up path, NOT rebuild — gap stays within walstore retention) | Step in #1 script |
-| 4 | m01 `-race ×10` verification of G5-4's integration test (`TestG54_BinaryWiring_RoleSplit_2NodeSmoke`) — Windows can't run `-race` (CGO/gcc); m01 is the verification environment | Step in #1 script |
+| 2 | Real frontend write byte-equal verification — primary's iSCSI target accepts a kernel write from m01; the same bytes land in replica's walstore on M02; verified by opening the replica's `storage.LogicalStorage` via the same `storage/walstore` package the daemon uses and calling `Read(lba)` on the targeted LBA range. **Architect REVISE binding round 51**: raw `.extent` byte peek is REJECTED — walstore on-disk layout includes WAL frames + checkpoint metadata + sparse regions + potentially-stale-but-valid blocks; only the storage abstraction's `Read(lba)` returns the authoritative current value for a given LBA. The verifier loads the same package as the daemon, opens the substrate (read-only), invokes `Read(lba)`, and SHA-256-compares against the kernel write payload. | Step in #1 script + Go assertion helper using `storage/walstore.OpenReadOnly` (or equivalent — sw confirms exact API at G-implementation time and adds it if missing) |
+| 3 | Mid-stream **network disconnect** + catch-up scenario — iptables drops primary↔replica WAL data port mid-write; replica falls behind; iptables restored; verify replica catches up via T4d engine-driven recovery (catch-up path, NOT rebuild — gap stays within walstore retention). Proves: live TCP interruption + recovery without process restart. **R/H observation source (architect REVISE binding round 51)**: the existing `/status?volume=v1` endpoint returns `frontend.Projection` (VolumeID, ReplicaID, Epoch, EndpointVersion, Healthy) — NO R/S/H/Mode/Decision. G5-5 adds a NEW endpoint `/status/recovery?volume=v1` that returns `engine.ReplicaProjection` (Mode, RecoveryDecision, R, S, H, Reason, etc.). The endpoint is gated by a NEW `--status-recovery` daemon flag (default off; production binaries do not enable it; m01 script passes it). Verifier polls primary's `/status/recovery` for `H` and replica's `/status/recovery` for `R` until `R == primaryH` within deadline. **Instrumentation change scope**: ~30 LOC in `core/host/volume/status_server.go` + 1 CLI flag in `cmd/blockvolume/main.go`. NOT a production behavior change — the new endpoint is opt-in and the engine projection it surfaces already exists (just wasn't exposed via HTTP). | Step in #1 script + new `/status/recovery` endpoint |
+| 4 | **Replica process stop/restart** + catch-up scenario — `SIGTERM` the replica's `blockvolume` process mid-write (clean shutdown); restart the same binary against the same `--durable-root`; verify replica reopens durable storage, resubscribes to master, and catches up via T4d engine-driven recovery. Proves: durable reopen + master resubscribe + recovery reconstruction (architect REVISE binding round 51 — distinct from #3 network-only path). | Step in #1 script |
+| 5 | m01 `-race ×10` verification of G5-4's integration test (`TestG54_BinaryWiring_RoleSplit_2NodeSmoke`) — Windows can't run `-race` (CGO/gcc); m01 is the verification environment | Step in #1 script |
 
 ### What G5-5 does NOT deliver (explicit non-claims)
 
@@ -40,9 +41,10 @@ G5-5 promotes G5-4's L1 (binary composition) result to L3 (Replicated IO) on rea
 
 | File | Change | LOC |
 |---|---|---|
-| `scripts/iterate-m01-replicated-write.sh` (new, in `seaweed_block`) | Orchestration script: build/deploy/start cluster/drive workload/verify/cleanup | ~200 |
-| `cmd/blockvolume/m01_verify_helper.go` (new, build-tag `m01verify`) | Go helper for direct replica-store byte-equal assertion (reads replica's walstore .extent, computes hash, prints to stdout) | ~80 |
-| `sw-block/design/v3-phase-15-g5-5-mini-plan.md` (this doc) | §close appended at batch close | ~250 + §close |
+| `scripts/iterate-m01-replicated-write.sh` (new, in `seaweed_block`) | Orchestration script: build/deploy/start cluster/drive workload/verify-byte-equal/disconnect-network/verify-network-catchup/restart-replica/verify-restart-catchup/race-stress/cleanup | ~280 |
+| `cmd/blockvolume/m01_verify_helper.go` (new, build-tag `m01verify`) | Go helper for storage-aware byte-equal: opens replica's walstore via `core/storage/walstore.OpenReadOnly` (or equivalent — sw confirms exact API at impl time and adds it if missing), invokes `Read(lba)` for each LBA in the verified range, SHA-256 vs primary's known payload, prints `OK` / `MISMATCH lba=N exp=... got=...` to stdout for the script to grep. NOT raw extent peek. | ~100 |
+| `core/host/volume/status_server.go` + `cmd/blockvolume/main.go` | Add `/status/recovery?volume=v1` endpoint returning `engine.ReplicaProjection` (Mode, R, S, H, RecoveryDecision); gated by new `--status-recovery` flag (default off). Required for §2 #3 named R/H observation source. | ~30 prod + ~30 unit test |
+| `sw-block/design/v3-phase-15-g5-5-mini-plan.md` (this doc) | §close appended at batch close | ~280 + §close |
 
 ### Architecture truth-domain check (v3-architecture.md §4)
 
@@ -66,8 +68,8 @@ No new truth-domain owner. G5-5 verifies the existing truth-domain map (§4) at 
 | Check | This batch's answer |
 |---|---|
 | Scope truth | Done: end-to-end byte-equal write + short-disconnect catch-up at L3 on m01 hardware. Not done: rebuild scenario, NVMe target, durability modes, failover. Product risk: catch-up within retention is verified; gap-beyond-retention rebuild path stays unverified at L3 (verified at L1 component scope only). |
-| V2/new-build decision | New build — script + Go helper. NO V2 muscle PORT (orchestration is shell + Go test). G-1 NOT required (per `v3-batch-process.md §6.1`). |
-| Engine/adapter impact | Zero. G5-5 is verification-only. No engine, adapter, transport, or replication code changes. |
+| V2/new-build decision | New build — script + Go helper + opt-in instrumentation endpoint. NO V2 muscle PORT (orchestration is shell + Go test). G-1 NOT required (per `v3-batch-process.md §6.1`). |
+| Engine/adapter impact | Zero engine/adapter logic change. G5-5 surfaces existing `engine.ReplicaProjection` (R/S/H/Mode/Decision — already computed by engine, just not exposed via HTTP) through a new opt-in `/status/recovery` endpoint. If implementation discovers an engine/adapter change is needed (e.g., projection field is missing), STOP and re-ratify per architect binding round 51. |
 | Product usability level | Operator can run a real iSCSI volume across 2 nodes; writes survive a transient network blip via catch-up. Reaches L3 (Replicated IO) per `v3-architecture.md §13`. Falls short of L4 (rebuild path) and L5 (CSI/API operator surface). |
 
 ---
@@ -105,9 +107,9 @@ G5-4 explicitly deferred to G5-5:
 
 | G5-4 criterion | G5-5 absorption |
 |---|---|
-| #3 Byte-equal primary→replica via real frontend write | G5-5 §2 #2 |
-| #4 Stop-restart catch-up convergence | G5-5 §2 #3 (variant: network disconnect via iptables, not process restart — same engine-driven catch-up path) |
-| #6 10× `-race` stress on G5-4 integration test | G5-5 §2 #4 |
+| #3 Byte-equal primary→replica via real frontend write | G5-5 §2 #2 (storage-aware verifier per architect REVISE binding round 51) |
+| #4 Stop-restart catch-up convergence | **Split per architect REVISE binding round 51**: network disconnect proves live TCP interruption + recovery (G5-5 §2 #3); process restart proves durable reopen + master resubscribe + recovery reconstruction (G5-5 §2 #4). Both paths consumed by G5-5; neither carries forward. |
+| #6 10× `-race` stress on G5-4 integration test | G5-5 §2 #5 |
 
 Plus the broader G5-4 wiring claim — that the binary-level T4 replication stack composes — gets m01 hardware verification at G5-5 §2 #1 (cluster reaches role-appropriate ready state on real hardware, not subprocess-only).
 
@@ -122,6 +124,9 @@ Plus the broader G5-4 wiring claim — that the binary-level T4 replication stac
 | SMB share binary deployment race (already-running binary holds .exe open; rebuild fails) | Script kills processes BEFORE rebuild. Idempotent: re-run from any state. |
 | `-race` on m01 needs `CGO_ENABLED=1` + `gcc` installed | Memory: m01 has gcc per RDMA build chain. Script asserts `which gcc` succeeds before -race step. |
 | Test-only `m01_verify_helper.go` accidentally compiles into production binary | Guarded by `//go:build m01verify` build tag; default builds exclude it. Production binary unchanged. |
+| `--status-recovery` endpoint accidentally enabled in production | Default OFF; flag must be explicitly passed. Endpoint is loopback-only (same `isLoopbackRemote` guard the existing `/status` uses). Documented in mini-plan as test-only. Architect-binding scope: instrumentation surface, not engine/adapter change. |
+| Replica restart scenario races against in-flight writes (replica down before primary's write commits → primary times out vs. continues; recovery test is non-deterministic) | Script throttles writes between restart events; each phase has a clear quiesce step before assertions. If non-determinism appears, script fails fast with named diagnostic, not silently continues. |
+| Storage-aware verifier needs `walstore.OpenReadOnly` (or equivalent) which may not exist | sw confirms exact API at impl time; if missing, ADD it with godoc + 1 unit test as part of this batch (small scope expansion contained in `core/storage/walstore`). NOT a substrate semantic change — read-only opener for verification only. |
 
 ---
 
@@ -129,7 +134,7 @@ Plus the broader G5-4 wiring claim — that the binary-level T4 replication stac
 
 | Stage | Signer | When | Status |
 |---|---|---|---|
-| §1-§6 ratification | architect (pingqiu) + QA review (§12 checklist) | This submission | ⏳ pending |
+| §1-§6 ratification | architect (pingqiu) + QA review (§12 checklist) | v0.1 submitted; v0.2 addresses architect REVISE-BEFORE-CODE round 51 (3 revisions) | ⏳ pending re-review |
 | Code start (script + Go helper) | sw | After §1-§6 ratification | ⏳ blocked on ratification |
 | m01 hardware verification run | QA | After sw lands script + helper | ⏳ blocked |
 | §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
