@@ -1,6 +1,6 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.4.1 — adds §1.D two-feedback-loop ordering-independence statement per architect framing 2026-04-27; design unchanged from v0.4)
+**Date**: 2026-04-27 (v0.4.2 — adds §1.E authority-bounded primary recovery rule per architect framing 2026-04-27; design unchanged from v0.4)
 **Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5`
 **Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (primary-side probe loop + recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
@@ -53,7 +53,7 @@ G5-5C closes that gap: define and implement the **trigger source** that re-arms 
 | **In-flight guard** | A peer with an active probe / catch-up / rebuild session is NOT re-probed by the loop. The loop reads the peer's state under its existing lock; if the state is no longer `ReplicaDegraded` at probe-dispatch time, the dispatch is skipped (TOCTOU-safe). |
 | **Probe action** | Calls existing `ProbeReplica` (or V3 equivalent on the peer / executor). On `ProbeCatchUpRequired` → engine-driven catch-up via T4d-4 primitives (already wired). On `ProbeRebuildRequired` → hand off to the existing rebuild path. On any other outcome (peer still unreachable, transport error) → log + leave peer in `ReplicaDegraded`, next loop iteration retries after cooldown. |
 | **Lifecycle** | Loop starts when the volume's primary role is admitted; stops on volume close / role change. Start/Stop discipline mirrors CP4B-2 lessons (BUG-CP4B2-1 stop-before-run deadlock; BUG-CP4B2-2 zero-interval panic; BUG-CP4B2-3 callback panic isolation). All three patterns explicitly covered by tests. |
-| **Master interaction** | Loop does NOT consult master, NOT mutate master state, NOT re-trigger master publication. The peer's address came from the most recent `AssignmentFact` already in primary memory (existing `ReplicationVolume.peers` map); the loop just probes the existing peer handle. |
+| **Master interaction** | Loop does NOT consult master, NOT mutate master state, NOT re-trigger master publication. The peer's address came from the most recent `AssignmentFact` already in primary memory (existing `ReplicationVolume.peers` map); the loop just probes the existing peer handle. **Authority-bounded** per §1.E: only peers admitted by master-issued assignment facts for the current lineage are eligible. |
 
 #### What this batch deliberately does NOT change
 
@@ -119,6 +119,51 @@ A replica going down (or recovering) triggers feedback in **both** the control p
 
 `INV-G5-5C-TWO-LOOPS-ORDERING-INDEPENDENT` (proposed, see §3): no run-order dependency between the two loops; idempotent primary-side dispatch under in-flight guard.
 
+### §1.E Authority-bounded primary recovery (protocol invariant)
+
+§1.D's "ordering-independent" rule must NOT be misread as "primary may self-discover and connect to any replica it sees on the network." A second protocol invariant tightens the boundary:
+
+**Rule (architect 2026-04-27)**:
+> *Primary recovery loop may retry only peers that were previously admitted by a master-issued assignment fact for the current authority lineage.*
+
+Phrased as a layering principle:
+> *Master establishes identity once; primary owns retry / recovery for that admitted peer until master revokes or changes the assignment.*
+
+#### What this means in code
+
+The probe loop iterates **only** `ReplicationVolume.peers` — the map that `UpdateReplicaSet` populated from master-issued assignment facts. The probe loop does NOT:
+
+- enumerate network-discoverable addresses,
+- read peer descriptors from any source other than `ReplicationVolume.peers`,
+- attempt to connect to a `replicaID` that has never appeared in an assignment fact for the current `(volume, epoch, EV)`,
+- continue probing a peer whose entry has been removed or replaced by a subsequent `UpdateReplicaSet` call (lineage change / peer-set change).
+
+This is already structurally true in V3 (v0.4 §1.A bound shape: "the peer's address came from the most recent `AssignmentFact` already in primary memory"). v0.4.2 promotes it from implementation detail to **protocol invariant** so future contributors don't widen the probe surface.
+
+#### Three scenarios this rules out / allows
+
+| Scenario | Behavior |
+|---|---|
+| **(a) First-time replica join** (new replica appears on network, never admitted by master) | **Disallowed.** Primary cannot probe or recover. Must wait for master to mint an assignment fact admitting the replica. The peer enters `ReplicationVolume.peers` only via `UpdateReplicaSet`. |
+| **(b) Already-admitted peer brief outage + recovery** (this is G5-5C's core case) | **Allowed without master re-emit.** The peer stays in `ReplicationVolume.peers` while degraded; the probe loop retries based on the previously-admitted peer descriptor. Master health observation runs in parallel (per §1.D) but is not a prerequisite. |
+| **(c) Epoch / assignment change** (master revokes peer, replaces it, or bumps lineage) | **Probe must stop.** `UpdateReplicaSet`'s existing lineage-bump teardown path (`core/replication/volume.go:237` — "Lineage or address bumped → tear down + recreate") removes the stale peer. An in-flight probe on a torn-down peer must abort cleanly. |
+
+#### Implementation requirement that follows
+
+`ReplicaPeer.Close()` must signal in-flight probe / catch-up / rebuild to abort. v0.4 already implies this (probe loop reads peer state under lock, in-flight guard tracks active sessions), but v0.4.2 makes it explicit as `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED`'s test pointer (§3).
+
+This needs an audit during code-start: confirm that `Close()` interrupts an in-flight `ProbeIfDegraded` synchronously, and that the probe loop iteration handles `peer.Close()` racing the iteration without dispatching against a closed peer (TOCTOU again, same lock discipline as §1.A in-flight guard).
+
+#### Authority alignment surface (recap)
+
+| Master publishes | Primary consumes | Use |
+|---|---|---|
+| `replicaID`, `epoch`, `endpointVersion` | identity binding for peer | reject probes against stale lineage |
+| `peer addresses + ReplicaTarget` (within `AssignmentFact.Peers`) | populates `ReplicationVolume.peers` via `UpdateReplicaSet` | the only legal source of probe targets |
+| `(epoch << 32) \| EV` = `PeerSetGeneration` | `lastAppliedGeneration` guard in `UpdateReplicaSet` | enforces monotonic authority advance |
+
+`INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` (proposed, see §3): probe loop targets are sourced only from master-issued assignment facts for the current lineage; in-flight probes abort cleanly on lineage-change teardown.
+
 ### §1.B Master protocol — explicitly unchanged
 
 v0.3 proposed a `PeerSetRevision` proto field, an `ObservationStore.obsRev` counter, and a lex-compare upgrade to `UpdateReplicaSet`. **All three are retired in v0.4.** Master assignment publication semantics, `PeerSetGeneration = (epoch<<32)|ev`, and the existing stale-replay rule in `UpdateReplicaSet` (`core/replication/volume.go:194-209`) are preserved exactly as-is.
@@ -150,7 +195,7 @@ All paths are in **`seaweed_block` (V3)**. v0.4 retires v0.3's master-side rows 
 
 | File | Likely change | LOC est |
 |---|---|---|
-| `core/replication/peer.go` | New per-peer probe entry point (e.g., `ProbeIfDegraded()`) — checks state, returns early if not `ReplicaDegraded` or in cooldown, otherwise probes via existing transport / executor path; on `ProbeCatchUpRequired` dispatches to engine catch-up (T4d-4); on `ProbeRebuildRequired` hands off to existing rebuild path. Per-peer cooldown timestamp + in-flight guard. | ~90 |
+| `core/replication/peer.go` | New per-peer probe entry point (e.g., `ProbeIfDegraded()`) — checks state, returns early if not `ReplicaDegraded` or in cooldown, otherwise probes via existing transport / executor path; on `ProbeCatchUpRequired` dispatches to engine catch-up (T4d-4); on `ProbeRebuildRequired` hands off to existing rebuild path. Per-peer cooldown timestamp + in-flight guard. **Close() must abort in-flight probe synchronously** (§1.E authority-bounded teardown). | ~90 |
 | `core/replication/volume.go` (or a new sibling, e.g., `core/replication/probe_loop.go`) | New `degradedProbeLoop` goroutine started by `ReplicationVolume` lifecycle. Iterates over `peers` map under existing lock discipline, calls each peer's `ProbeIfDegraded()`. Configurable interval (default 5 s) and max-concurrent-probes (default 1). Start/Stop methods integrated with `ReplicationVolume.Close`. | ~120 |
 | `cmd/blockvolume/main.go` | New flags: `--degraded-probe-interval` (default 5 s; 0 disables), `--degraded-probe-max-concurrent` (default 1). Threaded into `ReplicationVolume` construction. | ~15 |
 | `core/replication/probe_loop_test.go` (new) | Loop lifecycle tests — start before run, stop while running, zero-interval guard (CP4B-2 lessons); cooldown enforcement; in-flight guard; only-degraded-peers iteration. | ~150 |
@@ -182,6 +227,8 @@ Numbered, verifier-named, single source of truth.
 | 6 | No regression on G5-5 #1/#2/#3 — all three remain GREEN in the same hardware run. | Same script, same run |
 | 7 | No master code touched. `git diff --stat` for the close PR shows zero changes under `core/host/master/`, `core/authority/`, `core/rpc/proto/`, `core/rpc/control/`. | Diff inspection at PR review |
 | 8 | **Two-loop ordering independence** (§1.D): a unit test exercises the "simultaneous-fire" case — concurrent assignment-fact replay (master loop) + concurrent `ProbeIfDegraded` dispatch (primary loop) on the same `ReplicaDegraded` peer. Outcome: at most one catch-up / rebuild session installed; no panic; no goroutine leak; final state converges. Cooldown / in-flight guard absorbs the duplicate. | `core/replication/peer_test.go` — simultaneous-fire test (exact name pinned at code-start) |
+| 9 | **Authority-bounded probe targets** (§1.E (a)): a unit test confirms the probe loop NEVER probes a peer that is not in `ReplicationVolume.peers`. Synthetic non-admitted peer addresses are NOT discoverable / probable from the loop. | `core/replication/probe_loop_test.go` — authority-bounded targets test |
+| 10 | **Lineage-change teardown** (§1.E (c)): a unit test exercises probe-in-flight + `UpdateReplicaSet` lineage-bump teardown. Outcome: `ReplicaPeer.Close()` aborts the in-flight probe synchronously; no dispatch against a closed peer; no goroutine leak; the replaced peer (new lineage) starts fresh on next loop tick. | `core/replication/peer_test.go` — lineage-change-during-probe test |
 
 **File + test names**: §2 #3a/#3b/#4 list (file: TBD at impl) is acceptable for v0.2 ratification per QA review; sw concretizes file path + Go test method name at code-start so QA can grep them in CI later. To be appended to this §2 as a code-start addendum (not requiring re-ratification — it's the same tests, just named).
 
@@ -204,6 +251,7 @@ Numbered, verifier-named, single source of truth.
 | `INV-REPL-PEER-RECOVERY-NO-RETRIGGER-LOOP` | The probe loop does not re-fire on a peer with an active catch-up or rebuild session. Hand-off from catch-up to rebuild is one-way (loop ignores `NeedsRebuild` peers because the existing rebuild path owns them). | `peer_test.go` dispatch-branch tests + component test |
 | `INV-G5-5C-NO-MASTER-PROTOCOL-CHANGE` | G5-5C closes without modifying master assignment publication, `PeerSetGeneration` semantics, `ObservationStore`, `UpdateReplicaSet` stale-replay rule, or any control-plane protocol surface. Runtime peer recovery is a primary-only concern. | §2 #7 diff-inspection at PR review |
 | `INV-G5-5C-TWO-LOOPS-ORDERING-INDEPENDENT` | The control-plane identity/health loop and the data-plane governance loop run in parallel without ordering dependency. All five orderings in §1.D (primary-first, master-first, replica-recovers-first, primary-probe-first, simultaneous) terminate in correct convergence. Idempotency held by `ProbeIfDegraded` early-returns + in-flight guard + existing `UpdateReplicaSet` stale-replay. | `peer_test.go` simultaneous-fire test (concurrent fact-replay + probe dispatch on same peer); `probe_loop_test.go` cooldown / in-flight guard tests cover the simpler orderings. |
+| `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` | Primary's probe loop targets are sourced only from master-issued assignment facts for the current authority lineage. The loop reads exclusively from `ReplicationVolume.peers` (which `UpdateReplicaSet` populates from facts). Master-unknown peers are never probed; lineage-revoked peers stop being probed; in-flight probes abort cleanly on `ReplicaPeer.Close()` / lineage-change teardown. | `probe_loop_test.go` "no peer outside ReplicationVolume.peers is ever probed" + `peer_test.go` "in-flight probe aborts on Close()" + lineage-change-during-probe test. |
 
 **Forward-carry from G5-5 §close (deferred ledger pointers)**:
 - `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — G5-5C hardware re-run exercises this path; ledger pointer added at G5-5C §close (per G5-5 §close binding).
