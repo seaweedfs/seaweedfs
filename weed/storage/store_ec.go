@@ -93,9 +93,22 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 // without re-acquiring the location's RLocks for every priority pass.
 // dataShardCount is the data-shard count of the EC layout being placed —
 // see FindEcShardTargetLocation's docstring for why it's a parameter.
+//
+// MaxVolumeCount == 0 is the "unlimited" sentinel used elsewhere in the
+// store (see hasFreeDiskLocation). Reporting a synthetic large free
+// count keeps unlimited disks eligible while still letting tie-breaks
+// prefer the less-loaded one.
 func ecFreeShardCount(loc *DiskLocation, dataShardCount int) int32 {
 	if dataShardCount <= 0 {
 		return 0
+	}
+	if loc.MaxVolumeCount <= 0 {
+		const unlimitedFree = int32(1 << 30)
+		used := int32(loc.VolumesLen()) + int32(loc.EcShardCount())/int32(dataShardCount)
+		if used >= unlimitedFree {
+			return 1
+		}
+		return unlimitedFree - used
 	}
 	free := loc.MaxVolumeCount - int32(loc.VolumesLen())
 	free *= int32(dataShardCount)

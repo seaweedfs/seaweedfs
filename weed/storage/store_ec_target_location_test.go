@@ -94,6 +94,24 @@ func TestFindEcShardTargetLocation_FallsThroughToHddWhenNothingMatches(t *testin
 	}
 }
 
+// TestFindEcShardTargetLocation_HonoursUnlimitedDisk pins the
+// MaxVolumeCount==0 ("unlimited") convention shared with
+// hasFreeDiskLocation. ecFreeShardCount used to return a negative free
+// count for unlimited disks, which made FindEcShardTargetLocation skip
+// them entirely. PR #9245 review by @gemini-code-assist.
+func TestFindEcShardTargetLocation_HonoursUnlimitedDisk(t *testing.T) {
+	store := newEcTargetTestStore(t, 1)
+	store.Locations[0].MaxVolumeCount = 0 // unlimited
+
+	got := store.FindEcShardTargetLocation("grafana-loki", needle.VolumeId(4444), dataShardCount)
+	if got == nil {
+		t.Fatalf("FindEcShardTargetLocation returned nil for an unlimited (MaxVolumeCount=0) disk")
+	}
+	if got != store.Locations[0] {
+		t.Errorf("expected the only (unlimited) disk to be picked; got %v", got)
+	}
+}
+
 // newEcTargetTestStore is a leaner cousin of the helper in
 // store_load_balancing_test.go: it spins up an in-memory Store with N
 // HDD disk locations under a single t.TempDir and consumes any heartbeat
