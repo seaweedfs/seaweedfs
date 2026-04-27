@@ -38,26 +38,60 @@ import (
 // can split shards from their index files across disks of the same node
 // and lose them at startup. See issue #9212 and the orphan-shard
 // reconciliation in #9244.
+//
+// Implementation walks s.Locations once and scores each disk by tier; the
+// highest-tier disk wins, ties broken by free count. The earlier waterfall
+// across four FindFreeLocation passes was equivalent but acquired
+// volumesLock and ecVolumesLock RLocks (via VolumesLen / EcShardCount) up
+// to four times per disk per call.
 func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId) *DiskLocation {
-	if location := s.FindFreeLocation(func(loc *DiskLocation) bool {
-		_, found := loc.FindEcVolume(vid)
-		return found
-	}); location != nil {
-		return location
+	const (
+		tierAnyDisk = iota + 1
+		tierHDD
+		tierEcxOnDisk
+		tierMounted
+	)
+
+	var (
+		best     *DiskLocation
+		bestTier int
+		bestFree int32
+	)
+	for _, loc := range s.Locations {
+		if loc.isDiskSpaceLow {
+			continue
+		}
+		freeCount := ecFreeShardCount(loc)
+		if freeCount <= 0 {
+			continue
+		}
+		tier := tierAnyDisk
+		if loc.DiskType == types.HardDriveType {
+			tier = tierHDD
+		}
+		if loc.HasEcxFileOnDisk(collection, vid) {
+			tier = tierEcxOnDisk
+		}
+		if _, mounted := loc.FindEcVolume(vid); mounted {
+			tier = tierMounted
+		}
+		if best == nil || tier > bestTier || (tier == bestTier && freeCount > bestFree) {
+			best = loc
+			bestTier = tier
+			bestFree = freeCount
+		}
 	}
-	if location := s.FindFreeLocation(func(loc *DiskLocation) bool {
-		return loc.HasEcxFileOnDisk(collection, vid)
-	}); location != nil {
-		return location
-	}
-	if location := s.FindFreeLocation(func(loc *DiskLocation) bool {
-		return loc.DiskType == types.HardDriveType
-	}); location != nil {
-		return location
-	}
-	return s.FindFreeLocation(func(loc *DiskLocation) bool {
-		return true
-	})
+	return best
+}
+
+// ecFreeShardCount mirrors the free-slot calculation in FindFreeLocation
+// without re-acquiring the location's RLocks for every priority pass.
+func ecFreeShardCount(loc *DiskLocation) int32 {
+	free := loc.MaxVolumeCount - int32(loc.VolumesLen())
+	free *= erasure_coding.DataShardsCount
+	free -= int32(loc.EcShardCount())
+	free /= erasure_coding.DataShardsCount
+	return free
 }
 
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
