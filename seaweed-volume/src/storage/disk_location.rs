@@ -544,6 +544,40 @@ impl DiskLocation {
         self.ec_volumes.contains_key(&vid)
     }
 
+    /// Reports whether this disk has a sealed `.ecx` index file for the
+    /// given (collection, vid). Unlike [`Self::has_ec_volume`] this does
+    /// not require the EC volume to be mounted in memory, which makes it
+    /// the right primitive for placement decisions during `ec.balance` /
+    /// `ec.rebuild` flows where shards may arrive before any
+    /// `VolumeEcShardsMount` has happened on the receiving disk. Without
+    /// checking the on-disk state, auto-select can split shards from the
+    /// `.ecx` that travels with the first shard, which is the source of
+    /// the orphan-shard layout reported in seaweedfs/seaweedfs#9212.
+    ///
+    /// Mirrors `DiskLocation.HasEcxFileOnDisk` in
+    /// `weed/storage/disk_location_ec.go`. Skips entries that are
+    /// directories so a stray dir named `<collection>_<vid>.ecx` doesn't
+    /// register as a present index file.
+    pub fn has_ecx_file_on_disk(&self, collection: &str, vid: VolumeId) -> bool {
+        let idx_base = volume_file_name(&self.idx_directory, collection, vid);
+        let idx_path = format!("{}.ecx", idx_base);
+        if let Ok(meta) = fs::metadata(&idx_path) {
+            if !meta.is_dir() {
+                return true;
+            }
+        }
+        if self.idx_directory != self.directory {
+            let data_base = volume_file_name(&self.directory, collection, vid);
+            let data_path = format!("{}.ecx", data_base);
+            if let Ok(meta) = fs::metadata(&data_path) {
+                if !meta.is_dir() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Remove an EC volume, returning it.
     pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
         self.ec_volumes.remove(&vid)
