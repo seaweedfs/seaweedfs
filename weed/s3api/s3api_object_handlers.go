@@ -1000,10 +1000,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
 			} else {
-				// Caching failed - return error to client
-				glog.Errorf("streamFromVolumeServers: failed to cache remote object for streaming")
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return newStreamErrorWithResponse(fmt.Errorf("failed to cache remote object for streaming"))
+				// Cache attempt did not produce chunks in time. The cache may still
+				// be filling in the background, so return 503 with Retry-After to
+				// let S3 SDKs back off and retry transparently rather than treating
+				// this as a fatal 500 InternalError.
+				glog.V(1).Infof("streamFromVolumeServers: remote object %s/%s not cached yet, returning 503 for retry", bucket, object)
+				w.Header().Set("Retry-After", "5")
+				s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+				return newStreamErrorWithResponse(fmt.Errorf("remote object not cached yet"))
 			}
 		} else if totalSize > 0 && len(entry.Content) == 0 {
 			// Not a remote entry but has size without content - this is a data integrity issue
