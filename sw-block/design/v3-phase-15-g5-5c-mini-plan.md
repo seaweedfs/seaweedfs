@@ -1,10 +1,11 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.2 — revised per architect REVISE ruling + QA review of v0.1)
-**Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5` (architect already ratified trigger source = Option A with A1 + A2 in same batch; v0.2 absorbs that ruling and QA's two pin requests)
+**Date**: 2026-04-27 (v0.3 — revised per architect REVISE ruling on v0.2: V3 path correction + peer-set generation design + truth-domain wording)
+**Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5` (Option A trigger source already bound; v0.3 absorbs three more REVISE items from architect's v0.2 review)
+**Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (master observation-driven re-emit + primary-side recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
 **Process**: `v3-batch-process.md` compressed flow (one mini-plan, one PR, one §close)
-**Predecessors**: G5-5 closed at `seaweedfs@c78116fd2` (L3 Replicated IO on hardware; #4 carried to this batch); architect bindings 2026-04-27 (round 14 close ruling + v0.1 REVISE ruling)
+**Predecessors**: G5-5 closed at `seaweedfs@c78116fd2` (L3 Replicated IO on hardware; #4 carried to this batch); architect bindings 2026-04-27 (G5-5 round 14 close ruling + G5-5C v0.1 + v0.2 REVISE rulings)
 
 ---
 
@@ -51,6 +52,84 @@ Option A has two parts, both required:
 - **Option B (periodic probe loop)** — rejected: introduces a polling goroutine and an independent timing source when the same event already flows through the master subscription. Less disciplined per V3 truth-domain split.
 - **Option C (transport reconnect signal)** — rejected for this batch: `Ship()` short-circuits in `ReplicaDegraded`, so the shipper does not attempt a reconnect that could carry the signal. C in practice folds back into A or B.
 
+### §1.B Peer-set generation scheme — design (architect REVISE v0.2 #2)
+
+**Architect REVISE ruling on v0.2**: "v0.2 says master re-emits assignment facts, but does not define how `PeerSetGeneration` changes. A re-emitted fact with the same generation can be dropped by `ReplicationVolume.UpdateReplicaSet`. The mini-plan needs an explicit design: master-maintained peer-set revision, observation revision folded into generation, or another monotonic scheme."
+
+**Today's encoding** (`core/host/master/services.go:215`):
+```go
+fact.PeerSetGeneration = (info.Epoch << 32) | info.EndpointVersion
+```
+With epoch and EV each constrained to fit in uint32 (asserted just above the encoding line). Generation is purely a function of the authority line `(epoch, ev)`. The publisher comment frames this as "monotonic across process lifetimes because Epoch/EV are durable authority facts preserved across master restart."
+
+**Stale-drop hazard** (`core/replication/volume.go:194-209`):
+```go
+if generation > 0 && generation <= v.lastAppliedGeneration {
+    v.replayedGens.Add(1)
+    // ...stale-replay log + return nil...
+}
+```
+A re-emit with unchanged `(epoch, ev)` produces an identical generation → silent stale-drop in `UpdateReplicaSet`. The peer set is NOT mutated, peer state is NOT recomputed, and any "peer reappeared" signal A1 wants to deliver is lost.
+
+**Design space — three options the architect named, mapped to V3 mechanics:**
+
+| Option | Wire shape | Master-side state | Cross-restart monotonicity | Aliasing risk |
+|---|---|---|---|---|
+| **α — Master-maintained per-volume monotonic counter** | Unchanged (single `PeerSetGeneration` uint64) | New durable (or quasi-durable) per-volume rev counter; bumps on every emission cause | Requires master to persist the counter (new authority-store entry), or accept reset on master restart with a forced subscriber bootstrap | None |
+| **β — Observation revision folded into existing generation packing** | Unchanged (single uint64) | `obsRev` per (volume, replica) maintained by `ObservationStore`; packed as `(epoch << 48) \| (ev << 32) \| obsRev`, narrowing epoch + ev to 16 bits each | Preserved if epoch/ev fit in 16 bits | High — current code asserts epoch + ev fit in uint32; narrowing to uint16 is an invariant change |
+| **γ — Add a separate `PeerSetRevision` field alongside `PeerSetGeneration`** | Wire change (additive proto field) — `(generation, revision)` compared lexicographically | `obsRev` per slot in `ObservationStore` (G5-5A round 54 already gates freshness; extend to count fresh-stale-fresh transitions) | Preserved — `PeerSetGeneration` keeps `(epoch<<32)\|ev` semantics; `PeerSetRevision` orders re-emits within a fixed lineage | None within the wire shape; lex compare in `UpdateReplicaSet` |
+
+**sw recommendation: Option γ** — for these reasons:
+1. **Discipline-coherent** — `PeerSetGeneration` continues to mean "the lineage stamp" (semantically aligned with `(epoch, ev)`); `PeerSetRevision` newly means "the re-emit ordinal within this lineage". Two distinct trust signals carried by two distinct fields.
+2. **No bit-arithmetic gymnastics** — Option β narrows epoch/ev which violates an existing uint32 invariant; not worth the wire saving.
+3. **No new master-side durable state** — unlike α, no need to add an authority-store entry just for the counter; `obsRev` lives where freshness already lives (`ObservationStore`).
+4. **Backward-additive proto change** — V3-only, single field, default-zero is a safe "no revision yet" sentinel; existing tests with `PeerSetGeneration: N` continue to compile and pass with `PeerSetRevision: 0`.
+5. **`UpdateReplicaSet` change is mechanical** — replace the `generation <= lastAppliedGeneration` stale-drop check with `(generation, revision) <= (lastAppliedGeneration, lastAppliedRevision)` lex compare. Existing replay-counter forensics extend cleanly.
+
+**Reject α**: master restart problem and new durable state both add scope outside G5-5C's stated minimal-change posture.
+**Reject β**: narrowing epoch + ev to 16 bits silently weakens an existing invariant; one uint32 epoch overflow in any future cluster year erases the option's benefit. Do not retire a stronger invariant for a weaker one.
+
+**Wire change (γ) — proto field**:
+```proto
+// core/rpc/proto/control.proto — AssignmentFact message
+message AssignmentFact {
+  // ... existing fields ...
+  uint64 peer_set_generation = N;   // existing — (epoch<<32)|ev lineage stamp
+  uint64 peer_set_revision   = N+1; // NEW — re-emit ordinal within lineage; 0 = unrevised
+}
+```
+
+**Generation rule update** (`UpdateReplicaSet`):
+```
+Compare (incoming_gen, incoming_rev) vs (lastApplied_gen, lastApplied_rev):
+  - lex-greater          → apply + advance both
+  - lex-equal-or-less    → stale-replay (existing log + replayedGens counter)
+  - generation == 0      → unversioned apply (existing semantics, unchanged;
+                           rev is ignored when gen==0)
+```
+
+**A1 emission trigger**:
+- On lineage change (`(epoch, ev)` bump) → `PeerSetRevision = 0` (new lineage; rev resets)
+- On observation freshness transition (stale → fresh) within unchanged lineage → `PeerSetRevision = obsRev_for_slot++` (or, for multi-slot facts, max across the slots that transitioned)
+- `obsRev` lives in `ObservationStore` per (volume, replica), incremented on the fresh-stale-fresh transition (gated by `FreshnessConfig` from G5-5A round 54).
+
+**Open architect choice within γ**: per-slot vs per-volume rev. sw proposes **per-volume max** — simpler, and re-emission is a volume-fact event regardless of which slot transitioned. Architect may bind otherwise at single-sign.
+
+### §1.C Truth-domain wording correction (architect REVISE v0.2 #3)
+
+**Architect REVISE ruling on v0.2**: "Adjust the truth-domain line: A1 is not just a 'read' of master truth if it causes subscription re-emission and peer-set revision movement. It can remain authority-safe, but document it as master observation-driven publication/re-emission, not pure read."
+
+**Corrected truth-domain check** (replaces v0.2's §1 closing line):
+
+| Truth domain | A1 (master) | A2 (primary) |
+|---|---|---|
+| Master peer-set + observation freshness | **Publication / re-emission** — A1 reads observation freshness from `ObservationStore` AND publishes a fact re-emission via the publisher; `PeerSetRevision` advances; existing `(epoch, ev)`-derived `PeerSetGeneration` does not change unless lineage itself changed | (no master writes from primary side) |
+| Primary shipper state + recovery decisions | (no primary writes from master side) | **Write** — recovery manager dispatches, shipper state advances via existing transitions |
+| Replica durable storage + acks | (no change) | (no change — replica already reopens correctly post-restart; G5-5 #4 confirmed restart side works) |
+| Engine | (no change) | (no change — T4d-4 primitives reused as-is) |
+
+A1 is **authority-safe**: it does not invent a new lineage, it does not advance `(epoch, ev)`, it does not change which replica is authoritative. It re-emits a fact that already represents authoritative truth, with a fresh `PeerSetRevision` so subscribers re-apply.
+
 ### What G5-5C does NOT deliver (explicit non-claims)
 
 - **No rebuild-path-only batch.** This batch handles the catch-up case (gap within retention). Rebuild path (`StartRebuildFromProbe`) is already wired (T4d-4 part B/C); G5-5C #4 only verifies the trigger correctly *hands off* to rebuild, not the rebuild path itself.
@@ -61,26 +140,29 @@ Option A has two parts, both required:
 
 ### Files (preliminary — exact set bound at code-start)
 
+All paths are in **`seaweed_block` (V3)**. The v0.2 file map mistakenly listed V2 `weed/server/...` and `weed/storage/blockvol/...` paths; v0.3 corrects this per architect REVISE v0.2 #1.
+
 | File | Side | Likely change | LOC est |
 |---|---|---|---|
-| `core/host/master/services.go` (or sibling: publisher/observation hookup) | master (A1) | When a slot's observation transitions stale → fresh and the slot identity is unchanged, mint a re-emission of the existing assignment fact for that slot. Reuse `Publisher.LastPublished` + `ObservationStore.SlotFact` freshness gate from G5-5A round 54. | ~70 |
-| `core/authority/observation_store.go` (possibly) | master (A1) | If freshness-transition detection isn't already accessible, expose a minimal callback or comparison helper. Avoid new public surface where `SlotFact` already suffices. | ~20 |
-| `weed/server/volume_server_block.go` (assignment subscription handler) | primary (A2) | On consuming an assignment-fact update for a slot whose shipper is in `ReplicaDegraded`, emit peer-reappeared event into recovery manager. | ~40 |
-| `weed/server/block_recovery.go` | primary (A2) | New entry point (e.g., `OnPeerObservedAfterDegraded(replicaID)`) — probes peer, dispatches to engine catch-up or rebuild. Includes per-peer cooldown to prevent flapping (§6 risk #1). | ~60 |
-| `weed/storage/blockvol/wal_shipper.go` | primary (A2) | Possibly: explicit `RearmFromDegraded()` method for the recovery manager to call (avoid touching shipper internals from server layer). | ~20 |
-| `weed/server/block_recovery_test.go` + master-side tests | both | Component tests #3 + #4 (covers A1 freshness-transition + A2 dispatch); failure-mode test for rebuild hand-off. | ~150 |
+| `core/rpc/proto/control.proto` | wire (A1) | Add `uint64 peer_set_revision` to `AssignmentFact` (§1.B Option γ). Regenerate `core/rpc/control/control.pb.go` + `control_grpc.pb.go`. | ~5 (proto) + generated |
+| `core/host/master/services.go` | master (A1) | In `SubscribeAssignments`, on observation freshness transition (stale → fresh) for a slot in the volume's topology, mint a re-emission of the current assignment fact with bumped `PeerSetRevision`. Reuse `Publisher.LastPublished` + `ObservationStore.SlotFact` (G5-5A round 54). | ~80 |
+| `core/authority/observation_store.go` | master (A1) | Track per-slot `obsRev` (uint64) — increment on fresh-stale-fresh transition, expose `SlotObsRev(volumeID, replicaID)` and a freshness-transition callback (or polling comparison helper used by services.go). | ~40 |
+| `core/replication/volume.go` | primary (A2) | `UpdateReplicaSet` signature: replace `generation uint64` with `(generation, revision uint64)` OR add a sibling method that accepts both. Stale-drop guard becomes lex compare on `(generation, revision)`. Existing `lastAppliedGeneration` joined by `lastAppliedRevision`. Existing `replayedGens` counter still applies; consider `replayedRevs` counter for forensics. | ~30 |
+| `core/host/volume/host.go` | primary (A2) | In `applyFact`, decode `PeerSetRevision` from the fact (via `decodeReplicaTargets` or a parallel helper), pass to `UpdateReplicaSet`. After `UpdateReplicaSet` returns nil-with-mutation, detect peers that transitioned out of `ReplicaDegraded` (or were degraded at entry and now have a fresh reapply) and dispatch the peer-reappeared event into the recovery dispatcher. | ~60 |
+| `core/replication/peer.go` | primary (A2) | Add an entry point on `ReplicaPeer` that the host's peer-reappeared handler calls — e.g., `OnReappeared(...)` — which probes the peer and dispatches to engine-driven catch-up via existing T4d-4 primitives, or hands off to rebuild on `ProbeRebuildRequired`. Includes per-peer cooldown (§6 risk #1). | ~70 |
+| `core/host/volume/apply_fact_test.go` | primary tests | New test cases for revision-driven reapply + peer-reappeared dispatch. | ~70 |
+| `core/host/master/services_test.go` (existing or new) | master tests | New test cases for observation-freshness-driven re-emission with bumped `PeerSetRevision`. | ~60 |
+| `core/replication/volume_test.go` | replication tests | New cases for `(generation, revision)` lex compare in `UpdateReplicaSet`. | ~40 |
+| `core/replication/component/...` (one of the existing component-test files) | end-to-end tests | Component test #4 — failure-mode rebuild hand-off without re-trigger loop. | ~50 |
 | `sw-block/design/v3-phase-15-g5-5c-mini-plan.md` (this doc) | — | §close appended at batch close. | + §close |
 
-Total estimate: ~360 LOC production + ~150 LOC tests, split master-side ~90 / primary-side ~120 / tests ~150.
+Total estimate: ~285 LOC production + ~220 LOC tests + ~5 LOC proto + generated, split master-side ~125 / replication ~30 / primary-side ~130 / tests ~220.
 
 ### Architecture truth-domain check (`v3-architecture.md §4`)
 
-- Master truth domain: peer-set + observation freshness — **read** (Option A consumes; no master mutation).
-- Primary truth domain: shipper state + recovery decisions — **write** (the trigger fires recovery here).
-- Replica truth domain: durable storage + acks — **no change** (replica already reopens correctly; G5-5 #4 confirmed restart side works).
-- Engine: **no change** to recovery primitives (T4d-4 reused as-is).
+See §1.C below for the corrected per-domain matrix (v0.3 fixes the v0.2 wording: A1 is **publication / re-emission** of master truth, not pure read; remains authority-safe because no new lineage is invented).
 
-No truth-domain crossings introduced.
+No truth-domain crossings introduced; A1 remains within the master truth domain (publication is master's own write surface), A2 remains within the primary truth domain.
 
 ---
 
@@ -91,8 +173,8 @@ Numbered, verifier-named, single source of truth.
 | # | Criterion | Verifier |
 |---|---|---|
 | 1 | Trigger source = Option A (master observation-driven re-emission), with both A1 (master-side re-emit on observation freshness transition) and A2 (primary-side recovery dispatch on consuming the re-emitted fact) implemented in this batch. | Architect §7 sign + §1.A binding |
-| 2 | A1 — Master mints a re-emission of the existing assignment fact for a slot when its observation transitions stale → fresh (slot identity unchanged). | Component test #3a (master-side; file + test name pinned at code-start) |
-| 3 | A2 — On consuming a re-emitted assignment fact for a slot whose shipper is in `ReplicaDegraded`, primary's recovery manager calls `ProbeReplica` and dispatches to engine-driven catch-up (T4d-4 primitives) when outcome is `ProbeCatchUpRequired`. | Component test #3b (primary-side; file + test name pinned at code-start) |
+| 2 | A1 — Master mints a re-emission of the existing assignment fact for a slot when its observation transitions stale → fresh (slot identity unchanged). The re-emission carries the unchanged `PeerSetGeneration` and a bumped `PeerSetRevision` per §1.B Option γ. | Component test #3a (master-side; `core/host/master/services_test.go` — exact test name pinned at code-start) |
+| 3 | A2 — On consuming a re-emitted assignment fact whose `(PeerSetGeneration, PeerSetRevision)` is lex-greater than `(lastAppliedGeneration, lastAppliedRevision)`, `UpdateReplicaSet` re-applies, the host detects peers that were in `ReplicaDegraded`, and the recovery dispatcher calls `ProbeReplica` and dispatches to engine-driven catch-up (T4d-4 primitives) when outcome is `ProbeCatchUpRequired`. | Component test #3b (primary-side; `core/host/volume/apply_fact_test.go` + `core/replication/volume_test.go` — exact test names pinned at code-start) |
 | 4 | When the gap exceeds retention and probe outcome is `ProbeRebuildRequired`, recovery manager hands off to `StartRebuildFromProbe` (already wired) without entering a re-trigger loop. Per-peer cooldown prevents flapping. | Component test #4 |
 | 5 | `iterate-m01-replicated-write.sh verify_restart_catchup` step turns GREEN on m01/M02 hardware: `LBA[2]=0xef` byte-equal under `m01verify` within 30s deadline (same as G5-5 #3 network-catchup; budget = 1× master heartbeat for re-emit + catch-up time + safety margin, comfortably inside 30s). | Hardware re-run; artifacts archived under `g5-test/logs/artifacts-<timestamp>/` |
 | 6 | No regression on G5-5 #1/#2/#3 — all three remain GREEN in the same hardware run. | Same script, same run |
@@ -114,8 +196,9 @@ Numbered, verifier-named, single source of truth.
 
 | INV ID (proposed) | What it claims | Test pointer (proposed) |
 |---|---|---|
-| `INV-REPL-PEER-RECOVERY-TRIGGER-001` | When a peer in `ReplicaDegraded` becomes observable again (per the chosen trigger source), the primary's recovery manager re-probes and dispatches to engine-driven catch-up or rebuild without operator intervention. | Component test #3 + hardware step #5 |
+| `INV-REPL-PEER-RECOVERY-TRIGGER-001` | When a peer in `ReplicaDegraded` becomes observable again (per Option A trigger), the primary's recovery dispatcher re-probes and dispatches to engine-driven catch-up or rebuild without operator intervention. | Component test #3a/#3b + hardware step #5 |
 | `INV-REPL-PEER-RECOVERY-NO-RETRIGGER-LOOP` | Hand-off from catch-up trigger to rebuild path is one-way; the trigger does not re-fire while a rebuild session is active. | Component test #4 |
+| `INV-MASTER-PEER-SET-GEN-REV-MONOTONIC` | `(PeerSetGeneration, PeerSetRevision)` advances lex-monotonically across all assignment-fact emissions for a (volume, replica). Re-emission on observation freshness transition bumps `PeerSetRevision` while leaving `PeerSetGeneration` (= `(epoch<<32)\|ev`) unchanged. Lineage change resets `PeerSetRevision` to 0 and bumps `PeerSetGeneration`. | `core/host/master/services_test.go` (revision bump + lineage reset) + `core/replication/volume_test.go` (lex-compare stale-drop) |
 
 **Forward-carry from G5-5 §close (deferred ledger pointers)**:
 - `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — G5-5C hardware re-run exercises this path; ledger pointer added at G5-5C §close (per G5-5 §close binding).
@@ -158,6 +241,8 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 | Gap exceeds retention mid-trigger (race between ship retention pressure and trigger arming) | Probe outcome `ProbeRebuildRequired` already handles this; #4 component test pins the hand-off |
 | Hardware re-run on m01 reveals secondary issues (residual iptables, leftover sessions, etc.) | `iterate-m01-replicated-write.sh start_cluster` already has pre-flight cleanup from G5-5 round 14; no new infra work |
 | Component tests pass but hardware doesn't converge (timing/state-of-world differences) | Same closure pattern as G5-5: component tests are necessary but not sufficient; hardware GREEN is the §close gate |
+| `obsRev` overflow over long-lived clusters (uint64 — practically infinite, but listed for completeness) | uint64 with rare bumps (only on freshness transitions) is effectively unbounded; no mitigation required |
+| Subscriber on master restart sees `PeerSetRevision` decrease (master's `obsRev` resets to 0) | Existing master-restart semantics already invalidate subscriber state model; first post-restart fact carries `(generation = current (epoch, ev), revision = 0)`. Subscriber's `lastAppliedRevision` may be > 0 from before restart → fact appears stale in lex compare. Mitigation: subscriber bootstrap path (host's first attach) explicitly clears `lastAppliedGeneration`/`lastAppliedRevision` so first post-restart fact applies. To be made explicit in `applyFact` first-attach handling; covered by component test #3a master-restart sub-case. |
 
 ---
 
@@ -166,8 +251,11 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 | Item | Owner | When | State |
 |---|---|---|---|
 | §1.A trigger source binding (Option A, A1+A2 in same batch, B/C rejected) | architect | v0.1 → v0.2 REVISE ruling | ✅ done 2026-04-27 |
-| §1-§6 architect single-sign of v0.2 (after this revision) | architect | Before code start | ⏳ pending |
-| Code (master-side A1 re-emit + primary-side A2 dispatch + tests) | sw | After §1-§6 single-sign | ⏳ blocked on single-sign |
+| §1.B peer-set generation scheme (γ recommended; per-slot vs per-volume rev open at single-sign) | architect | v0.2 → v0.3 REVISE ruling | ⏳ awaiting single-sign |
+| §1.C truth-domain wording (publication / re-emission, not pure read) | architect | v0.2 → v0.3 REVISE ruling | ✅ absorbed in v0.3 |
+| §1 Files V3 path correction (`core/...` not `weed/...`) | architect | v0.2 → v0.3 REVISE ruling | ✅ absorbed in v0.3 |
+| §1-§6 architect single-sign of v0.3 | architect | Before code start | ⏳ pending |
+| Code (proto field add + master-side A1 re-emit + replication lex-compare + primary-side A2 dispatch + tests) | sw | After §1-§6 single-sign | ⏳ blocked on single-sign |
 | m01 hardware re-run of `verify_restart_catchup` (+ #1/#2/#3 regression check) | QA | After sw lands trigger + component tests | ⏳ blocked |
 | §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
 
