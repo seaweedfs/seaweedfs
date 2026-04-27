@@ -200,6 +200,14 @@ These are the observed sources of waste. Every batch should actively check them.
 
 ## §14 Who owns what step
 
+All three "architects" are AI agents; user routes messages between them. Per-agent action lists (§15) reduce routing overhead.
+
+| Architect role | Owner agent | Scope |
+|---|---|---|
+| **System architect** | architect agent (cursor) | Product, scope, behavior contracts, gate definitions, close sign |
+| **Function/process architect** | QA agent (claude-code) | Process discipline, verification, system-level drift detection, doc lifecycle |
+| **Code-ownership architect** | sw agent (cursor) | Implementation feasibility, code shape, framework state |
+
 Based on what actually worked across T4 + G5:
 
 | Step | Owner | Why |
