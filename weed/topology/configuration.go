@@ -4,10 +4,6 @@ import (
 	"encoding/xml"
 )
 
-type loc struct {
-	dcName   string
-	rackName string
-}
 type rack struct {
 	Name string   `xml:"name,attr"`
 	Ips  []string `xml:"Ip"`

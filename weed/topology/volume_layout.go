@@ -156,7 +156,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
-		sizeTracking:    make(map[needle.VolumeId]*volumeSizeTracking),
+		sizeTracking:     make(map[needle.VolumeId]*volumeSizeTracking),
 	}
 }
 
@@ -362,10 +362,6 @@ func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
 	return uint64(v.Size) >= vl.volumeSizeLimit
 }
 
-func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
-	return float64(v.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold
-}
-
 // RecordAssign adds the estimated byte size to the volume's tracked effective
 // size and updates the volume's writable state:
 //
@@ -488,7 +484,6 @@ func (vl *VolumeLayout) DrainAndRemoveFromWritable(vid needle.VolumeId) {
 	vl.accessLock.Unlock()
 	vl.waitForPendingDrain(context.Background(), vid)
 }
-
 
 func (vl *VolumeLayout) isEmpty() bool {
 	vl.accessLock.RLock()
