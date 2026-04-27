@@ -257,24 +257,12 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		location = vs.store.Locations[req.DiskId]
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
-		// Prefer a location that already has shards for this volume,
-		// so all shards end up on the same disk for rebuild.
-		location = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
-			_, found := loc.FindEcVolume(needle.VolumeId(req.VolumeId))
-			return found
-		})
-		if location == nil {
-			// Fall back to any HDD location with free space
-			location = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
-				return loc.DiskType == types.HardDriveType
-			})
-		}
-		if location == nil {
-			// Fall back to any location with free space
-			location = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
-				return true
-			})
-		}
+		// Auto-select the target disk: prefer a disk that already has the
+		// EC volume mounted, then a disk that owns the .ecx on disk (the
+		// volume hasn't been mounted yet — relevant for ec.rebuild, where
+		// only the first shard carries .ecx and subsequent shards must
+		// land on the same disk; see #9212), then any HDD, then any disk.
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId))
 		if location == nil {
 			return nil, fmt.Errorf("no space left")
 		}

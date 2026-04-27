@@ -22,6 +22,44 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
+// FindEcShardTargetLocation returns the disk that should receive a new
+// shard / index file for (collection, vid). The selection order is:
+//
+//  1. a disk that already has the EC volume mounted (in-memory state),
+//  2. a disk that owns the .ecx file on disk (volume not mounted yet),
+//  3. any HDD with free space,
+//  4. any disk with free space.
+//
+// Step 2 is the missing primitive that pinned subsequent shards to the
+// first-shard disk during ec.rebuild. ec.rebuild only sets CopyEcxFile=true
+// for the first shard, then relies on auto-select to land later shards on
+// the same disk. Without an on-disk check, FindEcVolume returns nothing
+// (no mount yet) and the fallback picks "any HDD with free space" — which
+// can split shards from their index files across disks of the same node
+// and lose them at startup. See issue #9212 and the orphan-shard
+// reconciliation in #9244.
+func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId) *DiskLocation {
+	if location := s.FindFreeLocation(func(loc *DiskLocation) bool {
+		_, found := loc.FindEcVolume(vid)
+		return found
+	}); location != nil {
+		return location
+	}
+	if location := s.FindFreeLocation(func(loc *DiskLocation) bool {
+		return loc.HasEcxFileOnDisk(collection, vid)
+	}); location != nil {
+		return location
+	}
+	if location := s.FindFreeLocation(func(loc *DiskLocation) bool {
+		return loc.DiskType == types.HardDriveType
+	}); location != nil {
+		return location
+	}
+	return s.FindFreeLocation(func(loc *DiskLocation) bool {
+		return true
+	})
+}
+
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
 	collectionEcShardSize := make(map[string]int64)
