@@ -135,7 +135,11 @@ Plus the broader G5-4 wiring claim — that the binary-level T4 replication stac
 
 | Stage | Signer | When | Status |
 |---|---|---|---|
-| §1-§6 ratification | architect (pingqiu) + QA review (§12 checklist) | v0.1 submitted; v0.2 addressed substance but §2 acceptance criteria stayed stale; v0.3 rewrites §2 to match §1 (single-source-of-truth discipline) | ⏳ pending re-review |
+| §1-§6 ratification | architect (pingqiu) + QA review (§12 checklist) | v0.3 RATIFIED 2026-04-26 (round 51, G-1 ceremony dropped) | ✅ |
+| Code start (G5-5.1-5) | sw | After §1-§6 ratification | ✅ landed at `seaweed_block@2745cf4` and follow-up commits |
+| m01 hardware verification | sw self-iteration (architect-approved 2026-04-27 trial mode) | rounds 1-14, surfaced 14 bugs + 1 product finding | ✅ rounds complete; #1+#2+#3 GREEN |
+| §close append | sw drafts; QA verifies evidence | This commit | ✅ submitted |
+| §close architect single-sign | architect (pingqiu) | After this submission | ⏳ pending |
 | Code start (script + Go helper) | sw | After §1-§6 ratification | ⏳ blocked on ratification |
 | m01 hardware verification run | QA | After sw lands script + helper | ⏳ blocked |
 | §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
@@ -144,16 +148,181 @@ Plus the broader G5-4 wiring claim — that the binary-level T4 replication stac
 
 ## §close
 
-*(Appended at batch close. Per `v3-batch-process.md §12`, the §close summary MUST include:)*
+**Date**: 2026-04-27
+**Status**: ⏳ awaiting architect single-sign per `v3-batch-process.md §5` / §8C.2
+**Result**: 3 of 4 verify steps GREEN on m01 hardware; 1 surfaces a real recovery-path finding deferred to a named follow-up batch.
 
 ```
 Done:
+  - #1 verify_cluster_ready (role split confirmed cross-node)
+  - #2 verify_byte_equal — live iSCSI write replicated end-to-end
+    on real m01+M02 cross-host TCP, byte-equal verified by
+    storage-aware m01verify (LBA[0]=0xab matches on replica
+    walstore via storage.OpenReadOnly + LogicalStorage.Read)
+  - #3 verify_network_catchup — iptables OUTPUT drop + write
+    during partition + heal + replica converges to byte-equal
+    LBA[1]=0xcd in 8s via engine-driven catch-up
+  - 14 distinct bugs surfaced and fixed across rounds 1-14 (full
+    ledger in §close.evidence.bugs)
+  - 5 INV-BIN-WIRING-* invariants in v3-invariant-ledger.md from
+    G5-4 close still load-bearing; G5-5 hardware run is the
+    Integration evidence backstop for those rows
+
 Not done:
+  - #4 verify_restart_catchup — kill replica + write while down
+    + restart same --durable-root: replica's LBA[2]=0xef does
+    NOT converge within 30s. Per architect ruling 2 (round 13):
+    'run #4 naively; if it does not converge, that is a real
+    recovery-path finding to surface, not a test flaw.'
+    Surfaces as carry-forward G5-5C (architect ratification
+    2026-04-27).
+  - #5 verify_race_stress + #6 verify_full_suite — depend on
+    cluster up across multi-step; gated on #4 fix or test
+    sequencing rework.
+
 Product level reached:
+  - L3 (Replicated IO) per v3-architecture.md §13 — proven by
+    #2 + #3 (live replicated write + network-blip catch-up
+    convergence on real cross-host hardware).
+  - Falls short of full L4 (Failure/recovery under IO) — the
+    process-restart recovery path (peer-recovery-after-restart
+    trigger) is the gap, scoped as G5-5C.
+
 Next gate that makes it usable:
+  - G5-5C Peer Recovery Trigger After Replica Restart — fix
+    the engine-driven catch-up re-trigger so a degraded peer
+    that becomes reachable again (replica restart) replays
+    missed LSNs without manual intervention. After G5-5C
+    closes: re-run #4 + #5 + #6 in this same harness; full
+    L4 is reached.
 ```
 
-*(Plus deltas vs §1-§6, evidence pointers (commit hashes, m01 log artifacts, ledger row updates), and forward-carries to G5-6.)*
+### §close.deltas vs §1-§6
+
+- §1 file map: ALL planned files landed plus 4 unplanned
+  instrumentation passes (rounds 7-9-10-12 added INFO logs at
+  iSCSI handler + StorageBackend + observer dispatch +
+  ReplicationVolume.OnLocalWrite + ReplicaPeer.ShipEntry/Barrier
+  + transport.Ship lazy-dial). Beneficial side-effect of the
+  diagnostic iteration; production-acceptable verbosity.
+- §1.5 listener bind addr corrected: mini-plan v0.4 said
+  `--ctrl-addr` reuse; round-12 hardware found `--data-addr` is
+  the correct binding (transport executor dials peer.DataAddr).
+  Fixed in code; documented in PR. Not a scope change — same
+  semantic surface, corrected addr field.
+- §2 acceptance #2 verifier wording: m01verify reads via
+  walstore.OpenReadOnly per architect REVISE round 51 — landed
+  exactly as specified.
+- §2 acceptance #4: status changed mid-batch from "GREEN expected"
+  to "real recovery-path finding". Architect ruling 2026-04-27
+  ratifies as carry-forward, not failure.
+- §3 invariants: no new INV inscribed for G5-5 (verification
+  batch); existing INV-BIN-WIRING-* rows updated with
+  Last verified=2026-04-27 (Tier 2 m01 cross-node).
+- §6 risks: pre-flight iptables cleanup added to
+  start_cluster() (test-infra hardening, architect-approved
+  2026-04-27); not product scope expansion.
+
+### §close.evidence
+
+**Commits (chronological):**
+
+| Commit | Round | Content |
+|---|---|---|
+| `f5de7c5` | pre-G5-5 | blockmaster `--expected-slots-per-volume` flag |
+| `c820e17` | G5-4 | Binary T4 replication wiring (foundation for G5-5) |
+| `36ba7b44e` (seaweedfs) | G5-4 | 5 INV-BIN-WIRING-* in ledger |
+| `2745cf4` | G5-5.1-5 initial | /status/recovery + walstore.OpenReadOnly + m01verify + script |
+| `64c7899` | round 52 | walstore_readonly no-goroutine fix + script fail-closed |
+| `b9eb82c` | round 53 | LOCAL_MODE Tier 1 |
+| `1f7f472` | round 53 | SSH `-T -n` + timeout (Windows Git Bash hang fix) |
+| `52565ff` | round 53 | PREBUILT_BIN_DIR + SRC_DIR safety guard |
+| `f078096` | round 53 | bash -s heredoc launch (line-collapse fix) |
+| `fb30b90` | round 53 | drop -n from launch ssh (bash -s stdin conflict) |
+| `7233cb2` | round 54 | bind+advertise routable IP |
+| `c995d74` | G5-5A | master collectPeers observation fallback |
+| `ba8abf0` | round 54 follow-ups | freshness gate + lineage rule + comment |
+| `beedcc2` | round 54 | INFO logs on UpdateReplicaSet success |
+| `c2a2418` | round 53 | ship/dial/barrier instrumentation |
+| `1277a10` | round 54 | upstream observer + OnLocalWrite + gate-close instrumentation |
+| `003daa2` | round 54 | SCSI handler + StorageBackend.Write entry instrumentation |
+| `2b76afc` | round 54 | StorageBackend.SetIdentity round 1 (all-fields-zero check) |
+| `7d19cbe` | round 11 | SetIdentity v2 — latch on Epoch=0 (round 1 was no-op) |
+| `5c66466` | round 12 | drop H-advance preflight (engine semantic mismatch) |
+| `8f7b9cc` | round 12B | walstore filename `v1.bin` not `v1.walstore` |
+| `7e3e6d5` | round 12C | dd 0xab fill via python3 (tr lacks `\xHH` escape) — **#2 GREEN** |
+| `530af8d` | round 13 | rewrite #3/#4 to byte-equal pattern + helpers |
+| `5c4718f` | round 14 | pre-flight stale-iptables cleanup — **#3 GREEN** + **#4 surfaces real finding** |
+
+**m01 hardware artifacts (V:/share/g5-test/logs/):**
+- `iterate-20260427T084120Z.log` — #2 GREEN evidence (round 12 part C)
+- `iterate-20260427T091245Z.log` — #1+#2+#3 GREEN, #4 surfaces finding (round 14)
+- `artifacts-20260427T091245Z/{master,primary,replica}-fail.log` — diagnostic dump
+
+**Production code change footprint** (excluding script + tests):
+- `core/host/master/services.go`: G5-5A peer-set construction (path 1 + path 2 fallback to ObservationStore.SlotFact, subscriber-stamped Epoch/EV)
+- `core/authority/observation_store.go`: SlotFact accessor with FreshnessConfig gate
+- `core/frontend/durable/storage_adapter.go`: SetIdentity(latch-from-Epoch=0) + observer-dispatch INFO logs
+- `core/frontend/durable/provider.go`: dp.Open auto-latches Identity post-waitHealthy
+- `core/host/volume/host.go`: UpdateReplicaSet success + adopted-as-PRIMARY INFO logs
+- `core/host/volume/status_server.go`: /status/recovery endpoint (opt-in)
+- `core/host/volume/projection_bridge.go`: AdapterProjectionView.EngineProjection accessor
+- `core/storage/walstore_readonly.go`: NEW — OpenReadOnly + WALStoreReader
+- `cmd/blockmaster/main.go`: `--expected-slots-per-volume` flag (G5-5 prereq)
+- `cmd/blockvolume/main.go`: `--status-recovery` flag + dp.EnsureStorage + ReplicationVolume + ReplicaListener wiring
+- `cmd/m01verify/main.go`: NEW — standalone byte-equal verifier (build-tag m01verify)
+- `core/replication/peer.go`: ShipEntry + Barrier instrumentation
+- `core/transport/ship_sender.go`: lazy-dial INFO log
+- `core/frontend/iscsi/scsi.go`: SCSI WRITE/SYNCHRONIZE_CACHE handler INFO logs
+
+### §close.evidence.bugs (round-by-round)
+
+14 bugs surfaced + fixed during m01 self-iteration:
+
+1. (round 6) Replica role-split design verification (G5-4 expected behavior)
+2. (round 53) SSH hang from Windows Git Bash — `-T -n` flags
+3. (round 53) iSCSI 0.0.0.0 listen rejection (loopback-only enforcement)
+4. (round 53) Script remote bash silent failure (`set -euo pipefail`)
+5. (round 53) tar root filesystem hazard (SRC_DIR guard)
+6. (round 53) Backslash-newline collapse in SSH heredoc
+7. (round 53) `-n` vs `bash -s` stdin conflict (split SSH_OPTS)
+8. (round 54) 0.0.0.0 bind/advertise vs routable IP
+9. (round 54) Master collectPeers misses observation-only replicas (G5-5A)
+10. (round 11) SetIdentity all-zero check too strict (latch never fired)
+11. (round 12) walstore filename mismatch (`.walstore` vs `.bin`)
+12. (round 12) `tr "\0" "\xab"` doesn't produce 0xab (tr escape gap)
+13. (round 12) H-advance preflight false positive (engine state semantic)
+14. (round 14) Stale iptables INPUT DROP rule poisoning all subsequent runs
+
+### §close.evidence.findings
+
+1 real product finding (architectural, NOT script-level):
+
+**G5-5C carry: peer recovery trigger after replica restart.** Engine-driven catch-up primitives exist (T4d-4) but no runtime trigger fires when a degraded peer becomes reachable again (e.g., after replica restart). Primary's `gate-degraded` rejects ships without retry; barrier acks at stale `achievedLSN`; replica never receives missed LSNs. Carry-forward to a dedicated mini-plan per architect ruling 2026-04-27.
+
+### §close.forward-carries
+
+To **G5-5C** (named follow-up, architect-bound 2026-04-27):
+- Reuse existing engine-driven recovery primitives (T4d-4); do not invent ad-hoc re-ship from replication layer.
+- Define the trigger source first: observation reappearance, periodic probe loop, or stream/transport reconnect signal.
+- Pass criterion: exactly the failed hardware case from G5-5 #4 — kill replica, write while down, restart same `--durable-root`, wait, verify LBA byte-equal.
+- Seed evidence: `seaweed_block@5c4718f` primary-fail.log shows the gate-degraded + stale-barrier-ack pattern.
+
+To **future hardening** (no specific gate, opportunistic):
+- Component-scope test for `EnsureStorage → assignment-arrives → first-Open` Identity-latch path (would have caught the round-10/11 bug pre-m01)
+- Test-infra discipline: `start_cluster()` pre-flight cleanup pattern (iptables, residual files, leftover sessions) generalized across future hardware harnesses
+
+To **G5-6** (G5-DECISION-001 close):
+- Engine-state serializability (TestG5Decision001_ReplicaState_RoundTripJSON pinned in T4d) survives G5-5; Path A vs Path B decision still open at G5-6 close.
+
+### §close.architect-review-checklist (`v3-batch-process.md §12`)
+
+| Check | Answer |
+|---|---|
+| Scope truth | Done: #1+#2+#3 GREEN on real hardware. Not done: #4 (carry G5-5C) + #5+#6 (gated on #4 or sequencing rework). Product risk: replica-restart recovery is L3-/L4-blocking until G5-5C lands. |
+| V2 / new-build decision | Pure verification + new instrumentation + small architectural fixes (G5-5A, SetIdentity latch). No V2 muscle PORT involved. G-1 correctly N/A. |
+| Engine / adapter impact | Zero engine/adapter logic change. master/observation peer-set construction (G5-5A) + frontend backend Identity latch (G5-5) — both covered by architect rulings 2026-04-26 (G5-5A round 54) and implicitly by SetIdentity test pin. |
+| Product usability level | Operator can run a 2-node cluster, write via iSCSI, get the data on the replica, survive a network blip, and observe convergence. Cannot yet survive a replica process restart with auto-recovery. L3 reached; full L4 awaits G5-5C. |
 
 ---
 
