@@ -139,9 +139,6 @@ Plus the broader G5-4 wiring claim — that the binary-level T4 replication stac
 | m01 hardware verification | sw self-iteration (architect-approved 2026-04-27 trial mode) | rounds 1-14, surfaced 14 bugs + 1 product finding | ✅ rounds complete; #1+#2+#3 GREEN |
 | §close append | sw drafts; QA verifies evidence | This commit | ✅ submitted |
 | §close architect single-sign | architect (pingqiu) | After this submission | ⏳ pending |
-| Code start (script + Go helper) | sw | After §1-§6 ratification | ⏳ blocked on ratification |
-| m01 hardware verification run | QA | After sw lands script + helper | ⏳ blocked |
-| §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
 
 ---
 
