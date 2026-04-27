@@ -349,3 +349,109 @@ func TestReconcileNoOpWhenEachDiskIsSelfContained(t *testing.T) {
 	}
 }
 
+// TestLoadEcShardsWhenOwnerEcxIsInDataDir covers the legacy layout flagged
+// in PR #9244 review: -dir.idx is configured (so every DiskLocation has
+// IdxDirectory != Directory), but the owner's .ecx / .ecj / .vif were
+// written into the owner's data dir before -dir.idx was set. indexEcxOwners
+// must record the directory the .ecx was actually found in (Directory),
+// not just the owner's IdxDirectory — otherwise NewEcVolume's same-disk
+// fallback retries the orphan disk's data dir and ENOENTs there too.
+func TestLoadEcShardsWhenOwnerEcxIsInDataDir(t *testing.T) {
+	tempDir := t.TempDir()
+	dir0 := filepath.Join(tempDir, "data1") // orphan: shards only
+	dir1 := filepath.Join(tempDir, "data2") // owner: .ecx in data dir
+	idxDir := filepath.Join(tempDir, "idx") // shared idx folder, intentionally empty
+	for _, d := range []string{dir0, dir1, idxDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	collection := "grafana-loki"
+	vid := needle.VolumeId(4242)
+	const dataShards, parityShards = 10, 4
+	const datSize int64 = 10 * 1024 * 1024
+	expectedShardSize := calculateExpectedShardSize(datSize)
+
+	writeShard := func(dir string, shardId int) {
+		t.Helper()
+		base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+		f, err := os.Create(base + erasure_coding.ToExt(shardId))
+		if err != nil {
+			t.Fatalf("create shard %d in %s: %v", shardId, dir, err)
+		}
+		if err := f.Truncate(expectedShardSize); err != nil {
+			f.Close()
+			t.Fatalf("truncate shard %d in %s: %v", shardId, dir, err)
+		}
+		f.Close()
+	}
+
+	writeShard(dir0, 0)
+	writeShard(dir0, 12)
+	writeShard(dir1, 1)
+
+	// Owner's .ecx / .ecj / .vif live in dir1 (data dir), NOT idxDir.
+	// This mirrors a server that ran without -dir.idx, then later got it
+	// configured — the index files stay in their original on-disk home.
+	base1Data := erasure_coding.EcShardFileName(collection, dir1, int(vid))
+	if err := os.WriteFile(base1Data+".ecx", make([]byte, 20), 0o644); err != nil {
+		t.Fatalf("write .ecx in data dir: %v", err)
+	}
+	if err := os.WriteFile(base1Data+".ecj", nil, 0o644); err != nil {
+		t.Fatalf("write .ecj in data dir: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base1Data+".vif", &volume_server_pb.VolumeInfo{
+		Version:     uint32(needle.Version3),
+		DatFileSize: datSize,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards:   dataShards,
+			ParityShards: parityShards,
+		},
+	}); err != nil {
+		t.Fatalf("save .vif in data dir: %v", err)
+	}
+
+	// idxDir is configured but intentionally empty for this volume — we
+	// want IdxDirectory != Directory while the .ecx lives in Directory.
+	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+		[]string{dir0, dir1},
+		[]int32{100, 100},
+		[]util.MinFreeSpace{{}, {}},
+		idxDir,
+		NeedleMapInMemory,
+		[]types.DiskType{types.HardDriveType, types.HardDriveType},
+		nil,
+		3,
+	)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-store.NewVolumesChan:
+			case <-store.NewEcShardsChan:
+			case <-store.DeletedVolumesChan:
+			case <-store.DeletedEcShardsChan:
+			case <-store.StateUpdateChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
+
+	loc1 := store.Locations[1]
+	if _, found := loc1.FindEcShard(vid, 1); !found {
+		t.Fatalf("baseline broken: shard 1 on dir1 (which has .ecx in its data dir) was not loaded")
+	}
+
+	loc0 := store.Locations[0]
+	for _, sid := range []erasure_coding.ShardId{0, 12} {
+		if _, found := loc0.FindEcShard(vid, sid); !found {
+			t.Errorf("issue #9212 (PR #9244 review): orphan shard %d on dir0 not loaded; reconcile pointed loader at IdxDirectory but .ecx was actually in owner.Directory", sid)
+		}
+	}
+}

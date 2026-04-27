@@ -19,6 +19,20 @@ type ecKeyForReconcile struct {
 	vid        needle.VolumeId
 }
 
+// ecxOwnerInfo records both the disk that owns the .ecx and the actual
+// directory it lives in (IdxDirectory or Directory). The directory matters
+// because indexEcxOwners scans both — when .ecx lives in Directory (the
+// legacy "written before -dir.idx was set" layout that removeEcVolumeFiles
+// in disk_location_ec.go also keeps cleaning up), passing the owner's
+// IdxDirectory to NewEcVolume would ENOENT both the primary and the
+// same-disk fallback path, which uses the orphan disk's data dir, not the
+// owner's. Tracking the actual scan dir lets reconcile point loaders at
+// the directory the .ecx is really in.
+type ecxOwnerInfo struct {
+	location *DiskLocation
+	idxDir   string
+}
+
 // reconcileEcShardsAcrossDisks loads EC shards that the per-disk scan in
 // loadAllEcShards skipped because the disk holding the .ec?? files does not
 // also hold the matching .ecx / .ecj / .vif index files. The index files
@@ -53,28 +67,30 @@ func (s *Store) reconcileEcShardsAcrossDisks() {
 					key.vid, key.collection, loc.Directory, shards)
 				continue
 			}
-			if owner == loc {
+			if owner.location == loc {
 				// .ecx is on this same disk, but loadAllEcShards still
 				// did not load these shards — handleFoundEcxFile already
 				// logged the underlying failure. Don't try again here.
 				continue
 			}
 			glog.V(0).Infof("ec volume %d (collection=%q): loading orphan shards %v on %s using index files from %s (issue #9212)",
-				key.vid, key.collection, shards, loc.Directory, owner.IdxDirectory)
-			if err := loc.loadEcShardsWithIdxDir(shards, key.collection, key.vid, owner.IdxDirectory, loc.ecShardNotifyHandler); err != nil {
+				key.vid, key.collection, shards, loc.Directory, owner.idxDir)
+			if err := loc.loadEcShardsWithIdxDir(shards, key.collection, key.vid, owner.idxDir, loc.ecShardNotifyHandler); err != nil {
 				glog.Errorf("ec volume %d on %s: cross-disk shard load failed: %v", key.vid, loc.Directory, err)
 			}
 		}
 	}
 }
 
-// indexEcxOwners returns the disk that owns the .ecx file for each
-// (collection, vid) on this store. .ecx normally lives in IdxDirectory but
-// may have been written into the data directory before -dir.idx was set,
-// so we check both. The first owner found wins; duplicates across disks
-// are unusual but tolerated.
-func (s *Store) indexEcxOwners() map[ecKeyForReconcile]*DiskLocation {
-	owners := make(map[ecKeyForReconcile]*DiskLocation)
+// indexEcxOwners returns the disk and the actual directory that owns the
+// .ecx file for each (collection, vid) on this store. .ecx normally lives
+// in IdxDirectory but may have been written into the data directory before
+// -dir.idx was set, so we check both — and we record which one matched so
+// downstream loaders point NewEcVolume at the directory that really has
+// the file. The first owner found wins; duplicates across disks are
+// unusual but tolerated.
+func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
+	owners := make(map[ecKeyForReconcile]ecxOwnerInfo)
 	for _, loc := range s.Locations {
 		seen := make(map[string]bool, 2)
 		for _, scan := range []string{loc.IdxDirectory, loc.Directory} {
@@ -101,7 +117,7 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]*DiskLocation {
 				}
 				key := ecKeyForReconcile{collection: collection, vid: vid}
 				if _, exists := owners[key]; !exists {
-					owners[key] = loc
+					owners[key] = ecxOwnerInfo{location: loc, idxDir: scan}
 				}
 			}
 		}
