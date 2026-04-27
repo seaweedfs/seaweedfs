@@ -1635,6 +1635,12 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 	return iam.credentialManager
 }
 
+// SetCredentialManagerForTest replaces the credential manager. Only intended
+// for use in tests that need to inject a pre-configured in-memory store.
+func (iam *IdentityAccessManagement) SetCredentialManagerForTest(cm *credential.CredentialManager) {
+	iam.credentialManager = cm
+}
+
 type managedPolicyLoader interface {
 	LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error)
 }
