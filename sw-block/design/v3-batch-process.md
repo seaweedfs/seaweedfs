@@ -156,3 +156,36 @@ Do NOT auto-port T4 governance template forward. Each batch asks "does this step
 Documentation overhead that doesn't catch bugs is ceremony. Documentation that catches bugs is discipline.
 
 Drop ceremony. Keep discipline.
+
+---
+
+## §12 Who owns what step
+
+Based on what actually worked across T4 + G5:
+
+| Step | Owner | Why |
+|---|---|---|
+| **Gate scope** (which gate, what it promises, dependencies) | architect | Product requirements + V3 architectural discipline |
+| **Batch sketch** (mini-plan §1-§6) | **sw** | Knows the code + implementation feasibility + framework state; can commit to what's deliverable |
+| **G-1 V2 read** (when V2 PORT) | sw | Owns the V3 target where V2 muscle lands |
+| **Mini-plan ratification** | architect (signs §1-§6) + QA (reviews) | Architect: scope drift / missing bindings / V2 lessons. QA: invariant + acceptance discipline. |
+| **Code + unit tests** | sw | — |
+| **Component scenarios + m01 verification** | QA | Independent perspective; framework + hardware coverage |
+| **Ledger inscription** (PR-atomic) | sw | Lands with code in same PR |
+| **§close append** | sw drafts; QA verifies evidence pointers | Sw: facts. QA: acceptance discipline. |
+| **Close sign** | architect | Single-sign per §8C.2; caught stale refs + scope drift multiple times |
+
+**Why sw plans (not architect):**
+- Sw knows what's feasible + what frameworks exist + what shortcuts are safe
+- Architect-drafted plans miss implementation realities (catch up via reviewer cycle anyway)
+- Sw self-commits to scope they can deliver — fewer revision cycles
+- Architect ratifies SCOPE (caught 2 binding clarifications at G5-4 v0.2→v0.3) but doesn't need to author implementation detail
+
+**Why QA reviews + verifies (doesn't plan):**
+- Independent third party; not advocate for either scope or implementation choice
+- Catches discipline gaps (invariant inscription, acceptance criteria coverage) sw + architect miss
+- Owns m01 hardware verification + component scenarios
+
+**Edge case — process changes (this doc):** QA proposes; architect signs (same as any scope-affecting change).
+
+**Edge case — hotfix-class** (per §6.3): sw can self-author + self-merge with QA spot-review. Architect ratifies if invariant-affecting.
