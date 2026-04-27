@@ -2016,7 +2016,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo)
         let (data_shards, parity_shards) =
-            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, collection, vid);
+            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                &dir, &idx_dir, collection, vid,
+            );
 
         if let Err(e) = crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
@@ -2170,6 +2172,7 @@ impl VolumeServer for VolumeGrpcService {
         let (data_shards, parity_shards) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &rebuild_dir,
+                &rebuild_idx_dir,
                 collection,
                 vid,
             );
@@ -3486,8 +3489,13 @@ impl VolumeServer for VolumeGrpcService {
 
                     total_volumes += 1;
                     total_files += files;
+                    // Scrub operates on the dir returned by find_ec_dir;
+                    // pass it for both args so the helper has a single
+                    // place to look. If a sibling-disk split ever
+                    // matters here, plumb the idx dir through too.
                     let (data_shards, parity_shards) =
                         crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                            &dir,
                             &dir,
                             &collection,
                             *vid,
