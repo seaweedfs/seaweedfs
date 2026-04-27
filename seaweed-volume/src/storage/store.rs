@@ -84,6 +84,17 @@ impl Store {
         }
 
         self.locations.push(loc);
+
+        // After every disk has finished its per-disk EC scan, sweep
+        // the store for shards that live on a disk without local index
+        // files and load them by reaching across to a sibling disk's
+        // .ecx / .ecj / .vif (seaweedfs/seaweedfs#9212 / #9244).
+        // ec.balance / ec.rebuild can move shards onto a destination
+        // node's second disk while leaving the index on the disk that
+        // already held the volume; without this pass those orphan
+        // shards stay invisible to the master.
+        self.reconcile_ec_shards_across_disks();
+
         Ok(())
     }
 
@@ -95,6 +106,7 @@ impl Store {
                 tracing::error!("load_new_volumes error in {}: {}", loc.directory, e);
             }
         }
+        self.reconcile_ec_shards_across_disks();
     }
 
     // ---- Volume lookup ----
