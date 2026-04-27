@@ -98,6 +98,7 @@ For any specific question, go to the canonical doc:
 | What does P15 promise? | `v3-phase-15-mvp-scope-gates.md` (22 gates + closure rules) |
 | What's the product goal + execution model? | `v3-phase-15-product-plan.md` |
 | Why pre-declared topology + authority discipline (not V2-style heartbeat-as-authority)? | `v3-product-placement-authority-rationale.md` |
+| What positive behavior contracts must V3 block preserve (vs object/KV)? | **[`v3-block-behavior-contract-index.md`](./v3-block-behavior-contract-index.md)** — first-order architect ref, positive counterpart to anti-patterns |
 | What's the methodology / closed-loop discipline? | `v3-phase-development-model.md` |
 | What invariants does V3 promise + which tests prove them? | `v3-invariant-ledger.md` |
 | What's the V2→V3 contract bridge state? | `v2-v3-contract-bridge-catalogue.md` |
