@@ -1,6 +1,6 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.4.2 — adds §1.E authority-bounded primary recovery rule per architect framing 2026-04-27; design unchanged from v0.4)
+**Date**: 2026-04-27 (v0.4.3 — adds §1.F reconnect orthogonality (connection recovery vs identity change) per architect framing 2026-04-27; design unchanged from v0.4)
 **Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5`
 **Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (primary-side probe loop + recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
@@ -164,6 +164,59 @@ This needs an audit during code-start: confirm that `Close()` interrupts an in-f
 
 `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` (proposed, see §3): probe loop targets are sourced only from master-issued assignment facts for the current lineage; in-flight probes abort cleanly on lineage-change teardown.
 
+### §1.F Reconnect: connection-recovery vs identity-change (orthogonal axes)
+
+§1.D / §1.E together rule out the wrong shapes (master scheduling recovery; primary inventing peers). This subsection adds the missing axis: **what changes between primary and the recovering replica**. There are two orthogonal dimensions; G5-5C handles both correctly.
+
+| Axis | What it captures | Detected by | Master action | Primary action |
+|---|---|---|---|---|
+| **Connection / session** | Replica process restart, brief network blip, transport-level disconnect | Ship / barrier failure → primary marks `ReplicaDegraded` | (none required) | reconnect, mint new `sessionID` / recovery lineage, probe R/S/H, dispatch catch-up / rebuild |
+| **Identity / lineage** | replicaID replaced, dataAddr changed, epoch / endpointVersion bumped, primary changed, volume authority changed | Master publishes new `AssignmentFact` with bumped `PeerSetGeneration` | mint + publish | `UpdateReplicaSet` tears down old peer handle, recreates with new lineage; probe loop now operates on the new peer |
+
+#### Case 1 — Identity unchanged, connection recovered
+
+Trigger: replica restart against same `--durable-root` (slot identity preserved); or a transient network outage healed.
+
+State: `replicaID`, `epoch`, `endpointVersion`, `dataAddr` all match the existing peer descriptor. Master may or may not have observed the freshness drop; **it does not matter** (per §1.D).
+
+Primary behavior:
+- `ReplicaDegraded` peer remains in `ReplicationVolume.peers` (master never revoked it; §1.E (b))
+- Probe loop's next tick reconnects on the existing `ReplicaTarget`
+- A new recovery `sessionID` is minted (recovery sessions are session-scoped, not peer-scoped); the peer's authority lineage `(epoch, EV)` is unchanged
+- `ProbeReplica` returns R/S/H; primary computes gap; dispatches catch-up (within retention) or rebuild (gap exceeds retention)
+- On success → `ReplicaDegraded → ReplicaHealthy`
+
+`PeerSetGeneration` does NOT bump. Master is not asked to re-emit. This is the core G5-5C path that §1.A binds and §2 #5 verifies on hardware.
+
+#### Case 2 — Identity changed, connection necessarily new
+
+Trigger: master publishes a new `AssignmentFact` with one or more of (`replicaID`, `dataAddr`, `epoch`, `endpointVersion`) changed → `PeerSetGeneration` strictly greater than `lastAppliedGeneration`.
+
+Primary behavior:
+- `UpdateReplicaSet` (existing T4a-5 code at `core/replication/volume.go:229-246`) detects lineage / address change → tears down old `*ReplicaPeer` (which closes its session in the executor) → creates a fresh `*ReplicaPeer` with the new `ReplicaTarget` and a freshly minted `peerSessionIDCounter` value
+- Any in-flight probe / catch-up / rebuild on the old peer aborts cleanly via `ReplicaPeer.Close()` (§1.E (c) — already a §2 #10 acceptance criterion)
+- Probe loop's next tick operates on the new peer with the new lineage
+- New `ProbeReplica` against the new lineage; new catch-up / rebuild as needed
+
+`PeerSetGeneration` bumps; master mints + publishes; primary cannot "carry over" the old peer state.
+
+#### The protocol judgment points (architect 2026-04-27)
+
+These are the rules a reviewer should be able to check against:
+
+1. **`PeerSetGeneration` only changes for identity / address / lineage change.** Brief disconnects, replica process restarts, freshness flapping — none of these bump generation. (Master semantics today already satisfy this; G5-5C does not change it.)
+2. **Primary's degraded-peer loop only acts on currently-admitted peers** (§1.E). A peer removed by `UpdateReplicaSet` is not retryable; a peer recreated by `UpdateReplicaSet` is a different handle and gets a fresh session.
+3. **After reconnect, primary still probes R/S/H — does not assume catch-up is unnecessary.** The probe is the source of truth for the gap; reconnect alone is not.
+4. **If a higher `PeerSetGeneration` arrives during reconnect / probe, the in-flight recovery must stop or invalidate.** This is the lineage-change-during-probe rule — `ReplicaPeer.Close()` aborts the in-flight probe, the new peer starts fresh.
+
+#### Why this matters for v0.4 / G5-5C
+
+Without the §1.F articulation, §1.A could be misread two ways:
+- Misread A: "Primary just keeps retrying the same address forever, even after master changes the assignment." Wrong — Case 2 + §1.E (c) explicitly forbid this.
+- Misread B: "Master must bump `PeerSetGeneration` whenever a replica blips, otherwise primary won't retry." Wrong — Case 1 + §1.D explicitly support retry-without-bump.
+
+`INV-G5-5C-RECONNECT-ORTHOGONAL-AXES` (proposed, see §3): reconnect proceeds correctly along both axes — Case 1 (identity unchanged) without master re-emit; Case 2 (identity changed) via existing `UpdateReplicaSet` lineage-bump teardown + recreate; in-flight recovery aborts when a higher `PeerSetGeneration` arrives mid-flight.
+
 ### §1.B Master protocol — explicitly unchanged
 
 v0.3 proposed a `PeerSetRevision` proto field, an `ObservationStore.obsRev` counter, and a lex-compare upgrade to `UpdateReplicaSet`. **All three are retired in v0.4.** Master assignment publication semantics, `PeerSetGeneration = (epoch<<32)|ev`, and the existing stale-replay rule in `UpdateReplicaSet` (`core/replication/volume.go:194-209`) are preserved exactly as-is.
@@ -229,6 +282,8 @@ Numbered, verifier-named, single source of truth.
 | 8 | **Two-loop ordering independence** (§1.D): a unit test exercises the "simultaneous-fire" case — concurrent assignment-fact replay (master loop) + concurrent `ProbeIfDegraded` dispatch (primary loop) on the same `ReplicaDegraded` peer. Outcome: at most one catch-up / rebuild session installed; no panic; no goroutine leak; final state converges. Cooldown / in-flight guard absorbs the duplicate. | `core/replication/peer_test.go` — simultaneous-fire test (exact name pinned at code-start) |
 | 9 | **Authority-bounded probe targets** (§1.E (a)): a unit test confirms the probe loop NEVER probes a peer that is not in `ReplicationVolume.peers`. Synthetic non-admitted peer addresses are NOT discoverable / probable from the loop. | `core/replication/probe_loop_test.go` — authority-bounded targets test |
 | 10 | **Lineage-change teardown** (§1.E (c)): a unit test exercises probe-in-flight + `UpdateReplicaSet` lineage-bump teardown. Outcome: `ReplicaPeer.Close()` aborts the in-flight probe synchronously; no dispatch against a closed peer; no goroutine leak; the replaced peer (new lineage) starts fresh on next loop tick. | `core/replication/peer_test.go` — lineage-change-during-probe test |
+| 11 | **Reconnect Case 1 — identity unchanged, no master re-emit** (§1.F): a unit test exercises a `ReplicaDegraded` peer whose underlying transport reconnects successfully on the same `(replicaID, epoch, EV, dataAddr)`. Outcome: `PeerSetGeneration` does NOT bump; primary mints a fresh recovery `sessionID`; `ProbeReplica` runs and returns R/S/H; catch-up / rebuild dispatches based on probe outcome (NOT on reconnect alone). | `core/replication/peer_test.go` — reconnect-identity-unchanged test |
+| 12 | **Reconnect Case 2 — identity changed mid-flight** (§1.F): a unit test exercises an in-flight probe / catch-up on peer P1 when a higher `PeerSetGeneration` arrives replacing P1 with P1'. Outcome: in-flight session on P1 aborts; P1 torn down via existing `UpdateReplicaSet` path; P1' created with new lineage; probe loop next tick operates on P1' with fresh session. | `core/replication/volume_test.go` — lineage-bump-during-recovery test (extends existing T4a-5 teardown coverage with probe-active sub-case) |
 
 **File + test names**: §2 #3a/#3b/#4 list (file: TBD at impl) is acceptable for v0.2 ratification per QA review; sw concretizes file path + Go test method name at code-start so QA can grep them in CI later. To be appended to this §2 as a code-start addendum (not requiring re-ratification — it's the same tests, just named).
 
@@ -252,6 +307,7 @@ Numbered, verifier-named, single source of truth.
 | `INV-G5-5C-NO-MASTER-PROTOCOL-CHANGE` | G5-5C closes without modifying master assignment publication, `PeerSetGeneration` semantics, `ObservationStore`, `UpdateReplicaSet` stale-replay rule, or any control-plane protocol surface. Runtime peer recovery is a primary-only concern. | §2 #7 diff-inspection at PR review |
 | `INV-G5-5C-TWO-LOOPS-ORDERING-INDEPENDENT` | The control-plane identity/health loop and the data-plane governance loop run in parallel without ordering dependency. All five orderings in §1.D (primary-first, master-first, replica-recovers-first, primary-probe-first, simultaneous) terminate in correct convergence. Idempotency held by `ProbeIfDegraded` early-returns + in-flight guard + existing `UpdateReplicaSet` stale-replay. | `peer_test.go` simultaneous-fire test (concurrent fact-replay + probe dispatch on same peer); `probe_loop_test.go` cooldown / in-flight guard tests cover the simpler orderings. |
 | `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` | Primary's probe loop targets are sourced only from master-issued assignment facts for the current authority lineage. The loop reads exclusively from `ReplicationVolume.peers` (which `UpdateReplicaSet` populates from facts). Master-unknown peers are never probed; lineage-revoked peers stop being probed; in-flight probes abort cleanly on `ReplicaPeer.Close()` / lineage-change teardown. | `probe_loop_test.go` "no peer outside ReplicationVolume.peers is ever probed" + `peer_test.go` "in-flight probe aborts on Close()" + lineage-change-during-probe test. |
+| `INV-G5-5C-RECONNECT-ORTHOGONAL-AXES` | Reconnect succeeds along both axes: (Case 1) identity unchanged → primary retries existing peer descriptor without master re-emit, mints new recovery `sessionID`, probes R/S/H, dispatches catch-up / rebuild; (Case 2) identity changed → master bumps `PeerSetGeneration`, `UpdateReplicaSet` tears down + recreates peer, probe loop operates on the new peer with new lineage. After reconnect on either axis, R/S/H probe still runs (reconnect alone is not assumed sufficient). A higher `PeerSetGeneration` arriving during in-flight recovery aborts the in-flight session. | `peer_test.go` Case-1-reconnect test (identity-unchanged retry without re-emit) + `volume_test.go` Case-2 lineage-bump teardown-and-recreate test (existing T4a-5 path; G5-5C adds probe-active sub-case) + `peer_test.go` reconnect-then-still-probe test. |
 
 **Forward-carry from G5-5 §close (deferred ledger pointers)**:
 - `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — G5-5C hardware re-run exercises this path; ledger pointer added at G5-5C §close (per G5-5 §close binding).
