@@ -154,6 +154,15 @@ func NewStore(
 	}
 	wg.Wait()
 
+	// After every DiskLocation has finished its per-disk EC scan, sweep the
+	// store for shards that live on a disk without local index files and
+	// load them by reaching across to a sibling disk's .ecx / .ecj / .vif.
+	// This is the volume-server side of issue #9212: ec.balance can move
+	// shards onto a destination node's second disk while leaving the index
+	// on the disk that already held the volume, and without this pass those
+	// orphan shards stay invisible to the master.
+	s.reconcileEcShardsAcrossDisks()
+
 	// Resolve state.pb's directory via the first disk location so it inherits
 	// the same `~` expansion and empty-idxFolder fallback used for .idx files,
 	// and is never written as a relative path against the process CWD (#9173).

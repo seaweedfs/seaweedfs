@@ -105,9 +105,23 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		glog.Warningf("ec volume %d: load deleted needles from .ecj: %v", vid, loadErr)
 	}
 
-	// read volume info
+	// read volume info. Prefer .vif at the data dir (where shards live), but
+	// fall back to the index dir when the data dir does not have one — the
+	// orphan-shard reconciliation in Store loads shards on a disk whose only
+	// EC artefacts are .ec?? files, with .ecx / .ecj / .vif on a sibling disk
+	// (issue #9212). Without this fallback we'd write a stub .vif on the
+	// shard disk and lose the real EC config + datFileSize.
+	vifFileName := dataBaseFileName + ".vif"
+	if dirIdx != dir {
+		if _, statErr := os.Stat(vifFileName); statErr != nil && os.IsNotExist(statErr) {
+			altVif := EcShardFileName(collection, dirIdx, int(vid)) + ".vif"
+			if _, altStatErr := os.Stat(altVif); altStatErr == nil {
+				vifFileName = altVif
+			}
+		}
+	}
 	ev.Version = needle.Version3
-	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
+	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifFileName); found {
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
@@ -134,7 +148,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			ev.ECContext = NewDefaultECContext(collection, vid)
 		}
 	} else {
-		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
+		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, vifFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 		ev.ECContext = NewDefaultECContext(collection, vid)
 	}

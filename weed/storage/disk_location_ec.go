@@ -93,6 +93,15 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 }
 
 func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, error) {
+	return l.loadEcShardWithIdxDir(collection, vid, shardId, l.IdxDirectory)
+}
+
+// loadEcShardWithIdxDir is like LoadEcShard but uses the supplied idxDir as
+// the source of .ecx / .ecj rather than this disk's own IdxDirectory. The
+// orphan-shard reconciliation calls this with a sibling disk's idx folder
+// when shards live on a disk that does not own the index files itself
+// (issue #9212).
+func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, idxDir string) (*erasure_coding.EcVolume, error) {
 
 	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
 	if err != nil {
@@ -105,7 +114,7 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}
@@ -235,6 +244,38 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 	// Check for orphaned EC shards without .ecx file at the end of the directory scan
 	// This handles the last group of shards in the directory
 	l.checkOrphanedShards(sameVolumeShards, prevCollection, prevVolumeId)
+
+	return nil
+}
+
+// loadEcShardsWithIdxDir loads each shard file in shards into l.ecVolumes,
+// using idxDir as the source of .ecx / .ecj / .vif (NewEcVolume falls back
+// to dirIdx for .vif when the data dir does not have one). Used by the
+// store-level orphan-shard reconciliation in #9212; stops on the first
+// failure so the caller can log and continue with other volumes.
+func (l *DiskLocation) loadEcShardsWithIdxDir(shards []string, collection string, vid needle.VolumeId, idxDir string, onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) error {
+
+	for _, shard := range shards {
+		ext := path.Ext(shard)
+		if len(ext) < 4 {
+			return fmt.Errorf("unexpected ec shard name %v", shard)
+		}
+		shardId, err := strconv.ParseInt(ext[3:], 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse ec shard name %v: %w", shard, err)
+		}
+		if shardId < 0 || shardId > 255 {
+			return fmt.Errorf("shard ID out of range: %d", shardId)
+		}
+
+		ecVolume, err := l.loadEcShardWithIdxDir(collection, vid, erasure_coding.ShardId(shardId), idxDir)
+		if err != nil {
+			return fmt.Errorf("failed to load ec shard %v: %w", shard, err)
+		}
+		if onShardLoad != nil {
+			onShardLoad(collection, vid, erasure_coding.ShardId(shardId), ecVolume)
+		}
+	}
 
 	return nil
 }
