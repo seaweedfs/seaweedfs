@@ -1,6 +1,6 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.4.3 — adds §1.F reconnect orthogonality (connection recovery vs identity change) per architect framing 2026-04-27; design unchanged from v0.4)
+**Date**: 2026-04-27 (v0.4.4 — adds §1.G engine/runtime/master split, §1.H code-start audit gate, three new boundary INVs (generation fence, single in-flight per peer, probe-before-catchup, stale-ack guard), expands forward-carry per architect framing 2026-04-27; design unchanged from v0.4)
 **Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5`
 **Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (primary-side probe loop + recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
@@ -217,6 +217,59 @@ Without the §1.F articulation, §1.A could be misread two ways:
 
 `INV-G5-5C-RECONNECT-ORTHOGONAL-AXES` (proposed, see §3): reconnect proceeds correctly along both axes — Case 1 (identity unchanged) without master re-emit; Case 2 (identity changed) via existing `UpdateReplicaSet` lineage-bump teardown + recreate; in-flight recovery aborts when a higher `PeerSetGeneration` arrives mid-flight.
 
+### §1.G Engine vs primary runtime vs master — three-way responsibility split
+
+§1.D / §1.E / §1.F establish the protocol invariants. §1.G is about *where the code lives*. Architect framing 2026-04-27:
+
+| Layer | Owns |
+|---|---|
+| **Engine** (recovery semantics) | Recovery attempt state machine (`Idle / Probing / CatchingUp / Rebuilding / Failed`); single in-flight recovery session per peer; generation/epoch fence (older recovery results cannot pollute newer assignments); probe-result → catch-up/rebuild/none decision; backoff / cooldown policy; stale-ack-cannot-promote-health rule; recovery reason / failure kind / observability projection |
+| **Primary runtime / adapter** (wiring) | Timer / degraded-peer loop; calling transport probe; feeding probe result into engine; executing engine-emitted commands (catch-up, rebuild, rearm peer); `ReplicationVolume` / `ReplicaPeer` connection lifecycle |
+| **Master** (control plane) | Identity / topology / assignment / health observation. NO runtime recovery scheduling. NO catch-up / rebuild execution. NO authority epoch bumps for short up/down events. |
+
+The split tells you which package owns each of the **ten boundary rules** the architect enumerated:
+
+| # | Boundary rule | Owner | G5-5C disposition |
+|---|---|---|---|
+| 1 | **Admitted Peer Rule** — primary only retries master-admitted peers | engine fence + runtime gate | ✅ §1.E + `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` |
+| 2 | **Generation Fence** — each recovery attempt bound to current `(PeerSetGeneration, epoch, EV)`; higher arrival aborts | engine | ✅ NEW `INV-G5-5C-GENERATION-FENCE` (§3) + §2 #12 (already exists) |
+| 3 | **Single In-Flight Recovery Per Peer** — at most one active session per peer | engine | ✅ NEW `INV-G5-5C-SINGLE-INFLIGHT-PER-PEER` (§3) + §2 #4 (already exists, sharpened) |
+| 4 | **Probe Before Catch-Up** — reconnect ≠ data consistency; engine decides via probe R/S/H | engine | ✅ NEW `INV-G5-5C-PROBE-BEFORE-CATCHUP` (§3) + §2 #11 (already exists, sharpened) |
+| 5 | **Durability Mode Explicit** — current G5-5/G5-5C is BestEffort; SyncAll/Quorum is later | docs / forward-carry | ⏭ Forward-carry to **G5-2 (durability cadence) / G5-6 (closure)**; §5 |
+| 6 | **RF Health Reporting Separate From Recovery** — observability ≠ recovery trigger | future master observability batch | ⏭ Forward-carry to **future master RF-health observability** (§5) |
+| 7 | **Backoff / Cooldown** — base 5 s, exponential on consecutive failure, reset on success | engine policy + runtime impl | ✅ NEW `INV-G5-5C-RECOVERY-BACKOFF` (§3) — extends v0.4 fixed-5 s cooldown to backoff |
+| 8 | **Stale Ack Guard** — barrier ack `< target` cannot promote peer health, cannot count as SyncAll success | engine | ✅ NEW `INV-G5-5C-STALE-ACK-NO-HEALTH-PROMOTION` (§3) + §2 #13 |
+| 9 | **Role/Authority Check On Replica** — replica rejects probe/ship/catch-up from stale primary or stale epoch | engine + replica wire | ✅ Already exists in T4: `acceptMutationLineage` gate. Cited as INV pointer; no new code. |
+| 10 | **Status Surface** — `/status/recovery` exposes peer state, last probe time, last recovery reason, effective RF, desired RF | runtime / observability | ⏭ Forward-carry to **G5-3 (metrics/backpressure)**; §5 |
+
+**Summary**: G5-5C lands six boundary rules (#1–#4, #7, #8) — five sourced from existing engine/runtime mechanisms, one (`backoff`) extending v0.4's fixed-5 s cooldown into a small policy. Three (#5, #6, #10) forward-carry to other batches. One (#9) is already in code; G5-5C just cites it.
+
+### §1.H Engine evolution audit gate (code-start halt-or-proceed)
+
+Per architect framing 2026-04-27:
+
+> If current engine already has sufficient T4d-4 primitives, G5-5C can do the minimum evolution — add peer recovery state / fence / in-flight guard without rewriting engine. But if sw finds these states scattered across `ReplicationVolume` / `ReplicaPeer`, sw must STOP and rewrite this mini-plan as an engine/coordinator-evolution batch, not a runtime if-pile.
+
+**Audit step at code-start (sw, before writing any code)**:
+
+1. Locate where each of the six in-scope rules (#1, #2, #3, #4, #7, #8) currently lives:
+   - `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` — confirm `ReplicationVolume.peers` is the sole probe target source
+   - `INV-G5-5C-GENERATION-FENCE` — locate the `(PeerSetGeneration, epoch, EV)` carrier on recovery sessions; confirm engine fences on it
+   - `INV-G5-5C-SINGLE-INFLIGHT-PER-PEER` — locate the in-flight registry; confirm it's per-peer not per-volume
+   - `INV-G5-5C-PROBE-BEFORE-CATCHUP` — locate the probe→decision path; confirm engine drives it (T4d-4)
+   - `INV-G5-5C-RECOVERY-BACKOFF` — confirm cooldown lives in one place (engine policy or peer state)
+   - `INV-G5-5C-STALE-ACK-NO-HEALTH-PROMOTION` — locate barrier-ack health-promotion path; confirm `achievedLSN < targetLSN` does not promote
+
+2. **Halt condition**: if the audit finds any of the following, sw MUST stop and re-scope as an engine-evolution batch (not implement around it in `core/replication/`):
+   - Recovery state machine logic *embedded* in `ReplicationVolume` rather than a single engine FSM
+   - Generation/epoch fence *re-derived* at every call site rather than carried on the recovery session
+   - In-flight tracking *implicit* (e.g., relying on peer-state mutations to be atomic with session lifecycle) rather than explicit registry
+   - Stale-ack guard *missing* (i.e., barrier callback would promote on `achievedLSN < targetLSN` today)
+
+3. **Proceed condition**: audit confirms engine T4d-4 primitives + `ReplicaPeer` state machine + barrier-ack handling are sufficient; G5-5C adds the probe loop + small policy extensions (backoff) + the new tests. No engine FSM rewrite.
+
+This audit is a documented step in §2 sequence ("audit before code"), not an architect re-ratification gate; sw publishes audit findings as a brief commit note before code starts. If halt-condition fires, sw drafts a NEW mini-plan for engine evolution and pauses G5-5C.
+
 ### §1.B Master protocol — explicitly unchanged
 
 v0.3 proposed a `PeerSetRevision` proto field, an `ObservationStore.obsRev` counter, and a lex-compare upgrade to `UpdateReplicaSet`. **All three are retired in v0.4.** Master assignment publication semantics, `PeerSetGeneration = (epoch<<32)|ev`, and the existing stale-replay rule in `UpdateReplicaSet` (`core/replication/volume.go:194-209`) are preserved exactly as-is.
@@ -284,6 +337,9 @@ Numbered, verifier-named, single source of truth.
 | 10 | **Lineage-change teardown** (§1.E (c)): a unit test exercises probe-in-flight + `UpdateReplicaSet` lineage-bump teardown. Outcome: `ReplicaPeer.Close()` aborts the in-flight probe synchronously; no dispatch against a closed peer; no goroutine leak; the replaced peer (new lineage) starts fresh on next loop tick. | `core/replication/peer_test.go` — lineage-change-during-probe test |
 | 11 | **Reconnect Case 1 — identity unchanged, no master re-emit** (§1.F): a unit test exercises a `ReplicaDegraded` peer whose underlying transport reconnects successfully on the same `(replicaID, epoch, EV, dataAddr)`. Outcome: `PeerSetGeneration` does NOT bump; primary mints a fresh recovery `sessionID`; `ProbeReplica` runs and returns R/S/H; catch-up / rebuild dispatches based on probe outcome (NOT on reconnect alone). | `core/replication/peer_test.go` — reconnect-identity-unchanged test |
 | 12 | **Reconnect Case 2 — identity changed mid-flight** (§1.F): a unit test exercises an in-flight probe / catch-up on peer P1 when a higher `PeerSetGeneration` arrives replacing P1 with P1'. Outcome: in-flight session on P1 aborts; P1 torn down via existing `UpdateReplicaSet` path; P1' created with new lineage; probe loop next tick operates on P1' with fresh session. | `core/replication/volume_test.go` — lineage-bump-during-recovery test (extends existing T4a-5 teardown coverage with probe-active sub-case) |
+| 13 | **Stale-ack guard** (§1.G #8): a unit test exercises a barrier ack delivery where `achievedLSN < targetLSN`. Outcome: peer health is NOT promoted; `SyncAll` durability counter is NOT incremented; recovery dispatcher treats the peer as still-degraded; cross-references G5-5 round-14 `gate-degraded + stale-barrier-ack` artifact. | `core/replication/peer_test.go` — stale-ack-no-promotion test |
+| 14 | **Backoff policy** (§1.G #7): a unit test exercises consecutive probe failures and confirms cooldown progression (5 s → 10 s → 20 s → 40 s → 60 s cap) and reset-to-base on first success. | `core/replication/peer_test.go` — backoff-progression test |
+| 15 | **Code-start audit** (§1.H): sw publishes audit findings as a brief commit note before code starts, listing per-INV current owner location. If halt-condition fires (recovery state machine embedded in `ReplicationVolume`, fence re-derived per call site, in-flight tracking implicit, or stale-ack guard missing), G5-5C pauses pending an engine-evolution mini-plan. | Audit commit on the G5-5C branch before any production code change; PR includes audit-summary in description |
 
 **File + test names**: §2 #3a/#3b/#4 list (file: TBD at impl) is acceptable for v0.2 ratification per QA review; sw concretizes file path + Go test method name at code-start so QA can grep them in CI later. To be appended to this §2 as a code-start addendum (not requiring re-ratification — it's the same tests, just named).
 
@@ -308,6 +364,12 @@ Numbered, verifier-named, single source of truth.
 | `INV-G5-5C-TWO-LOOPS-ORDERING-INDEPENDENT` | The control-plane identity/health loop and the data-plane governance loop run in parallel without ordering dependency. All five orderings in §1.D (primary-first, master-first, replica-recovers-first, primary-probe-first, simultaneous) terminate in correct convergence. Idempotency held by `ProbeIfDegraded` early-returns + in-flight guard + existing `UpdateReplicaSet` stale-replay. | `peer_test.go` simultaneous-fire test (concurrent fact-replay + probe dispatch on same peer); `probe_loop_test.go` cooldown / in-flight guard tests cover the simpler orderings. |
 | `INV-G5-5C-PRIMARY-RECOVERY-AUTHORITY-BOUNDED` | Primary's probe loop targets are sourced only from master-issued assignment facts for the current authority lineage. The loop reads exclusively from `ReplicationVolume.peers` (which `UpdateReplicaSet` populates from facts). Master-unknown peers are never probed; lineage-revoked peers stop being probed; in-flight probes abort cleanly on `ReplicaPeer.Close()` / lineage-change teardown. | `probe_loop_test.go` "no peer outside ReplicationVolume.peers is ever probed" + `peer_test.go` "in-flight probe aborts on Close()" + lineage-change-during-probe test. |
 | `INV-G5-5C-RECONNECT-ORTHOGONAL-AXES` | Reconnect succeeds along both axes: (Case 1) identity unchanged → primary retries existing peer descriptor without master re-emit, mints new recovery `sessionID`, probes R/S/H, dispatches catch-up / rebuild; (Case 2) identity changed → master bumps `PeerSetGeneration`, `UpdateReplicaSet` tears down + recreates peer, probe loop operates on the new peer with new lineage. After reconnect on either axis, R/S/H probe still runs (reconnect alone is not assumed sufficient). A higher `PeerSetGeneration` arriving during in-flight recovery aborts the in-flight session. | `peer_test.go` Case-1-reconnect test (identity-unchanged retry without re-emit) + `volume_test.go` Case-2 lineage-bump teardown-and-recreate test (existing T4a-5 path; G5-5C adds probe-active sub-case) + `peer_test.go` reconnect-then-still-probe test. |
+| `INV-G5-5C-GENERATION-FENCE` | Each recovery attempt is bound to the `(PeerSetGeneration, epoch, EndpointVersion)` triple in effect when it started. Results delivered after a higher triple has been applied are discarded; in-flight attempts under a lower triple abort. The engine fence carries the triple on the recovery session itself, not re-derived at every call site. | §2 #12 lineage-bump-during-recovery + new `peer_test.go` "stale recovery result discarded after higher generation" sub-case |
+| `INV-G5-5C-SINGLE-INFLIGHT-PER-PEER` | At most one recovery session is active per peer at any time. The probe loop's in-flight guard checks an explicit registry (engine-side or peer-side), not implicit peer-state-mutation atomicity. Duplicate triggers (probe loop + assignment-fact replay + manual operator action) are absorbed without spawning concurrent catch-up / rebuild. | §2 #4 dispatch-branch + §2 #8 simultaneous-fire (already covers this from the trigger angle); add `peer_test.go` "in-flight registry rejects second dispatch" unit test as a direct check |
+| `INV-G5-5C-PROBE-BEFORE-CATCHUP` | A successful reconnect / TCP-level probe is NOT sufficient evidence to skip catch-up / rebuild. The decision branch (none / catch-up / rebuild) is driven by the engine's R/S/H probe outcome, NOT by transport-level liveness. | §2 #11 reconnect-Case-1 + new sub-assertion: probe is invoked and outcome decides dispatch (rather than reconnect-success implying healthy) |
+| `INV-G5-5C-RECOVERY-BACKOFF` | Per-peer cooldown extends v0.4's fixed 5 s into a small backoff policy: base 5 s, doubled on consecutive probe failures up to a cap (e.g., 60 s), reset to base on first success. Prevents log/connection storm against long-down replicas; preserves fast convergence on transient blips. | New `peer_test.go` backoff-progression test (5 s → 10 s → … → 60 s cap; reset on success) |
+| `INV-G5-5C-STALE-ACK-NO-HEALTH-PROMOTION` | A barrier ack with `achievedLSN < targetLSN` is never grounds to promote a peer from `ReplicaDegraded` toward `ReplicaHealthy`, and never counts as `SyncAll` durability success. (Observation surfaced as `gate-degraded` symptom in G5-5 round 14 evidence.) | New `peer_test.go` stale-ack-no-promotion unit test + cross-reference G5-5 round 14 `primary-fail.log` artifact |
+| `INV-G5-5C-REPLICA-LINEAGE-CHECK` (citation only — already enforced in T4) | Replica's `acceptMutationLineage` gate rejects probe / ship / catch-up from stale primary or stale epoch. G5-5C cites this; no new code. | Existing T4a tests in `core/transport/executor_test.go` and replica-side wire tests cover this; G5-5C does not duplicate. |
 
 **Forward-carry from G5-5 §close (deferred ledger pointers)**:
 - `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — G5-5C hardware re-run exercises this path; ledger pointer added at G5-5C §close (per G5-5 §close binding).
@@ -338,6 +400,14 @@ INVs **rejected / deferred**:
 Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scope):
 - `EnsureStorage → first-Open` Identity-latch component test — opportunistic, not blocking G5-5C.
 - `start_cluster()` pre-flight cleanup discipline — already in `iterate-m01-replicated-write.sh` from G5-5 round 14; future hardware harnesses inherit by reference.
+
+**Forward-carries OUT of G5-5C** (boundary rules deferred per §1.G):
+
+| Forward-carry | Target batch | Why deferred |
+|---|---|---|
+| **#5 Durability Mode Explicit** — document that G5-5/G5-5C is `BestEffort` (replica down ⇒ primary write succeeds, RF temporarily degraded); `SyncAll` / `Quorum` modes will fail-closed or wait for ack | **G5-2 (durability cadence) / G5-6 (collective close)** | G5-5C only fixes the recovery trigger. Durability-mode policy is its own concern; lumping it in expands scope. |
+| **#6 RF Health Reporting Separate From Recovery** — master surfaces `desired RF=N, current effective RF=M` as observability, NOT as recovery trigger; not allowed to drive recovery scheduling | **future master observability batch** (no specific gate yet — likely sits between G5-3 and G9A) | Architect explicitly: this is observability, not recovery. Adding to G5-5C would re-couple master and recovery, which §1.D / §1.G prevent. |
+| **#10 Status Surface** — `/status/recovery` exposes peer state, last probe time, last recovery reason, effective RF, desired RF | **G5-3 (metrics / backpressure)** | The G5-5 `/status/recovery` endpoint already exists for R/S/H/Mode/Decision; G5-3's metrics work is the natural home for the additional fields (recovery reason, effective RF, last probe time). G5-5C does not bloat the existing endpoint; debug logs are sufficient for G5-5C verification. |
 
 ---
 
