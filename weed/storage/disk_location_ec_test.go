@@ -123,7 +123,7 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 
 			// Use deterministic but small size: 10MB .dat => 1MB per shard
 			datFileSize := int64(10 * 1024 * 1024) // 10MB
-			expectedShardSize := calculateExpectedShardSize(datFileSize)
+			expectedShardSize := calculateExpectedShardSize(datFileSize, erasure_coding.DataShardsCount)
 
 			// Create .dat file if needed
 			if tt.createDatFile {
@@ -325,7 +325,7 @@ func TestValidateEcVolume(t *testing.T) {
 			// For test purposes, use a small .dat file size that still exercises the logic
 			// 10MB .dat file = 1MB per shard (one small batch, fast and deterministic)
 			datFileSize := int64(10 * 1024 * 1024) // 10MB
-			expectedShardSize := calculateExpectedShardSize(datFileSize)
+			expectedShardSize := calculateExpectedShardSize(datFileSize, erasure_coding.DataShardsCount)
 
 			// Create .dat file if needed
 			if tt.createDatFile {
