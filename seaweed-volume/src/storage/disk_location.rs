@@ -612,13 +612,22 @@ impl DiskLocation {
     /// volume-server restart until something explicitly issues
     /// VolumeEcShardsMount — strict superset of seaweedfs/seaweedfs#9212.
     pub fn load_all_ec_shards(&mut self) -> io::Result<()> {
+        // Use a HashSet during accumulation so a name appearing in
+        // both data dir and idx dir (idempotent legacy layouts can
+        // place .ecx in either) is processed exactly once. Without
+        // dedup, mount_ec_shards' per-shard metric increment would
+        // double-count for those filenames.
+        let mut seen: HashSet<String> = HashSet::new();
         let mut entries: Vec<String> = Vec::new();
         for ent in fs::read_dir(&self.directory)? {
             let ent = ent?;
             if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 continue;
             }
-            entries.push(ent.file_name().to_string_lossy().into_owned());
+            let name = ent.file_name().to_string_lossy().into_owned();
+            if seen.insert(name.clone()) {
+                entries.push(name);
+            }
         }
         if self.idx_directory != self.directory {
             for ent in fs::read_dir(&self.idx_directory)? {
@@ -626,7 +635,10 @@ impl DiskLocation {
                 if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     continue;
                 }
-                entries.push(ent.file_name().to_string_lossy().into_owned());
+                let name = ent.file_name().to_string_lossy().into_owned();
+                if seen.insert(name.clone()) {
+                    entries.push(name);
+                }
             }
         }
         entries.sort();
