@@ -492,7 +492,8 @@ impl Store {
                 let vol_count = loc.volumes_len() as i32;
                 let loc_ec_shards = loc.ec_shard_count();
                 let ec_equivalent = ((loc_ec_shards
-                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT
+                    - 1)
                     / crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
                     as i32;
                 let mut max_count = vol_count + ec_equivalent;
