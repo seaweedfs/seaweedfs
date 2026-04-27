@@ -29,6 +29,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -46,15 +47,19 @@ var ErrCacheNotReady = errors.New("remote object not cached yet")
 
 // writePrepareWriteFnErr writes an HTTP response for an error from
 // prepareWriteFn, before any 2xx headers have been written. Client cancels are
-// silent; ErrCacheNotReady becomes 503 + Retry-After; everything else is 500.
-// Clears Content-Length and Content-Range so callers that set them for the
-// success path don't leak stale values into the error response.
+// silent; filer_pb.ErrNotFound becomes 404; ErrCacheNotReady becomes 503 +
+// Retry-After; everything else is 500. Strips headers that described the
+// success body (Content-Length / Content-Range / Content-Disposition / ETag /
+// Last-Modified) so they don't get attached to the error response.
 func writePrepareWriteFnErr(w http.ResponseWriter, err error) {
-	w.Header().Del("Content-Length")
-	w.Header().Del("Content-Range")
+	for _, h := range []string{"Content-Length", "Content-Range", "Content-Disposition", "ETag", "Last-Modified"} {
+		w.Header().Del(h)
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		glog.V(3).Infof("ProcessRangeRequest: client disconnected: %v", err)
+	case errors.Is(err, filer_pb.ErrNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, ErrCacheNotReady):
 		glog.V(1).Infof("ProcessRangeRequest: cache not ready, returning 503: %v", err)
 		w.Header().Set("Retry-After", "5")

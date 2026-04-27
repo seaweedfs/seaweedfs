@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -214,6 +215,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				// Client disconnected: surface ctx error so caller stays silent.
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return nil, ctxErr
+				}
+				// Entry vanished mid-cache: forward NotFound so caller maps to 404,
+				// not the 503 retry-loop.
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					return nil, err
 				}
 				// Cache still filling: tag with sentinel so caller maps to 503 + Retry-After.
 				glog.WarningfCtx(ctx, "CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
