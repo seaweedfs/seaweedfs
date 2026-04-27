@@ -47,8 +47,11 @@ var ErrCacheNotReady = errors.New("remote object not cached yet")
 // writePrepareWriteFnErr writes an HTTP response for an error from
 // prepareWriteFn, before any 2xx headers have been written. Client cancels are
 // silent; ErrCacheNotReady becomes 503 + Retry-After; everything else is 500.
+// Clears Content-Length and Content-Range so callers that set them for the
+// success path don't leak stale values into the error response.
 func writePrepareWriteFnErr(w http.ResponseWriter, err error) {
 	w.Header().Del("Content-Length")
+	w.Header().Del("Content-Range")
 	switch {
 	case errors.Is(err, context.Canceled):
 		glog.V(3).Infof("ProcessRangeRequest: client disconnected: %v", err)
