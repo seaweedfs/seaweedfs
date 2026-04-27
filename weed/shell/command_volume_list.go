@@ -199,7 +199,7 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 	if *c.readonly && !readOnly {
 		return true
 	}
-	if *c.writable && (readOnly || volumeSize == -1 || c.volumeSizeLimitMb >= uint64(volumeSize)) {
+	if *c.writable && (readOnly || volumeSize == -1 || uint64(volumeSize) >= c.volumeSizeLimitMb*1024*1024) {
 		return true
 	}
 	if *c.collectionPattern != "" {
