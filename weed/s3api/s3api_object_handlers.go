@@ -1000,6 +1000,13 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
 			} else {
+				// If the client already went away (most common cause of a failed
+				// cache attempt here), surface the context error so the outer
+				// handler treats it as a cancellation instead of writing a 503
+				// the client will never see.
+				if ctxErr := r.Context().Err(); ctxErr != nil {
+					return ctxErr
+				}
 				// Cache attempt did not produce chunks in time. The cache may still
 				// be filling in the background, so return 503 with Retry-After to
 				// let S3 SDKs back off and retry transparently rather than treating
