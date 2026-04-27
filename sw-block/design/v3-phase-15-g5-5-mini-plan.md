@@ -1,7 +1,7 @@
 # V3 Phase 15 — G5-5 (m01 Hardware First-Light + L3 Integration) Mini-Plan
 
-**Date**: 2026-04-26 (v0.2 — addresses architect REVISE-BEFORE-CODE requirements)
-**Status**: DRAFT v0.2 — re-submitted for architect §1-§6 ratification per `v3-batch-process.md` after addressing 3 revision requirements (network ≠ process restart; storage-aware byte verifier; named R/H observation source)
+**Date**: 2026-04-26 (v0.3 — §2 acceptance criteria rewritten per architect REVISE round 51-followup; §2 was stale in v0.2 even though §1 body absorbed the bindings)
+**Status**: DRAFT v0.3 — re-submitted for architect §1-§6 ratification. §2 is now the SINGLE SOURCE OF TRUTH for close evidence per `v3-batch-process.md §2`; v0.3 ensures §2 wording matches §1 scope (no drift between the two)
 **Owner**: sw (script + Go driver); QA (m01 verification + scenario authoring)
 **Process**: First trial of compressed `v3-batch-process.md` (one doc, §close appended at batch close)
 **Predecessors**: G5-4 closed (`seaweed_block@c820e17` + `seaweedfs@36ba7b44e`); 5 INV-BIN-WIRING-* invariants ACTIVE in ledger; `--expected-slots-per-volume` flag landed (`f5de7c5`)
@@ -56,12 +56,13 @@ No new truth-domain owner. G5-5 verifies the existing truth-domain map (§4) at 
 
 | # | Criterion | Verifier |
 |---|---|---|
-| 1 | `iterate-m01-replicated-write.sh` runs end-to-end on m01 cleanly: blockmaster + 2× blockvolume start, both reach role-appropriate ready state | Script step "verify_cluster_ready" exits 0 |
-| 2 | Kernel iSCSI write from m01 → primary's iSCSI target → replication fan-out → byte-equal on replica's walstore extent | Script step "verify_byte_equal" computes SHA-256 of primary write payload + replica's stored block; equality required |
-| 3 | iptables drops primary→replica WAL port during a write burst → replica lags → iptables restored → replica catches up to primary's H within 30s via T4d engine-driven recovery | Script step "verify_catchup" polls replica's status until R == primary's H within deadline |
-| 4 | `TestG54_BinaryWiring_RoleSplit_2NodeSmoke` runs 10× under `-race` on m01 with no flake | Script step "verify_race_stress" runs `CGO_ENABLED=1 go test -race -count=10 -run TestG54_BinaryWiring` |
-| 5 | No regressions in V3 suite | Full V3 suite green from m01 (`go test ./...` clean) |
-| 6 | `v3-dev-roadmap.md` updated to reflect G5-5 close + L3 reached | sw + QA at §close |
+| 1 | `iterate-m01-replicated-write.sh` runs end-to-end on m01 cleanly: blockmaster + 2× blockvolume start, both reach role-appropriate ready state | Script step `verify_cluster_ready` exits 0 |
+| 2 | Kernel iSCSI write from m01 → primary's iSCSI target → replication fan-out → byte-equal on replica's storage. Verifier opens replica's walstore via `core/storage/walstore.OpenReadOnly` (or equivalent — sw confirms exact API at impl time and adds it if missing) and calls `storage.LogicalStorage.Read(lba)` over the target LBA range; SHA-256-compares per-LBA bytes against primary's known write payload. **No raw `.extent` peek; storage abstraction is the only authoritative read path.** | Script step `verify_byte_equal` invokes the `m01verify` Go helper which uses `walstore.OpenReadOnly` + `Read(lba)` per LBA + SHA-256 compare; helper exits 0 / prints `OK` on equality, exits 1 / prints `MISMATCH lba=N exp=... got=...` on diff |
+| 3 | iptables drops primary→replica WAL data port during a write burst → replica lags → iptables restored → replica catches up to primary's H within 30s via T4d engine-driven recovery (catch-up path within walstore retention; NOT rebuild). **R/H observation source: NEW `/status/recovery?volume=v1` endpoint** returning `engine.ReplicaProjection` (Mode, RecoveryDecision, R, S, H, Reason); gated by NEW `--status-recovery` daemon flag (default off; m01 script enables on both nodes). | Script step `verify_network_catchup` polls primary's `/status/recovery?volume=v1` for `H` and replica's `/status/recovery?volume=v1` for `R` until `R >= primary.H` within 30s deadline; asserts `RecoveryDecision == "catch_up"` (not "rebuild") at the catch-up trigger |
+| 4 | Replica process stop/restart + catch-up — `SIGTERM` the replica's `blockvolume` process mid-write (clean shutdown); restart the SAME binary against the SAME `--durable-root`; verify replica reopens durable storage, resubscribes to master, catches up via T4d engine-driven recovery. Proves: durable reopen + master resubscribe + recovery reconstruction. **R/H observation source: same `/status/recovery?volume=v1` endpoint as #3.** | Script step `verify_restart_catchup` SIGTERMs replica process, waits for clean shutdown (process exit), restarts the binary with identical CLI flags + same `--durable-root`, then polls `/status/recovery?volume=v1` for `R >= primary.H` within 30s deadline; asserts replica's status returns `Healthy=false` at restart (not yet caught up) and `RecoveryDecision == "catch_up"` (not "rebuild") |
+| 5 | `TestG54_BinaryWiring_RoleSplit_2NodeSmoke` runs 10× under `-race` on m01 with no flake | Script step `verify_race_stress` runs `CGO_ENABLED=1 go test -race -count=10 -run TestG54_BinaryWiring ./cmd/blockvolume/` |
+| 6 | No regressions in V3 suite | Script step `verify_full_suite` runs `go test ./... -count=1 -timeout 600s` from m01; all packages green |
+| 7 | `v3-dev-roadmap.md` updated to reflect G5-5 close + L3 reached per `v3-architecture.md §13` | sw + QA at §close (per `v3-batch-process.md §8` — gate-close trigger) |
 
 ### Architect review checklist (§12) coverage
 
@@ -134,7 +135,7 @@ Plus the broader G5-4 wiring claim — that the binary-level T4 replication stac
 
 | Stage | Signer | When | Status |
 |---|---|---|---|
-| §1-§6 ratification | architect (pingqiu) + QA review (§12 checklist) | v0.1 submitted; v0.2 addresses architect REVISE-BEFORE-CODE round 51 (3 revisions) | ⏳ pending re-review |
+| §1-§6 ratification | architect (pingqiu) + QA review (§12 checklist) | v0.1 submitted; v0.2 addressed substance but §2 acceptance criteria stayed stale; v0.3 rewrites §2 to match §1 (single-source-of-truth discipline) | ⏳ pending re-review |
 | Code start (script + Go helper) | sw | After §1-§6 ratification | ⏳ blocked on ratification |
 | m01 hardware verification run | QA | After sw lands script + helper | ⏳ blocked |
 | §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
