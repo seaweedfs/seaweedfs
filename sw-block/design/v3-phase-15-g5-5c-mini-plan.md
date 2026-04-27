@@ -1,6 +1,6 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.4.4 — adds §1.G engine/runtime/master split, §1.H code-start audit gate, three new boundary INVs (generation fence, single in-flight per peer, probe-before-catchup, stale-ack guard), expands forward-carry per architect framing 2026-04-27; design unchanged from v0.4)
+**Date**: 2026-04-27 (v0.4.5 — doc-hygiene cleanup of v0.1/v0.2 residue + probe loop placement bound to `core/replication/` per architect ruling 2026-04-27; design unchanged from v0.4)
 **Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5`
 **Repo**: `seaweed_block` (V3) — **not** `seaweedfs` (V2)
 **Owner**: sw (primary-side probe loop + recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
@@ -33,7 +33,7 @@ G5-5C closes that gap: define and implement the **trigger source** that re-arms 
 |---|---|---|
 | 1 | **Trigger source** for re-arming a degraded peer's shipper after the peer becomes reachable again. **Architect binding (2026-04-27)**: must reuse engine-driven recovery primitives (T4d-4); no ad-hoc re-ship from the replication layer. **sw must propose trigger source first** — see §1.A "Trigger source options" below; one option is selected at architect ratification of this mini-plan. | Implementation lands the chosen path; #2 tests prove the wire-up |
 | 2 | **m01 hardware re-run of G5-5 #4** — kill replica, write while down, restart same `--durable-root`, wait, verify `LBA[2]=0xef` byte-equal via `m01verify` within deadline. The script `iterate-m01-replicated-write.sh` already contains `verify_restart_catchup` (currently red); G5-5C closes when this step turns GREEN on hardware without script changes beyond optional deadline adjustment. | `iterate-m01-replicated-write.sh verify_restart_catchup` GREEN; artifacts under `/mnt/smb/work/share/g5-test/logs/artifacts-<timestamp>/` |
-| 3 | **Component-scope test** — primary observes peer-up event after restart → shipper re-arms → engine plans catch-up → replica receives missed LSNs → barrier ack at current frontier. Tests the trigger path without the iSCSI/iptables harness. | New unit/component test in `weed/server/` (exact name + file determined at impl) |
+| 3 | **Component-scope test** — primary's probe loop detects degraded peer reconnection → engine plans catch-up → replica receives missed LSNs → barrier ack at current frontier. Tests the trigger path without the iSCSI/iptables harness. | New unit/component test in `core/replication/` (exact name + file determined at code-start) |
 | 4 | **Failure-mode test** — peer-up event fires but engine catch-up cannot complete (e.g., gap exceeds retention → rebuild required). Verifies the trigger correctly hands off to the rebuild path (`StartRebuildFromProbe`) instead of looping. | New unit/component test |
 
 ### §1.A Trigger source — bound (v0.4)
@@ -46,7 +46,7 @@ G5-5C closes that gap: define and implement the **trigger source** that re-arms 
 
 | Aspect | Binding |
 |---|---|
-| **Loop owner** | Primary's per-volume runtime (host- or replication-layer goroutine; exact placement bound at code-start within §1 Files). One loop per primary serving the volume; no master-side participation. |
+| **Loop owner** | **`core/replication/` — owned by `ReplicationVolume` lifecycle** (architect binding 2026-04-27). Reasoning: admitted peers, peer state, close/teardown, and the in-flight guard all live in `core/replication/`; host layer only forwards flags/config. One loop per primary serving the volume; no master-side participation. **§1.H halt rule preserved**: if audit finds recovery FSM / fence / in-flight tracking belongs upstream in engine/coordinator rather than replication, sw halts and rewrites this mini-plan. |
 | **Scope** | Iterates ONLY over peers in `ReplicaDegraded` state. `ReplicaHealthy`, `ReplicaCatchingUp`, `ReplicaNeedsRebuild` are skipped (catching-up has its own recovery in flight; needs-rebuild dispatches via the existing rebuild path, not this loop). |
 | **Cadence** | Low frequency. Initial value: **5 s** between iterations, configurable via a new flag (default 5 s). Each iteration is a single pass over the degraded set; no per-peer parallelism within the loop iteration (cap on concurrent probes prevents stampedes). |
 | **Per-peer cooldown** | After a probe completes (success or fail), a per-peer cooldown of **5 s** (= one loop tick) is enforced before the same peer is probed again. Prevents retrigger storms on flapping peers. |
@@ -313,9 +313,7 @@ Total estimate: ~225 LOC production + ~310 LOC tests, all primary-side. Zero LOC
 
 ### Architecture truth-domain check (`v3-architecture.md §4`)
 
-See §1.C below for the corrected per-domain matrix (v0.3 fixes the v0.2 wording: A1 is **publication / re-emission** of master truth, not pure read; remains authority-safe because no new lineage is invented).
-
-No truth-domain crossings introduced; A1 remains within the master truth domain (publication is master's own write surface), A2 remains within the primary truth domain.
+See §1.C for the v0.4 per-domain matrix. Summary: only the primary data-control plane writes; master / replica / engine are unchanged. No truth-domain crossings introduced.
 
 ---
 
@@ -341,7 +339,7 @@ Numbered, verifier-named, single source of truth.
 | 14 | **Backoff policy** (§1.G #7): a unit test exercises consecutive probe failures and confirms cooldown progression (5 s → 10 s → 20 s → 40 s → 60 s cap) and reset-to-base on first success. | `core/replication/peer_test.go` — backoff-progression test |
 | 15 | **Code-start audit** (§1.H): sw publishes audit findings as a brief commit note before code starts, listing per-INV current owner location. If halt-condition fires (recovery state machine embedded in `ReplicationVolume`, fence re-derived per call site, in-flight tracking implicit, or stale-ack guard missing), G5-5C pauses pending an engine-evolution mini-plan. | Audit commit on the G5-5C branch before any production code change; PR includes audit-summary in description |
 
-**File + test names**: §2 #3a/#3b/#4 list (file: TBD at impl) is acceptable for v0.2 ratification per QA review; sw concretizes file path + Go test method name at code-start so QA can grep them in CI later. To be appended to this §2 as a code-start addendum (not requiring re-ratification — it's the same tests, just named).
+**File + test names**: §2 acceptance criteria #2–#15 list verifier files at the package level (`core/replication/peer_test.go`, `core/replication/probe_loop_test.go`, `core/replication/volume_test.go`, plus one component-test file under `core/replication/component/`). Exact Go test method names are concretized at code-start as a commit-note addendum to §2 (not requiring re-ratification — same tests, just named).
 
 ### Architect review checklist (`v3-batch-process.md §12`) coverage
 
@@ -349,7 +347,7 @@ Numbered, verifier-named, single source of truth.
 |---|---|
 | Scope truth | §1 + §1.A explicit non-claims; §1.A trigger options laid out without pre-deciding |
 | V2 / new-build decision | New build; no V2 muscle PORT; G-1 N/A (§4) |
-| Engine / adapter impact | Zero engine logic change (binding from architect); replication-layer + recovery-manager wiring only |
+| Engine / adapter impact | No new engine recovery primitive by default — G5-5C reuses T4d-4. Engine-owned fences / state (recovery FSM, single in-flight per peer, generation/epoch fence, stale-ack guard) are audited at §1.H code-start; if found insufficient, sw halts G5-5C and starts an engine-evolution mini-plan rather than layering ifs in `core/replication/`. |
 | Product usability level | Closing this batch reaches **L4 Replicated IO with peer-restart resilience** (replica process restart now self-heals via engine-driven catch-up) |
 
 ---
@@ -435,7 +433,10 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 | §1.A v0.2 binding: Option A with A1+A2 | architect | v0.1 → v0.2 REVISE | ✅ then **retired** in v0.4 |
 | §1 V3 path correction + §1.B PeerSetGeneration design + §1.C truth-domain wording | architect | v0.2 → v0.3 REVISE | ✅ absorbed in v0.3, **then PeerSetGeneration scope retired in v0.4** (V3 path correction kept) |
 | §1.A v0.4 re-binding: **Option B** (primary-side probe loop) per layering correction; master protocol unchanged | architect | v0.3 → v0.4 REVISE | ✅ ruled 2026-04-27 |
-| §1-§6 architect single-sign of **v0.4** | architect | Before code start | ⏳ pending |
+| §1.D / §1.E / §1.F / §1.G / §1.H protocol-boundary additions (two-loop ordering / authority-bounded / reconnect orthogonality / engine-runtime-master split / audit gate) | architect | v0.4 → v0.4.4 framings | ✅ written |
+| **Substance approval** of v0.4.4 (Option B; master unchanged; no `PeerSetGeneration` change); doc hygiene fixes required before single-sign | architect | 2026-04-27 | ✅ approved 2026-04-27 |
+| Probe loop placement bound to `core/replication/` (`ReplicationVolume` lifecycle) | architect | 2026-04-27 | ✅ ruled |
+| §1-§6 architect single-sign of **v0.4.5** | architect | Before code start | ⏳ pending (doc-hygiene cleanup landed) |
 | Code (primary-side probe loop + peer probe entry + lifecycle tests + component test) | sw | After §1-§6 single-sign | ⏳ blocked on single-sign |
 | m01 hardware re-run of `verify_restart_catchup` (+ #1/#2/#3 regression check) | QA | After sw lands trigger + component tests | ⏳ blocked |
 | §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
