@@ -63,7 +63,9 @@ pub struct Cli {
     #[arg(long = "rack", default_value = "")]
     pub rack: String,
 
-    /// Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.
+    /// Choose [memory|redb|redbMedium|redbLarge] mode for memory~performance balance.
+    /// `leveldb`/`leveldbMedium`/`leveldbLarge` are accepted as aliases for the
+    /// corresponding redb backends (Rust volume server uses redb under the hood).
     #[arg(long = "index", default_value = "memory")]
     pub index: String,
 
@@ -701,14 +703,16 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         ip.clone()
     };
 
-    // Parse index type
+    // Parse index type. Accept both `redb*` (preferred — what the volume server
+    // actually uses) and the legacy `leveldb*` names as aliases.
     let index_type = match cli.index.as_str() {
         "memory" => NeedleMapKind::InMemory,
-        "leveldb" => NeedleMapKind::LevelDb,
-        "leveldbMedium" => NeedleMapKind::LevelDbMedium,
-        "leveldbLarge" => NeedleMapKind::LevelDbLarge,
+        "redb" | "leveldb" => NeedleMapKind::Redb,
+        "redbMedium" | "leveldbMedium" => NeedleMapKind::RedbMedium,
+        "redbLarge" | "leveldbLarge" => NeedleMapKind::RedbLarge,
         other => panic!(
-            "Unknown index type: {}. Use memory|leveldb|leveldbMedium|leveldbLarge",
+            "Unknown index type: {}. Use memory|redb|redbMedium|redbLarge \
+             (leveldb/leveldbMedium/leveldbLarge accepted as aliases)",
             other
         ),
     };
@@ -1372,6 +1376,23 @@ mod tests {
     fn test_resolve_config_defaults_dir_to_platform_temp_dir() {
         let cfg = resolve_config(Cli::parse_from(["bin"]));
         assert_eq!(cfg.folders, vec![default_volume_dir()]);
+    }
+
+    #[test]
+    fn test_resolve_config_index_accepts_redb_and_leveldb_aliases() {
+        let pairs = [
+            ("memory", NeedleMapKind::InMemory),
+            ("redb", NeedleMapKind::Redb),
+            ("leveldb", NeedleMapKind::Redb),
+            ("redbMedium", NeedleMapKind::RedbMedium),
+            ("leveldbMedium", NeedleMapKind::RedbMedium),
+            ("redbLarge", NeedleMapKind::RedbLarge),
+            ("leveldbLarge", NeedleMapKind::RedbLarge),
+        ];
+        for (input, expected) in pairs {
+            let cfg = resolve_config(Cli::parse_from(["bin", "--index", input]));
+            assert_eq!(cfg.index_type, expected, "input={}", input);
+        }
     }
 
     #[test]
