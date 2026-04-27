@@ -81,7 +81,7 @@ templ PluginLane(page string, lane string) {
         if (!lane) return;
 
         function fetchAndRender(url, containerId, renderFn) {
-            fetch(url)
+            fetch(basePath(url))
                 .then(r => r.json())
                 .then(data => {
                     const el = document.getElementById(containerId);
