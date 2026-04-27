@@ -1,10 +1,10 @@
 # V3 Phase 15 — G5-5C (Peer Recovery Trigger After Replica Restart) Mini-Plan
 
-**Date**: 2026-04-27 (v0.1 — kickoff draft for architect ratification)
-**Status**: §1-§6 awaiting architect ratification per `v3-batch-process.md §5`
-**Owner**: sw (engine + replication-layer wiring); QA (m01 hardware re-run + scenario authoring)
+**Date**: 2026-04-27 (v0.2 — revised per architect REVISE ruling + QA review of v0.1)
+**Status**: §1-§6 awaiting architect single-sign per `v3-batch-process.md §5` (architect already ratified trigger source = Option A with A1 + A2 in same batch; v0.2 absorbs that ruling and QA's two pin requests)
+**Owner**: sw (master observation-driven re-emit + primary-side recovery dispatch + tests); QA (m01 hardware re-run + scenario authoring)
 **Process**: `v3-batch-process.md` compressed flow (one mini-plan, one PR, one §close)
-**Predecessors**: G5-5 closed at `seaweedfs@c78116fd2` (L3 Replicated IO on hardware; #4 carried to this batch); architect bindings 2026-04-27 (round 14 close ruling)
+**Predecessors**: G5-5 closed at `seaweedfs@c78116fd2` (L3 Replicated IO on hardware; #4 carried to this batch); architect bindings 2026-04-27 (round 14 close ruling + v0.1 REVISE ruling)
 
 ---
 
@@ -29,17 +29,27 @@ G5-5C closes that gap: define and implement the **trigger source** that re-arms 
 | 3 | **Component-scope test** — primary observes peer-up event after restart → shipper re-arms → engine plans catch-up → replica receives missed LSNs → barrier ack at current frontier. Tests the trigger path without the iSCSI/iptables harness. | New unit/component test in `weed/server/` (exact name + file determined at impl) |
 | 4 | **Failure-mode test** — peer-up event fires but engine catch-up cannot complete (e.g., gap exceeds retention → rebuild required). Verifies the trigger correctly hands off to the rebuild path (`StartRebuildFromProbe`) instead of looping. | New unit/component test |
 
-### §1.A Trigger source options (sw proposal — architect picks one)
+### §1.A Trigger source — bound
 
-The architect bound the constraint: "Define trigger source first: observation reappearance, periodic probe loop, or stream/transport reconnect signal." Three options, with tradeoffs:
+**Architect ruling 2026-04-27 (REVISE before code, v0.1 → v0.2)**: trigger source is **Option A — master observation-driven re-emission**, with **both halves of the causal chain in this batch's scope** (no split into a separate precursor batch). Options B and C are explicitly rejected for this batch.
 
-| Option | Source of trigger | Pros | Cons |
-|---|---|---|---|
-| **A. Master observation reappearance** | Primary's host loop subscribes to assignment-fact updates from master. When a replica that was previously absent (or stale) reappears with a fresh observation, the host emits a "peer-reappeared" event into the recovery manager, which probes that peer. | Authoritative source (master is the single source of peer-set truth in V3); aligns with G5-5A peer-set publication path; no new transport paths. | Couples recovery cadence to master heartbeat cadence (~seconds); requires master observation freshness gate to avoid flapping. |
-| **B. Periodic probe loop on Degraded peers** | Primary's recovery manager runs a slow background loop (e.g., 5s) over peers in `ReplicaDegraded` and calls `ProbeReplica` on each. On `ProbeCatchUpRequired`, engine plans catch-up; on `ProbeRebuildRequired`, hand to rebuild path. | Self-contained on primary; doesn't depend on master timing; existing `StartRebuildFromProbe` shows the pattern. | Adds a new background goroutine per primary; needs careful start/stop lifecycle (existing concern from BUG-CP4B2-1 deadlock pattern); polling cost grows with cluster size. |
-| **C. Transport reconnect signal** | When the replica's `ReplicaListener` accepts a new control-channel connection from the primary's shipper (post-restart), the listener emits a "peer-up" event back through the assignment publisher; primary's shipper reconnect path (`ReplicaConnecting → ReplicaInSync`) is the trigger. | Lowest latency (event-driven, no polling); reuses existing transport path. | Requires the shipper to actually attempt a reconnect — but `Ship()` short-circuits in `ReplicaDegraded` (the very symptom). Would need an out-of-band "try-reconnect" path that doesn't ride on `Ship()` (i.e., timer or master event). Folds back into A or B in practice. |
+Rationale (architect): "Master already owns peer-set/observation truth in V3. Periodic probe (Option B) is viable but less disciplined. Transport reconnect (Option C) is rejected for this batch. Splitting Option A into a separate G5-5B precursor would add process overhead for one causal chain — keep both halves together."
 
-**sw recommendation**: **Option A (master observation reappearance)**, because (a) V3 already routes peer-set authority through master observation (G5-5A), so this is the discipline-coherent path; (b) C reduces to A or B once you account for `ReplicaDegraded` not driving reconnects; (c) B works but introduces a polling goroutine when the same information already flows through the master subscription. Architect picks at §1-§6 ratification — sw will not start coding until the binding is explicit.
+Option A has two parts, both required:
+
+| Part | Side | What it does |
+|---|---|---|
+| **A1 — Master-side observation-driven re-emission** | master | Today, master's `SubscribeAssignments` only re-emits when the publisher mints a *new* fact (e.g., `IntentRefreshEndpoint`). Observation-freshness changes alone do not trigger re-emission (sw's G5-5 round-7 finding). A1 wires master so that when a previously-stale observation for an existing slot becomes fresh again (replica restart against same `--durable-root` keeps `server_id`/slot identity, only the observation reanimates), the publisher mints a re-emission of the assignment fact for that slot. |
+| **A2 — Primary-side recovery dispatch** | primary | Primary's host loop already consumes assignment-fact updates from master via `SubscribeAssignments` (G5-5A code path). On consuming a re-emitted fact for a slot whose shipper is in `ReplicaDegraded`, the host emits a "peer-reappeared" event into the recovery manager, which calls `ProbeReplica`. On `ProbeCatchUpRequired` → engine-driven catch-up via T4d-4 primitives. On `ProbeRebuildRequired` → hand off to existing `StartRebuildFromProbe`. |
+
+**Pros (recap)**: Authoritative source (master is the single source of peer-set truth in V3); aligns with G5-5A peer-set publication path; no new transport paths; no polling goroutine; observation freshness gating already exists in `ObservationStore.SlotFact` from G5-5A round 54.
+
+**Cons accepted**: Recovery latency couples to master heartbeat cadence (~seconds, dominated by observation freshness window). For G5-5C #5 hardware deadline this is well within the 30s budget.
+
+**Options B and C — recorded for future reference**:
+
+- **Option B (periodic probe loop)** — rejected: introduces a polling goroutine and an independent timing source when the same event already flows through the master subscription. Less disciplined per V3 truth-domain split.
+- **Option C (transport reconnect signal)** — rejected for this batch: `Ship()` short-circuits in `ReplicaDegraded`, so the shipper does not attempt a reconnect that could carry the signal. C in practice folds back into A or B.
 
 ### What G5-5C does NOT deliver (explicit non-claims)
 
@@ -51,13 +61,17 @@ The architect bound the constraint: "Define trigger source first: observation re
 
 ### Files (preliminary — exact set bound at code-start)
 
-| File | Likely change | LOC est |
-|---|---|---|
-| `weed/server/block_recovery.go` | New "peer-up" entry point (e.g., `OnPeerObservedAfterDegraded(replicaID)`) — probes peer, dispatches to engine catch-up or rebuild | ~60 |
-| `weed/server/volume_server_block.go` (or master-subscription handler) | Wire master observation update → emit peer-up event when a Degraded peer reappears with a fresh slot fact | ~40 (Option A); ~60 incl. timer (Option B) |
-| `weed/storage/blockvol/wal_shipper.go` | Possibly: explicit `RearmFromDegraded()` method for the recovery manager to call (avoid touching shipper internals from server layer) | ~20 |
-| `weed/server/block_recovery_test.go` | #3 + #4 component tests | ~120 |
-| `sw-block/design/v3-phase-15-g5-5c-mini-plan.md` (this doc) | §close appended at batch close | + §close |
+| File | Side | Likely change | LOC est |
+|---|---|---|---|
+| `core/host/master/services.go` (or sibling: publisher/observation hookup) | master (A1) | When a slot's observation transitions stale → fresh and the slot identity is unchanged, mint a re-emission of the existing assignment fact for that slot. Reuse `Publisher.LastPublished` + `ObservationStore.SlotFact` freshness gate from G5-5A round 54. | ~70 |
+| `core/authority/observation_store.go` (possibly) | master (A1) | If freshness-transition detection isn't already accessible, expose a minimal callback or comparison helper. Avoid new public surface where `SlotFact` already suffices. | ~20 |
+| `weed/server/volume_server_block.go` (assignment subscription handler) | primary (A2) | On consuming an assignment-fact update for a slot whose shipper is in `ReplicaDegraded`, emit peer-reappeared event into recovery manager. | ~40 |
+| `weed/server/block_recovery.go` | primary (A2) | New entry point (e.g., `OnPeerObservedAfterDegraded(replicaID)`) — probes peer, dispatches to engine catch-up or rebuild. Includes per-peer cooldown to prevent flapping (§6 risk #1). | ~60 |
+| `weed/storage/blockvol/wal_shipper.go` | primary (A2) | Possibly: explicit `RearmFromDegraded()` method for the recovery manager to call (avoid touching shipper internals from server layer). | ~20 |
+| `weed/server/block_recovery_test.go` + master-side tests | both | Component tests #3 + #4 (covers A1 freshness-transition + A2 dispatch); failure-mode test for rebuild hand-off. | ~150 |
+| `sw-block/design/v3-phase-15-g5-5c-mini-plan.md` (this doc) | — | §close appended at batch close. | + §close |
+
+Total estimate: ~360 LOC production + ~150 LOC tests, split master-side ~90 / primary-side ~120 / tests ~150.
 
 ### Architecture truth-domain check (`v3-architecture.md §4`)
 
@@ -76,12 +90,14 @@ Numbered, verifier-named, single source of truth.
 
 | # | Criterion | Verifier |
 |---|---|---|
-| 1 | Trigger source defined and ratified by architect (Option A / B / C from §1.A) before code start. | Architect mark on §7 sign table |
-| 2 | After replica restart against same `--durable-root`, primary's recovery manager observes the peer-reappeared event within the bound (Option A: 1× master heartbeat; Option B: ≤ probe interval; Option C: 1× transport reconnect attempt). | Component test #3 (file: TBD at impl) |
-| 3 | On peer-reappeared, recovery manager calls `ProbeReplica` and dispatches to engine-driven catch-up (T4d-4 primitives) when outcome is `ProbeCatchUpRequired`. | Component test #3 |
-| 4 | When the gap exceeds retention and probe outcome is `ProbeRebuildRequired`, recovery manager hands off to `StartRebuildFromProbe` (already wired) without entering a re-trigger loop. | Component test #4 |
-| 5 | `iterate-m01-replicated-write.sh verify_restart_catchup` step turns GREEN on m01/M02 hardware: `LBA[2]=0xef` byte-equal under `m01verify` within deadline (suggest 30s, same as #3 network-catchup; final value bound at code-start). | Hardware re-run; artifacts archived under `g5-test/logs/artifacts-<timestamp>/` |
+| 1 | Trigger source = Option A (master observation-driven re-emission), with both A1 (master-side re-emit on observation freshness transition) and A2 (primary-side recovery dispatch on consuming the re-emitted fact) implemented in this batch. | Architect §7 sign + §1.A binding |
+| 2 | A1 — Master mints a re-emission of the existing assignment fact for a slot when its observation transitions stale → fresh (slot identity unchanged). | Component test #3a (master-side; file + test name pinned at code-start) |
+| 3 | A2 — On consuming a re-emitted assignment fact for a slot whose shipper is in `ReplicaDegraded`, primary's recovery manager calls `ProbeReplica` and dispatches to engine-driven catch-up (T4d-4 primitives) when outcome is `ProbeCatchUpRequired`. | Component test #3b (primary-side; file + test name pinned at code-start) |
+| 4 | When the gap exceeds retention and probe outcome is `ProbeRebuildRequired`, recovery manager hands off to `StartRebuildFromProbe` (already wired) without entering a re-trigger loop. Per-peer cooldown prevents flapping. | Component test #4 |
+| 5 | `iterate-m01-replicated-write.sh verify_restart_catchup` step turns GREEN on m01/M02 hardware: `LBA[2]=0xef` byte-equal under `m01verify` within 30s deadline (same as G5-5 #3 network-catchup; budget = 1× master heartbeat for re-emit + catch-up time + safety margin, comfortably inside 30s). | Hardware re-run; artifacts archived under `g5-test/logs/artifacts-<timestamp>/` |
 | 6 | No regression on G5-5 #1/#2/#3 — all three remain GREEN in the same hardware run. | Same script, same run |
+
+**File + test names**: §2 #3a/#3b/#4 list (file: TBD at impl) is acceptable for v0.2 ratification per QA review; sw concretizes file path + Go test method name at code-start so QA can grep them in CI later. To be appended to this §2 as a code-start addendum (not requiring re-ratification — it's the same tests, just named).
 
 ### Architect review checklist (`v3-batch-process.md §12`) coverage
 
@@ -124,7 +140,7 @@ INVs **rejected / deferred**:
 | Reuse engine-driven primitives (T4d-4) | Binding adopted in §1 + §3; no new engine primitives introduced. |
 | Define trigger source first | §1.A enumerates three options with tradeoffs; architect picks at §7 ratification. |
 | Pass criterion = G5-5 #4 hardware case | §2 #5 uses the exact existing `verify_restart_catchup` step with no harness changes. |
-| Seed evidence: `seaweed_block@5c4718f` primary-fail.log | Referenced in §1 to ground the symptom; QA may re-collect a clean `gate-degraded + stale-barrier-ack` log to confirm the pre-fix baseline before the trigger lands. |
+| Seed evidence: `seaweed_block@5c4718f` primary-fail.log | **Pinned**: `V:\share\g5-test\logs\artifacts-20260427T092858Z\primary-fail.log` (G5-5 §close evidence run, surfaces the `gate-degraded + stale-barrier-ack` pattern). No new collection required. |
 | Two ledger-pointer additions (`INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1`, `INV-REPL-LSN-ORDER-FANOUT-001`) | Inscribed at G5-5C §close per §3. |
 
 Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scope):
@@ -149,8 +165,9 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 
 | Item | Owner | When | State |
 |---|---|---|---|
-| §1-§6 architect ratification (including §1.A trigger source pick) | architect | Before code start | ⏳ pending |
-| Code (recovery manager + master subscription wiring + tests) | sw | After §1-§6 ratification with bound trigger source | ⏳ blocked on ratification |
+| §1.A trigger source binding (Option A, A1+A2 in same batch, B/C rejected) | architect | v0.1 → v0.2 REVISE ruling | ✅ done 2026-04-27 |
+| §1-§6 architect single-sign of v0.2 (after this revision) | architect | Before code start | ⏳ pending |
+| Code (master-side A1 re-emit + primary-side A2 dispatch + tests) | sw | After §1-§6 single-sign | ⏳ blocked on single-sign |
 | m01 hardware re-run of `verify_restart_catchup` (+ #1/#2/#3 regression check) | QA | After sw lands trigger + component tests | ⏳ blocked |
 | §close append + close sign | sw drafts §close; QA verifies evidence; architect single-sign per `v3-batch-process.md §5` | After m01 verification | ⏳ blocked |
 
