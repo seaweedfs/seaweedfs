@@ -329,6 +329,65 @@ func TestVersionFilterRetriesTransientAcceptErrors(t *testing.T) {
 	}
 }
 
+func TestVersionFilterPassesThroughNonV2RPC(t *testing.T) {
+	// Anything that isn't ONC RPC v2 isn't ours to classify — even if the
+	// bytes at hdr[16:24] happen to look like nfsProgram + vers=4, we
+	// shouldn't synthesize a PROG_MISMATCH advertising NFSv3 support for
+	// what could be a completely different protocol sharing the port.
+	innerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer innerListener.Close()
+
+	listener := newVersionFilterListener(innerListener)
+	delivered := make(chan struct{}, 1)
+	go func() {
+		c, aerr := listener.Accept()
+		if aerr != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 44)
+		if _, rerr := io.ReadFull(c, buf); rerr == nil {
+			delivered <- struct{}{}
+		}
+	}()
+
+	conn, err := net.Dial("tcp", innerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// Build a CALL frame, then overwrite the rpcvers field with 99.
+	// Without the rpcvers guard the filter would still parse prog=NFS,
+	// vers=4 from the same buffer and reject with PROG_MISMATCH.
+	frame := buildRPCCallFrame(0xfeedbeef, nfsProgram, 4, 0)
+	binary.BigEndian.PutUint32(frame[12:16], 99) // bogus rpcvers
+	if _, err := conn.Write(frame); err != nil {
+		t.Fatal(err)
+	}
+
+	// Try to read a PROG_MISMATCH reply with a short deadline — none
+	// should arrive because the filter shouldn't pretend to know what
+	// this protocol is.
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	hdr := make([]byte, 4)
+	if n, err := io.ReadFull(conn, hdr); err == nil && n == 4 {
+		if got := binary.BigEndian.Uint32(hdr); got == uint32(progMismatchBodyLen)|(1<<31) {
+			t.Fatal("filter sent PROG_MISMATCH for a non-v2 RPC frame")
+		}
+	}
+
+	// And the connection should reach the inner accept handler.
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("non-v2 RPC frame should pass through filter to inner accept")
+	}
+}
+
 func TestVersionFilterIgnoresShortFirstFragment(t *testing.T) {
 	// Peek(28) can read past the first fragment's body when the body is
 	// shorter than the 24-byte fixed RPC CALL header. Without a length

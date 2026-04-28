@@ -255,6 +255,16 @@ func filterFirstRPCFrame(conn net.Conn) (net.Conn, bool) {
 		// Not a CALL — odd, but pass through.
 		return &peekedConn{Conn: conn, reader: r}, true
 	}
+	if rpcVers := binary.BigEndian.Uint32(hdr[12:16]); rpcVers != 2 {
+		// ONC RPC v2 is the only version we and go-nfs speak; if the
+		// rpcvers field is anything else the rest of the header is
+		// untrusted (could be a non-RPC protocol that happens to share
+		// the port, or simply garbled traffic). Don't synthesize a
+		// PROG_MISMATCH that lies about supporting NFS — pass it
+		// through and let go-nfs / RFC 5531 §9 RPC_MISMATCH handling
+		// in the upstream library do the right thing.
+		return &peekedConn{Conn: conn, reader: r}, true
+	}
 
 	prog := binary.BigEndian.Uint32(hdr[16:20])
 	vers := binary.BigEndian.Uint32(hdr[20:24])
