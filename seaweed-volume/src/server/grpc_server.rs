@@ -3480,23 +3480,25 @@ impl VolumeServer for VolumeGrpcService {
                     // LOCAL (2) / FULL (3): verify EC shard data
                     let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
 
-                    let dir = store
-                        .find_ec_dir(*vid, &collection)
-                        .unwrap_or_else(|| String::from(""));
+                    // After cross-disk reconciliation, an EcVolume can
+                    // legitimately have ecv.dir != ecv.dir_idx (shards
+                    // on one disk, .ecx / .ecj / .vif on a sibling).
+                    // Use the EcVolume's own dirs rather than collapsing
+                    // both args to find_ec_dir's single answer, otherwise
+                    // read_ec_shard_config falls back to the wrong .vif
+                    // location for split-disk volumes (#9252).
+                    let dir = ecv.dir.clone();
+                    let idx_dir = ecv.dir_idx.clone();
                     if dir.is_empty() {
                         continue;
                     }
 
                     total_volumes += 1;
                     total_files += files;
-                    // Scrub operates on the dir returned by find_ec_dir;
-                    // pass it for both args so the helper has a single
-                    // place to look. If a sibling-disk split ever
-                    // matters here, plumb the idx dir through too.
                     let (data_shards, parity_shards) =
                         crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                             &dir,
-                            &dir,
+                            &idx_dir,
                             &collection,
                             *vid,
                         );
