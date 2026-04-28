@@ -2574,12 +2574,19 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         let store = self.state.store.read().unwrap();
-        let ec_vol = store.find_ec_volume(vid).ok_or_else(|| {
-            Status::not_found(format!(
-                "ec volume {} shard {} not found",
-                req.volume_id, req.shard_id
-            ))
-        })?;
+        // Reconciled EC volumes can have their shards split across
+        // disks (e.g. shards 0/12 on disk 0, shard 1 on disk 1), so
+        // resolve the EcVolume from the *shard*'s home location
+        // rather than first-match `find_ec_volume(vid)` which would
+        // miss shards that live on a sibling. Mirrors Go's findEcShard.
+        let ec_vol = store
+            .find_ec_volume_with_shard(vid, req.shard_id)
+            .ok_or_else(|| {
+                Status::not_found(format!(
+                    "ec volume {} shard {} not found",
+                    req.volume_id, req.shard_id
+                ))
+            })?;
 
         // Check if the requested needle is deleted (via .ecx index, matching Go)
         if req.file_key > 0 {
