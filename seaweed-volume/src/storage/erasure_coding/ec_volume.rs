@@ -361,6 +361,14 @@ impl EcVolume {
             .unwrap_or(false)
     }
 
+    /// Directory where this EcVolume's `.ecx` was actually opened
+    /// (may differ from `dir_idx` when the legacy "written before
+    /// -dir.idx was set" fallback or the cross-disk reconcile path
+    /// pointed it elsewhere).
+    pub fn ecx_actual_dir(&self) -> &str {
+        &self.ecx_actual_dir
+    }
+
     pub fn is_time_to_destroy(&self) -> bool {
         self.expire_at_sec > 0
             && SystemTime::now()

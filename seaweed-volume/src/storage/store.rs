@@ -702,6 +702,75 @@ impl Store {
         self.locations.iter().any(|loc| loc.has_ec_volume(vid))
     }
 
+    /// Returns the index of the disk location that has `(vid, shard_id)`
+    /// mounted, if any. Mirrors Go's `Store.findEcShard` and is the
+    /// right primitive for read/unmount/delete operations on a single
+    /// shard, since reconciliation can mount the same `vid` on multiple
+    /// disks (each holding a disjoint subset of the shards). Without
+    /// this, callers using `find_ec_volume(vid)` would only see the
+    /// first disk and miss shards that live on a sibling.
+    pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: u32) -> Option<usize> {
+        for (i, loc) in self.locations.iter().enumerate() {
+            if let Some(ecv) = loc.find_ec_volume(vid) {
+                if ecv.has_shard(shard_id as u8) {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Like [`Self::find_ec_shard_location`] but returns the EcVolume
+    /// reference directly. Borrows the store immutably for the
+    /// EcVolume's lifetime.
+    pub fn find_ec_volume_with_shard(
+        &self,
+        vid: VolumeId,
+        shard_id: u32,
+    ) -> Option<&EcVolume> {
+        for loc in &self.locations {
+            if let Some(ecv) = loc.find_ec_volume(vid) {
+                if ecv.has_shard(shard_id as u8) {
+                    return Some(ecv);
+                }
+            }
+        }
+        None
+    }
+
+    /// Aggregate the data dir of each mounted shard for `vid` across
+    /// all locations. Returns the EcVolume to use for metadata
+    /// (`.ecx`, `dir_idx`, etc — any per-disk EcVolume for this vid
+    /// will do, since they all open the same `.ecx`) and a vector of
+    /// per-shard data dirs (`None` when the shard isn't mounted on
+    /// any disk).
+    ///
+    /// Mirrors Go's `Store.CollectEcShards` in
+    /// `weed/storage/store_ec.go`. The decoder needs per-shard paths
+    /// to support cross-disk reconciled volumes whose shards are
+    /// split across data dirs.
+    pub fn collect_ec_shard_dirs(
+        &self,
+        vid: VolumeId,
+        max_shard_count: usize,
+    ) -> Option<(&EcVolume, Vec<Option<String>>)> {
+        let mut found_vol: Option<&EcVolume> = None;
+        let mut dirs: Vec<Option<String>> = vec![None; max_shard_count];
+        for loc in &self.locations {
+            if let Some(ecv) = loc.find_ec_volume(vid) {
+                if found_vol.is_none() {
+                    found_vol = Some(ecv);
+                }
+                for shard_id in 0..max_shard_count {
+                    if dirs[shard_id].is_none() && ecv.has_shard(shard_id as u8) {
+                        dirs[shard_id] = Some(loc.directory.clone());
+                    }
+                }
+            }
+        }
+        found_vol.map(|v| (v, dirs))
+    }
+
     pub fn delete_expired_ec_volumes(
         &mut self,
     ) -> (
