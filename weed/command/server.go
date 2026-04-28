@@ -350,7 +350,7 @@ func runServer(cmd *Command, args []string) bool {
 			if *svc.portGrpc == 0 {
 				*svc.portGrpc = 10000 + *svc.port
 			}
-			pb.RegisterLocalGrpcSocket(*svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
+			pb.RegisterLocalGrpcSocket(*serverIp, *svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
 		}
 	}
 
