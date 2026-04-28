@@ -86,7 +86,7 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			if *file == "" {
 				return fmt.Errorf("-file is required")
 			}
-			data, err := os.ReadFile(*file)
+			data, err := os.ReadFile(expandHomeDir(*file))
 			if err != nil {
 				return fmt.Errorf("failed to read policy file: %v", err)
 			}

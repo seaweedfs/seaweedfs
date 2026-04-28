@@ -176,7 +176,7 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 		if *policyFile == "" {
 			return fmt.Errorf("-file is required")
 		}
-		content, err := os.ReadFile(*policyFile)
+		content, err := os.ReadFile(expandHomeDir(*policyFile))
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,8 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -79,4 +81,26 @@ func (ewg *ErrorWaitGroup) AddErrorf(format string, a ...interface{}) {
 func (ewg *ErrorWaitGroup) Wait() error {
 	ewg.wg.Wait()
 	return errors.Join(ewg.errors...)
+}
+
+// expandHomeDir expands a leading "~" or "~/..." to the user's home directory.
+// The weed shell parses commands itself and does not go through an OS shell, so
+// "~" never gets expanded and a path like "~/foo" is read literally. Commands
+// that accept user-supplied filesystem paths should pass them through this
+// helper. Forms like "~user/..." are not supported and returned unchanged.
+func expandHomeDir(p string) string {
+	if p == "" || p[0] != '~' {
+		return p
+	}
+	if p != "~" && p[1] != '/' && p[1] != filepath.Separator {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return filepath.Join(home, p[2:])
 }

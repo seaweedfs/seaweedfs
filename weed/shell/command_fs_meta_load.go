@@ -51,7 +51,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	fileName := args[len(args)-1]
+	fileName := expandHomeDir(args[len(args)-1])
 
 	metaLoadCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.dirPrefix = metaLoadCommand.String("dirPrefix", "", "load entries only with directories matching prefix")

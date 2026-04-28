@@ -108,7 +108,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 	case *create:
 		var metadata *s3tables.TableMetadata
 		if *metadataFile != "" {
-			content, err := os.ReadFile(*metadataFile)
+			content, err := os.ReadFile(expandHomeDir(*metadataFile))
 			if err != nil {
 				return err
 			}
@@ -178,7 +178,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 		if *policyFile == "" {
 			return fmt.Errorf("-file is required")
 		}
-		content, err := os.ReadFile(*policyFile)
+		content, err := os.ReadFile(expandHomeDir(*policyFile))
 		if err != nil {
 			return err
 		}
