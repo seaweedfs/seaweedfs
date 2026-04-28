@@ -80,12 +80,19 @@ impl Store {
                     );
                     continue;
                 };
-                if owner.location == loc_idx {
-                    // .ecx is on this same disk, but load_all_ec_shards
-                    // still didn't load these shards. handle_found_ecx_file
-                    // already logged the underlying failure; don't retry.
+                if owner.location == loc_idx && owner.idx_dir == loc.idx_directory {
+                    // Normal same-disk case: load_all_ec_shards already
+                    // attempted the mount via `loc.idx_directory` and
+                    // logged the underlying failure. No point retrying
+                    // the same call.
                     continue;
                 }
+                // Either a cross-disk owner OR a same-disk owner whose
+                // `.ecx` actually lives in `loc.directory` (the legacy
+                // pre-`-dir.idx` layout). The latter wasn't tried by
+                // load_all_ec_shards, which only looked in
+                // `self.idx_directory`, so we still need to retry it
+                // here with the owner's discovered idx_dir.
                 to_load.push((loc_idx, key, shards, owner.clone()));
             }
         }
