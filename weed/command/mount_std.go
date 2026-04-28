@@ -246,12 +246,17 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if option.fuseMaxBackground != nil && *option.fuseMaxBackground > 0 {
 		maxBackground = *option.fuseMaxBackground
 	}
+	congestionThreshold := 0
+	if option.fuseCongestionThreshold != nil && *option.fuseCongestionThreshold > 0 {
+		congestionThreshold = *option.fuseCongestionThreshold
+	}
 
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
 		Options:                  option.extraOptions,
 		MaxBackground:            maxBackground,
+		CongestionThreshold:      congestionThreshold,
 		MaxWrite:                 1024 * 1024 * 2,
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
