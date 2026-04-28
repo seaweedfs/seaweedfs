@@ -394,6 +394,30 @@ var (
 			Help:      "Counter of overall failed file write requests from clients.",
 		})
 
+	VolumeServerScrubLastTimeSeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "scrub_last_time_seconds",
+			Help:      "Last scrub execution time, as seconds since UNIX epoch.",
+		}, []string{"mode"})
+
+	VolumeServerScrubVolumeFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "scrub_volume_failures",
+			Help:      "Counter of overall volumes with issues detected during scrubbing.",
+		}, []string{"mode"})
+
+	VolumeServerScrubShardFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "scrub_shard_failures",
+			Help:      "Counter of overall EC shards with issues detected during scrubbing.",
+		}, []string{"mode"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -564,6 +588,9 @@ func init() {
 	Gather.MustRegister(VolumeServerFileReadFailures)
 	Gather.MustRegister(VolumeServerFileReadInvalidNeedles)
 	Gather.MustRegister(VolumeServerFileWriteFailures)
+	Gather.MustRegister(VolumeServerScrubLastTimeSeconds)
+	Gather.MustRegister(VolumeServerScrubVolumeFailures)
+	Gather.MustRegister(VolumeServerScrubShardFailures)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
