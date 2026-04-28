@@ -2,6 +2,7 @@ package nfs
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -104,11 +105,18 @@ func TestVersionFilterRejectsNFSv4WithProgMismatch(t *testing.T) {
 	}
 
 	// Filter must close the connection after replying so the client knows
-	// not to send another RPC on this socket.
+	// not to send another RPC on this socket. Insist on io.EOF specifically:
+	// "any error" would let a stuck (but still-open) connection pass this
+	// check via a deadline timeout, which is exactly the regression we want
+	// to catch.
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	one := make([]byte, 1)
-	if _, err := conn.Read(one); err == nil {
-		t.Error("expected EOF after PROG_MISMATCH but read succeeded")
+	n, err := conn.Read(one)
+	switch {
+	case err == nil:
+		t.Errorf("expected EOF after PROG_MISMATCH but read returned %d bytes", n)
+	case !errors.Is(err, io.EOF):
+		t.Errorf("expected io.EOF after PROG_MISMATCH, got %v (likely a regression where the filter replies but does not close)", err)
 	}
 
 	select {
