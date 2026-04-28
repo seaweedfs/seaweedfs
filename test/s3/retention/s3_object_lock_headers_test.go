@@ -296,6 +296,7 @@ func putObjectWithLockHeaders(t *testing.T, client *s3.Client, bucketName, key, 
 
 // createBucketWithObjectLock creates a bucket with object lock enabled
 func createBucketWithObjectLock(t *testing.T, client *s3.Client, bucketName string) {
+	cleanupLeftoverTestBuckets(t, client)
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket:                     aws.String(bucketName),
 		ObjectLockEnabledForBucket: aws.Bool(true),

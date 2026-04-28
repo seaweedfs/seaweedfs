@@ -68,6 +68,17 @@ func getS3Client(t *testing.T) *s3.Client {
 	})
 }
 
+// allTestBucketPrefixes lists every prefix used to name buckets in this test suite.
+// cleanupLeftoverTestBuckets uses it to find stale buckets from prior tests/runs.
+// Add the new prefix here whenever a test introduces one.
+var allTestBucketPrefixes = []string{
+	"test-retention-",
+	"object-lock-test-",
+	"object-lock-config-",
+	"bucket-defaults-",
+	"normal-test-",
+}
+
 // getNewBucketName generates a unique bucket name
 func getNewBucketName() string {
 	timestamp := time.Now().UnixNano()
@@ -77,6 +88,7 @@ func getNewBucketName() string {
 // createBucket creates a new bucket for testing with Object Lock enabled
 // Object Lock is required for retention and legal hold functionality per AWS S3 specification
 func createBucket(t *testing.T, client *s3.Client, bucketName string) {
+	cleanupLeftoverTestBuckets(t, client)
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket:                     aws.String(bucketName),
 		ObjectLockEnabledForBucket: aws.Bool(true),
@@ -87,6 +99,7 @@ func createBucket(t *testing.T, client *s3.Client, bucketName string) {
 // createBucketWithoutObjectLock creates a new bucket without Object Lock enabled
 // Use this only for tests that specifically need to verify non-Object-Lock bucket behavior
 func createBucketWithoutObjectLock(t *testing.T, client *s3.Client, bucketName string) {
+	cleanupLeftoverTestBuckets(t, client)
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 	})
@@ -264,22 +277,36 @@ func putObject(t *testing.T, client *s3.Client, bucketName, key, content string)
 	return resp
 }
 
-// cleanupAllTestBuckets cleans up any leftover test buckets
+// cleanupAllTestBuckets cleans up any leftover test buckets matching any prefix this
+// suite uses. Called both at test-suite teardown and before each new bucket creation
+// so a single `weed mini` data node does not exhaust its volume slots after many tests.
 func cleanupAllTestBuckets(t *testing.T, client *s3.Client) {
-	// List all buckets
 	listResp, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
 	if err != nil {
 		t.Logf("Warning: failed to list buckets for cleanup: %v", err)
 		return
 	}
 
-	// Delete buckets that match our test prefix
 	for _, bucket := range listResp.Buckets {
-		if bucket.Name != nil && strings.HasPrefix(*bucket.Name, defaultConfig.BucketPrefix) {
-			t.Logf("Cleaning up leftover test bucket: %s", *bucket.Name)
-			deleteBucket(t, client, *bucket.Name)
+		if bucket.Name == nil {
+			continue
+		}
+		for _, prefix := range allTestBucketPrefixes {
+			if strings.HasPrefix(*bucket.Name, prefix) {
+				t.Logf("Cleaning up leftover test bucket: %s", *bucket.Name)
+				deleteBucket(t, client, *bucket.Name)
+				break
+			}
 		}
 	}
+}
+
+// cleanupLeftoverTestBuckets is invoked from the createBucket* helpers so each new bucket
+// starts with a clean slate even when a prior test panicked, was interrupted, or its
+// volumes have not yet been reclaimed by the master. Without this the WORM suite
+// accumulates ~3 reserved volumes per bucket and the data node hits its volume cap.
+func cleanupLeftoverTestBuckets(t *testing.T, client *s3.Client) {
+	cleanupAllTestBuckets(t, client)
 }
 
 // TestBasicRetentionWorkflow tests the basic retention functionality
