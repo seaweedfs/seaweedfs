@@ -137,6 +137,12 @@ Per `v3-phase-15-mvp-scope-gates.md` §4.5 dependency graph:
 
 P15 closes at **G22 final cluster validation**. After P15 → P16 (in-place migration is the only hinted scope).
 
+### Open backlog tickets queued for G6
+
+| Ticket | Source | Description | Evidence |
+|---|---|---|---|
+| **G6-T-WALRECYCLE-ESCALATE** | G5-5C QA scenario D 2026-04-28 (architect-bound carry) | Verify engine recovery decision escalates `ProbeOutcome=WALRecycled` → `StartRebuildFromProbe` (a) OR surface as G6 gap if missing (b). Catch-up cannot bridge gap-beyond-WAL by design; rebuild path must auto-fire from probe outcome carrying WALRecycled, otherwise sustained writes leave replica permanently degraded. Dispatch-branch correctness already pinned at engine layer (Batch 4 `TestG5_5C_Dispatch_CatchUpVsRebuild_TableDriven`); the runtime escalation chain under sustained pressure is what's untested. | `V:\share\g5-test\logs\bcd-20260428T072539Z.log` D-section: `peer r2 invalidated (prev=catching_up, reason=session_failed: catch-up: WAL recycled: storage: WALRecycled: fromLSN=602 checkpointLSN=700 headLSN=701)`; no rebuild dispatch in 5 s scrape window. Cross-ref `INV-G5-5C-PROBE-BEFORE-CATCHUP`. QA prep: `wait_until_rebuild_dispatched` helper for the eventual G6 acceptance (held until G6 kickoff). |
+
 ---
 
 ## 9. Doc hygiene — outdated/historical docs
