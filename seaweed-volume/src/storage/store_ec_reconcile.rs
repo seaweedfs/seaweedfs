@@ -400,6 +400,169 @@ mod tests {
             );
         }
     }
+
+    /// Helper: build a 2-disk store where reconcile produces the
+    /// cross-disk split layout (shards 0/12 on dir0, shard 1 + .ecx
+    /// on dir1). Mirrors the report-from-the-issue layout that
+    /// VolumeEcShardRead and friends now have to handle correctly.
+    fn build_split_disk_store(vid_raw: u32) -> (Store, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "grafana-loki";
+        let vid = vid_raw;
+
+        // dir0: shards 0 and 12, no .ecx
+        write_shard(dir0.to_str().unwrap(), collection, vid, 0);
+        write_shard(dir0.to_str().unwrap(), collection, vid, 12);
+
+        // dir1: shard 1 plus the index files
+        write_shard(dir1.to_str().unwrap(), collection, vid, 1);
+        write_index_files(dir1.to_str().unwrap(), collection, vid, 10, 4);
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        (store, tmp)
+    }
+
+    /// Reconciliation can put the same `vid` on multiple disks with
+    /// disjoint shard subsets. Without a per-(vid, shard_id) lookup,
+    /// `find_ec_volume(vid)` returns disk 0's EcVolume and a request
+    /// for shard 1 (which lives on disk 1) gets "not mounted." The
+    /// new helpers must route to the right disk.
+    #[test]
+    fn test_find_ec_shard_location_finds_split_disk_shards() {
+        let (store, _tmp) = build_split_disk_store(7001);
+        let vid = VolumeId(7001);
+
+        // Shards 0 and 12 → disk 0; shard 1 → disk 1.
+        assert_eq!(store.find_ec_shard_location(vid, 0), Some(0));
+        assert_eq!(store.find_ec_shard_location(vid, 12), Some(0));
+        assert_eq!(store.find_ec_shard_location(vid, 1), Some(1));
+
+        // Unmounted shards → None.
+        assert_eq!(store.find_ec_shard_location(vid, 5), None);
+
+        // find_ec_volume_with_shard returns the EcVolume on the right
+        // disk for each shard.
+        let ev0 = store.find_ec_volume_with_shard(vid, 0).unwrap();
+        assert!(ev0.has_shard(0));
+        let ev1 = store.find_ec_volume_with_shard(vid, 1).unwrap();
+        assert!(ev1.has_shard(1));
+        // Different EcVolume instances per disk (same vid).
+        assert!(!std::ptr::eq(ev0, ev1));
+    }
+
+    /// `Store::unmount_ec_shards` used to return after the first
+    /// location with the vid, so a request to unmount a shard that
+    /// lives on a sibling disk became a silent no-op. After the fix,
+    /// every location with the vid is asked to unmount whatever
+    /// subset it has.
+    #[test]
+    fn test_unmount_ec_shards_reaches_all_locations() {
+        let (mut store, _tmp) = build_split_disk_store(7002);
+        let vid = VolumeId(7002);
+
+        // Sanity: shard 1 starts mounted on disk 1.
+        assert_eq!(store.find_ec_shard_location(vid, 1), Some(1));
+
+        // Unmount shard 1 only — it lives on disk 1, but disk 0 also
+        // has an EcVolume for the same vid (carrying shards 0/12).
+        store.unmount_ec_shards(vid, &[1]);
+
+        // After unmount, shard 1 should be gone from disk 1.
+        assert_eq!(store.find_ec_shard_location(vid, 1), None);
+        // And disk 0's shards must still be mounted (the unmount
+        // call should not have been a no-op on disk 0, but it also
+        // shouldn't have unmounted disk 0's unrelated shards).
+        assert_eq!(store.find_ec_shard_location(vid, 0), Some(0));
+        assert_eq!(store.find_ec_shard_location(vid, 12), Some(0));
+    }
+
+    /// Single-shard variant: `Store::unmount_ec_shard` likewise has
+    /// to reach the right disk regardless of which disk the
+    /// first-match `find_ec_volume(vid)` would have returned.
+    #[test]
+    fn test_unmount_ec_shard_finds_split_disk_shard() {
+        let (mut store, _tmp) = build_split_disk_store(7003);
+        let vid = VolumeId(7003);
+
+        store.unmount_ec_shard(vid, 1).unwrap();
+        assert_eq!(store.find_ec_shard_location(vid, 1), None);
+        // Other shards untouched.
+        assert_eq!(store.find_ec_shard_location(vid, 0), Some(0));
+    }
+
+    /// `delete_ec_shards` walks all locations to remove the on-disk
+    /// shard files (already correct) and then calls
+    /// `unmount_ec_shards` to drop in-memory state. Before the fix
+    /// the unmount stopped at the first location and could leave a
+    /// stale in-memory shard pointing at a now-deleted file. After
+    /// the fix every location with the vid sees the unmount.
+    #[test]
+    fn test_delete_ec_shards_unmounts_every_location() {
+        let (mut store, _tmp) = build_split_disk_store(7004);
+        let vid = VolumeId(7004);
+        let collection = "grafana-loki";
+
+        store.delete_ec_shards(vid, collection, &[1]);
+
+        // Shard 1 file is gone on disk 1.
+        let p1 = format!(
+            "{}/{}_{}.ec01",
+            store.locations[1].directory, collection, vid
+        );
+        assert!(!std::path::Path::new(&p1).exists());
+
+        // Disk 1's in-memory state for shard 1 is gone too.
+        assert_eq!(store.find_ec_shard_location(vid, 1), None);
+
+        // Disk 0's shards are unaffected.
+        assert_eq!(store.find_ec_shard_location(vid, 0), Some(0));
+        assert_eq!(store.find_ec_shard_location(vid, 12), Some(0));
+    }
+
+    /// `collect_ec_shard_dirs` aggregates per-shard data dirs across
+    /// every location with the vid — the primitive
+    /// `VolumeEcShardsToVolume` needs so it can decode a reconciled
+    /// volume whose shards are split across the data dirs of the
+    /// same volume server.
+    #[test]
+    fn test_collect_ec_shard_dirs_aggregates_across_locations() {
+        let (store, _tmp) = build_split_disk_store(7005);
+        let vid = VolumeId(7005);
+        let max_shards = 14;
+
+        let (_ev, dirs) = store.collect_ec_shard_dirs(vid, max_shards).unwrap();
+
+        // Shards 0 and 12 → disk 0's directory.
+        assert_eq!(dirs[0].as_deref(), Some(store.locations[0].directory.as_str()));
+        assert_eq!(dirs[12].as_deref(), Some(store.locations[0].directory.as_str()));
+        // Shard 1 → disk 1's directory.
+        assert_eq!(dirs[1].as_deref(), Some(store.locations[1].directory.as_str()));
+        // Unmounted shards → None.
+        for sid in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13] {
+            assert_eq!(
+                dirs[sid], None,
+                "shard {} unexpectedly reported a dir",
+                sid,
+            );
+        }
+    }
 }
 
 /// Walk a disk's data directory and return the `.ec??` shard files
