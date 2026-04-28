@@ -154,7 +154,7 @@ func TestVersionFilterRejectsMOUNTv4WithProgMismatch(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.Write(buildRPCCallFrame(42, mountProgramID, 1, 0)); err != nil {
+	if _, err := conn.Write(buildRPCCallFrame(42, mountProgramID, 4, 0)); err != nil {
 		t.Fatal(err)
 	}
 
