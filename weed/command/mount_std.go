@@ -242,11 +242,16 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fsName = "fuse"
 	}
 
+	maxBackground := 128
+	if option.fuseMaxBackground != nil && *option.fuseMaxBackground > 0 {
+		maxBackground = *option.fuseMaxBackground
+	}
+
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
 		Options:                  option.extraOptions,
-		MaxBackground:            128,
+		MaxBackground:            maxBackground,
 		MaxWrite:                 1024 * 1024 * 2,
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
