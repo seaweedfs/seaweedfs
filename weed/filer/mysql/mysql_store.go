@@ -111,11 +111,17 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 			tlsConfig.RootCAs = rootCertPool
 		}
 
-		clientCert := make([]tls.Certificate, 0)
-		if cert, err := tls.LoadX509KeyPair(clientCrtDir, clientKeyDir); err == nil {
-			clientCert = append(clientCert, cert)
+		// Only attempt to load a client keypair when at least one of the paths is
+		// set. If either is set, both must load successfully — silently skipping
+		// a typo'd path used to mask broken mTLS setups as confusing handshake
+		// failures.
+		if clientCrtDir != "" || clientKeyDir != "" {
+			cert, err := tls.LoadX509KeyPair(clientCrtDir, clientKeyDir)
+			if err != nil {
+				return fmt.Errorf("load mysql client keypair (crt=%s key=%s): %w", clientCrtDir, clientKeyDir, err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
 		}
-		tlsConfig.Certificates = clientCert
 
 		// Set TLS directly on the parsed Config rather than registering a global
 		// "mysql-tls" entry — the global registry is process-wide and would be
