@@ -76,7 +76,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\">Connect your Iceberg clients (DuckDB, Spark, etc.) to: <code>http://<span id=\"iceberg-host\">localhost</span>:")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\">Connect your Iceberg clients (DuckDB, Spark, etc.) to: <code><span id=\"iceberg-protocol\">http</span>://<span id=\"iceberg-host\">localhost</span>:")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -89,7 +89,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "/v1</code></p><script>\n\t\t\t\t\t\tconst icebergInfo = document.getElementById('iceberg-rest-info');\n\t\t\t\t\t\tconst icebergHost = window.location.hostname;\n\t\t\t\t\t\tconst icebergPort = icebergInfo ? icebergInfo.dataset.icebergPort : '';\n\t\t\t\t\t\tdocument.getElementById('iceberg-host').innerText = icebergHost;\n\t\t\t\t\t\tconst restLink = document.getElementById('iceberg-rest-link');\n\t\t\t\t\t\tif (restLink && icebergPort) {\n\t\t\t\t\t\t\trestLink.href = `//${icebergHost}:${icebergPort}/v1/config`;\n\t\t\t\t\t\t}\n\t\t\t\t\t</script></div></div></div><!-- Stats Cards --><div class=\"row mb-4\"><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Catalogs (Table Buckets)</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "/v1</code></p><script>\n\t\t\t\t\t\tconst icebergInfo = document.getElementById('iceberg-rest-info');\n\t\t\t\t\t\tconst icebergHost = window.location.hostname;\n\t\t\t\t\t\tconst icebergProtocol = window.location.protocol.slice(0, -1);\n\t\t\t\t\t\tconst icebergPort = icebergInfo ? icebergInfo.dataset.icebergPort : '';\n\t\t\t\t\t\tdocument.getElementById('iceberg-host').innerText = icebergHost;\n\t\t\t\t\t\tconst icebergProtocolEl = document.getElementById('iceberg-protocol');\n\t\t\t\t\t\tif (icebergProtocolEl) {\n\t\t\t\t\t\t\ticebergProtocolEl.innerText = icebergProtocol;\n\t\t\t\t\t\t}\n\t\t\t\t\t\tconst restLink = document.getElementById('iceberg-rest-link');\n\t\t\t\t\t\tif (restLink && icebergPort) {\n\t\t\t\t\t\t\trestLink.href = `//${icebergHost}:${icebergPort}/v1/config`;\n\t\t\t\t\t\t}\n\t\t\t\t\t</script></div></div></div><!-- Stats Cards --><div class=\"row mb-4\"><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Catalogs (Table Buckets)</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
