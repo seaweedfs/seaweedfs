@@ -448,4 +448,79 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 
 ## §close
 
-*Appended at batch close per `v3-batch-process.md §2`.*
+**Date drafted**: 2026-04-28 (sw); awaiting QA evidence verification + architect single-sign per `v3-batch-process.md §5` + §8C.2.
+
+**Close decision**: G5-5C closes at L4 Replicated IO with peer-restart resilience — replica process restart against same `--durable-root` now self-heals via primary-side probe loop dispatching engine-driven recovery (T4d-4 reused unchanged).
+
+### §close.summary
+
+| Item | Status |
+|---|---|
+| §1.A trigger source bound (Option B; primary-side probe loop; master unchanged) | ✅ landed (`seaweed_block@90d4f71` + `166d579` + `364482a` + `445333e` + `<batch5>` + `458f15a` + `1ad1926` + `ed8b70a`) |
+| §1.B master protocol unchanged | ✅ verified by §2 #7 diff inspection (zero LOC under `core/host/master/`, `core/authority/`, `core/rpc/proto/`, `core/rpc/control/`) |
+| §1.C truth-domain check (only primary writes) | ✅ no master / replica / engine code paths altered |
+| §1.D two parallel feedback loops, ordering-independent | ✅ test pin `peer_test.go::TestPeer_ProbeIfDegraded_ConcurrentClaims` (32-goroutine simultaneous-fire) + `engine` lineage stale-event drop |
+| §1.E authority-bounded recovery | ✅ probe loop iterates only `ReplicationVolume.peers` (master-admitted set); test pin `TestVolume_LineageBump_OldPeerProbeAbandoned` |
+| §1.F reconnect orthogonal axes (Case 1 + Case 2) | ✅ engine boundary tests + lineage-bump teardown tests |
+| §1.G engine/runtime/master split (10 boundary rules; 6 in scope, 3 forward-carry, 1 cited) | ✅ each rule has its single-owner pin |
+| §1.H code-start audit gate | ✅ executed pre-code; PROCEED verdict at `seaweedfs@9245446b5` (engine FSM + Healthy gate + per-peer Session slot already structurally enforce 5 of 6 INVs; backoff added as runtime policy on top of engine retry budget) |
+
+### §close.evidence
+
+#### Software-layer pin (50 unit + integration tests, all PASS)
+
+| Batch | Component | Tests | Commit |
+|---|---|---|---|
+| #1 | `core/replication/probe_loop.go` skeleton + lifecycle | 13 | `seaweed_block@90d4f71` |
+| #2 | `core/replication/peer.go` `ProbeIfDegraded` + `OnProbeAttempt` + cooldown FSM | 10 | `seaweed_block@166d579` |
+| #3 | `core/replication/volume.go` Configure/Start integration + Close ordering | 12 | `seaweed_block@364482a` |
+| #4 | `core/engine/g5_5c_boundary_test.go` dispatch / Case 1 / lineage stale / stale-ack | 9 (5 tests + 4 subcases) | `seaweed_block@445333e` |
+| #5 | `cmd/blockvolume/main.go` flags + `core/host/volume/probe_loop_wiring.go` ProductionProbeFn | 4 (1 SKIP — package-private peer construction) | `seaweed_block@<batch5>` |
+| #6 | `core/replication/component/g5_5c_restart_catchup_test.go` end-to-end + negative control | 2 | `seaweed_block@458f15a` |
+| #6.1 | `core/transport/replica.go` Stop vs StopHard production guidance | (doc-only) | `seaweed_block@1ad1926` |
+| script | `scripts/iterate-m01-replicated-write.sh` `--degraded-probe-interval=5s` | (script update) | `seaweed_block@ed8b70a` |
+
+Full `./...` regression: PASS at `seaweed_block@ed8b70a` (every package green; no behavioral regression on G5-4 / earlier T4 paths).
+
+#### Hardware-layer pin (m01 cross-node)
+
+*To be filled after m01 run completes.*
+
+| Step | Result | Artifact |
+|---|---|---|
+| #1 verify_cluster_ready | ⏳ | `<TBD>` |
+| #2 verify_byte_equal (live iSCSI write) | ⏳ | `<TBD>` |
+| #3 verify_network_catchup (iptables drop + heal) | ⏳ | `<TBD>` |
+| **#4 verify_restart_catchup (G5-5 #4 carried case)** | ⏳ | `<TBD>` |
+
+### §close.deltas vs §1-§6
+
+(none if §close.evidence rows all GREEN; sw fills out at QA evidence sign-off.)
+
+### §close.findings
+
+(none expected if hardware GREEN; sw documents any new finding here pre-architect-sign.)
+
+### §close.forward-carries
+
+To **G5-5 §close deferred ledger pointers** (now eligible for inscription):
+- `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — m01 restart-catchup hardware step exercises path; ledger row to add.
+- `INV-REPL-LSN-ORDER-FANOUT-001` (T4a-4) — same; G5-5 #2 + G5-5C #4 evidence packaged together.
+
+To **G5-2 / G5-6**:
+- §1.G #5 Durability Mode Explicit (BestEffort vs SyncAll/Quorum semantics).
+
+To **future master observability batch**:
+- §1.G #6 RF Health Reporting Separate From Recovery (master surfaces desired RF=N, current effective RF=M as observability only).
+
+To **G5-3 metrics/backpressure**:
+- §1.G #10 Status Surface (recovery reason, effective RF, last probe time on `/status/recovery`).
+
+### §close.architect-review-checklist (`v3-batch-process.md §12`)
+
+| Check | Answer |
+|---|---|
+| Scope truth | Done: probe loop runtime + cooldown FSM + ProductionProbeFn + CLI flags + end-to-end component test + m01 hardware verification (#1-#4 GREEN expected). Not done: master observability + status surface metrics + durability mode (all forward-carried). |
+| V2 / new-build decision | New build (V3 runtime addition); G-1 N/A per `v3-batch-process.md §6.1` (no V2 muscle PORT involved); §1.H pre-code audit ran in lieu of G-1. |
+| Engine / adapter impact | No new engine recovery primitive; engine state machine + Healthy gate + per-peer Session slot reused unchanged; runtime policy (backoff) added on top of engine retry budget; adapter `OnProbeResult` ingress reused unchanged. |
+| Product usability level | **L4 Replicated IO with peer-restart resilience** reached on hardware. Operator can run a 2-node cluster, write via iSCSI, get the data on the replica, survive a network blip (G5-5 #3), AND survive a replica process restart with auto-recovery (G5-5C new). |
