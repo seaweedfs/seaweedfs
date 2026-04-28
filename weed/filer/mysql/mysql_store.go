@@ -92,29 +92,36 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	}
 
 	if enableTls {
-		rootCertPool := x509.NewCertPool()
-		pem, err := os.ReadFile(caCrtDir)
-		if err != nil {
-			return err
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
 		}
-		if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
-			return fmt.Errorf("failed to append root certificate")
+
+		// When ca_crt is empty, leave RootCAs nil so Go falls back to the
+		// system trust store. This is the common case for managed databases
+		// (RDS, Aiven, ...) whose certs chain to a public CA already on the host.
+		if caCrtDir != "" {
+			rootCertPool := x509.NewCertPool()
+			pem, err := os.ReadFile(caCrtDir)
+			if err != nil {
+				return fmt.Errorf("read ca_crt %s: %w", caCrtDir, err)
+			}
+			if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+				return fmt.Errorf("failed to append root certificate from %s", caCrtDir)
+			}
+			tlsConfig.RootCAs = rootCertPool
 		}
 
 		clientCert := make([]tls.Certificate, 0)
 		if cert, err := tls.LoadX509KeyPair(clientCrtDir, clientKeyDir); err == nil {
 			clientCert = append(clientCert, cert)
 		}
+		tlsConfig.Certificates = clientCert
 
 		// Set TLS directly on the parsed Config rather than registering a global
 		// "mysql-tls" entry — the global registry is process-wide and would be
 		// overwritten if a second MysqlStore is initialized with different TLS
 		// settings.
-		cfg.TLS = &tls.Config{
-			RootCAs:      rootCertPool,
-			Certificates: clientCert,
-			MinVersion:   tls.VersionTLS12,
-		}
+		cfg.TLS = tlsConfig
 	}
 
 	connector, err := mysql.NewConnector(cfg)
