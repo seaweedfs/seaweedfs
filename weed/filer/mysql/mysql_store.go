@@ -51,11 +51,14 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 		configuration.GetString(prefix+"ca_crt"),
 		configuration.GetString(prefix+"client_crt"),
 		configuration.GetString(prefix+"client_key"),
+		configuration.GetBool(prefix+"tls_insecure_skip_verify"),
+		configuration.GetString(prefix+"tls_server_name"),
 	)
 }
 
 func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database string, maxIdle, maxOpen,
-	maxLifetimeSeconds int, interpolateParams bool, enableTls bool, caCrtDir string, clientCrtDir string, clientKeyDir string) (err error) {
+	maxLifetimeSeconds int, interpolateParams bool, enableTls bool, caCrtDir string, clientCrtDir string, clientKeyDir string,
+	tlsInsecureSkipVerify bool, tlsServerName string) (err error) {
 
 	store.SupportBucketTable = false
 	if !enableUpsert {
@@ -93,7 +96,9 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 
 	if enableTls {
 		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: tlsInsecureSkipVerify,
+			ServerName:         tlsServerName,
 		}
 
 		// When ca_crt is empty, leave RootCAs nil so Go falls back to the
