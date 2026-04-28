@@ -73,6 +73,10 @@ or enable the built-in portmap responder on the server:
 
     weed nfs ... -portmap.bind=0.0.0.0
 
+With the responder enabled MOUNT v3 is answered over both TCP and UDP,
+so the plain mount form above just works — no mountproto override is
+required even on clients whose default mountproto is UDP.
+
 Binding port 111 requires root or CAP_NET_BIND_SERVICE and must not
 collide with a system rpcbind.
 	`,

@@ -137,6 +137,7 @@ func TestHandleCall_GetPort_HitAndMiss(t *testing.T) {
 	}{
 		{"nfs-v3-tcp-hit", nfsProgram, 3, ipProtoTCP, 2049},
 		{"mount-v3-tcp-hit", mountProgram, 3, ipProtoTCP, 2049},
+		{"mount-v3-udp-hit", mountProgram, 3, ipProtoUDP, 2049},
 		{"mount-v1-tcp-miss", mountProgram, 1, ipProtoTCP, 0},
 		{"nfs-v3-udp-miss", nfsProgram, 3, ipProtoUDP, 0},
 		{"nlm-miss", 100021, 4, ipProtoTCP, 0},
@@ -190,12 +191,13 @@ func TestHandleCall_Dump(t *testing.T) {
 		})
 		p += 16
 	}
-	if len(entries) != 2 {
-		t.Fatalf("got %d dump entries, want 2: %+v", len(entries), entries)
+	if len(entries) != 3 {
+		t.Fatalf("got %d dump entries, want 3: %+v", len(entries), entries)
 	}
 	wantSet := map[portmapEntry]bool{
 		{Program: nfsProgram, Version: 3, Protocol: ipProtoTCP, Port: 2049}:   false,
 		{Program: mountProgram, Version: 3, Protocol: ipProtoTCP, Port: 2049}: false,
+		{Program: mountProgram, Version: 3, Protocol: ipProtoUDP, Port: 2049}: false,
 	}
 	for _, e := range entries {
 		if _, ok := wantSet[e]; !ok {

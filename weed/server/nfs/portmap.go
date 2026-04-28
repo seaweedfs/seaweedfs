@@ -103,10 +103,13 @@ type portmapServer struct {
 }
 
 // newPortmapServer builds a responder advertising the NFS services the caller
-// runs on nfsTCPPort. We expose NFS v3 TCP and MOUNT v3 TCP only: the
-// underlying library does not handle UDP or older MOUNT versions, so it would
-// be misleading to advertise them.
-func newPortmapServer(bindIP string, port int, nfsTCPPort uint32) *portmapServer {
+// runs on nfsPort. NFS itself is TCP-only here (the upstream go-nfs library
+// doesn't speak NFS UDP). MOUNT, however, is served over both TCP (via
+// go-nfs) and UDP (via mountUDPServer in mount_udp.go), so we advertise
+// both — that's what makes plain `mount -t nfs <host>:<export> /mnt` work
+// against Linux clients whose default mountproto is UDP without needing
+// mountproto=tcp / mountport=2049 mount options.
+func newPortmapServer(bindIP string, port int, nfsPort uint32) *portmapServer {
 	if port <= 0 {
 		port = portmapPort
 	}
@@ -115,8 +118,9 @@ func newPortmapServer(bindIP string, port int, nfsTCPPort uint32) *portmapServer
 		port:   port,
 		done:   make(chan struct{}),
 		entries: []portmapEntry{
-			{Program: nfsProgram, Version: 3, Protocol: ipProtoTCP, Port: nfsTCPPort},
-			{Program: mountProgram, Version: 3, Protocol: ipProtoTCP, Port: nfsTCPPort},
+			{Program: nfsProgram, Version: 3, Protocol: ipProtoTCP, Port: nfsPort},
+			{Program: mountProgram, Version: 3, Protocol: ipProtoTCP, Port: nfsPort},
+			{Program: mountProgram, Version: 3, Protocol: ipProtoUDP, Port: nfsPort},
 		},
 	}
 }
