@@ -98,6 +98,21 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen nfs on %s:%d: %w", s.option.BindIp, s.option.Port, err)
 	}
 
+	// MOUNT v3 over UDP runs alongside the TCP NFS listener on the same
+	// port. The kernel default for mountproto is UDP in many setups, so
+	// without this responder a plain `mount -t nfs <host>:<export> /mnt`
+	// gets EPROTONOSUPPORT during the MOUNT phase even though the TCP
+	// NFS path is fine.
+	mountUDP := newMountUDPServer(s.option.BindIp, s.option.Port, s)
+	if err := mountUDP.Start(); err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("start mount udp: %w", err)
+	}
+	defer func() {
+		_ = mountUDP.Close()
+	}()
+	glog.V(0).Infof("MOUNT v3 UDP responder listening on %s:%d", s.option.BindIp, s.option.Port)
+
 	var portmap *portmapServer
 	if s.option.PortmapBind != "" {
 		portmap = newPortmapServer(s.option.PortmapBind, portmapPort, uint32(s.option.Port))
@@ -105,8 +120,8 @@ func (s *Server) Start() error {
 			_ = listener.Close()
 			return fmt.Errorf("start portmap: %w", pmErr)
 		}
-		glog.V(0).Infof("NFS portmap responder listening on %s:%d (NFS v3 tcp=%d, MOUNT v3 tcp=%d)",
-			s.option.PortmapBind, portmapPort, s.option.Port, s.option.Port)
+		glog.V(0).Infof("NFS portmap responder listening on %s:%d (NFS v3 tcp=%d, MOUNT v3 tcp=%d, MOUNT v3 udp=%d)",
+			s.option.PortmapBind, portmapPort, s.option.Port, s.option.Port, s.option.Port)
 		defer func() {
 			if portmap != nil {
 				_ = portmap.Close()
