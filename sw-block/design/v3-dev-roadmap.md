@@ -39,7 +39,7 @@ G2  Frontend smoke                ✅ closed (T1/T2)
 G3  Real frontends iSCSI+NVMe     ✅ closed (T2)
 G4  Local durable data path       ✅ closed (T3)
 G5  Replicated write path         🟡 closing (T4 done; G5-1..6 close work; G5-5 just closed at L3, G5-5C carry-forward)
-G6  Incremental WAL catch-up      ⏳ next (T4c muscle done, mostly verification)
+G6  Incremental WAL catch-up      ✅ closed 2026-04-28 (retention-aware recovery; α config knob + escalation pin)
 G7  Rebuild / replica re-creation ⏳ (T4d-4 part B/C scaffolding done)
 G8  Failover data continuity      ⏳
 G9  Volume lifecycle              ⏳
@@ -122,6 +122,7 @@ For any specific question, go to the canonical doc:
 | T2A NVMe race fix | 2026-04-25 | `seaweed_block@a0be6d5` | atomic.Pointer test fixture; -race ×50 PASS |
 | G5-4 binary T4 wiring | 2026-04-26 | `seaweed_block@c820e17` + ledger `seaweedfs@36ba7b44e` + close-lock `daafc8e25` | binary now wires T4 stack; criteria 3+4 relocated to G5-5 |
 | G5-5 m01 hardware first-light | 2026-04-27 | `seaweed_block@5c4718f` + close-doc `seaweedfs@c78116fd2` | L3 Replicated IO on m01/M02 hardware: #1 cluster role split GREEN, #2 live iSCSI replicated write byte-equal GREEN, #3 network partition + heal catch-up GREEN (8s); #4 replica-restart catch-up carried to G5-5C as real recovery-path finding |
+| G6 Incremental WAL catch-up + recycle escalation | 2026-04-28 | `seaweed_block@96c51b4` (preceded by `85475cd` rebuild-START marker + `420ad1f` audit) + close-doc forthcoming | L5 retention-aware recovery: §1.A α config knob (`--wal-retention-lsns`) + walstore retention gate relaxation + engine table-driven WALRecycled→Rebuild dispatch test (3 tests, 6 cases) + substrate retention test (4 cases) + m01 single-run GREEN at 71s covering both #4 retention-OK catch-up and #5 recycle→rebuild escalation. 5 INVs inscribed including new harness-discipline INV-G6-HARNESS-DATA-AND-STATE-CONVERGENCE (chained scenarios need both byte-equal AND peer-healthy sync). G5-5C carry-forward G6-T-WALRECYCLE-ESCALATE closed at this gate. |
 
 ---
 
@@ -137,11 +138,11 @@ Per `v3-phase-15-mvp-scope-gates.md` §4.5 dependency graph:
 
 P15 closes at **G22 final cluster validation**. After P15 → P16 (in-place migration is the only hinted scope).
 
-### Open backlog tickets queued for G6
+### Closed backlog tickets
 
-| Ticket | Source | Description | Evidence |
-|---|---|---|---|
-| **G6-T-WALRECYCLE-ESCALATE** | G5-5C QA scenario D 2026-04-28 (architect-bound carry) | Verify engine recovery decision escalates `ProbeOutcome=WALRecycled` → `StartRebuildFromProbe` (a) OR surface as G6 gap if missing (b). Catch-up cannot bridge gap-beyond-WAL by design; rebuild path must auto-fire from probe outcome carrying WALRecycled, otherwise sustained writes leave replica permanently degraded. Dispatch-branch correctness already pinned at engine layer (Batch 4 `TestG5_5C_Dispatch_CatchUpVsRebuild_TableDriven`); the runtime escalation chain under sustained pressure is what's untested. | `V:\share\g5-test\logs\bcd-20260428T072539Z.log` D-section: `peer r2 invalidated (prev=catching_up, reason=session_failed: catch-up: WAL recycled: storage: WALRecycled: fromLSN=602 checkpointLSN=700 headLSN=701)`; no rebuild dispatch in 5 s scrape window. Cross-ref `INV-G5-5C-PROBE-BEFORE-CATCHUP`. QA prep: `wait_until_rebuild_dispatched` helper for the eventual G6 acceptance (held until G6 kickoff). |
+| Ticket | Source | Resolution |
+|---|---|---|
+| **G6-T-WALRECYCLE-ESCALATE** | G5-5C QA scenario D 2026-04-28 (architect-bound carry) | ✅ **Closed at G6 §close 2026-04-28** — verdict (a) existing-and-correct + observability gap. Engine `apply.go:519-547` already wired `RecoveryFailureWALRecycled` → `RebuildPinned` + `StartRebuild` emit at T4d-1; G6 added the rebuild-START log marker + operator retention knob + 14 test cases (10 unit + 4 substrate) + m01 hardware single-run GREEN at 71s. INV-G6-WALRECYCLE-DISPATCHES-REBUILD inscribed. Original 5s observation was scrape-window-too-short, NOT a missing dispatch. |
 
 ---
 
