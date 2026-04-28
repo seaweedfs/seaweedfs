@@ -329,6 +329,60 @@ func TestVersionFilterRetriesTransientAcceptErrors(t *testing.T) {
 	}
 }
 
+func TestVersionFilterCloseReturnsPromptlyWithIdlePeekConns(t *testing.T) {
+	// Regression test: Close() used to wait on every handleConn goroutine
+	// via wg.Wait, but those goroutines could be stuck in
+	// filterFirstRPCFrame's Peek() until rpcVersionFilterPeekTimeout (10s)
+	// fired. An idle client that completed a TCP handshake but never sent
+	// a byte would stretch shutdown by up to that timeout per conn.
+	// Close() now eagerly closes any tracked in-flight raw conns, which
+	// forces Peek() to return immediately and lets handleConn finish.
+	//
+	// Black-box test: only observes Close() latency. With the regression
+	// in place Close() would block ~10s; with the fix it returns in well
+	// under a second.
+	innerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listener := newVersionFilterListener(innerListener)
+	// Drive Accept once so the background accept loop is running.
+	go func() { _, _ = listener.Accept() }()
+
+	const idleConns = 4
+	dialed := make([]net.Conn, 0, idleConns)
+	defer func() {
+		for _, c := range dialed {
+			_ = c.Close()
+		}
+	}()
+	for i := 0; i < idleConns; i++ {
+		c, err := net.Dial("tcp", innerListener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dialed = append(dialed, c)
+	}
+
+	// Give handleConn time to invoke Peek for each idle conn — without
+	// this the test could race ahead and Close() while no goroutine has
+	// actually started peeking yet, masking the regression.
+	time.Sleep(100 * time.Millisecond)
+
+	// Close() must finish in well under rpcVersionFilterPeekTimeout (10s).
+	// 2s is a generous bound that still clearly distinguishes "broke the
+	// peek by closing the conn" from "waited for the peek deadline".
+	start := time.Now()
+	if err := listener.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 2*time.Second {
+		t.Errorf("Close took %v with %d idle pre-peek conns; should be sub-second once they're forcibly closed", elapsed, idleConns)
+	}
+}
+
 func TestVersionFilterPassesThroughNonV2RPC(t *testing.T) {
 	// Anything that isn't ONC RPC v2 isn't ours to classify — even if the
 	// bytes at hdr[16:24] happen to look like nfsProgram + vers=4, we

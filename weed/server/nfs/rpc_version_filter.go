@@ -80,6 +80,11 @@ type versionFilterListener struct {
 
 	mu        sync.Mutex
 	acceptErr error
+	// inFlight tracks raw (pre-peek) conns that are currently in
+	// handleConn so Close() can break their Peek() deadline by closing
+	// them, instead of waiting up to rpcVersionFilterPeekTimeout per
+	// idle client for the timeout to fire on its own.
+	inFlight map[net.Conn]struct{}
 
 	startOnce sync.Once
 	wg        sync.WaitGroup
@@ -116,6 +121,11 @@ func (l *versionFilterListener) Accept() (net.Conn, error) {
 func (l *versionFilterListener) Close() error {
 	l.signalClose()
 	err := l.inner.Close()
+	// Eagerly close any raw conns currently blocked in filterFirstRPCFrame's
+	// Peek so handleConn returns promptly. Without this, an idle client
+	// (TCP handshake without any RPC payload) holds Close() up to
+	// rpcVersionFilterPeekTimeout — 10s of stop-the-world per such conn.
+	l.evictInFlight()
 	l.wg.Wait()
 	return err
 }
@@ -137,6 +147,44 @@ func (l *versionFilterListener) terminalErr() error {
 		return l.acceptErr
 	}
 	return net.ErrClosed
+}
+
+// trackInFlight records a raw conn that's about to be peeked, so Close()
+// can break its Peek() deadline by closing it. Returns false if shutdown
+// has already started; the caller must close the conn and bail.
+func (l *versionFilterListener) trackInFlight(c net.Conn) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	select {
+	case <-l.closed:
+		return false
+	default:
+	}
+	if l.inFlight == nil {
+		l.inFlight = make(map[net.Conn]struct{})
+	}
+	l.inFlight[c] = struct{}{}
+	return true
+}
+
+func (l *versionFilterListener) untrackInFlight(c net.Conn) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.inFlight, c)
+}
+
+// evictInFlight closes every conn currently in handleConn so their
+// in-flight Peek() returns immediately. delete(nil-map, k) is a no-op,
+// so handleConn's deferred untrackInFlight is safe even after we've
+// nilled the map here.
+func (l *versionFilterListener) evictInFlight() {
+	l.mu.Lock()
+	conns := l.inFlight
+	l.inFlight = nil
+	l.mu.Unlock()
+	for c := range conns {
+		_ = c.Close()
+	}
 }
 
 func (l *versionFilterListener) acceptLoop() {
@@ -181,6 +229,14 @@ func (l *versionFilterListener) acceptLoop() {
 // don't leak a socket past shutdown.
 func (l *versionFilterListener) handleConn(conn net.Conn) {
 	defer l.wg.Done()
+	if !l.trackInFlight(conn) {
+		// Shutdown beat us: don't start the Peek that we'd then
+		// have to break, just close the raw conn.
+		_ = conn.Close()
+		return
+	}
+	defer l.untrackInFlight(conn)
+
 	wrapped, accepted := filterFirstRPCFrame(conn)
 	if !accepted {
 		// Already replied with PROG_MISMATCH and closed conn.
