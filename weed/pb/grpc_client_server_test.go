@@ -104,6 +104,7 @@ func TestResolveLocalGrpcSocket_RemotePortCollision(t *testing.T) {
 		{"loopback v4 routes to socket", "127.0.0.1:17334", socketPath},
 		{"localhost routes to socket", "localhost:17334", socketPath},
 		{"loopback v6 routes to socket", "[::1]:17334", socketPath},
+		{"empty host (bare port) routes to socket", ":17334", socketPath},
 		{"remote host with same port stays on TCP", remoteHost + ":17334", ""},
 		{"unrelated host with same port stays on TCP", "192.168.1.5:17334", ""},
 		{"unregistered port stays on TCP", localHost + ":17335", ""},
