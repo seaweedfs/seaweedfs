@@ -29,6 +29,42 @@ fn volume_is_remote_only(dat_path: &str, has_remote_file: bool) -> bool {
     has_remote_file && !std::path::Path::new(dat_path).exists()
 }
 
+/// Map a numeric `VolumeScrubMode` to its proto enum name, matching Go's
+/// `req.GetMode().String()` used for the Prometheus `mode` label.
+fn scrub_mode_label(mode: i32) -> &'static str {
+    match mode {
+        0 => "UNKNOWN",
+        1 => "INDEX",
+        2 => "FULL",
+        3 => "LOCAL",
+        _ => "UNKNOWN",
+    }
+}
+
+fn unix_now_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as f64)
+        .unwrap_or(0.0)
+}
+
+/// Record scrub metrics. `broken_shards` is `Some` only for EC scrubs so the
+/// shard-failures family stays untouched on regular volume scrubs (matching Go).
+fn emit_scrub_metrics(mode: i32, broken_volumes: usize, broken_shards: Option<usize>) {
+    let mode_label = scrub_mode_label(mode);
+    crate::metrics::SCRUB_LAST_TIME_SECONDS
+        .with_label_values(&[mode_label])
+        .set(unix_now_seconds());
+    crate::metrics::SCRUB_VOLUME_FAILURES
+        .with_label_values(&[mode_label])
+        .inc_by(broken_volumes as u64);
+    if let Some(n) = broken_shards {
+        crate::metrics::SCRUB_SHARD_FAILURES
+            .with_label_values(&[mode_label])
+            .inc_by(n as u64);
+    }
+}
+
 /// Persist VolumeServerState to a state.pb file (matches Go's State.save).
 fn save_state_file(
     path: &str,
@@ -3419,8 +3455,8 @@ impl VolumeServer for VolumeGrpcService {
 
         // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
         // Collect errors via errors.Join semantics (return joined error if any fail).
+        let mut errs: Vec<String> = Vec::new();
         if req.mark_broken_volumes_readonly {
-            let mut errs: Vec<String> = Vec::new();
             for vid in &broken_vids {
                 match self.make_volume_readonly(*vid, true).await {
                     Ok(()) => {
@@ -3432,9 +3468,14 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
             }
-            if !errs.is_empty() {
-                return Err(Status::internal(errs.join("\n")));
-            }
+        }
+
+        // Record metrics before the post-scrub error check so scrub failures are
+        // persisted even when a follow-up admin action (mark-readonly) fails.
+        emit_scrub_metrics(mode, broken_vids.len(), None);
+
+        if !errs.is_empty() {
+            return Err(Status::internal(errs.join("\n")));
         }
 
         Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
@@ -3559,6 +3600,12 @@ impl VolumeServer for VolumeGrpcService {
                 _ => unreachable!(), // validated above
             }
         }
+
+        emit_scrub_metrics(
+            mode,
+            broken_volume_ids.len(),
+            Some(broken_shard_infos.len()),
+        );
 
         Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
             total_volumes,
