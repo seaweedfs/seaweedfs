@@ -190,6 +190,60 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
 }
 
+// TestEmbeddedIamCreateUserDoesNotSaveAllUsers is a regression test for the bug
+// where creating a new user triggered a full SaveConfiguration over all existing
+// identities (causing N file writes + reload cycles in the filer_etc store).
+// The fix uses credentialManager.CreateUser for a targeted single-file write.
+func TestEmbeddedIamCreateUserDoesNotSaveAllUsers(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	// Pre-populate existing users via mockConfig. The getS3ApiConfigurationFunc
+	// fixture calls SaveConfiguration(mockConfig) exactly once (via syncOnce) on the
+	// first API call, seeding the credential store. Direct credentialManager.CreateUser
+	// calls must not be used here because syncOnce would later overwrite them.
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "existing-user-1"},
+			{Name: "existing-user-2"},
+			{Name: "existing-user-3"},
+		},
+	}
+
+	// Track calls to PutS3ApiConfiguration (the full-config write path).
+	putConfigCalls := 0
+	ctx := context.Background()
+	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		putConfigCalls++
+		api.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
+		return api.credentialManager.SaveConfiguration(ctx, s3cfg)
+	}
+
+	params := &iam.CreateUserInput{UserName: aws.String("new-user")}
+	req, _ := iam.New(session.New()).CreateUserRequest(params)
+	_ = req.Build()
+	out := iamCreateUserResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	// The new user must be visible.
+	newUser, userErr := api.credentialManager.GetUser(ctx, "new-user")
+	require.NoError(t, userErr)
+	require.Equal(t, "new-user", newUser.Name)
+
+	// The critical assertion: full SaveConfiguration must NOT have been called.
+	// Previously this was called once for every CreateUser, re-writing all N user
+	// files and triggering N reload loops.
+	assert.Equal(t, 0, putConfigCalls, "CreateUser must not call PutS3ApiConfiguration (full-config save)")
+
+	// Pre-existing users must be untouched.
+	for _, name := range []string{"existing-user-1", "existing-user-2", "existing-user-3"} {
+		u, err := api.credentialManager.GetUser(ctx, name)
+		require.NoError(t, err, "pre-existing user %s should still exist", name)
+		assert.Equal(t, name, u.Name)
+	}
+}
+
 // TestEmbeddedIamListUsers tests listing users via the embedded IAM API
 func TestEmbeddedIamListUsers(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
@@ -2503,17 +2557,13 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
-	// Explicitly set hook to debug panic
-	api.EmbeddedIamApi.reloadConfigurationFunc = func() error {
-		return nil
-	}
-
 	// Test case: CreateUser via ExecuteAction
 	vals := url.Values{}
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(context.Background(), vals, false, "")
+	ctx := context.Background()
+	resp, iamErr := api.ExecuteAction(ctx, vals, false, "")
 	assert.Nil(t, iamErr)
 
 	// Verify response type
@@ -2521,9 +2571,11 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
 
-	// Verify persistence
-	assert.Len(t, api.mockConfig.Identities, 1)
-	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
+	// CreateUser now uses a targeted write (credentialManager.CreateUser) rather than
+	// SaveConfiguration, so persistence is checked via the credential manager directly.
+	user, err := api.credentialManager.GetUser(ctx, "ExecuteActionUser")
+	assert.NoError(t, err)
+	assert.Equal(t, "ExecuteActionUser", user.Name)
 }
 
 // TestEmbeddedIamReadOnly tests that write operations are blocked when readOnly is true
