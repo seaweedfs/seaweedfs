@@ -116,6 +116,15 @@ impl Store {
                 &shard_ids,
                 &owner_idx_dir,
             ) {
+                // mount_ec_shards_with_idx_dir adds shards one at a
+                // time and increments the `ec_shards` gauge per shard
+                // that successfully attaches — a mid-loop failure
+                // would leave the EcVolume half-mounted with stale
+                // metric increments. Mirror DiskLocation::handle_found_ecx_file's
+                // recovery: drive the cleanup through unmount_ec_shards
+                // (which only decrements the gauge for shards that
+                // were actually mounted, drops the EcVolume when empty).
+                loc.unmount_ec_shards(key.vid, &shard_ids);
                 warn!(
                     volume_id = key.vid.0,
                     directory = %loc.directory,
