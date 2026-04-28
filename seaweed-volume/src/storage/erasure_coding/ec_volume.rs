@@ -50,11 +50,42 @@ pub struct EcVolume {
     pub expire_at_sec: u64,
 }
 
-pub fn read_ec_shard_config(dir: &str, collection: &str, volume_id: VolumeId) -> (u32, u32) {
+/// Locate the `.vif` for a (collection, vid) by preferring the data dir
+/// and falling back to the idx dir when it lives there instead. The
+/// fallback covers the cross-disk reconcile path: when a volume's
+/// shards live on one disk but its `.ecx` / `.ecj` / `.vif` live on a
+/// sibling disk (seaweedfs/seaweedfs#9212 / #9244), we want to read the
+/// real `.vif` from the sibling rather than write a stub on the shard
+/// disk and lose the EC config + dat file size.
+fn locate_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: VolumeId) -> String {
+    let data_vif = format!(
+        "{}.vif",
+        crate::storage::volume::volume_file_name(dir, collection, volume_id),
+    );
+    if dir_idx != dir && !std::path::Path::new(&data_vif).exists() {
+        let idx_vif = format!(
+            "{}.vif",
+            crate::storage::volume::volume_file_name(dir_idx, collection, volume_id),
+        );
+        if std::path::Path::new(&idx_vif).exists() {
+            return idx_vif;
+        }
+    }
+    data_vif
+}
+
+/// Read EC data/parity shard counts from `.vif`, defaulting to the
+/// build's standard ratio when no `.vif` is present or is malformed.
+/// Looks at the data dir first, then the idx dir — see [`locate_vif_path`].
+pub fn read_ec_shard_config(
+    dir: &str,
+    dir_idx: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> (u32, u32) {
     let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
     let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
-    let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
-    let vif_path = format!("{}.vif", base);
+    let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
     if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
         if let Ok(vif_info) =
             serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
@@ -81,7 +112,7 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
-        let (data_shards, parity_shards) = read_ec_shard_config(dir, collection, volume_id);
+        let (data_shards, parity_shards) = read_ec_shard_config(dir, dir_idx, collection, volume_id);
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);
@@ -89,10 +120,11 @@ impl EcVolume {
             shards.push(None);
         }
 
-        // Read expire_at_sec and version from .vif if present (matches Go's MaybeLoadVolumeInfo)
+        // Read expire_at_sec and version from .vif if present (matches Go's MaybeLoadVolumeInfo).
+        // Prefer the data dir; fall back to the idx dir for the
+        // cross-disk reconcile case (#9212 / #9244).
         let (expire_at_sec, vif_version) = {
-            let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
-            let vif_path = format!("{}.vif", base);
+            let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
             if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
                 if let Ok(vif_info) =
                     serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
@@ -317,6 +349,24 @@ impl EcVolume {
     /// Count of locally available shards.
     pub fn shard_count(&self) -> usize {
         self.shards.iter().filter(|s| s.is_some()).count()
+    }
+
+    /// Reports whether `shard_id` is currently registered to this
+    /// EcVolume (used by the cross-disk reconcile to skip already-
+    /// loaded shards).
+    pub fn has_shard(&self, shard_id: u8) -> bool {
+        self.shards
+            .get(shard_id as usize)
+            .map(|s| s.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Directory where this EcVolume's `.ecx` was actually opened
+    /// (may differ from `dir_idx` when the legacy "written before
+    /// -dir.idx was set" fallback or the cross-disk reconcile path
+    /// pointed it elsewhere).
+    pub fn ecx_actual_dir(&self) -> &str {
+        &self.ecx_actual_dir
     }
 
     pub fn is_time_to_destroy(&self) -> bool {
