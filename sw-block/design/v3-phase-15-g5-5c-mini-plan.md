@@ -482,26 +482,69 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 
 Full `./...` regression: PASS at `seaweed_block@ed8b70a` (every package green; no behavioral regression on G5-4 / earlier T4 paths).
 
-#### Hardware-layer pin (m01 cross-node)
+#### Hardware-layer pin (m01 cross-node, run 3 at `seaweed_block@ac9392d`)
 
-*To be filled after m01 run completes.*
-
-| Step | Result | Artifact |
+| Step | Result | Notes |
 |---|---|---|
-| #1 verify_cluster_ready | ⏳ | `<TBD>` |
-| #2 verify_byte_equal (live iSCSI write) | ⏳ | `<TBD>` |
-| #3 verify_network_catchup (iptables drop + heal) | ⏳ | `<TBD>` |
-| **#4 verify_restart_catchup (G5-5 #4 carried case)** | ⏳ | `<TBD>` |
+| #1 verify_cluster_ready | ✅ GREEN | primary Healthy=true, replica Healthy=false |
+| #2 verify_byte_equal (live iSCSI write) | ✅ GREEN | LBA[0]=0xAB byte-equal, m01verify SHA-256 |
+| #3 verify_network_catchup (iptables drop + heal) | ✅ GREEN (9 s) | LBA[1]=0xCD converged within 9 s of heal |
+| **#4 verify_restart_catchup (G5-5 #4 carried case)** | ❌ **RED — hardware-revealed integration gap** | LBA[2]=0xEF NOT converged within 30 s deadline; primary log artifacts at `sw-block/design/g5-artifacts/primary-fail.log` |
+
+#### Hardware finding: per-peer adapter wiring missing in `cmd/blockvolume`
+
+The G5-5C software pieces are individually correct (50 unit + integration tests PASS, including the component-level end-to-end at `seaweed_block@458f15a`). Hardware run reveals an architectural gap one layer up that the §1.H audit and the in-process component test did not catch:
+
+**Symptom**: primary log shows the probe loop fired correctly post-restart and the wire probe succeeded:
+```
+17:36:29 executor: probe r2 success R=2 S=1 H=3
+17:36:49 executor: probe r2 success R=2 S=1 H=3
+```
+But no `StartCatchUp` was ever dispatched, so no recovery ran on wire, and replica never received LBA[2]=0xEF.
+
+**Root cause** (verified by `core/engine/apply.go:117-128` `checkReplicaID`): `cmd/blockvolume/main.go` constructs ONE `*adapter.VolumeReplicaAdapter` for the host (`h.Adapter()`), and that adapter tracks the host's OWN `Identity.ReplicaID="r1"` (primary's own slot). When `ProductionProbeFn` forwards a probe result for peer `r2` into that adapter via `OnProbeResult`, the engine's `checkReplicaID` correctly drops the event with `wrong_replica` — engine truth is per (volume × replica), and the host's adapter is the wrong instance for tracking peer recovery decisions.
+
+**Why component test (Batch #6) passed but hardware fails**: `core/replication/component/cluster.go::Cluster.Start` constructs `c.primary.adapters []*adapter.VolumeReplicaAdapter` — **one adapter per peer** — and `configureProbeLoopOnCluster` routes to `c.primary.adapters[0]`. This per-peer-adapter structure does NOT exist in `cmd/blockvolume`'s production wiring. The component test exercised a different (and architecturally-correct) wiring than production has.
+
+**Why §1.H audit didn't catch it**: the audit checked engine state semantics (FSM, fence, single in-flight per peer, Healthy gate, stale-ack gate) — all correct per-peer in engine code. It did NOT trace whether the production binary **constructs** per-peer engine state. That layer was assumed; the hardware run is what surfaces the assumption.
+
+#### Decision: carry to **G5-5D — production per-peer adapter wiring**
+
+G5-5C software pieces (probe loop + per-peer cooldown FSM + ProductionProbeFn + CLI flags + component test + transport `StopHard`) are all sound and stay landed. The remaining work is a focused production-wiring batch:
+- `cmd/blockvolume/main.go` (or `core/host/volume/host.go`) maintains a `peerAdapters map[string]*adapter.VolumeReplicaAdapter` keyed by ReplicaID, populated/torn-down in lockstep with `ReplicationVolume`'s `UpdateReplicaSet`.
+- `ProductionProbeFn` (or a thin router around it) selects the right per-peer adapter before calling `OnProbeResult`.
+- The per-peer adapter wires to a **per-peer-routing CommandExecutor** that dispatches engine commands (StartCatchUp / StartRebuild / FenceAtEpoch / etc.) onto that peer's `transport.BlockExecutor` rather than onto the host's stub `HealthyPathExecutor` / `noopExecutor`.
+
+Architect-bound naming: **G5-5D — Per-peer adapter wiring for primary-side recovery dispatch** (see §close.forward-carries below).
 
 ### §close.deltas vs §1-§6
 
-(none if §close.evidence rows all GREEN; sw fills out at QA evidence sign-off.)
+| § | Delta | Rationale |
+|---|---|---|
+| §1.A bound shape — production wiring assumption | **Implicit assumption discovered**: §1.A says "loop owned by `ReplicationVolume`; calls into adapter; adapter drives engine". This silently assumed a per-peer adapter exists in production — true in `core/replication/component`'s `cluster.go` (one adapter per replica peer), false in `cmd/blockvolume`'s host wiring (one adapter per host = primary's own slot). | Hardware run surfaced; per-peer adapter wiring carries to G5-5D. |
+| §2 #5 hardware acceptance | **3 of 4 hardware steps GREEN** (#1 cluster ready, #2 byte-equal, #3 network catch-up 9 s); **#4 RED, carries to G5-5D**. | Same shape as G5-5 → G5-5C carry: real recovery-path finding, not test flaw. |
+| §1.H audit step 3 PROCEED verdict | **Verdict was correct on engine semantics but did not extend to "is per-peer engine state actually constructed in main.go"**. Audit covered the FSM correctness; the wiring layer above was assumed. | Future audit-style steps should explicitly check construction sites of engine state, not just semantic correctness of engine code. |
 
 ### §close.findings
 
-(none expected if hardware GREEN; sw documents any new finding here pre-architect-sign.)
+**Finding 1 — Per-peer adapter wiring missing in `cmd/blockvolume`**
+- See "Hardware finding: per-peer adapter wiring missing in `cmd/blockvolume`" above for the full root-cause + decision.
+- Architect ruling pending (sw drafts §close with this carry-forward; architect rules on G5-5D scope at single-sign or earlier).
+
+**Finding 2 — Replica-restart port-release race in `iterate-m01-replicated-write.sh`**
+- First m01 run failed at #4 because `killall -TERM` + `sleep 2` left the replica's status port (9291) bound at restart time → `bind: address already in use`.
+- Fixed at `seaweed_block@ac9392d`: TERM → KILL fallback → poll `ss` until port releases (up to 10 s).
+- Run 3 confirmed the replica restarts cleanly with the fix; #4 now fails for a different reason (Finding 1).
 
 ### §close.forward-carries
+
+To **G5-5D — Per-peer adapter wiring for primary-side recovery dispatch** (NEW carry, hardware-revealed 2026-04-27):
+- `cmd/blockvolume/main.go` or `core/host/volume/host.go` maintains a per-peer `*adapter.VolumeReplicaAdapter` map keyed by ReplicaID, lifecycled with `UpdateReplicaSet`.
+- Per-peer adapter wires to a per-peer-routing `CommandExecutor` that dispatches `StartCatchUp` / `StartRebuild` / `FenceAtEpoch` / `InvalidateSession` / `PublishHealthy` / `PublishDegraded` to the right peer's `transport.BlockExecutor`.
+- `ProductionProbeFn` becomes per-peer (or thinly wrapped by a router) so probe results land in the right adapter.
+- Pass criterion: `iterate-m01-replicated-write.sh verify_restart_catchup` GREEN within 30 s deadline (the exact failed case from G5-5C run 3).
+- Seed evidence: `sw-block/design/g5-artifacts/primary-fail.log` (run 3 at `seaweed_block@ac9392d`) — shows `executor: probe r2 success R=2 S=1 H=3` twice with no subsequent StartCatchUp emit; engine `checkReplicaID` cited as drop site.
+- INV to inscribe at G5-5D close: `INV-G5-5D-PER-PEER-ADAPTER-PER-PEER-ENGINE` — production binary constructs a `*VolumeReplicaAdapter` per (volume × admitted peer) so engine truth tracks each peer's recovery state independently of the host's own slot.
 
 To **G5-5 §close deferred ledger pointers** (now eligible for inscription):
 - `INV-REPL-CATCHUP-FROMLSN-IS-REPLICA-FLUSHED-PLUS-1` — m01 restart-catchup hardware step exercises path; ledger row to add.
@@ -520,7 +563,7 @@ To **G5-3 metrics/backpressure**:
 
 | Check | Answer |
 |---|---|
-| Scope truth | Done: probe loop runtime + cooldown FSM + ProductionProbeFn + CLI flags + end-to-end component test + m01 hardware verification (#1-#4 GREEN expected). Not done: master observability + status surface metrics + durability mode (all forward-carried). |
-| V2 / new-build decision | New build (V3 runtime addition); G-1 N/A per `v3-batch-process.md §6.1` (no V2 muscle PORT involved); §1.H pre-code audit ran in lieu of G-1. |
-| Engine / adapter impact | No new engine recovery primitive; engine state machine + Healthy gate + per-peer Session slot reused unchanged; runtime policy (backoff) added on top of engine retry budget; adapter `OnProbeResult` ingress reused unchanged. |
-| Product usability level | **L4 Replicated IO with peer-restart resilience** reached on hardware. Operator can run a 2-node cluster, write via iSCSI, get the data on the replica, survive a network blip (G5-5 #3), AND survive a replica process restart with auto-recovery (G5-5C new). |
+| Scope truth | Done: probe loop runtime + per-peer cooldown FSM + ProductionProbeFn + CLI flags + end-to-end component test + iterate-script port-release fix + m01 hardware #1/#2/#3 GREEN. Not done: m01 hardware #4 — carries to G5-5D as **production per-peer adapter wiring**. Master observability + status surface metrics + durability mode (all forward-carried, unchanged). |
+| V2 / new-build decision | New build (V3 runtime addition); G-1 N/A per `v3-batch-process.md §6.1` (no V2 muscle PORT involved); §1.H pre-code audit ran in lieu of G-1, **but did not extend to host-wiring construction sites** — that's the gap surfaced by hardware run 3. |
+| Engine / adapter impact | No new engine recovery primitive; engine state machine + Healthy gate + per-peer Session slot reused unchanged. **G5-5D will need a per-peer adapter / per-peer command executor in production wiring** — not an engine logic change, a host composition change. |
+| Product usability level | **L3+ Replicated IO with peer-restart probe-loop trigger pinned in software**. Reached on hardware: 2-node cluster operates, write via iSCSI, replica byte-equal, network blip recovery (G5-5 #3) survives. **Not reached on hardware**: replica process restart auto-recovery — software pieces all in place, blocked at production wiring (G5-5D). Full L4 lands at G5-5D close. |
