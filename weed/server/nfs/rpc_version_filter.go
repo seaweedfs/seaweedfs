@@ -214,6 +214,17 @@ func filterFirstRPCFrame(conn net.Conn) (net.Conn, bool) {
 		return &peekedConn{Conn: conn, reader: r}, true
 	}
 
+	// Peek(28) can read across record boundaries — the first fragment may
+	// be shorter than the fixed RPC CALL header (24 bytes after the marker)
+	// with the remaining bytes belonging to the *next* RPC. Indexing into
+	// hdr[16:24] without first checking the fragment length would parse
+	// fields from a different RPC and either spuriously reject or pass it.
+	// Pass through if the first fragment can't possibly hold a full header
+	// and let go-nfs surface the framing error.
+	if fragLen := fragMark &^ uint32(1<<31); fragLen < 24 {
+		return &peekedConn{Conn: conn, reader: r}, true
+	}
+
 	xid := binary.BigEndian.Uint32(hdr[4:8])
 	if msgType := binary.BigEndian.Uint32(hdr[8:12]); msgType != rpcMsgCall {
 		// Not a CALL — odd, but pass through.

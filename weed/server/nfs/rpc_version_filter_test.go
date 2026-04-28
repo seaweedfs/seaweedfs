@@ -252,6 +252,66 @@ func TestVersionFilterPassesThroughUnknownProgram(t *testing.T) {
 	}
 }
 
+func TestVersionFilterIgnoresShortFirstFragment(t *testing.T) {
+	// Peek(28) can read past the first fragment's body when the body is
+	// shorter than the 24-byte fixed RPC CALL header. Without a length
+	// check, the prog/vers fields would be sourced from bytes belonging to
+	// the *next* RPC (or a syntactic accident), and the filter could
+	// spuriously reject the connection. Send a 12-byte first fragment whose
+	// trailing peek-region bytes look like an NFSv4 CALL header, and assert
+	// the filter does NOT emit a PROG_MISMATCH reply.
+	innerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer innerListener.Close()
+
+	listener := newVersionFilterListener(innerListener)
+	go func() {
+		for {
+			c, aerr := listener.Accept()
+			if aerr != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	conn, err := net.Dial("tcp", innerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	const shortBody = 12
+	payload := make([]byte, 4+24)
+	binary.BigEndian.PutUint32(payload[0:4], shortBody|(1<<31)) // last-fragment, body=12
+	// Bytes 4..16 are the actual fragment body (12 bytes — too short for a
+	// CALL header; the filter must not look at them as one).
+	// Bytes 16..28 sit past the fragment in the peek window. If we were to
+	// (incorrectly) read prog/vers from hdr[16:24], we'd see NFS+v4 here.
+	binary.BigEndian.PutUint32(payload[16:20], nfsProgram)
+	binary.BigEndian.PutUint32(payload[20:24], 4)
+
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	// If the filter erroneously rejected, it would send a 36-byte TCP RPC
+	// reply (4-byte frag marker + 32-byte PROG_MISMATCH body) within ms.
+	// Wait briefly and assert nothing PROG_MISMATCH-shaped came back.
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	hdr := make([]byte, 4)
+	n, err := io.ReadFull(conn, hdr)
+	if err == nil && n == 4 {
+		if got := binary.BigEndian.Uint32(hdr); got == uint32(progMismatchBodyLen)|(1<<31) {
+			t.Fatal("filter sent PROG_MISMATCH on a short fragment whose trailing peek bytes only superficially resembled a v4 call")
+		}
+	}
+	// Anything else (timeout, EOF, or unrelated bytes) is fine — we only
+	// care that the filter did NOT misclassify the short fragment.
+}
+
 func TestVersionFilterDoesNotHeadOfLineBlockOnSlowConn(t *testing.T) {
 	// Regression test: the previous implementation peeked the first RPC
 	// frame inline in Accept(), so an idle TCP-only connect would block
