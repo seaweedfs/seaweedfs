@@ -134,13 +134,18 @@ func (s *Server) Start() error {
 }
 
 // logMountHint prints a copy-pasteable Linux mount command so operators can
-// see at startup how to mount the export from a client. The go-nfs library
-// does not run portmap, so without -portmap.bind the client must bypass
-// portmap via -o port=,mountport=,proto=tcp,mountproto=tcp.
+// see at startup how to mount the export from a client.
+//
+// With -portmap.bind set, MOUNT is now answered over both TCP and UDP, so a
+// plain `mount -t nfs host:/export /mnt` works — there is no longer any
+// kernel-default mountproto path that fails. Without -portmap.bind the
+// client still has to bypass portmap entirely via the explicit
+// port=/mountport=/proto=/mountproto= options.
 func (s *Server) logMountHint() {
 	exportPath := string(s.exportRoot)
 	if s.option.PortmapBind != "" {
 		glog.V(0).Infof("mount example: mount -t nfs -o nfsvers=3,nolock <host>:%s <mountpoint>", exportPath)
+		glog.V(0).Infof("(MOUNT v3 is served over both TCP and UDP, so no mountproto override is needed.)")
 		return
 	}
 	glog.V(0).Infof("mount example (bypasses portmap): mount -t nfs -o nfsvers=3,nolock,noacl,port=%d,mountport=%d,proto=tcp,mountproto=tcp <host>:%s <mountpoint>",
