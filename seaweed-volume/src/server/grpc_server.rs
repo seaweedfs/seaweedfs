@@ -29,6 +29,25 @@ fn volume_is_remote_only(dat_path: &str, has_remote_file: bool) -> bool {
     has_remote_file && !std::path::Path::new(dat_path).exists()
 }
 
+/// Map a numeric `VolumeScrubMode` to its proto enum name, matching Go's
+/// `req.GetMode().String()` used for the Prometheus `mode` label.
+fn scrub_mode_label(mode: i32) -> &'static str {
+    match mode {
+        0 => "UNKNOWN",
+        1 => "INDEX",
+        2 => "FULL",
+        3 => "LOCAL",
+        _ => "UNKNOWN",
+    }
+}
+
+fn unix_now_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as f64)
+        .unwrap_or(0.0)
+}
+
 /// Persist VolumeServerState to a state.pb file (matches Go's State.save).
 fn save_state_file(
     path: &str,
@@ -3437,6 +3456,14 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
+        let mode_label = scrub_mode_label(mode);
+        crate::metrics::SCRUB_LAST_TIME_SECONDS
+            .with_label_values(&[mode_label])
+            .set(unix_now_seconds());
+        crate::metrics::SCRUB_VOLUME_FAILURES
+            .with_label_values(&[mode_label])
+            .inc_by(broken_vids.len() as u64);
+
         Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
             total_volumes,
             total_files,
@@ -3559,6 +3586,17 @@ impl VolumeServer for VolumeGrpcService {
                 _ => unreachable!(), // validated above
             }
         }
+
+        let mode_label = scrub_mode_label(mode);
+        crate::metrics::SCRUB_LAST_TIME_SECONDS
+            .with_label_values(&[mode_label])
+            .set(unix_now_seconds());
+        crate::metrics::SCRUB_VOLUME_FAILURES
+            .with_label_values(&[mode_label])
+            .inc_by(broken_volume_ids.len() as u64);
+        crate::metrics::SCRUB_SHARD_FAILURES
+            .with_label_values(&[mode_label])
+            .inc_by(broken_shard_infos.len() as u64);
 
         Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
             total_volumes,
