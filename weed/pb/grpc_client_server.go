@@ -45,10 +45,23 @@ var (
 	grpcClients     = make(map[string]*versionedGrpcClient)
 	grpcClientsLock sync.Mutex
 
-	// localGrpcSockets maps gRPC port numbers to Unix socket paths.
-	// When registered (by mini mode), gRPC clients connect via Unix socket
-	// instead of TCP for local services.
-	localGrpcSockets     = make(map[int]string)
+	// localGrpcSockets maps gRPC port numbers to Unix socket paths for
+	// gRPC services running in this process. Used by both the server side
+	// (to start serving on the socket) and the client side (to dial it
+	// instead of TCP for same-host RPCs).
+	localGrpcSockets = make(map[int]string)
+	// localGrpcHosts maps gRPC port → set of host strings that count as
+	// "this machine" for that port. Only dials whose target host is in this
+	// set are routed through the Unix socket; dials to other hosts that
+	// happen to use the same port number go over TCP as normal.
+	//
+	// Without this host check the hijack was keyed purely on port, so a
+	// remote server reusing one of our local gRPC ports (e.g. a standalone
+	// `weed volume -port=7334` defaulting `port.grpc=17334` against a
+	// `weed server` whose in-process volume socket is also on 17334) had
+	// its inbound RPCs silently rerouted to our local Unix socket — see
+	// issue #9254.
+	localGrpcHosts       = make(map[int]map[string]struct{})
 	localGrpcSocketsLock sync.RWMutex
 )
 
@@ -63,12 +76,26 @@ func init() {
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 1024
 }
 
-// RegisterLocalGrpcSocket registers a Unix socket path for a gRPC port.
-// When a gRPC client dials an address on this port, it uses the Unix socket.
-func RegisterLocalGrpcSocket(grpcPort int, socketPath string) {
+// RegisterLocalGrpcSocket registers a Unix socket path for a gRPC service
+// running on host:grpcPort in this process. After this is called, any
+// GrpcDial to host:grpcPort (or to a loopback alias of host on the same
+// port) is routed through the Unix socket. Dials to any other host on the
+// same port still go over TCP.
+func RegisterLocalGrpcSocket(host string, grpcPort int, socketPath string) {
 	localGrpcSocketsLock.Lock()
 	defer localGrpcSocketsLock.Unlock()
 	localGrpcSockets[grpcPort] = socketPath
+	hosts, ok := localGrpcHosts[grpcPort]
+	if !ok {
+		hosts = make(map[string]struct{})
+		localGrpcHosts[grpcPort] = hosts
+	}
+	// The advertised host plus the well-known loopback aliases all refer
+	// to "this machine"; the empty entry covers SplitHostPort outputs like
+	// ":17334".
+	for _, h := range []string{host, "", "localhost", "127.0.0.1", "::1"} {
+		hosts[h] = struct{}{}
+	}
 }
 
 // GetLocalGrpcSocket returns the Unix socket path for a gRPC port, or empty if not registered.
@@ -78,10 +105,12 @@ func GetLocalGrpcSocket(grpcPort int) string {
 	return localGrpcSockets[grpcPort]
 }
 
-// resolveLocalGrpcSocket extracts the port from a gRPC address and returns
-// the registered Unix socket path, if any.
+// resolveLocalGrpcSocket returns the Unix socket path to use for an outgoing
+// gRPC dial, or empty if the dial should go over TCP. It matches both the
+// host and the port: a remote peer that happens to reuse a local service's
+// gRPC port must not be rerouted to the local socket (issue #9254).
 func resolveLocalGrpcSocket(address string) string {
-	_, portStr, err := net.SplitHostPort(address)
+	host, portStr, err := net.SplitHostPort(address)
 	if err != nil {
 		return ""
 	}
@@ -89,7 +118,12 @@ func resolveLocalGrpcSocket(address string) string {
 	if err != nil {
 		return ""
 	}
-	return GetLocalGrpcSocket(port)
+	localGrpcSocketsLock.RLock()
+	defer localGrpcSocketsLock.RUnlock()
+	if _, ok := localGrpcHosts[port][host]; !ok {
+		return ""
+	}
+	return localGrpcSockets[port]
 }
 
 // ServeGrpcOnLocalSocket starts serving a gRPC server on a Unix socket

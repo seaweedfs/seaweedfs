@@ -66,3 +66,54 @@ func TestIsClientSideMarshalError_RequiresGrpcStatus(t *testing.T) {
 		t.Fatalf("plain error must not match the marshal-error carve-out")
 	}
 }
+
+// TestResolveLocalGrpcSocket_RemotePortCollision is a regression test for
+// issue #9254. A `weed server` process registers a Unix socket for its
+// in-process volume server on host A. A standalone `weed volume` on host B
+// happens to use the same gRPC port. Dials from the master to host B must
+// continue out over TCP — they must NOT be hijacked into host A's local
+// socket on the basis of port match alone.
+func TestResolveLocalGrpcSocket_RemotePortCollision(t *testing.T) {
+	// Snapshot and restore global state so the test does not leak into others.
+	localGrpcSocketsLock.Lock()
+	prevSockets := localGrpcSockets
+	prevHosts := localGrpcHosts
+	localGrpcSockets = make(map[int]string)
+	localGrpcHosts = make(map[int]map[string]struct{})
+	localGrpcSocketsLock.Unlock()
+	t.Cleanup(func() {
+		localGrpcSocketsLock.Lock()
+		localGrpcSockets = prevSockets
+		localGrpcHosts = prevHosts
+		localGrpcSocketsLock.Unlock()
+	})
+
+	const localHost = "10.0.0.2"
+	const remoteHost = "10.0.0.3"
+	const collidingPort = 17334
+	const socketPath = "/tmp/seaweedfs-volume-grpc-17334.sock"
+
+	RegisterLocalGrpcSocket(localHost, collidingPort, socketPath)
+
+	cases := []struct {
+		name    string
+		address string
+		want    string
+	}{
+		{"local advertised host routes to socket", localHost + ":17334", socketPath},
+		{"loopback v4 routes to socket", "127.0.0.1:17334", socketPath},
+		{"localhost routes to socket", "localhost:17334", socketPath},
+		{"loopback v6 routes to socket", "[::1]:17334", socketPath},
+		{"remote host with same port stays on TCP", remoteHost + ":17334", ""},
+		{"unrelated host with same port stays on TCP", "192.168.1.5:17334", ""},
+		{"unregistered port stays on TCP", localHost + ":17335", ""},
+		{"malformed address stays on TCP", "not-a-host-port", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveLocalGrpcSocket(tc.address); got != tc.want {
+				t.Fatalf("resolveLocalGrpcSocket(%q) = %q, want %q", tc.address, got, tc.want)
+			}
+		})
+	}
+}
