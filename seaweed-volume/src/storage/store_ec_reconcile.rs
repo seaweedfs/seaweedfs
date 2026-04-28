@@ -17,7 +17,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
 
 use tracing::{info, warn};
 
@@ -428,14 +427,12 @@ fn collect_orphan_ec_shards(
         let Some(shard_id) = is_ec_shard_extension(ext) else {
             continue;
         };
-        // Ignore zero-byte shards.
-        let path = Path::new(&loc.directory).join(&name);
-        if let Ok(meta) = fs::metadata(&path) {
-            if meta.len() == 0 {
-                continue;
-            }
-        } else {
-            continue;
+        // Ignore zero-byte shards. Use the DirEntry's metadata so we
+        // don't pay a second stat syscall per file beyond what
+        // read_dir already returned.
+        match ent.metadata() {
+            Ok(meta) if meta.len() > 0 => {}
+            _ => continue,
         }
         let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
             continue;
