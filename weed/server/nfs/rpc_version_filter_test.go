@@ -243,3 +243,60 @@ func TestVersionFilterPassesThroughUnknownProgram(t *testing.T) {
 		t.Fatal("unknown-program frame should pass through filter")
 	}
 }
+
+func TestVersionFilterDoesNotHeadOfLineBlockOnSlowConn(t *testing.T) {
+	// Regression test: the previous implementation peeked the first RPC
+	// frame inline in Accept(), so an idle TCP-only connect would block
+	// every later Accept() call for up to rpcVersionFilterPeekTimeout.
+	// The peek now runs in a per-conn goroutine; a fast follow-up connect
+	// must reach the inner accept handler well before the slow conn's
+	// peek deadline.
+	innerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer innerListener.Close()
+
+	listener := newVersionFilterListener(innerListener)
+
+	delivered := make(chan struct{}, 1)
+	go func() {
+		c, aerr := listener.Accept()
+		if aerr != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 44)
+		if _, rerr := io.ReadFull(c, buf); rerr == nil {
+			delivered <- struct{}{}
+		}
+	}()
+
+	// Slow client: connect, never write. Holds a goroutine inside the
+	// filter peeking until the deadline, but must not block the next conn.
+	slowConn, err := net.Dial("tcp", innerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slowConn.Close()
+
+	// Fast client: send a valid v3 frame straight away; this conn must be
+	// delivered to the inner accept handler without waiting for slowConn.
+	fastConn, err := net.Dial("tcp", innerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fastConn.Close()
+
+	if _, err := fastConn.Write(buildRPCCallFrame(11, nfsProgram, 3, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bound the wait well below rpcVersionFilterPeekTimeout (10s) so a
+	// regression to inline peeking would clearly time out here.
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fast conn should not be head-of-line blocked by slow conn's peek")
+	}
+}

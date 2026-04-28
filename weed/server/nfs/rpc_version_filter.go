@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -49,26 +50,121 @@ const (
 	supportedNFSVer = 3
 )
 
+// versionFilterListener moves the per-connection RPC peek off the
+// Listener.Accept() critical path. Peeking inline would let one slow or idle
+// client (or a TCP three-way handshake without any RPC payload) hold
+// rpcVersionFilterPeekTimeout — i.e. up to 10 seconds — of head-of-line
+// blocking against every other connect, since gonfs.Serve only calls Accept
+// serially. Instead, a background goroutine runs the inner Accept() loop and
+// hands each raw conn to its own short-lived goroutine that does the peek;
+// validated conns are sent on acceptCh and the wrapper's Accept() reads from
+// that channel. Rejected conns never reach the channel — PROG_MISMATCH is
+// already on the wire by the time the per-conn goroutine returns.
 type versionFilterListener struct {
-	net.Listener
+	inner    net.Listener
+	acceptCh chan net.Conn
+
+	// closed is signalled either by Close() or by the accept loop after the
+	// inner listener returns a terminal error. After it fires Accept() will
+	// stop blocking and return acceptErr (or net.ErrClosed if none).
+	closed    chan struct{}
+	closeOnce sync.Once
+
+	mu        sync.Mutex
+	acceptErr error
+
+	startOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 func newVersionFilterListener(inner net.Listener) net.Listener {
-	return &versionFilterListener{Listener: inner}
+	return &versionFilterListener{
+		inner:    inner,
+		acceptCh: make(chan net.Conn),
+		closed:   make(chan struct{}),
+	}
+}
+
+// start lazily kicks off the background accept loop the first time someone
+// calls Accept(). This matches the behaviour of the embedded-listener form we
+// replaced — no goroutines spawn just from constructing the wrapper.
+func (l *versionFilterListener) start() {
+	l.startOnce.Do(func() {
+		l.wg.Add(1)
+		go l.acceptLoop()
+	})
 }
 
 func (l *versionFilterListener) Accept() (net.Conn, error) {
+	l.start()
+	select {
+	case c := <-l.acceptCh:
+		return c, nil
+	case <-l.closed:
+		return nil, l.terminalErr()
+	}
+}
+
+func (l *versionFilterListener) Close() error {
+	l.signalClose()
+	err := l.inner.Close()
+	l.wg.Wait()
+	return err
+}
+
+func (l *versionFilterListener) Addr() net.Addr {
+	return l.inner.Addr()
+}
+
+func (l *versionFilterListener) signalClose() {
+	l.closeOnce.Do(func() {
+		close(l.closed)
+	})
+}
+
+func (l *versionFilterListener) terminalErr() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.acceptErr != nil {
+		return l.acceptErr
+	}
+	return net.ErrClosed
+}
+
+func (l *versionFilterListener) acceptLoop() {
+	defer l.wg.Done()
+	defer l.signalClose()
 	for {
-		conn, err := l.Listener.Accept()
+		conn, err := l.inner.Accept()
 		if err != nil {
-			return nil, err
+			l.mu.Lock()
+			if l.acceptErr == nil {
+				l.acceptErr = err
+			}
+			l.mu.Unlock()
+			return
 		}
-		wrapped, accepted := filterFirstRPCFrame(conn)
-		if !accepted {
-			// Already replied with PROG_MISMATCH and closed.
-			continue
-		}
-		return wrapped, nil
+		l.wg.Add(1)
+		go l.handleConn(conn)
+	}
+}
+
+// handleConn runs the version peek for a single accepted conn. Because each
+// conn has its own goroutine, a slow client only blocks itself; concurrent
+// peeks proceed in parallel up to whatever the runtime can schedule. If
+// Close() fires before the peek completes we drop the validated conn so we
+// don't leak a socket past shutdown.
+func (l *versionFilterListener) handleConn(conn net.Conn) {
+	defer l.wg.Done()
+	wrapped, accepted := filterFirstRPCFrame(conn)
+	if !accepted {
+		// Already replied with PROG_MISMATCH and closed conn.
+		return
+	}
+	select {
+	case l.acceptCh <- wrapped:
+	case <-l.closed:
+		_ = wrapped.Close()
 	}
 }
 
