@@ -143,6 +143,7 @@ func (s *Server) serve(listener net.Listener) error {
 			authorizer: s.clientAuthorizer,
 		}
 	}
+	listener = newVersionFilterListener(listener)
 
 	handler, err := s.newHandler()
 	if err != nil {
