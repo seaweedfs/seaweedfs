@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	CONNECTION_URL_PATTERN     = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
-	CONNECTION_TLS_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin&tls=mysql-tls"
+	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
 )
 
 func init() {
@@ -81,6 +80,17 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 		return false
 	}
 
+	if dsn == "" {
+		dsn = fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
+		if interpolateParams {
+			dsn += "&interpolateParams=true"
+		}
+	}
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("can not parse DSN error:%w", err)
+	}
+
 	if enableTls {
 		rootCertPool := x509.NewCertPool()
 		pem, err := os.ReadFile(caCrtDir)
@@ -96,47 +106,37 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 			clientCert = append(clientCert, cert)
 		}
 
-		tlsConfig := &tls.Config{
+		// Set TLS directly on the parsed Config rather than registering a global
+		// "mysql-tls" entry — the global registry is process-wide and would be
+		// overwritten if a second MysqlStore is initialized with different TLS
+		// settings.
+		cfg.TLS = &tls.Config{
 			RootCAs:      rootCertPool,
 			Certificates: clientCert,
 			MinVersion:   tls.VersionTLS12,
 		}
-		err = mysql.RegisterTLSConfig("mysql-tls", tlsConfig)
-		if err != nil {
-			return err
-		}
 	}
 
-	if dsn == "" {
-		pattern := CONNECTION_URL_PATTERN
-		if enableTls {
-			pattern = CONNECTION_TLS_URL_PATTERN
-		}
-		dsn = fmt.Sprintf(pattern, user, password, hostname, port, database)
-		if interpolateParams {
-			dsn += "&interpolateParams=true"
-		}
-	}
-	cfg, err := mysql.ParseDSN(dsn)
+	connector, err := mysql.NewConnector(cfg)
 	if err != nil {
-		return fmt.Errorf("can not parse DSN error:%w", err)
+		return fmt.Errorf("can not create mysql connector for %s error:%w", maskedDSN(cfg), err)
 	}
 
-	var dbErr error
-	store.DB, dbErr = sql.Open("mysql", dsn)
-	if dbErr != nil {
-		store.DB.Close()
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", strings.ReplaceAll(dsn, cfg.Passwd, "<ADAPTED>"), err)
-	}
-
+	store.DB = sql.OpenDB(connector)
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", strings.ReplaceAll(dsn, cfg.Passwd, "<ADAPTED>"), err)
+		return fmt.Errorf("connect to %s error:%v", maskedDSN(cfg), err)
 	}
 
 	return nil
+}
+
+func maskedDSN(cfg *mysql.Config) string {
+	if cfg.Passwd == "" {
+		return cfg.FormatDSN()
+	}
+	return strings.ReplaceAll(cfg.FormatDSN(), cfg.Passwd, "<ADAPTED>")
 }
