@@ -95,6 +95,15 @@ case "$1" in
   	exec /usr/bin/weed -logtostderr=true server $ARGS $@
   	;;
 
+  'mini')
+  	ARGS="-dir=/data"
+  	if isArgPassed "-dir" "$@"; then
+  	  ARGS=""
+  	fi
+  	shift
+  	exec /usr/bin/weed -logtostderr=true mini $ARGS $@
+  	;;
+
   'filer')
   	ARGS=""
   	shift
