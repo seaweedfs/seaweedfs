@@ -602,6 +602,13 @@ To **future master observability batch**:
 To **G5-3 metrics/backpressure**:
 - §1.G #10 Status Surface (recovery reason, effective RF, last probe time on `/status/recovery`).
 
+To **G6 (Incremental WAL catch-up)** — NEW carry, surfaced by QA scenario D 2026-04-28:
+- **Backlog ticket**: *WALRecycled-past-replica-LSN: verify engine recovery decision escalates `ProbeOutcome=WALRecycled` → `StartRebuildFromProbe` (a) or surface as G6 gap if missing (b)*.
+- Evidence: `V:\share\g5-test\logs\bcd-20260428T072539Z.log` D-section showing `replication: peer r2 invalidated (prev=catching_up, reason=session_failed: catch-up: WAL recycled: storage: WALRecycled: fromLSN=602 checkpointLSN=700 headLSN=701)` followed by no rebuild dispatch in 5 s window.
+- Cross-references: `INV-G5-5C-PROBE-BEFORE-CATCHUP` (Batch 4) — engine has dispatch-branch tests; what's untested is the **runtime escalation path** when a probe outcome carries `WALRecycled` info; the catch-up session itself was started with the lagging LSN, then died with `WALRecycled`, and the question is whether the next probe dispatched rebuild instead of catch-up.
+- G6 acceptance: G6 owns the WAL-retention-vs-recycle policy + the catch-up-fail → rebuild-dispatch escalation chain. QA can prep a `wait_until_rebuild_dispatched` helper for the eventual G6 acceptance run; held until G6 kickoff.
+- Why NOT a G5-5C reopener: G5-5C's gate was `verify_restart_catchup` GREEN within 30 s on the canonical 1-LBA case (proven). Sustained-write WAL boundary behavior is a distinct invariant family that G6 was queued to address regardless.
+
 ### §close.architect-review-checklist (`v3-batch-process.md §12`)
 
 | Check | Answer |
@@ -610,3 +617,27 @@ To **G5-3 metrics/backpressure**:
 | V2 / new-build decision | New build (V3 runtime addition); G-1 N/A per `v3-batch-process.md §6.1` (no V2 muscle PORT involved); §1.H pre-code audit ran in lieu of G-1; the audit's blind spot on host-wiring construction sites was honestly recorded and resolved by Batch #7 in-batch. |
 | Engine / adapter impact | No new engine recovery primitive; engine state machine + Healthy gate + per-peer Session slot reused unchanged. Adapter library (`*VolumeReplicaAdapter`) reused unchanged — Batch #7's `PeerCommandExecutor` is a thin wrapper over the existing `transport.BlockExecutor` interface. Pure host composition change. |
 | Product usability level | **L4 Replicated IO with peer-restart resilience** REACHED on hardware. Operator can run a 2-node cluster, write via iSCSI, get the data on the replica, survive a network blip (G5-5 #3, 9 s convergence), AND survive a replica process restart with auto-recovery (G5-5C #4, 9 s convergence). |
+
+### §close.appendix — QA scenario expansion (post-§close, pre-final-sign)
+
+After Batch #7 m01 hardware GREEN, QA ran an expanded scenario suite to harden confidence on the closure tree (`seaweed_block@a250b52`). Architect ruling 2026-04-28: B/C are confidence bumps that strengthen but do not change the §close gate; D's WALRecycled finding is **G6 (Incremental WAL catch-up) territory**, not a G5-5C reopener. Recorded here as appendix evidence + forward-carry pointer.
+
+**Logs**: `V:\share\g5-test\logs\bcd-20260428T072539Z.log`
+**Scenario scripts**: `V:\share\g5-test\scenarios\{b,c,d}.sh`
+
+| Scenario | Result | Confidence delta |
+|---|---|---|
+| **A — capacity scale-sequential** (1000 LBAs × 4 KiB = 4 MiB) | 🐛 → ✅ Fixed at `seaweed_block@a250b52`; verified post-fix | INV-G5-FRONTEND-CAPACITY-FROM-DURABLE-CONFIG inscribed in ledger; addendum-already-merged-into-§close. |
+| **B — 500 random LBAs over 65536-LBA volume** | ✅ GREEN | dirty-map skew + ship-order under random write pattern hold. Stress an order-of-magnitude harder than the 3-LBA §close-evidence pattern. |
+| **C — kill replica mid-write-storm + restart + converge** (200 sequential LBAs, pkill replica at LBA[100], all writes complete under BestEffort, restart, byte-equal at all 200) | ✅ GREEN | Validates G5-5C peer-recovery trigger under load. No `INV-G5-5C-NO-RETRIGGER-LOOP` violations observed. Highest-signal recovery scenario in the expansion. |
+| **D — 5000-LBA sustained write at ~56 MB/s → WALRecycled past replica catch-up LSN** | 🐛 boundary finding (forward-carry to G6) | Primary's WAL recycled past LSN replica needed; engine reported `WALRecycled fromLSN=602 checkpointLSN=700 headLSN=701`; peer marked degraded; rebuild dispatch not observed in 5 s scrape window. **This is expected boundary behavior** (catch-up requires WAL still-present; rebuild path is for gap-beyond-WAL) — the open question is whether automatic escalation to rebuild fired at all in the longer window. See §close.forward-carries entry below. |
+
+**On D — semantic clarification (architect 2026-04-28)**:
+
+| Concept | Meaning |
+|---|---|
+| **Catch-up** | Requires primary's WAL retention window still contains replica's lagging LSN range. |
+| **WAL recycle** | Old prefix no longer exists in the ring → cannot use "re-ship that segment" to complete catch-up. |
+| **Rebuild** | Uses extent / base lane; does NOT require that WAL segment. |
+
+D's symptom (`WALRecycled fromLSN=602 checkpointLSN=700 headLSN=701`) is the **expected wire-level signal** that catch-up cannot bridge the gap. G5-5C's scope was probe-loop dispatch correctness on the catch-up path; the WAL-recycle-then-auto-rebuild escalation chain is a distinct invariant family (`INV-…-GAP-BEYOND-WAL → rebuild`, partially pinned by Batch 4 `TestG5_5C_Dispatch_CatchUpVsRebuild_TableDriven` at the engine layer). Whether the runtime path **observed** rebuild-dispatch in the 5 s scrape window is the open finding — could be (a) probe interval timing OR (b) escalation chain gap. Either way: G6 territory, not G5-5C.
