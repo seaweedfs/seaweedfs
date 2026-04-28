@@ -3,6 +3,7 @@ package nfs
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -46,6 +47,13 @@ const (
 	// peeked length: 4-byte fragment marker + 24 bytes of fixed RPC header
 	// (xid + msg_type + rpcvers + prog + vers + proc).
 	rpcVersionFilterPeekLen = 28
+
+	// rpcVersionFilterAcceptBackoff is how long the accept loop sleeps
+	// after a transient Accept() error (EMFILE, EAGAIN, ECONNABORTED,
+	// etc.) before retrying. Mirrors portmapRetryBackoff in portmap.go so
+	// both NFS-listening goroutines back off identically under host
+	// resource pressure.
+	rpcVersionFilterAcceptBackoff = 50 * time.Millisecond
 
 	supportedNFSVer = 3
 )
@@ -137,12 +145,29 @@ func (l *versionFilterListener) acceptLoop() {
 	for {
 		conn, err := l.inner.Accept()
 		if err != nil {
-			l.mu.Lock()
-			if l.acceptErr == nil {
-				l.acceptErr = err
+			// Permanent: the inner listener has been closed (Close(),
+			// shutdown, or an unrecoverable error from the OS). Surface
+			// the error to Accept() and stop.
+			if errors.Is(err, net.ErrClosed) {
+				l.mu.Lock()
+				if l.acceptErr == nil {
+					l.acceptErr = err
+				}
+				l.mu.Unlock()
+				return
 			}
-			l.mu.Unlock()
-			return
+			// Transient (EMFILE, EAGAIN, ECONNABORTED on accept,
+			// timeouts if a deadline is ever set): treating these as
+			// terminal would tear the whole NFS server down on a
+			// resource blip. Back off briefly and retry, mirroring the
+			// pattern in portmap.go's serveTCP.
+			glog.V(1).Infof("nfs version filter: transient accept error: %v", err)
+			select {
+			case <-l.closed:
+				return
+			case <-time.After(rpcVersionFilterAcceptBackoff):
+				continue
+			}
 		}
 		l.wg.Add(1)
 		go l.handleConn(conn)

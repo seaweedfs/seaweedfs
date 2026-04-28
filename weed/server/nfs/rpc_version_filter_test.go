@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -249,6 +250,82 @@ func TestVersionFilterPassesThroughUnknownProgram(t *testing.T) {
 	case <-delivered:
 	case <-time.After(2 * time.Second):
 		t.Fatal("unknown-program frame should pass through filter")
+	}
+}
+
+// transientErrListener wraps a real net.Listener but injects a configurable
+// number of transient Accept() errors before delegating. It exists only to
+// regression-test the version filter's transient-retry behaviour without
+// having to provoke real EMFILE conditions on the host.
+type transientErrListener struct {
+	inner   net.Listener
+	mu      sync.Mutex
+	remaining int
+}
+
+type fakeAcceptError struct{}
+
+func (fakeAcceptError) Error() string { return "fake transient accept error" }
+
+func (l *transientErrListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if l.remaining > 0 {
+		l.remaining--
+		l.mu.Unlock()
+		return nil, fakeAcceptError{}
+	}
+	l.mu.Unlock()
+	return l.inner.Accept()
+}
+
+func (l *transientErrListener) Close() error   { return l.inner.Close() }
+func (l *transientErrListener) Addr() net.Addr { return l.inner.Addr() }
+
+func TestVersionFilterRetriesTransientAcceptErrors(t *testing.T) {
+	// Regression test: previously the accept loop exited on any error
+	// from the inner listener, which meant a single transient EMFILE /
+	// EAGAIN under host resource pressure would tear the entire NFS
+	// server down. Inject a few fake transient errors and assert the
+	// filter still delivers the next real connection.
+	innerListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer innerListener.Close()
+
+	injected := &transientErrListener{inner: innerListener, remaining: 3}
+	listener := newVersionFilterListener(injected)
+
+	delivered := make(chan struct{}, 1)
+	go func() {
+		c, aerr := listener.Accept()
+		if aerr != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 44)
+		if _, rerr := io.ReadFull(c, buf); rerr == nil {
+			delivered <- struct{}{}
+		}
+	}()
+
+	conn, err := net.Dial("tcp", innerListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write(buildRPCCallFrame(1, nfsProgram, 3, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 transient errors × ~50ms backoff plus normal accept latency. Allow
+	// a generous bound so flakes on slow CI don't surface here, but still
+	// tight enough to catch a regression to "any error is terminal".
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("filter did not retry transient Accept() errors and recover")
 	}
 }
 
