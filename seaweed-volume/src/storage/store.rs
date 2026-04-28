@@ -655,11 +655,18 @@ impl Store {
     }
 
     /// Unmount EC shards for a volume (batch).
+    ///
+    /// Iterates every location that has an EcVolume for `vid` and
+    /// asks it to unmount whatever subset of `shard_ids` it actually
+    /// has — required for cross-disk reconciled volumes where the
+    /// requested shards may legitimately live on different disks of
+    /// the same store (#9252). DiskLocation::unmount_ec_shards
+    /// already skips shards that aren't mounted, so this is safe to
+    /// fan out blindly.
     pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
         for loc in &mut self.locations {
             if loc.has_ec_volume(vid) {
                 loc.unmount_ec_shards(vid, shard_ids);
-                return;
             }
         }
     }
@@ -667,10 +674,12 @@ impl Store {
     /// Unmount a single EC shard, searching all locations.
     /// Matches Go's Store.UnmountEcShards which unmounts one shard at a time.
     pub fn unmount_ec_shard(&mut self, vid: VolumeId, shard_id: u32) -> Result<(), VolumeError> {
+        // Walk all locations rather than stopping at the first with the
+        // vid — split-disk reconciled volumes can have the same vid on
+        // multiple disks, with the target shard on any of them.
         for loc in &mut self.locations {
             if loc.has_ec_volume(vid) {
                 loc.unmount_ec_shards(vid, &[shard_id]);
-                return Ok(());
             }
         }
         // Go returns nil if shard not found (no error)
