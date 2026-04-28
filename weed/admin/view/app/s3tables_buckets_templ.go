@@ -104,7 +104,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "/v1</code></p><script>\n\t\t\t\t\t\t\tconst s3tablesInfo = document.getElementById('s3tables-iceberg-info');\n\t\t\t\t\t\t\tconst s3tablesIcebergHost = window.location.hostname;\n\t\t\t\t\t\t\tconst s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';\n\t\t\t\t\t\t\tdocument.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;\n\t\t\t\t\t\t\tconst s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');\n\t\t\t\t\t\t\tif (s3tablesRestLink && s3tablesIcebergPort) {\n\t\t\t\t\t\t\t\ts3tablesRestLink.href = `http://${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t</script></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "/v1</code></p><script>\n\t\t\t\t\t\t\tconst s3tablesInfo = document.getElementById('s3tables-iceberg-info');\n\t\t\t\t\t\t\tconst s3tablesIcebergHost = window.location.hostname;\n\t\t\t\t\t\t\tconst s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';\n\t\t\t\t\t\t\tdocument.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;\n\t\t\t\t\t\t\tconst s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');\n\t\t\t\t\t\t\tif (s3tablesRestLink && s3tablesIcebergPort) {\n\t\t\t\t\t\t\t\ts3tablesRestLink.href = `//${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t</script></div></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -44,7 +44,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 						document.getElementById('iceberg-host').innerText = icebergHost;
 						const restLink = document.getElementById('iceberg-rest-link');
 						if (restLink && icebergPort) {
-							restLink.href = `http://${icebergHost}:${icebergPort}/v1/config`;
+							restLink.href = `//${icebergHost}:${icebergPort}/v1/config`;
 						}
 					</script>
 				</div>

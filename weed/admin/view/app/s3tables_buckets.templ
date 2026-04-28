@@ -46,7 +46,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 							document.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;
 							const s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');
 							if (s3tablesRestLink && s3tablesIcebergPort) {
-								s3tablesRestLink.href = `http://${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
+								s3tablesRestLink.href = `//${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
 							}
 						</script>
 					</div>
