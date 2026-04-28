@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -58,8 +59,9 @@ func (c *commandS3IAMExport) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 
 		var out io.Writer = writer
-		if *file != "" {
-			fp, err := os.OpenFile(*file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		outputFile := util.ResolvePath(*file)
+		if outputFile != "" {
+			fp, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 			if err != nil {
 				return fmt.Errorf("create file: %v", err)
 			}
@@ -72,8 +74,8 @@ func (c *commandS3IAMExport) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 		fmt.Fprintln(out)
 
-		if *file != "" {
-			fmt.Fprintf(writer, "Exported IAM configuration to %s\n", *file)
+		if outputFile != "" {
+			fmt.Fprintf(writer, "Exported IAM configuration to %s\n", outputFile)
 		}
 		return nil
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
