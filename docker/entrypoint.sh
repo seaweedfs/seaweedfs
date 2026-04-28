@@ -37,17 +37,21 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 isArgPassed() {
+  # Match both `-flag` and `--flag` (and their `=value` forms): the Go fla9
+  # library accepts both, and users may pick either form on the CLI.
   arg="$1"
   argWithEqualSign="$1="
+  argDouble="-$1"
+  argDoubleWithEqualSign="-$1="
   shift
   while [ $# -gt 0 ]; do
     passedArg="$1"
     shift
     case $passedArg in
-    "$arg")
+    "$arg"|"$argDouble")
       return 0
       ;;
-    "$argWithEqualSign"*)
+    "$argWithEqualSign"*|"$argDoubleWithEqualSign"*)
       return 0
       ;;
     esac
