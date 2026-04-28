@@ -2605,7 +2605,8 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // Read from the shard
+        // Read from the shard. Guaranteed to be present because
+        // find_ec_volume_with_shard already verified it.
         let shard = ec_vol
             .shards
             .get(req.shard_id as usize)
@@ -2695,8 +2696,13 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         let store = self.state.store.read().unwrap();
-        let ec_vol = store
-            .find_ec_volume(vid)
+        // Aggregate per-shard data dirs across all locations so the
+        // shard-presence check + decoder both see the union for
+        // cross-disk reconciled volumes (#9252). Mirrors Go's
+        // CollectEcShards.
+        let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
+        let (ec_vol, shard_dirs) = store
+            .collect_ec_shard_dirs(vid, max_shard_count)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
         if ec_vol.collection != req.collection {
@@ -2710,7 +2716,6 @@ impl VolumeServer for VolumeGrpcService {
         let data_shards = ec_vol.data_shards as usize;
 
         // Validate data shard count range (matches Go's VolumeEcShardsToVolume)
-        let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
         if data_shards == 0 || data_shards > max_shard_count {
             return Err(Status::invalid_argument(format!(
                 "invalid data shard count {} for volume {} (must be 1..{})",
@@ -2718,14 +2723,9 @@ impl VolumeServer for VolumeGrpcService {
             )));
         }
 
-        // Check that all data shards are present
+        // Check that all data shards are present somewhere on this server.
         for shard_id in 0..data_shards {
-            if ec_vol
-                .shards
-                .get(shard_id)
-                .map(|s| s.is_none())
-                .unwrap_or(true)
-            {
+            if shard_dirs[shard_id].is_none() {
                 return Err(Status::internal(format!(
                     "ec volume {} missing shard {}",
                     req.volume_id, shard_id
@@ -2757,29 +2757,46 @@ impl VolumeServer for VolumeGrpcService {
             )));
         }
 
-        // Reconstruct the volume from EC shards
-        let dir = ec_vol.dir.clone();
+        // Reconstruct the volume from EC shards. Use the EcVolume's
+        // own dir for the produced .dat (matches the volume's home
+        // disk) and its `ecx_actual_dir` for the .ecx lookup, while
+        // reading each shard from its real on-disk location.
+        let dat_dir = ec_vol.dir.clone();
+        let ecx_dir = ec_vol.ecx_actual_dir().to_string();
         let collection = ec_vol.collection.clone();
+        // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
+        // the check above; collect concrete dirs for the decoder.
+        let per_shard_dirs: Vec<String> = shard_dirs[..data_shards]
+            .iter()
+            .map(|d| d.clone().unwrap())
+            .collect();
         drop(store);
 
-        // Calculate .dat file size from .ecx entries
+        // Calculate .dat file size from .ecx entries (.ec00 lives on
+        // its own disk, .ecx on the index disk).
         let dat_file_size =
-            crate::storage::erasure_coding::ec_decoder::find_dat_file_size(&dir, &collection, vid)
-                .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
+            crate::storage::erasure_coding::ec_decoder::find_dat_file_size_with_dirs(
+                &per_shard_dirs[0],
+                &ecx_dir,
+                &collection,
+                vid,
+            )
+            .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
 
-        // Write .dat file using block-interleaved reading from shards
-        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards(
-            &dir,
+        // Write .dat file using block-interleaved reading from shards.
+        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards_with_dirs(
+            &dat_dir,
             &collection,
             vid,
             dat_file_size,
             data_shards,
+            &per_shard_dirs,
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 
-        // Write .idx file from .ecx and .ecj files
+        // Write .idx file from .ecx and .ecj files (lives on idx dir).
         crate::storage::erasure_coding::ec_decoder::write_idx_file_from_ec_index(
-            &dir,
+            &dat_dir,
             &collection,
             vid,
         )
