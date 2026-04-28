@@ -266,7 +266,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                             <span class="text-success">{bytesToHumanReadableUint64(shard.Size)}</span>
                                         </td>
                                         <td>
-                                            <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">
+                                            <a href={ templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", shard.Server)) } target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">
                                                 <i class="fas fa-external-link-alt me-1"></i>Volume Server
                                             </a>
                                         </td>

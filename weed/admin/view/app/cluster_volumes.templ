@@ -320,7 +320,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             </code>
                                         </td>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", volume.Server))} target="_blank" class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", volume.Server))} target="_blank" class="text-decoration-none">
                                                 {volume.Server}
                                                 <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                             </a>
