@@ -55,7 +55,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var3 templ.SafeURL
-		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)))
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("//localhost:%d/v1/config", data.IcebergPort)))
 		if templ_7745c5c3_Err != nil {
 			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 23, Col: 114}
 		}
