@@ -220,6 +220,35 @@ Without the §1.F articulation, §1.A could be misread two ways:
 
 `INV-G5-5C-RECONNECT-ORTHOGONAL-AXES` (proposed, see §3): reconnect proceeds correctly along both axes — Case 1 (identity unchanged) without master re-emit; Case 2 (identity changed) via existing `UpdateReplicaSet` lineage-bump teardown + recreate; in-flight recovery aborts when a higher `PeerSetGeneration` arrives mid-flight.
 
+### §1.I Per-peer adapter wiring (Batch #7, hardware-revealed scope expansion)
+
+**Date bound**: 2026-04-27 (architect approved Option B "absorb fix in G5-5C as Batch #7" after hardware run 3 revealed gap).
+
+**Why expanded scope is appropriate**: §1.H audit confirmed engine semantics are correct per-peer; the audit did NOT extend to "is per-peer engine state actually constructed in `cmd/blockvolume`". That layer was assumed. Hardware run 3 surfaced the assumption as a real production gap (`primary-fail.log` shows wire probe success but engine drops the event via `checkReplicaID` because the host's single adapter tracks the host's own slot, not the peer). The fix is small, architecturally tight (composition layer, not engine logic), and stays within the §1 scope-rule (`master owns identity/topology; primary+engine own data recovery`). Per architect's "fix vs carry — fix when small + same intent" rule: fix.
+
+**Scope** — 4 new pieces, all primary-side composition:
+
+| File | Side | Change | LOC est |
+|---|---|---|---|
+| `core/host/volume/peer_command_executor.go` (NEW) | primary | `PeerCommandExecutor` implements `adapter.CommandExecutor` over a `*ReplicaPeer`: Probe / StartCatchUp / StartRebuild / FenceAtEpoch / InvalidateSession route to `peer.Executor()`; PublishHealthy / PublishDegraded route to `peer.SetState` / `peer.Invalidate`; SessionStart / SessionClose callbacks registered on the peer's transport executor. | ~120 |
+| `core/host/volume/peer_adapter_registry.go` (NEW) | primary | `PeerAdapterRegistry` map[ReplicaID]*VolumeReplicaAdapter; `OnPeerAdded(peer)` constructs PeerCommandExecutor + VolumeReplicaAdapter and primes with AssignmentObserved; `OnPeerRemoved(id)` tears down; `AdapterFor(id)` lookup. | ~100 |
+| `core/replication/volume.go` (EXTEND) | primary | `ConfigurePeerLifecycleHook(onAdd, onRemove)` registers a callback pair invoked from `UpdateReplicaSet` add / lineage-bump-recreate / remove paths. | ~30 |
+| `core/host/volume/probe_loop_wiring.go` (UPDATE) | primary | `ProductionProbeFn` becomes `ProductionProbeFn(adapterFor func(string) *VolumeReplicaAdapter)`; routes per-peer; nil-adapter fallback shim updated. | ~20 net |
+| `cmd/blockvolume/main.go` (UPDATE) | primary | Construct `PeerAdapterRegistry`; wire `ConfigurePeerLifecycleHook` on the `ReplicationVolume`; use new `ProductionProbeFn` signature. | ~20 net |
+
+**Tests** (~10 new, ~250 LOC):
+- `peer_command_executor_test.go` — per-method dispatch (Probe → peer.Executor.Probe; StartCatchUp → peer.Executor.StartCatchUp; PublishHealthy → peer.SetState(Healthy); etc.)
+- `peer_adapter_registry_test.go` — add / lookup / remove / double-add / lineage-bump teardown
+- `probe_loop_wiring_test.go` — extended for the router signature
+- Component test extension (`g5_5c_restart_catchup_test.go`) — positive convergence path now exercises per-peer adapter; existing negative control unchanged
+
+**New INV** (replaces the previously-G5-5D-deferred one):
+- `INV-G5-5C-PER-PEER-ADAPTER-PER-PEER-ENGINE` — production binary constructs a `*VolumeReplicaAdapter` per (volume × admitted peer) so engine truth tracks each peer's recovery state independently of the host's own slot. Engine `checkReplicaID` correctness is preserved (events route to the right per-peer engine instance, not dropped).
+
+**Pass criterion**: `iterate-m01-replicated-write.sh verify_restart_catchup` GREEN within 30 s deadline (the exact failed case from G5-5C run 3); #1/#2/#3 regression GREEN in the same run.
+
+**Out of scope (still)**: master observability + status-surface metrics + durability-mode coverage (forward-carry to G5-2/G5-3/future master observability batch — unchanged from §1.G).
+
 ### §1.G Engine vs primary runtime vs master — three-way responsibility split
 
 §1.D / §1.E / §1.F establish the protocol invariants. §1.G is about *where the code lives*. Architect framing 2026-04-27:
@@ -448,9 +477,9 @@ Opportunistic carry items from G5-5 §close (no specific gate, not in G5-5C scop
 
 ## §close
 
-**Date drafted**: 2026-04-28 (sw); awaiting QA evidence verification + architect single-sign per `v3-batch-process.md §5` + §8C.2.
+**Date drafted**: 2026-04-28 (sw); awaiting Batch #7 land + m01 #4 GREEN + QA evidence + architect single-sign per `v3-batch-process.md §5` + §8C.2.
 
-**Close decision**: G5-5C closes at L4 Replicated IO with peer-restart resilience — replica process restart against same `--durable-root` now self-heals via primary-side probe loop dispatching engine-driven recovery (T4d-4 reused unchanged).
+**Close decision**: pending Batch #7 (per-peer adapter wiring) + hardware re-run. Per architect ruling 2026-04-27 "go with B (absorb fix in G5-5C as Batch #7)", the §close ceremony waits until #4 GREEN; G5-5C closes at full L4 in one shot, no carry to G5-5D.
 
 ### §close.summary
 
