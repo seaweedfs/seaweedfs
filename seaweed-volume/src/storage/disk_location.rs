@@ -622,11 +622,20 @@ impl DiskLocation {
         idx_dir: &str,
     ) -> Result<(), VolumeError> {
         let dir = self.directory.clone();
-        let idx_dir_owned = idx_dir.to_string();
+        // Avoid the entry().or_insert_with() pattern here: that closure
+        // can't return a Result, so any EcVolume::new failure (e.g.
+        // .ecx open error, .ecj create error, malformed .vif) would
+        // have to panic via unwrap(). Build the EcVolume up front and
+        // propagate the error to the caller.
+        if !self.ec_volumes.contains_key(&vid) {
+            let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid)
+                .map_err(VolumeError::Io)?;
+            self.ec_volumes.insert(vid, ec_vol);
+        }
         let ec_vol = self
             .ec_volumes
-            .entry(vid)
-            .or_insert_with(|| EcVolume::new(&dir, &idx_dir_owned, collection, vid).unwrap());
+            .get_mut(&vid)
+            .expect("just inserted above");
         ec_vol.disk_type = self.disk_type.clone();
 
         for &shard_id in shard_ids {
