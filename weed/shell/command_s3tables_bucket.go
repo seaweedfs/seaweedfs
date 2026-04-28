@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -176,7 +177,7 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 		if *policyFile == "" {
 			return fmt.Errorf("-file is required")
 		}
-		content, err := os.ReadFile(expandHomeDir(*policyFile))
+		content, err := os.ReadFile(util.ResolvePath(*policyFile))
 		if err != nil {
 			return err
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -58,7 +59,7 @@ func (c *commandS3IAMExport) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 
 		var out io.Writer = writer
-		outputFile := expandHomeDir(*file)
+		outputFile := util.ResolvePath(*file)
 		if outputFile != "" {
 			fp, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 			if err != nil {

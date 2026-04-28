@@ -63,7 +63,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 	// load the mapping
 	mapping := make(map[needle.VolumeId]needle.VolumeId)
 	if *mappingFileName != "" {
-		readMappingFromFile(expandHomeDir(*mappingFileName), mapping)
+		readMappingFromFile(util.ResolvePath(*mappingFileName), mapping)
 	} else {
 		if *fromVolumeId == *toVolumeId {
 			return fmt.Errorf("no volume id changes")

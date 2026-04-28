@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -108,7 +109,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 	case *create:
 		var metadata *s3tables.TableMetadata
 		if *metadataFile != "" {
-			content, err := os.ReadFile(expandHomeDir(*metadataFile))
+			content, err := os.ReadFile(util.ResolvePath(*metadataFile))
 			if err != nil {
 				return err
 			}
@@ -178,7 +179,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 		if *policyFile == "" {
 			return fmt.Errorf("-file is required")
 		}
-		content, err := os.ReadFile(expandHomeDir(*policyFile))
+		content, err := os.ReadFile(util.ResolvePath(*policyFile))
 		if err != nil {
 			return err
 		}
