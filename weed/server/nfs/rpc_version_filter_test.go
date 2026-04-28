@@ -2,6 +2,7 @@ package nfs
 
 import (
 	"encoding/binary"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func readPROGMismatchReply(t *testing.T, conn net.Conn) (xid, low, high uint32) 
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 4+progMismatchBodyLen)
-	n, err := readFull(conn, buf)
+	n, err := io.ReadFull(conn, buf)
 	if err != nil {
 		t.Fatalf("read reply: %v (got %d bytes)", err, n)
 	}
@@ -58,18 +59,6 @@ func readPROGMismatchReply(t *testing.T, conn net.Conn) (xid, low, high uint32) 
 	low = binary.BigEndian.Uint32(buf[28:32])
 	high = binary.BigEndian.Uint32(buf[32:36])
 	return
-}
-
-func readFull(conn net.Conn, buf []byte) (int, error) {
-	read := 0
-	for read < len(buf) {
-		n, err := conn.Read(buf[read:])
-		read += n
-		if err != nil {
-			return read, err
-		}
-	}
-	return read, nil
 }
 
 func TestVersionFilterRejectsNFSv4WithProgMismatch(t *testing.T) {
@@ -102,7 +91,7 @@ func TestVersionFilterRejectsNFSv4WithProgMismatch(t *testing.T) {
 	defer conn.Close()
 
 	// NFSv4 NULL: the first probe Linux mount.nfs sends when trying v4.
-	if _, err := conn.Write(buildRPCCallFrame(0xdeadbeef, nfsProgramID, 4, 0)); err != nil {
+	if _, err := conn.Write(buildRPCCallFrame(0xdeadbeef, nfsProgram, 4, 0)); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -154,7 +143,7 @@ func TestVersionFilterRejectsMOUNTv4WithProgMismatch(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.Write(buildRPCCallFrame(42, mountProgramID, 4, 0)); err != nil {
+	if _, err := conn.Write(buildRPCCallFrame(42, mountProgram, 4, 0)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,7 +172,7 @@ func TestVersionFilterPassesThroughNFSv3(t *testing.T) {
 		}
 		defer c.Close()
 		buf := make([]byte, 44)
-		_, rerr := readFull(c, buf)
+		_, rerr := io.ReadFull(c, buf)
 		if rerr != nil {
 			return
 		}
@@ -196,7 +185,7 @@ func TestVersionFilterPassesThroughNFSv3(t *testing.T) {
 	}
 	defer conn.Close()
 
-	frame := buildRPCCallFrame(7, nfsProgramID, 3, 0)
+	frame := buildRPCCallFrame(7, nfsProgram, 3, 0)
 	if _, err := conn.Write(frame); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +220,7 @@ func TestVersionFilterPassesThroughUnknownProgram(t *testing.T) {
 		}
 		defer c.Close()
 		buf := make([]byte, 44)
-		if _, rerr := readFull(c, buf); rerr == nil {
+		if _, rerr := io.ReadFull(c, buf); rerr == nil {
 			delivered <- struct{}{}
 		}
 	}()

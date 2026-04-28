@@ -32,6 +32,10 @@ import (
 // flow through to go-nfs unchanged. This avoids vendoring go-nfs while still
 // producing protocol-correct rejections.
 
+// RPC numeric constants used here (rpcMsgCall, rpcMsgReply, rpcMsgAccepted,
+// rpcAcceptProgMismatch, rpcAuthNone, nfsProgram, mountProgram) are defined
+// alongside the portmap responder in portmap.go to keep one source of truth
+// per package.
 const (
 	// rpcVersionFilterPeekTimeout bounds how long we wait for the first frame
 	// header on a new connection before giving up and letting go-nfs handle
@@ -42,12 +46,6 @@ const (
 	// (xid + msg_type + rpcvers + prog + vers + proc).
 	rpcVersionFilterPeekLen = 28
 
-	rpcMsgTypeCall = 0
-
-	rpcAcceptedReply = 0
-
-	nfsProgramID    = 100003
-	mountProgramID  = 100005
 	supportedNFSVer = 3
 )
 
@@ -121,7 +119,7 @@ func filterFirstRPCFrame(conn net.Conn) (net.Conn, bool) {
 	}
 
 	xid := binary.BigEndian.Uint32(hdr[4:8])
-	if msgType := binary.BigEndian.Uint32(hdr[8:12]); msgType != rpcMsgTypeCall {
+	if msgType := binary.BigEndian.Uint32(hdr[8:12]); msgType != rpcMsgCall {
 		// Not a CALL — odd, but pass through.
 		return &peekedConn{Conn: conn, reader: r}, true
 	}
@@ -130,7 +128,7 @@ func filterFirstRPCFrame(conn net.Conn) (net.Conn, bool) {
 	vers := binary.BigEndian.Uint32(hdr[20:24])
 
 	switch prog {
-	case nfsProgramID, mountProgramID:
+	case nfsProgram, mountProgram:
 	default:
 		// Unknown program: let go-nfs reply PROG_UNAVAIL itself.
 		return &peekedConn{Conn: conn, reader: r}, true
@@ -169,11 +167,11 @@ func writeProgMismatchTCP(w io.Writer, xid, low, high uint32) error {
 	out := make([]byte, 4+progMismatchBodyLen)
 	binary.BigEndian.PutUint32(out[0:4], uint32(progMismatchBodyLen)|(1<<31))
 	binary.BigEndian.PutUint32(out[4:8], xid)
-	binary.BigEndian.PutUint32(out[8:12], 1)  // msg_type=REPLY
-	binary.BigEndian.PutUint32(out[12:16], 0) // reply_stat=MSG_ACCEPTED
-	binary.BigEndian.PutUint32(out[16:20], 0) // verf flavor AUTH_NONE
-	binary.BigEndian.PutUint32(out[20:24], 0) // verf len
-	binary.BigEndian.PutUint32(out[24:28], 2) // accept_stat=PROG_MISMATCH
+	binary.BigEndian.PutUint32(out[8:12], rpcMsgReply)
+	binary.BigEndian.PutUint32(out[12:16], rpcMsgAccepted)
+	binary.BigEndian.PutUint32(out[16:20], rpcAuthNone)
+	binary.BigEndian.PutUint32(out[20:24], 0) // verf opaque length (always zero for AUTH_NONE)
+	binary.BigEndian.PutUint32(out[24:28], rpcAcceptProgMismatch)
 	binary.BigEndian.PutUint32(out[28:32], low)
 	binary.BigEndian.PutUint32(out[32:36], high)
 	_, err := w.Write(out)
