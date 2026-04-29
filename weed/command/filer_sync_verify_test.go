@@ -363,6 +363,86 @@ func TestVerifySyncCutoffTime(t *testing.T) {
 	})
 }
 
+// TestVerifySyncCutoffMatchedFileBSideRecent verifies that when matched-name
+// files differ but only the B side is recently modified, the comparison is
+// skipped (sync-lag tolerance) rather than reporting a spurious mismatch.
+func TestVerifySyncCutoffMatchedFileBSideRecent(t *testing.T) {
+	cutoff := time.Unix(1000, 0)
+
+	entry := func(size uint64, mtime int64) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:       "data.bin",
+			Attributes: &filer_pb.FuseAttributes{FileSize: size, Mtime: mtime},
+		}
+	}
+
+	// A is old (size 100), B is recently rewritten with a different size.
+	// Without the B-side cutoff check this would surface as SIZE_MISMATCH.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/": {entry(100, 500)}},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/": {entry(200, 2000)}},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/", "/", false, cutoff, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.skippedRecent.Load(); got != 1 {
+		t.Errorf("skippedRecent = %d, want 1 (B-side recent should skip)", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (recent B should not surface as mismatch)", got)
+	}
+}
+
+// TestVerifySyncMissingDirRecursesEvenWithRecentMtime verifies that a
+// directory missing in B with a recent mtime still has its subtree walked,
+// so older missing files inside are reported. A recent child write can bump
+// the parent mtime even though older missing files exist underneath.
+func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
+	cutoff := time.Unix(1000, 0)
+
+	recentDir := &filer_pb.Entry{
+		Name:        "subdir",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 2000}, // > cutoff
+	}
+	oldChild := &filer_pb.Entry{
+		Name:       "old.txt",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 10, Mtime: 500}, // < cutoff
+	}
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/":        {recentDir},
+			"/subdir":  {oldChild},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/": {},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/", "/", false, cutoff, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expect: directory MISSING + recursed-old-file MISSING = 2 missing.
+	if got := result.missingCount.Load(); got != 2 {
+		t.Errorf("missingCount = %d, want 2 (recent dir + old child inside)", got)
+	}
+	if got := result.skippedRecent.Load(); got != 0 {
+		t.Errorf("skippedRecent = %d, want 0 (dir mtime should not gate recursion)", got)
+	}
+}
+
 // TestVerifySyncRootPath is a regression test for the path.Join fix.
 // fmt.Sprintf("%s/%s", "/", name) produced "//name"; path.Join produces "/name".
 // This test walks from "/" and verifies the child directory is found and

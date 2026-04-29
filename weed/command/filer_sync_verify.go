@@ -108,6 +108,12 @@ func runFilerSyncVerify(cmd *Command, args []string) bool {
 // children to acquire slots.
 const verifySyncConcurrency = 5
 
+// isTooRecent reports whether entry's mtime is past cutoff (sync-lag tolerance).
+// Returns false when cutoff is zero or attributes are missing.
+func isTooRecent(entry *filer_pb.Entry, cutoff time.Time) bool {
+	return !cutoff.IsZero() && entry != nil && entry.Attributes != nil && entry.Attributes.Mtime > cutoff.Unix()
+}
+
 type VerifyResult struct {
 	dirCount      atomic.Int64
 	fileCount     atomic.Int64
@@ -352,21 +358,24 @@ func compareDirectory(ctx context.Context,
 		case eA != nil && (eB == nil || eA.Name < eB.Name):
 			// entry only in A
 			entryA := streamA.advance()
-			if !cutoffTime.IsZero() && entryA.Attributes != nil && entryA.Attributes.Mtime > cutoffTime.Unix() {
+			if entryA.IsDirectory {
+				// Always recurse for missing-in-B directories: a recent
+				// child write can bump the parent's mtime even though
+				// older missing files exist underneath. The cutoff is
+				// applied per-file inside countMissingRecursive.
+				reportDiff(diffMissing, dirA, entryA, nil, result)
+				countMissingRecursive(ctx, clientA, path.Join(dirA, entryA.Name), cutoffTime, result)
+			} else if isTooRecent(entryA, cutoffTime) {
 				result.skippedRecent.Add(1)
 			} else {
 				reportDiff(diffMissing, dirA, entryA, nil, result)
-				if entryA.IsDirectory {
-					// directory missing in B: count all files under it as missing
-					countMissingRecursive(ctx, clientA, path.Join(dirA, entryA.Name), cutoffTime, result)
-				}
 			}
 
 		case eB != nil && (eA == nil || eB.Name < eA.Name):
 			// entry only in B
 			entryB := streamB.advance()
 			if !isActivePassive {
-				if !cutoffTime.IsZero() && entryB.Attributes != nil && entryB.Attributes.Mtime > cutoffTime.Unix() {
+				if isTooRecent(entryB, cutoffTime) {
 					result.skippedRecent.Add(1)
 				} else {
 					reportDiff(diffOnlyInB, dirB, entryB, nil, result)
@@ -384,8 +393,8 @@ func compareDirectory(ctx context.Context,
 					b: path.Join(dirB, entryB.Name),
 				})
 			} else if !entryA.IsDirectory && !entryB.IsDirectory {
-				// skip recently modified files
-				if !cutoffTime.IsZero() && entryA.Attributes != nil && entryA.Attributes.Mtime > cutoffTime.Unix() {
+				// Skip if either side was modified recently (sync-lag tolerance).
+				if isTooRecent(entryA, cutoffTime) || isTooRecent(entryB, cutoffTime) {
 					result.skippedRecent.Add(1)
 				} else {
 					compareEntries(dirA, entryA, entryB, result)
@@ -414,25 +423,40 @@ func compareDirectory(ctx context.Context,
 	releaseSlot()
 
 	if len(subDirs) > 0 {
-		var wg sync.WaitGroup
-		errCh := make(chan error, len(subDirs))
-
-		for _, pair := range subDirs {
-			wg.Add(1)
-			go func(a, b string) {
-				defer wg.Done()
-				if err := compareDirectory(ctx, clientA, clientB, a, b, isActivePassive, cutoffTime, sem, result); err != nil {
-					errCh <- err
-				}
-			}(pair.a, pair.b)
+		// Bounded worker pool: cap goroutines per directory level instead
+		// of spawning one per child. A directory with thousands of subdirs
+		// would otherwise park ~2KB per waiting goroutine even though
+		// only `verifySyncConcurrency` can do I/O at once.
+		workers := verifySyncConcurrency
+		if len(subDirs) < workers {
+			workers = len(subDirs)
 		}
+		jobs := make(chan dirPair, len(subDirs))
+		errCh := make(chan error, 1) // first error wins; others dropped
+		var wg sync.WaitGroup
+
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for pair := range jobs {
+					if err := compareDirectory(ctx, clientA, clientB, pair.a, pair.b, isActivePassive, cutoffTime, sem, result); err != nil {
+						select {
+						case errCh <- err:
+						default:
+						}
+					}
+				}
+			}()
+		}
+		for _, pair := range subDirs {
+			jobs <- pair
+		}
+		close(jobs)
 		wg.Wait()
 		close(errCh)
-
-		for err := range errCh {
-			if err != nil {
-				return err
-			}
+		if err := <-errCh; err != nil {
+			return err
 		}
 	}
 
