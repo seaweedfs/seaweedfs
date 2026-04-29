@@ -536,28 +536,28 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 }
 
-func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeUnmountedhardIds []erasure_coding.ShardId) error {
+func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeUnmountedShardIds []erasure_coding.ShardId) error {
 
-	fmt.Printf("unmount %d.%v from %s\n", volumeId, toBeUnmountedhardIds, sourceLocation)
+	fmt.Printf("unmount %d.%v from %s\n", volumeId, toBeUnmountedShardIds, sourceLocation)
 
 	return operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, deleteErr := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
 			VolumeId: uint32(volumeId),
-			ShardIds: erasure_coding.ShardIdsToUint32(toBeUnmountedhardIds),
+			ShardIds: erasure_coding.ShardIdsToUint32(toBeUnmountedShardIds),
 		})
 		return deleteErr
 	})
 }
 
-func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeMountedhardIds []erasure_coding.ShardId) error {
+func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeMountedShardIds []erasure_coding.ShardId) error {
 
-	fmt.Printf("mount %d.%v on %s\n", volumeId, toBeMountedhardIds, sourceLocation)
+	fmt.Printf("mount %d.%v on %s\n", volumeId, toBeMountedShardIds, sourceLocation)
 
 	return operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
-			ShardIds:   erasure_coding.ShardIdsToUint32(toBeMountedhardIds),
+			ShardIds:   erasure_coding.ShardIdsToUint32(toBeMountedShardIds),
 		})
 		return mountErr
 	})
