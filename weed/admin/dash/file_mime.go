@@ -8,6 +8,103 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+func init() {
+	// Register text files
+	mime.AddExtensionType(".txt", "text/plain")
+	mime.AddExtensionType(".log", "text/plain")
+	mime.AddExtensionType(".cfg", "text/plain")
+	mime.AddExtensionType(".conf", "text/plain")
+	mime.AddExtensionType(".ini", "text/plain")
+	mime.AddExtensionType(".properties", "text/plain")
+	mime.AddExtensionType(".gitignore", "text/plain")
+	mime.AddExtensionType(".gitattributes", "text/plain")
+	mime.AddExtensionType(".env", "text/plain")
+
+	// Register markup and styling
+	mime.AddExtensionType(".md", "text/markdown")
+	mime.AddExtensionType(".markdown", "text/markdown")
+	mime.AddExtensionType(".html", "text/html")
+	mime.AddExtensionType(".htm", "text/html")
+	mime.AddExtensionType(".css", "text/css")
+	mime.AddExtensionType(".xml", "application/xml")
+
+	// Register code and scripting languages
+	mime.AddExtensionType(".js", "application/javascript")
+	mime.AddExtensionType(".mjs", "application/javascript")
+	mime.AddExtensionType(".ts", "text/typescript")
+	mime.AddExtensionType(".py", "text/x-python")
+	mime.AddExtensionType(".go", "text/x-go")
+	mime.AddExtensionType(".java", "text/x-java")
+	mime.AddExtensionType(".c", "text/x-c")
+	mime.AddExtensionType(".cpp", "text/x-c++")
+	mime.AddExtensionType(".cc", "text/x-c++")
+	mime.AddExtensionType(".cxx", "text/x-c++")
+	mime.AddExtensionType(".c++", "text/x-c++")
+	mime.AddExtensionType(".h", "text/x-c-header")
+	mime.AddExtensionType(".hpp", "text/x-c-header")
+	mime.AddExtensionType(".php", "text/x-php")
+	mime.AddExtensionType(".rb", "text/x-ruby")
+	mime.AddExtensionType(".pl", "text/x-perl")
+	mime.AddExtensionType(".rs", "text/x-rust")
+	mime.AddExtensionType(".swift", "text/x-swift")
+	mime.AddExtensionType(".kt", "text/x-kotlin")
+	mime.AddExtensionType(".scala", "text/x-scala")
+	mime.AddExtensionType(".sh", "text/x-shellscript")
+	mime.AddExtensionType(".bash", "text/x-shellscript")
+	mime.AddExtensionType(".zsh", "text/x-shellscript")
+	mime.AddExtensionType(".fish", "text/x-shellscript")
+	mime.AddExtensionType(".dockerfile", "text/x-dockerfile")
+
+	// Register data formats
+	mime.AddExtensionType(".json", "application/json")
+	mime.AddExtensionType(".yaml", "text/yaml")
+	mime.AddExtensionType(".yml", "text/yaml")
+	mime.AddExtensionType(".csv", "text/csv")
+	mime.AddExtensionType(".sql", "text/sql")
+
+	// Register image types
+	mime.AddExtensionType(".jpg", "image/jpeg")
+	mime.AddExtensionType(".jpeg", "image/jpeg")
+	mime.AddExtensionType(".png", "image/png")
+	mime.AddExtensionType(".gif", "image/gif")
+	mime.AddExtensionType(".bmp", "image/bmp")
+	mime.AddExtensionType(".webp", "image/webp")
+	mime.AddExtensionType(".svg", "image/svg+xml")
+	mime.AddExtensionType(".ico", "image/x-icon")
+
+	// Register document types
+	mime.AddExtensionType(".pdf", "application/pdf")
+	mime.AddExtensionType(".doc", "application/msword")
+	mime.AddExtensionType(".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	mime.AddExtensionType(".xls", "application/vnd.ms-excel")
+	mime.AddExtensionType(".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	mime.AddExtensionType(".ppt", "application/vnd.ms-powerpoint")
+	mime.AddExtensionType(".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+	// Register archive types
+	mime.AddExtensionType(".zip", "application/zip")
+	mime.AddExtensionType(".tar", "application/x-tar")
+	mime.AddExtensionType(".gz", "application/gzip")
+	mime.AddExtensionType(".bz2", "application/x-bzip2")
+	mime.AddExtensionType(".7z", "application/x-7z-compressed")
+	mime.AddExtensionType(".rar", "application/x-rar-compressed")
+
+	// Register video types
+	mime.AddExtensionType(".mp4", "video/mp4")
+	mime.AddExtensionType(".avi", "video/x-msvideo")
+	mime.AddExtensionType(".mov", "video/quicktime")
+	mime.AddExtensionType(".wmv", "video/x-ms-wmv")
+	mime.AddExtensionType(".flv", "video/x-flv")
+	mime.AddExtensionType(".webm", "video/webm")
+
+	// Register audio types
+	mime.AddExtensionType(".mp3", "audio/mpeg")
+	mime.AddExtensionType(".wav", "audio/wav")
+	mime.AddExtensionType(".flac", "audio/flac")
+	mime.AddExtensionType(".aac", "audio/aac")
+	mime.AddExtensionType(".ogg", "audio/ogg")
+}
+
 func ResolveEntryMime(entry *filer_pb.Entry) string {
 	if entry == nil {
 		return "application/octet-stream"
@@ -15,8 +112,11 @@ func ResolveEntryMime(entry *filer_pb.Entry) string {
 	if entry.IsDirectory {
 		return "inode/directory"
 	}
-	if entry.Attributes != nil && entry.Attributes.Mime != "" {
-		return normalizeMimeType(entry.Attributes.Mime)
+	if entry.Attributes != nil {
+		normalized := normalizeMimeType(entry.Attributes.Mime)
+		if normalized != "" {
+			return normalized
+		}
 	}
 	return inferMimeTypeFromName(entry.Name)
 }
@@ -39,126 +139,12 @@ func normalizeMimeType(value string) string {
 }
 
 func inferMimeTypeFromName(filename string) string {
-	ext := strings.ToLower(path.Ext(filename))
-
-	switch ext {
-	case ".txt", ".log", ".cfg", ".conf", ".ini", ".properties":
-		return "text/plain"
-	case ".md", ".markdown":
-		return "text/markdown"
-	case ".html", ".htm":
-		return "text/html"
-	case ".css":
-		return "text/css"
-	case ".js", ".mjs":
-		return "application/javascript"
-	case ".ts":
-		return "text/typescript"
-	case ".json":
-		return "application/json"
-	case ".xml":
-		return "application/xml"
-	case ".yaml", ".yml":
-		return "text/yaml"
-	case ".csv":
-		return "text/csv"
-	case ".sql":
-		return "text/sql"
-	case ".sh", ".bash", ".zsh", ".fish":
-		return "text/x-shellscript"
-	case ".py":
-		return "text/x-python"
-	case ".go":
-		return "text/x-go"
-	case ".java":
-		return "text/x-java"
-	case ".c":
-		return "text/x-c"
-	case ".cpp", ".cc", ".cxx", ".c++":
-		return "text/x-c++"
-	case ".h", ".hpp":
-		return "text/x-c-header"
-	case ".php":
-		return "text/x-php"
-	case ".rb":
-		return "text/x-ruby"
-	case ".pl":
-		return "text/x-perl"
-	case ".rs":
-		return "text/x-rust"
-	case ".swift":
-		return "text/x-swift"
-	case ".kt":
-		return "text/x-kotlin"
-	case ".scala":
-		return "text/x-scala"
-	case ".dockerfile":
-		return "text/x-dockerfile"
-	case ".gitignore", ".gitattributes", ".env":
-		return "text/plain"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".bmp":
-		return "image/bmp"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-	case ".pdf":
-		return "application/pdf"
-	case ".doc":
-		return "application/msword"
-	case ".docx":
-		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	case ".xls":
-		return "application/vnd.ms-excel"
-	case ".xlsx":
-		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	case ".ppt":
-		return "application/vnd.ms-powerpoint"
-	case ".pptx":
-		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-	case ".zip":
-		return "application/zip"
-	case ".tar":
-		return "application/x-tar"
-	case ".gz":
-		return "application/gzip"
-	case ".bz2":
-		return "application/x-bzip2"
-	case ".7z":
-		return "application/x-7z-compressed"
-	case ".rar":
-		return "application/x-rar-compressed"
-	case ".mp4":
-		return "video/mp4"
-	case ".avi":
-		return "video/x-msvideo"
-	case ".mov":
-		return "video/quicktime"
-	case ".wmv":
-		return "video/x-ms-wmv"
-	case ".flv":
-		return "video/x-flv"
-	case ".webm":
-		return "video/webm"
-	case ".mp3":
-		return "audio/mpeg"
-	case ".wav":
-		return "audio/wav"
-	case ".flac":
-		return "audio/flac"
-	case ".aac":
-		return "audio/aac"
-	case ".ogg":
-		return "audio/ogg"
-	default:
-		return "application/octet-stream"
+	ext := path.Ext(filename)
+	if mimeType := mime.TypeByExtension(ext); mimeType != "" {
+		// mime.TypeByExtension can include parameters (e.g., charset), so we parse just the media type.
+		if mediaType, _, err := mime.ParseMediaType(mimeType); err == nil {
+			return mediaType
+		}
 	}
+	return "application/octet-stream"
 }

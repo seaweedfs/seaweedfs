@@ -53,3 +53,16 @@ func TestResolveEntryMimeReturnsDirectoryMime(t *testing.T) {
 		t.Fatalf("ResolveEntryMime() = %q, want %q", got, "inode/directory")
 	}
 }
+
+func TestResolveEntryMimeWhitespaceMimeFallsBackToFilename(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name: "archive.zip",
+		Attributes: &filer_pb.FuseAttributes{
+			Mime: "   ",
+		},
+	}
+
+	if got := ResolveEntryMime(entry); got != "application/zip" {
+		t.Fatalf("ResolveEntryMime() = %q, want %q", got, "application/zip")
+	}
+}
