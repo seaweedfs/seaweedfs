@@ -677,7 +677,7 @@ templ Plugin(page string, initialJob string, lane string) {
                     }
                 }
 
-                var response = await fetch(url, requestOptions);
+                var response = await fetch(basePath(url), requestOptions);
                 var data = await readResponseJSON(response);
                 if (!response.ok) {
                     var message = (data && (data.error || data.message)) ? (data.error || data.message) : ('Request failed: ' + response.status);

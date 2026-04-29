@@ -57,6 +57,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
 	if err != nil || len(lookupResult.Locations) <= 0 {
 		glog.V(0).Infoln("lookup error:", err, r.URL.Path)
+		stats.VolumeServerFileReadInvalidNeedles.Inc()
 		NotFound(w)
 		return
 	}
@@ -65,16 +66,17 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 			lookupResult.Locations[i], lookupResult.Locations[j] = lookupResult.Locations[j], lookupResult.Locations[i]
 		})
 	}
-	var tragetUrl *url.URL
+	var targetUrl *url.URL
 	location := fmt.Sprintf("%s:%d", vs.store.Ip, vs.store.Port)
 	for _, loc := range lookupResult.Locations {
 		if !strings.Contains(loc.Url, location) {
 			rawURL, _ := util_http.NormalizeUrl(loc.Url)
-			tragetUrl, _ = url.Parse(rawURL)
+			targetUrl, _ = url.Parse(rawURL)
 			break
 		}
 	}
-	if tragetUrl == nil {
+	if targetUrl == nil {
+		stats.VolumeServerFileReadInvalidNeedles.Inc()
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.EmptyReadProxyLoc).Inc()
 		glog.Errorf("failed lookup target host is empty locations: %+v, %s", lookupResult.Locations, location)
 		NotFound(w)
@@ -83,8 +85,8 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	if vs.ReadMode == "proxy" {
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ReadProxyReq).Inc()
 		// proxy client request to target server
-		r.URL.Host = tragetUrl.Host
-		r.URL.Scheme = tragetUrl.Scheme
+		r.URL.Host = targetUrl.Host
+		r.URL.Scheme = targetUrl.Scheme
 		query := r.URL.Query()
 		query.Set(reqIsProxied, "true")
 		r.URL.RawQuery = query.Encode()
@@ -125,14 +127,14 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	} else {
 		// redirect
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ReadRedirectReq).Inc()
-		tragetUrl.Path = fmt.Sprintf("%s/%s,%s", tragetUrl.Path, vid, fid)
+		targetUrl.Path = fmt.Sprintf("%s/%s,%s", targetUrl.Path, vid, fid)
 		arg := url.Values{}
 		if c := r.FormValue("collection"); c != "" {
 			arg.Set("collection", c)
 		}
 		arg.Set(reqIsProxied, "true")
-		tragetUrl.RawQuery = arg.Encode()
-		http.Redirect(w, r, tragetUrl.String(), http.StatusMovedPermanently)
+		targetUrl.RawQuery = arg.Encode()
+		http.Redirect(w, r, targetUrl.String(), http.StatusMovedPermanently)
 		return
 	}
 }
@@ -164,6 +166,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
 		if vs.ReadMode == "local" {
+			stats.VolumeServerFileReadInvalidNeedles.Inc()
 			glog.V(0).Infoln("volume is not local:", err, r.URL.Path)
 			NotFound(w)
 			return
@@ -207,7 +210,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
 		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
-		if err == storage.ErrorNotFound || err == storage.ErrorDeleted || errors.Is(err, erasure_coding.NotFoundError) {
+		invalid_needle := err == storage.ErrorNotFound || errors.Is(err, erasure_coding.NotFoundError)
+		if invalid_needle {
+			stats.VolumeServerFileReadInvalidNeedles.Inc()
+		}
+		if invalid_needle || err == storage.ErrorDeleted {
 			NotFound(w)
 		} else {
 			InternalError(w)

@@ -952,13 +952,13 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Register Unix socket paths for gRPC services so local inter-service
 	// communication goes through Unix sockets instead of TCP.
-	pb.RegisterLocalGrpcSocket(*miniMasterOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-master-grpc-%d.sock", *miniMasterOptions.portGrpc))
-	pb.RegisterLocalGrpcSocket(*miniOptions.v.portGrpc, fmt.Sprintf("/tmp/seaweedfs-volume-grpc-%d.sock", *miniOptions.v.portGrpc))
-	pb.RegisterLocalGrpcSocket(*miniFilerOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-filer-grpc-%d.sock", *miniFilerOptions.portGrpc))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniMasterOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-master-grpc-%d.sock", *miniMasterOptions.portGrpc))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniOptions.v.portGrpc, fmt.Sprintf("/tmp/seaweedfs-volume-grpc-%d.sock", *miniOptions.v.portGrpc))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniFilerOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-filer-grpc-%d.sock", *miniFilerOptions.portGrpc))
 	if *miniS3Options.portGrpc > 0 {
-		pb.RegisterLocalGrpcSocket(*miniS3Options.portGrpc, fmt.Sprintf("/tmp/seaweedfs-s3-grpc-%d.sock", *miniS3Options.portGrpc))
+		pb.RegisterLocalGrpcSocket(*miniIp, *miniS3Options.portGrpc, fmt.Sprintf("/tmp/seaweedfs-s3-grpc-%d.sock", *miniS3Options.portGrpc))
 	}
-	pb.RegisterLocalGrpcSocket(*miniAdminOptions.grpcPort, fmt.Sprintf("/tmp/seaweedfs-admin-grpc-%d.sock", *miniAdminOptions.grpcPort))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniAdminOptions.grpcPort, fmt.Sprintf("/tmp/seaweedfs-admin-grpc-%d.sock", *miniAdminOptions.grpcPort))
 
 	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
 

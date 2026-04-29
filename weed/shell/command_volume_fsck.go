@@ -145,7 +145,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// create a temp folder
-	c.tempFolder, err = os.MkdirTemp(*tempPath, "sw_fsck")
+	c.tempFolder, err = os.MkdirTemp(util.ResolvePath(*tempPath), "sw_fsck")
 	if err != nil {
 		return fmt.Errorf("failed to create temp folder: %w", err)
 	}

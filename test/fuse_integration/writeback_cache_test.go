@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -791,18 +792,37 @@ func TestWritebackCacheStressSmallFiles(t *testing.T) {
 	wg.Wait()
 
 	writeDuration := time.Since(start)
+	// Stream to stderr so the line is visible even if the test hangs and the
+	// 45m suite alarm panics before t.Logf flushes its buffer.
+	fmt.Fprintf(os.Stderr, "TestWritebackCacheStressSmallFiles: wrote %d files in %v (%.0f files/sec)\n",
+		totalFiles, writeDuration, float64(totalFiles)/writeDuration.Seconds())
 	t.Logf("wrote %d files in %v (%.0f files/sec)",
 		totalFiles, writeDuration, float64(totalFiles)/writeDuration.Seconds())
 
 	require.Empty(t, writeErrors, "write errors: %v", writeErrors)
 	assert.Equal(t, totalFiles, len(records))
 
-	// Verify all files are eventually readable with correct content
+	// Verify all files are eventually readable with correct content.
+	// A whole-phase budget bounds total verify time so a stuck mount fails
+	// with diagnostics instead of being swallowed by the 45m suite alarm.
+	const verifyPhaseBudget = 10 * time.Minute
+	const perFileDeadline = 120 * time.Second
+	verifyStart := time.Now()
+	verifyPhaseDeadline := verifyStart.Add(verifyPhaseBudget)
 	var verifyErrors []error
-	for _, rec := range records {
-		deadline := time.Now().Add(120 * time.Second)
+	for i, rec := range records {
+		if time.Now().After(verifyPhaseDeadline) {
+			buf := make([]byte, 1<<20)
+			n := runtime.Stack(buf, true)
+			fmt.Fprintf(os.Stderr, "TestWritebackCacheStressSmallFiles: verify-phase budget %v exceeded at file %d/%d (%s); goroutine dump:\n%s\n",
+				verifyPhaseBudget, i, len(records), rec.path, buf[:n])
+			t.Fatalf("verify phase exceeded %v at file %d/%d (%s); accumulated errors: %v",
+				verifyPhaseBudget, i, len(records), rec.path, verifyErrors)
+		}
+		fileDeadline := time.Now().Add(perFileDeadline)
 		var lastErr error
-		for time.Now().Before(deadline) {
+		retries := 0
+		for time.Now().Before(fileDeadline) {
 			actual, err := os.ReadFile(rec.path)
 			if err == nil && bytes.Equal(rec.content, actual) {
 				lastErr = nil
@@ -813,13 +833,29 @@ func TestWritebackCacheStressSmallFiles(t *testing.T) {
 			} else {
 				lastErr = fmt.Errorf("content mismatch for %s: got %d bytes, want %d", rec.path, len(actual), len(rec.content))
 			}
+			retries++
+			// Surface the in-flight error every ~5s of polling so a stuck file
+			// is visible in real time, not only after the test exits.
+			if retries%10 == 0 {
+				fmt.Fprintf(os.Stderr, "TestWritebackCacheStressSmallFiles: file %d/%d %s still failing after %d retries: %v\n",
+					i, len(records), rec.path, retries, lastErr)
+			}
 			time.Sleep(500 * time.Millisecond)
 		}
 		if lastErr != nil {
+			fmt.Fprintf(os.Stderr, "TestWritebackCacheStressSmallFiles: file %d/%d %s gave up after %v: %v\n",
+				i, len(records), rec.path, perFileDeadline, lastErr)
 			verifyErrors = append(verifyErrors, lastErr)
+		}
+		// Periodic progress so the test isn't silent during the verify phase.
+		if (i+1)%100 == 0 {
+			fmt.Fprintf(os.Stderr, "TestWritebackCacheStressSmallFiles: verified %d/%d (elapsed %v, %d errors)\n",
+				i+1, len(records), time.Since(verifyStart), len(verifyErrors))
 		}
 	}
 	require.Empty(t, verifyErrors, "verification errors after stress test: %v", verifyErrors)
 
+	fmt.Fprintf(os.Stderr, "TestWritebackCacheStressSmallFiles: all %d files verified in %v\n",
+		totalFiles, time.Since(verifyStart))
 	t.Logf("all %d files verified successfully", totalFiles)
 }

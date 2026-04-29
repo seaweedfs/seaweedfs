@@ -68,7 +68,7 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 								for _, filer := range data.Filers {
 									<tr>
 										<td>
-											<a href={ templ.SafeURL(fmt.Sprintf("http://%s", filer.Address)) } target="_blank" class="text-decoration-none">
+											<a href={ templ.SafeURL(fmt.Sprintf("//%s", filer.Address)) } target="_blank" class="text-decoration-none">
 												{ filer.Address }
 												<i class="fas fa-external-link-alt ms-1 text-muted"></i>
 											</a>

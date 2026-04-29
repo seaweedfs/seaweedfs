@@ -78,6 +78,41 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
+	// Evict members whose session has expired before processing this join.
+	// The cleanup goroutine runs every 30s, but session timeouts can be as
+	// short as 6s — so a lost LeaveGroup or an ungraceful disconnect can leave
+	// a phantom member in the group long enough for the next rejoin to land
+	// in a stale composition. Sweeping here forces the new join into a clean
+	// view of the group and unblocks fast restart-and-rejoin patterns
+	// (TestOffsetManagement/ConsumerGroupResumption was burning all 5
+	// test-level retries because the dead previous member kept it from
+	// becoming leader / making progress).
+	if expired := h.groupCoordinator.EvictExpiredMembersLocked(group); len(expired) > 0 {
+		glog.V(1).Infof("[JoinGroup] evicted %d expired member(s) from group %s on rejoin: %v",
+			len(expired), request.GroupID, expired)
+		h.updateGroupSubscription(group)
+		if len(group.Members) == 0 {
+			// Mark the group Empty without bumping generation — the
+			// Empty/Stable case in the state-machine switch below will do the
+			// bump as part of this new member joining.
+			group.State = consumer.GroupStateEmpty
+			group.Leader = ""
+		} else {
+			// Surviving members must rebalance to drop the dead member's
+			// partitions. Bump here so the PreparingRebalance branch in the
+			// switch below is a no-op (avoids a double generation bump) and
+			// clear cached assignments so the non-leader SyncGroup path
+			// returns REBALANCE_IN_PROGRESS instead of serving stale
+			// pre-eviction partitions to a rejoiner.
+			group.State = consumer.GroupStatePreparingRebalance
+			group.Generation++
+			for _, m := range group.Members {
+				m.State = consumer.MemberStatePending
+				m.Assignment = nil
+			}
+		}
+	}
+
 	// Handle member ID logic with static membership support
 	var memberID string
 	var isNewMember bool

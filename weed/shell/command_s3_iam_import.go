@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -56,7 +57,7 @@ func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("this overwrites the entire IAM configuration; use -apply to confirm")
 	}
 
-	data, err := os.ReadFile(*file)
+	data, err := os.ReadFile(util.ResolvePath(*file))
 	if err != nil {
 		return fmt.Errorf("read file: %w", err)
 	}

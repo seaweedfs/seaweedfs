@@ -146,9 +146,9 @@ impl NeedleMapMetric {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NeedleMapKind {
     InMemory,
-    LevelDb,
-    LevelDbMedium,
-    LevelDbLarge,
+    Redb,
+    RedbMedium,
+    RedbLarge,
 }
 
 // ============================================================================

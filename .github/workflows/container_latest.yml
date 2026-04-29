@@ -337,7 +337,7 @@ jobs:
       - name: Trivy report (published image)
         if: needs.setup.outputs.publish == 'true'
         # Pin to SHA - mutable tags were compromised (GHSA-69fq-xp46-6x23)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           # Scan amd64 only - OS packages are identical across architectures
@@ -354,7 +354,7 @@ jobs:
           exit-code: '0'
       - name: Trivy report (local tarball)
         if: needs.setup.outputs.publish != 'true'
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           input: /tmp/seaweedfs${{ steps.config.outputs.tag_suffix }}-amd64.tar
           scanners: vuln
@@ -374,7 +374,7 @@ jobs:
         if: needs.setup.outputs.publish == 'true'
         # Gate only on fixable high/critical vulnerabilities. Non-fixable
         # findings are still visible in the SARIF upload above.
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/chrislusf/seaweedfs:${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}${{ steps.config.outputs.tag_suffix }}-amd64
@@ -387,7 +387,7 @@ jobs:
           skip-setup-trivy: true
       - name: Trivy gate (local tarball)
         if: needs.setup.outputs.publish != 'true'
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           input: /tmp/seaweedfs${{ steps.config.outputs.tag_suffix }}-amd64.tar
           scanners: vuln
