@@ -714,6 +714,36 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// Fetch the destination upload entry to determine whether the multipart
+	// upload was created with SSE configured. If either side has SSE, the
+	// fast raw-byte chunk copy below would leave destination chunks tagged
+	// inconsistently with the bytes on disk and trigger #8908's deterministic
+	// byte corruption on GET. Re-encrypt the source bytes in that case so
+	// destination chunks come out properly tagged.
+	uploadEntry, uploadEntryErr := s3a.getEntry(s3a.genUploadsFolder(dstBucket), uploadID)
+	if uploadEntryErr != nil && !errors.Is(uploadEntryErr, filer_pb.ErrNotFound) {
+		glog.Errorf("CopyObjectPartHandler: failed to fetch upload entry for %s/%s: %v", dstBucket, uploadID, uploadEntryErr)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) {
+		etag, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
+		writeSuccessResponseXML(w, r, CopyPartResult{
+			ETag:         etag,
+			LastModified: t,
+		})
+		return
+	}
+
+	// Fast path: neither source nor destination has SSE. Raw byte copy is
+	// safe, since the bytes on disk are plaintext on both sides.
+
 	// Create new entry for the part
 	// Calculate part size, avoiding underflow for invalid ranges
 	partSize := uint64(0)
