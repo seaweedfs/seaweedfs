@@ -776,7 +776,7 @@ impl Volume {
     fn load_index(&mut self) -> Result<(), VolumeError> {
         let use_redb = matches!(
             self.needle_map_kind,
-            NeedleMapKind::LevelDb | NeedleMapKind::LevelDbMedium | NeedleMapKind::LevelDbLarge
+            NeedleMapKind::Redb | NeedleMapKind::RedbMedium | NeedleMapKind::RedbLarge
         );
 
         let idx_path = self.file_name(".idx");

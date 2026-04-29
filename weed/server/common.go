@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -37,6 +39,35 @@ var startTime = time.Now()
 var writePool = sync.Pool{New: func() interface{} {
 	return bufio.NewWriterSize(nil, 128*1024)
 },
+}
+
+// ErrCacheNotReady signals that a remote-only object's local cache is still
+// filling. Callers should map it to 503 + Retry-After so SDKs back off and retry.
+var ErrCacheNotReady = errors.New("remote object not cached yet")
+
+// writePrepareWriteFnErr writes an HTTP response for an error from
+// prepareWriteFn, before any 2xx headers have been written. Client cancels are
+// silent; filer_pb.ErrNotFound becomes 404; ErrCacheNotReady becomes 503 +
+// Retry-After; everything else is 500. Strips headers that described the
+// success body (Content-Length / Content-Range / Content-Disposition / ETag /
+// Last-Modified) so they don't get attached to the error response.
+func writePrepareWriteFnErr(w http.ResponseWriter, err error) {
+	for _, h := range []string{"Content-Length", "Content-Range", "Content-Disposition", "ETag", "Last-Modified"} {
+		w.Header().Del(h)
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		glog.V(3).Infof("ProcessRangeRequest: client disconnected: %v", err)
+	case errors.Is(err, filer_pb.ErrNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, ErrCacheNotReady):
+		glog.V(1).Infof("ProcessRangeRequest: cache not ready, returning 503: %v", err)
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	default:
+		glog.Errorf("ProcessRangeRequest: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func init() {
@@ -290,9 +321,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		writeFn, err := prepareWriteFn(0, totalSize)
 		if err != nil {
-			glog.Errorf("ProcessRangeRequest: %v", err)
-			w.Header().Del("Content-Length")
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writePrepareWriteFnErr(w, err)
 			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
 		if err = writeFn(bufferedWriter); err != nil {
@@ -340,9 +369,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 
 		writeFn, err := prepareWriteFn(ra.start, ra.length)
 		if err != nil {
-			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
-			w.Header().Del("Content-Length")
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writePrepareWriteFnErr(w, err)
 			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
 		w.WriteHeader(http.StatusPartialContent)
@@ -365,9 +392,8 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		}
 		writeFn, err := prepareWriteFn(ra.start, ra.length)
 		if err != nil {
-			glog.Errorf("ProcessRangeRequest range[%d] err: %v", i, err)
-			http.Error(w, "Internal Error", http.StatusInternalServerError)
-			return fmt.Errorf("ProcessRangeRequest range[%d] err: %v", i, err)
+			writePrepareWriteFnErr(w, err)
+			return fmt.Errorf("ProcessRangeRequest range[%d]: %w", i, err)
 		}
 		writeFnByRange[i] = writeFn
 	}

@@ -572,8 +572,12 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				}
 
 				// disk_id=0 means "unset" (protobuf default), so auto-select
-				// mirrors VolumeEcShardsCopy: prefer a disk already holding
-				// this volume's shards, then any HDD, then any disk.
+				// using the same primitive as VolumeEcShardsCopy: prefer a
+				// disk that has the EC volume mounted, then a disk that owns
+				// the .ecx on disk (the volume hasn't been mounted yet —
+				// relevant when shards stream in mid-rebuild before any
+				// mount has happened; see #9212), then any HDD, then any
+				// disk.
 				var targetLocation *storage.DiskLocation
 				if fileInfo.DiskId > 0 {
 					if fileInfo.DiskId >= uint32(len(vs.store.Locations)) {
@@ -584,20 +588,10 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 					}
 					targetLocation = vs.store.Locations[fileInfo.DiskId]
 				} else {
-					targetLocation = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
-						_, found := loc.FindEcVolume(needle.VolumeId(fileInfo.VolumeId))
-						return found
-					})
-					if targetLocation == nil {
-						targetLocation = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
-							return loc.DiskType == types.HardDriveType
-						})
-					}
-					if targetLocation == nil {
-						targetLocation = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
-							return true
-						})
-					}
+					// Pass the build's default data-shard count for the helper's
+					// free-slot maths; it's a parameter so custom-ratio builds
+					// (e.g. enterprise) can swap it without touching this file.
+					targetLocation = vs.store.FindEcShardTargetLocation(fileInfo.Collection, needle.VolumeId(fileInfo.VolumeId), erasure_coding.DataShardsCount)
 				}
 				if targetLocation == nil {
 					glog.Errorf("ReceiveFile: no storage location available")

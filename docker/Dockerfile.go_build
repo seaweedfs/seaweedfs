@@ -89,3 +89,8 @@ WORKDIR /data
 
 # Entrypoint will handle permission fixes and user switching
 ENTRYPOINT ["/entrypoint.sh"]
+# Default to a complete single-process cluster (master+volume+filer+S3+admin)
+# so the image is usable out of the box — including in environments like
+# GitHub Actions service containers that cannot pass arguments to the entrypoint.
+# Override with any other subcommand at `docker run` / compose time.
+CMD ["mini", "-dir=/data"]

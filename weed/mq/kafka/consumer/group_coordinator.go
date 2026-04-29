@@ -297,6 +297,36 @@ func (gc *GroupCoordinator) cleanupRoutine() {
 	}
 }
 
+// EvictExpiredMembersLocked removes members whose session has expired and
+// returns their IDs. The caller is responsible for any group-state transition
+// that follows (e.g. moving the group to GroupStateEmpty when no members
+// remain, or kicking off a rebalance among the survivors). The caller must
+// hold group.Mu.
+func (gc *GroupCoordinator) EvictExpiredMembersLocked(group *ConsumerGroup) []string {
+	now := time.Now()
+	var expired []string
+	for memberID, member := range group.Members {
+		// Defensive: a SessionTimeout of zero means the JoinGroup payload
+		// hasn't populated it yet, not "expired immediately".
+		if member.SessionTimeout <= 0 {
+			continue
+		}
+		sessionDuration := time.Duration(member.SessionTimeout) * time.Millisecond
+		if now.Sub(member.LastHeartbeat) <= sessionDuration {
+			continue
+		}
+		if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
+			delete(group.StaticMembers, *member.GroupInstanceID)
+		}
+		delete(group.Members, memberID)
+		if group.Leader == memberID {
+			group.Leader = ""
+		}
+		expired = append(expired, memberID)
+	}
+	return expired
+}
+
 // performCleanup removes expired members and empty groups
 func (gc *GroupCoordinator) performCleanup() {
 	now := time.Now()
@@ -310,21 +340,38 @@ func (gc *GroupCoordinator) performCleanup() {
 	for groupID, group := range gc.groups {
 		group.Mu.Lock()
 
-		// Check for expired members (session timeout)
-		expiredMembers := make([]string, 0)
-		for memberID, member := range group.Members {
-			sessionDuration := time.Duration(member.SessionTimeout) * time.Millisecond
-			timeSinceHeartbeat := now.Sub(member.LastHeartbeat)
-			if timeSinceHeartbeat > sessionDuration {
-				expiredMembers = append(expiredMembers, memberID)
-			}
-		}
+		// Evict expired members (session timeout). EvictExpiredMembersLocked
+		// also handles static-member unregistration and clears group.Leader if
+		// the leader was evicted.
+		expired := gc.EvictExpiredMembersLocked(group)
 
-		// Remove expired members
-		for _, memberID := range expiredMembers {
-			delete(group.Members, memberID)
-			if group.Leader == memberID {
-				group.Leader = ""
+		// If there are surviving members, mirror the join-time eviction path:
+		// move the group to PreparingRebalance, bump the generation, clear
+		// cached assignments, and select a new leader if one was evicted —
+		// otherwise the partitions owned by the expired member would stay
+		// assigned to that ghost slot until some unrelated join/leave bumped
+		// the group out of Stable. The join-time path doesn't need to pick a
+		// leader because it has an incoming member; here we have to.
+		if len(expired) > 0 && len(group.Members) > 0 {
+			if group.Leader == "" {
+				for memberID := range group.Members {
+					group.Leader = memberID
+					break
+				}
+			}
+			group.State = GroupStatePreparingRebalance
+			group.Generation++
+			for _, m := range group.Members {
+				m.State = MemberStatePending
+				m.Assignment = nil
+			}
+			// Rebuild subscribed topics from remaining members so a topic
+			// only the evicted member subscribed to is dropped.
+			group.SubscribedTopics = make(map[string]bool)
+			for _, m := range group.Members {
+				for _, topic := range m.Subscription {
+					group.SubscribedTopics[topic] = true
+				}
 			}
 		}
 

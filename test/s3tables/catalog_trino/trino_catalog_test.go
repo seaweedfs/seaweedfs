@@ -406,12 +406,19 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 		nestedLine = "\niceberg.rest-catalog.nested-namespace-enabled=true"
 	}
 
+	uniqueTableLocation := "true"
+	if o.deterministicTableLocation {
+		// Skip UUID suffixing in TrinoRestCatalog.createLocationForTable so each
+		// table lands at the deterministic <namespace-location>/<table> path.
+		uniqueTableLocation = "false"
+	}
+
 	config := fmt.Sprintf(`connector.name=iceberg
 iceberg.catalog.type=rest
 iceberg.rest-catalog.uri=http://host.docker.internal:%d
 iceberg.rest-catalog.warehouse=s3://%s%s
 iceberg.file-format=PARQUET
-iceberg.unique-table-location=true
+iceberg.unique-table-location=%s
 
 # S3 storage config
 fs.native-s3.enabled=true
@@ -424,7 +431,7 @@ s3.region=us-west-2
 
 # REST catalog authentication
 iceberg.rest-catalog.security=SIGV4
-`, env.icebergPort, warehouseBucket, nestedLine, env.s3Port, env.accessKey, env.secretKey)
+`, env.icebergPort, warehouseBucket, nestedLine, uniqueTableLocation, env.s3Port, env.accessKey, env.secretKey)
 
 	if err := os.WriteFile(filepath.Join(configDir, "iceberg.properties"), []byte(config), 0644); err != nil {
 		t.Fatalf("Failed to write Trino config: %v", err)
@@ -434,11 +441,19 @@ iceberg.rest-catalog.security=SIGV4
 }
 
 type trinoConfigOptions struct {
-	nestedNamespace bool
+	nestedNamespace            bool
+	deterministicTableLocation bool
 }
 
 func withNestedNamespace() func(*trinoConfigOptions) {
 	return func(o *trinoConfigOptions) { o.nestedNamespace = true }
+}
+
+// withDeterministicTableLocation flips Trino's iceberg.unique-table-location
+// flag to false so each table's <location> is the deterministic
+// <namespace-location>/<tableName> path instead of a UUID-suffixed one.
+func withDeterministicTableLocation() func(*trinoConfigOptions) {
+	return func(o *trinoConfigOptions) { o.deterministicTableLocation = true }
 }
 
 func (env *TestEnvironment) startTrinoContainer(t *testing.T, configDir string) {

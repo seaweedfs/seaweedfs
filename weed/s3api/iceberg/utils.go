@@ -169,3 +169,38 @@ func normalizeNamespaceProperties(properties map[string]string) map[string]strin
 	}
 	return properties
 }
+
+// namespaceLocationProperty is the well-known Iceberg key used to advertise a
+// default base path for tables created in a namespace.
+const namespaceLocationProperty = "location"
+
+// defaultNamespaceLocation returns the s3 path under which tables in the
+// namespace should be stored when the namespace itself does not carry an
+// explicit "location" property. The flattened namespace path mirrors the on-
+// disk layout used by handleCreateTable so a deferred client-side commit ends
+// up at the same place a server-computed one would.
+func defaultNamespaceLocation(bucket string, namespace []string) string {
+	if bucket == "" || len(namespace) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("s3://%s/%s", bucket, flattenNamespacePath(namespace))
+}
+
+// withDefaultNamespaceLocation populates the Iceberg "location" property on a
+// namespace response when the storage layer does not carry one. Trino's REST
+// catalog falls back to an eager createTable code path when the namespace
+// has no location, which races our metadata write against Trino's emptiness
+// check and surfaces as a "Cannot create a table on a non-empty location"
+// error on the very first CREATE TABLE. Advertising a default location lets
+// Trino take the deferred-transaction path and pick a unique per-table path.
+// See issue #9074.
+func withDefaultNamespaceLocation(properties map[string]string, bucket string, namespace []string) map[string]string {
+	properties = normalizeNamespaceProperties(properties)
+	if _, ok := properties[namespaceLocationProperty]; ok {
+		return properties
+	}
+	if def := defaultNamespaceLocation(bucket, namespace); def != "" {
+		properties[namespaceLocationProperty] = def
+	}
+	return properties
+}

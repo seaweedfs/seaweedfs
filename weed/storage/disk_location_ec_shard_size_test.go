@@ -128,7 +128,7 @@ func TestCalculateExpectedShardSize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualShardSize := calculateExpectedShardSize(tt.datFileSize)
+			actualShardSize := calculateExpectedShardSize(tt.datFileSize, dataShards)
 
 			if actualShardSize != tt.expectedShardSize {
 				t.Errorf("Expected shard size %d, got %d. %s",
@@ -143,6 +143,7 @@ func TestCalculateExpectedShardSize(t *testing.T) {
 
 // TestShardSizeValidationScenarios tests realistic scenarios
 func TestShardSizeValidationScenarios(t *testing.T) {
+	const dataShards = 10
 	scenarios := []struct {
 		name            string
 		datFileSize     int64
@@ -183,7 +184,7 @@ func TestShardSizeValidationScenarios(t *testing.T) {
 
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			expectedSize := calculateExpectedShardSize(scenario.datFileSize)
+			expectedSize := calculateExpectedShardSize(scenario.datFileSize, dataShards)
 			isValid := scenario.actualShardSize == expectedSize
 
 			if isValid != scenario.shouldBeValid {

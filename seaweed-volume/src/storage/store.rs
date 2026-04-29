@@ -84,6 +84,17 @@ impl Store {
         }
 
         self.locations.push(loc);
+
+        // After every disk has finished its per-disk EC scan, sweep
+        // the store for shards that live on a disk without local index
+        // files and load them by reaching across to a sibling disk's
+        // .ecx / .ecj / .vif (seaweedfs/seaweedfs#9212 / #9244).
+        // ec.balance / ec.rebuild can move shards onto a destination
+        // node's second disk while leaving the index on the disk that
+        // already held the volume; without this pass those orphan
+        // shards stay invisible to the master.
+        self.reconcile_ec_shards_across_disks();
+
         Ok(())
     }
 
@@ -95,6 +106,7 @@ impl Store {
                 tracing::error!("load_new_volumes error in {}: {}", loc.directory, e);
             }
         }
+        self.reconcile_ec_shards_across_disks();
     }
 
     // ---- Volume lookup ----
@@ -195,6 +207,72 @@ impl Store {
             }
         }
         best.map(|(i, _)| i)
+    }
+
+    /// Returns the index of the disk that should receive a new EC
+    /// shard / index file for `(collection, vid)`. Selection order:
+    ///
+    /// 1. a disk that already has the EC volume mounted (in-memory state),
+    /// 2. a disk that owns the `.ecx` file on disk (volume not yet mounted),
+    /// 3. any HDD with free space,
+    /// 4. any disk with free space.
+    ///
+    /// Step 2 is the missing primitive that pinned subsequent shards to
+    /// the first-shard disk during `ec.rebuild`: rebuild only sets
+    /// `CopyEcxFile=true` on the first shard, then relies on auto-select
+    /// to land later shards on the same disk. Without an on-disk check,
+    /// `has_ec_volume` returns false (no mount yet) and the fallback
+    /// picks "any HDD with free space" — which can split shards from
+    /// their index files across disks of the same node and lose them at
+    /// startup. See seaweedfs/seaweedfs#9212.
+    ///
+    /// `data_shard_count` is taken as a parameter rather than read from
+    /// `DATA_SHARDS_COUNT` so custom-ratio builds can swap the default
+    /// without touching this helper.
+    ///
+    /// Single pass over `self.locations` with tier scoring; the
+    /// highest-tier disk wins, ties broken by free shard-slot count.
+    /// Mirrors `Store.FindEcShardTargetLocation` in
+    /// `weed/storage/store_ec.go`.
+    pub fn find_ec_shard_target_location(
+        &self,
+        collection: &str,
+        vid: VolumeId,
+        data_shard_count: u32,
+    ) -> Option<usize> {
+        const TIER_ANY_DISK: u8 = 1;
+        const TIER_HDD: u8 = 2;
+        const TIER_ECX_ON_DISK: u8 = 3;
+        const TIER_MOUNTED: u8 = 4;
+
+        let mut best: Option<(usize, u8, i64)> = None;
+        for (i, loc) in self.locations.iter().enumerate() {
+            if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                continue;
+            }
+            let free = ec_free_shard_count(loc, data_shard_count);
+            if free <= 0 {
+                continue;
+            }
+            let mut tier = TIER_ANY_DISK;
+            if loc.disk_type == DiskType::HardDrive {
+                tier = TIER_HDD;
+            }
+            if loc.has_ecx_file_on_disk(collection, vid) {
+                tier = TIER_ECX_ON_DISK;
+            }
+            if loc.has_ec_volume(vid) {
+                tier = TIER_MOUNTED;
+            }
+            let better = match best {
+                None => true,
+                Some((_, b_tier, b_free)) => tier > b_tier || (tier == b_tier && free > b_free),
+            };
+            if better {
+                best = Some((i, tier, free));
+            }
+        }
+        best.map(|(i, _, _)| i)
     }
 
     /// Create a new volume, placing it on the location with the most free space.
@@ -492,7 +570,8 @@ impl Store {
                 let vol_count = loc.volumes_len() as i32;
                 let loc_ec_shards = loc.ec_shard_count();
                 let ec_equivalent = ((loc_ec_shards
-                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT
+                    - 1)
                     / crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
                     as i32;
                 let mut max_count = vol_count + ec_equivalent;
@@ -576,11 +655,18 @@ impl Store {
     }
 
     /// Unmount EC shards for a volume (batch).
+    ///
+    /// Iterates every location that has an EcVolume for `vid` and
+    /// asks it to unmount whatever subset of `shard_ids` it actually
+    /// has — required for cross-disk reconciled volumes where the
+    /// requested shards may legitimately live on different disks of
+    /// the same store (#9252). DiskLocation::unmount_ec_shards
+    /// already skips shards that aren't mounted, so this is safe to
+    /// fan out blindly.
     pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
         for loc in &mut self.locations {
             if loc.has_ec_volume(vid) {
                 loc.unmount_ec_shards(vid, shard_ids);
-                return;
             }
         }
     }
@@ -588,10 +674,12 @@ impl Store {
     /// Unmount a single EC shard, searching all locations.
     /// Matches Go's Store.UnmountEcShards which unmounts one shard at a time.
     pub fn unmount_ec_shard(&mut self, vid: VolumeId, shard_id: u32) -> Result<(), VolumeError> {
+        // Walk all locations rather than stopping at the first with the
+        // vid — split-disk reconciled volumes can have the same vid on
+        // multiple disks, with the target shard on any of them.
         for loc in &mut self.locations {
             if loc.has_ec_volume(vid) {
                 loc.unmount_ec_shards(vid, &[shard_id]);
-                return Ok(());
             }
         }
         // Go returns nil if shard not found (no error)
@@ -621,6 +709,75 @@ impl Store {
     /// Check if any location has an EC volume.
     pub fn has_ec_volume(&self, vid: VolumeId) -> bool {
         self.locations.iter().any(|loc| loc.has_ec_volume(vid))
+    }
+
+    /// Returns the index of the disk location that has `(vid, shard_id)`
+    /// mounted, if any. Mirrors Go's `Store.findEcShard` and is the
+    /// right primitive for read/unmount/delete operations on a single
+    /// shard, since reconciliation can mount the same `vid` on multiple
+    /// disks (each holding a disjoint subset of the shards). Without
+    /// this, callers using `find_ec_volume(vid)` would only see the
+    /// first disk and miss shards that live on a sibling.
+    pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: u32) -> Option<usize> {
+        for (i, loc) in self.locations.iter().enumerate() {
+            if let Some(ecv) = loc.find_ec_volume(vid) {
+                if ecv.has_shard(shard_id as u8) {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Like [`Self::find_ec_shard_location`] but returns the EcVolume
+    /// reference directly. Borrows the store immutably for the
+    /// EcVolume's lifetime.
+    pub fn find_ec_volume_with_shard(
+        &self,
+        vid: VolumeId,
+        shard_id: u32,
+    ) -> Option<&EcVolume> {
+        for loc in &self.locations {
+            if let Some(ecv) = loc.find_ec_volume(vid) {
+                if ecv.has_shard(shard_id as u8) {
+                    return Some(ecv);
+                }
+            }
+        }
+        None
+    }
+
+    /// Aggregate the data dir of each mounted shard for `vid` across
+    /// all locations. Returns the EcVolume to use for metadata
+    /// (`.ecx`, `dir_idx`, etc — any per-disk EcVolume for this vid
+    /// will do, since they all open the same `.ecx`) and a vector of
+    /// per-shard data dirs (`None` when the shard isn't mounted on
+    /// any disk).
+    ///
+    /// Mirrors Go's `Store.CollectEcShards` in
+    /// `weed/storage/store_ec.go`. The decoder needs per-shard paths
+    /// to support cross-disk reconciled volumes whose shards are
+    /// split across data dirs.
+    pub fn collect_ec_shard_dirs(
+        &self,
+        vid: VolumeId,
+        max_shard_count: usize,
+    ) -> Option<(&EcVolume, Vec<Option<String>>)> {
+        let mut found_vol: Option<&EcVolume> = None;
+        let mut dirs: Vec<Option<String>> = vec![None; max_shard_count];
+        for loc in &self.locations {
+            if let Some(ecv) = loc.find_ec_volume(vid) {
+                if found_vol.is_none() {
+                    found_vol = Some(ecv);
+                }
+                for shard_id in 0..max_shard_count {
+                    if dirs[shard_id].is_none() && ecv.has_shard(shard_id as u8) {
+                        dirs[shard_id] = Some(loc.directory.clone());
+                    }
+                }
+            }
+        }
+        found_vol.map(|v| (v, dirs))
     }
 
     pub fn delete_expired_ec_volumes(
@@ -919,6 +1076,48 @@ fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeEr
     Ok(())
 }
 
+/// Free EC shard capacity of `loc`, expressed in shard slots (not
+/// volume-equivalent slots). `find_free_location_predicate` does similar
+/// math but divides by `data_shard_count` at the end. That truncation can
+/// exclude a disk that still has room for several individual shards
+/// (e.g. `MaxVolumeCount=1`, `EcShardCount=1`, `data_shard_count=10` →
+/// reports 0 despite 9 free shard slots), which would re-route subsequent
+/// shards off the `.ecx`-owning disk and re-introduce the orphan-shard
+/// layout this helper is meant to prevent (seaweedfs/seaweedfs#9212).
+///
+/// `MaxVolumeCount == 0` is the "unlimited" sentinel honoured elsewhere
+/// in the store; report a synthetic large free count decremented by
+/// current usage so unlimited disks are eligible and tie-breaks still
+/// prefer the less-loaded one.
+///
+/// Mirrors `ecFreeShardCount` in `weed/storage/store_ec.go`.
+fn ec_free_shard_count(loc: &DiskLocation, data_shard_count: u32) -> i64 {
+    if data_shard_count == 0 {
+        return 0;
+    }
+    let dsc = data_shard_count as i64;
+    let max = loc.max_volume_count.load(Ordering::Relaxed) as i64;
+    if max <= 0 {
+        // Synthetic "unlimited" capacity. Use a large but
+        // well-below-overflow base (1 << 60 ≈ 1.15e18) and saturating
+        // arithmetic so even pathological usage never wraps and
+        // tie-breaks among unlimited disks still meaningfully prefer
+        // the less-loaded one. Clamp to ≥ 1 so the disk stays eligible
+        // for placement no matter how loaded it is.
+        const UNLIMITED_FREE: i64 = 1 << 60;
+        let used = (loc.volumes_len() as i64)
+            .saturating_mul(dsc)
+            .saturating_add(loc.ec_shard_count() as i64);
+        return UNLIMITED_FREE.saturating_sub(used).max(1);
+    }
+    let mut free = (max - loc.volumes_len() as i64) * dsc;
+    free -= loc.ec_shard_count() as i64;
+    if free < 0 {
+        return 0;
+    }
+    free
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -927,6 +1126,7 @@ fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeEr
 mod tests {
     use super::*;
     use crate::storage::needle::needle::Needle;
+    use crate::storage::volume::volume_file_name;
     use tempfile::TempDir;
 
     fn make_test_store(dirs: &[&str]) -> Store {
@@ -1299,5 +1499,152 @@ mod tests {
         };
         let err = store.read_volume_needle(VolumeId(99), &mut n);
         assert!(matches!(err, Err(VolumeError::NotFound)));
+    }
+
+    /// Build a Store with N HDD disk locations under a single TempDir.
+    /// Returns the store and the TempDir guard so callers keep the dirs
+    /// alive for the test's lifetime.
+    fn make_ec_target_test_store(numdirs: usize) -> (Store, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for i in 0..numdirs {
+            let path = tmp.path().join(format!("data{}", i));
+            std::fs::create_dir_all(&path).unwrap();
+            store
+                .add_location(
+                    path.to_str().unwrap(),
+                    path.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        (store, tmp)
+    }
+
+    /// Reproduces the placement half of seaweedfs/seaweedfs#9212. After
+    /// `ec.rebuild`'s first VolumeEcShardsCopy lands `.ecx` on disk N,
+    /// subsequent shards arrive with `CopyEcxFile=false` and rely on
+    /// auto-select. Without an on-disk check, `has_ec_volume` returns
+    /// false (no mount yet) and the fallback picks "any HDD with free
+    /// space" — splitting shards from their index files across disks.
+    /// `find_ec_shard_target_location` must pin to the `.ecx`-owning
+    /// disk via the on-disk check.
+    #[test]
+    fn test_find_ec_shard_target_location_pins_to_ecx_on_disk() {
+        let (store, _tmp) = make_ec_target_test_store(3);
+        let collection = "grafana-loki";
+        let vid = VolumeId(1093);
+
+        // Drop a sealed .ecx onto disk 2. Nothing is mounted yet — this
+        // is the state right after the first VolumeEcShardsCopy with
+        // CopyEcxFile=true and before any VolumeEcShardsMount has run.
+        let base = volume_file_name(&store.locations[2].idx_directory, collection, vid);
+        std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
+
+        let got = store.find_ec_shard_target_location(collection, vid, 10);
+        assert_eq!(
+            got,
+            Some(2),
+            "placement leaked off the .ecx-owning disk; got {:?}",
+            got,
+        );
+    }
+
+    /// An already-mounted EC volume on disk 1 must win over a stray
+    /// `.ecx` on disk 2. Protects the post-startup steady state from
+    /// being perturbed by leftover index files from a prior failed move.
+    #[test]
+    fn test_find_ec_shard_target_location_prefers_mounted_over_ecx() {
+        let (mut store, _tmp) = make_ec_target_test_store(3);
+        let collection = "grafana-loki";
+        let vid = VolumeId(2222);
+
+        // Mount an EC shard on disk 1 so has_ec_volume returns true.
+        std::fs::write(
+            format!("{}/{}_{}.ec00", store.locations[1].directory, collection, vid.0),
+            b"shard data",
+        )
+        .unwrap();
+        store.locations[1]
+            .mount_ec_shards(vid, collection, &[0])
+            .unwrap();
+
+        // Stray .ecx on disk 2 must not win.
+        let base = volume_file_name(&store.locations[2].idx_directory, collection, vid);
+        std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
+
+        let got = store.find_ec_shard_target_location(collection, vid, 10);
+        assert_eq!(got, Some(1), "expected the mounted disk to win; got {:?}", got);
+    }
+
+    /// Cold-volume case: no mount, no `.ecx` anywhere on this server.
+    /// Selection should still fall through to an HDD fallback.
+    #[test]
+    fn test_find_ec_shard_target_location_falls_through_to_hdd_when_nothing_matches() {
+        let (store, _tmp) = make_ec_target_test_store(2);
+        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(3333), 10);
+        assert!(got.is_some(), "expected an HDD fallback");
+        assert_eq!(store.locations[got.unwrap()].disk_type, DiskType::HardDrive);
+    }
+
+    /// `MaxVolumeCount=0` is the "unlimited disk" sentinel. The previous
+    /// formula returned a negative free count for unlimited disks,
+    /// making placement skip them entirely. The unlimited branch in
+    /// `ec_free_shard_count` must report a synthetic large free count.
+    #[test]
+    fn test_find_ec_shard_target_location_honours_unlimited_disk() {
+        let (store, _tmp) = make_ec_target_test_store(1);
+        store.locations[0]
+            .max_volume_count
+            .store(0, Ordering::Relaxed);
+
+        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(4444), 10);
+        assert_eq!(
+            got,
+            Some(0),
+            "expected the only (unlimited) disk to be picked",
+        );
+    }
+
+    /// Truncation hazard: with `MaxVolumeCount=1, EcShardCount=1,
+    /// data_shard_count=10`, the old formula `(1*10 - 1) / 10 = 0`
+    /// would have rounded the disk to "full" and routed subsequent
+    /// shards elsewhere — the orphan-shard layout this PR exists to
+    /// prevent. Accounting in shard slots fixes it.
+    #[test]
+    fn test_find_ec_shard_target_location_tight_provisioning_keeps_ecx_disk() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        store.locations[0]
+            .max_volume_count
+            .store(1, Ordering::Relaxed);
+        store.locations[1]
+            .max_volume_count
+            .store(1, Ordering::Relaxed);
+
+        let collection = "grafana-loki";
+        let vid = VolumeId(5555);
+
+        // Seed disk 1 with one EC shard so it owns .ecx and has 9
+        // free shard slots remaining; the old formula would have
+        // rounded that to 0.
+        std::fs::write(
+            format!("{}/{}_{}.ec00", store.locations[1].directory, collection, vid.0),
+            b"shard data",
+        )
+        .unwrap();
+        store.locations[1]
+            .mount_ec_shards(vid, collection, &[0])
+            .unwrap();
+
+        let got = store.find_ec_shard_target_location(collection, vid, 10);
+        assert_eq!(
+            got,
+            Some(1),
+            "expected the .ecx-owning disk (1 shard placed, 9 free shard slots) to be picked; got {:?}",
+            got,
+        );
     }
 }

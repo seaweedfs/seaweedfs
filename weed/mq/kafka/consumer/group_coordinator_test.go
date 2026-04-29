@@ -228,3 +228,170 @@ func TestGroupCoordinator_GenerateMemberID(t *testing.T) {
 		t.Errorf("Expected member ID to start with 'consumer-', got: %s", id1)
 	}
 }
+
+// TestGroupCoordinator_EvictExpiredMembersLocked covers the on-rejoin eviction
+// path: JoinGroup calls this helper with the group lock held to drop phantom
+// members whose session has expired but whose LeaveGroup never landed (the
+// 30s cleanup tick is too coarse for fast consumer restarts with a 6s session
+// timeout — see TestOffsetManagement/ConsumerGroupResumption).
+func TestGroupCoordinator_EvictExpiredMembersLocked(t *testing.T) {
+	gc := NewGroupCoordinator()
+	defer gc.Close()
+
+	group := gc.GetOrCreateGroup("test-group")
+
+	expiredLeader := &GroupMember{
+		ID:             "expired-leader",
+		SessionTimeout: 6000,                              // 6s
+		LastHeartbeat:  time.Now().Add(-10 * time.Second), // 10s ago: expired
+		State:          MemberStateStable,
+	}
+	staticInstance := "static-1"
+	expiredStatic := &GroupMember{
+		ID:              "expired-static",
+		SessionTimeout:  6000,
+		LastHeartbeat:   time.Now().Add(-30 * time.Second),
+		GroupInstanceID: &staticInstance,
+		State:           MemberStateStable,
+	}
+	healthyMember := &GroupMember{
+		ID:             "healthy-member",
+		SessionTimeout: 30000,
+		LastHeartbeat:  time.Now(),
+		State:          MemberStateStable,
+	}
+
+	group.Mu.Lock()
+	group.Members[expiredLeader.ID] = expiredLeader
+	group.Members[expiredStatic.ID] = expiredStatic
+	group.Members[healthyMember.ID] = healthyMember
+	group.StaticMembers[staticInstance] = expiredStatic.ID
+	group.Leader = expiredLeader.ID
+
+	evicted := gc.EvictExpiredMembersLocked(group)
+	defer group.Mu.Unlock()
+
+	if len(evicted) != 2 {
+		t.Fatalf("expected 2 evictions, got %d (%v)", len(evicted), evicted)
+	}
+	if _, exists := group.Members[expiredLeader.ID]; exists {
+		t.Errorf("expired leader should have been removed")
+	}
+	if _, exists := group.Members[expiredStatic.ID]; exists {
+		t.Errorf("expired static member should have been removed")
+	}
+	if _, exists := group.Members[healthyMember.ID]; !exists {
+		t.Errorf("healthy member should remain")
+	}
+	if group.Leader != "" {
+		t.Errorf("expected leader cleared after evicting old leader, got %q", group.Leader)
+	}
+	if _, exists := group.StaticMembers[staticInstance]; exists {
+		t.Errorf("expired static instance ID should have been unregistered")
+	}
+}
+
+// TestGroupCoordinator_Cleanup_SurvivorsRebalance covers the survivors path:
+// when expired members are evicted but at least one healthy member remains,
+// performCleanup must move the group to PreparingRebalance, bump the
+// generation, clear cached assignments, and elect a new leader. Otherwise
+// partitions held by the evicted member would stay assigned to the ghost
+// slot until some unrelated join/leave bumped the group out of Stable.
+func TestGroupCoordinator_Cleanup_SurvivorsRebalance(t *testing.T) {
+	gc := NewGroupCoordinator()
+	defer gc.Close()
+
+	group := gc.GetOrCreateGroup("test-group")
+
+	expiredLeader := &GroupMember{
+		ID:             "expired-leader",
+		SessionTimeout: 1000,                             // 1s
+		LastHeartbeat:  time.Now().Add(-5 * time.Second), // expired
+		Subscription:   []string{"shared-topic", "leader-only"},
+		Assignment:     []PartitionAssignment{{Topic: "shared-topic", Partition: 0}},
+		State:          MemberStateStable,
+	}
+	survivor := &GroupMember{
+		ID:             "survivor",
+		SessionTimeout: 30000,
+		LastHeartbeat:  time.Now(),
+		Subscription:   []string{"shared-topic"},
+		Assignment:     []PartitionAssignment{{Topic: "shared-topic", Partition: 1}},
+		State:          MemberStateStable,
+	}
+
+	group.Mu.Lock()
+	group.Members[expiredLeader.ID] = expiredLeader
+	group.Members[survivor.ID] = survivor
+	group.Leader = expiredLeader.ID
+	group.State = GroupStateStable
+	group.Generation = 5
+	group.SubscribedTopics = map[string]bool{
+		"shared-topic": true,
+		"leader-only":  true,
+	}
+	group.Mu.Unlock()
+
+	gc.performCleanup()
+
+	group.Mu.RLock()
+	defer group.Mu.RUnlock()
+
+	if _, exists := group.Members[expiredLeader.ID]; exists {
+		t.Errorf("expired leader should have been evicted")
+	}
+	if _, exists := group.Members[survivor.ID]; !exists {
+		t.Fatalf("survivor should remain in group")
+	}
+	if group.Leader != survivor.ID {
+		t.Errorf("expected leader re-elected to %q, got %q", survivor.ID, group.Leader)
+	}
+	if group.State != GroupStatePreparingRebalance {
+		t.Errorf("expected state PreparingRebalance after eviction with survivors, got %s", group.State)
+	}
+	if group.Generation != 6 {
+		t.Errorf("expected generation 6, got %d", group.Generation)
+	}
+	if survivor.State != MemberStatePending {
+		t.Errorf("expected survivor state Pending, got %s", survivor.State)
+	}
+	if len(survivor.Assignment) != 0 {
+		t.Errorf("expected survivor assignment cleared so non-leader SyncGroup returns REBALANCE_IN_PROGRESS, got %v", survivor.Assignment)
+	}
+	if _, ok := group.SubscribedTopics["leader-only"]; ok {
+		t.Errorf("expected topic only the evicted member subscribed to be dropped from SubscribedTopics")
+	}
+	if _, ok := group.SubscribedTopics["shared-topic"]; !ok {
+		t.Errorf("expected shared-topic to remain in SubscribedTopics")
+	}
+}
+
+// TestGroupCoordinator_EvictExpiredMembersLocked_ZeroSessionTimeout makes sure
+// a brand-new member that hasn't yet had its SessionTimeout populated isn't
+// auto-evicted (zero is not "expired immediately").
+func TestGroupCoordinator_EvictExpiredMembersLocked_ZeroSessionTimeout(t *testing.T) {
+	gc := NewGroupCoordinator()
+	defer gc.Close()
+
+	group := gc.GetOrCreateGroup("test-group")
+
+	pristine := &GroupMember{
+		ID:             "pristine",
+		SessionTimeout: 0, // not yet populated
+		LastHeartbeat:  time.Time{},
+		State:          MemberStatePending,
+	}
+
+	group.Mu.Lock()
+	group.Members[pristine.ID] = pristine
+
+	evicted := gc.EvictExpiredMembersLocked(group)
+	defer group.Mu.Unlock()
+
+	if len(evicted) != 0 {
+		t.Errorf("member with zero SessionTimeout should not be evicted, got %v", evicted)
+	}
+	if _, exists := group.Members[pristine.ID]; !exists {
+		t.Errorf("pristine member should remain in group")
+	}
+}
