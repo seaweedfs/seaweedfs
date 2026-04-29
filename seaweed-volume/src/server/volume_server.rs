@@ -142,9 +142,12 @@ pub fn normalize_outgoing_http_url(scheme: &str, raw_target: &str) -> Result<Str
 /// - `host:port.grpcPort` -> `host:port`
 /// - `host:port` -> `host:port` (unchanged)
 /// - Anything that does not look like `host:port[.grpcPort]` is returned unchanged.
-pub fn to_http_address(addr: &str) -> String {
+///
+/// Returns a `Cow<str>` so the common (no-suffix) case borrows from `addr`
+/// without allocating; only the rewrite branch produces a new `String`.
+pub fn to_http_address(addr: &str) -> std::borrow::Cow<'_, str> {
     let Some(ports_sep_index) = addr.rfind(':') else {
-        return addr.to_string();
+        return std::borrow::Cow::Borrowed(addr);
     };
     let ports = &addr[ports_sep_index + 1..];
     if let Some(dot_idx) = ports.rfind('.') {
@@ -155,10 +158,12 @@ pub fn to_http_address(addr: &str) -> String {
         // rather than being silently rewritten. Mirrors the validation already
         // done in `to_grpc_address` for the inverse direction.
         if http_port.parse::<u16>().is_ok() && grpc_port.parse::<u16>().is_ok() {
-            return addr[..ports_sep_index + 1 + dot_idx].to_string();
+            return std::borrow::Cow::Owned(
+                addr[..ports_sep_index + 1 + dot_idx].to_string(),
+            );
         }
     }
-    addr.to_string()
+    std::borrow::Cow::Borrowed(addr)
 }
 
 fn request_remote_addr(request: &Request) -> Option<SocketAddr> {
@@ -446,6 +451,20 @@ mod tests {
         assert_eq!(to_http_address("no-port"), "no-port");
         // Trailing colon: nothing after the separator, treat as unparseable.
         assert_eq!(to_http_address("host:"), "host:");
+    }
+
+    #[test]
+    fn test_to_http_address_borrows_when_unchanged_and_owns_when_stripped() {
+        // The common case (no suffix) must not allocate.
+        let result = to_http_address("10.0.0.1:9333");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+        // Stripping requires a new string.
+        let result = to_http_address("10.0.0.1:9333.19333");
+        assert!(matches!(result, std::borrow::Cow::Owned(_)));
+        assert_eq!(result, "10.0.0.1:9333");
+        // Unparseable / passthrough also borrows.
+        let result = to_http_address("host:abc.def");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]
