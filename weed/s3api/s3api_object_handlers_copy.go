@@ -2496,12 +2496,15 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 		// bytes raw without decryption — yielding deterministic byte
 		// corruption on the SSE-KMS copy path (issue #9281).
 		//
-		// CreateSSEKMSEncryptedReaderWithBucketKey returns the destSSEKey
-		// freshly populated with KeyID, EncryptionContext, EncryptedDataKey,
-		// IV and BucketKey state; the per-chunk ChunkOffset is the chunk's
-		// position within the destination object so the read path advances the
-		// keystream by the right amount.
-		destSSEKey.ChunkOffset = chunk.Offset
+		// CreateSSEKMSEncryptedReaderWithBucketKey returns destSSEKey freshly
+		// populated with KeyID, EncryptionContext, EncryptedDataKey, IV and
+		// BucketKey state, with the encryption stream initialised at counter 0
+		// for THIS chunk's bytes (each chunk gets its own random IV, not a
+		// base-IV-plus-offset scheme). ChunkOffset must therefore stay 0 on
+		// read; setting it to chunk.Offset would advance the decryption IV by
+		// chunk.Offset/16 blocks past the position the encryption was at,
+		// producing deterministic garbage on chunks whose chunk.Offset > 0.
+		destSSEKey.ChunkOffset = 0
 		kmsMetadata, metaErr := SerializeSSEKMSMetadata(destSSEKey)
 		if metaErr != nil {
 			return nil, fmt.Errorf("serialize SSE-KMS chunk metadata: %w", metaErr)
