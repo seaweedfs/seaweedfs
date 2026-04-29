@@ -294,10 +294,10 @@ func TestSplitCSVSet(t *testing.T) {
 		in   string
 		want map[string]bool
 	}{
-		{"empty returns nil", "", nil},
-		{"whitespace only returns nil", "   ", nil},
-		{"commas only returns nil", ",,,", nil},
-		{"whitespace and commas only returns nil", " , , ", nil},
+		{"empty input is empty set (no filter)", "", map[string]bool{}},
+		{"whitespace only is empty set (no filter)", "   ", map[string]bool{}},
+		{"commas only is empty set (no filter)", ",,,", map[string]bool{}},
+		{"whitespace and commas only is empty set (no filter)", " , , ", map[string]bool{}},
 		{"single", "rack1", map[string]bool{"rack1": true}},
 		{"multi", "rack1,rack2", map[string]bool{"rack1": true, "rack2": true}},
 		{"trims whitespace", " rack1 , rack2 ", map[string]bool{"rack1": true, "rack2": true}},
