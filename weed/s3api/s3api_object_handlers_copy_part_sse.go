@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+// errCopySourceSSEUnsupported is returned by openSourcePlaintextReader when
+// the source object's SSE type is not yet implemented in the UploadPartCopy
+// slow path. Callers map it to a 501 NotImplemented S3 response so clients
+// can distinguish "we will not handle this shape" from "the server failed".
+var errCopySourceSSEUnsupported = errors.New("UploadPartCopy source SSE type not yet supported")
 
 // uploadEntryHasSSE reports whether the multipart upload entry was created
 // with any server-side encryption configured (SSE-S3 or SSE-KMS — explicit at
@@ -84,6 +91,12 @@ func (r *readCloserAdapter) Close() error {
 // completedMultipartChunk's NONE→SSE_S3 backfill (PR #9224) then writes
 // destination-baseIV-derived metadata onto bytes that were actually encrypted
 // with the source's key — producing deterministic byte corruption on GET (#8908).
+//
+// Returns errCopySourceSSEUnsupported when the source's SSE type is not yet
+// implemented in this slow path (SSE-KMS, SSE-C). Callers should map that
+// sentinel to a 501 NotImplemented S3 response rather than collapsing it to
+// 500 InternalError, so clients can distinguish "we will not handle this
+// shape" from "the server failed".
 func (s3a *S3ApiServer) openSourcePlaintextReader(
 	ctx context.Context,
 	srcEntry *filer_pb.Entry,
@@ -101,9 +114,9 @@ func (s3a *S3ApiServer) openSourcePlaintextReader(
 	case s3_constants.SSETypeS3:
 		return s3a.openSSES3SourcePlaintextReader(ctx, srcEntry, startOffset, sliceLen)
 	case s3_constants.SSETypeKMS:
-		return nil, fmt.Errorf("UploadPartCopy from SSE-KMS source is not yet supported with cross-encryption")
+		return nil, fmt.Errorf("%w: UploadPartCopy from SSE-KMS source", errCopySourceSSEUnsupported)
 	case s3_constants.SSETypeC:
-		return nil, fmt.Errorf("UploadPartCopy from SSE-C source is not yet supported with cross-encryption")
+		return nil, fmt.Errorf("%w: UploadPartCopy from SSE-C source", errCopySourceSSEUnsupported)
 	default:
 		// Unencrypted source: stream raw bytes and apply range.
 		raw, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry)
@@ -334,6 +347,13 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	srcReader, err := s3a.openSourcePlaintextReader(r.Context(), srcEntry, startOffset, endOffset)
 	if err != nil {
 		glog.Errorf("UploadPartCopy: open source plaintext reader: %v", err)
+		// Distinguish "we will not handle this shape" (501) from "the server
+		// failed" (500). SSE-KMS / SSE-C source support in this slow path is
+		// staged work; the explicit error lets clients see it as a feature
+		// gap rather than a server fault.
+		if errors.Is(err, errCopySourceSSEUnsupported) {
+			return "", s3err.ErrNotImplemented
+		}
 		return "", s3err.ErrInternalError
 	}
 	defer srcReader.Close()
