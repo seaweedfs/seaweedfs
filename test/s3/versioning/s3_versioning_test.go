@@ -36,7 +36,7 @@ type S3TestConfig struct {
 // Default test configuration - should match s3tests.conf
 var defaultConfig = &S3TestConfig{
 	Endpoint:       firstNonEmpty(os.Getenv("S3_ENDPOINT"), "http://localhost:8333"),       // Default SeaweedFS S3 port
-	MasterEndpoint: firstNonEmpty(os.Getenv("MASTER_ENDPOINT"), "http://localhost:9333"),   // Default SeaweedFS master HTTP port
+	MasterEndpoint: firstNonEmpty(os.Getenv("MASTER_ENDPOINT"), "http://127.0.0.1:9333"),   // Default SeaweedFS master HTTP port
 	AccessKey:      "some_access_key1",
 	SecretKey:      "some_secret_key1",
 	Region:         "us-east-1",

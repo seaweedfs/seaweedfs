@@ -47,7 +47,7 @@ func getDefaultConfig() *S3TestConfig {
 	}
 	masterEndpoint := os.Getenv("MASTER_ENDPOINT")
 	if masterEndpoint == "" {
-		masterEndpoint = "http://localhost:9333" // Default SeaweedFS master HTTP port
+		masterEndpoint = "http://127.0.0.1:9333" // Default SeaweedFS master HTTP port
 	}
 	accessKey := os.Getenv("S3_ACCESS_KEY")
 	if accessKey == "" {
