@@ -739,12 +739,16 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) {
-		etag, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
+		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
 		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
+		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
+		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
+		// so clients can see the destination's encryption state.
+		s3a.setSSEResponseHeaders(w, r, sseMetadata)
 		writeSuccessResponseXML(w, r, CopyPartResult{
 			ETag:         etag,
 			LastModified: t,

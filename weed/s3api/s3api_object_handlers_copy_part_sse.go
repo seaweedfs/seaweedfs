@@ -338,9 +338,10 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	dstBucket, uploadID string,
 	partID int,
 	uploadEntry *filer_pb.Entry,
-) (etag string, errCode s3err.ErrorCode) {
+) (etag string, sseMetadata SSEResponseMetadata, errCode s3err.ErrorCode) {
 	if endOffset < startOffset {
-		return s3a.writeEmptyCopyPart(dstBucket, uploadID, partID)
+		tag, code := s3a.writeEmptyCopyPart(dstBucket, uploadID, partID)
+		return tag, SSEResponseMetadata{}, code
 	}
 	sliceLen := endOffset - startOffset + 1
 
@@ -352,24 +353,29 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 		// staged work; the explicit error lets clients see it as a feature
 		// gap rather than a server fault.
 		if errors.Is(err, errCopySourceSSEUnsupported) {
-			return "", s3err.ErrNotImplemented
+			return "", SSEResponseMetadata{}, s3err.ErrNotImplemented
 		}
-		return "", s3err.ErrInternalError
+		return "", SSEResponseMetadata{}, s3err.ErrInternalError
 	}
 	defer srcReader.Close()
 
 	cloned := fakeContentRequest(r, srcReader, sliceLen)
 	if err := s3a.applyDestSSEHeadersToCopyRequest(cloned, uploadEntry, uploadID); err != nil {
 		glog.Errorf("UploadPartCopy: apply destination SSE headers: %v", err)
-		return "", s3err.ErrInternalError
+		return "", SSEResponseMetadata{}, s3err.ErrInternalError
 	}
 
+	// Surface putToFiler's SSE response metadata to the caller so the handler
+	// can mirror PutObjectPart's behavior of writing
+	// x-amz-server-side-encryption / x-amz-server-side-encryption-aws-kms-key-id
+	// on the UploadPartCopy response. Without this, clients have no way to
+	// see that the destination was encrypted.
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
-	tag, code, _ := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, nil)
+	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, nil)
 	if code != s3err.ErrNone {
-		return "", code
+		return "", SSEResponseMetadata{}, code
 	}
-	return tag, s3err.ErrNone
+	return tag, putSSE, s3err.ErrNone
 }
 
 // writeEmptyCopyPart writes a 0-byte part entry for an empty UploadPartCopy
