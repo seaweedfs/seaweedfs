@@ -478,4 +478,24 @@ mod tests {
         // Out-of-range ports must not be silently truncated either.
         assert_eq!(to_http_address("host:99999.19333"), "host:99999.19333");
     }
+
+    #[test]
+    fn test_to_http_address_handles_bracketed_ipv6_literals() {
+        // The function uses `rfind(':')`, so for bracketed IPv6 the port
+        // separator is correctly identified as the colon AFTER the closing
+        // bracket — making IPv4 and IPv6 behave the same.
+        assert_eq!(to_http_address("[::1]:9333.19333"), "[::1]:9333");
+        assert_eq!(
+            to_http_address("[2001:db8::10]:5300.6300"),
+            "[2001:db8::10]:5300"
+        );
+        // Plain bracketed IPv6 without a dotted suffix is borrowed unchanged.
+        let result = to_http_address("[2001:db8::1]:9333");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(result, "[2001:db8::1]:9333");
+        // Non-numeric / out-of-range / missing suffix all preserve the input.
+        assert_eq!(to_http_address("[::1]:"), "[::1]:");
+        assert_eq!(to_http_address("[::1]:abc.def"), "[::1]:abc.def");
+        assert_eq!(to_http_address("[::1]:99999.19333"), "[::1]:99999.19333");
+    }
 }
