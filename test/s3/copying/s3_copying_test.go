@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,16 +102,20 @@ func getNewBucketName() string {
 	timestamp := time.Now().UnixNano()
 	// Add random suffix to prevent collisions when tests run quickly
 	randomSuffix := mathrand.Intn(100000)
-	return fmt.Sprintf("%s%d-%d", defaultConfig.BucketPrefix, timestamp, randomSuffix)
+	return fmt.Sprintf("%sr%s-%d-%d", defaultConfig.BucketPrefix, testRunID, timestamp, randomSuffix)
 }
 
-// testRunStart marks when this test process started; cleanupTestBuckets only
-// sweeps buckets created before this point so a concurrent `go test` run against
-// the same endpoints cannot have its live buckets torn down. The 1-minute backdate
-// gives clock skew between test host and master room.
-var testRunStart = time.Now().Add(-time.Minute)
+// testRunID uniquely identifies this `go test` invocation. It's embedded into
+// every bucket created by getNewBucketName (after defaultConfig.BucketPrefix), so
+// the cleanup sweep can scope deletions to buckets that belong to this run only —
+// letting concurrent runs against the same endpoints coexist without tearing each
+// other's buckets down. Stale buckets left behind by a crashed prior run share the
+// family prefix but a different runID, so they are not swept here; `make clean`
+// (or wiping the data dir) is the right cleanup for that case.
+var testRunID = strconv.FormatInt(time.Now().UnixNano(), 36)
 
-// cleanupTestBuckets removes any leftover test buckets from previous runs
+// cleanupTestBuckets removes any leftover test buckets from this run.
+// Buckets from concurrent runs carry a different runID marker and are skipped.
 func cleanupTestBuckets(t *testing.T, client *s3.Client) {
 	resp, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
 	if err != nil {
@@ -118,14 +123,11 @@ func cleanupTestBuckets(t *testing.T, client *s3.Client) {
 		return
 	}
 
+	runPrefix := defaultConfig.BucketPrefix + "r" + testRunID + "-"
 	for _, bucket := range resp.Buckets {
 		bucketName := *bucket.Name
-		// Skip buckets newer than this process — they belong to a concurrent run.
-		if bucket.CreationDate != nil && bucket.CreationDate.After(testRunStart) {
-			continue
-		}
-		// Only delete buckets that match our test prefix
-		if strings.HasPrefix(bucketName, defaultConfig.BucketPrefix) {
+		// Only sweep buckets owned by this run (prefix + runID marker).
+		if strings.HasPrefix(bucketName, runPrefix) {
 			t.Logf("Cleaning up leftover test bucket: %s", bucketName)
 			deleteBucket(t, client, bucketName)
 		}
