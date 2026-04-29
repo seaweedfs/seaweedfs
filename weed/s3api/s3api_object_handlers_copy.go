@@ -720,8 +720,19 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// inconsistently with the bytes on disk and trigger #8908's deterministic
 	// byte corruption on GET. Re-encrypt the source bytes in that case so
 	// destination chunks come out properly tagged.
+	//
+	// checkUploadId above only verifies that the uploadID's hash prefix
+	// matches dstObject; it does NOT prove the upload directory exists.
+	// Treat a missing upload entry as NoSuchUpload — falling through with
+	// uploadEntry=nil would silently skip the SSE check on the destination
+	// side and could send a plain-source copy through the raw-byte fast
+	// path even though the destination's encryption state is unknown.
 	uploadEntry, uploadEntryErr := s3a.getEntry(s3a.genUploadsFolder(dstBucket), uploadID)
-	if uploadEntryErr != nil && !errors.Is(uploadEntryErr, filer_pb.ErrNotFound) {
+	if uploadEntryErr != nil {
+		if errors.Is(uploadEntryErr, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+			return
+		}
 		glog.Errorf("CopyObjectPartHandler: failed to fetch upload entry for %s/%s: %v", dstBucket, uploadID, uploadEntryErr)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
