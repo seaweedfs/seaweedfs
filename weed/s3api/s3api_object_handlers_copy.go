@@ -2427,9 +2427,29 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, 
 	// canonical entry-level key — it includes a real EDK + IV minted by
 	// CreateSSEKMSEncryptedReaderWithBucketKey.
 	dstMetadata := make(map[string][]byte)
-	if destKeyID != "" && len(dstChunks) > 0 && len(dstChunks[0].GetSseMetadata()) > 0 {
-		dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = dstChunks[0].GetSseMetadata()
-		glog.V(3).Infof("Set entry-level SSE-KMS key from first dst chunk: keyID=%s, bucketKey=%t", destKeyID, bucketKeyEnabled)
+	if destKeyID != "" {
+		if len(dstChunks) > 0 && len(dstChunks[0].GetSseMetadata()) > 0 {
+			dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = dstChunks[0].GetSseMetadata()
+			glog.V(3).Infof("Set entry-level SSE-KMS key from first dst chunk: keyID=%s, bucketKey=%t", destKeyID, bucketKeyEnabled)
+		} else {
+			// 0-byte (no chunks) or no SSE-KMS chunk to crib metadata from:
+			// fall back to a stub key so the destination entry is still
+			// recognised as SSE-KMS encrypted on read. Mirrors the fallback
+			// in copyChunksWithSSEKMS direct branch and copyMultipartCrossEncryption.
+			if encryptionContext == nil {
+				encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
+			}
+			sseKey := &SSEKMSKey{
+				KeyID:             destKeyID,
+				EncryptionContext: encryptionContext,
+				BucketKeyEnabled:  bucketKeyEnabled,
+			}
+			if kmsMetadata, serErr := SerializeSSEKMSMetadata(sseKey); serErr == nil {
+				dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+			} else {
+				glog.Errorf("Failed to serialize SSE-KMS metadata for 0-byte destination: %v", serErr)
+			}
+		}
 	}
 
 	return dstChunks, dstMetadata, nil
