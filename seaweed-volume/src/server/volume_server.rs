@@ -134,6 +134,30 @@ pub fn normalize_outgoing_http_url(scheme: &str, raw_target: &str) -> Result<Str
     Ok(format!("{}://{}", scheme, raw_target))
 }
 
+/// Convert a SeaweedFS server address to its HTTP `host:port` form.
+///
+/// Mirrors Go's `pb.ServerAddress.ToHttpAddress()`: SeaweedFS encodes a
+/// server's gRPC port by appending `.grpcPort` to the HTTP port (e.g.
+/// `host:9333.19333`). For HTTP requests we want only the HTTP `host:port`.
+/// - `host:port.grpcPort` -> `host:port`
+/// - `host:port` -> `host:port` (unchanged)
+/// - Anything that does not look like `host:port[.grpcPort]` is returned unchanged.
+pub fn to_http_address(addr: &str) -> String {
+    let Some(ports_sep_index) = addr.rfind(':') else {
+        return addr.to_string();
+    };
+    if ports_sep_index + 1 >= addr.len() {
+        return addr.to_string();
+    }
+    let ports = &addr[ports_sep_index + 1..];
+    if let Some(dot_idx) = ports.rfind('.') {
+        let host = &addr[..ports_sep_index];
+        let http_port = &ports[..dot_idx];
+        return format!("{}:{}", host, http_port);
+    }
+    addr.to_string()
+}
+
 fn request_remote_addr(request: &Request) -> Option<SocketAddr> {
     request
         .extensions()
@@ -391,4 +415,33 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
         .fallback(public_store_handler)
         .layer(middleware::from_fn(common_headers_middleware))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_http_address_strips_grpc_port_suffix() {
+        assert_eq!(to_http_address("10.0.0.1:9333.19333"), "10.0.0.1:9333");
+        assert_eq!(
+            to_http_address("master.local:9333.19333"),
+            "master.local:9333"
+        );
+        assert_eq!(to_http_address("10.85.183.6:5300.6300"), "10.85.183.6:5300");
+    }
+
+    #[test]
+    fn test_to_http_address_passthrough_without_grpc_suffix() {
+        assert_eq!(to_http_address("10.0.0.1:9333"), "10.0.0.1:9333");
+        assert_eq!(to_http_address("master.local:9333"), "master.local:9333");
+    }
+
+    #[test]
+    fn test_to_http_address_returns_input_when_unparseable() {
+        assert_eq!(to_http_address(""), "");
+        assert_eq!(to_http_address("no-port"), "no-port");
+        // Trailing colon: nothing after the separator, treat as unparseable.
+        assert_eq!(to_http_address("host:"), "host:");
+    }
 }

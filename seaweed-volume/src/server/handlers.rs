@@ -16,7 +16,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
-use super::volume_server::{normalize_outgoing_http_url, VolumeServerState};
+use super::volume_server::{normalize_outgoing_http_url, to_http_address, VolumeServerState};
 use crate::config::ReadMode;
 use crate::metrics;
 use crate::pb::volume_server_pb;
@@ -357,9 +357,12 @@ async fn lookup_volume(
     master_url: &str,
     volume_id: u32,
 ) -> Result<Vec<VolumeLocation>, String> {
+    // master_url may be in SeaweedFS's "host:httpPort.grpcPort" form (mirrors
+    // Go's pb.ServerAddress); strip the gRPC port before building the HTTP URL.
+    let master_http = to_http_address(master_url);
     let url = normalize_outgoing_http_url(
         scheme,
-        &format!("{}/dir/lookup?volumeId={}", master_url, volume_id),
+        &format!("{}/dir/lookup?volumeId={}", master_http, volume_id),
     )?;
     let resp = client
         .get(&url)
@@ -3919,5 +3922,56 @@ mod tests {
             response.headers().get(header::LOCATION).unwrap(),
             "https://volume.internal:8080/3,01637037d6?collection=photos&proxied=true"
         );
+    }
+
+    /// Regression test for issue #9274.
+    ///
+    /// SeaweedFS encodes a server's gRPC port by appending `.grpcPort` to
+    /// the HTTP port: e.g. `master.local:9333.19333` (mirrors Go's
+    /// `pb.ServerAddress`). When the volume server's `--mserver` flag is
+    /// configured this way, replication writes look up the peer locations
+    /// from the master over HTTP. Prior to the fix, the lookup URL became
+    /// `http://host:9333.19333/dir/lookup?volumeId=...` — an invalid port
+    /// that reqwest rejects with a "builder error", causing every
+    /// replicated write to fail.
+    #[tokio::test]
+    async fn test_lookup_volume_strips_grpc_port_from_master_url() {
+        use axum::{routing::get, Router};
+
+        let app = Router::new().route(
+            "/dir/lookup",
+            get(|axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
+                assert_eq!(params.get("volumeId").map(String::as_str), Some("31"));
+                axum::Json(serde_json::json!({
+                    "volumeOrFileId": "31",
+                    "locations": [
+                        {"url": "10.0.0.2:5301", "publicUrl": "10.0.0.2:5301", "grpcPort": 5311}
+                    ]
+                }))
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Mirrors how main.rs receives masters: a `host:httpPort.grpcPort` token.
+        // The grpc-port part is fictitious here (the master is HTTP-only in
+        // this test) — what matters is that the volume server must not pass
+        // it through to reqwest.
+        let master_url = format!("127.0.0.1:{}.{}", addr.port(), 19999);
+        let client = reqwest::Client::new();
+
+        let locations = super::lookup_volume(&client, "http", &master_url, 31)
+            .await
+            .expect("lookup_volume should succeed even when master_url carries a .grpcPort suffix");
+
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].url, "10.0.0.2:5301");
+        assert_eq!(locations[0].grpc_port, 5311);
+
+        server.abort();
     }
 }
