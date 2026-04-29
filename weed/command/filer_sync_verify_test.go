@@ -229,6 +229,178 @@ func TestVerifySyncConcurrencyBound(t *testing.T) {
 	}
 }
 
+// TestVerifySyncETagMismatch confirms that two files with the same size but
+// different Md5 checksums are counted as an ETag mismatch, not a size mismatch.
+func TestVerifySyncETagMismatch(t *testing.T) {
+	newEntry := func(name string, md5 []byte) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name: name,
+			Attributes: &filer_pb.FuseAttributes{
+				FileSize: 100,
+				Md5:      md5,
+			},
+		}
+	}
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {newEntry("data.bin", []byte{0x11, 0x22, 0x33})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {newEntry("data.bin", []byte{0x44, 0x55, 0x66})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (same size should not trigger size mismatch)", got)
+	}
+}
+
+// TestVerifySyncCutoffTime verifies that entries newer than cutoffTime are
+// skipped in both the A-only (MISSING) and B-only (ONLY_IN_B) branches.
+func TestVerifySyncCutoffTime(t *testing.T) {
+	cutoff := time.Unix(1000, 0)
+
+	recentEntry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: 10, Mtime: 2000}, // > cutoff
+		}
+	}
+	oldEntry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: 10, Mtime: 500}, // < cutoff
+		}
+	}
+
+	t.Run("A-only recent file is skipped, not reported missing", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {recentEntry("new.txt")}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.skippedRecent.Load(); got != 1 {
+			t.Errorf("skippedRecent = %d, want 1", got)
+		}
+		if got := result.missingCount.Load(); got != 0 {
+			t.Errorf("missingCount = %d, want 0 (recent file should be skipped)", got)
+		}
+	})
+
+	t.Run("A-only old file is reported missing", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {oldEntry("old.txt")}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.missingCount.Load(); got != 1 {
+			t.Errorf("missingCount = %d, want 1", got)
+		}
+	})
+
+	t.Run("B-only recent file is skipped, not reported as ONLY_IN_B", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {recentEntry("new.txt")}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.skippedRecent.Load(); got != 1 {
+			t.Errorf("skippedRecent = %d, want 1", got)
+		}
+		if got := result.onlyInB.Load(); got != 0 {
+			t.Errorf("onlyInB = %d, want 0 (recent B-only file should be skipped)", got)
+		}
+	})
+
+	t.Run("B-only old file is reported as ONLY_IN_B", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {oldEntry("old.txt")}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.onlyInB.Load(); got != 1 {
+			t.Errorf("onlyInB = %d, want 1", got)
+		}
+	})
+}
+
+// TestVerifySyncRootPath is a regression test for the path.Join fix.
+// fmt.Sprintf("%s/%s", "/", name) produced "//name"; path.Join produces "/name".
+// This test walks from "/" and verifies the child directory is found and
+// compared correctly (not silently skipped due to a malformed path).
+func TestVerifySyncRootPath(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/":      {verifyDirEntry("data")},
+			"/data":  {verifyFileEntry("file.txt", 42)},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/":      {verifyDirEntry("data")},
+			"/data":  {verifyFileEntry("file.txt", 42)},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/", "/", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.missingCount.Load() != 0 || result.sizeMismatch.Load() != 0 {
+		t.Errorf("identical trees from root should have no diffs: missing=%d size=%d",
+			result.missingCount.Load(), result.sizeMismatch.Load())
+	}
+	// 2 directories traversed: "/" and "/data"
+	if got := result.dirCount.Load(); got != 2 {
+		t.Errorf("dirCount = %d, want 2 (root + /data)", got)
+	}
+	// 1 file compared: /data/file.txt
+	if got := result.fileCount.Load(); got != 1 {
+		t.Errorf("fileCount = %d, want 1", got)
+	}
+}
+
 // TestVerifySyncNoDeadlockDeepTree ensures that a tree deeper than
 // verifySyncConcurrency completes without deadlocking. With a per-call
 // semaphore the walk would still complete (just with unbounded goroutines);
