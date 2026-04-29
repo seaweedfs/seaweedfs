@@ -17,6 +17,20 @@ import (
 	"google.golang.org/grpc"
 )
 
+// verifySyncConcurrency caps concurrent directory I/O across the entire
+// recursive walk. A single shared semaphore is created in runVerifySync and
+// passed down so the limit applies globally — a per-call semaphore would only
+// cap concurrency per directory level, allowing fanout to grow as
+// verifySyncConcurrency^depth on deep trees.
+//
+// Trade-off: higher values reduce wall time on wide trees by parallelizing
+// listEntries RPCs, at the cost of more concurrent load on both filers and
+// more memory from queued goroutines (each waiting goroutine ~2KB stack).
+// Each compareDirectory holds a slot only for its own listing+compare phase
+// and releases before recursing, so a parent never blocks waiting for
+// children to acquire slots.
+const verifySyncConcurrency = 5
+
 type VerifyResult struct {
 	dirCount      atomic.Int64
 	fileCount     atomic.Int64
@@ -116,8 +130,9 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 
 	result := &VerifyResult{jsonOutput: jsonOutput}
 	ctx := context.Background()
+	sem := make(chan struct{}, verifySyncConcurrency)
 
-	err := compareDirectory(ctx, clientA, clientB, aPath, bPath, isActivePassive, cutoffTime, result)
+	err := compareDirectory(ctx, clientA, clientB, aPath, bPath, isActivePassive, cutoffTime, sem, result)
 
 	totalErrors := result.missingCount.Load() + result.sizeMismatch.Load() + result.etagMismatch.Load()
 	if !isActivePassive {
@@ -167,7 +182,21 @@ func compareDirectory(ctx context.Context,
 	dirA, dirB string,
 	isActivePassive bool,
 	cutoffTime time.Time,
+	sem chan struct{},
 	result *VerifyResult) error {
+
+	// Hold a slot only for this directory's I/O phase (listings + merge).
+	// Released before recursing so parents never block waiting for children
+	// to acquire slots — see verifySyncConcurrency for the rationale.
+	sem <- struct{}{}
+	released := false
+	releaseSlot := func() {
+		if !released {
+			released = true
+			<-sem
+		}
+	}
+	defer releaseSlot()
 
 	result.dirCount.Add(1)
 
@@ -245,19 +274,19 @@ func compareDirectory(ctx context.Context,
 		}
 	}
 
-	// recurse into subdirectories with concurrency
+	// Release our slot before recursing so children can acquire it. Holding
+	// it across wg.Wait would deadlock once depth exceeds verifySyncConcurrency.
+	releaseSlot()
+
 	if len(subDirs) > 0 {
 		var wg sync.WaitGroup
 		errCh := make(chan error, len(subDirs))
-		sem := make(chan struct{}, 5) // concurrency limit
 
 		for _, pair := range subDirs {
 			wg.Add(1)
 			go func(a, b string) {
 				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				if err := compareDirectory(ctx, clientA, clientB, a, b, isActivePassive, cutoffTime, result); err != nil {
+				if err := compareDirectory(ctx, clientA, clientB, a, b, isActivePassive, cutoffTime, sem, result); err != nil {
 					errCh <- err
 				}
 			}(pair.a, pair.b)
