@@ -287,3 +287,87 @@ func TestDeleteEmptySelection(t *testing.T) {
 	})
 
 }
+
+func TestSplitCSVSet(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want map[string]bool
+	}{
+		{"empty input is empty set (no filter)", "", map[string]bool{}},
+		{"whitespace only is empty set (no filter)", "   ", map[string]bool{}},
+		{"commas only is empty set (no filter)", ",,,", map[string]bool{}},
+		{"whitespace and commas only is empty set (no filter)", " , , ", map[string]bool{}},
+		{"single", "rack1", map[string]bool{"rack1": true}},
+		{"multi", "rack1,rack2", map[string]bool{"rack1": true, "rack2": true}},
+		{"trims whitespace", " rack1 , rack2 ", map[string]bool{"rack1": true, "rack2": true}},
+		{"skips empty items", "rack1,,rack2,", map[string]bool{"rack1": true, "rack2": true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, splitCSVSet(tc.in))
+		})
+	}
+}
+
+// Regression test for the rack/node filter that previously used
+// strings.Contains, which falsely matched any id that was a substring of the
+// user-supplied flag value (e.g. -racks=rack10 also matched rack1).
+func TestCollectVolumeServersByDcRackNode_RackFilter(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{
+				{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{{Id: "n1"}}},
+				{Id: "rack10", DataNodeInfos: []*master_pb.DataNodeInfo{{Id: "n10"}}},
+				{Id: "rack2", DataNodeInfos: []*master_pb.DataNodeInfo{{Id: "n2"}}},
+			},
+		}},
+	}
+
+	got := collectVolumeServersByDcRackNode(topo, "", "rack10", "")
+	if assert.Len(t, got, 1, "-racks=rack10 should not match rack1") {
+		assert.Equal(t, "rack10", got[0].rack)
+	}
+
+	got = collectVolumeServersByDcRackNode(topo, "", "rack1,rack2", "")
+	racks := map[string]bool{}
+	for _, n := range got {
+		racks[n.rack] = true
+	}
+	assert.Equal(t, map[string]bool{"rack1": true, "rack2": true}, racks,
+		"-racks=rack1,rack2 should match exactly those two, not rack10")
+}
+
+// Regression test for the -nodes filter, mirroring the rack-filter case.
+// Uses bare ids (no :port suffix) so that "node1" is a true substring of
+// "node10": under the old strings.Contains implementation,
+// -nodes=node10 wrongly included node1 as well.
+func TestCollectVolumeServersByDcRackNode_NodeFilter(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{
+					{Id: "node1"},
+					{Id: "node10"},
+					{Id: "node2"},
+				},
+			}},
+		}},
+	}
+
+	got := collectVolumeServersByDcRackNode(topo, "", "", "node10")
+	if assert.Len(t, got, 1, "-nodes=node10 should not match node1") {
+		assert.Equal(t, "node10", got[0].info.Id)
+	}
+
+	got = collectVolumeServersByDcRackNode(topo, "", "", "node1,node2")
+	nodes := map[string]bool{}
+	for _, n := range got {
+		nodes[n.info.Id] = true
+	}
+	assert.Equal(t, map[string]bool{"node1": true, "node2": true}, nodes,
+		"-nodes=node1,node2 should match exactly those two, not node10")
+}
