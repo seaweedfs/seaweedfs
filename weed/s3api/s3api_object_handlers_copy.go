@@ -2331,10 +2331,22 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 		}
 	}
 
-	// Determine copy strategy
+	// Determine copy strategy.
+	//
+	// DetermineSSEKMSCopyStrategy returns Direct when source and destination
+	// share the same KMS key ID, but that's not enough on its own — if the
+	// destination request changes the encryption context or the BucketKey
+	// flag, the source ciphertext (and its embedded EDK + context) does not
+	// satisfy the destination's request. Force the slow re-encrypt path in
+	// that case so the destination object gets a freshly-wrapped EDK bound
+	// to the requested context/flag.
 	strategy, err := DetermineSSEKMSCopyStrategy(entry.Extended, destKeyID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if strategy == SSEKMSCopyStrategyDirect && destKeyID != "" && !srcSSEKMSStateMatchesDest(entry.Extended, encryptionContext, bucketKeyEnabled) {
+		glog.V(2).Infof("SSE-KMS direct copy rejected — encryption context or bucket-key flag differs; falling back to re-encrypt path for %s", dstPath)
+		strategy = SSEKMSCopyStrategyDecryptEncrypt
 	}
 
 	glog.V(2).Infof("SSE-KMS copy strategy for %s: %v", dstPath, strategy)
@@ -2385,6 +2397,46 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 	default:
 		return nil, nil, fmt.Errorf("unknown SSE-KMS copy strategy: %v", strategy)
 	}
+}
+
+// srcSSEKMSStateMatchesDest reports whether the source object's stored SSE-KMS
+// state (encryption context + bucket-key flag) matches the destination request.
+// Used to gate the SSE-KMS direct copy fast path: if either differs the source
+// ciphertext can't satisfy the destination's request and we must re-encrypt.
+func srcSSEKMSStateMatchesDest(srcMetadata map[string][]byte, dstContext map[string]string, dstBucketKeyEnabled bool) bool {
+	keyData, ok := srcMetadata[s3_constants.SeaweedFSSSEKMSKey]
+	if !ok || len(keyData) == 0 {
+		// Source isn't SSE-KMS encrypted; the fast path is safe (or
+		// CanDirectCopySSEKMS would have rejected it anyway).
+		return true
+	}
+	srcKey, err := DeserializeSSEKMSMetadata(keyData)
+	if err != nil {
+		// Conservative: a malformed source key shouldn't be reused verbatim.
+		return false
+	}
+	if srcKey.BucketKeyEnabled != dstBucketKeyEnabled {
+		return false
+	}
+	if !encryptionContextEqual(srcKey.EncryptionContext, dstContext) {
+		return false
+	}
+	return true
+}
+
+// encryptionContextEqual treats nil and empty maps as equivalent so a request
+// that omits the context header doesn't spuriously diverge from a stored one
+// that was serialised as an empty map.
+func encryptionContextEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // copyChunksWithSSEKMSReencryption handles the slow path: decrypt source and re-encrypt for destination
