@@ -531,9 +531,12 @@ async fn do_replicated_request(
 
     let mut futures = Vec::new();
     for loc in remote_locations {
+        // Defensively strip a `.grpcPort` suffix in case loc.url carries it
+        // (e.g. from an older master); see lookup_volume for the same fix.
+        let peer_http = to_http_address(&loc.url);
         let url = normalize_outgoing_http_url(
             &state.outgoing_http_scheme,
-            &format!("{}{}?{}", loc.url, path, new_query),
+            &format!("{}{}?{}", peer_http, path, new_query),
         )?;
         let client = state.http_client.clone();
 
@@ -701,13 +704,15 @@ async fn proxy_request(
 ) -> Response {
     // Build target URL, adding proxied=true query param
     let path = info.path.trim_start_matches('/');
+    // Defensively strip a `.grpcPort` suffix in case target.url carries it.
+    let target_http = to_http_address(&target.url);
 
     let raw_target = if info.original_query.is_empty() {
-        format!("{}/{}?proxied=true", target.url, path)
+        format!("{}/{}?proxied=true", target_http, path)
     } else {
         format!(
             "{}/{}?{}&proxied=true",
-            target.url, path, info.original_query
+            target_http, path, info.original_query
         )
     };
     let target_url = match normalize_outgoing_http_url(&state.outgoing_http_scheme, &raw_target) {
@@ -774,9 +779,11 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &s
     query_params.push("proxied=true".to_string());
     let query = query_params.join("&");
 
+    // Defensively strip a `.grpcPort` suffix in case target.url carries it.
+    let target_http = to_http_address(&target.url);
     let raw_target = format!(
         "{}/{},{}?{}",
-        target.url, &info.vid_str, &info.fid_str, query
+        target_http, &info.vid_str, &info.fid_str, query
     );
     let location = match normalize_outgoing_http_url(scheme, &raw_target) {
         Ok(url) => url,
@@ -3921,6 +3928,32 @@ mod tests {
         assert_eq!(
             response.headers().get(header::LOCATION).unwrap(),
             "https://volume.internal:8080/3,01637037d6?collection=photos&proxied=true"
+        );
+    }
+
+    /// Defensive coverage for peer-to-peer redirects: if a master ever returns
+    /// `Location.url` already encoded in `host:httpPort.grpcPort` form,
+    /// `redirect_request` must still emit a valid HTTP Location header.
+    #[test]
+    fn test_redirect_request_strips_grpc_port_from_target_url() {
+        let info = ProxyRequestInfo {
+            original_headers: HeaderMap::new(),
+            original_query: String::new(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let target = VolumeLocation {
+            url: "volume.internal:8080.18080".to_string(),
+            public_url: "volume.public:8080.18080".to_string(),
+            grpc_port: 18080,
+        };
+
+        let response = redirect_request(&info, &target, "http");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "http://volume.internal:8080/3,01637037d6?proxied=true"
         );
     }
 
