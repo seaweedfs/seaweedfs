@@ -216,16 +216,17 @@ func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.Dis
 }
 
 // splitCSVSet parses a comma-separated list into a set for exact-match filtering.
-// Returns nil when the input is empty so callers can treat nil as "no filter".
+// Returns nil when the input has no valid items (empty, whitespace-only, or
+// only commas) so callers can uniformly treat nil as "no filter".
 func splitCSVSet(csv string) map[string]bool {
-	if csv == "" {
-		return nil
-	}
 	set := make(map[string]bool)
 	for _, item := range strings.Split(csv, ",") {
 		if item = strings.TrimSpace(item); item != "" {
 			set[item] = true
 		}
+	}
+	if len(set) == 0 {
+		return nil
 	}
 	return set
 }
