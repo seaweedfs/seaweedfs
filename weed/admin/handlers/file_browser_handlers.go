@@ -699,8 +699,7 @@ func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
 			size = int64(entry.Attributes.FileSize)
 		}
 
-		// Determine MIME type with comprehensive extension support
-		mime := h.determineMimeType(entry.Name)
+		mime := dash.ResolveEntryMime(entry)
 
 		fileEntry = dash.FileEntry{
 			Name:        entry.Name,
@@ -854,10 +853,8 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 			properties["chunk_count"] = len(entry.Chunks)
 		}
 
-		// Determine MIME type
 		if !entry.IsDirectory {
-			mime := h.determineMimeType(entry.Name)
-			properties["mime_type"] = mime
+			properties["mime_type"] = dash.ResolveEntryMime(entry)
 		}
 
 		return nil
@@ -882,148 +879,6 @@ func (h *FileBrowserHandlers) formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-// Helper function to determine MIME type from filename
-func (h *FileBrowserHandlers) determineMimeType(filename string) string {
-	ext := strings.ToLower(filepath.Ext(filename))
-
-	// Text files
-	switch ext {
-	case ".txt", ".log", ".cfg", ".conf", ".ini", ".properties":
-		return "text/plain"
-	case ".md", ".markdown":
-		return "text/markdown"
-	case ".html", ".htm":
-		return "text/html"
-	case ".css":
-		return "text/css"
-	case ".js", ".mjs":
-		return "application/javascript"
-	case ".ts":
-		return "text/typescript"
-	case ".json":
-		return "application/json"
-	case ".xml":
-		return "application/xml"
-	case ".yaml", ".yml":
-		return "text/yaml"
-	case ".csv":
-		return "text/csv"
-	case ".sql":
-		return "text/sql"
-	case ".sh", ".bash", ".zsh", ".fish":
-		return "text/x-shellscript"
-	case ".py":
-		return "text/x-python"
-	case ".go":
-		return "text/x-go"
-	case ".java":
-		return "text/x-java"
-	case ".c":
-		return "text/x-c"
-	case ".cpp", ".cc", ".cxx", ".c++":
-		return "text/x-c++"
-	case ".h", ".hpp":
-		return "text/x-c-header"
-	case ".php":
-		return "text/x-php"
-	case ".rb":
-		return "text/x-ruby"
-	case ".pl":
-		return "text/x-perl"
-	case ".rs":
-		return "text/x-rust"
-	case ".swift":
-		return "text/x-swift"
-	case ".kt":
-		return "text/x-kotlin"
-	case ".scala":
-		return "text/x-scala"
-	case ".dockerfile":
-		return "text/x-dockerfile"
-	case ".gitignore", ".gitattributes":
-		return "text/plain"
-	case ".env":
-		return "text/plain"
-
-	// Image files
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".bmp":
-		return "image/bmp"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-
-	// Document files
-	case ".pdf":
-		return "application/pdf"
-	case ".doc":
-		return "application/msword"
-	case ".docx":
-		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	case ".xls":
-		return "application/vnd.ms-excel"
-	case ".xlsx":
-		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	case ".ppt":
-		return "application/vnd.ms-powerpoint"
-	case ".pptx":
-		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-
-	// Archive files
-	case ".zip":
-		return "application/zip"
-	case ".tar":
-		return "application/x-tar"
-	case ".gz":
-		return "application/gzip"
-	case ".bz2":
-		return "application/x-bzip2"
-	case ".7z":
-		return "application/x-7z-compressed"
-	case ".rar":
-		return "application/x-rar-compressed"
-
-	// Video files
-	case ".mp4":
-		return "video/mp4"
-	case ".avi":
-		return "video/x-msvideo"
-	case ".mov":
-		return "video/quicktime"
-	case ".wmv":
-		return "video/x-ms-wmv"
-	case ".flv":
-		return "video/x-flv"
-	case ".webm":
-		return "video/webm"
-
-	// Audio files
-	case ".mp3":
-		return "audio/mpeg"
-	case ".wav":
-		return "audio/wav"
-	case ".flac":
-		return "audio/flac"
-	case ".aac":
-		return "audio/aac"
-	case ".ogg":
-		return "audio/ogg"
-
-	default:
-		// For files without extension or unknown extensions,
-		// we'll check if they might be text files by content
-		return "application/octet-stream"
-	}
 }
 
 // Helper function to check if a file is likely a text file by checking content

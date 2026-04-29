@@ -134,47 +134,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 					}
 				}
 
-				// Determine MIME type based on file extension
-				mime := "application/octet-stream"
-				if entry.IsDirectory {
-					mime = "inode/directory"
-				} else {
-					ext := strings.ToLower(path.Ext(entry.Name))
-					switch ext {
-					case ".txt", ".log":
-						mime = "text/plain"
-					case ".html", ".htm":
-						mime = "text/html"
-					case ".css":
-						mime = "text/css"
-					case ".js":
-						mime = "application/javascript"
-					case ".json":
-						mime = "application/json"
-					case ".xml":
-						mime = "application/xml"
-					case ".pdf":
-						mime = "application/pdf"
-					case ".jpg", ".jpeg":
-						mime = "image/jpeg"
-					case ".png":
-						mime = "image/png"
-					case ".gif":
-						mime = "image/gif"
-					case ".svg":
-						mime = "image/svg+xml"
-					case ".mp4":
-						mime = "video/mp4"
-					case ".mp3":
-						mime = "audio/mpeg"
-					case ".zip":
-						mime = "application/zip"
-					case ".tar":
-						mime = "application/x-tar"
-					case ".gz":
-						mime = "application/gzip"
-					}
-				}
+				mime := ResolveEntryMime(entry)
 
 				fileEntry := FileEntry{
 					Name:        entry.Name,
