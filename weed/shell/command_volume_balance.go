@@ -215,17 +215,34 @@ func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.Dis
 	return nil
 }
 
+// splitCSVSet parses a comma-separated list into a set for exact-match filtering.
+// Returns nil when the input is empty so callers can treat nil as "no filter".
+func splitCSVSet(csv string) map[string]bool {
+	if csv == "" {
+		return nil
+	}
+	set := make(map[string]bool)
+	for _, item := range strings.Split(csv, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			set[item] = true
+		}
+	}
+	return set
+}
+
 func collectVolumeServersByDcRackNode(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRacks string, selectedNodes string) (nodes []*Node) {
+	rackSet := splitCSVSet(selectedRacks)
+	nodeSet := splitCSVSet(selectedNodes)
 	for _, dc := range t.DataCenterInfos {
 		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
 			continue
 		}
 		for _, r := range dc.RackInfos {
-			if selectedRacks != "" && !strings.Contains(selectedRacks, r.Id) {
+			if rackSet != nil && !rackSet[r.Id] {
 				continue
 			}
 			for _, dn := range r.DataNodeInfos {
-				if selectedNodes != "" && !strings.Contains(selectedNodes, dn.Id) {
+				if nodeSet != nil && !nodeSet[dn.Id] {
 					continue
 				}
 				nodes = append(nodes, &Node{
@@ -488,7 +505,7 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 	}
 
 	if candidateVolume.RemoteStorageName != "" {
-		return false, fmt.Errorf("does not move volume in remove storage")
+		return false, fmt.Errorf("does not move volume in remote storage")
 	}
 
 	if candidateVolume.ReplicaPlacement > 0 {
