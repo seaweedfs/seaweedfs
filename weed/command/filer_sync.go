@@ -63,6 +63,7 @@ type SyncOptions struct {
 	debugPort        *int
 	verifySync       *bool
 	modifyTimeAgo    *time.Duration
+	verifyJsonOutput *bool
 }
 
 const (
@@ -125,6 +126,7 @@ func init() {
 	syncOptions.debugPort = cmdFilerSynchronize.Flag.Int("debug.port", 6060, "http port for debugging")
 	syncOptions.verifySync = cmdFilerSynchronize.Flag.Bool("verifySync", false, "verify sync by comparing entries between filer A and B, then exit")
 	syncOptions.modifyTimeAgo = cmdFilerSynchronize.Flag.Duration("modifyTimeAgo", 0, "in verifySync mode, only verify files modified before this duration ago (e.g. 1h)")
+	syncOptions.verifyJsonOutput = cmdFilerSynchronize.Flag.Bool("verifyJsonOutput", false, "in verifySync mode, emit NDJSON output (one JSON object per line) for external tooling")
 	syncOptions.clientId = util.RandomInt32()
 }
 
@@ -194,6 +196,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	if *syncOptions.verifySync {
 		err := runVerifySync(filerA, filerB, *syncOptions.aPath, *syncOptions.bPath,
 			*syncOptions.isActivePassive, *syncOptions.modifyTimeAgo,
+			*syncOptions.verifyJsonOutput,
 			grpcDialOptionA, grpcDialOptionB)
 		if err != nil {
 			glog.Errorf("verify sync error: %v", err)
