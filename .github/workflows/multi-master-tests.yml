@@ -57,13 +57,14 @@ jobs:
       - name: Collect server logs on failure
         if: failure()
         run: |
+          # test/multi_master/cluster.go creates per-test dirs via
+          # os.MkdirTemp("", "seaweedfs_multi_master_it_") and writes each
+          # node's log into <baseDir>/logs/master*.log.
           echo "Collecting per-node master logs from temp directories..."
           mkdir -p /tmp/multi-master-logs
-          find /tmp -maxdepth 2 -type d \( -name "MasterCluster*" -o -name "TestLeader*" -o -name "TestTwoMasters*" -o -name "TestAllMasters*" \) 2>/dev/null | while read dir; do
-            if [ -d "$dir" ]; then
-              echo "Found test directory: $dir"
-              cp -r "$dir" /tmp/multi-master-logs/ 2>/dev/null || true
-            fi
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_multi_master_it_*" 2>/dev/null | while read dir; do
+            echo "Found test directory: $dir"
+            cp -r "$dir" /tmp/multi-master-logs/ 2>/dev/null || true
           done
           find /tmp/multi-master-logs -type f -name "*.log" -print -exec tail -n 100 {} \; 2>/dev/null || echo "No logs found"
 
