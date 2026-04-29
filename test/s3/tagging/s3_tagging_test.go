@@ -39,6 +39,12 @@ var allTestBucketPrefixes = []string{
 	"test-tagging-",
 }
 
+// testRunStart marks when this test process started; cleanupAllTestBuckets only
+// sweeps buckets created before this point so a concurrent `go test` run against
+// the same endpoints cannot have its live buckets torn down. The 1-minute backdate
+// gives clock skew between test host and master room.
+var testRunStart = time.Now().Add(-time.Minute)
+
 // getDefaultConfig returns a fresh instance of the default test configuration
 func getDefaultConfig() *S3TestConfig {
 	endpoint := os.Getenv("S3_ENDPOINT")
@@ -217,6 +223,10 @@ func cleanupAllTestBuckets(t *testing.T, client *s3.Client) {
 
 	for _, bucket := range listResp.Buckets {
 		if bucket.Name == nil {
+			continue
+		}
+		// Skip buckets newer than this process — they belong to a concurrent run.
+		if bucket.CreationDate != nil && bucket.CreationDate.After(testRunStart) {
 			continue
 		}
 		for _, prefix := range allTestBucketPrefixes {

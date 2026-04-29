@@ -104,6 +104,12 @@ func getNewBucketName() string {
 	return fmt.Sprintf("%s%d-%d", defaultConfig.BucketPrefix, timestamp, randomSuffix)
 }
 
+// testRunStart marks when this test process started; cleanupTestBuckets only
+// sweeps buckets created before this point so a concurrent `go test` run against
+// the same endpoints cannot have its live buckets torn down. The 1-minute backdate
+// gives clock skew between test host and master room.
+var testRunStart = time.Now().Add(-time.Minute)
+
 // cleanupTestBuckets removes any leftover test buckets from previous runs
 func cleanupTestBuckets(t *testing.T, client *s3.Client) {
 	resp, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
@@ -114,6 +120,10 @@ func cleanupTestBuckets(t *testing.T, client *s3.Client) {
 
 	for _, bucket := range resp.Buckets {
 		bucketName := *bucket.Name
+		// Skip buckets newer than this process — they belong to a concurrent run.
+		if bucket.CreationDate != nil && bucket.CreationDate.After(testRunStart) {
+			continue
+		}
 		// Only delete buckets that match our test prefix
 		if strings.HasPrefix(bucketName, defaultConfig.BucketPrefix) {
 			t.Logf("Cleaning up leftover test bucket: %s", bucketName)
