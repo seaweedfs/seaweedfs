@@ -1,0 +1,129 @@
+name: "S3 ETag and ACL Tests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/etag*.go'
+      - 'weed/server/filer_server_handlers_*.go'
+      - 'test/s3/etag/**'
+      - 'test/s3/acl/**'
+      - '.github/workflows/s3-etag-acl-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/etag*.go'
+      - 'weed/server/filer_server_handlers_*.go'
+      - 'test/s3/etag/**'
+      - 'test/s3/acl/**'
+      - '.github/workflows/s3-etag-acl-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/s3-etag-acl-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  s3-etag-acl-tests:
+    name: S3 ETag + ACL Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install SeaweedFS
+        run: |
+          cd weed && go install -buildvcs=false
+
+      - name: Start weed mini (S3 on :8333)
+        run: |
+          mkdir -p /tmp/seaweedfs-etag-acl
+          # Minimal identity config so SSE-aware tests under acl/ can authenticate.
+          cat > /tmp/seaweedfs-etag-acl-s3.json <<'JSON'
+          {
+            "identities": [
+              {
+                "name": "admin",
+                "credentials": [
+                  {"accessKey": "some_access_key1", "secretKey": "some_secret_key1"}
+                ],
+                "actions": ["Admin", "Read", "Write"]
+              }
+            ]
+          }
+          JSON
+          AWS_ACCESS_KEY_ID=some_access_key1 \
+          AWS_SECRET_ACCESS_KEY=some_secret_key1 \
+            weed mini \
+              -dir=/tmp/seaweedfs-etag-acl \
+              -s3.port=8333 \
+              -s3.config=/tmp/seaweedfs-etag-acl-s3.json \
+              -ip=127.0.0.1 \
+              > /tmp/weed-mini.log 2>&1 &
+          echo $! > /tmp/weed-mini.pid
+
+          # Wait for the S3 endpoint to come up (returns 403 unauth before any
+          # request is signed; that's fine — it means the server is listening).
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8333/ | grep -qE "^(200|403)$"; then
+              echo "weed mini is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "weed mini failed to start within 30s"
+          tail -50 /tmp/weed-mini.log
+          exit 1
+
+      - name: Run ETag tests
+        # Pins the regression for #7768: PutObject of an auto-chunked file (>8MB)
+        # must return a pure MD5 hex ETag, not a `<md5>-N` composite — the AWS
+        # SDK for Java v2 rejects the latter on the PutObject path.
+        env:
+          S3_ENDPOINT: http://127.0.0.1:8333
+          AWS_ACCESS_KEY_ID: some_access_key1
+          AWS_SECRET_ACCESS_KEY: some_secret_key1
+          AWS_REGION: us-east-1
+        run: go test -v -timeout=5m ./test/s3/etag/...
+
+      - name: Run ACL versioning tests
+        # Pins object-ACL behavior on a versioned bucket: GetObjectAcl /
+        # PutObjectAcl with and without versionId, modifying ACLs on different
+        # versions independently.
+        env:
+          S3_ENDPOINT: http://127.0.0.1:8333
+          AWS_ACCESS_KEY_ID: some_access_key1
+          AWS_SECRET_ACCESS_KEY: some_secret_key1
+          AWS_REGION: us-east-1
+        run: go test -v -timeout=5m ./test/s3/acl/...
+
+      - name: Stop weed mini
+        if: always()
+        run: |
+          if [ -f /tmp/weed-mini.pid ]; then
+            kill "$(cat /tmp/weed-mini.pid)" 2>/dev/null || true
+          fi
+
+      - name: Show server log on failure
+        if: failure()
+        run: |
+          echo "=== weed mini log (last 200 lines) ==="
+          tail -n 200 /tmp/weed-mini.log 2>/dev/null || echo "no log available"
+
+      - name: Archive log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-etag-acl-server-log
+          path: /tmp/weed-mini.log
+          retention-days: 3
