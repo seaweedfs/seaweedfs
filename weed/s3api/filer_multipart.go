@@ -452,7 +452,9 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		if !ok {
 			glog.Errorf("part %d has no entry", partNumber)
 			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartNotFound).Inc()
-			return nil, nil, s3err.ErrInvalidPart
+			return &multipartCompletionState{
+				deleteEntries: deleteEntries,
+			}, nil, s3err.ErrInvalidPart
 		}
 		found := false
 
