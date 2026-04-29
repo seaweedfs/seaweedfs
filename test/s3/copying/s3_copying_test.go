@@ -134,6 +134,11 @@ func cleanupTestBuckets(t *testing.T, client *s3.Client) {
 
 // createBucket creates a new bucket for testing
 func createBucket(t *testing.T, client *s3.Client, bucketName string) {
+	// Sweep stale buckets from prior tests/runs so each new bucket starts on a
+	// fresh slate. Without this, leaked collection volumes from a panicked or
+	// interrupted earlier run accumulate on a single `weed mini` data node and
+	// the suite eventually exhausts its volume slots.
+	cleanupTestBuckets(t, client)
 	// First, try to delete the bucket if it exists (cleanup from previous failed tests)
 	deleteBucket(t, client, bucketName)
 
