@@ -1112,16 +1112,43 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
 	} else {
-		// No version-tagged entries remain - delete the .versions directory.
-		// rm is non-recursive, so any stray non-version entries will cause
-		// rm to fail; we log and continue, treating the directory cleanup as
-		// best-effort since the version data is already gone.
+		// No version-tagged entries remain - try to delete the .versions
+		// directory. rm is non-recursive, so any stray non-version entries
+		// (orphan files from older code paths or interrupted writes that left
+		// behind a v_<id> file without the version-id extended attribute)
+		// will cause rm to fail.
+		//
+		// In that case, clear the stale latest-version pointer on the
+		// .versions directory entry so subsequent reads return a clean
+		// "object absent" instead of repeatedly chasing a missing version
+		// file through getLatestObjectVersion's retry loop and the self-heal
+		// path on every request. The orphan files remain in the directory
+		// (an operator can remove them); from the S3 API perspective, the
+		// object is correctly absent.
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
 		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
-		if err != nil {
-			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
-			// Don't return error - the versions are already deleted, this is just cleanup
+		if err == nil {
+			return nil
+		}
+		glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
+
+		_, hasId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+		_, hasFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
+		if !hasId && !hasFile {
+			return nil
+		}
+		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
+		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+		clearCachedVersionMetadata(versionsEntry.Extended)
+		if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+			updatedEntry.Extended = versionsEntry.Extended
+			updatedEntry.Attributes = versionsEntry.Attributes
+			updatedEntry.Chunks = versionsEntry.Chunks
+		}); mkErr != nil {
+			glog.Warningf("updateLatestVersionAfterDeletion: failed to clear stale pointer for %s/%s: %v", bucket, object, mkErr)
+		} else {
+			glog.V(1).Infof("updateLatestVersionAfterDeletion: cleared stale latest-version pointer for %s/%s (orphan entries remain in .versions directory)", bucket, object)
 		}
 	}
 
