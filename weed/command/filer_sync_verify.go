@@ -177,6 +177,62 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	return nil
 }
 
+// entryStream is a sorted, streaming view of a single directory's entries.
+// A background goroutine pages through the directory via ReadDirAllEntries
+// and forwards each entry to a buffered channel; the caller consumes entries
+// one at a time through peek/advance. Memory usage is O(channel buffer) —
+// independent of directory size — rather than O(total entries).
+type entryStream struct {
+	ch   <-chan *filer_pb.Entry
+	head *filer_pb.Entry
+	done bool
+	err  error // written before ch is closed; safe to read once done==true
+}
+
+// newEntryStream starts the background goroutine. It exits when listing
+// completes, an error occurs, or ctx is cancelled; the channel is always
+// closed before exit so consumers do not block indefinitely.
+func newEntryStream(ctx context.Context, client filer_pb.FilerClient, dir string) *entryStream {
+	ch := make(chan *filer_pb.Entry, 64)
+	s := &entryStream{ch: ch}
+	go func() {
+		defer close(ch)
+		s.err = filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "",
+			func(entry *filer_pb.Entry, isLast bool) error {
+				select {
+				case ch <- entry:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+	}()
+	return s
+}
+
+// peek returns the next entry without consuming it, or nil at end-of-stream.
+func (s *entryStream) peek() *filer_pb.Entry {
+	if s.done {
+		return nil
+	}
+	if s.head == nil {
+		e, ok := <-s.ch
+		if !ok {
+			s.done = true
+			return nil
+		}
+		s.head = e
+	}
+	return s.head
+}
+
+// advance consumes and returns the next entry.
+func (s *entryStream) advance() *filer_pb.Entry {
+	e := s.peek()
+	s.head = nil
+	return e
+}
+
 func compareDirectory(ctx context.Context,
 	clientA, clientB filer_pb.FilerClient,
 	dirA, dirB string,
@@ -200,33 +256,26 @@ func compareDirectory(ctx context.Context,
 
 	result.dirCount.Add(1)
 
-	entriesA, errA := listEntries(ctx, clientA, dirA)
-	if errA != nil {
-		return fmt.Errorf("list %s on filer A: %v", dirA, errA)
-	}
-	entriesB, errB := listEntries(ctx, clientB, dirB)
-	if errB != nil {
-		return fmt.Errorf("list %s on filer B: %v", dirB, errB)
-	}
+	// A child context ensures that stream goroutines are cancelled and their
+	// channels are closed if compareDirectory returns early (e.g. on error).
+	mergeCtx, cancelMerge := context.WithCancel(ctx)
+	defer cancelMerge()
+
+	streamA := newEntryStream(mergeCtx, clientA, dirA)
+	streamB := newEntryStream(mergeCtx, clientB, dirB)
 
 	// collect subdirectories for recursive comparison
 	type dirPair struct{ a, b string }
 	var subDirs []dirPair
 
-	i, j := 0, 0
-	for i < len(entriesA) || j < len(entriesB) {
-		var nameA, nameB string
-		if i < len(entriesA) {
-			nameA = entriesA[i].Name
-		}
-		if j < len(entriesB) {
-			nameB = entriesB[j].Name
-		}
+	for streamA.peek() != nil || streamB.peek() != nil {
+		eA := streamA.peek()
+		eB := streamB.peek()
 
 		switch {
-		case i < len(entriesA) && (j >= len(entriesB) || nameA < nameB):
+		case eA != nil && (eB == nil || eA.Name < eB.Name):
 			// entry only in A
-			entryA := entriesA[i]
+			entryA := streamA.advance()
 			if !cutoffTime.IsZero() && entryA.Attributes != nil && entryA.Attributes.Mtime > cutoffTime.Unix() {
 				result.skippedRecent.Add(1)
 			} else {
@@ -236,19 +285,18 @@ func compareDirectory(ctx context.Context,
 					countMissingRecursive(ctx, clientA, fmt.Sprintf("%s/%s", dirA, entryA.Name), cutoffTime, result)
 				}
 			}
-			i++
 
-		case j < len(entriesB) && (i >= len(entriesA) || nameB < nameA):
+		case eB != nil && (eA == nil || eB.Name < eA.Name):
 			// entry only in B
+			entryB := streamB.advance()
 			if !isActivePassive {
-				reportDiff(diffOnlyInB, dirB, entriesB[j], nil, result)
+				reportDiff(diffOnlyInB, dirB, entryB, nil, result)
 			}
-			j++
 
 		default:
 			// same name in both
-			entryA := entriesA[i]
-			entryB := entriesB[j]
+			entryA := streamA.advance()
+			entryB := streamB.advance()
 
 			if entryA.IsDirectory && entryB.IsDirectory {
 				subDirs = append(subDirs, dirPair{
@@ -269,9 +317,16 @@ func compareDirectory(ctx context.Context,
 					reportDiff(diffOnlyInB, dirB, entryB, nil, result)
 				}
 			}
-			i++
-			j++
 		}
+	}
+
+	// Both channels are closed: close happens-before the receive of the zero
+	// value, so stream.err is visible here without additional synchronisation.
+	if err := streamA.err; err != nil && err != context.Canceled {
+		return fmt.Errorf("list %s on filer A: %v", dirA, err)
+	}
+	if err := streamB.err; err != nil && err != context.Canceled {
+		return fmt.Errorf("list %s on filer B: %v", dirB, err)
 	}
 
 	// Release our slot before recursing so children can acquire it. Holding
@@ -304,14 +359,6 @@ func compareDirectory(ctx context.Context,
 	return nil
 }
 
-func listEntries(ctx context.Context, client filer_pb.FilerClient, dir string) ([]*filer_pb.Entry, error) {
-	var entries []*filer_pb.Entry
-	err := filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
-		entries = append(entries, entry)
-		return nil
-	})
-	return entries, err
-}
 
 func compareEntries(dir string, entryA, entryB *filer_pb.Entry, result *VerifyResult) {
 	result.fileCount.Add(1)
@@ -505,20 +552,20 @@ func writeJSONLine(result *VerifyResult, v any) {
 }
 
 func countMissingRecursive(ctx context.Context, client filer_pb.FilerClient, dir string, cutoffTime time.Time, result *VerifyResult) {
-	entries, err := listEntries(ctx, client, dir)
-	if err != nil {
-		glog.Warningf("list missing directory %s: %v", dir, err)
-		return
-	}
-	for _, entry := range entries {
-		if entry.IsDirectory {
-			countMissingRecursive(ctx, client, fmt.Sprintf("%s/%s", dir, entry.Name), cutoffTime, result)
-		} else {
+	err := filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "",
+		func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory {
+				countMissingRecursive(ctx, client, fmt.Sprintf("%s/%s", dir, entry.Name), cutoffTime, result)
+				return nil
+			}
 			if !cutoffTime.IsZero() && entry.Attributes != nil && entry.Attributes.Mtime > cutoffTime.Unix() {
 				result.skippedRecent.Add(1)
-				continue
+				return nil
 			}
 			reportDiff(diffMissing, dir, entry, nil, result)
-		}
+			return nil
+		})
+	if err != nil {
+		glog.Warningf("list missing directory %s: %v", dir, err)
 	}
 }
