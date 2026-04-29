@@ -1795,15 +1795,28 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		if destKMSEncryptionContext == nil {
 			destKMSEncryptionContext = BuildEncryptionContext(dstBucket, dstPath, destKMSBucketKeyEnabled)
 		}
-		sseKey := &SSEKMSKey{
-			KeyID:             destKMSKeyID,
-			EncryptionContext: destKMSEncryptionContext,
-			BucketKeyEnabled:  destKMSBucketKeyEnabled,
-		}
-		if kmsMetadata, serErr := SerializeSSEKMSMetadata(sseKey); serErr == nil {
-			dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+		// Take the first dst chunk's full per-chunk metadata as the canonical
+		// entry-level key — it includes a real EDK + IV minted by
+		// copyCrossEncryptionChunk's CreateSSEKMSEncryptedReaderWithBucketKey
+		// call. Earlier this stored only KeyID/context/bucketKey, leaving the
+		// EncryptedDataKey empty; single-chunk reads then failed with
+		// "Invalid ciphertext format" when KMS was asked to unwrap an empty
+		// EDK (#9281).
+		if len(dstChunks) > 0 && len(dstChunks[0].GetSseMetadata()) > 0 {
+			dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = dstChunks[0].GetSseMetadata()
 		} else {
-			glog.Errorf("Failed to serialize SSE-KMS metadata: %v", serErr)
+			// 0-byte object or no SSE-KMS chunk: fall back to a stub key
+			// (sufficient for the entry to be recognised as SSE-KMS).
+			sseKey := &SSEKMSKey{
+				KeyID:             destKMSKeyID,
+				EncryptionContext: destKMSEncryptionContext,
+				BucketKeyEnabled:  destKMSBucketKeyEnabled,
+			}
+			if kmsMetadata, serErr := SerializeSSEKMSMetadata(sseKey); serErr == nil {
+				dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+			} else {
+				glog.Errorf("Failed to serialize SSE-KMS metadata: %v", serErr)
+			}
 		}
 	} else if state.DstSSES3 && destSSES3Key != nil {
 		// For SSE-S3 destination, create object-level metadata
@@ -2338,16 +2351,28 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 			if encryptionContext == nil {
 				encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
 			}
-			sseKey := &SSEKMSKey{
-				KeyID:             destKeyID,
-				EncryptionContext: encryptionContext,
-				BucketKeyEnabled:  bucketKeyEnabled,
-			}
-			if kmsMetadata, serializeErr := SerializeSSEKMSMetadata(sseKey); serializeErr == nil {
-				dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-				glog.V(3).Infof("Generated SSE-KMS metadata for direct copy: keyID=%s", destKeyID)
+			// Direct (same-key) fast path: chunks were copied as-is and now
+			// carry the source's per-chunk SSE-KMS metadata (preserved by
+			// createDestinationChunkPreservingSSE in copySingleChunk). Use
+			// the first chunk's full key as entry-level so single-chunk
+			// reads can unwrap the EDK on the GET path. Earlier this stored
+			// only KeyID/context/bucketKey, which made single-chunk reads
+			// fail at GET with "Invalid ciphertext format" (#9281).
+			if len(chunks) > 0 && len(chunks[0].GetSseMetadata()) > 0 {
+				dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = chunks[0].GetSseMetadata()
+				glog.V(3).Infof("Set entry-level SSE-KMS key from first dst chunk for direct copy: keyID=%s", destKeyID)
 			} else {
-				glog.Errorf("Failed to serialize SSE-KMS metadata for direct copy: %v", serializeErr)
+				sseKey := &SSEKMSKey{
+					KeyID:             destKeyID,
+					EncryptionContext: encryptionContext,
+					BucketKeyEnabled:  bucketKeyEnabled,
+				}
+				if kmsMetadata, serializeErr := SerializeSSEKMSMetadata(sseKey); serializeErr == nil {
+					dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+					glog.V(3).Infof("Generated SSE-KMS metadata for direct copy: keyID=%s", destKeyID)
+				} else {
+					glog.Errorf("Failed to serialize SSE-KMS metadata for direct copy: %v", serializeErr)
+				}
 			}
 		}
 		return chunks, dstMetadata, err
