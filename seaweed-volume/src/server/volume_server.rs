@@ -146,14 +146,17 @@ pub fn to_http_address(addr: &str) -> String {
     let Some(ports_sep_index) = addr.rfind(':') else {
         return addr.to_string();
     };
-    if ports_sep_index + 1 >= addr.len() {
-        return addr.to_string();
-    }
     let ports = &addr[ports_sep_index + 1..];
     if let Some(dot_idx) = ports.rfind('.') {
-        let host = &addr[..ports_sep_index];
         let http_port = &ports[..dot_idx];
-        return format!("{}:{}", host, http_port);
+        let grpc_port = &ports[dot_idx + 1..];
+        // Only strip the suffix when both parts parse as real ports — leave
+        // anything else (e.g. "host:abc.def") untouched so bad config surfaces
+        // rather than being silently rewritten. Mirrors the validation already
+        // done in `to_grpc_address` for the inverse direction.
+        if http_port.parse::<u16>().is_ok() && grpc_port.parse::<u16>().is_ok() {
+            return addr[..ports_sep_index + 1 + dot_idx].to_string();
+        }
     }
     addr.to_string()
 }
@@ -443,5 +446,17 @@ mod tests {
         assert_eq!(to_http_address("no-port"), "no-port");
         // Trailing colon: nothing after the separator, treat as unparseable.
         assert_eq!(to_http_address("host:"), "host:");
+    }
+
+    #[test]
+    fn test_to_http_address_keeps_non_numeric_dotted_suffix() {
+        // The dotted form is only valid when both sides are real port numbers.
+        // Otherwise the address is malformed config (e.g. a hostname like
+        // "host:abc.def"), and silently rewriting it would just hide the bug.
+        assert_eq!(to_http_address("host:abc.def"), "host:abc.def");
+        assert_eq!(to_http_address("host:9333.notaport"), "host:9333.notaport");
+        assert_eq!(to_http_address("host:notaport.19333"), "host:notaport.19333");
+        // Out-of-range ports must not be silently truncated either.
+        assert_eq!(to_http_address("host:99999.19333"), "host:99999.19333");
     }
 }
