@@ -949,10 +949,13 @@ func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*fi
 	return dstChunks, nil
 }
 
-// copySingleChunk copies a single chunk from source to destination
+// copySingleChunk copies a single chunk from source to destination, preserving
+// the source's SSE tagging (the same-key copy fast path reuses the source
+// ciphertext as-is, so the destination chunk must keep the source's SSE_C /
+// SSE_KMS / SSE_S3 metadata or the read path will not decrypt — see #9281).
 func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath string) (*filer_pb.FileChunk, error) {
 	// Create destination chunk
-	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
+	dstChunk := s3a.createDestinationChunkPreservingSSE(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
@@ -1198,7 +1201,13 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 	return s3err.ErrNone
 }
 
-// createDestinationChunk creates a new chunk based on the source chunk with modified properties
+// createDestinationChunk creates a new chunk based on the source chunk with modified properties.
+//
+// SseType and SseMetadata are NOT copied here because most call sites
+// re-encrypt the chunk with the destination's keys and then set those fields
+// to match the new encryption. The same-key fast path (where the bytes are
+// copied as-is and the destination should keep the source's SSE tagging) calls
+// createDestinationChunkPreservingSSE instead.
 func (s3a *S3ApiServer) createDestinationChunk(sourceChunk *filer_pb.FileChunk, offset int64, size uint64) *filer_pb.FileChunk {
 	return &filer_pb.FileChunk{
 		Offset:       offset,
@@ -1208,6 +1217,21 @@ func (s3a *S3ApiServer) createDestinationChunk(sourceChunk *filer_pb.FileChunk, 
 		IsCompressed: sourceChunk.IsCompressed,
 		CipherKey:    sourceChunk.CipherKey,
 	}
+}
+
+// createDestinationChunkPreservingSSE returns a destination chunk that mirrors
+// the source's SSE tagging in addition to the usual fields. This is used by the
+// same-key copy fast paths where the on-disk bytes are reused as-is and the
+// destination must therefore declare the same per-chunk SSE encryption as the
+// source (otherwise detectPrimarySSEType returns "None" on read and
+// GetObjectHandler serves the still-encrypted bytes raw — issue #9281).
+func (s3a *S3ApiServer) createDestinationChunkPreservingSSE(sourceChunk *filer_pb.FileChunk, offset int64, size uint64) *filer_pb.FileChunk {
+	dst := s3a.createDestinationChunk(sourceChunk, offset, size)
+	dst.SseType = sourceChunk.SseType
+	if len(sourceChunk.SseMetadata) > 0 {
+		dst.SseMetadata = append([]byte(nil), sourceChunk.SseMetadata...)
+	}
+	return dst
 }
 
 // lookupVolumeUrl looks up the volume URL for a given file ID using the filer's LookupVolume method
@@ -2226,9 +2250,20 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 			return nil, fmt.Errorf("re-encrypt chunk data: %w", readErr)
 		}
 		finalData = reencryptedData
-
-		// Update chunk size to include IV
 		dstChunk.Size = uint64(len(finalData))
+
+		// Tag the destination chunk as SSE-C with per-chunk metadata. Without
+		// this the chunk's SseType stays NONE, detectPrimarySSEType returns
+		// "None" on read (it counts SSE-C chunks; an entry whose only chunk
+		// is NONE shows zero), and GetObjectHandler serves the still-encrypted
+		// volume bytes raw without decryption — yielding deterministic byte
+		// corruption on the SSE-C copy path (issue #9281).
+		ssecMetadata, metaErr := SerializeSSECMetadata(destIV, destKey.KeyMD5, chunk.Offset)
+		if metaErr != nil {
+			return nil, fmt.Errorf("serialize SSE-C chunk metadata: %w", metaErr)
+		}
+		dstChunk.SseType = filer_pb.SSEType_SSE_C
+		dstChunk.SseMetadata = ssecMetadata
 	}
 
 	// Upload the processed data
@@ -2352,31 +2387,24 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, 
 		dstChunks = append(dstChunks, dstChunk)
 	}
 
-	// Generate destination metadata for SSE-KMS encryption (consistent with SSE-C pattern)
+	// Generate destination metadata for SSE-KMS encryption.
+	//
+	// For multi-chunk objects (isMultipartSSEKMS=true on read), the read path
+	// uses per-chunk metadata (already set by copyChunkWithSSEKMSReencryption
+	// after #9281). For single-chunk objects (isMultipartSSEKMS=false), the
+	// read path falls back to the entry-level SSE-KMS key — so it must be a
+	// fully-formed key (with EncryptedDataKey + IV), not just KeyID. Earlier
+	// this stored only KeyID/context/bucketKey, leaving EncryptedDataKey
+	// empty; reads then failed with "Invalid ciphertext format" when KMS was
+	// asked to unwrap an empty EDK.
+	//
+	// Take the first destination chunk's full per-chunk metadata as the
+	// canonical entry-level key — it includes a real EDK + IV minted by
+	// CreateSSEKMSEncryptedReaderWithBucketKey.
 	dstMetadata := make(map[string][]byte)
-	if destKeyID != "" {
-		// Build encryption context if not provided
-		if encryptionContext == nil {
-			encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
-		}
-
-		// Create SSE-KMS key structure for destination metadata
-		sseKey := &SSEKMSKey{
-			KeyID:             destKeyID,
-			EncryptionContext: encryptionContext,
-			BucketKeyEnabled:  bucketKeyEnabled,
-			// Note: EncryptedDataKey will be generated during actual encryption
-			// IV is also generated per chunk during encryption
-		}
-
-		// Serialize SSE-KMS metadata for storage
-		kmsMetadata, err := SerializeSSEKMSMetadata(sseKey)
-		if err != nil {
-			return nil, nil, fmt.Errorf("serialize destination SSE-KMS metadata: %w", err)
-		}
-
-		dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-		glog.V(3).Infof("Generated destination SSE-KMS metadata: keyID=%s, bucketKey=%t", destKeyID, bucketKeyEnabled)
+	if destKeyID != "" && len(dstChunks) > 0 && len(dstChunks[0].GetSseMetadata()) > 0 {
+		dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = dstChunks[0].GetSseMetadata()
+		glog.V(3).Infof("Set entry-level SSE-KMS key from first dst chunk: keyID=%s, bucketKey=%t", destKeyID, bucketKeyEnabled)
 	}
 
 	return dstChunks, dstMetadata, nil
@@ -2407,11 +2435,23 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 
 	var finalData []byte
 
-	// Decrypt source data if it's SSE-KMS encrypted
-	if sourceSSEKey != nil {
-		// For SSE-KMS, the encrypted chunk data contains IV + encrypted content
-		// Use the source SSE key to decrypt the chunk data
-		decryptedReader, err := CreateSSEKMSDecryptedReader(bytes.NewReader(chunkData), sourceSSEKey)
+	// Decrypt source data if it's SSE-KMS encrypted.
+	// Multipart SSE-KMS sources have a different EDK + IV per chunk; the
+	// per-chunk metadata is the only place those values live, so we MUST use
+	// the chunk's own metadata for decryption rather than the entry-level
+	// sourceSSEKey (which only matches single-part objects). Earlier this
+	// always decrypted with the entry-level key, which produced deterministic
+	// wrong bytes on a multipart-source COPY (issue #9281).
+	chunkSSEKey := sourceSSEKey
+	if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
+		perChunkKey, deErr := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
+		if deErr != nil {
+			return nil, fmt.Errorf("deserialize per-chunk SSE-KMS metadata: %w", deErr)
+		}
+		chunkSSEKey = perChunkKey
+	}
+	if chunkSSEKey != nil {
+		decryptedReader, err := CreateSSEKMSDecryptedReader(bytes.NewReader(chunkData), chunkSSEKey)
 		if err != nil {
 			return nil, fmt.Errorf("create SSE-KMS decrypted reader: %w", err)
 		}
@@ -2435,7 +2475,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 			encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
 		}
 
-		encryptedReader, _, err := CreateSSEKMSEncryptedReaderWithBucketKey(bytes.NewReader(finalData), destKeyID, encryptionContext, bucketKeyEnabled)
+		encryptedReader, destSSEKey, err := CreateSSEKMSEncryptedReaderWithBucketKey(bytes.NewReader(finalData), destKeyID, encryptionContext, bucketKeyEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("create SSE-KMS encrypted reader: %w", err)
 		}
@@ -2445,13 +2485,29 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 			return nil, fmt.Errorf("re-encrypt chunk data: %w", err)
 		}
 
-		// Store original decrypted data size for logging
 		originalSize := len(finalData)
 		finalData = reencryptedData
 		glog.V(4).Infof("Re-encrypted chunk data: %d bytes → %d bytes", originalSize, len(finalData))
-
-		// Update chunk size to include IV and encryption overhead
 		dstChunk.Size = uint64(len(finalData))
+
+		// Tag the destination chunk as SSE-KMS with per-chunk metadata. Without
+		// this, the chunk's SseType stays NONE, detectPrimarySSEType returns
+		// "None" on read, and GetObjectHandler serves still-encrypted volume
+		// bytes raw without decryption — yielding deterministic byte
+		// corruption on the SSE-KMS copy path (issue #9281).
+		//
+		// CreateSSEKMSEncryptedReaderWithBucketKey returns the destSSEKey
+		// freshly populated with KeyID, EncryptionContext, EncryptedDataKey,
+		// IV and BucketKey state; the per-chunk ChunkOffset is the chunk's
+		// position within the destination object so the read path advances the
+		// keystream by the right amount.
+		destSSEKey.ChunkOffset = chunk.Offset
+		kmsMetadata, metaErr := SerializeSSEKMSMetadata(destSSEKey)
+		if metaErr != nil {
+			return nil, fmt.Errorf("serialize SSE-KMS chunk metadata: %w", metaErr)
+		}
+		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
+		dstChunk.SseMetadata = kmsMetadata
 	}
 
 	// Upload the processed data

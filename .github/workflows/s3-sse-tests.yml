@@ -73,8 +73,12 @@ jobs:
             # Quick tests - basic SSE-C and SSE-KMS functionality + Range requests
             make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior"
           else
-            # Comprehensive tests - SSE-C/KMS functionality, excluding copy operations (pre-existing SSE-C issues)
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior"
+            # Comprehensive tests - SSE-C/KMS functionality plus cross-SSE copy.
+            # The copy-operation tests (`.*ObjectCopyIntegration`, `TestCrossSSECopy`,
+            # `TestSSEMultipartCopy`) were excluded for a long time as "pre-existing
+            # SSE-C issues" (#9281); fixed and brought back into CI as part of the
+            # same change that fixed them.
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior|.*ObjectCopyIntegration|TestCrossSSECopy|TestSSEMultipartCopy"
           fi
 
       - name: Show server logs on failure
