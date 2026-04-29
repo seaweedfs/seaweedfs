@@ -1112,20 +1112,107 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
 	} else {
-		// No version-tagged entries remain - delete the .versions directory.
-		// rm is non-recursive, so any stray non-version entries will cause
-		// rm to fail; we log and continue, treating the directory cleanup as
-		// best-effort since the version data is already gone.
+		// No version-tagged entries remain - try to delete the .versions
+		// directory. rm is non-recursive, so any stray non-version entries
+		// (orphan files from older code paths or interrupted writes that left
+		// behind a v_<id> file without the version-id extended attribute)
+		// will cause rm to fail.
+		//
+		// In that case, clear the stale latest-version pointer on the
+		// .versions directory entry so subsequent reads return a clean
+		// "object absent" instead of repeatedly chasing a missing version
+		// file through getLatestObjectVersion's retry loop and the self-heal
+		// path on every request. The orphan files remain in the directory
+		// (an operator can remove them); from the S3 API perspective, the
+		// object is correctly absent.
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
 		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
-		if err != nil {
-			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
-			// Don't return error - the versions are already deleted, this is just cleanup
+		if err == nil {
+			return nil
 		}
+		glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
+		s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 	}
 
 	return nil
+}
+
+// clearStaleLatestVersionPointer best-effort clears the latest-version
+// pointer on a .versions directory entry when no recoverable version
+// remains and the directory cannot be removed (e.g. because of orphan
+// entries that lack the version-id extended attribute).
+//
+// The persist is CAS-style to avoid wiping a pointer that a concurrent
+// writer just promoted between the caller's snapshot and this function:
+//
+//  1. Re-scan .versions for any version-id-tagged entry. If one now
+//     exists, abort - either the concurrent writer already updated the
+//     pointer or the next read's self-heal will pick up the new entry.
+//  2. Re-fetch the live .versions directory entry and require its
+//     latest-pointer fields to still match the stale id observed by the
+//     caller. If they have changed, abort.
+//  3. Persist with mkFile using the live Extended map (with the two
+//     pointer fields and cached metadata removed) so any other Extended
+//     fields written concurrently between (2) and the persist are
+//     preserved.
+//
+// caller is the source-function name used in log lines so operators can
+// trace which path ran the clear.
+func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath string, versionsEntry *filer_pb.Entry, caller string) {
+	if versionsEntry == nil || versionsEntry.Extended == nil {
+		return
+	}
+	observedStaleId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	versionsDir := bucketDir + "/" + versionsObjectPath
+
+	startFrom := ""
+	for {
+		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+		if listErr != nil {
+			glog.Warningf("%s: re-scan failed for %s/%s, leaving pointer untouched: %v", caller, bucket, object, listErr)
+			return
+		}
+		if pageEntry, _, _, _ := selectLatestVersion(entries); pageEntry != nil {
+			glog.V(1).Infof("%s: skipping pointer clear for %s/%s, concurrent writer added a tagged version", caller, bucket, object)
+			return
+		}
+		if isLast || len(entries) == 0 {
+			break
+		}
+		startFrom = entries[len(entries)-1].Name
+	}
+
+	liveEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err != nil {
+		// Directory was concurrently removed - nothing to clear.
+		return
+	}
+	if liveEntry.Extended == nil {
+		return
+	}
+	currentIdBytes, hasId := liveEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+	_, hasFile := liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
+	if !hasId && !hasFile {
+		return
+	}
+	if observedStaleId != "" && string(currentIdBytes) != observedStaleId {
+		glog.V(1).Infof("%s: skipping pointer clear for %s/%s, live pointer changed (observed=%s, current=%s)", caller, bucket, object, observedStaleId, string(currentIdBytes))
+		return
+	}
+
+	delete(liveEntry.Extended, s3_constants.ExtLatestVersionIdKey)
+	delete(liveEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+	clearCachedVersionMetadata(liveEntry.Extended)
+	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, liveEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = liveEntry.Extended
+		updatedEntry.Attributes = liveEntry.Attributes
+		updatedEntry.Chunks = liveEntry.Chunks
+	}); mkErr != nil {
+		glog.Warningf("%s: failed to clear stale pointer for %s/%s: %v", caller, bucket, object, mkErr)
+		return
+	}
+	glog.V(1).Infof("%s: cleared stale latest-version pointer for %s/%s (orphan entries remain in .versions directory)", caller, bucket, object)
 }
 
 // ListObjectVersionsHandler handles the list object versions request
@@ -1375,6 +1462,13 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	}
 
 	if latestEntry == nil {
+		// Best-effort clear the stale latest-version pointer so subsequent
+		// reads short-circuit to ErrNotFound directly instead of replaying
+		// getLatestObjectVersion's read-retry loop and re-entering self-heal
+		// on every request. Orphan entries (files in .versions/ that lack
+		// the version-id extended attribute) remain in place; from the S3
+		// API perspective the object is correctly absent.
+		s3a.clearStaleLatestVersionPointer(bucket, normalizedObject, bucketDir, versionsObjectPath, versionsEntry, "healStaleLatestVersionPointer")
 		// Wrap filer_pb.ErrNotFound so callers can distinguish genuine
 		// object-absence (nothing left to promote) from scan failures
 		// (I/O errors during list) via errors.Is.
