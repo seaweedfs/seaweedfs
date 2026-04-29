@@ -1132,27 +1132,45 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			return nil
 		}
 		glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
-
-		_, hasId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
-		_, hasFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
-		if !hasId && !hasFile {
-			return nil
-		}
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
-		clearCachedVersionMetadata(versionsEntry.Extended)
-		if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-			updatedEntry.Extended = versionsEntry.Extended
-			updatedEntry.Attributes = versionsEntry.Attributes
-			updatedEntry.Chunks = versionsEntry.Chunks
-		}); mkErr != nil {
-			glog.Warningf("updateLatestVersionAfterDeletion: failed to clear stale pointer for %s/%s: %v", bucket, object, mkErr)
-		} else {
-			glog.V(1).Infof("updateLatestVersionAfterDeletion: cleared stale latest-version pointer for %s/%s (orphan entries remain in .versions directory)", bucket, object)
-		}
+		s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 	}
 
 	return nil
+}
+
+// clearStaleLatestVersionPointer best-effort clears the latest-version
+// pointer on a .versions directory entry when no recoverable version
+// remains and the directory cannot be removed (e.g. because of orphan
+// entries that lack the version-id extended attribute).
+//
+// Persists with mkFile, snapshotting the caller's versionsEntry.Extended
+// (with the two pointer fields and cached metadata removed). Orphan files
+// are left in place; from the S3 API perspective the object is now
+// correctly absent and subsequent reads short-circuit to ErrNotFound.
+//
+// caller is the source-function name used in log lines so operators can
+// trace which path ran the clear.
+func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath string, versionsEntry *filer_pb.Entry, caller string) {
+	if versionsEntry == nil || versionsEntry.Extended == nil {
+		return
+	}
+	_, hasId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+	_, hasFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
+	if !hasId && !hasFile {
+		return
+	}
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+	clearCachedVersionMetadata(versionsEntry.Extended)
+	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionsEntry.Extended
+		updatedEntry.Attributes = versionsEntry.Attributes
+		updatedEntry.Chunks = versionsEntry.Chunks
+	}); mkErr != nil {
+		glog.Warningf("%s: failed to clear stale pointer for %s/%s: %v", caller, bucket, object, mkErr)
+		return
+	}
+	glog.V(1).Infof("%s: cleared stale latest-version pointer for %s/%s (orphan entries remain in .versions directory)", caller, bucket, object)
 }
 
 // ListObjectVersionsHandler handles the list object versions request
@@ -1402,6 +1420,13 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	}
 
 	if latestEntry == nil {
+		// Best-effort clear the stale latest-version pointer so subsequent
+		// reads short-circuit to ErrNotFound directly instead of replaying
+		// getLatestObjectVersion's read-retry loop and re-entering self-heal
+		// on every request. Orphan entries (files in .versions/ that lack
+		// the version-id extended attribute) remain in place; from the S3
+		// API perspective the object is correctly absent.
+		s3a.clearStaleLatestVersionPointer(bucket, normalizedObject, bucketDir, versionsObjectPath, versionsEntry, "healStaleLatestVersionPointer")
 		// Wrap filer_pb.ErrNotFound so callers can distinguish genuine
 		// object-absence (nothing left to promote) from scan failures
 		// (I/O errors during list) via errors.Is.
