@@ -131,7 +131,10 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	case sys.XATTR_REPLACE:
 		fallthrough
 	default:
-		entry.Extended[XATTR_PREFIX+attr] = data
+		// data aliases the FUSE request's pooled input buffer, which is
+		// recycled once this handler returns. Copy before storing so a
+		// later request reusing the buffer cannot corrupt the value.
+		entry.Extended[XATTR_PREFIX+attr] = append([]byte(nil), data...)
 	}
 
 	if fh != nil {
