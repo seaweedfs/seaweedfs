@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -1425,14 +1426,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunks(entry *filer_pb.Entry, destKey
 	// as a fallback for legacy multipart chunks that lack per-chunk metadata.
 	// New multipart SSE-KMS uploads always populate per-chunk metadata, but
 	// objects written by earlier code may have only the entry-level key.
-	var sourceEntrySSEKey *SSEKMSKey
-	if keyData, ok := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; ok && len(keyData) > 0 {
-		if k, err := DeserializeSSEKMSMetadata(keyData); err == nil {
-			sourceEntrySSEKey = k
-		} else {
-			glog.V(2).Infof("copyMultipartSSEKMSChunks: failed to deserialize source entry-level SSE-KMS key for %s: %v", dstPath, err)
-		}
-	}
+	sourceEntrySSEKey := deserializeEntrySSEKMSKey(entry.Extended)
 
 	var dstChunks []*filer_pb.FileChunk
 
@@ -1522,20 +1516,11 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, sour
 
 	// Prefer the chunk's own per-chunk SSE-KMS metadata; fall back to the
 	// source's entry-level key for legacy multipart objects that don't have
-	// per-chunk metadata. Hard-failing on the missing per-chunk metadata
-	// would break those legacy objects even though the entry-level key is
-	// available.
-	var sourceSSEKey *SSEKMSKey
-	if len(chunk.GetSseMetadata()) > 0 {
-		sourceSSEKey, err = DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
-		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
-		}
-	} else if sourceEntrySSEKey != nil {
-		glog.V(2).Infof("copyMultipartSSEKMSChunk: chunk %s has no per-chunk SSE-KMS metadata; falling back to entry-level key (legacy multipart object)", chunk.GetFileIdString())
-		sourceSSEKey = sourceEntrySSEKey
-	} else {
-		return nil, fmt.Errorf("SSE-KMS chunk missing per-chunk metadata and no entry-level key available")
+	// per-chunk metadata. resolveChunkSSEKMSKey centralizes that selection
+	// so the same logic is used everywhere a chunk needs decryption.
+	sourceSSEKey, err := resolveChunkSSEKMSKey(chunk, sourceEntrySSEKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve SSE-KMS metadata: %w", err)
 	}
 
 	// Decrypt the chunk data using the source metadata
@@ -2436,21 +2421,53 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 	}
 }
 
+// deserializeEntrySSEKMSKey returns the SSE-KMS key serialized into
+// entry.Extended[SeaweedFSSSEKMSKey], or nil if the entry is not SSE-KMS
+// encrypted. Errors are logged and treated as "not present" so the caller
+// can fall back to per-chunk metadata or fail safely.
+func deserializeEntrySSEKMSKey(entryExtended map[string][]byte) *SSEKMSKey {
+	keyData, ok := entryExtended[s3_constants.SeaweedFSSSEKMSKey]
+	if !ok || len(keyData) == 0 {
+		return nil
+	}
+	k, err := DeserializeSSEKMSMetadata(keyData)
+	if err != nil {
+		glog.V(2).Infof("deserializeEntrySSEKMSKey: failed to deserialize entry-level SSE-KMS key: %v", err)
+		return nil
+	}
+	return k
+}
+
+// resolveChunkSSEKMSKey picks the right SSE-KMS key to decrypt a chunk with:
+// the chunk's own per-chunk metadata if present (the post-#9211 layout for
+// new uploads), else the source object's entry-level key (legacy multipart
+// objects). Returns nil + an error if neither is available; the caller can
+// then surface a clear "missing metadata" error to the client. The selection
+// must mirror the encryption side: each chunk is encrypted with the key
+// recorded in its per-chunk metadata at write time, and entry-level metadata
+// is the legacy fallback for parts that were written before per-chunk keys
+// existed.
+func resolveChunkSSEKMSKey(chunk *filer_pb.FileChunk, entryFallback *SSEKMSKey) (*SSEKMSKey, error) {
+	if len(chunk.GetSseMetadata()) > 0 {
+		return DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
+	}
+	if entryFallback != nil {
+		glog.V(2).Infof("resolveChunkSSEKMSKey: chunk %s has no per-chunk SSE-KMS metadata; falling back to entry-level key (legacy multipart object)", chunk.GetFileIdString())
+		return entryFallback, nil
+	}
+	return nil, fmt.Errorf("SSE-KMS chunk %s missing per-chunk metadata and no entry-level key available", chunk.GetFileIdString())
+}
+
 // srcSSEKMSStateMatchesDest reports whether the source object's stored SSE-KMS
 // state (encryption context + bucket-key flag) matches the destination request.
 // Used to gate the SSE-KMS direct copy fast path: if either differs the source
 // ciphertext can't satisfy the destination's request and we must re-encrypt.
 func srcSSEKMSStateMatchesDest(srcMetadata map[string][]byte, dstContext map[string]string, dstBucketKeyEnabled bool) bool {
-	keyData, ok := srcMetadata[s3_constants.SeaweedFSSSEKMSKey]
-	if !ok || len(keyData) == 0 {
-		// Source isn't SSE-KMS encrypted; the fast path is safe (or
-		// CanDirectCopySSEKMS would have rejected it anyway).
+	srcKey := deserializeEntrySSEKMSKey(srcMetadata)
+	if srcKey == nil {
+		// Source isn't SSE-KMS encrypted (or its key data is malformed —
+		// we conservatively let CanDirectCopySSEKMS make the call there).
 		return true
-	}
-	srcKey, err := DeserializeSSEKMSMetadata(keyData)
-	if err != nil {
-		// Conservative: a malformed source key shouldn't be reused verbatim.
-		return false
 	}
 	if srcKey.BucketKeyEnabled != dstBucketKeyEnabled {
 		return false
@@ -2463,17 +2480,13 @@ func srcSSEKMSStateMatchesDest(srcMetadata map[string][]byte, dstContext map[str
 
 // encryptionContextEqual treats nil and empty maps as equivalent so a request
 // that omits the context header doesn't spuriously diverge from a stored one
-// that was serialised as an empty map.
+// that was serialised as an empty map. reflect.DeepEqual returns false for
+// nil-vs-empty, so the empty-case shortcut at the top is required.
 func encryptionContextEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
+	if len(a) == 0 && len(b) == 0 {
+		return true
 	}
-	for k, v := range a {
-		if bv, ok := b[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
+	return reflect.DeepEqual(a, b)
 }
 
 // copyChunksWithSSEKMSReencryption handles the slow path: decrypt source and re-encrypt for destination
@@ -2481,14 +2494,10 @@ func encryptionContextEqual(a, b map[string]string) bool {
 func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, dstPath, bucket string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	var dstChunks []*filer_pb.FileChunk
 
-	// Extract and deserialize source SSE-KMS metadata
-	var sourceSSEKey *SSEKMSKey
-	if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-		var err error
-		sourceSSEKey, err = DeserializeSSEKMSMetadata(keyData)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to deserialize source SSE-KMS metadata: %w", err)
-		}
+	// Deserialize the source's entry-level SSE-KMS key once. Used as the
+	// per-chunk fallback for legacy multipart objects (see resolveChunkSSEKMSKey).
+	sourceSSEKey := deserializeEntrySSEKMSKey(entry.Extended)
+	if sourceSSEKey != nil {
 		glog.V(3).Infof("Extracted source SSE-KMS key: keyID=%s, bucketKey=%t", sourceSSEKey.KeyID, sourceSSEKey.BucketKeyEnabled)
 	}
 
@@ -2575,14 +2584,15 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	// the chunk's own metadata for decryption rather than the entry-level
 	// sourceSSEKey (which only matches single-part objects). Earlier this
 	// always decrypted with the entry-level key, which produced deterministic
-	// wrong bytes on a multipart-source COPY (issue #9281).
-	chunkSSEKey := sourceSSEKey
-	if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
-		perChunkKey, deErr := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
-		if deErr != nil {
-			return nil, fmt.Errorf("deserialize per-chunk SSE-KMS metadata: %w", deErr)
+	// wrong bytes on a multipart-source COPY (issue #9281). Use the shared
+	// resolveChunkSSEKMSKey helper which centralises this selection.
+	var chunkSSEKey *SSEKMSKey
+	if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS || sourceSSEKey != nil {
+		var resolveErr error
+		chunkSSEKey, resolveErr = resolveChunkSSEKMSKey(chunk, sourceSSEKey)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolve SSE-KMS metadata: %w", resolveErr)
 		}
-		chunkSSEKey = perChunkKey
 	}
 	if chunkSSEKey != nil {
 		decryptedReader, err := CreateSSEKMSDecryptedReader(bytes.NewReader(chunkData), chunkSSEKey)
