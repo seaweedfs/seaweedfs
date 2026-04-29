@@ -200,7 +200,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			grpcDialOptionA, grpcDialOptionB)
 		if err != nil {
 			glog.Errorf("verify sync error: %v", err)
-			return true
+			return false
 		}
 		return true
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -132,7 +133,9 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	ctx := context.Background()
 	sem := make(chan struct{}, verifySyncConcurrency)
 
-	err := compareDirectory(ctx, clientA, clientB, aPath, bPath, isActivePassive, cutoffTime, sem, result)
+	if err := compareDirectory(ctx, clientA, clientB, aPath, bPath, isActivePassive, cutoffTime, sem, result); err != nil {
+		return err
+	}
 
 	totalErrors := result.missingCount.Load() + result.sizeMismatch.Load() + result.etagMismatch.Load()
 	if !isActivePassive {
@@ -168,9 +171,6 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 		fmt.Fprintf(os.Stdout, "  Total errors:         %d\n", totalErrors)
 	}
 
-	if err != nil {
-		return err
-	}
 	if totalErrors > 0 {
 		return fmt.Errorf("found %d differences", totalErrors)
 	}
@@ -282,7 +282,7 @@ func compareDirectory(ctx context.Context,
 				reportDiff(diffMissing, dirA, entryA, nil, result)
 				if entryA.IsDirectory {
 					// directory missing in B: count all files under it as missing
-					countMissingRecursive(ctx, clientA, fmt.Sprintf("%s/%s", dirA, entryA.Name), cutoffTime, result)
+					countMissingRecursive(ctx, clientA, path.Join(dirA, entryA.Name), cutoffTime, result)
 				}
 			}
 
@@ -290,7 +290,11 @@ func compareDirectory(ctx context.Context,
 			// entry only in B
 			entryB := streamB.advance()
 			if !isActivePassive {
-				reportDiff(diffOnlyInB, dirB, entryB, nil, result)
+				if !cutoffTime.IsZero() && entryB.Attributes != nil && entryB.Attributes.Mtime > cutoffTime.Unix() {
+					result.skippedRecent.Add(1)
+				} else {
+					reportDiff(diffOnlyInB, dirB, entryB, nil, result)
+				}
 			}
 
 		default:
@@ -300,8 +304,8 @@ func compareDirectory(ctx context.Context,
 
 			if entryA.IsDirectory && entryB.IsDirectory {
 				subDirs = append(subDirs, dirPair{
-					a: fmt.Sprintf("%s/%s", dirA, entryA.Name),
-					b: fmt.Sprintf("%s/%s", dirB, entryB.Name),
+					a: path.Join(dirA, entryA.Name),
+					b: path.Join(dirB, entryB.Name),
 				})
 			} else if !entryA.IsDirectory && !entryB.IsDirectory {
 				// skip recently modified files
@@ -444,7 +448,7 @@ func reportDiff(diffType verifyDiffType, dir string, entryA, entryB *filer_pb.En
 }
 
 func writeTextDiff(result *VerifyResult, diffType verifyDiffType, dir string, entryA, entryB *filer_pb.Entry) {
-	path := fmt.Sprintf("%s/%s", dir, entryA.Name)
+	entryPath := path.Join(dir, entryA.Name)
 
 	result.outputMu.Lock()
 	defer result.outputMu.Unlock()
@@ -452,21 +456,21 @@ func writeTextDiff(result *VerifyResult, diffType verifyDiffType, dir string, en
 	switch diffType {
 	case diffMissing:
 		if entryA.IsDirectory {
-			fmt.Fprintf(os.Stdout, "[MISSING]       %s/ (directory)\n", path)
+			fmt.Fprintf(os.Stdout, "[MISSING]       %s/ (directory)\n", entryPath)
 		} else {
 			fmt.Fprintf(os.Stdout, "[MISSING]       %s (size=%d, etag=%s)\n",
-				path, filer.FileSize(entryA), filer.ETag(entryA))
+				entryPath, filer.FileSize(entryA), filer.ETag(entryA))
 		}
 	case diffOnlyInB:
-		fmt.Fprintf(os.Stdout, "[ONLY_IN_B]     %s\n", path)
+		fmt.Fprintf(os.Stdout, "[ONLY_IN_B]     %s\n", entryPath)
 	case diffSizeMismatch:
 		ann := annotation(entryA, entryB)
 		fmt.Fprintf(os.Stdout, "[SIZE_MISMATCH] %s (a=%d, b=%d%s)\n",
-			path, filer.FileSize(entryA), filer.FileSize(entryB), ann)
+			entryPath, filer.FileSize(entryA), filer.FileSize(entryB), ann)
 	case diffETagMismatch:
 		ann := annotation(entryA, entryB)
 		fmt.Fprintf(os.Stdout, "[ETAG_MISMATCH] %s (a=%s, b=%s%s)\n",
-			path, filer.ETag(entryA), filer.ETag(entryB), ann)
+			entryPath, filer.ETag(entryA), filer.ETag(entryB), ann)
 	}
 }
 
@@ -489,8 +493,7 @@ func annotation(entryA, entryB *filer_pb.Entry) string {
 }
 
 func writeJSONDiff(result *VerifyResult, diffType verifyDiffType, dir string, entryA, entryB *filer_pb.Entry) {
-	path := fmt.Sprintf("%s/%s", dir, entryA.Name)
-	rec := diffRecord{Path: path}
+	rec := diffRecord{Path: path.Join(dir, entryA.Name)}
 
 	switch diffType {
 	case diffMissing:
@@ -555,7 +558,7 @@ func countMissingRecursive(ctx context.Context, client filer_pb.FilerClient, dir
 	err := filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "",
 		func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				countMissingRecursive(ctx, client, fmt.Sprintf("%s/%s", dir, entry.Name), cutoffTime, result)
+				countMissingRecursive(ctx, client, path.Join(dir, entry.Name), cutoffTime, result)
 				return nil
 			}
 			if !cutoffTime.IsZero() && entry.Attributes != nil && entry.Attributes.Mtime > cutoffTime.Unix() {
