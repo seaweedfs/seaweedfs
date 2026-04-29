@@ -156,7 +156,7 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	if size < 0 {
 		// read the deletion entry
 		if lastAppendAtNs, err = verifyDeletedNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key); err != nil {
-			return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), err)
+			return lastAppendAtNs, fmt.Errorf("verifyDeletedNeedleIntegrity %s failed: %v", indexFile.Name(), err)
 		}
 	} else {
 		if lastAppendAtNs, err = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key, size); err != nil {
