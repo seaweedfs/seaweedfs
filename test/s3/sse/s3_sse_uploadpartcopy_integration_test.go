@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSSES3UploadPartCopyIntegration pins the fix for issue #8908.
+// TestSSES3MultipartUploadPartCopyIntegration pins the fix for issue #8908.
 //
 // Docker Registry's S3 storage driver finalizes blob uploads via a server-side
 // "Move" pattern: a streaming PUT/multipart upload to a temporary key, then
@@ -38,10 +38,11 @@ import (
 // destination key with two UploadPartCopy parts (32MB + 7MB) and Complete.
 // The full GET must SHA back to what was uploaded.
 //
-// The function name ends in "Integration" so it is matched by the existing
-// `TestSSE.*Integration` pattern in test/s3/sse/Makefile and the
-// `.*Multipart.*Integration` pattern in .github/workflows/s3-sse-tests.yml.
-func TestSSES3UploadPartCopyIntegration(t *testing.T) {
+// The function name contains both "Multipart" and "Integration" so it is matched
+// by the `.*Multipart.*Integration` pattern in .github/workflows/s3-sse-tests.yml
+// and the `TestSSE.*Integration` pattern in test/s3/sse/Makefile, ensuring this
+// regression coverage runs in CI.
+func TestSSES3MultipartUploadPartCopyIntegration(t *testing.T) {
 	ctx := context.Background()
 	client, err := createS3Client(ctx, defaultConfig)
 	require.NoError(t, err, "Failed to create S3 client")
