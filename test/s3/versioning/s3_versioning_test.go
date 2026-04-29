@@ -47,7 +47,7 @@ var defaultConfig = &S3TestConfig{
 }
 
 // allTestBucketPrefixes lists every prefix used to name buckets in this test suite.
-// cleanupLeftoverTestBuckets uses it to find stale buckets from prior tests/runs.
+// cleanupAllTestBuckets uses it to find stale buckets from prior tests/runs.
 // Add the new prefix here whenever a test introduces one.
 var allTestBucketPrefixes = []string{
 	"test-versioning-",  // covers test-versioning-, test-versioning-directories, test-versioning-interaction-, test-versioned-acl/list
@@ -112,10 +112,11 @@ func getNewBucketName() string {
 
 // createBucket creates a new bucket for testing
 func createBucket(t *testing.T, client *s3.Client, bucketName string) {
-	// Sweep stale buckets from prior tests/runs so each new bucket starts on a
-	// fresh slate. Without this, leaked collection volumes accumulate on a single
-	// `weed mini` data node and the suite eventually exhausts its volume slots.
-	cleanupLeftoverTestBuckets(t, client)
+	// Sweep stale buckets from prior tests in this run so each new bucket starts
+	// on a fresh slate. Without this, leaked collection volumes accumulate on a
+	// single `weed mini` data node and the suite eventually exhausts its volume
+	// slots.
+	cleanupAllTestBuckets(t, client)
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 	})
@@ -180,9 +181,10 @@ func forceDeleteCollection(t *testing.T, bucketName string) {
 	}
 }
 
-// cleanupAllTestBuckets cleans up any leftover test buckets matching any prefix this
-// suite uses. Called from cleanupLeftoverTestBuckets before each new bucket creation
-// so a single `weed mini` data node does not exhaust its volume slots after many tests.
+// cleanupAllTestBuckets cleans up any leftover test buckets owned by this run
+// (prefix + runID marker). Called from createBucket before each new bucket
+// creation so a single `weed mini` data node does not exhaust its volume slots
+// after many tests.
 func cleanupAllTestBuckets(t *testing.T, client *s3.Client) {
 	listResp, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
 	if err != nil {
@@ -204,13 +206,6 @@ func cleanupAllTestBuckets(t *testing.T, client *s3.Client) {
 			}
 		}
 	}
-}
-
-// cleanupLeftoverTestBuckets is invoked from createBucket so each new bucket starts
-// with a clean slate even when a prior test panicked, was interrupted, or its volumes
-// have not yet been reclaimed by the master.
-func cleanupLeftoverTestBuckets(t *testing.T, client *s3.Client) {
-	cleanupAllTestBuckets(t, client)
 }
 
 // deleteAllObjectVersions deletes all object versions in a bucket
