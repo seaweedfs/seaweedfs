@@ -157,7 +157,7 @@ pub fn to_http_address(addr: &str) -> std::borrow::Cow<'_, str> {
         // anything else (e.g. "host:abc.def") untouched so bad config surfaces
         // rather than being silently rewritten. Mirrors the validation already
         // done in `to_grpc_address` for the inverse direction.
-        if http_port.parse::<u16>().is_ok() && grpc_port.parse::<u16>().is_ok() {
+        if let (Ok(_), Ok(_)) = (http_port.parse::<u16>(), grpc_port.parse::<u16>()) {
             return std::borrow::Cow::Owned(
                 addr[..ports_sep_index + 1 + dot_idx].to_string(),
             );
