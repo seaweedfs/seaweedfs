@@ -714,6 +714,61 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// Fetch the destination upload entry to determine whether the multipart
+	// upload was created with SSE configured. If either side has SSE, the
+	// fast raw-byte chunk copy below would leave destination chunks tagged
+	// inconsistently with the bytes on disk and trigger #8908's deterministic
+	// byte corruption on GET. Re-encrypt the source bytes in that case so
+	// destination chunks come out properly tagged.
+	//
+	// checkUploadId above only verifies that the uploadID's hash prefix
+	// matches dstObject; it does NOT prove the upload directory exists.
+	// Treat a missing upload entry as NoSuchUpload — falling through with
+	// uploadEntry=nil would silently skip the SSE check on the destination
+	// side and could send a plain-source copy through the raw-byte fast
+	// path even though the destination's encryption state is unknown.
+	uploadEntry, uploadEntryErr := s3a.getEntry(s3a.genUploadsFolder(dstBucket), uploadID)
+	if uploadEntryErr != nil {
+		if errors.Is(uploadEntryErr, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+			return
+		}
+		glog.Errorf("CopyObjectPartHandler: failed to fetch upload entry for %s/%s uploadID=%s: %v",
+			dstBucket, dstObject, uploadID, uploadEntryErr)
+		// Distinguish transient from permanent errors: gRPC Unavailable
+		// (filer briefly unreachable, leader election in flight, etc.) and
+		// DeadlineExceeded both indicate the client should retry rather than
+		// give up. Map them to 503 ServiceUnavailable; everything else stays
+		// as 500 InternalError.
+		if isTransientFilerError(uploadEntryErr) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) {
+		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
+		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
+		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
+		// so clients can see the destination's encryption state.
+		s3a.setSSEResponseHeaders(w, r, sseMetadata)
+		writeSuccessResponseXML(w, r, CopyPartResult{
+			ETag:         etag,
+			LastModified: t,
+		})
+		return
+	}
+
+	// Fast path: neither source nor destination has SSE. Raw byte copy is
+	// safe, since the bytes on disk are plaintext on both sides.
+
 	// Create new entry for the part
 	// Calculate part size, avoiding underflow for invalid ranges
 	partSize := uint64(0)
