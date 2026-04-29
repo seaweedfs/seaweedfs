@@ -733,7 +733,17 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 			return
 		}
-		glog.Errorf("CopyObjectPartHandler: failed to fetch upload entry for %s/%s: %v", dstBucket, uploadID, uploadEntryErr)
+		glog.Errorf("CopyObjectPartHandler: failed to fetch upload entry for %s/%s uploadID=%s: %v",
+			dstBucket, dstObject, uploadID, uploadEntryErr)
+		// Distinguish transient from permanent errors: gRPC Unavailable
+		// (filer briefly unreachable, leader election in flight, etc.) and
+		// DeadlineExceeded both indicate the client should retry rather than
+		// give up. Map them to 503 ServiceUnavailable; everything else stays
+		// as 500 InternalError.
+		if isTransientFilerError(uploadEntryErr) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+			return
+		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}

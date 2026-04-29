@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -22,6 +25,27 @@ import (
 // slow path. Callers map it to a 501 NotImplemented S3 response so clients
 // can distinguish "we will not handle this shape" from "the server failed".
 var errCopySourceSSEUnsupported = errors.New("UploadPartCopy source SSE type not yet supported")
+
+// isTransientFilerError reports whether an error talking to the filer is
+// retryable from the client's perspective (filer briefly unreachable, leader
+// election in flight, deadline exceeded, etc.). Such errors should map to a
+// 503 ServiceUnavailable response so SDK retry logic engages, rather than a
+// 500 InternalError which most clients treat as fatal.
+func isTransientFilerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	if s, ok := status.FromError(err); ok {
+		switch s.Code() {
+		case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
+			return true
+		}
+	}
+	return false
+}
 
 // uploadEntryHasSSE reports whether the multipart upload entry was created
 // with any server-side encryption configured (SSE-S3 or SSE-KMS — explicit at
