@@ -14,9 +14,85 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
+
+type SyncVerifyOptions struct {
+	filerA          *string
+	filerB          *string
+	aPath           *string
+	bPath           *string
+	aSecurity       *string
+	bSecurity       *string
+	isActivePassive *bool
+	modifiedTimeAgo *time.Duration
+	jsonOutput      *bool
+}
+
+var syncVerifyOptions SyncVerifyOptions
+
+func init() {
+	cmdFilerSyncVerify.Run = runFilerSyncVerify // break init cycle
+	syncVerifyOptions.filerA = cmdFilerSyncVerify.Flag.String("a", "", "filer A in one SeaweedFS cluster")
+	syncVerifyOptions.filerB = cmdFilerSyncVerify.Flag.String("b", "", "filer B in the other SeaweedFS cluster")
+	syncVerifyOptions.aPath = cmdFilerSyncVerify.Flag.String("a.path", "/", "directory to verify on filer A")
+	syncVerifyOptions.bPath = cmdFilerSyncVerify.Flag.String("b.path", "/", "directory to verify on filer B")
+	syncVerifyOptions.aSecurity = cmdFilerSyncVerify.Flag.String("a.security", "", "security.toml file for filer A when clusters use different certificates")
+	syncVerifyOptions.bSecurity = cmdFilerSyncVerify.Flag.String("b.security", "", "security.toml file for filer B when clusters use different certificates")
+	syncVerifyOptions.isActivePassive = cmdFilerSyncVerify.Flag.Bool("isActivePassive", false, "one directional comparison from A to B; entries only in B are not reported")
+	syncVerifyOptions.modifiedTimeAgo = cmdFilerSyncVerify.Flag.Duration("modifiedTimeAgo", 0, "only verify files modified before this duration ago (e.g. 1h) for sync-lag tolerance")
+	syncVerifyOptions.jsonOutput = cmdFilerSyncVerify.Flag.Bool("jsonOutput", false, "emit NDJSON output (one JSON object per line) for external tooling")
+}
+
+var cmdFilerSyncVerify = &Command{
+	UsageLine: "filer.sync.verify -a=<oneFilerHost>:<oneFilerPort> -b=<otherFilerHost>:<otherFilerPort>",
+	Short:     "compare entries between two filers and report differences",
+	Long: `compare entries between two filers and report differences, then exit.
+
+	Useful for validating active/passive sync targets agree with the source.
+	Reports MISSING (in A but not in B), ONLY_IN_B (in B but not in A; suppressed
+	in active-passive mode), SIZE_MISMATCH, and ETAG_MISMATCH. Honors
+	-modifiedTimeAgo to skip recently-modified files (sync-lag tolerance) and
+	-isActivePassive for unidirectional comparison.
+
+	Exits with code 0 on agreement, 2 on differences or operational errors.
+
+`,
+}
+
+func runFilerSyncVerify(cmd *Command, args []string) bool {
+	util.LoadSecurityConfiguration()
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	grpcDialOptionA := grpcDialOption
+	grpcDialOptionB := grpcDialOption
+	if *syncVerifyOptions.aSecurity != "" {
+		var err error
+		if grpcDialOptionA, err = security.LoadClientTLSFromFile(*syncVerifyOptions.aSecurity, "grpc.client"); err != nil {
+			glog.Fatalf("load security config for filer A: %v", err)
+		}
+	}
+	if *syncVerifyOptions.bSecurity != "" {
+		var err error
+		if grpcDialOptionB, err = security.LoadClientTLSFromFile(*syncVerifyOptions.bSecurity, "grpc.client"); err != nil {
+			glog.Fatalf("load security config for filer B: %v", err)
+		}
+	}
+
+	filerA := pb.ServerAddress(*syncVerifyOptions.filerA)
+	filerB := pb.ServerAddress(*syncVerifyOptions.filerB)
+
+	if err := runVerifySync(filerA, filerB, *syncVerifyOptions.aPath, *syncVerifyOptions.bPath,
+		*syncVerifyOptions.isActivePassive, *syncVerifyOptions.modifiedTimeAgo,
+		*syncVerifyOptions.jsonOutput,
+		grpcDialOptionA, grpcDialOptionB); err != nil {
+		glog.Errorf("verify sync: %v", err)
+		os.Exit(2)
+	}
+	return true
+}
 
 // verifySyncConcurrency caps concurrent directory I/O across the entire
 // recursive walk. A single shared semaphore is created in runVerifySync and
@@ -108,7 +184,7 @@ func (c *simpleFilerClient) GetDataCenter() string {
 }
 
 func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
-	isActivePassive bool, modifyTimeAgo time.Duration,
+	isActivePassive bool, modifiedTimeAgo time.Duration,
 	jsonOutput bool,
 	grpcDialOptionA, grpcDialOptionB grpc.DialOption) error {
 
@@ -116,14 +192,14 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	clientB := &simpleFilerClient{grpcAddress: filerB, grpcDialOption: grpcDialOptionB}
 
 	var cutoffTime time.Time
-	if modifyTimeAgo > 0 {
-		cutoffTime = time.Now().Add(-modifyTimeAgo)
+	if modifiedTimeAgo > 0 {
+		cutoffTime = time.Now().Add(-modifiedTimeAgo)
 	}
 
 	if !jsonOutput {
 		if !cutoffTime.IsZero() {
-			fmt.Fprintf(os.Stdout, "Verifying files modified before %v (modifyTimeAgo=%v)\n",
-				cutoffTime.Format(time.RFC3339), modifyTimeAgo)
+			fmt.Fprintf(os.Stdout, "Verifying files modified before %v (modifiedTimeAgo=%v)\n",
+				cutoffTime.Format(time.RFC3339), modifiedTimeAgo)
 		}
 		fmt.Fprintf(os.Stdout, "Comparing %s%s => %s%s (isActivePassive=%v)\n\n",
 			filerA, aPath, filerB, bPath, isActivePassive)
