@@ -1143,10 +1143,19 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 // remains and the directory cannot be removed (e.g. because of orphan
 // entries that lack the version-id extended attribute).
 //
-// Persists with mkFile, snapshotting the caller's versionsEntry.Extended
-// (with the two pointer fields and cached metadata removed). Orphan files
-// are left in place; from the S3 API perspective the object is now
-// correctly absent and subsequent reads short-circuit to ErrNotFound.
+// The persist is CAS-style to avoid wiping a pointer that a concurrent
+// writer just promoted between the caller's snapshot and this function:
+//
+//  1. Re-scan .versions for any version-id-tagged entry. If one now
+//     exists, abort - either the concurrent writer already updated the
+//     pointer or the next read's self-heal will pick up the new entry.
+//  2. Re-fetch the live .versions directory entry and require its
+//     latest-pointer fields to still match the stale id observed by the
+//     caller. If they have changed, abort.
+//  3. Persist with mkFile using the live Extended map (with the two
+//     pointer fields and cached metadata removed) so any other Extended
+//     fields written concurrently between (2) and the persist are
+//     preserved.
 //
 // caller is the source-function name used in log lines so operators can
 // trace which path ran the clear.
@@ -1154,18 +1163,51 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 	if versionsEntry == nil || versionsEntry.Extended == nil {
 		return
 	}
-	_, hasId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
-	_, hasFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
+	observedStaleId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	versionsDir := bucketDir + "/" + versionsObjectPath
+
+	startFrom := ""
+	for {
+		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+		if listErr != nil {
+			glog.Warningf("%s: re-scan failed for %s/%s, leaving pointer untouched: %v", caller, bucket, object, listErr)
+			return
+		}
+		if pageEntry, _, _, _ := selectLatestVersion(entries); pageEntry != nil {
+			glog.V(1).Infof("%s: skipping pointer clear for %s/%s, concurrent writer added a tagged version", caller, bucket, object)
+			return
+		}
+		if isLast || len(entries) == 0 {
+			break
+		}
+		startFrom = entries[len(entries)-1].Name
+	}
+
+	liveEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err != nil {
+		// Directory was concurrently removed - nothing to clear.
+		return
+	}
+	if liveEntry.Extended == nil {
+		return
+	}
+	currentIdBytes, hasId := liveEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+	_, hasFile := liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 	if !hasId && !hasFile {
 		return
 	}
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
-	clearCachedVersionMetadata(versionsEntry.Extended)
-	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = versionsEntry.Extended
-		updatedEntry.Attributes = versionsEntry.Attributes
-		updatedEntry.Chunks = versionsEntry.Chunks
+	if observedStaleId != "" && string(currentIdBytes) != observedStaleId {
+		glog.V(1).Infof("%s: skipping pointer clear for %s/%s, live pointer changed (observed=%s, current=%s)", caller, bucket, object, observedStaleId, string(currentIdBytes))
+		return
+	}
+
+	delete(liveEntry.Extended, s3_constants.ExtLatestVersionIdKey)
+	delete(liveEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+	clearCachedVersionMetadata(liveEntry.Extended)
+	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, liveEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = liveEntry.Extended
+		updatedEntry.Attributes = liveEntry.Attributes
+		updatedEntry.Chunks = liveEntry.Chunks
 	}); mkErr != nil {
 		glog.Warningf("%s: failed to clear stale pointer for %s/%s: %v", caller, bucket, object, mkErr)
 		return
