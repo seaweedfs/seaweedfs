@@ -234,16 +234,40 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 
 **Note on physical reality**: shared `writeMu` means base waits on slow WAL writes (and vice versa). Logical overlap, mutex-bounded interleaving — not zero-blocking parallelism. Hard SLO on base under bursty WAL would need separate credit channel (out of scope for §6.8 #6 strict reading).
 
-### §11.3 Compliance receipt
+### §11.3 Compliance receipt — landed commits on `g7-redo/wal-shipper-impl`
 
-Post-C3, the implementation satisfies:
+| §6.8 # | Requirement | Implementation | Commit |
+|---|---|---|---|
+| 1 | SINGLE-SERIALIZER | `walShipperEntry.writeMu` + `WalShipper.shipMu`; lock hierarchy `shipMu → writeMu` documented | C1 `294d4bf` |
+| 2 | ONE TAPE | substrate canonical, single cursor, single shipMu | (P0/P1, retained) |
+| 3 | PRIORITY | drain emits LSN-ascending in cursor scan order during Backlog | C2 `53c292f` |
+| 4 | TIMER | `WalShipper.timerLoop` goroutine via `IdleSleep` cadence + nudgeCh | C2 `53c292f` |
+| 5 | FRAMING ≠ SECOND TAPE | `EmitProfile` (Steady / DualLane) selects encoder per conn | P2d `cb8ff1c` |
+| 6 | BASE ∥ WAL | `Sender.Run` two-goroutine errgroup + shared `writeMu` | C3 `40f2935` |
+| 7 | R1 | `assertCaughtUpAndEnableTailShipLocked` under shipMu + double-check | (P0, retained) |
+| 8 | R2 | `OnSaturation` single-shot per session | (P0, retained) |
+| 9 | `send(·,·)` | NotifyAppend uses **`cursor < head`** debt condition (NOT `lsn > cursor + 1` — banned regression anchor) | C2 `53c292f` |
 
-- §6.8 #1 SINGLE-SERIALIZER: shared `writeMu` + WalShipper's `shipMu` + `cursor`. ✓
-- §6.8 #2 ONE TAPE: substrate scan is single source; debt-path NotifyAppend defers. ✓
-- §6.8 #3 PRIORITY: `cursor < head` triggers drain-from-cursor before tail. ✓
-- §6.8 #4 TIMER: WalShipper internal periodic loop. ✓
-- §6.8 #5 FRAMING ≠ SECOND TAPE: EmitProfile selects encoder, not a second cursor. ✓
-- §6.8 #6 BASE ∥ WAL: errgroup goroutines + shared writeMu. ✓
-- §6.8 #7 R1: existing `assertCaughtUpAndEnableTailShipLocked` under `shipMu` + double-check. ✓
-- §6.8 #8 R2: existing `OnSaturation` hook (single-shot per session). ✓
-- §6.8 #9 (consensus v3.8): `send(incoming, debt)` / `send(∅, debt)` / `send(incoming, ∅)` per §6.3. ✓ (post-C2)
+### §11.4 Test anchors (CHK + regression)
+
+| Test | §6.8 # | Repo path |
+|---|---|---|
+| `TestC1_WriteMu_SharedAcrossSenderAndWalShipper` | #1 wiring | `core/transport/c1_writemu_recordshipped_test.go` |
+| `TestC1_WriteMu_NoInterleave` | #1 race | (same file) |
+| `TestC1_PostEmitHook_AdvancesShipCursor` | accounting (RecordShipped) | (same file) |
+| `TestC2_TimerDrainsIdle` | #4 (CHK-WALSHIPPER-TIMER-DRAIN) | `core/transport/c2_timer_drain_test.go` |
+| `TestC2_PriorityOldFirst` | #3 / #9 | (same file) |
+| `TestC2_NoGapDenseLSNEdge` | #9 — **regression anchor**: bans `lsn > cursor + 1` debt check | (same file) |
+| `TestC3_BaseWalParallel_FramesInterleave` | #6 (CHK-BASE-WAL-OVERLAP via interleaved frame indices) | `core/recovery/c3_base_wal_parallel_test.go` |
+
+### §11.5 Invariants documented in code (architect-review-derived)
+
+1. **`DisableTimerDrain` test-only invariant** (`wal_shipper.go` config doc): production MUST leave false; tests using true MUST NOT linger in `cursor < head` without manual drain source. Today's only users: R2 saturation tests, scope-bounded.
+2. **Lock hierarchy** (`walShipperEntry.writeMu` doc): `shipMu` always outermost; `writeMu` acquired under it. Reversal risks deadlock.
+3. **`RecordShipped` coverage audit** (PR description): four production emit paths verified — bridging streamBacklog/flushAndSeal call inline; WalShipper-routed Backlog drain + Realtime post-R1 fire via C1 postEmit hook. Steady-state `Ship()` without session correctly skips (no session = no shipCursor to advance).
+
+### §11.6 Open items (carried for hardware run / next phase)
+
+- **§IV T2 (barrier vs frozen targetLSN)**: still architect-open. C3 barrier writes after BASE ∥ WAL goroutines complete; receiver computes achievedLSN; coord.CanEmitSessionComplete checks `achieved >= target`. With WalShipper-resident gap→0 semantics, alignment between coord's session-target and receiver's frontier is a hardware-run concern.
+- **§IV T7 (R2 saturation under sustained pressure)**: hook is wired (single-shot), production-grade throttle/escalation is engine concern. Hardware run with sustained `append > ship` rate is the validation venue.
+- **PR template line** (suggested by reviewer): for future PRs touching `WalShipper.NotifyAppend`, add a checklist item: "**禁止 `lsn > cursor + 1` 当 debt 判定 — 用 `cursor < head`**" (the banned-check regression anchor).
