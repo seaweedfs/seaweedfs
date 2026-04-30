@@ -135,6 +135,7 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-29 | v0.3 — **§10 P2d decision request** appended; P2c split into **slice A / B-1 / B-2** (all merged into `g7-redo/wal-shipper-impl`) |
 | 2026-04-30 | v0.4 — **P2d ratified + implemented** (`cb8ff1c`): per-connection format dispatch (steady=`MsgShipEntry`, dual-lane=`frameWALEntry`); resident WalShipper with EmitProfile + EmitKind; RecoverySink wired into `startRebuildDualLane` |
 | 2026-04-30 | v0.5 — **§11 C1–C3 hardening sequence** appended after architect review of `cb8ff1c` exposed three correctness gaps vs §6.8 checklist (writer race, missing RecordShipped, no timer drain, sequential BASE/WAL) |
+| 2026-04-30 | v0.6 — **Dual-mode **`ModeBacklog`/ModeRealtime`** + consensus **`§13` E‑WALSHIPPER‑DUAL‑MODE** (**T4a carve-out**) — rewrote **§11.2**, **§11.3** `#3/#4/#9`, §11.4 anchors, §11.5 (**StrictRealtimeOrdering**, TOCTOU); **§11.6 migrations** (**replicaID**, rebuild-on-gap); CHK/timer scope = **Backlog** |
 
 ---
 
@@ -199,7 +200,7 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 |---|---------|-----|
 | **G-WRITE-RACE** | (1) SINGLE-SERIALIZER (mechanical) | `Sender.writeFrame` (`writerMu`) and `EmitFunc.conn.Write` (no mutex) race on same dual-lane conn; can interleave header/payload of two frames |
 | **G-RECORDSHIPPED** | accounting | WalShipper-routed emits don't call `coord.RecordShipped`; `shipCursor` stays at `fromLSN` for whole session |
-| **G-TIMER** | (4) TIMER + new (9) PRIORITY (consensus v3.8) | No periodic `emit-from-cursor` loop. Primary-idle starvation possible. NotifyAppend in Realtime emits new tail directly even when `cursor < head` (debt) — violates `send(incoming, debt)` |
+| **G-TIMER** | (4) TIMER + **(9) PRIORITY** (consensus v3.8) | **Originally**: no periodic `emit-from-cursor`; Realtime **`NotifyAppend`** could skip debt. **Resolved in C2 + clarified by dual-mode (**`§13` E‑WALSHIPPER‑DUAL‑MODE**)** — **idle timer MUST** **`ModeBacklog` only**; Realtime ships **without** substrate drain per **T4a** (**§11.2a**). |
 | **G-PARALLEL** | (6) BASE ∥ WAL overlap | `Sender.Run` runs `streamBase` fully before `sink.DrainBacklog`. Strictly serial. P6 / `G3` requires wall-clock overlap |
 
 ### §11.2 Commit sequence
@@ -213,15 +214,21 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 - `transport.RecoverySink` implements both. Steady (Ship) path keeps own mutex (no contention).
 - Tests: `-race` on concurrent Sender.writeFrame + EmitFunc; assert `coord.PinFloor` advances during dual-lane session.
 
-**C2 — `send(∅, debt)` timer + `send(incoming, debt)` priority** (consensus v3.8 §6.3 / §6.8 #9):
+**C2 — `send(∅, debt)` timer + **`ModeBacklog`** priority** (**consensus** **§6.3 / §6.8 #3,#4,#9**, scoped **`v3-recovery-algorithm-consensus.md` §13 — E‑WALSHIPPER‑DUAL‑MODE**):
 
-- `WalShipper` gains internal goroutine driven by `IdleSleep` cadence. On tick under `shipMu`: if `cursor < head`, run one `ScanLBAs(cursor, ...)` cycle.
-- `NotifyAppend` Realtime path uses **debt condition `cursor < head`** (NOT `lsn > cursor + 1` — fails the dense single-LSN-of-debt edge case where `lsn = cursor + 1 = head`).
-  - `cursor < head` → debt exists → nudge drain, return nil (don't emit `lsn` directly)
-  - `cursor == head` (no debt) + `lsn > cursor` → direct emit of caller's `data` (optimized tail path)
-- `NotifyAppend(lba, lsn, data)` signature unchanged. `data` is **canonical only on the no-debt path**; debt path drain reads substrate (one source of truth). Documented in PR.
-- Lifecycle: timer runs for shipper's lifetime (one per (volume, replicaID)); emit gated by session-installed context (nil-conn → silent drop). Timer doesn't autonomously decide a peer.
-- Tests: `Test-Timer-Drains-Idle` (CHK-WALSHIPPER-TIMER-DRAIN); `Test-Priority-OldFirst` (§6.8 #3 / §6.3 — NOT CHK-WALSHIPPER-SINGLE-CURSOR); `Test-NoGap-DenseLSN-Edge` (cursor=10, head=11, lsn=11 — debt path required).
+- **`ModeBacklog`**: `WalShipper` internal `timerLoop` (`IdleSleep`) + **`nudgeCh`**. **`drainOpportunity`**: under **`shipMu`**, **`mode`, `cursor`, `head`** read atomically (**TOCTOU fix** `377bcb0`); if **`cursor < head`**, one **`ScanLBAs(cursor, …)`** cycle (`emit-from-cursor`), then **`cursor++`**; **`assertCaughtUpAndEnableTailShipLocked`** unchanged.
+- **`ModeRealtime`** (`NotifyAppend`): **does not** run substrate-scan ship on **`NotifyAppend` hot path** (**T4a / no‑replay`). **`lsn <= cursor`** ⇒ idempotent **`nil`**; else **`emit(EmitKindLive, …, data)`**, **`cursor = lsn`** (optimized steady tail — caller bytes canonical). **`cursor < head`** in Realtime ⇒ **BUG / caller contract violation** ⇒ engine **`MUST`** drive **`ModeBacklog`** **`DrainBacklog`** **or rebuild** (**§11.6**); **never** silently “repair” via Realtime scan.
+- **`StrictRealtimeOrdering`**: **`wal_shipper`** config — **default log-warn** on dense **`lsn ≠ cursor + 1`**; **strict / error-return** optional **production** opt‑in (**pre-condition §11.6**).
+- Signature **`NotifyAppend(lba, lsn, data)`**: **`data`** used **Realtime** optimized path **only**; **`ModeBacklog`** drain **`MUST`** read substrate (**one tape** authoritative bytes).
+- **`DisableTimerDrain`**: production **`MUST false`** (test-only; see §11.5).
+- Tests: **`TestC2_TimerDrainsIdle`** (**CHK-WALSHIPPER-TIMER‑DRAIN**, **`ModeBacklog`** only per **§13**); **`TestC2_PriorityOldFirst`** (§6.8 #3 / #9, Backlog); **`TestC2_NoGapDenseLSNEdge`** (**regression**) — dense **single-unsent‑LSN** debt ships only via Backlog/timer (bans naive **`lsn > cursor + 1`** debt predicate).
+
+**§11.2a — Dual-mode normative contract (consensus ⇄ mini-plan)**
+
+| Mode | Scheduling |
+|------|------------|
+| **`ModeBacklog`** | **`send(incoming, debt)`**, **`send(∅, debt)`**: idle timer **`MUST`** (**§13**). Oldest‑first (**§6.8 #3**) via **`ScanLBAs`**. Scope of **`CHK-WALSHIPPER-TIMER‑DRAIN`**. |
+| **`ModeRealtime`** | **Append‑driven only** — **literal §6.3(B)** idle timer **`MUST NOT`** apply. **Hot path `MUST NOT` substrate‑replay** for shipped WAL bytes (**§13**). |
 
 **C3 — BASE ∥ WAL parallel in `Sender.Run`** (§6.8 #6 / P6 / G3):
 
@@ -240,13 +247,13 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 |---|---|---|---|
 | 1 | SINGLE-SERIALIZER | `walShipperEntry.writeMu` + `WalShipper.shipMu`; lock hierarchy `shipMu → writeMu` documented | C1 `294d4bf` |
 | 2 | ONE TAPE | substrate canonical, single cursor, single shipMu | (P0/P1, retained) |
-| 3 | PRIORITY | drain emits LSN-ascending in cursor scan order during Backlog | C2 `53c292f` |
-| 4 | TIMER | `WalShipper.timerLoop` goroutine via `IdleSleep` cadence + nudgeCh | C2 `53c292f` |
+| 3 | PRIORITY | **`ModeBacklog`** only (**§13**): drain emits LSN-ascending from substrate scan | C2 `53c292f` |
+| 4 | TIMER | **`ModeBacklog`**: `timerLoop` + **`drainOpportunity`** — idle drain **`MUST NOT`** be suppressed while **`cursor<head`** (**§13**) | C2 `53c292f` |
 | 5 | FRAMING ≠ SECOND TAPE | `EmitProfile` (Steady / DualLane) selects encoder per conn | P2d `cb8ff1c` |
 | 6 | BASE ∥ WAL | `Sender.Run` two-goroutine errgroup + shared `writeMu` | C3 `40f2935` |
 | 7 | R1 | `assertCaughtUpAndEnableTailShipLocked` under shipMu + double-check | (P0, retained) |
 | 8 | R2 | `OnSaturation` single-shot per session | (P0, retained) |
-| 9 | `send(·,·)` | NotifyAppend uses **`cursor < head`** debt condition (NOT `lsn > cursor + 1` — banned regression anchor) | C2 `53c292f` |
+| 9 | `send(·,·)` | **`ModeBacklog`**: **`cursor<head`** + priority + **`send(∅, debt)`** (no banned **`lsn > cursor+1`** predicate). **`ModeRealtime`**: **`NotifyAppend`** tail (**T4a**); **`StrictRealtimeOrdering`** + TOCTOU (`377bcb0`) | C2 `53c292f` |
 
 ### §11.4 Test anchors (CHK + regression)
 
@@ -257,7 +264,8 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 | `TestC1_PostEmitHook_AdvancesShipCursor` | accounting (RecordShipped) | (same file) |
 | `TestC2_TimerDrainsIdle` | #4 (CHK-WALSHIPPER-TIMER-DRAIN) | `core/transport/c2_timer_drain_test.go` |
 | `TestC2_PriorityOldFirst` | #3 / #9 | (same file) |
-| `TestC2_NoGapDenseLSNEdge` | #9 — **regression anchor**: bans `lsn > cursor + 1` debt check | (same file) |
+| `TestC2_NoGapDenseLSNEdge` | #9 / **Backlog** — **regression anchor**: bans **`lsn > cursor + 1`** as sole debt detector; asserts single‑LSN debt via Backlog/timer | (same file) |
+| **`StrictRealtimeOrdering`** (ordering guard) | **`§13`** safety switch (`wal_shipper` — default warn / strict opt‑in; see tests in `wal_shipper`/`NotifyAppend`) | **`377bcb0`** |
 | `TestC3_BaseWalParallel_FramesInterleave` | #6 (CHK-BASE-WAL-OVERLAP via interleaved frame indices) | `core/recovery/c3_base_wal_parallel_test.go` |
 
 ### §11.5 Invariants documented in code (architect-review-derived)
@@ -265,9 +273,16 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 1. **`DisableTimerDrain` test-only invariant** (`wal_shipper.go` config doc): production MUST leave false; tests using true MUST NOT linger in `cursor < head` without manual drain source. Today's only users: R2 saturation tests, scope-bounded.
 2. **Lock hierarchy** (`walShipperEntry.writeMu` doc): `shipMu` always outermost; `writeMu` acquired under it. Reversal risks deadlock.
 3. **`RecordShipped` coverage audit** (PR description): four production emit paths verified — bridging streamBacklog/flushAndSeal call inline; WalShipper-routed Backlog drain + Realtime post-R1 fire via C1 postEmit hook. Steady-state `Ship()` without session correctly skips (no session = no shipCursor to advance).
+4. **`StrictRealtimeOrdering`** (**`wal_shipper`**) — default **warn** on **`lsn ≠ cursor + 1`** (dense WAL); strict opt‑in (**§13**). **Production `strict=true`**: **pre‑condition §11.6** — engine **must** rebuild / re-anchor on gap first.
+5. **`drainOpportunity` atomic read** (**`377bcb0`)**: **`mode` + `cursor` + `head`** under **`shipMu`** **before** cross-checking backlog work — **fixes TOCTOU** vs **`head`/cursor** snapshot.
 
-### §11.6 Open items (carried for hardware run / next phase)
+### §11.6 Open items · production migrations (hardware + ops)
 
-- **§IV T2 (barrier vs frozen targetLSN)**: still architect-open. C3 barrier writes after BASE ∥ WAL goroutines complete; receiver computes achievedLSN; coord.CanEmitSessionComplete checks `achieved >= target`. With WalShipper-resident gap→0 semantics, alignment between coord's session-target and receiver's frontier is a hardware-run concern.
-- **§IV T7 (R2 saturation under sustained pressure)**: hook is wired (single-shot), production-grade throttle/escalation is engine concern. Hardware run with sustained `append > ship` rate is the validation venue.
-- **PR template line** (suggested by reviewer): for future PRs touching `WalShipper.NotifyAppend`, add a checklist item: "**禁止 `lsn > cursor + 1` 当 debt 判定 — 用 `cursor < head`**" (the banned-check regression anchor).
+| Item | Action |
+|------|--------|
+| **§IV T2 (`targetLSN` vs moving `head` / barrier)** | Architect-open at consensus **§IV**; hardware run validates **receiver `achievedLSN` ⇄ coordinator `targetLSN`** at C3 barrier. |
+| **§IV T7 (R2 sustained pressure)** | Single-shot **`OnSaturation`** is structural only; throttle / escalation remains **engine** work. |
+| **Engine rebuild-on-gap** (before `StrictRealtimeOrdering=true`) | If **Ship→WalShipper** sees Realtime **`NotifyAppend`** violations (out‑of‑order / **`lsn≠cursor+1`** under strict policy, or **`cursor<head`** stuck in wrong mode): engine **MUST** drive **rebuild** or session reopen to **re‑anchor **`cursor`** (§13)** before tightening production ordering. |
+| **startRebuildDualLane `replicaID` consistency** | **Caller obligation**: **RecoverySink** / WalShipper key (**engine **`replicaID`**)** **MUST** match **`bridge.coord`** / dual‑lane **`dl.ReplicaID`** used for **`RecordShipped`** and cursor polls. Drift surfaced during C2 debugging — **bridge‑side cleanup** (same ID end‑to‑end). |
+| **PR template guard** | For PRs touching **`WalShipper.NotifyAppend`**: (**a**) **Ban `lsn > cursor + 1` as sole debt test** — use **`cursor < head`** (**Backlog**); (**b**) **Realtime never substrate-scan for ship** (**T4a**, **§13**). |
+
