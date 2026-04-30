@@ -15,6 +15,7 @@
 | In scope | Out of scope (link elsewhere) |
 |----------|--------------------------------|
 | **One ordered Wal tape** on Primary: `head`, per-peer **`cursor[P]`**, **emit** order to **P** | **Extent/base bulk** — `v3-recovery-algorithm-consensus.md` §5; bytes `v3-recovery-pin-floor-wire.md` |
+| **§7.3 — sender recover emit** (**normative = consensus **`Drive`**) · **§7.4** — illustrative **recover receive** rewind + monotone + **`bitmap`** pseudocode (**consensus §II §7 routing**) | **§7.4** **`ApplyWalWithWalClaimBitmap` / **`ApplyBaseUnderBitmapGate` **→** **`v3-recovery-algorithm-consensus.md` §6.10** pseudocode (**`INV‑RECV‑*`**). Receiver detail — **`seaweed_block`** `core/recovery` + tests; **`checkMonotonic`** |
 | **Single serializer** for “next LSN sent to P” (**P2**) | Receiver **`checkMonotonic`**, **`bitmap`** — consensus §7; replica apply |
 | **R1** transition (caught-up vs append race) | **Engine** retry / escalate after fail-close — executor / engine |
 | **R2** saturation observability hooks | **`MinPin`/recycle** full story — coordinator + substrate |
@@ -119,7 +120,9 @@ Timer **priority drain** (**§4**) remains required for **liveness** but **does 
 
 ---
 
-## 7. Pseudocode (**reference shape**)
+## 7. Pseudocode (**reference shapes**)
+
+### 7.1 Primary **`WalShipper`** core loop (**steady + recover**)
 
 ```text
 // One goroutine OR all entrypoints take shipMu.
@@ -148,7 +151,89 @@ function EmitAccordingTo§4UntilBudgetOrBlocked():
         emit(head); clear pending_tail_flag  // depends on refactor; simplest: append path calls Emit once after advancing head while cursor tracked
 ```
 
-Implementations **flatten** this; the **semantic** contract is **§3–§5**, not the sketch’s loop details.
+Implementations **flatten** this sketch; **§3–§5** remain the semantic contract.
+
+### 7.2 **Recover-visible high layer** (**session** + **`backlog` pointer**)
+
+Pairs with **`v3-recovery-algorithm-consensus.md` §6.9** (**`NEGATIVE‑EQUITY`**, **`HOPE‑SHIPPER‑MONOTONIC`**). Recover adds **no** parallel “Wal ownership” beside:
+
+| Artifact | Meaning |
+|----------|---------|
+| **Recover session envelope** | **`sessionID`, epoch/ev, lineage`** (may carry optional **`targetLSN=Y`** as **frozen lineage text** — **not** a backlog pointer — **never** WAL segmentation rhetoric). |
+| **Backlog pointer** | **`cursor`** on the **same** Primary tape — **`cursor < head` ⇔ debt** (**§6.3** **`send(incoming, debt)`** / **`send(∅, debt)`**). |
+
+```text
+type RecoverSessionView = record
+    session_id : uint64
+    lineage    : opaque   // echoed on bearer + barrier; includes engine-authored fromLSN/target text
+end
+
+// cursor + head owned ONLY by WalShipper (§2). Executor/coordinator publishes RecoverSessionView + brackets.
+WalShipper.OnRecoverSessionBracket(StartSession(fromLSN), …, EndSession)
+```
+
+### 7.3 **Primary recover — monotone emit**
+
+**Normative**: **`v3-recovery-algorithm-consensus.md` §6.3 — reference pseudocode `Drive(input)`** — single **`fifo`**, **`cursor < head ⇒ ReadAtLSN(cursor)` before tail**, **`lsn > cursor` ⇒ `CursorGap`** (**no realtime scan‑fill**). **`(a)`** state, **`(b)`** **`shipMu`** atomic boundary, **`(c)`** **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`**.
+
+Optional **`ScanLBAs(...,≤Y]`** emits **Backlog‑class** frames yet **still** advances **`cursor`** only **under **`shipMu`** — **INV-SINGLE** / **INV-MONOTONIC-CURSOR** unchanged.
+
+**Informative**: one lock hold often **loops** **`Drive(∅ | fifo.peek())`** until transport budget clears or **blocked** — **observable semantics remain** **`Drive`** **per step** per **§6.3**.
+
+### 7.4 Replica recover session (**monotone receive**, **one rewind**, **`bitmap` overlap**)
+
+**“One rewind”**: not an arbitrary backward LSN cascade — the session **resets** ingest expectation to **`fromLSN + 1`** (dense default; **`CHK-RECOVER-REWIND-ONCE`** in **consensus §V §12**), validates the **first lawful** recover-WAL frame, then **`monotonic_armed`** — only **strict monotone** (`checkMonotonic`) thereafter.
+
+**Normative ingest**: exactly **one** recover-WAL monotonic frontier after contractual **rewind**; **Wal-vs-base overlap** gated by **`bitmap`** (**§I P5** — operationalized **`v3-recovery-algorithm-consensus.md` §7 routing table**, **`checkMonotonic`**); substrate **Wal-vs-Wal LWW** after ingest order holds.
+
+```text
+type RecoverRcvrSession = record
+    open                : bool
+    fromLSN_exclusive   : uint64
+    expect_next_LSN     : uint64   // rewound expectation baseline
+    monotonic_armed     : bool     // after first lawful recover-WAL ingest
+end
+
+procedure OpenRecoverRcvr(s: RecoverRcvrSession*, fromLSN, lineage_blob):
+    require not s.open
+    s.open := true
+    s.fromLSN_exclusive := fromLSN
+
+    // INFORMATIVE (CHK-RECOVER-REWIND-ONCE): first post-open WAL expects fromLSN+1 on dense products
+    s.expect_next_LSN := fromLSN + 1
+    s.monotonic_armed := false
+    BITMAP_scope_for_session(lineage_blob)
+
+procedure OnRecoverWalTuple(s: RecoverRcvrSession*, frame_kind /* Backlog | SessionLive | … */, lsn, lba, data):
+    require s.open
+
+    if not s.monotonic_armed:
+        REWIND_VALIDATE(lsn, s.expect_next_LSN, s.fromLSN_exclusive)
+        // after success, ingest at lsn establishes monotonic stream
+        s.monotonic_armed := true
+    else:
+        FAIL_IF_NOT checkMonotonic(lsn, s.expect_next_LSN)   // gaps / backwards / unlawful dup vs policy
+
+    ApplyWalWithWalClaimBitmap(s, lsn, lba, data)
+
+    s.expect_next_LSN := AdvanceDenseOrProductRule(lsn)
+
+
+procedure OnRecoverBaseBlock(s: RecoverRcvrSession*, lba, bytes):
+    require s.open
+    ApplyBaseUnderBitmapGate(s, lba, bytes)                  // overlaps with Wal claims (**P5**); does NOT bypass Wal LSN frontier
+
+
+procedure CloseRecoverRcvr(s: RecoverRcvrSession*):
+    s.open := false
+```
+
+```text
+// Receiver-hard invariant (consensus §6.9): all recover WAL frames obey ONE global LSN order to this session —
+// bearer “kind” reshapes encoding only — never splits into independent tapes.
+```
+
+**`bitmap` arbitration + races** — **`INV‑RECV‑BITMAP‑CORE`** / **`INV‑RECV‑WAL‑NAIVE`**: normative **`ApplyWAL` / `ApplyBASE`** pseudocode (**(a)–(c)**) — **`v3-recovery-algorithm-consensus.md` §6.10**. This §7.4 sketch (**`OpenRecoverRcvr` / `OnRecoverWalTuple`**) is **routing glue**; **`ApplyWalWithWalClaimBitmap`** / **`ApplyBaseUnderBitmapGate`** **MUST** implement **§6.10** lock/`CAS` discipline (**not** anti‑pattern check‑outside‑lock).
 
 ---
 
@@ -183,6 +268,9 @@ Implementations **flatten** this; the **semantic** contract is **§3–§5**, no
 | **2026-04-30** | Pointer to consensus **§6.8** implementer checklist; **§V** **`CHK-WALSHIPPER-TIMER-DRAIN`** cross-ref in **§9**. |
 | **2026-04-30** | **§2** vocabulary **`incoming` / `debt` / `send(·,·)`**; **§4.1–4.2** strategy split; tests cross-ref **§6.3**; checklist **nine** items (**§6.8(9)**). |
 | **2026-04-30** | **§1** intro + **consensus §6.3(B)** cross-ref — **`ModeBacklog` vs `ModeRealtime`** (**§13** E‑WALSHIPPER‑DUAL‑MODE); mini-plan **§11.2a** bridge |
+| **2026-04-30** | **§7** split: **7.1–7.4** — recover **session/backlog pointer**, **monotone send (`send(∅,·)` / `send(incoming,·)`)**, receiver **rewind + monotone + `bitmap`** pseudocode |
+| **2026-04-30** | **§7.4** foot — **`bitmap`/`CAS`** cross-ref **consensus §6.10** (`INV‑RECV-*`) |
+| **2026-04-27** | **§7.3** — primary sender recover emit: normative **`Drive(input)` → `v3-recovery-algorithm-consensus.md` §6.3** (removed duplicate **`ShipOpportunity_RecoverMerged`** skeleton); **§7.4** note → consensus **§6.10** **`ApplyWAL`/`ApplyBASE`** pseudocode |
 
 ---
 
@@ -190,8 +278,8 @@ Implementations **flatten** this; the **semantic** contract is **§3–§5**, no
 
 | Doc | Role |
 |-----|------|
-| **`v3-recovery-algorithm-consensus.md` §6 + §6.8** | **Axioms + stability + implementer MUST checklist** |
-| **This** | **Algorithm steps + invariants for one implementation** |
+| **`v3-recovery-algorithm-consensus.md` §6, §6.3 **`Drive`**, §6.8–§6.9, §II §7** | **Axioms** + **`Drive`/`Apply*`** pseudocode (**`INV‑WIRE‑*`**, **`INV‑RECV‑*`**) + **implementer checklist** + **`targetLSN`** process + **replica routing / `checkMonotonic`** |
+| **This** | **Algorithm + §7 pseudocode** (**Primary shipper** + **recover receive sketch**) |
 | **`v3-recovery-wal-shipper-mini-plan.md`** | **Phased PR / file anchoring (**`seaweed_block`**) **↔** §INV tests** |
 | `v3-recovery-wiring-plan.md` | Bearer / port |
 | `v3-recovery-unified-wal-stream-*.md` | Historical kickoff — **align or supersede** with this spec |

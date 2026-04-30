@@ -3,7 +3,7 @@
 **Status**: Draft — executable sequence from **`v3-recovery-wal-shipper-spec.md`** to **`seaweed_block`** concrete diffs.  
 **Supersedes narrative scope of**: **`v3-recovery-unified-wal-stream-mini-plan.md` §3.2 (#3 unified stream implementation)** — that track treated recovery `sender` as the Wal scheduler; **non-compliant** with consensus **§6** + wal-shipper-spec **INV-NO-DOUBLE-LIVE**. Architect may add formal **SUPERSEDED** banners on kickoff/unified docs; **this file does not block on that.**
 
-**Normative**: **`v3-recovery-wal-shipper-spec.md`** (**§2–§§7**) + **`v3-recovery-algorithm-consensus.md`** **§I / §II §6**.
+**Normative**: **`v3-recovery-wal-shipper-spec.md`** (**§2–§§7**) + **`v3-recovery-algorithm-consensus.md`** **§I / §II §6** (**§6.3 `Drive`**, **§6.10 `Apply*`** pseudocode).
 
 **Anti‑archive branch**: **`g7-redo/unified-wal-impl`** — **do not PR** as WalShipper truth; cherry-pick only **tests/fixtures** if still valid after refactor audit.
 
@@ -138,6 +138,9 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-30 | v0.6 — **Dual-mode **`ModeBacklog`/ModeRealtime`** + consensus **`§13` E‑WALSHIPPER‑DUAL‑MODE** (**T4a carve-out**) — rewrote **§11.2**, **§11.3** `#3/#4/#9`, §11.4 anchors, §11.5 (**StrictRealtimeOrdering**, TOCTOU); **§11.6 migrations** (**replicaID**, rebuild-on-gap); CHK/timer scope = **Backlog** |
 | 2026-04-30 | v0.7 — **§11.6** + **`v3-recovery-execution-institution.md`** **Entity layering & assembly contract** (**architect → SW**); Phase 0 **replicaID** vs Phase 1 **attempt binder** guardrails |
 | 2026-04-30 | v0.8 — **§11.7** heavy integration proof (**manager-assembled session**): pillars **WalShipper / dual-line / receiver convergence**; ordering **Phase 0 → (2) fault-inject → matrix → soak** |
+| 2026-04-30 | v0.9 — **§11.7 pillar 3**: **slice-2** **`190ee56`** (`TestPillar3Slice2_EngineDriven_SameLBAArbitration`); **T2 / hardware soak** called out **open** pending §IV |
+| 2026-04-30 | v0.10 — **§12** **design candidate** — §6.9‑driven **Drive** simplification + **three receiver models** + **`bitmap`/`CAS`** (**consensus §6.10** cross-ref); **not** normative until architect promotes |
+| 2026-04-27 | v0.11 — **§12.3**: **normative `Drive` = consensus §6.3 only** (remove duplicate sketch); **§12.1–12.2** cross-ref **§6.3** |
 
 ---
 
@@ -297,9 +300,48 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 |--------|------------|---------------------|
 | **1 — WalShipper: backlog vs incoming** | **`ModeBacklog`**: timer + **`DrainBacklog`** / **`ScanLBAs`**, **`NotifyAppend`** lag-only; **`ModeRealtime`**: **`NotifyAppend`** tail + **`StrictRealtimeOrdering`**; **§13** carve-out | `core/transport`: **`TestC2_*`**, **`TestWalShipper_*`**, **`replicaid_unified_test`**; add **assembled-path** sessions (real **`RecoverySink`**, not shipper-only) |
 | **2 — Dual-line execution** | **BASE ∥ WAL** overlap, **`writeMu`**-bounded interleave; correct **profile / port**; **no corrupted frames** | **`TestC3_BaseWalParallel_FramesInterleave`**, dual-lane E2E; **item (2)**: **C3 ctx fault-injection** (**`7d051e2`** — `TestC3FaultInjection_BaseError_WalExitsViaCtx` / `_OuterCancel_BothLanesWindDown` / `_WalError_RunTerminates_NarrowVariantA`); assembled-stack lift (**`9f62ebe`** — `TestPillar2A_BaseError_AssembledStack_FailReason` / `TestPillar2B_LiveWrites_HighPressure_BarrierIntegrity` / `TestPillar2C_WireAbortMidSession_AssembledStack_RestoresEmitContext`) |
-| **3 — Receiver recover convergence** | Replica accepts **interleaved base + WAL** on recover path, **bitmap / `checkMonotonic`**, **barrier `achievedLSN`**, moves toward **idle / healthy** | **`core/recovery` E2E**, **`dual_lane_engine_test`**, **`replication/component` cluster**; stress: **live writes during session**; **T2** when §IV closed. **Slice-1 landed 2026-04-30** (**`291e652`** + polish **`3495a12`**) — `TestPillar3Slice1_ReceiverConvergence_LiveOverwritesBacklog_SameLBAs` (transport-stack only; **slice-2** lifts to engine-driven path via `dual_lane_engine_test.go`) |
+| **3 — Receiver recover convergence** | Replica accepts **interleaved base + WAL** on recover path, **bitmap / `checkMonotonic`**, **barrier `achievedLSN`**, moves toward **idle / healthy** | **`core/recovery` E2E**, **`dual_lane_engine_test`**, **`replication/component` cluster**; stress: **live writes during session**; **T2** when §IV closed (hardware soak — **still open** pending §IV). **Slice-1** (**`291e652`** + polish **`3495a12`**) — `TestPillar3Slice1_ReceiverConvergence_LiveOverwritesBacklog_SameLBAs` (transport stack). **Slice-2** (**`190ee56`**) — `TestPillar3Slice2_EngineDriven_SameLBAArbitration` (full adapter→engine→executor dispatch; **`RouteSessionLane`** on each live push). Slice-3+ / wire-tap / C3‑#2B **optional backlog** |
 
 **Order**: **(1)** Phase 0 **committed + §11.6 receipt (SHA)** → **(2)** fault-injection → **(3)** widen matrix → **hardware soak** (**T2 / T7**).
 
 **Stop rule**: Failure at **assembled-session** layer → fix **algorithm / wiring** before **Phase 1** (binder fixes **identity**, not WAL/base correctness).
+
+---
+
+## 12. Design candidate — **`§6.9`‑driven shipper/receiver simplification** (**not normative until promoted**)
+
+**Status**: **Design candidate** — for **architect decision**; **does not** replace **§11.2–§11.7** receipts or **§13** until consensus + this section are **explicitly revised** and code lands on a **named branch**.
+
+### 12.1 **Document stack** — what SW should read in what order
+
+| Layer | Doc | Role |
+|-------|-----|------|
+| **Consensus** | **`v3-recovery-algorithm-consensus.md`** **§I P5**, **§6.2–6.4**, **§6.3 `Drive`**, **§6.9**, **§6.10** (`Apply*` pseudocode), **§13**, **§IV T2** | **Normative** truth: single tape intent, **`targetLSN`** non‑segmentation, **`send(∅,·)`/`send(incoming,·)`**, **`bitmap`** CORE + **`INV‑RECV-*`** race rules. |
+| **Algorithm leaf** | **`v3-recovery-wal-shipper-spec.md`** **§7** | **Implementable sketches** (**§7.1 loop**, **receiver rewind + monotone §7.4**); **primary recover emit** = **§6.3 `Drive`** (**normative consensus**); **`Apply`/`bitmap` detail** ⇒ **§6.10**. |
+| **Bridge / receipts** | **This mini-plan §11** | What **already merged** on **`g7-redo/wal-shipper-impl`** + **pilots**. |
+| **This §12** | **Candidate refactor** | **Single normative `Drive(input)`** (**consensus §6.3** — **avoid duplicating here**); barrier‑only **`target`**, receiver **Wal naive**, **bitmap `CAS`** base — **diff** from today's **dual‑mode + bridging sink**. |
+
+### 12.2 **Receiver — three models** (clears SW confusion)
+
+| Model | WAL apply | BASE vs WAL | Typical cost |
+|-------|-----------|-------------|--------------|
+| **① Today bridging sink + ordered seal** | **Naive substrate write** | **Mostly ordered by sender buffer/seal luck** — **§6.8 #6 parallelism still risky under races** | No **per‑LBA Wal** table; **ordering not a hard invariant** without proof. |
+| **②** (**`NEGATIVE‑EQUITY`**) | Needs **per‑LBA Wal frontier** (**e.g. 64‑bit last‑LSN**) for stale compare | **Dual WAL truth** at receiver — violates **§6.9** mono‑ingest story | **Expensive** |
+| **§6.9 / §12 candidate (`HOPE‑SHIPPER‑MONOTONIC`)** | **`INV‑RECV‑WAL‑NAIVE`**: naive write; **Wal–Wal order = wire LSN order** (**sender `cursor` monotone + single apply frontier**) | **`INV‑RECV‑BITMAP‑CORE`**: **`bitmap` not optional ornament** — **sparse / dense / parallel base** all **CAS (or equiv.)‑gate** base; **Wal sets claim after write** (**§6.10**) | **Small `bitmap` + `CAS`**; **drops** brittle **dual‑mailbox Wal** story. |
+
+**Key correction for SW**: **`bitmap`** is **`P5` core arbitration for BASE vs WAL**, not “only pay 1‑bit because we chose parallel BASE.” **`§6.10`** pins **`CAS`/atomicity** so **Wal data vs lazy base check** cannot **race‑overwrite**.
+
+### 12.3 **Candidate sender** — normative reference only
+
+**Normative pseudocode** **`Drive(input)`**: **`v3-recovery-algorithm-consensus.md` §6.3** — **do not** fork a second **`Drive`** sketch in this mini‑plan (prevents **§6 ↔ §12** drift). **§12.4 #1** (**`ReadAtLSN`** vs prefetch **N**) and **`targetLSN=Y`** barrier semantics remain **architect / implementation** leaves.
+
+### 12.4 **Architect checklist** (open before implementation)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| **1** | **Substrate** | **`ReadEntryByLSN`** vs **prefetch‑N inner queue** (same observable **next‑emit **`cursor`** advancement** vs **§6.3 **`Drive`**) — **WalStore/smartwal index** cost |
+| **2** | **`target`/lineage** | **Barrier admission only** + **§IV T2** sweep for **legacy hidden dependencies** |
+| **3** | **`bitmap` lifetime** | **Session‑scoped**, cleared / reset on **`EndSession`** (**exact hook** ties **receiver FSM**) |
+| **4** | **`streamBase`** | **`groupCtx`** / **fail‑fast with `Drive`** (**C3 #2B** follow‑up) |
+| **5** | **BASE vs WAL wall‑clock** | **Candidate B** (overlap + **`§6.10`**) vs **A** (serial BASE→Wal **may relax `bitmap` policy** explicitly) |
 
