@@ -258,14 +258,13 @@ func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr)
 // rootMountStatus is the UDP analogue of Handler.lstatExportStatus:
 // confirms the configured export root still exists in the filer so the
 // transport-OK branches can't hand out a handle pointing at a deleted
-// directory. The returned status maps to the mountstat3 codes the UDP
-// reply uses.
+// directory. Reuses the Server's shared rootFS instance so we don't
+// construct a wrapper per MOUNT request.
 func (m *mountUDPServer) rootMountStatus(ctx context.Context) uint32 {
 	if m.server.withInternalClient == nil {
 		return mnt3StatOK
 	}
-	fs := newSeaweedFileSystem(m.server, m.server.exportRoot, m.server.sharedReaderCache)
-	switch _, err := fs.fileInfoForVirtualPath(ctx, "/"); {
+	switch _, err := m.server.rootFilesystem().fileInfoForVirtualPath(ctx, "/"); {
 	case err == nil:
 		return mnt3StatOK
 	case os.IsNotExist(err):
