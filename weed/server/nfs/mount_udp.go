@@ -279,11 +279,18 @@ func (m *mountUDPServer) rootMountStatus(ctx context.Context) uint32 {
 // Handler.resolveMountFilesystem. The TCP path lets go-nfs's onMount call
 // ToHandle on the returned filesystem; UDP encodes the FH itself, so the
 // inode/generation lookup happens explicitly here.
+//
+// The UDP listener is up before serve() runs newHandler(), so a subexport
+// MOUNT can land here before sharedReaderCache has been assigned. Resolve
+// the rootFS first to drive Server.rootFilesystem's sync.Once and read
+// the cache directly off it, so the new sub-fs always shares the same
+// reader cache the TCP path uses.
 func (m *mountUDPServer) resolveSubexportFileHandle(ctx context.Context, requested util.FullPath) ([]byte, uint32) {
 	if m.server.withInternalClient == nil {
 		return nil, mnt3ErrServerFault
 	}
-	subFS := newSeaweedFileSystem(m.server, requested, m.server.sharedReaderCache)
+	rootFS := m.server.rootFilesystem()
+	subFS := newSeaweedFileSystem(m.server, requested, rootFS.readerCache)
 	info, err := subFS.fileInfoForVirtualPath(ctx, "/")
 	switch {
 	case err == nil:
