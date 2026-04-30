@@ -136,6 +136,8 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-30 | v0.4 — **P2d ratified + implemented** (`cb8ff1c`): per-connection format dispatch (steady=`MsgShipEntry`, dual-lane=`frameWALEntry`); resident WalShipper with EmitProfile + EmitKind; RecoverySink wired into `startRebuildDualLane` |
 | 2026-04-30 | v0.5 — **§11 C1–C3 hardening sequence** appended after architect review of `cb8ff1c` exposed three correctness gaps vs §6.8 checklist (writer race, missing RecordShipped, no timer drain, sequential BASE/WAL) |
 | 2026-04-30 | v0.6 — **Dual-mode **`ModeBacklog`/ModeRealtime`** + consensus **`§13` E‑WALSHIPPER‑DUAL‑MODE** (**T4a carve-out**) — rewrote **§11.2**, **§11.3** `#3/#4/#9`, §11.4 anchors, §11.5 (**StrictRealtimeOrdering**, TOCTOU); **§11.6 migrations** (**replicaID**, rebuild-on-gap); CHK/timer scope = **Backlog** |
+| 2026-04-30 | v0.7 — **§11.6** + **`v3-recovery-execution-institution.md`** **Entity layering & assembly contract** (**architect → SW**); Phase 0 **replicaID** vs Phase 1 **attempt binder** guardrails |
+| 2026-04-30 | v0.8 — **§11.7** heavy integration proof (**manager-assembled session**): pillars **WalShipper / dual-line / receiver convergence**; ordering **Phase 0 → (2) fault-inject → matrix → soak** |
 
 ---
 
@@ -283,6 +285,21 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 | **§IV T2 (`targetLSN` vs moving `head` / barrier)** | Architect-open at consensus **§IV**; hardware run validates **receiver `achievedLSN` ⇄ coordinator `targetLSN`** at C3 barrier. |
 | **§IV T7 (R2 sustained pressure)** | Single-shot **`OnSaturation`** is structural only; throttle / escalation remains **engine** work. |
 | **Engine rebuild-on-gap** (before `StrictRealtimeOrdering=true`) | If **Ship→WalShipper** sees Realtime **`NotifyAppend`** violations (out‑of‑order / **`lsn≠cursor+1`** under strict policy, or **`cursor<head`** stuck in wrong mode): engine **MUST** drive **rebuild** or session reopen to **re‑anchor **`cursor`** (§13)** before tightening production ordering. |
-| **startRebuildDualLane `replicaID` consistency** | **Caller obligation**: **RecoverySink** / WalShipper key (**engine **`replicaID`**)** **MUST** match **`bridge.coord`** / dual‑lane **`dl.ReplicaID`** used for **`RecordShipped`** and cursor polls. Drift surfaced during C2 debugging — **bridge‑side cleanup** (same ID end‑to‑end). |
+| **startRebuildDualLane `replicaID` consistency** | **Phase 0** (**implementation first**): unify on **engine `replicaID` arg** **or** **assert** **`arg == dl.ReplicaID`**; tests **happy + drift**. **Normative assembly rules**: **`v3-recovery-execution-institution.md`** — **Entity layering & assembly contract**. **Landed 2026-04-30** on `g7-redo/wal-shipper-impl`: **`e354813`** (transport: unify `argRID` thread + fail-closed assert + `replicaid_unified_test.go` happy/drift/empty), **`e5a8763`** (test harness: `cluster.go` `r-%d` → `replica-%d` align + `dual_lane_engine_test` assertions). Module-wide `go test ./...` green (25 packages). |
+| **Assembly: phased attempt binder (`RecoveryOrchestrator`)** | **Phase 1+** — **explicit attempt object** binds **one `replicaID`**, **`*WalShipper`**, **sink**, **lineage**; **MUST NOT** hang session/retry/coord glue **ad hoc** on **`WalShipper`** or **`BlockExecutor`** without that layer. Same doc section — **phase table**. |
 | **PR template guard** | For PRs touching **`WalShipper.NotifyAppend`**: (**a**) **Ban `lsn > cursor + 1` as sole debt test** — use **`cursor < head`** (**Backlog**); (**b**) **Realtime never substrate-scan for ship** (**T4a**, **§13**). |
+
+### §11.7 Heavy integration proof — **after Phase 0 + item (2)** (**architect intent**)
+
+**Goal**: Before **Phase 1 `RebuildAttemptBindings`**, expand tests on the **already-assembled session**: adapter/engine issues the recover command; **`BlockExecutor` + `PrimaryBridge` + `RecoverySink` + `recovery.Sender`** execute it; **resident `WalShipper`** owns WAL scheduling; **`PeerShipCoordinator`** keys pin / ship cursor under **unified `replicaID` (Phase 0)**. Proves **“高层 manager 组装的 session”** can finish **without** a new entity type.
+
+| Pillar | Must prove | Tests (extend / add) |
+|--------|------------|---------------------|
+| **1 — WalShipper: backlog vs incoming** | **`ModeBacklog`**: timer + **`DrainBacklog`** / **`ScanLBAs`**, **`NotifyAppend`** lag-only; **`ModeRealtime`**: **`NotifyAppend`** tail + **`StrictRealtimeOrdering`**; **§13** carve-out | `core/transport`: **`TestC2_*`**, **`TestWalShipper_*`**, **`replicaid_unified_test`**; add **assembled-path** sessions (real **`RecoverySink`**, not shipper-only) |
+| **2 — Dual-line execution** | **BASE ∥ WAL** overlap, **`writeMu`**-bounded interleave; correct **profile / port**; **no corrupted frames** | **`TestC3_BaseWalParallel_FramesInterleave`**, dual-lane E2E; **item (2)**: **C3 ctx fault-injection** |
+| **3 — Receiver recover convergence** | Replica accepts **interleaved base + WAL** on recover path, **bitmap / `checkMonotonic`**, **barrier `achievedLSN`**, moves toward **idle / healthy** | **`core/recovery` E2E**, **`dual_lane_engine_test`**, **`replication/component` cluster**; stress: **live writes during session**; **T2** when §IV closed |
+
+**Order**: **(1)** Phase 0 **committed + §11.6 receipt (SHA)** → **(2)** fault-injection → **(3)** widen matrix → **hardware soak** (**T2 / T7**).
+
+**Stop rule**: Failure at **assembled-session** layer → fix **algorithm / wiring** before **Phase 1** (binder fixes **identity**, not WAL/base correctness).
 
