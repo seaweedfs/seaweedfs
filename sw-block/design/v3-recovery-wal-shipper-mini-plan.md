@@ -141,6 +141,7 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-30 | v0.9 — **§11.7 pillar 3**: **slice-2** **`190ee56`** (`TestPillar3Slice2_EngineDriven_SameLBAArbitration`); **T2 / hardware soak** called out **open** pending §IV |
 | 2026-04-30 | v0.10 — **§12** **design candidate** — §6.9‑driven **Drive** simplification + **three receiver models** + **`bitmap`/`CAS`** (**consensus §6.10** cross-ref); **not** normative until architect promotes |
 | 2026-04-27 | v0.11 — **§12.3**: **normative `Drive` = consensus §6.3 only** (remove duplicate sketch); **§12.1–12.2** cross-ref **§6.3** |
+| 2026-04-27 | v0.12 — **§12.4**: backlog **stateful iterator vs stateless **`ReadAtLSN`**; **`appendWAL` / `writeExtentDirect`** receiver split (**consensus §6.3 / §6.10**) |
 
 ---
 
@@ -333,15 +334,16 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 
 ### 12.3 **Candidate sender** — normative reference only
 
-**Normative pseudocode** **`Drive(input)`**: **`v3-recovery-algorithm-consensus.md` §6.3** — **do not** fork a second **`Drive`** sketch in this mini‑plan (prevents **§6 ↔ §12** drift). **§12.4 #1** (**`ReadAtLSN`** vs prefetch **N**) and **`targetLSN=Y`** barrier semantics remain **architect / implementation** leaves.
+**Normative pseudocode** **`Drive(input)`**: **`v3-recovery-algorithm-consensus.md` §6.3** — **do not** fork a second **`Drive`** sketch in this mini‑plan (prevents **§6 ↔ §12** drift). **§12.4 #1** (**stateful iterate vs stateless lookup**) and **#5** (**`appendWAL` vs `writeExtentDirect`**) are **substrate / SW** leaves; **`targetLSN=Y`** barrier semantics likewise.
 
 ### 12.4 **Architect checklist** (open before implementation)
 
 | # | Topic | Decision |
 |---|-------|----------|
-| **1** | **Substrate** | **`ReadEntryByLSN`** vs **prefetch‑N inner queue** (same observable **next‑emit **`cursor`** advancement** vs **§6.3 **`Drive`**) — **WalStore/smartwal index** cost |
+| **1** | **Substrate backlog read** (**§6.3**) | **Stateful iterate** (**`SeekLSN` + `Next`** / chained frame / session read cursor ⇒ **O(1)** per **`CASE A`** emit, **O(N)** for **N** ships) **`vs`** **pure stateless **`ReadAtLSN(k)`** **(re‑resolve each **k** ⇒ **O(N log N)** typical). **Wal ring + write head** ⇒ first seek to **`fromLSN+1` / pin** often **O(log N)** or **O(1)** fixed‑record; pin may be reached by bounded walk from head. **`ReadEntryByLSN`** cost **≠** **`Drive`** cost unless API is pinned stateless-only. |
 | **2** | **`target`/lineage** | **Barrier admission only** + **§IV T2** sweep for **legacy hidden dependencies** |
 | **3** | **`bitmap` lifetime** | **Session‑scoped**, cleared / reset on **`EndSession`** (**exact hook** ties **receiver FSM**) |
 | **4** | **`streamBase`** | **`groupCtx`** / **fail‑fast with `Drive`** (**C3 #2B** follow‑up) |
-| **5** | **BASE vs WAL wall‑clock** | **Candidate B** (overlap + **`§6.10`**) vs **A** (serial BASE→Wal **may relax `bitmap` policy** explicitly) |
+| **5** | **Receiver substrate API** (**§6.10**) | Wal lane: **`appendWAL(lba,data,lsn)`** (stale‑skip on Wal path). Base lane: **`writeExtentDirect(lba,data)`** (extent fill, **no** Wal record). **`LogicalStorage`** / leaf **must** expose **both** — **not** one silent overload that routes base through Wal. |
+| **6** | **BASE vs WAL wall‑clock** | **Candidate B** (overlap + **`§6.10`**) vs **A** (serial BASE→Wal **may relax `bitmap` policy** explicitly) |
 

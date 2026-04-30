@@ -233,7 +233,7 @@ procedure CloseRecoverRcvr(s: RecoverRcvrSession*):
 // bearer “kind” reshapes encoding only — never splits into independent tapes.
 ```
 
-**`bitmap` arbitration + races** — **`INV‑RECV‑BITMAP‑CORE`** / **`INV‑RECV‑WAL‑NAIVE`**: normative **`ApplyWAL` / `ApplyBASE`** pseudocode (**(a)–(c)**) — **`v3-recovery-algorithm-consensus.md` §6.10**. This §7.4 sketch (**`OpenRecoverRcvr` / `OnRecoverWalTuple`**) is **routing glue**; **`ApplyWalWithWalClaimBitmap`** / **`ApplyBaseUnderBitmapGate`** **MUST** implement **§6.10** lock/`CAS` discipline (**not** anti‑pattern check‑outside‑lock).
+**`bitmap` arbitration + races** — **`INV‑RECV‑BITMAP‑CORE`** / **`INV‑RECV‑WAL‑NAIVE`**: normative **`ApplyWAL` / `ApplyBASE`** (**`appendWAL` vs `writeExtentDirect`**) — **`v3-recovery-algorithm-consensus.md` §6.10**. This §7.4 sketch **routes** only; **`ApplyWalWithWalClaimBitmap`** **`MUST`** use **Wal path**; **`ApplyBaseUnderBitmapGate`** **`MUST`** **not** smuggle base through **Wal** without **§I** sign-off.
 
 ---
 
@@ -271,6 +271,7 @@ procedure CloseRecoverRcvr(s: RecoverRcvrSession*):
 | **2026-04-30** | **§7** split: **7.1–7.4** — recover **session/backlog pointer**, **monotone send (`send(∅,·)` / `send(incoming,·)`)**, receiver **rewind + monotone + `bitmap`** pseudocode |
 | **2026-04-30** | **§7.4** foot — **`bitmap`/`CAS`** cross-ref **consensus §6.10** (`INV‑RECV-*`) |
 | **2026-04-27** | **§7.3** — primary sender recover emit: normative **`Drive(input)` → `v3-recovery-algorithm-consensus.md` §6.3** (removed duplicate **`ShipOpportunity_RecoverMerged`** skeleton); **§7.4** note → consensus **§6.10** **`ApplyWAL`/`ApplyBASE`** pseudocode |
+| **2026-04-27** | **§7.4** note — **`appendWAL` vs `writeExtentDirect`** (**consensus §6.10** substrate split) |
 
 ---
 

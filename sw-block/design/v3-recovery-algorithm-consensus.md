@@ -129,6 +129,17 @@ Implementations **must** obey the **scheduler choices** below. Prose **`send(...
 
 **Dense‑LSN product**: sparse / non‑contiguous LSNs **`MUST`** replace literal **`+1`** step and dense **`ReadAtLSN`** with **`NextPresentLSN` / product scan — **architect leaf**. **Substrate** **`ReadAtLSN(k)`** is **semantic** only — **batch prefetch** **MAY** hide behind it (**mini-plan §12.4 #1**).
 
+**Backlog read — correct mental model (**not **`O(N²)`** naive scan**)**: **Primary Wal** is typically **append‑ordered** (**ring / segment**). **First** resolve the **session lower bound** (**`fromLSN+1`** / **`cursor` init** ↔ **CHK‑REWIND**) — **O(log N)** index / binary search, or **O(1)** if **fixed frame size** gives **offset**. **Each subsequent** sequential **`cursor+1`** step is **O(1)** if the substrate **preserves linkage** (**next offset in predecessor header**, **write head** − bounded walk to **pin**, or **session‑scoped read cursor ≡ `iterator.next()`**). **`Drive` CASE A** is thus **one “seek + repeat step”** pattern; **aggregate** to ship **N** frames is **O(N)** when the implementation is **stateful‑iterate**, not **re‑find **`LSN`** from scratch every call**.
+
+##### Substrate obligation — **`ReadAtLSN` / backlog iterator** (**implementation class**)
+
+| Implementation class | Typical **single **`emit`** step** | **Total** for **N** sequential **`CASE A`** emits |
+|----------------------|-----------------------------------|--------------------------------------------------|
+| **Stateful iterate** (**per‑session or per‑shipper read cursor**; **`ReadAtLSN(cursor)`** ≡ **`cursor`‑advanced **`next`** after internal **`Seek`**) | **O(1)** amortized | **O(N)** |
+| **Stateless lookup** (**each call **re‑resolves **`LSN`→offset** from ring head / sparse index**) | **O(log N)** (typical) | **O(N log N)** |
+
+**Normative intent**: substrates backing **`ModeBacklog`** drain **`MUST`** **support** sequential **`cursor → cursor+1`** emission **without** paying **full re‑search per frame** — **stateful iterator**, **chained frame headers**, **`SeekLSN` + `Next`**, or **equivalent** (**API name** — **architect** / **SW** leaf). **Shipper pseudo‑API **`ReadAtLSN(k)`** **MAY** be **thin** over **`Seek(k); Next()`**; **MUST NOT** be **documented** as **only** **stateless **`O(log N)`** per call** if product claims **backlog bandwidth SLO**.
+
 **§6.1 / §V (`CHK‑RECOVER‑REWIND‑ONCE`) alignment**: **`cursor`** here is **`next LSN to emit`** (**same convention as **`v3-recovery-wal-shipper-spec.md` §7.1** `while cursor < head`**). **`§6.1 **`cursor[P] := fromLSN`** **and** engine **`fromLSN`** **MUST** be paired so **first lawful ship `lsn`**, **`ReadAtLSN(cursor)`** (debt path), and receiver **`expect_next_LSN`** after rewind (**spec §7.4**) **agree** — **exclusive‑floor **`fromLSN`** ⇒ commonly **`cursor := fromLSN+1`** for first frame **`lsn = fromLSN+1`**; **inclusive / product variants** **`MUST`** document the mapping **without** drifting **`Drive`** cases.
 
 ```text
@@ -289,42 +300,44 @@ Implementations aiming to **omit `Y`** on wire (**pure stream recover**) MUST st
 
 | ID | Invariant (**receiver recover path**) |
 |----|----------------------------------------|
-| **`INV‑RECV‑BITMAP‑CORE`** | **`bitmap`** is the **sole** gate that lets **recover base** mutate an LBA after **Wal** may have asserted **Wal‑truth** on that LBA. **Base apply** **`MUST`** follow a **single critical pattern**: **observe / claim “not Wal‑protected” and write base bytes in one race‑free atomic step** — e.g. **`CAS`/compare‑and‑set** style **`0→1`** on **`bitmap[lba]`** (or **`TryClaimBase(lba)`** with equivalent semantics); **winner** performs **`ApplyBaseBlock`** and sets **`claimed`**; **loser** **skips** base write. **Wal apply** **`MUST NOT`** rely on a **read‑then‑later‑write** of **`bitmap`** that can interleave with base (**§6.10 anti‑pattern** below). |
-| **`INV‑RECV‑WAL‑NAIVE`** | **Recover Wal tuples** (**`frameWALEntry`**) **`MUST`** apply with **substrate LWW** (**write payload**) **without** consulting **`bitmap`** before write **for stale‑Wal micro‑comparison** — **Wal vs Wal ordering** is **`LSN`** monotonic on the **single ingest frontier** (**§6.9 receiver-hard**, **`checkMonotonic`**, precondition **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`** **§6.3** pseudocode). After successful Wal substrate write, **`MUST`** **set **`bitmap`/Wal‑claim** for **`lba`** so **later base** loses **`CAS`**. Ordering inside the implementation **`MUST`** be **Wal data durable before observable claim** (or use one **`per‑LBA` / `shipMu`‑compatible** serialization that merges data+claim — product picks; **wrong interleavings** ⇒ **NEGATIVE‑EQUITY‑class bugs**). |
+| **`INV‑RECV‑BITMAP‑CORE`** | **`bitmap`** is the **sole** gate that lets **recover base** mutate an LBA after **Wal** may have asserted **Wal‑truth** on that LBA. **Base apply** **`MUST`** follow **one** race‑free atomic step: **`bitmap` observe / extent write** — e.g. **`CAS` `0→1`** (**`TryClaimBase`**, …); **winner** **`writeExtentDirect`** / **`ApplyBaseBlock`** (**§6.10**); **loser skips**. **Wal apply** **`MUST NOT`** use a **read‑`bitmap`‑then‑later‑write** pattern that can **interleave** with base (**anti‑pattern** below). |
+| **`INV‑RECV‑WAL‑NAIVE`** | **Recover Wal tuples** (**`frameWALEntry`**) **`MUST`** apply on the **substrate WAL / append path** (**author `lsn`**) — **Wal vs Wal** ordering and **substrate stale‑skip / coalescing** rules apply **as for that path**; **ingest `MUST NOT`** use **`bitmap`** as a **per‑frame Wal micro‑compare** (**wire order** is already **`LSN`‑monotone** — **`checkMonotonic`**, **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`** **§6.3**). After successful Wal apply, **`MUST`** set **`bitmap`** (**Wal‑claim**) for **`lba`** so **later base** loses the gate. **Ordering**: **Wal bytes durable before observable `bitmap`** (or one **`per‑LBA` / global writer** serialization — **wrong interleavings** ⇒ **NEGATIVE‑EQUITY**). |
 
-##### Reference pseudocode — **`ApplyWAL` / `ApplyBASE`** (**per‑LBA atomic envelope`)
+##### Reference pseudocode — **`ApplyWAL` / `ApplyBASE`** (**per‑LBA atomic envelope** · **dual lane semantics**)
 
-**Naming**: **`store.lock(lba)`** = **one race‑free critical section** **`MUST`** cover **`data write` ∪ `bitmap` transition** together — equivalent **`bitmap.CAS`** patterns — **informative** notes below.
+**Tester / SW pin**: **WAL lane** and **BASE lane** are **different substrate operations**. **BASE** **does not** carry **`lsn`** and **does not** route through **Wal append** — **`bitmap`** is the **only** merge **referee** at this layer (**vs** **Wal path** **stale‑skip**). **Routing** — **`§7`** table.
+
+**Naming**: **`store.lock(lba)`** = **one race‑free critical section** **`MUST`** cover **mutation** ∪ **`bitmap`** together — equivalent **`bitmap.CAS`** — **informative** notes below.
 
 ```text
 # —— (a) STATE ——
 state:
     bitmap : array[NumLBAs] of bit, init 0      # CORE — INV-RECV-BITMAP-CORE
-    store  : substrate                          # exposes per-LBA lock OR global writer (see equivalence note)
+    store  : substrate                          # MUST expose Wal append path AND extent direct write (see contract below)
 
-# —— WAL — precondition: ingest order ≡ strict LSN increase (INV-WIRE-WAL-LSN-MONOTONIC §6.3) ——
+# —— WAL lane — precondition: strict LSN increase on wire (INV-WIRE-WAL-LSN-MONOTONIC §6.3) ——
 def ApplyWAL(lba, lsn, data):
-    with store.lock(lba):                       # atomic envelope (INV-RECV-BITMAP-CORE + WAL-NAIVE)
-        store.write(lba, data)                  # naive LWW vs prior Wal bytes — no bitmap pre-check
-        bitmap[lba] := 1                        # claim set BEFORE releasing lock
+    with store.lock(lba):
+        store.appendWAL(lba, data, lsn)         # substrate WAL path; stale-skip / Wal coalescing = substrate rules (INV-RECV-WAL-NAIVE)
+        bitmap[lba] := 1
 
-# —— BASE — may race WAL on same lba under BASE ∥ WAL (§6.8 #6) ——
+# —— BASE lane — recover bulk; may race ApplyWAL (§6.8 #6) ——
 def ApplyBASE(lba, data):
-    with store.lock(lba):                       # SAME lock family as ApplyWAL
+    with store.lock(lba):
         if bitmap[lba] == 0:
-            store.write(lba, data)
+            store.writeExtentDirect(lba, data)  # bypass WAL; no LSN; NO Wal stale-skip — bitmap is sole judge
             bitmap[lba] := 1
-        # else: Wal already authoritative for this session scope — stale base snapshot SKIP
+        # else: WAL won this LBA — base bytes are stale snapshot; skip
 
 # ANTI-PATTERN (banned — same prose as §6.10 DON’T below):
 #   if bitmap[lba] == 0:
-#       with store.lock(lba): store.write(lba, data)
+#       with store.lock(lba): store.writeExtentDirect(...)
 #       bitmap[lba] := 1
 ```
 
-**Informative equivalence**: if substrate serializes **all** **`Apply*`** via **one** goroutine, lock may degrade to **global queue** + **`bitmap` atomic** — **`CAS`**‑only formulations **remain valid** (**§9** tests **may** simulate either).
+**Substrate contract (`seaweed_block` / logical storage leaf)**: **`MUST`** expose **both**: **(1)** **Wal append** with **author **`lsn`** (**`appendWAL`** or equivalent on the **Wal path**), and **(2)** **extent fill** for recover **base** that **does not** record a Wal tuple — **`writeExtentDirect(lba, data)`** or **architect‑named** equivalent (**`ResetForRebuild`** branch, **extent‑only IOCTL**, …). **Silently** implementing recover **base** through a **generic **`Write(lba, data, lsn)`** that **journeys base bytes onto the Wal tape** **without** an explicit **merged** product story **violates** this split — **forbidden** unless **§I** / **architect** revises **§6.10** / **§7**.
 
-**Informative (**substrate **`Write` arity**)**: **`ApplyBASE`** payloads **typically lack author Wal **`LSN`****; **synthetic frontier** for extent layer **MAY** use **session **`targetLSN` / lineage anchor** per **`RebuildSession` / §5** — **architect** pins if **`Write(lba, data, effectiveLSN)`** becomes required.
+**Informative equivalence**: if **all** **`Apply*`** serialize through **one** goroutine, lock may degrade to **global queue** + **`bitmap` atomic** — **`CAS`**‑only formulations **remain valid** (**§9** tests **may** simulate either).
 
 **Anti-pattern (normative DON’T)** — **`read bit; compute elsewhere; later base write`** without **`CAS`/lock** vs concurrent **`Wal`** — permits **Wal data then base overwrite** (**lost update**).
 
@@ -337,8 +350,8 @@ def ApplyBASE(lba, data):
 | Ingress | Shape | Action |
 |---------|-------|--------|
 | Steady `MsgShipEntry` | WAL tuple | Substrate apply; **LWW** across LSN |
-| Recover `frameWALEntry` | WAL tuple | Substrate apply **+** **`bitmap` WAL-claim** |
-| Recover `frameBaseBlock` | Bytes | **`bitmap` gate** → **`ApplyBaseBlock` / synthetic frontier** |
+| Recover `frameWALEntry` | WAL tuple | **`appendWAL`‑class** substrate path **+** **`bitmap`** Wal‑claim (**§6.10**) |
+| Recover `frameBaseBlock` | Bytes | **`bitmap` gate** → **`writeExtentDirect`‑class** fill (**no Wal record**); **synthetic frontier** per **§5** if product uses anchors |
 
 **`checkMonotonic`**: protocol defense on **recover WAL** stream (**gap / backward / dup / +1**). **Bitmap / base race atomicity** (**`INV‑RECV-*`**) — **`§6.10`**.
 
@@ -448,12 +461,13 @@ Controlled relaxations of **§6** prose **without** weakening **§I**. Each row 
 | **2026-04-30** | **v3.12**: **§6.9** — **`NEGATIVE‑EQUITY`** if **`target`** read as WAL **segmentation**; **`HOPE‑SHIPPER‑MONOTONIC`**: backlog = **`send(∅, debt)`** + **`send(incoming, debt)`** (**§6.3**) |
 | **2026-04-30** | **v3.13**: **§6.10** — **`INV‑RECV‑BITMAP‑CORE`** (**`CAS`‑style base**); **`INV‑RECV‑WAL‑NAIVE`**; **`bitmap`** = **core P5 arbitration** (not optional “parallel bit” alone); session scope |
 | **2026-04-27** | **v3.14**: **§6.3** — normative **`Drive(input)`** pseudocode (**state / atomic boundary / `INV‑WIRE‑WAL‑LSN‑MONOTONIC`**); **§6.10** — **`ApplyWAL`/`ApplyBASE`** pseudocode (**`INV‑RECV‑*`**); **§6.1/§V** cursor↔rewind alignment note; **§13** **`StrictRealtimeOrdering`** keyed to **`Drive`** **`cursor`** convention |
+| **2026-04-27** | **v3.15**: **§6.3** — backlog **iterator / complexity** (**stateful `O(N)` vs stateless `O(N log N)`**); **§6.10** — **`appendWAL` vs `writeExtentDirect`** dual lane (**tester feedback**); substrate **contract**; **§7** routing table wording |
 
 ### 15. Document map
 
 | Doc | Role |
 |-----|------|
-| **This** | **Foundation + index**; **`§6.8`** checklist; **`§13`**; **`§6.3`/`§6.9–§6.10`** — **`Drive`/`Apply*`** pseudocode, **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`**, **`NEGATIVE‑EQUITY`**, **`HOPE‑SHIPPER‑MONOTONIC`**, **`INV‑RECV‑BITMAP‑CORE`** / **`INV‑RECV‑WAL‑NAIVE`** |
+| **This** | **Foundation + index**; **`§6.8`** checklist; **`§13`**; **`§6.3`** (**`Drive`** + backlog **iterator intent**); **`§6.9–§6.10`** — **`appendWAL`/`writeExtentDirect`**, **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`**, **`NEGATIVE‑EQUITY`**, **`HOPE‑SHIPPER‑MONOTONIC`**, **`INV‑RECV‑BITMAP‑CORE`** / **`INV‑RECV‑WAL‑NAIVE`** |
 | `v3-recovery-pin-floor-wire.md` | Pin bytes |
 | `v3-recovery-wal-shipper-mini-plan.md` | **Implementation bridge** (**seaweed_block** phased PR ↔ spec §INV) |
 | `v3-recovery-wal-shipper-spec.md` | **WalShipper algorithm** (priority, **R1**, **INV-***) |
