@@ -182,24 +182,41 @@ func TestMountUDPMntReturnsHandleAndFlavors(t *testing.T) {
 	_ = m
 }
 
-func TestMountUDPMntRejectsWrongPath(t *testing.T) {
-	_, conn := newMountUDPTestServer(t, "/exports")
+func TestMountUDPMntAcceptsAnyPath(t *testing.T) {
+	const exportRoot = "/buckets/data"
+
+	_, conn := newMountUDPTestServer(t, exportRoot)
 	target := conn.LocalAddr().(*net.UDPAddr)
 
-	reply := sendMountUDP(t, target, buildMountCallFrame(99, mountProgram, 3, mountProcMnt, "/somewhere/else"))
-	_, astat, body := parseRPCReply(t, reply)
-
-	if astat != rpcAcceptSuccess {
-		t.Fatalf("accept_stat=%d want SUCCESS(0); MNT3ERR is in the body, not at the RPC layer", astat)
+	dirpaths := []string{
+		"/",
+		"/buckets",
+		"/buckets/other",
+		"/buckets/data/sub",
+		"/wrong/path",
+		"",
+		"buckets/data",
+		exportRoot,
+		exportRoot + "/",
 	}
-	if len(body) < 4 {
-		t.Fatalf("body too short: %d bytes", len(body))
-	}
-	if status := binary.BigEndian.Uint32(body[0:4]); status != mnt3ErrNoEnt {
-		t.Errorf("mountstat3=%d want NoEnt(2)", status)
-	}
-	if len(body) != 4 {
-		t.Errorf("error reply should carry only the status; got %d trailing bytes", len(body)-4)
+	for i, dirpath := range dirpaths {
+		t.Run(dirpath, func(t *testing.T) {
+			xid := uint32(1000 + i)
+			reply := sendMountUDP(t, target, buildMountCallFrame(xid, mountProgram, 3, mountProcMnt, dirpath))
+			_, astat, body := parseRPCReply(t, reply)
+			if astat != rpcAcceptSuccess {
+				t.Fatalf("accept_stat=%d want SUCCESS(0)", astat)
+			}
+			if len(body) < 4 {
+				t.Fatalf("body too short: %d bytes", len(body))
+			}
+			if got := binary.BigEndian.Uint32(body[0:4]); got != mnt3StatOK {
+				t.Errorf("MNT(%q): mountstat3=%d want OK(0)", dirpath, got)
+			}
+			if len(body) <= 4 {
+				t.Errorf("MNT(%q) success body must include handle and flavors", dirpath)
+			}
+		})
 	}
 }
 

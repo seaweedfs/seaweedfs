@@ -507,23 +507,42 @@ func TestHandlerMountAndFileHandleRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"demo.txt"}, path)
 }
 
-func TestHandlerRejectsUnexpectedMountPath(t *testing.T) {
+func TestHandlerAcceptsAnyMountPath(t *testing.T) {
+	const exportRoot = "/buckets/data"
+
 	client := &fakeNFSFilerClient{
 		entries: map[util.FullPath]*filer_pb.Entry{
-			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+			"/buckets":      testEntry("buckets", true, 100, uint32(0755), nil),
+			"/buckets/data": testEntry("data", true, 101, uint32(0755), nil),
 		},
 		kv: map[string][]byte{
-			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+			string(filer.InodeIndexKey(100)): testIndexRecord(t, 100, 1, "/buckets"),
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/buckets/data"),
 		},
 	}
 
-	server := newTestServer(t, "/exports", client)
+	server := newTestServer(t, exportRoot, client)
 	handler, err := server.newHandler()
 	require.NoError(t, err)
 
-	status, filesystem, _ := handler.Mount(context.Background(), nil, gonfs.MountRequest{Dirpath: []byte("/wrong")})
-	assert.Equal(t, gonfs.MountStatusErrNoEnt, status)
-	assert.Nil(t, filesystem)
+	dirpaths := []string{
+		"/",
+		"/buckets",
+		"/buckets/other",
+		"/buckets/data/sub",
+		"/wrong/path",
+		"",
+		"buckets/data",
+		exportRoot,
+		exportRoot + "/",
+	}
+	for _, dirpath := range dirpaths {
+		t.Run(dirpath, func(t *testing.T) {
+			status, fs, _ := handler.Mount(context.Background(), nil, gonfs.MountRequest{Dirpath: []byte(dirpath)})
+			assert.Equal(t, gonfs.MountStatusOk, status, "Mount(%q)", dirpath)
+			assert.NotNil(t, fs, "Mount(%q)", dirpath)
+		})
+	}
 }
 
 func TestHandlerRejectsMountFromUnauthorizedClient(t *testing.T) {

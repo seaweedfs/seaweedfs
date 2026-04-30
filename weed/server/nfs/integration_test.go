@@ -330,6 +330,78 @@ func nfsLink(target *nfsclient.Target, sourceHandle []byte, linkPath string) err
 	return nfsclient.NFS3Error(status)
 }
 
+func TestSeaweedNFSAcceptsAnyMountPathOverRPC(t *testing.T) {
+	const exportRoot = "/buckets/data"
+
+	client := &fakeNFSFilerClient{
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/buckets":      testEntry("buckets", true, 100, uint32(0755), nil),
+			"/buckets/data": testEntry("data", true, 101, uint32(0755), nil),
+		},
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(100)): testIndexRecord(t, 100, 1, "/buckets"),
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/buckets/data"),
+		},
+	}
+
+	server := newTestServer(t, exportRoot, client)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- gonfs.Serve(listener, handler)
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case err := <-serveDone:
+			if err != nil && !isClosedNetworkErr(err) {
+				t.Errorf("nfs server exited with error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("timed out waiting for nfs server shutdown")
+		}
+	})
+
+	dirpaths := []string{
+		"/",
+		"/buckets",
+		"/buckets/other",
+		"/buckets/data/sub",
+		"/wrong/path",
+		exportRoot,
+		exportRoot + "/",
+	}
+	for _, dirpath := range dirpaths {
+		t.Run(dirpath, func(t *testing.T) {
+			var rpcClient *rpc.Client
+			var dialErr error
+			for attempt := 0; attempt < 10; attempt++ {
+				rpcClient, dialErr = rpc.DialTCP(listener.Addr().Network(), listener.Addr().String(), false)
+				if dialErr == nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			require.NoError(t, dialErr)
+			defer rpcClient.Close()
+
+			mounter := &nfsclient.Mount{Client: rpcClient}
+			target, err := mounter.Mount(dirpath, rpc.AuthNull)
+			require.NoErrorf(t, err, "Mount(%q)", dirpath)
+			defer target.Close()
+
+			entries, err := target.ReadDirPlus("/")
+			require.NoError(t, err)
+			assert.Empty(t, entries, "Mount(%q) should land at the empty export root", dirpath)
+		})
+	}
+}
+
 func TestSeaweedNFSServesInlineRoundTripOverRPC(t *testing.T) {
 	client := &fakeNFSFilerClient{
 		kv: map[string][]byte{

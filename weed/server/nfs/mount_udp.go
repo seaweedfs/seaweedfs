@@ -198,14 +198,10 @@ func (m *mountUDPServer) handleCall(callBuf []byte, addr *net.UDPAddr) []byte {
 	}
 }
 
-// handleMount implements MOUNT v3 MNT. The wire format is RFC 1813 §5.1.4:
+// handleMount implements MOUNT v3 MNT. RFC 1813 §5.1.4:
 //
 //	MOUNT3args  { dirpath3 dirpath; }              // XDR opaque
 //	MOUNT3res   { mountstat3 status; if OK { handle, auth_flavors[] } }
-//
-// We mirror handler.go's Mount(): export-path mismatch returns NoEnt; root
-// inode is encoded as a synthetic directory filehandle so it round-trips with
-// the TCP MOUNT path without an extra filer round-trip per UDP MOUNT call.
 func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr) []byte {
 	if len(args) < 4 {
 		return encodeAcceptedReply(xid, rpcAcceptGarbageArgs, nil)
@@ -220,10 +216,8 @@ func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr)
 	}
 	dirpath := string(args[4 : 4+pathLen])
 
-	requestedPath := normalizeExportRoot(util.FullPath(dirpath))
-	if requestedPath != m.server.exportRoot {
-		glog.V(1).Infof("mount udp: client %s requested %q but export is %q", addr, dirpath, m.server.exportRoot)
-		return encodeMountStatus(xid, mnt3ErrNoEnt)
+	if requested := normalizeExportRoot(util.FullPath(dirpath)); requested != m.server.exportRoot {
+		glog.V(0).Infof("mount udp: client %s requested %q; serving configured export %q", addr, dirpath, m.server.exportRoot)
 	}
 
 	rootHandle := NewFileHandle(m.server.exportID, FileHandleKindDirectory, 0, filer.InodeIndexInitialGeneration).Encode()

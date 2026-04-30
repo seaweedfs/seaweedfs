@@ -8,6 +8,7 @@ import (
 
 	billy "github.com/go-git/go-billy/v5"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	gonfs "github.com/willscott/go-nfs"
@@ -24,9 +25,8 @@ func (h *Handler) Mount(_ context.Context, conn net.Conn, req gonfs.MountRequest
 	if h.server.clientAuthorizer != nil && !h.server.clientAuthorizer.isAllowedConn(conn) {
 		return gonfs.MountStatusErrAcces, nil, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
 	}
-	requestedPath := normalizeExportRoot(util.FullPath(req.Dirpath))
-	if requestedPath != h.server.exportRoot {
-		return gonfs.MountStatusErrNoEnt, nil, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
+	if requested := normalizeExportRoot(util.FullPath(req.Dirpath)); requested != h.server.exportRoot {
+		glog.V(0).Infof("nfs mount: client requested %q; serving configured export %q", string(req.Dirpath), h.server.exportRoot)
 	}
 	if _, err := h.rootFS.Lstat("/"); err != nil {
 		if os.IsNotExist(err) {
