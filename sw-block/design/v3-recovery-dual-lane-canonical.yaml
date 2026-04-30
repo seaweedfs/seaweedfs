@@ -1,0 +1,280 @@
+# Hardware canonical for the G7-redo dual-lane train (#11..#15).
+#
+# Architect 2026-04-29: "信任状 — 最少 dual-lane + recycle-pin + retry-A
+# 在二进制里跑一次 你们定义的 canonical". This file is the "你们定义的 canonical"
+# half — the YAML shape. Live execution waits for the train to merge to
+# trunk; the paper artifact ships ahead so the run is one-script-away
+# the moment trunk includes #11..#15.
+#
+# Companion: docs/recovery-dual-lane-canonical-runbook.md
+#
+# Ledger pins (each phase asserts at least one):
+#   - INV-PIN-EXISTS-ONLY-DURING-SESSION
+#   - INV-PIN-COMPATIBLE-WITH-RETENTION
+#   - INV-PIN-ADVANCES-ONLY-ON-REPLICA-ACK
+#   - INV-RECYCLE-GATED-BY-MIN-ACTIVE-PIN
+#   - INV-SESSION-COMPLETE-CLOSURE
+#
+# This is a SCENARIO SHAPE document — the authoritative live binary
+# runner is `cmd/blockvolume` + `cmd/blockmaster` + `cmd/m01verify`
+# with the actions below scripted into a runbook. The Go-native replay
+# (when written) lives at
+# core/replication/component/dual_lane_canonical_replay_test.go and
+# walks these phases against memorywal in-process.
+
+name: recovery-dual-lane-canonical
+purpose: |
+  G7-redo train trust signal. Single end-to-end run that exercises
+  PR #11 (POC + memorywal substrate), PR #12 (BaseBatchAck +
+  pin_floor advancement), PR #13 (transport+cmd dual-lane wiring),
+  PR #14 (recycle gate consumes MinPin), PR #15 (PinUnderRetention
+  retry-budget bypass). One green run = trust-signal closure for
+  the train.
+
+precondition:
+  branch: trunk-includes-train
+  notes: |
+    Run requires #11..#15 merged to phase-15 (or main) — the binary
+    must already carry RecoveryFailurePinUnderRetention, the
+    dual-lane port code-path, and the substrate recycle gate. Running
+    this on an unmerged branch is explicitly out-of-scope per
+    architect 2026-04-29.
+
+variant_matrix:
+  # Two-replica is the minimum architect-defined canonical
+  # ("最少 dual-lane + recycle + retry-A"). Three-replica adds
+  # multi-pin coverage and is OPTIONAL — keep ordered list for
+  # explicit run targeting.
+  - rf2-localhost
+  - rf2-rdma          # m01 + M02 with RDMA NIC; requires test infra
+  - rf3-localhost     # OPTIONAL — multi-pin coverage
+
+phases:
+  - name: setup
+    actions:
+      - start: cmd/blockmaster
+        flags:
+          - --authority-store=${artifact_dir}/store
+          - --listen=${master_addr}
+          - --topology=${artifact_dir}/topology.yaml
+          - --t0-print-ready
+      - start: cmd/blockvolume
+        instance: primary
+        flags:
+          - --master=${master_addr}
+          - --server-id=s1
+          - --volume-id=v1
+          - --replica-id=r1
+          - --data-addr=${primary_data_addr}
+          - --ctrl-addr=${primary_ctrl_addr}
+          - --recovery-mode=dual-lane          # PR #13
+      - start: cmd/blockvolume
+        instance: replica
+        flags:
+          - --master=${master_addr}
+          - --server-id=s2
+          - --volume-id=v1
+          - --replica-id=r2
+          - --data-addr=${replica_data_addr}
+          - --ctrl-addr=${replica_ctrl_addr}
+          - --recovery-mode=dual-lane          # PR #13
+      - wait_until: both volumes visible in master topology view
+      - assert_log_line:
+          instance: primary
+          contains: "G7-redo recovery-mode=dual-lane"
+      - assert_log_line:
+          instance: primary
+          contains: "G7-redo-2.5 recycle gate installed"   # PR #14
+
+  - name: initial_assignment
+    purpose: master assigns primary + replica; baseline writes commit on both
+    actions:
+      - wait_until: v1 has assigned authority (primary=r1, replica=r2)
+      - write_n_distinct_blocks:
+          target: primary
+          count: 16
+          seed: deterministic
+          # baseline: replica must catch these via steady-state ship
+      - sync: { target: primary }
+      - wait_until:
+          condition: replica frontier R == primary frontier R
+          timeout: 5s
+      - snapshot: authority_timeline → artifact
+
+  - name: trigger_dual_lane_rebuild
+    purpose: |
+      Take down replica; primary writes during the gap; replica
+      restarts; engine probes; rebuild session opens on dual-lane
+      port. Pin #11 (session opens) + #13 (dual-lane port active).
+    actions:
+      - signal:
+          target: replica
+          signal: SIGTERM           # graceful — replica stops accepting
+      - wait_until: master observes replica probe-fail
+      - write_n_distinct_blocks:
+          target: primary
+          count: 32                 # creates the gap that forces rebuild
+          seed: deterministic-2
+      - sync: { target: primary }
+      - restart: replica            # comes back; engine probes; gap detected
+      - assert_log_line:
+          instance: primary
+          contains: "rebuild start replica=r2"      # transport rebuild_sender
+      - assert_log_line:
+          instance: primary
+          contains: "dual-lane"                     # PR #13 path
+      - assert_tcp_connection:
+          # Dual-lane port = ctrl-addr port + 1 (architect Option A)
+          src: primary
+          dst_port: ${replica_ctrl_port_plus_one}
+          timeout: 10s
+
+  - name: observe_pin_advancement
+    purpose: |
+      Receiver emits BaseBatchAck (frame 0x07) periodically;
+      primary's coord.SetPinFloor advances. Pin #12.
+    actions:
+      - sample_metric:
+          # Periodic sample (every 100ms for 5s) of pin_floor on primary.
+          # Asserts strict-monotonic across consecutive non-zero samples.
+          source: primary
+          metric: dual_lane.pin_floor[r2]
+          interval: 100ms
+          duration: 5s
+          assert: monotonic_nondecreasing
+      - assert_metric_eventually:
+          source: primary
+          metric: dual_lane.pin_floor[r2]
+          predicate: ">= 16"        # baseline (16 baseline + at least one ack into rebuild)
+          timeout: 10s
+
+  - name: observe_recycle_gate_active
+    purpose: |
+      Under active session, primary's checkpoint MUST NOT advance
+      past pin_floor. Pin #14 (INV-RECYCLE-GATED-BY-MIN-ACTIVE-PIN).
+      Negative observation: even if primary writes more during the
+      session, checkpointLSN clamps at min(pin_floor_active_sessions).
+    actions:
+      - capture_metric:
+          source: primary
+          metric: walstore.checkpoint_lsn
+          as: checkpoint_pre
+      - capture_metric:
+          source: primary
+          metric: dual_lane.pin_floor[r2]
+          as: pin_floor_during
+      - write_n_distinct_blocks:
+          # Adds primary-side writes that would, absent the gate,
+          # let checkpoint advance. With the gate, checkpoint is
+          # clamped — that's the assertion below.
+          target: primary
+          count: 8
+          seed: deterministic-during-session
+      - sync: { target: primary }
+      - capture_metric:
+          source: primary
+          metric: walstore.checkpoint_lsn
+          as: checkpoint_during
+      - assert: |
+          checkpoint_during <= pin_floor_during    # the gate is doing its job
+
+  - name: complete_session
+    purpose: barrier-ack returns; coord.EndSession; pin released; recycle resumes
+    actions:
+      - wait_until:
+          condition: replica frontier R == primary frontier H
+          timeout: 30s
+      - assert_log_line:
+          instance: primary
+          contains: "SessionClosedCompleted"
+      - assert_metric:
+          source: primary
+          metric: dual_lane.session_active[r2]
+          equals: 0                  # session closed
+      - assert_metric:
+          source: primary
+          metric: dual_lane.pin_floor[r2]
+          equals: 0                  # pin released (INV-PIN-EXISTS-ONLY-DURING-SESSION)
+      - sync: { target: primary }
+      - assert_metric_eventually:
+          source: primary
+          metric: walstore.checkpoint_lsn
+          predicate: ">= primary frontier H"      # recycle resumes; checkpoint catches up
+          timeout: 5s
+
+  - name: observe_retry_bypass_pin_under_retention
+    purpose: |
+      Pin #15 (Option A). Force a PinUnderRetention by injecting
+      an explicit retention-violation scenario; assert engine emits
+      PublishDegraded WITHOUT re-emitting Start*; assert
+      retry_attempts counter does NOT increment.
+    notes: |
+      Triggering PinUnderRetention naturally requires retention to
+      advance past a pin mid-session — possible via fault injection
+      (--inject-recycle-bypass=true on primary, or a manual flusher
+      override at the right moment). If fault injection is too
+      heavy-hand for the canonical, this phase MAY be skipped on
+      live hardware and pinned by the unit test
+      TestT4d_PinUnderRetention_BypassesRetryBudget instead. See
+      runbook §6 for the option matrix.
+    optional: true
+    actions:
+      - inject_fault:
+          target: primary
+          fault: recycle_bypass_pin_under_retention
+          duration: 1
+      - wait_until:
+          condition: |
+            log line on primary contains
+            "FailureKind=PinUnderRetention — skip retry"
+          timeout: 10s
+      - assert_log_line:
+          instance: primary
+          contains: "PublishDegraded"
+      - assert_log_line:
+          instance: primary
+          NOT_contains: "StartCatchUp (retry)"     # bypass = no Start* re-emit
+          NOT_contains: "StartRebuild (retry)"
+      - assert_metric:
+          source: primary
+          metric: engine.recovery.attempts[r2]
+          unchanged_from: last_session_end          # Attempts MUST NOT bump
+
+  - name: verify_final
+    actions:
+      - assert: no double-primary in authority timeline
+      - assert: no orphan assignment
+      - assert: replica r2 in InSync state for full session-closed-window
+      - assert: zero "FailureKind=Transport" lines after PinUnderRetention
+                (proves boundary mapping took the recovery.Failure path,
+                NOT the Transport fallback — PR #15 closes this)
+
+acceptance:
+  - all phases except `observe_retry_bypass_pin_under_retention`
+    PASS on each variant in `variant_matrix` (the bypass phase is
+    optional — runbook §6 documents the unit-test substitution)
+  - barrier-ack-driven completion (NOT shipper-liveness inferred)
+    pinned by `INV-LIVE-CAUGHT-UP-IFF-FRONTIER-AT-BARRIER`
+  - one full canonical run on rf2-localhost = engineering trust signal
+    closure for the train (architect's "你们定义的 canonical")
+  - rf2-rdma = production trust signal (canonical run on test
+    infrastructure described in runbook §3)
+  - rf3-localhost = nice-to-have multi-pin coverage; NOT a gate
+
+artifacts:
+  - blockmaster.log
+  - blockvolume-primary.log
+  - blockvolume-replica.log
+  - authority_timeline.txt
+  - dual_lane_metrics_timeline.json   # pin_floor + checkpoint_lsn samples
+  - tcpdump-port-${replica_ctrl_port_plus_one}.pcap   # dual-lane port traffic
+
+pins_ledger:
+  - INV-PIN-EXISTS-ONLY-DURING-SESSION
+  - INV-PIN-COMPATIBLE-WITH-RETENTION
+  - INV-PIN-ADVANCES-ONLY-ON-REPLICA-ACK
+  - INV-PIN-STABLE-WITHIN-SESSION
+  - INV-RECYCLE-GATED-BY-MIN-ACTIVE-PIN
+  - INV-SESSION-COMPLETE-CLOSURE
+  - INV-LIVE-CAUGHT-UP-IFF-FRONTIER-AT-BARRIER
+  - INV-SINGLE-FLIGHT-PER-REPLICA
