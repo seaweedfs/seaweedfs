@@ -133,6 +133,8 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-29 | v0.1 — Bridges **wal-shipper-spec** ↔ **`seaweed_block`**; supersede unified §3.2 #3; phased PR |
 | 2026-04-29 | v0.2 — **§1.1** steady-path **four-hop fan-out** + **`Ship` delegation** (**P1**); **`DrainBacklog`** naming |
 | 2026-04-29 | v0.3 — **§10 P2d decision request** appended; P2c split into **slice A / B-1 / B-2** (all merged into `g7-redo/wal-shipper-impl`) |
+| 2026-04-30 | v0.4 — **P2d ratified + implemented** (`cb8ff1c`): per-connection format dispatch (steady=`MsgShipEntry`, dual-lane=`frameWALEntry`); resident WalShipper with EmitProfile + EmitKind; RecoverySink wired into `startRebuildDualLane` |
+| 2026-04-30 | v0.5 — **§11 C1–C3 hardening sequence** appended after architect review of `cb8ff1c` exposed three correctness gaps vs §6.8 checklist (writer race, missing RecordShipped, no timer drain, sequential BASE/WAL) |
 
 ---
 
@@ -180,3 +182,68 @@ These do **not** require the format choice and can land while waiting on the dec
 ### 10.4 Ask, in one paragraph
 
 > P2c/B sink path is unified; bridging `senderBacklogSink` still duplicates `frameWALEntry` encoding because P2d is open. Going to a real `transport.WalShipper` sink requires **one** of: (A) unify dual-lane on `MsgShipEntry` payload + receiver dispatch, (B) teach `WalShipper.Emit` backlog path to encode `frameWALEntry`, or (C) a documented third (e.g. envelope byte). Plus: which package owns the **single applier** (`recovery.Receiver` vs `transport` replica handler), and which encoding is the **replay source of truth** for on-disk WAL. Pre-decision adapter scaffolding + rules-1+2 integration tests can land in parallel.
+
+**§10.5 P2d ratification + implementation** (architect 2026-04-30, `cb8ff1c`):
+
+Choice — **per-connection format dispatch**, not single-format unification. Dual-lane port → `frameWALEntry` (`recovery.WriteWALEntryFrame`). Legacy port → `MsgShipEntry`. Single resident WalShipper per (volume, replicaID); `walShipperEntry.emitProfile` selects encoder + `EmitKind` (Backlog/Live) tags WAL kind. `RecoverySink` swaps profile via `updateWalShipperEmitContext` at session brackets; nil-conn emit silently drops (matches Idle semantics). Replay source of truth + applier owner unchanged from existing design.
+
+---
+
+## 11. C1–C3 hardening (post-`cb8ff1c`, post-§6.8 architect review)
+
+§6.8 / consensus v3.8 review of `cb8ff1c` exposed three correctness gaps vs the checklist's nine MUSTs. Three commits, in order:
+
+### §11.1 Three identified gaps
+
+| # | §6.8 ref | Gap |
+|---|---------|-----|
+| **G-WRITE-RACE** | (1) SINGLE-SERIALIZER (mechanical) | `Sender.writeFrame` (`writerMu`) and `EmitFunc.conn.Write` (no mutex) race on same dual-lane conn; can interleave header/payload of two frames |
+| **G-RECORDSHIPPED** | accounting | WalShipper-routed emits don't call `coord.RecordShipped`; `shipCursor` stays at `fromLSN` for whole session |
+| **G-TIMER** | (4) TIMER + new (9) PRIORITY (consensus v3.8) | No periodic `emit-from-cursor` loop. Primary-idle starvation possible. NotifyAppend in Realtime emits new tail directly even when `cursor < head` (debt) — violates `send(incoming, debt)` |
+| **G-PARALLEL** | (6) BASE ∥ WAL overlap | `Sender.Run` runs `streamBase` fully before `sink.DrainBacklog`. Strictly serial. P6 / `G3` requires wall-clock overlap |
+
+### §11.2 Commit sequence
+
+**C1 — concurrency safety** (`writeMu` shared + post-emit hook for `RecordShipped`):
+
+- `walShipperEntry` adds `writeMu sync.Mutex`. `EmitFunc` acquires it during `conn.Write`.
+- `recovery.WalShipperSink` gains optional duck-type sub-interfaces:
+  - `WriteMu() *sync.Mutex` — Sender uses if present (for shared serialization)
+  - `SetPostEmitHook(func(lsn uint64))` — Sender installs the `coord.RecordShipped(replicaID, lsn)` callback at session start
+- `transport.RecoverySink` implements both. Steady (Ship) path keeps own mutex (no contention).
+- Tests: `-race` on concurrent Sender.writeFrame + EmitFunc; assert `coord.PinFloor` advances during dual-lane session.
+
+**C2 — `send(∅, debt)` timer + `send(incoming, debt)` priority** (consensus v3.8 §6.3 / §6.8 #9):
+
+- `WalShipper` gains internal goroutine driven by `IdleSleep` cadence. On tick under `shipMu`: if `cursor < head`, run one `ScanLBAs(cursor, ...)` cycle.
+- `NotifyAppend` Realtime path uses **debt condition `cursor < head`** (NOT `lsn > cursor + 1` — fails the dense single-LSN-of-debt edge case where `lsn = cursor + 1 = head`).
+  - `cursor < head` → debt exists → nudge drain, return nil (don't emit `lsn` directly)
+  - `cursor == head` (no debt) + `lsn > cursor` → direct emit of caller's `data` (optimized tail path)
+- `NotifyAppend(lba, lsn, data)` signature unchanged. `data` is **canonical only on the no-debt path**; debt path drain reads substrate (one source of truth). Documented in PR.
+- Lifecycle: timer runs for shipper's lifetime (one per (volume, replicaID)); emit gated by session-installed context (nil-conn → silent drop). Timer doesn't autonomously decide a peer.
+- Tests: `Test-Timer-Drains-Idle` (CHK-WALSHIPPER-TIMER-DRAIN); `Test-Priority-OldFirst` (§6.8 #3 / §6.3 — NOT CHK-WALSHIPPER-SINGLE-CURSOR); `Test-NoGap-DenseLSN-Edge` (cursor=10, head=11, lsn=11 — debt path required).
+
+**C3 — BASE ∥ WAL parallel in `Sender.Run`** (§6.8 #6 / P6 / G3):
+
+- `Sender.Run` spawns two goroutines via errgroup:
+  - Base goroutine: `streamBase` → `BaseDone` frame
+  - WAL goroutine: `sink.StartSession` → `sink.DrainBacklog`
+- Both write through shared `writeMu` (C1's mutex). Mutex-bounded interleaving = correct frame integrity; wall-clock overlap from CPU/IO of substrate reads + small base block writes.
+- Barrier writes after both goroutines return (errgroup.Wait); on first error, ctx cancel propagates.
+- Test: receiver observes interleaved `frameBaseBlock` and `frameWALEntry` frames (not strictly all-base-then-all-WAL).
+
+**Note on physical reality**: shared `writeMu` means base waits on slow WAL writes (and vice versa). Logical overlap, mutex-bounded interleaving — not zero-blocking parallelism. Hard SLO on base under bursty WAL would need separate credit channel (out of scope for §6.8 #6 strict reading).
+
+### §11.3 Compliance receipt
+
+Post-C3, the implementation satisfies:
+
+- §6.8 #1 SINGLE-SERIALIZER: shared `writeMu` + WalShipper's `shipMu` + `cursor`. ✓
+- §6.8 #2 ONE TAPE: substrate scan is single source; debt-path NotifyAppend defers. ✓
+- §6.8 #3 PRIORITY: `cursor < head` triggers drain-from-cursor before tail. ✓
+- §6.8 #4 TIMER: WalShipper internal periodic loop. ✓
+- §6.8 #5 FRAMING ≠ SECOND TAPE: EmitProfile selects encoder, not a second cursor. ✓
+- §6.8 #6 BASE ∥ WAL: errgroup goroutines + shared writeMu. ✓
+- §6.8 #7 R1: existing `assertCaughtUpAndEnableTailShipLocked` under `shipMu` + double-check. ✓
+- §6.8 #8 R2: existing `OnSaturation` hook (single-shot per session). ✓
+- §6.8 #9 (consensus v3.8): `send(incoming, debt)` / `send(∅, debt)` / `send(incoming, ∅)` per §6.3. ✓ (post-C2)
