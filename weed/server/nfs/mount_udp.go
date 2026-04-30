@@ -40,6 +40,12 @@ const (
 	// listening goroutines back off identically under host pressure.
 	mountUDPRetryBackoff = 50 * time.Millisecond
 
+	// mountUDPLookupTimeout bounds any filer round-trip the UDP MOUNT
+	// path makes (export-root existence check, subexport lookup). The
+	// UDP serve loop is single-threaded, so a stalled filer call would
+	// otherwise block every later MOUNT packet.
+	mountUDPLookupTimeout = 5 * time.Second
+
 	mountVersion = 3
 
 	mountProcNull = 0
@@ -225,31 +231,61 @@ func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr)
 	requested := normalizeExportRoot(util.FullPath(dirpath))
 	flavors := []uint32{authFlavorNull, authFlavorUnix}
 
+	ctx, cancel := context.WithTimeout(context.Background(), mountUDPLookupTimeout)
+	defer cancel()
+
 	if requested == m.server.exportRoot {
+		if status := m.rootMountStatus(ctx); status != mnt3StatOK {
+			return encodeMountStatus(xid, status)
+		}
 		return encodeMountSuccess(xid, syntheticRootHandle(m.server), flavors)
 	}
 	if !requested.IsUnder(m.server.exportRoot) {
 		glog.V(0).Infof("mount udp: client %s requested %q (outside export %q); serving configured export", addr, dirpath, m.server.exportRoot)
+		if status := m.rootMountStatus(ctx); status != mnt3StatOK {
+			return encodeMountStatus(xid, status)
+		}
 		return encodeMountSuccess(xid, syntheticRootHandle(m.server), flavors)
 	}
-	fh, status := m.resolveSubexportFileHandle(requested)
+	fh, status := m.resolveSubexportFileHandle(ctx, requested)
 	if status != mnt3StatOK {
 		return encodeMountStatus(xid, status)
 	}
-	glog.V(0).Infof("mount udp: client %s requested %q under export %q; mounting at subdirectory", addr, dirpath, m.server.exportRoot)
+	glog.V(1).Infof("mount udp: client %s requested %q under export %q; mounting at subdirectory", addr, dirpath, m.server.exportRoot)
 	return encodeMountSuccess(xid, fh, flavors)
+}
+
+// rootMountStatus is the UDP analogue of Handler.lstatExportStatus:
+// confirms the configured export root still exists in the filer so the
+// transport-OK branches can't hand out a handle pointing at a deleted
+// directory. The returned status maps to the mountstat3 codes the UDP
+// reply uses.
+func (m *mountUDPServer) rootMountStatus(ctx context.Context) uint32 {
+	if m.server.withInternalClient == nil {
+		return mnt3StatOK
+	}
+	fs := newSeaweedFileSystem(m.server, m.server.exportRoot, m.server.sharedReaderCache)
+	switch _, err := fs.fileInfoForVirtualPath(ctx, "/"); {
+	case err == nil:
+		return mnt3StatOK
+	case os.IsNotExist(err):
+		return mnt3ErrNoEnt
+	default:
+		glog.Errorf("mount udp: export root %q lookup failed: %v", m.server.exportRoot, err)
+		return mnt3ErrServerFault
+	}
 }
 
 // resolveSubexportFileHandle is the UDP analogue of the sub-fs branch in
 // Handler.resolveMountFilesystem. The TCP path lets go-nfs's onMount call
 // ToHandle on the returned filesystem; UDP encodes the FH itself, so the
 // inode/generation lookup happens explicitly here.
-func (m *mountUDPServer) resolveSubexportFileHandle(requested util.FullPath) ([]byte, uint32) {
+func (m *mountUDPServer) resolveSubexportFileHandle(ctx context.Context, requested util.FullPath) ([]byte, uint32) {
 	if m.server.withInternalClient == nil {
 		return nil, mnt3ErrServerFault
 	}
 	subFS := newSeaweedFileSystem(m.server, requested, m.server.sharedReaderCache)
-	info, err := subFS.fileInfoForVirtualPath(context.Background(), "/")
+	info, err := subFS.fileInfoForVirtualPath(ctx, "/")
 	switch {
 	case err == nil:
 	case os.IsNotExist(err):
