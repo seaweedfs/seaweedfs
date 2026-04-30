@@ -21,11 +21,11 @@ type Handler struct {
 
 var _ gonfs.Handler = (*Handler)(nil)
 
-func (h *Handler) Mount(_ context.Context, conn net.Conn, req gonfs.MountRequest) (gonfs.MountStatus, billy.Filesystem, []gonfs.AuthFlavor) {
+func (h *Handler) Mount(ctx context.Context, conn net.Conn, req gonfs.MountRequest) (gonfs.MountStatus, billy.Filesystem, []gonfs.AuthFlavor) {
 	if h.server.clientAuthorizer != nil && !h.server.clientAuthorizer.isAllowedConn(conn) {
 		return gonfs.MountStatusErrAcces, nil, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
 	}
-	fs, status := h.resolveMountFilesystem(context.Background(), req.Dirpath)
+	fs, status := h.resolveMountFilesystem(ctx, req.Dirpath)
 	if status != gonfs.MountStatusOk {
 		return status, nil, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
 	}
@@ -40,11 +40,11 @@ func (h *Handler) Mount(_ context.Context, conn net.Conn, req gonfs.MountRequest
 func (h *Handler) resolveMountFilesystem(ctx context.Context, rawDirpath []byte) (*seaweedFileSystem, gonfs.MountStatus) {
 	requested := normalizeExportRoot(util.FullPath(rawDirpath))
 	if requested == h.server.exportRoot {
-		return h.rootFS, h.lstatExportStatus()
+		return h.rootFS, h.lstatExportStatus(ctx)
 	}
 	if !requested.IsUnder(h.server.exportRoot) {
 		glog.V(0).Infof("nfs mount: client requested %q (outside export %q); serving configured export", string(rawDirpath), h.server.exportRoot)
-		return h.rootFS, h.lstatExportStatus()
+		return h.rootFS, h.lstatExportStatus(ctx)
 	}
 	entry, err := h.lookupSubexportEntry(ctx, requested)
 	switch {
@@ -58,12 +58,12 @@ func (h *Handler) resolveMountFilesystem(ctx context.Context, rawDirpath []byte)
 	case !entry.IsDirectory:
 		return nil, gonfs.MountStatusErrNotDir
 	}
-	glog.V(0).Infof("nfs mount: client requested %q under export %q; mounting at subdirectory", string(rawDirpath), h.server.exportRoot)
+	glog.V(1).Infof("nfs mount: client requested %q under export %q; mounting at subdirectory", string(rawDirpath), h.server.exportRoot)
 	return newSeaweedFileSystem(h.server, requested, h.server.sharedReaderCache), gonfs.MountStatusOk
 }
 
-func (h *Handler) lstatExportStatus() gonfs.MountStatus {
-	if _, err := h.rootFS.Lstat("/"); err != nil {
+func (h *Handler) lstatExportStatus(ctx context.Context) gonfs.MountStatus {
+	if _, err := h.rootFS.fileInfoForVirtualPath(ctx, "/"); err != nil {
 		if os.IsNotExist(err) {
 			return gonfs.MountStatusErrNoEnt
 		}
