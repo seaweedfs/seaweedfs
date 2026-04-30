@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fluent/fluent-logger-golang/fluent"
@@ -82,6 +83,25 @@ func InitAuditLog(config string) {
 	}
 }
 
+// getRemoteIP returns the client IP for the audit log, honoring forwarding
+// headers set by reverse proxies. Preference order: X-Forwarded-For (first
+// non-empty entry), X-Real-IP, then r.RemoteAddr. Headers are trusted as-is;
+// operators who expose the S3 endpoint directly to untrusted networks should
+// strip these headers at the proxy boundary so clients cannot spoof them.
+func getRemoteIP(r *http.Request) string {
+	if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+		for _, entry := range strings.Split(forwardedFor, ",") {
+			if ip := strings.TrimSpace(entry); ip != "" {
+				return ip
+			}
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	return r.RemoteAddr
+}
+
 func getREST(httpMetod string, resourceType string) string {
 	return fmt.Sprintf("REST.%s.%s", httpMetod, resourceType)
 }
@@ -134,10 +154,7 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 	if s3errCode != ErrNone {
 		errorCode = GetAPIError(s3errCode).Code
 	}
-	remoteIP := r.Header.Get("X-Real-IP")
-	if len(remoteIP) == 0 {
-		remoteIP = r.RemoteAddr
-	}
+	remoteIP := getRemoteIP(r)
 	hostHeader := r.Header.Get("X-Forwarded-Host")
 	if len(hostHeader) == 0 {
 		hostHeader = r.Host
