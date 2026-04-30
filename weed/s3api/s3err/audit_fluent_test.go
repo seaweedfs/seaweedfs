@@ -27,9 +27,19 @@ func TestGetAccessLogRemoteIP(t *testing.T) {
 		expectedRemote string
 	}{
 		{
-			name:           "falls back to RemoteAddr when no headers set",
+			name:           "falls back to RemoteAddr (port stripped) when no headers set",
 			remoteAddr:     "10.89.0.1:35832",
-			expectedRemote: "10.89.0.1:35832",
+			expectedRemote: "10.89.0.1",
+		},
+		{
+			name:           "preserves IPv6 host from RemoteAddr",
+			remoteAddr:     "[2001:db8::1]:35832",
+			expectedRemote: "2001:db8::1",
+		},
+		{
+			name:           "returns RemoteAddr unchanged when no port present",
+			remoteAddr:     "@",
+			expectedRemote: "@",
 		},
 		{
 			name:           "uses X-Real-IP when X-Forwarded-For is absent",
