@@ -1,9 +1,11 @@
 package nfs
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -45,10 +47,11 @@ const (
 	mountProcUmnt = 3
 
 	// MOUNT v3 status codes (mountstat3 in RFC 1813 §5.1.1).
-	mnt3StatOK    uint32 = 0
-	mnt3ErrAcces  uint32 = 13
-	mnt3ErrNoEnt  uint32 = 2
-	mnt3ErrNotDir uint32 = 20
+	mnt3StatOK         uint32 = 0
+	mnt3ErrAcces       uint32 = 13
+	mnt3ErrNoEnt       uint32 = 2
+	mnt3ErrNotDir      uint32 = 20
+	mnt3ErrServerFault uint32 = 10006
 
 	// XDR opaque length cap for dirpath. RFC 1813 §5.1 limits MNTPATHLEN
 	// to 1024; cap a bit higher for headroom and reject anything beyond.
@@ -202,6 +205,10 @@ func (m *mountUDPServer) handleCall(callBuf []byte, addr *net.UDPAddr) []byte {
 //
 //	MOUNT3args  { dirpath3 dirpath; }              // XDR opaque
 //	MOUNT3res   { mountstat3 status; if OK { handle, auth_flavors[] } }
+//
+// Mirrors Handler.resolveMountFilesystem: exact match returns the
+// synthetic root handle; under-export resolves to the subdirectory's
+// handle; outside-export falls back to the synthetic root.
 func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr) []byte {
 	if len(args) < 4 {
 		return encodeAcceptedReply(xid, rpcAcceptGarbageArgs, nil)
@@ -215,14 +222,51 @@ func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr)
 		return encodeAcceptedReply(xid, rpcAcceptGarbageArgs, nil)
 	}
 	dirpath := string(args[4 : 4+pathLen])
-
-	if requested := normalizeExportRoot(util.FullPath(dirpath)); requested != m.server.exportRoot {
-		glog.V(0).Infof("mount udp: client %s requested %q; serving configured export %q", addr, dirpath, m.server.exportRoot)
-	}
-
-	rootHandle := NewFileHandle(m.server.exportID, FileHandleKindDirectory, 0, filer.InodeIndexInitialGeneration).Encode()
+	requested := normalizeExportRoot(util.FullPath(dirpath))
 	flavors := []uint32{authFlavorNull, authFlavorUnix}
-	return encodeMountSuccess(xid, rootHandle, flavors)
+
+	if requested == m.server.exportRoot {
+		return encodeMountSuccess(xid, syntheticRootHandle(m.server), flavors)
+	}
+	if !requested.IsUnder(m.server.exportRoot) {
+		glog.V(0).Infof("mount udp: client %s requested %q (outside export %q); serving configured export", addr, dirpath, m.server.exportRoot)
+		return encodeMountSuccess(xid, syntheticRootHandle(m.server), flavors)
+	}
+	fh, status := m.resolveSubexportFileHandle(requested)
+	if status != mnt3StatOK {
+		return encodeMountStatus(xid, status)
+	}
+	glog.V(0).Infof("mount udp: client %s requested %q under export %q; mounting at subdirectory", addr, dirpath, m.server.exportRoot)
+	return encodeMountSuccess(xid, fh, flavors)
+}
+
+// resolveSubexportFileHandle is the UDP analogue of the sub-fs branch in
+// Handler.resolveMountFilesystem. The TCP path lets go-nfs's onMount call
+// ToHandle on the returned filesystem; UDP encodes the FH itself, so the
+// inode/generation lookup happens explicitly here.
+func (m *mountUDPServer) resolveSubexportFileHandle(requested util.FullPath) ([]byte, uint32) {
+	if m.server.withInternalClient == nil {
+		return nil, mnt3ErrServerFault
+	}
+	subFS := newSeaweedFileSystem(m.server, requested, m.server.sharedReaderCache)
+	info, err := subFS.fileInfoForVirtualPath(context.Background(), "/")
+	switch {
+	case err == nil:
+	case os.IsNotExist(err):
+		return nil, mnt3ErrNoEnt
+	default:
+		glog.Errorf("mount udp: subexport lookup %q failed: %v", requested, err)
+		return nil, mnt3ErrServerFault
+	}
+	if !info.entry.IsDirectory {
+		return nil, mnt3ErrNotDir
+	}
+	inode := info.entry.GetAttributes().GetInode()
+	return NewFileHandle(m.server.exportID, FileHandleKindDirectory, inode, info.generation).Encode(), mnt3StatOK
+}
+
+func syntheticRootHandle(s *Server) []byte {
+	return NewFileHandle(s.exportID, FileHandleKindDirectory, 0, filer.InodeIndexInitialGeneration).Encode()
 }
 
 // encodeMountStatus returns a MOUNT MNT reply carrying just an error status.

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -32,9 +34,15 @@ func buildMountCallFrame(xid, prog, vers, proc uint32, dirpath string) []byte {
 
 func newMountUDPTestServer(t *testing.T, exportPath string) (*mountUDPServer, *net.UDPConn) {
 	t.Helper()
+	return newMountUDPTestServerWithClient(t, exportPath, nil)
+}
 
-	// Build a minimal Server with just the fields the UDP MOUNT path
-	// uses: exportRoot, exportID, and a permissive clientAuthorizer.
+// newMountUDPTestServerWithClient wires Server.withInternalClient when
+// client is non-nil, so the under-export lookup branch in handleMount
+// can find directory entries.
+func newMountUDPTestServerWithClient(t *testing.T, exportPath string, client *fakeNFSFilerClient) (*mountUDPServer, *net.UDPConn) {
+	t.Helper()
+
 	exportRoot := normalizeExportRoot(util.FullPath(exportPath))
 	authz, err := newClientAuthorizer(nil)
 	if err != nil {
@@ -45,6 +53,11 @@ func newMountUDPTestServer(t *testing.T, exportPath string) (*mountUDPServer, *n
 		exportRoot:       exportRoot,
 		exportID:         exportIDForRoot(exportRoot),
 		clientAuthorizer: authz,
+	}
+	if client != nil {
+		srv.withInternalClient = func(_ bool, fn func(nfsFilerClient) error) error {
+			return fn(client)
+		}
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -192,7 +205,6 @@ func TestMountUDPMntAcceptsAnyPath(t *testing.T) {
 		"/",
 		"/buckets",
 		"/buckets/other",
-		"/buckets/data/sub",
 		"/wrong/path",
 		"",
 		"buckets/data",
@@ -215,6 +227,82 @@ func TestMountUDPMntAcceptsAnyPath(t *testing.T) {
 			}
 			if len(body) <= 4 {
 				t.Errorf("MNT(%q) success body must include handle and flavors", dirpath)
+			}
+		})
+	}
+}
+
+func TestMountUDPSubexportMount(t *testing.T) {
+	const exportRoot = "/buckets"
+
+	client := &fakeNFSFilerClient{
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/buckets":             testEntry("buckets", true, 100, uint32(0755), nil),
+			"/buckets/data":        testEntry("data", true, 101, uint32(0755), nil),
+			"/buckets/data/nested": testEntry("nested", true, 102, uint32(0755), nil),
+			"/buckets/file.txt":    testEntry("file.txt", false, 103, uint32(0644), []byte("hi")),
+		},
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(100)): testIndexRecord(t, 100, 1, "/buckets"),
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/buckets/data"),
+			string(filer.InodeIndexKey(102)): testIndexRecord(t, 102, 1, "/buckets/data/nested"),
+			string(filer.InodeIndexKey(103)): testIndexRecord(t, 103, 1, "/buckets/file.txt"),
+		},
+	}
+
+	_, conn := newMountUDPTestServerWithClient(t, exportRoot, client)
+	target := conn.LocalAddr().(*net.UDPAddr)
+
+	cases := []struct {
+		name       string
+		dirpath    string
+		wantStatus uint32
+		wantInode  uint64
+	}{
+		{name: "subdirectory_one_level", dirpath: "/buckets/data", wantStatus: mnt3StatOK, wantInode: 101},
+		{name: "subdirectory_two_levels", dirpath: "/buckets/data/nested", wantStatus: mnt3StatOK, wantInode: 102},
+		{name: "subdirectory_trailing_slash", dirpath: "/buckets/data/", wantStatus: mnt3StatOK, wantInode: 101},
+		{name: "missing_under_export", dirpath: "/buckets/missing", wantStatus: mnt3ErrNoEnt},
+		{name: "deep_missing_under_export", dirpath: "/buckets/data/no-such-thing", wantStatus: mnt3ErrNoEnt},
+		{name: "regular_file_not_directory", dirpath: "/buckets/file.txt", wantStatus: mnt3ErrNotDir},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xid := uint32(2000 + i)
+			reply := sendMountUDP(t, target, buildMountCallFrame(xid, mountProgram, 3, mountProcMnt, tc.dirpath))
+			_, astat, body := parseRPCReply(t, reply)
+			if astat != rpcAcceptSuccess {
+				t.Fatalf("accept_stat=%d want SUCCESS(0)", astat)
+			}
+			if len(body) < 4 {
+				t.Fatalf("body too short: %d bytes", len(body))
+			}
+			got := binary.BigEndian.Uint32(body[0:4])
+			if got != tc.wantStatus {
+				t.Fatalf("MNT(%q) status=%d want %d", tc.dirpath, got, tc.wantStatus)
+			}
+			if tc.wantStatus != mnt3StatOK {
+				if len(body) != 4 {
+					t.Errorf("MNT(%q) error body should carry only the status; got %d trailing bytes", tc.dirpath, len(body)-4)
+				}
+				return
+			}
+			if len(body) < 8 {
+				t.Fatalf("MNT(%q) success body missing handle length", tc.dirpath)
+			}
+			handleLen := binary.BigEndian.Uint32(body[4:8])
+			if uint32(len(body)) < 8+handleLen {
+				t.Fatalf("MNT(%q) success body truncated", tc.dirpath)
+			}
+			handle, err := DecodeFileHandle(body[8 : 8+handleLen])
+			if err != nil {
+				t.Fatalf("MNT(%q) handle decode: %v", tc.dirpath, err)
+			}
+			if handle.Inode != tc.wantInode {
+				t.Errorf("MNT(%q) FH inode=%d want %d", tc.dirpath, handle.Inode, tc.wantInode)
+			}
+			if handle.Kind != FileHandleKindDirectory {
+				t.Errorf("MNT(%q) FH kind=%d want directory", tc.dirpath, handle.Kind)
 			}
 		})
 	}
