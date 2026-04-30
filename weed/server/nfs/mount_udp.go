@@ -234,14 +234,12 @@ func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr)
 	ctx, cancel := context.WithTimeout(context.Background(), mountUDPLookupTimeout)
 	defer cancel()
 
-	if requested == m.server.exportRoot {
-		if status := m.rootMountStatus(ctx); status != mnt3StatOK {
-			return encodeMountStatus(xid, status)
+	// Exact match and outside-export both fall back to the synthetic root
+	// handle. Only the second case logs; the first is the common path.
+	if requested == m.server.exportRoot || !requested.IsUnder(m.server.exportRoot) {
+		if requested != m.server.exportRoot {
+			glog.V(0).Infof("mount udp: client %s requested %q (outside export %q); serving configured export", addr, dirpath, m.server.exportRoot)
 		}
-		return encodeMountSuccess(xid, syntheticRootHandle(m.server), flavors)
-	}
-	if !requested.IsUnder(m.server.exportRoot) {
-		glog.V(0).Infof("mount udp: client %s requested %q (outside export %q); serving configured export", addr, dirpath, m.server.exportRoot)
 		if status := m.rootMountStatus(ctx); status != mnt3StatOK {
 			return encodeMountStatus(xid, status)
 		}

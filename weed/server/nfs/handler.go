@@ -39,11 +39,12 @@ func (h *Handler) Mount(ctx context.Context, conn net.Conn, req gonfs.MountReque
 // log. The UDP MOUNT path mirrors this in mount_udp.go.
 func (h *Handler) resolveMountFilesystem(ctx context.Context, requestedPath string) (*seaweedFileSystem, gonfs.MountStatus) {
 	requested := normalizeExportRoot(util.FullPath(requestedPath))
-	if requested == h.server.exportRoot {
-		return h.rootFS, h.lstatExportStatus(ctx)
-	}
-	if !requested.IsUnder(h.server.exportRoot) {
-		glog.V(0).Infof("nfs mount: client requested %q (outside export %q); serving configured export", requestedPath, h.server.exportRoot)
+	// Exact match and outside-export both fall back to the export root.
+	// Only the second case logs; the first is the boring common path.
+	if requested == h.server.exportRoot || !requested.IsUnder(h.server.exportRoot) {
+		if requested != h.server.exportRoot {
+			glog.V(0).Infof("nfs mount: client requested %q (outside export %q); serving configured export", requestedPath, h.server.exportRoot)
+		}
 		return h.rootFS, h.lstatExportStatus(ctx)
 	}
 	entry, err := h.lookupSubexportEntry(ctx, requested)
