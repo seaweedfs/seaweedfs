@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -46,6 +47,9 @@ type Server struct {
 	newUploader        func() (chunkUploader, error)
 	withFilerClient    filerClientExecutor
 	withInternalClient internalClientExecutor
+
+	rootFSOnce sync.Once
+	rootFS     *seaweedFileSystem
 }
 
 func NewServer(option *Option) (*Server, error) {
@@ -199,17 +203,28 @@ func (s *Server) newHandler() (*Handler, error) {
 	if s == nil {
 		return nil, errors.New("nfs server is not configured")
 	}
-	rootFS := newSeaweedFileSystem(s, s.exportRoot, s.sharedReaderCache)
-	if s.sharedReaderCache == nil {
-		s.sharedReaderCache = rootFS.readerCache
-	}
-	if s.chunkInvalidator == nil {
-		s.chunkInvalidator = s.sharedReaderCache
-	}
 	return &Handler{
 		server: s,
-		rootFS: rootFS,
+		rootFS: s.rootFilesystem(),
 	}, nil
+}
+
+// rootFilesystem returns a single seaweedFileSystem rooted at the
+// configured export, building it on first call. Both the TCP handler
+// (via newHandler) and the UDP MOUNT path use the same instance so
+// they share the chunk reader cache and don't reconstruct a wrapper
+// per request.
+func (s *Server) rootFilesystem() *seaweedFileSystem {
+	s.rootFSOnce.Do(func() {
+		s.rootFS = newSeaweedFileSystem(s, s.exportRoot, s.sharedReaderCache)
+		if s.sharedReaderCache == nil {
+			s.sharedReaderCache = s.rootFS.readerCache
+		}
+		if s.chunkInvalidator == nil {
+			s.chunkInvalidator = s.sharedReaderCache
+		}
+	})
+	return s.rootFS
 }
 
 func (s *Server) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {

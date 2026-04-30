@@ -330,6 +330,168 @@ func nfsLink(target *nfsclient.Target, sourceHandle []byte, linkPath string) err
 	return nfsclient.NFS3Error(status)
 }
 
+func TestSeaweedNFSAcceptsAnyMountPathOverRPC(t *testing.T) {
+	const exportRoot = "/buckets/data"
+
+	client := &fakeNFSFilerClient{
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/buckets":      testEntry("buckets", true, 100, uint32(0755), nil),
+			"/buckets/data": testEntry("data", true, 101, uint32(0755), nil),
+		},
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(100)): testIndexRecord(t, 100, 1, "/buckets"),
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/buckets/data"),
+		},
+	}
+
+	server := newTestServer(t, exportRoot, client)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- gonfs.Serve(listener, handler)
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case err := <-serveDone:
+			if err != nil && !isClosedNetworkErr(err) {
+				t.Errorf("nfs server exited with error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("timed out waiting for nfs server shutdown")
+		}
+	})
+
+	dirpaths := []string{
+		"/",
+		"/buckets",
+		"/buckets/other",
+		"/wrong/path",
+		exportRoot,
+		exportRoot + "/",
+	}
+	for _, dirpath := range dirpaths {
+		t.Run(dirpath, func(t *testing.T) {
+			var rpcClient *rpc.Client
+			var dialErr error
+			for attempt := 0; attempt < 10; attempt++ {
+				rpcClient, dialErr = rpc.DialTCP(listener.Addr().Network(), listener.Addr().String(), false)
+				if dialErr == nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			require.NoError(t, dialErr)
+			defer rpcClient.Close()
+
+			mounter := &nfsclient.Mount{Client: rpcClient}
+			target, err := mounter.Mount(dirpath, rpc.AuthNull)
+			require.NoErrorf(t, err, "Mount(%q)", dirpath)
+			defer target.Close()
+
+			entries, err := target.ReadDirPlus("/")
+			require.NoError(t, err)
+			assert.Empty(t, entries, "Mount(%q) should land at the empty export root", dirpath)
+		})
+	}
+}
+
+func TestSeaweedNFSSubexportMountOverRPC(t *testing.T) {
+	const exportRoot = "/buckets"
+
+	client := &fakeNFSFilerClient{
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/buckets":            testEntry("buckets", true, 100, uint32(0755), nil),
+			"/buckets/data":       testEntry("data", true, 101, uint32(0755), nil),
+			"/buckets/data/inner": testEntry("inner", false, 104, uint32(0644), []byte("payload")),
+			"/buckets/other":      testEntry("other", true, 105, uint32(0755), nil),
+			"/buckets/file.txt":   testEntry("file.txt", false, 103, uint32(0644), []byte("hi")),
+		},
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(100)): testIndexRecord(t, 100, 1, "/buckets"),
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/buckets/data"),
+			string(filer.InodeIndexKey(103)): testIndexRecord(t, 103, 1, "/buckets/file.txt"),
+			string(filer.InodeIndexKey(104)): testIndexRecord(t, 104, 1, "/buckets/data/inner"),
+			string(filer.InodeIndexKey(105)): testIndexRecord(t, 105, 1, "/buckets/other"),
+		},
+	}
+
+	server := newTestServer(t, exportRoot, client)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- gonfs.Serve(listener, handler)
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case err := <-serveDone:
+			if err != nil && !isClosedNetworkErr(err) {
+				t.Errorf("nfs server exited with error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("timed out waiting for nfs server shutdown")
+		}
+	})
+
+	dial := func(t *testing.T) *rpc.Client {
+		t.Helper()
+		var rpcClient *rpc.Client
+		var dialErr error
+		for attempt := 0; attempt < 10; attempt++ {
+			rpcClient, dialErr = rpc.DialTCP(listener.Addr().Network(), listener.Addr().String(), false)
+			if dialErr == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		require.NoError(t, dialErr)
+		t.Cleanup(func() { rpcClient.Close() })
+		return rpcClient
+	}
+
+	t.Run("mounts_under_export_at_subdirectory", func(t *testing.T) {
+		mounter := &nfsclient.Mount{Client: dial(t)}
+		target, err := mounter.Mount("/buckets/data", rpc.AuthNull)
+		require.NoError(t, err)
+		defer target.Close()
+
+		entries, err := target.ReadDirPlus("/")
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		assert.Equal(t, "inner", entries[0].Name())
+
+		readFile, err := target.Open("/inner")
+		require.NoError(t, err)
+		defer readFile.Close()
+		data, err := io.ReadAll(readFile)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("payload"), data)
+	})
+
+	t.Run("missing_entry_under_export_rejects", func(t *testing.T) {
+		mounter := &nfsclient.Mount{Client: dial(t)}
+		_, err := mounter.Mount("/buckets/missing", rpc.AuthNull)
+		require.Error(t, err)
+	})
+
+	t.Run("regular_file_under_export_rejects", func(t *testing.T) {
+		mounter := &nfsclient.Mount{Client: dial(t)}
+		_, err := mounter.Mount("/buckets/file.txt", rpc.AuthNull)
+		require.Error(t, err)
+	})
+}
+
 func TestSeaweedNFSServesInlineRoundTripOverRPC(t *testing.T) {
 	client := &fakeNFSFilerClient{
 		kv: map[string][]byte{

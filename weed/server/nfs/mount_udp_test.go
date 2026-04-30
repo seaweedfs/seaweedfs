@@ -1,12 +1,18 @@
 package nfs
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	gonfs "github.com/willscott/go-nfs"
 )
 
 // buildMountCallFrame constructs a MOUNT v3 RPC CALL with an opaque dirpath
@@ -32,9 +38,15 @@ func buildMountCallFrame(xid, prog, vers, proc uint32, dirpath string) []byte {
 
 func newMountUDPTestServer(t *testing.T, exportPath string) (*mountUDPServer, *net.UDPConn) {
 	t.Helper()
+	return newMountUDPTestServerWithClient(t, exportPath, nil)
+}
 
-	// Build a minimal Server with just the fields the UDP MOUNT path
-	// uses: exportRoot, exportID, and a permissive clientAuthorizer.
+// newMountUDPTestServerWithClient wires Server.withInternalClient when
+// client is non-nil, so the under-export lookup branch in handleMount
+// can find directory entries.
+func newMountUDPTestServerWithClient(t *testing.T, exportPath string, client *fakeNFSFilerClient) (*mountUDPServer, *net.UDPConn) {
+	t.Helper()
+
 	exportRoot := normalizeExportRoot(util.FullPath(exportPath))
 	authz, err := newClientAuthorizer(nil)
 	if err != nil {
@@ -45,6 +57,11 @@ func newMountUDPTestServer(t *testing.T, exportPath string) (*mountUDPServer, *n
 		exportRoot:       exportRoot,
 		exportID:         exportIDForRoot(exportRoot),
 		clientAuthorizer: authz,
+	}
+	if client != nil {
+		srv.withInternalClient = func(_ bool, fn func(nfsFilerClient) error) error {
+			return fn(client)
+		}
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -182,24 +199,132 @@ func TestMountUDPMntReturnsHandleAndFlavors(t *testing.T) {
 	_ = m
 }
 
-func TestMountUDPMntRejectsWrongPath(t *testing.T) {
-	_, conn := newMountUDPTestServer(t, "/exports")
+func TestMountUDPMntAcceptsAnyPath(t *testing.T) {
+	const exportRoot = "/buckets/data"
+
+	_, conn := newMountUDPTestServer(t, exportRoot)
 	target := conn.LocalAddr().(*net.UDPAddr)
 
-	reply := sendMountUDP(t, target, buildMountCallFrame(99, mountProgram, 3, mountProcMnt, "/somewhere/else"))
-	_, astat, body := parseRPCReply(t, reply)
+	dirpaths := []string{
+		"/",
+		"/buckets",
+		"/buckets/other",
+		"/wrong/path",
+		"",
+		"buckets/data",
+		exportRoot,
+		exportRoot + "/",
+	}
+	for i, dirpath := range dirpaths {
+		t.Run(dirpath, func(t *testing.T) {
+			xid := uint32(1000 + i)
+			reply := sendMountUDP(t, target, buildMountCallFrame(xid, mountProgram, 3, mountProcMnt, dirpath))
+			_, astat, body := parseRPCReply(t, reply)
+			if astat != rpcAcceptSuccess {
+				t.Fatalf("accept_stat=%d want SUCCESS(0)", astat)
+			}
+			if len(body) < 4 {
+				t.Fatalf("body too short: %d bytes", len(body))
+			}
+			if got := binary.BigEndian.Uint32(body[0:4]); got != mnt3StatOK {
+				t.Errorf("MNT(%q): mountstat3=%d want OK(0)", dirpath, got)
+			}
+			if len(body) <= 4 {
+				t.Errorf("MNT(%q) success body must include handle and flavors", dirpath)
+			}
+		})
+	}
+}
 
-	if astat != rpcAcceptSuccess {
-		t.Fatalf("accept_stat=%d want SUCCESS(0); MNT3ERR is in the body, not at the RPC layer", astat)
+func TestMountUDPSubexportMount(t *testing.T) {
+	const exportRoot = "/buckets"
+
+	client := &fakeNFSFilerClient{
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/buckets":             testEntry("buckets", true, 100, uint32(0755), nil),
+			"/buckets/data":        testEntry("data", true, 101, uint32(0755), nil),
+			"/buckets/data/nested": testEntry("nested", true, 102, uint32(0755), nil),
+			"/buckets/file.txt":    testEntry("file.txt", false, 103, uint32(0644), []byte("hi")),
+		},
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(100)): testIndexRecord(t, 100, 1, "/buckets"),
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/buckets/data"),
+			string(filer.InodeIndexKey(102)): testIndexRecord(t, 102, 1, "/buckets/data/nested"),
+			string(filer.InodeIndexKey(103)): testIndexRecord(t, 103, 1, "/buckets/file.txt"),
+		},
 	}
-	if len(body) < 4 {
-		t.Fatalf("body too short: %d bytes", len(body))
+
+	m, conn := newMountUDPTestServerWithClient(t, exportRoot, client)
+	target := conn.LocalAddr().(*net.UDPAddr)
+
+	// Build a TCP Handler from the same Server so we can compare the
+	// raw FH bytes both transports produce for the same subdirectory.
+	tcpHandler, err := m.server.newHandler()
+	require.NoError(t, err)
+
+	cases := []struct {
+		name       string
+		dirpath    string
+		wantStatus uint32
+		wantInode  uint64
+	}{
+		{name: "subdirectory_one_level", dirpath: "/buckets/data", wantStatus: mnt3StatOK, wantInode: 101},
+		{name: "subdirectory_two_levels", dirpath: "/buckets/data/nested", wantStatus: mnt3StatOK, wantInode: 102},
+		{name: "subdirectory_trailing_slash", dirpath: "/buckets/data/", wantStatus: mnt3StatOK, wantInode: 101},
+		{name: "missing_under_export", dirpath: "/buckets/missing", wantStatus: mnt3ErrNoEnt},
+		{name: "deep_missing_under_export", dirpath: "/buckets/data/no-such-thing", wantStatus: mnt3ErrNoEnt},
+		{name: "regular_file_not_directory", dirpath: "/buckets/file.txt", wantStatus: mnt3ErrNotDir},
 	}
-	if status := binary.BigEndian.Uint32(body[0:4]); status != mnt3ErrNoEnt {
-		t.Errorf("mountstat3=%d want NoEnt(2)", status)
-	}
-	if len(body) != 4 {
-		t.Errorf("error reply should carry only the status; got %d trailing bytes", len(body)-4)
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xid := uint32(2000 + i)
+			reply := sendMountUDP(t, target, buildMountCallFrame(xid, mountProgram, 3, mountProcMnt, tc.dirpath))
+			_, astat, body := parseRPCReply(t, reply)
+			if astat != rpcAcceptSuccess {
+				t.Fatalf("accept_stat=%d want SUCCESS(0)", astat)
+			}
+			if len(body) < 4 {
+				t.Fatalf("body too short: %d bytes", len(body))
+			}
+			got := binary.BigEndian.Uint32(body[0:4])
+			if got != tc.wantStatus {
+				t.Fatalf("MNT(%q) status=%d want %d", tc.dirpath, got, tc.wantStatus)
+			}
+			if tc.wantStatus != mnt3StatOK {
+				if len(body) != 4 {
+					t.Errorf("MNT(%q) error body should carry only the status; got %d trailing bytes", tc.dirpath, len(body)-4)
+				}
+				return
+			}
+			if len(body) < 8 {
+				t.Fatalf("MNT(%q) success body missing handle length", tc.dirpath)
+			}
+			handleLen := binary.BigEndian.Uint32(body[4:8])
+			if uint32(len(body)) < 8+handleLen {
+				t.Fatalf("MNT(%q) success body truncated", tc.dirpath)
+			}
+			udpHandleBytes := body[8 : 8+handleLen]
+			handle, err := DecodeFileHandle(udpHandleBytes)
+			if err != nil {
+				t.Fatalf("MNT(%q) handle decode: %v", tc.dirpath, err)
+			}
+			if handle.Inode != tc.wantInode {
+				t.Errorf("MNT(%q) FH inode=%d want %d", tc.dirpath, handle.Inode, tc.wantInode)
+			}
+			if handle.Kind != FileHandleKindDirectory {
+				t.Errorf("MNT(%q) FH kind=%d want directory", tc.dirpath, handle.Kind)
+			}
+
+			// Transport parity: drive the TCP Handler with the same dirpath
+			// and confirm the bytes go-nfs's onMount would write match the
+			// UDP responder's bytes exactly. A regression that drifts the
+			// generation, exportID, or kind on one transport would fail here.
+			tcpStatus, tcpFS, _ := tcpHandler.Mount(context.Background(), nil, gonfs.MountRequest{Dirpath: []byte(tc.dirpath)})
+			require.Equal(t, gonfs.MountStatusOk, tcpStatus, "TCP Mount(%q)", tc.dirpath)
+			tcpHandleBytes := tcpHandler.ToHandle(tcpFS, nil)
+			require.NotEmpty(t, tcpHandleBytes, "TCP Mount(%q) ToHandle returned empty", tc.dirpath)
+			assert.Equal(t, tcpHandleBytes, udpHandleBytes, "TCP/UDP FH bytes diverge for %q", tc.dirpath)
+		})
 	}
 }
 

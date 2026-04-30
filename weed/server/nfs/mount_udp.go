@@ -1,9 +1,11 @@
 package nfs
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -38,6 +40,12 @@ const (
 	// listening goroutines back off identically under host pressure.
 	mountUDPRetryBackoff = 50 * time.Millisecond
 
+	// mountUDPLookupTimeout bounds any filer round-trip the UDP MOUNT
+	// path makes (export-root existence check, subexport lookup). The
+	// UDP serve loop is single-threaded, so a stalled filer call would
+	// otherwise block every later MOUNT packet.
+	mountUDPLookupTimeout = 5 * time.Second
+
 	mountVersion = 3
 
 	mountProcNull = 0
@@ -45,10 +53,11 @@ const (
 	mountProcUmnt = 3
 
 	// MOUNT v3 status codes (mountstat3 in RFC 1813 §5.1.1).
-	mnt3StatOK    uint32 = 0
-	mnt3ErrAcces  uint32 = 13
-	mnt3ErrNoEnt  uint32 = 2
-	mnt3ErrNotDir uint32 = 20
+	mnt3StatOK         uint32 = 0
+	mnt3ErrAcces       uint32 = 13
+	mnt3ErrNoEnt       uint32 = 2
+	mnt3ErrNotDir      uint32 = 20
+	mnt3ErrServerFault uint32 = 10006
 
 	// XDR opaque length cap for dirpath. RFC 1813 §5.1 limits MNTPATHLEN
 	// to 1024; cap a bit higher for headroom and reject anything beyond.
@@ -198,14 +207,14 @@ func (m *mountUDPServer) handleCall(callBuf []byte, addr *net.UDPAddr) []byte {
 	}
 }
 
-// handleMount implements MOUNT v3 MNT. The wire format is RFC 1813 §5.1.4:
+// handleMount implements MOUNT v3 MNT. RFC 1813 §5.1.4:
 //
 //	MOUNT3args  { dirpath3 dirpath; }              // XDR opaque
 //	MOUNT3res   { mountstat3 status; if OK { handle, auth_flavors[] } }
 //
-// We mirror handler.go's Mount(): export-path mismatch returns NoEnt; root
-// inode is encoded as a synthetic directory filehandle so it round-trips with
-// the TCP MOUNT path without an extra filer round-trip per UDP MOUNT call.
+// Mirrors Handler.resolveMountFilesystem: exact match returns the
+// synthetic root handle; under-export resolves to the subdirectory's
+// handle; outside-export falls back to the synthetic root.
 func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr) []byte {
 	if len(args) < 4 {
 		return encodeAcceptedReply(xid, rpcAcceptGarbageArgs, nil)
@@ -219,16 +228,85 @@ func (m *mountUDPServer) handleMount(xid uint32, args []byte, addr *net.UDPAddr)
 		return encodeAcceptedReply(xid, rpcAcceptGarbageArgs, nil)
 	}
 	dirpath := string(args[4 : 4+pathLen])
-
-	requestedPath := normalizeExportRoot(util.FullPath(dirpath))
-	if requestedPath != m.server.exportRoot {
-		glog.V(1).Infof("mount udp: client %s requested %q but export is %q", addr, dirpath, m.server.exportRoot)
-		return encodeMountStatus(xid, mnt3ErrNoEnt)
-	}
-
-	rootHandle := NewFileHandle(m.server.exportID, FileHandleKindDirectory, 0, filer.InodeIndexInitialGeneration).Encode()
+	requested := normalizeExportRoot(util.FullPath(dirpath))
 	flavors := []uint32{authFlavorNull, authFlavorUnix}
-	return encodeMountSuccess(xid, rootHandle, flavors)
+
+	ctx, cancel := context.WithTimeout(context.Background(), mountUDPLookupTimeout)
+	defer cancel()
+
+	// Exact match and outside-export both fall back to the synthetic root
+	// handle. Only the second case logs; the first is the common path.
+	if requested == m.server.exportRoot || !requested.IsUnder(m.server.exportRoot) {
+		if requested != m.server.exportRoot {
+			glog.V(0).Infof("mount udp: client %s requested %q (outside export %q); serving configured export", addr, dirpath, m.server.exportRoot)
+		}
+		if status := m.rootMountStatus(ctx); status != mnt3StatOK {
+			return encodeMountStatus(xid, status)
+		}
+		return encodeMountSuccess(xid, syntheticRootHandle(m.server), flavors)
+	}
+	fh, status := m.resolveSubexportFileHandle(ctx, requested)
+	if status != mnt3StatOK {
+		return encodeMountStatus(xid, status)
+	}
+	glog.V(1).Infof("mount udp: client %s requested %q under export %q; mounting at subdirectory", addr, dirpath, m.server.exportRoot)
+	return encodeMountSuccess(xid, fh, flavors)
+}
+
+// rootMountStatus is the UDP analogue of Handler.lstatExportStatus:
+// confirms the configured export root still exists in the filer so the
+// transport-OK branches can't hand out a handle pointing at a deleted
+// directory. Reuses the Server's shared rootFS instance so we don't
+// construct a wrapper per MOUNT request.
+func (m *mountUDPServer) rootMountStatus(ctx context.Context) uint32 {
+	if m.server.withInternalClient == nil {
+		return mnt3StatOK
+	}
+	switch _, err := m.server.rootFilesystem().fileInfoForVirtualPath(ctx, "/"); {
+	case err == nil:
+		return mnt3StatOK
+	case os.IsNotExist(err):
+		return mnt3ErrNoEnt
+	default:
+		glog.Errorf("mount udp: export root %q lookup failed: %v", m.server.exportRoot, err)
+		return mnt3ErrServerFault
+	}
+}
+
+// resolveSubexportFileHandle is the UDP analogue of the sub-fs branch in
+// Handler.resolveMountFilesystem. The TCP path lets go-nfs's onMount call
+// ToHandle on the returned filesystem; UDP encodes the FH itself, so the
+// inode/generation lookup happens explicitly here.
+//
+// The UDP listener is up before serve() runs newHandler(), so a subexport
+// MOUNT can land here before sharedReaderCache has been assigned. Resolve
+// the rootFS first to drive Server.rootFilesystem's sync.Once and read
+// the cache directly off it, so the new sub-fs always shares the same
+// reader cache the TCP path uses.
+func (m *mountUDPServer) resolveSubexportFileHandle(ctx context.Context, requested util.FullPath) ([]byte, uint32) {
+	if m.server.withInternalClient == nil {
+		return nil, mnt3ErrServerFault
+	}
+	rootFS := m.server.rootFilesystem()
+	subFS := newSeaweedFileSystem(m.server, requested, rootFS.readerCache)
+	info, err := subFS.fileInfoForVirtualPath(ctx, "/")
+	switch {
+	case err == nil:
+	case os.IsNotExist(err):
+		return nil, mnt3ErrNoEnt
+	default:
+		glog.Errorf("mount udp: subexport lookup %q failed: %v", requested, err)
+		return nil, mnt3ErrServerFault
+	}
+	if !info.entry.IsDirectory {
+		return nil, mnt3ErrNotDir
+	}
+	inode := info.entry.GetAttributes().GetInode()
+	return NewFileHandle(m.server.exportID, FileHandleKindDirectory, inode, info.generation).Encode(), mnt3StatOK
+}
+
+func syntheticRootHandle(s *Server) []byte {
+	return NewFileHandle(s.exportID, FileHandleKindDirectory, 0, filer.InodeIndexInitialGeneration).Encode()
 }
 
 // encodeMountStatus returns a MOUNT MNT reply carrying just an error status.
