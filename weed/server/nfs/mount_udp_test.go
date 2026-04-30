@@ -1,6 +1,7 @@
 package nfs
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"testing"
@@ -9,6 +10,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	gonfs "github.com/willscott/go-nfs"
 )
 
 // buildMountCallFrame constructs a MOUNT v3 RPC CALL with an opaque dirpath
@@ -250,8 +254,13 @@ func TestMountUDPSubexportMount(t *testing.T) {
 		},
 	}
 
-	_, conn := newMountUDPTestServerWithClient(t, exportRoot, client)
+	m, conn := newMountUDPTestServerWithClient(t, exportRoot, client)
 	target := conn.LocalAddr().(*net.UDPAddr)
+
+	// Build a TCP Handler from the same Server so we can compare the
+	// raw FH bytes both transports produce for the same subdirectory.
+	tcpHandler, err := m.server.newHandler()
+	require.NoError(t, err)
 
 	cases := []struct {
 		name       string
@@ -294,7 +303,8 @@ func TestMountUDPSubexportMount(t *testing.T) {
 			if uint32(len(body)) < 8+handleLen {
 				t.Fatalf("MNT(%q) success body truncated", tc.dirpath)
 			}
-			handle, err := DecodeFileHandle(body[8 : 8+handleLen])
+			udpHandleBytes := body[8 : 8+handleLen]
+			handle, err := DecodeFileHandle(udpHandleBytes)
 			if err != nil {
 				t.Fatalf("MNT(%q) handle decode: %v", tc.dirpath, err)
 			}
@@ -304,6 +314,16 @@ func TestMountUDPSubexportMount(t *testing.T) {
 			if handle.Kind != FileHandleKindDirectory {
 				t.Errorf("MNT(%q) FH kind=%d want directory", tc.dirpath, handle.Kind)
 			}
+
+			// Transport parity: drive the TCP Handler with the same dirpath
+			// and confirm the bytes go-nfs's onMount would write match the
+			// UDP responder's bytes exactly. A regression that drifts the
+			// generation, exportID, or kind on one transport would fail here.
+			tcpStatus, tcpFS, _ := tcpHandler.Mount(context.Background(), nil, gonfs.MountRequest{Dirpath: []byte(tc.dirpath)})
+			require.Equal(t, gonfs.MountStatusOk, tcpStatus, "TCP Mount(%q)", tc.dirpath)
+			tcpHandleBytes := tcpHandler.ToHandle(tcpFS, nil)
+			require.NotEmpty(t, tcpHandleBytes, "TCP Mount(%q) ToHandle returned empty", tc.dirpath)
+			assert.Equal(t, tcpHandleBytes, udpHandleBytes, "TCP/UDP FH bytes diverge for %q", tc.dirpath)
 		})
 	}
 }
