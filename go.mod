@@ -157,7 +157,7 @@ require (
 	github.com/willscott/go-nfs-client v0.0.0-20251022144359-801f10d98886
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.134.0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.134.2
 	go.etcd.io/etcd/client/pkg/v3 v3.6.10
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.20.0

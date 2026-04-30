@@ -1840,8 +1840,6 @@ github.com/schollz/progressbar/v3 v3.19.0 h1:Ea18xuIRQXLAUidVDox3AbwfUhD0/1Ivohy
 github.com/schollz/progressbar/v3 v3.19.0/go.mod h1:IsO3lpbaGuzh8zIMzgY3+J8l4C8GjO0Y9S69eFvNsec=
 github.com/seaweedfs/cockroachdb-parser v0.0.0-20260225204133-2f342c5ea564 h1:TgxPraf1NmF6XTcUG53ULpLQrKvhtUJxQ3hyekxSDNQ=
 github.com/seaweedfs/cockroachdb-parser v0.0.0-20260225204133-2f342c5ea564/go.mod h1:JSKCh6uCHBz91lQYFYHCyTrSVIPge4SUFVn28iwMNB0=
-github.com/seaweedfs/go-fuse/v2 v2.9.2 h1:IfP/yFjLGO4rALcJY2Gb39PlebHxLnj7dkIiQAjFres=
-github.com/seaweedfs/go-fuse/v2 v2.9.2/go.mod h1:zABdmWEa6A0bwaBeEOBUeUkGIZlxUhcdv+V1Dcc/U/I=
 github.com/seaweedfs/go-fuse/v2 v2.9.3 h1:rJufGrHImTx7yoGUmetUi+To4LrmTQJROJnBHWt92ic=
 github.com/seaweedfs/go-fuse/v2 v2.9.3/go.mod h1:zABdmWEa6A0bwaBeEOBUeUkGIZlxUhcdv+V1Dcc/U/I=
 github.com/seaweedfs/goexif v1.0.3 h1:ve/OjI7dxPW8X9YQsv3JuVMaxEyF9Rvfd04ouL+Bz30=
@@ -2072,8 +2070,8 @@ github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1 h1:XaRxeVrOyl3y6v9CiYMWaF
 github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1/go.mod h1:9YzkhlIymWaJGX6KMU3vh5sOf3UKbCXkG/ZdjaI3zNM=
 github.com/ydb-platform/ydb-go-sdk/v3 v3.44.0/go.mod h1:oSLwnuilwIpaF5bJJMAofnGgzPJusoI3zWMNb8I+GnM=
 github.com/ydb-platform/ydb-go-sdk/v3 v3.47.3/go.mod h1:bWnOIcUHd7+Sl7DN+yhyY1H/I61z53GczvwJgXMgvj0=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.134.0 h1:Voog4d56wPNT8JQvbgN6QPdZ1gKG36YM5615PJB/XpM=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.134.0/go.mod h1:VYUUkRJkKuQPkIpgtZJj6+58Fa2g8ccAqdmaaK6HP5k=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.134.2 h1:Bzra5hUQIWrxknQ0oV6HE5q/eZU1VhHMKSZ/XWpqMgM=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.134.2/go.mod h1:VYUUkRJkKuQPkIpgtZJj6+58Fa2g8ccAqdmaaK6HP5k=
 github.com/ydb-platform/ydb-go-yc v0.12.1 h1:qw3Fa+T81+Kpu5Io2vYHJOwcrYrVjgJlT6t/0dOXJrA=
 github.com/ydb-platform/ydb-go-yc v0.12.1/go.mod h1:t/ZA4ECdgPWjAb4jyDe8AzQZB5dhpGbi3iCahFaNwBY=
 github.com/ydb-platform/ydb-go-yc-metadata v0.6.1 h1:9E5q8Nsy2RiJMZDNVy0A3KUrIMBPakJ2VgloeWbcI84=
