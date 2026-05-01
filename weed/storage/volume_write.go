@@ -89,20 +89,26 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 
 func removeVolumeFiles(filename string) {
 	// basic
-	os.Remove(filename + ".dat")
-	os.Remove(filename + ".idx")
-	os.Remove(filename + ".vif")
+	deleteAndLog := func(ext string) {
+		fullFilename := filename + "." + ext
+		if err := os.RemoveAll(fullFilename); err != nil {
+			glog.V(0).Infof("failed to remove volume file %s: %s", fullFilename, err)
+		}
+	}
+	deleteAndLog("dat")
+	deleteAndLog("idx")
+	deleteAndLog("vif")
 	// sorted index file
-	os.Remove(filename + ".sdx")
+	deleteAndLog("sdx")
 	// compaction
-	os.Remove(filename + ".cpd")
-	os.Remove(filename + ".cpx")
+	deleteAndLog("cpd")
+	deleteAndLog("cpx")
 	// level db index file
-	os.RemoveAll(filename + ".ldb")
+	deleteAndLog("ldb")
 	// redb index file (Rust volume server)
-	os.Remove(filename + ".rdb")
+	deleteAndLog("rdb")
 	// marker for damaged or incomplete volume
-	os.Remove(filename + ".note")
+	deleteAndLog("note")
 }
 
 func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
