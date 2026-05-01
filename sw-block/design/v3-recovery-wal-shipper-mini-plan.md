@@ -142,6 +142,8 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-30 | v0.10 — **§12** **design candidate** — §6.9‑driven **Drive** simplification + **three receiver models** + **`bitmap`/`CAS`** (**consensus §6.10** cross-ref); **not** normative until architect promotes |
 | 2026-04-27 | v0.11 — **§12.3**: **normative `Drive` = consensus §6.3 only** (remove duplicate sketch); **§12.1–12.2** cross-ref **§6.3** |
 | 2026-04-27 | v0.12 — **§12.4**: backlog **stateful iterator vs stateless **`ReadAtLSN`**; **`appendWAL` / `writeExtentDirect`** receiver split (**consensus §6.3 / §6.10**) |
+| 2026-04-27 | v0.13 — **§12.4 #5**: **`RWMutex`** (**Wal `Lock`**, **BASE `RLock` + CAS**) cross-ref **consensus §6.10 v3.16** |
+| 2026-04-27 | v0.14 — **§11.8**: **`WriteExtentDirect`** **`6fccc62`**, **`9f7d918`** Pillar2C; **§12.4 #7–10** (**∅‑noop**, **OpenWALScan**, **`WriteExtentDirect` fsync**, **QA**); pillar 2 C row supersession note |
 
 ---
 
@@ -300,12 +302,21 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 | Pillar | Must prove | Tests (extend / add) |
 |--------|------------|---------------------|
 | **1 — WalShipper: backlog vs incoming** | **`ModeBacklog`**: timer + **`DrainBacklog`** / **`ScanLBAs`**, **`NotifyAppend`** lag-only; **`ModeRealtime`**: **`NotifyAppend`** tail + **`StrictRealtimeOrdering`**; **§13** carve-out | `core/transport`: **`TestC2_*`**, **`TestWalShipper_*`**, **`replicaid_unified_test`**; add **assembled-path** sessions (real **`RecoverySink`**, not shipper-only) |
-| **2 — Dual-line execution** | **BASE ∥ WAL** overlap, **`writeMu`**-bounded interleave; correct **profile / port**; **no corrupted frames** | **`TestC3_BaseWalParallel_FramesInterleave`**, dual-lane E2E; **item (2)**: **C3 ctx fault-injection** (**`7d051e2`** — `TestC3FaultInjection_BaseError_WalExitsViaCtx` / `_OuterCancel_BothLanesWindDown` / `_WalError_RunTerminates_NarrowVariantA`); assembled-stack lift (**`9f62ebe`** — `TestPillar2A_BaseError_AssembledStack_FailReason` / `TestPillar2B_LiveWrites_HighPressure_BarrierIntegrity` / `TestPillar2C_WireAbortMidSession_AssembledStack_RestoresEmitContext`) |
+| **2 — Dual-line execution** | **BASE ∥ WAL** overlap, **`writeMu`**-bounded interleave; correct **profile / port**; **no corrupted frames** | **`TestC3_BaseWalParallel_FramesInterleave`**, dual-lane E2E; **item (2)**: **C3 ctx fault-injection** (**`7d051e2`** — `TestC3FaultInjection_BaseError_WalExitsViaCtx` / `_OuterCancel_BothLanesWindDown` / `_WalError_RunTerminates_NarrowVariantA`); assembled-stack lift (**`9f62ebe`** — `TestPillar2A_BaseError_AssembledStack_FailReason` / `TestPillar2B_LiveWrites_HighPressure_BarrierIntegrity`). **Pillar 2 C** superseded (**post‑ **`WriteExtentDirect`**) **`9f7d918`** — **faulty-store** (**deterministic**) replaces **wire‑abort** (**§11.8**); **prefer** pinning **`TestPillar2C_*`** name from that commit in future doc passes. |
 | **3 — Receiver recover convergence** | Replica accepts **interleaved base + WAL** on recover path, **bitmap / `checkMonotonic`**, **barrier `achievedLSN`**, moves toward **idle / healthy** | **`core/recovery` E2E**, **`dual_lane_engine_test`**, **`replication/component` cluster**; stress: **live writes during session**; **T2** when §IV closed (hardware soak — **still open** pending §IV). **Slice-1** (**`291e652`** + polish **`3495a12`**) — `TestPillar3Slice1_ReceiverConvergence_LiveOverwritesBacklog_SameLBAs` (transport stack). **Slice-2** (**`190ee56`**) — `TestPillar3Slice2_EngineDriven_SameLBAArbitration` (full adapter→engine→executor dispatch; **`RouteSessionLane`** on each live push). Slice-3+ / wire-tap / C3‑#2B **optional backlog** |
 
 **Order**: **(1)** Phase 0 **committed + §11.6 receipt (SHA)** → **(2)** fault-injection → **(3)** widen matrix → **hardware soak** (**T2 / T7**).
 
 **Stop rule**: Failure at **assembled-session** layer → fix **algorithm / wiring** before **Phase 1** (binder fixes **identity**, not WAL/base correctness).
+
+### §11.8 **§6.10 BASE bypass** — **`WriteExtentDirect`** receipt (**branch `g7-redo/wal-shipper-impl`**)
+
+| SHA | Contents |
+|-----|----------|
+| **`6fccc62`** | **Substrate**: **`LogicalStorage.WriteExtentDirect(lba uint32, data []byte) error`** — **no** **`lsn`**, **no** Wal frontier advance, **no** stale-skip; **BlockStore / memorywal / WALStore / smartwal**. **Receiver `RebuildSession`**: **`ApplyBaseBlock` → `WriteExtentDirect`** (drops **`ApplyEntry(lba,data,targetLSN)`** POC on base); **`MarkBaseComplete` → `AdvanceFrontier(targetLSN)`** restores **explicit** frontier (**previously** tied to **`ApplyEntry`** side‑effect). **Contract test**: **`TestContract_WriteExtentDirect`**. Consensus **effective‑BASE‑LSN** architect item **closes** → **extent lane bypasses Wal** (**`v3-recovery-algorithm-consensus.md` §6.10**). |
+| **`9f7d918`** | **Pillar 2 C**: **`TestPillar2C`** rework — **deterministic faulty-store** instead of **wire-abort** (timing race amplified after BASE lane speed-up); **×20 consecutive + full‑module sweeps** green per SW sign-off (**update §11.7 row** when pinning long‑term anchor name). |
+
+**Open (still spec / substrate / QA)**: **`OpenWALScan`** stateful iterator (**§6.3 CASE A**) — §12.4 **#8**; WALStore/smartwal **`WriteExtentDirect`** — **fsync** / persistence until next explicit **substrate sync or flush** (§12.4 **#9**); **`targetLSN`** audit / hardware **`#2`/`#6`** — **§11.6** (**grep** **`AdvanceFrontier`**, **`WriteExtentDirect`**, **`ApplyBaseBlock`**).
 
 ---
 
@@ -334,7 +345,7 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 
 ### 12.3 **Candidate sender** — normative reference only
 
-**Normative pseudocode** **`Drive(input)`**: **`v3-recovery-algorithm-consensus.md` §6.3** — **do not** fork a second **`Drive`** sketch in this mini‑plan (prevents **§6 ↔ §12** drift). **§12.4 #1** (**stateful iterate vs stateless lookup**) and **#5** (**`appendWAL` vs `writeExtentDirect`**) are **substrate / SW** leaves; **`targetLSN=Y`** barrier semantics likewise.
+**Normative pseudocode** **`Drive(input)`**: **`v3-recovery-algorithm-consensus.md` §6.3** — **do not** fork a second **`Drive`** sketch in this mini‑plan (prevents **§6 ↔ §12** drift). **§12.4 #1** (**stateful iterate vs stateless lookup**) and **#5** (**`RWMutex` + `appendWAL` / `writeExtentDirect`**) are **substrate / SW** leaves; **`targetLSN=Y`** barrier semantics likewise.
 
 ### 12.4 **Architect checklist** (open before implementation)
 
@@ -344,6 +355,10 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 | **2** | **`target`/lineage** | **Barrier admission only** + **§IV T2** sweep for **legacy hidden dependencies** |
 | **3** | **`bitmap` lifetime** | **Session‑scoped**, cleared / reset on **`EndSession`** (**exact hook** ties **receiver FSM**) |
 | **4** | **`streamBase`** | **`groupCtx`** / **fail‑fast with `Drive`** (**C3 #2B** follow‑up) |
-| **5** | **Receiver substrate API** (**§6.10**) | Wal lane: **`appendWAL(lba,data,lsn)`** (stale‑skip on Wal path). Base lane: **`writeExtentDirect(lba,data)`** (extent fill, **no** Wal record). **`LogicalStorage`** / leaf **must** expose **both** — **not** one silent overload that routes base through Wal. |
+| **5** | **Receiver apply & substrate** (**§6.10**) | **`session RWMutex`**: **`ApplyWAL` → `Lock` + `appendWAL`**; **`ApplyBASE` → `RLock` + `bitmap` CAS(0→1) then `writeExtentDirect`**. **`LogicalStorage`** **must** expose **both** paths — **no** silent **`Write(lba,data,lsn)`** merging base into Wal. **`per‑LBA Mutex`** fallback only if **documented** (avoid double-locking substrate). |
 | **6** | **BASE vs WAL wall‑clock** | **Candidate B** (overlap + **`§6.10`**) vs **A** (serial BASE→Wal **may relax `bitmap` policy** explicitly) |
+| **7** | **§6.3 `Drive` CASE C (∅‑trigger noop)** | **Consensus v3.17**: **`Drive(∅)` at `cursor == head`** emits **nothing** — work arrives via **CASE A** (debt) or **CASE B** (Append); **never** use ∅ **to excuse** substrate scan‑fill (**CASE B **`CursorGap`**, §13**). |
+| **8** | **Stateful backlog iterator (`OpenWALScan`‑class)** | Sender **CASE A**: substrate **seek + iterative `next`** — **avoid** purely stateless **`ReadAtLSN(k)` per emit** (**§12.4 #1**). |
+| **9** | **`WriteExtentDirect` durability (WALStore / smartwal)** | **`6fccc62`** landed **writes**; **fsync**/allocation vs **crash window** until **next **`Sync`/flush policy** — architect review. |
+| **10** | **QA `targetLSN` audit + hardware #2/#6** | Standing **evidence**; grep **`AdvanceFrontier`**, **`WriteExtentDirect`**, **`ApplyBaseBlock`** (**§11.8**). |
 

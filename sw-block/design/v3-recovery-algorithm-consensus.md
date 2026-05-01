@@ -177,7 +177,9 @@ def Drive(input):   # input ∈ { ∅, Append{lba,lsn,data} }
         # lsn > cursor — gap / contract violation. NO silent substrate scan to fill (§13 T4a spirit).
         raise CursorGap{cursor, lsn}              # engine MUST rebuild-on-gap / re-anchor (NEGATIVE‑EQUITY ban on “heal by scan”)
 
-    # CASE C — ∅, cursor == head: nothing to ship
+    # CASE C — input is ∅ AND cursor == head: normative noop (no backlog, no Append paired to this call).
+    # Timers/schedulers MAY invoke Drive(∅); emits only originate from CASE A (cursor < head) or CASE B (Append).
+    # ∅ MUST NOT authorize silent substrate scan to heal gaps — that remains CursorGap / engine rebuild-on-gap (CASE B above).
     return
 ```
 
@@ -300,48 +302,64 @@ Implementations aiming to **omit `Y`** on wire (**pure stream recover**) MUST st
 
 | ID | Invariant (**receiver recover path**) |
 |----|----------------------------------------|
-| **`INV‑RECV‑BITMAP‑CORE`** | **`bitmap`** is the **sole** gate that lets **recover base** mutate an LBA after **Wal** may have asserted **Wal‑truth** on that LBA. **Base apply** **`MUST`** follow **one** race‑free atomic step: **`bitmap` observe / extent write** — e.g. **`CAS` `0→1`** (**`TryClaimBase`**, …); **winner** **`writeExtentDirect`** / **`ApplyBaseBlock`** (**§6.10**); **loser skips**. **Wal apply** **`MUST NOT`** use a **read‑`bitmap`‑then‑later‑write** pattern that can **interleave** with base (**anti‑pattern** below). |
-| **`INV‑RECV‑WAL‑NAIVE`** | **Recover Wal tuples** (**`frameWALEntry`**) **`MUST`** apply on the **substrate WAL / append path** (**author `lsn`**) — **Wal vs Wal** ordering and **substrate stale‑skip / coalescing** rules apply **as for that path**; **ingest `MUST NOT`** use **`bitmap`** as a **per‑frame Wal micro‑compare** (**wire order** is already **`LSN`‑monotone** — **`checkMonotonic`**, **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`** **§6.3**). After successful Wal apply, **`MUST`** set **`bitmap`** (**Wal‑claim**) for **`lba`** so **later base** loses the gate. **Ordering**: **Wal bytes durable before observable `bitmap`** (or one **`per‑LBA` / global writer** serialization — **wrong interleavings** ⇒ **NEGATIVE‑EQUITY**). |
+| **`INV‑RECV‑BITMAP‑CORE`** | **`bitmap`** is the **sole** arbiter for **which lane may install bytes** on an **LBA** after **Wal** may have **claimed** it. **Recover base** (**`writeExtentDirect`**‑class) **`MUST`** run under **`RWMutex.RLock`** **and** **`MUST`** **`CAS` `bitmap` `0→1`** (or equivalent) **before** extent write — **intra‑BASE** parallelism (**§6.8 #6**, full/sparse/parallel copy) is **first‑class**: **multiple** base workers **share** **`RLock`**; **same‑LBA** races **resolve** by **CAS** (**one** winner writes, **others** skip). **Wal apply** **`MUST NOT`** interleave **unchecked** **`bitmap` read** with base **without** the **rwlock** pairing below (**anti‑pattern**). |
+| **`INV‑RECV‑WAL‑NAIVE`** | **Recover Wal** **`MUST`** **`appendWAL`‑class** (**author `lsn`**) — **substrate** **Wal vs Wal** / **stale‑skip** **as that path** defines; **ingest `MUST NOT`** use **`bitmap`** for **per‑frame Wal micro‑ordering** (**`INV‑WIRE‑WAL‑LSN‑MONOTONIC`** **§6.3**, **`checkMonotonic`**). **`MUST`** take **`RWMutex.Lock`** (**writer**) for **ApplyWAL**, then **`appendWAL`**, then **`bitmap[lba]:=1`** — **exclusive** of **all BASE** **`RLock`** holders and **other** **Wal** (**no** Wal **RLock** — **anti‑pattern**). **No Wal `CAS`** needed: **writer serializes** authoritative updates. |
 
-##### Reference pseudocode — **`ApplyWAL` / `ApplyBASE`** (**per‑LBA atomic envelope** · **dual lane semantics**)
+##### Reference pseudocode — **`ApplyWAL` / `ApplyBASE`** (**asymmetric `RWMutex`** · **dual lane**)
 
-**Tester / SW pin**: **WAL lane** and **BASE lane** are **different substrate operations**. **BASE** **does not** carry **`lsn`** and **does not** route through **Wal append** — **`bitmap`** is the **only** merge **referee** at this layer (**vs** **Wal path** **stale‑skip**). **Routing** — **`§7`** table.
-
-**Naming**: **`store.lock(lba)`** = **one race‑free critical section** **`MUST`** cover **mutation** ∪ **`bitmap`** together — equivalent **`bitmap.CAS`** — **informative** notes below.
+**Intent**: **three** things **normative** together — **(1)** **`bitmap` = CORE**, **(2)** **Wal = writer / base = reader** **asymmetry**, **(3)** **multi‑worker BASE** is **not** a corner case. **Substrate paths** remain **split** — **`appendWAL`** vs **`writeExtentDirect`** — so **extent** install **does not** **race** Wal **tape** (**§7**); **`rwlock`** **additionally** **bars** **concurrent extent + Wal mutation** on **any** **LBA** that **shares** **this** **`store` / session** **without** **ordering** through the **lock**.
 
 ```text
-# —— (a) STATE ——
+# —— (a) Receiver per-session state — INV-RECV-BITMAP-CORE ——
 state:
-    bitmap : array[NumLBAs] of bit, init 0      # CORE — INV-RECV-BITMAP-CORE
-    store  : substrate                          # MUST expose Wal append path AND extent direct write (see contract below)
+    bitmap : array[NumLBAs] of bit, init 0
+    rwlock : RWMutex                            # bitmap + store coherence (Wal writer vs BASE readers)
+    store  : substrate                          # MUST: appendWAL + writeExtentDirect (see contract below)
 
-# —— WAL lane — precondition: strict LSN increase on wire (INV-WIRE-WAL-LSN-MONOTONIC §6.3) ——
+# —— ApplyWAL — WRITER lock ——
+# WAL is authoritative, low-volume vs BASE: exclusive of ALL BASE (RLock holders) AND other WAL.
+# Naive Wal apply is correct because:
+#   (a) sender cursor monotonic ⇒ INV-WIRE-WAL-LSN-MONOTONIC ⇒ wire WAL LSNs strictly increase (no gaps, dense)
+#   (b) writer lock excludes BASE entirely from store mutation during this frame.
 def ApplyWAL(lba, lsn, data):
-    with store.lock(lba):
-        store.appendWAL(lba, data, lsn)         # substrate WAL path; stale-skip / Wal coalescing = substrate rules (INV-RECV-WAL-NAIVE)
-        bitmap[lba] := 1
+    rwlock.Lock()
+    defer rwlock.Unlock()
+    store.appendWAL(lba, data, lsn)             # Wal path; stale-skip = substrate (INV-RECV-WAL-NAIVE)
+    bitmap[lba] := 1
+    # no last-applied-LSN comparison on ingest — wire order is the proof
 
-# —— BASE lane — recover bulk; may race ApplyWAL (§6.8 #6) ——
+# —— ApplyBASE — READER lock + CAS ——
+# Multiple BASE workers LEGAL: share RLock; intra-BASE same-LBA → CAS(0→1) picks one writer.
 def ApplyBASE(lba, data):
-    with store.lock(lba):
-        if bitmap[lba] == 0:
-            store.writeExtentDirect(lba, data)  # bypass WAL; no LSN; NO Wal stale-skip — bitmap is sole judge
-            bitmap[lba] := 1
-        # else: WAL won this LBA — base bytes are stale snapshot; skip
+    rwlock.RLock()
+    defer rwlock.RUnlock()
+    if bitmap[lba].CAS(0, 1):                   # first winner per LBA — losers skip
+        store.writeExtentDirect(lba, data)     # extent lane; no LSN; NOT through Wal append
+    # else: WAL claimed OR another BASE won — snapshot bytes stale / duplicate LBA
 
-# ANTI-PATTERN (banned — same prose as §6.10 DON’T below):
-#   if bitmap[lba] == 0:
-#       with store.lock(lba): store.writeExtentDirect(...)
-#       bitmap[lba] := 1
+# WHY ASYMMETRIC (writer / reader)
+#   - WAL: brief writer lock pauses BASE readers; correctness-first for authoritative path.
+#   - BASE: high-throughput snapshot install; RLock keeps BASE ∥ WAL wall-clock overlap (§6.8 #6)
+#     and admits parallel BASE workers (full / sparse / parallel-copy).
+#   - Without rwlock: Wal append and writeExtentDirect could hit the same lba concurrently —
+#     corruption regardless of bitmap; lock collapses union; bitmap resolves BASE-only ordering.
+
+# ANTI-PATTERN (banned)
+#   ❌ BASE observes bitmap without holding rwlock.RLock — WAL can interleave check vs write.
+#   ❌ WAL uses only RLock — two WAL applies or WAL+BASE can write the same lba concurrently.
+#   ❌ Single Mutex (no R/W) — valid only as fallback (kills BASE parallelism with no extra safety).
 ```
 
-**Substrate contract (`seaweed_block` / logical storage leaf)**: **`MUST`** expose **both**: **(1)** **Wal append** with **author **`lsn`** (**`appendWAL`** or equivalent on the **Wal path**), and **(2)** **extent fill** for recover **base** that **does not** record a Wal tuple — **`writeExtentDirect(lba, data)`** or **architect‑named** equivalent (**`ResetForRebuild`** branch, **extent‑only IOCTL**, …). **Silently** implementing recover **base** through a **generic **`Write(lba, data, lsn)`** that **journeys base bytes onto the Wal tape** **without** an explicit **merged** product story **violates** this split — **forbidden** unless **§I** / **architect** revises **§6.10** / **§7**.
+**Substrate contract (`seaweed_block` / logical storage leaf)**: **`MUST`** expose **both**: **(1)** **`appendWAL(lba, data, lsn)`** (or equivalent **Wal** path that **records author `lsn`**), and **(2)** **`writeExtentDirect(lba, data)`** (**recover base**, **no** **Wal** record). **Silently** routing **base bytes** through **`Write(lba, data, lsn)`** onto the **Wal tape** **without** **§I** / **architect** **merged** story **violates** this split — **forbidden**.
 
-**Informative equivalence**: if **all** **`Apply*`** serialize through **one** goroutine, lock may degrade to **global queue** + **`bitmap` atomic** — **`CAS`**‑only formulations **remain valid** (**§9** tests **may** simulate either).
+**Informative — equivalent / degraded implementations**
 
-**Anti-pattern (normative DON’T)** — **`read bit; compute elsewhere; later base write`** without **`CAS`/lock** vs concurrent **`Wal`** — permits **Wal data then base overwrite** (**lost update**).
+- **`per‑LBA` `sync.Mutex`** (fine-grained): **can** be **correct** but **serializes** work **per LBA**; **cross‑LBA** parallelism **remains** unless **substrate** is **single‑threaded** anyway. Use **only** as **fallback** (e.g. **substrate** already **owns** **`Mutex` per lba** — **avoid** **stacking** **`session.rwlock`** **redundantly** — **document** **one** **winning** hierarchy).
+- **`rwlock` omitted**, **relying** **only** **on** **substrate** **internal** **serialization**: **theoretically** acceptable **only** if leaf **documents** a **composite** such as **`write_atomic_with_bitmap_claim(...)`** so **`bitmap`** **commit** **cannot** drift from **extent** / **Wal** **byte** **install** — **do not** assume **implicitly**.
 
-**Session scope**: recover **`bitmap`** state **`SHOULD`** be **scoped to `StartSession…EndSession`** (or **`RebuildSession`** lifetime) **unless** substrate definition extends Wal‑claims — **explicit** in leaf spec (**architect**) so **`streamBase`/parallel base** races cannot cross **stale boundaries**.
+**Anti-pattern (normative DON’T)** — **BASE** **`bitmap`** check / **`writeExtentDirect`** **without** **`rwlock.RLock`**; **Wal** **`appendWAL`** **without** **`rwlock.Lock`**; **session `Mutex`** **only** (**no** **`RWMutex`**) **as** **dual-lane** **default** (**allowed** **only** **as** **documented** fallback).
+
+**Session scope**: **`bitmap`** and **`rwlock` SHOULD** match **`StartSession…EndSession`** / **`RebuildSession`** (**architect** leaf) so **`streamBase`** **cannot** reuse **stale** arbitration.
 
 ---
 
@@ -462,12 +480,14 @@ Controlled relaxations of **§6** prose **without** weakening **§I**. Each row 
 | **2026-04-30** | **v3.13**: **§6.10** — **`INV‑RECV‑BITMAP‑CORE`** (**`CAS`‑style base**); **`INV‑RECV‑WAL‑NAIVE`**; **`bitmap`** = **core P5 arbitration** (not optional “parallel bit” alone); session scope |
 | **2026-04-27** | **v3.14**: **§6.3** — normative **`Drive(input)`** pseudocode (**state / atomic boundary / `INV‑WIRE‑WAL‑LSN‑MONOTONIC`**); **§6.10** — **`ApplyWAL`/`ApplyBASE`** pseudocode (**`INV‑RECV‑*`**); **§6.1/§V** cursor↔rewind alignment note; **§13** **`StrictRealtimeOrdering`** keyed to **`Drive`** **`cursor`** convention |
 | **2026-04-27** | **v3.15**: **§6.3** — backlog **iterator / complexity** (**stateful `O(N)` vs stateless `O(N log N)`**); **§6.10** — **`appendWAL` vs `writeExtentDirect`** dual lane (**tester feedback**); substrate **contract**; **§7** routing table wording |
+| **2026-04-27** | **v3.16**: **§6.10** — asymmetric **`RWMutex`** (**Wal `Lock`**, **BASE `RLock` + `bitmap` CAS**); multi‑worker BASE normative; per‑**LBA** `Mutex` / substrate composite informative; dual defense: **`writeExtentDirect` + rwlock** vs Wal/extent corruption |
+| **2026-04-27** | **v3.17**: **§6.3** — **`Drive(∅)`** at **`cursor == head`** (**CASE C**) clarified as **noop** in pseudocode; cross-ref **`WriteExtentDirect`** / **`RebuildSession`** receipt — **mini-plan §11.8**, branch **`g7-redo/wal-shipper-impl`**, SHA **`6fccc62`** |
 
 ### 15. Document map
 
 | Doc | Role |
 |-----|------|
-| **This** | **Foundation + index**; **`§6.8`** checklist; **`§13`**; **`§6.3`** (**`Drive`** + backlog **iterator intent**); **`§6.9–§6.10`** — **`appendWAL`/`writeExtentDirect`**, **`INV‑WIRE‑WAL‑LSN‑MONOTONIC`**, **`NEGATIVE‑EQUITY`**, **`HOPE‑SHIPPER‑MONOTONIC`**, **`INV‑RECV‑BITMAP‑CORE`** / **`INV‑RECV‑WAL‑NAIVE`** |
+| **This** | **Foundation + index**; **`§6.8`** checklist; **`§13`**; **`§6.3`** (**`Drive`**, backlog iterator); **`§6.9–§6.10`** — **`RWMutex`** (Wal writer / BASE reader), **`appendWAL` / `writeExtentDirect`**, **`INV‑WIRE`**, **`NEGATIVE‑EQUITY`**, **`HOPE‑SHIPPER‑MONOTONIC`**, **`INV‑RECV‑*`** |
 | `v3-recovery-pin-floor-wire.md` | Pin bytes |
 | `v3-recovery-wal-shipper-mini-plan.md` | **Implementation bridge** (**seaweed_block** phased PR ↔ spec §INV) |
 | `v3-recovery-wal-shipper-spec.md` | **WalShipper algorithm** (priority, **R1**, **INV-***) |
