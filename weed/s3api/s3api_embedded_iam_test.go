@@ -248,6 +248,33 @@ func TestEmbeddedIamCreateUserDoesNotSaveAllUsers(t *testing.T) {
 	}
 }
 
+// TestEmbeddedIamCreateUserSkipPersist asserts that ExecuteAction("CreateUser",
+// skipPersist=true) performs no persistent write to the credential store. The
+// targeted-create optimization must respect the skipPersist contract documented
+// on ExecuteAction; otherwise no-persist callers would silently leak writes.
+func TestEmbeddedIamCreateUserSkipPersist(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+
+	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		t.Fatalf("PutS3ApiConfiguration must not be called when skipPersist=true")
+		return nil
+	}
+
+	vals := url.Values{}
+	vals.Set("Action", "CreateUser")
+	vals.Set("UserName", "no-persist-user")
+
+	resp, iamErr := api.ExecuteAction(ctx, vals, true /*skipPersist*/, "")
+	require.Nil(t, iamErr)
+	require.NotNil(t, resp)
+
+	// The credential store must not have the user — skipPersist contract.
+	_, err := api.credentialManager.GetUser(ctx, "no-persist-user")
+	require.ErrorIs(t, err, credential.ErrUserNotFound,
+		"skipPersist=true must not write the new user to the credential store")
+}
+
 // TestEmbeddedIamListUsers tests listing users via the embedded IAM API
 func TestEmbeddedIamListUsers(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
