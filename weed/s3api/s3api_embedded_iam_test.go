@@ -196,22 +196,26 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 // The fix uses credentialManager.CreateUser for a targeted single-file write.
 func TestEmbeddedIamCreateUserDoesNotSaveAllUsers(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
 
-	// Pre-populate existing users via mockConfig. The getS3ApiConfigurationFunc
-	// fixture calls SaveConfiguration(mockConfig) exactly once (via syncOnce) on the
-	// first API call, seeding the credential store. Direct credentialManager.CreateUser
-	// calls must not be used here because syncOnce would later overwrite them.
-	api.mockConfig = &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{
-			{Name: "existing-user-1"},
-			{Name: "existing-user-2"},
-			{Name: "existing-user-3"},
-		},
+	// Seed both mockConfig and the credential store directly so the test does
+	// not rely on the getS3ApiConfigurationFunc fixture's syncOnce side effect
+	// to populate the store. Pre-call assertions below fail loudly if seeding
+	// breaks for any reason.
+	existing := []string{"existing-user-1", "existing-user-2", "existing-user-3"}
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+	for _, name := range existing {
+		api.mockConfig.Identities = append(api.mockConfig.Identities, &iam_pb.Identity{Name: name})
+	}
+	require.NoError(t, api.credentialManager.SaveConfiguration(ctx, api.mockConfig))
+	for _, name := range existing {
+		u, err := api.credentialManager.GetUser(ctx, name)
+		require.NoError(t, err, "seed precondition: %s must exist", name)
+		require.Equal(t, name, u.Name)
 	}
 
 	// Track calls to PutS3ApiConfiguration (the full-config write path).
 	putConfigCalls := 0
-	ctx := context.Background()
 	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
 		putConfigCalls++
 		api.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
@@ -237,7 +241,7 @@ func TestEmbeddedIamCreateUserDoesNotSaveAllUsers(t *testing.T) {
 	assert.Equal(t, 0, putConfigCalls, "CreateUser must not call PutS3ApiConfiguration (full-config save)")
 
 	// Pre-existing users must be untouched.
-	for _, name := range []string{"existing-user-1", "existing-user-2", "existing-user-3"} {
+	for _, name := range existing {
 		u, err := api.credentialManager.GetUser(ctx, name)
 		require.NoError(t, err, "pre-existing user %s should still exist", name)
 		assert.Equal(t, name, u.Name)
