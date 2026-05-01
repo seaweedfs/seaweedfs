@@ -14,11 +14,11 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -45,18 +45,6 @@ const (
 var policyLock = sync.RWMutex{}
 
 const policyArnPrefix = "arn:aws:iam:::policy/"
-
-// credentialErrToIamErrCode maps a credential store error to the appropriate
-// IAM error code. Permanent client errors (e.g. duplicate entity) are mapped
-// to their specific IAM codes; all other errors fall back to ServiceFailure.
-func credentialErrToIamErrCode(err error) string {
-	switch {
-	case errors.Is(err, credential.ErrUserAlreadyExists):
-		return iam.ErrCodeEntityAlreadyExistsException
-	default:
-		return iam.ErrCodeServiceFailureException
-	}
-}
 
 // parsePolicyArn validates an IAM policy ARN and extracts the policy name.
 func parsePolicyArn(policyArn string) (string, *IamError) {
@@ -1142,7 +1130,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			if cm := iama.iam.GetCredentialManager(); cm != nil {
 				userName := values.Get("UserName")
 				if err := cm.CreateUser(r.Context(), &iam_pb.Identity{Name: userName}); err != nil {
-					writeIamErrorResponse(w, r, reqID, &IamError{Code: credentialErrToIamErrCode(err), Error: err})
+					writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
 					return
 				}
 				changed = false

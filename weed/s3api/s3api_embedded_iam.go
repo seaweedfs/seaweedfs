@@ -2200,11 +2200,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		if e.credentialManager != nil {
 			userName := values.Get("UserName")
 			if err := e.credentialManager.CreateUser(ctx, &iam_pb.Identity{Name: userName}); err != nil {
-				errCode := iam.ErrCodeServiceFailureException
-				if errors.Is(err, credential.ErrUserAlreadyExists) {
-					errCode = iam.ErrCodeEntityAlreadyExistsException
-				}
-				return nil, &iamError{Code: errCode, Error: err}
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
 			}
 			changed = false
 		}
