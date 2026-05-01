@@ -1,6 +1,7 @@
 package iamapi
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -14,11 +15,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var GetS3ApiConfiguration func(s3cfg *iam_pb.S3ApiConfiguration) (err error)
@@ -384,4 +388,102 @@ func mustMarshalJSON(t *testing.T, v interface{}) []byte {
 		t.Fatalf("failed to marshal JSON: %v", err)
 	}
 	return data
+}
+
+// iamApiServerWithCredentialManager builds an IamApiServer backed by a real
+// in-memory credential store. Used for tests that exercise the targeted
+// credentialManager paths (e.g. CreateUser) instead of the legacy mock.
+func iamApiServerWithCredentialManager() (*IamApiServer, *credential.CredentialManager, *countingConfigSaver) {
+	store := &memory.MemoryStore{}
+	store.Initialize(nil, "")
+	cm := &credential.CredentialManager{Store: store}
+
+	counter := &countingConfigSaver{cm: cm}
+	iamInstance := &s3api.IdentityAccessManagement{}
+	// Wire up the credential manager so GetCredentialManager() returns it.
+	iamInstance.SetCredentialManagerForTest(cm)
+
+	srv := &IamApiServer{
+		s3ApiConfig: counter,
+		iam:         iamInstance,
+	}
+	return srv, cm, counter
+}
+
+// countingConfigSaver wraps the credential manager and counts full-config saves.
+type countingConfigSaver struct {
+	cm        *credential.CredentialManager
+	putCalled int
+}
+
+func (c *countingConfigSaver) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
+	config, err := c.cm.LoadConfiguration(context.Background())
+	if err != nil {
+		return err
+	}
+	s3cfg.Identities = config.Identities
+	s3cfg.Policies = config.Policies
+	return nil
+}
+
+func (c *countingConfigSaver) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
+	c.putCalled++
+	return c.cm.SaveConfiguration(context.Background(), s3cfg)
+}
+
+func (c *countingConfigSaver) GetPolicies(policies *Policies) error {
+	return nil
+}
+
+func (c *countingConfigSaver) PutPolicies(policies *Policies) error {
+	return nil
+}
+
+func executeRequestWith(srv *IamApiServer, req *http.Request, v interface{}) (*httptest.ResponseRecorder, error) {
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(srv.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+	return rr, xml.Unmarshal(rr.Body.Bytes(), &v)
+}
+
+// TestCreateUserDoesNotSaveAllUsers is a regression test for the bug where
+// creating a new user triggered a full SaveConfiguration over all existing
+// identities (causing N file writes + reload cycles in the filer_etc store).
+// The fix uses credentialManager.CreateUser for a targeted single-file write.
+func TestCreateUserDoesNotSaveAllUsers(t *testing.T) {
+	srv, cm, counter := iamApiServerWithCredentialManager()
+	ctx := context.Background()
+
+	// Pre-populate three existing users.
+	for _, name := range []string{"existing-1", "existing-2", "existing-3"} {
+		require.NoError(t, cm.CreateUser(ctx, &iam_pb.Identity{Name: name}))
+	}
+
+	// Create a new user via the HTTP API.
+	params := &iam.CreateUserInput{UserName: aws.String("new-user")}
+	req, _ := iam.New(session.New()).CreateUserRequest(params)
+	_ = req.Build()
+	out := CreateUserResponse{}
+	resp, err := executeRequestWith(srv, req.HTTPRequest, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// The new user must appear in the store.
+	newUser, userErr := cm.GetUser(ctx, "new-user")
+	require.NoError(t, userErr)
+	require.Equal(t, "new-user", newUser.Name)
+
+	// Critical: full SaveConfiguration (PutS3ApiConfiguration) must NOT have
+	// been called. Before the fix it was called once per CreateUser, rewriting
+	// every existing user file and triggering a cascade of reload events.
+	assert.Equal(t, 0, counter.putCalled,
+		"CreateUser must not trigger a full PutS3ApiConfiguration over all users")
+
+	// All pre-existing users must still be intact.
+	for _, name := range []string{"existing-1", "existing-2", "existing-3"} {
+		u, err := cm.GetUser(ctx, name)
+		require.NoError(t, err, "pre-existing user %s should still exist", name)
+		assert.Equal(t, name, u.Name)
+	}
 }

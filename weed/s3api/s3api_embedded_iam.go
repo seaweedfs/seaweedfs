@@ -2195,6 +2195,18 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		// Use targeted create to avoid rewriting all existing user files via SaveConfiguration.
+		// credentialManager.CreateUser writes only the new user's file.
+		// Skip when skipPersist is set: the contract is no persistent write, so leave
+		// changed=true and let the tail's `if changed { if !skipPersist { ... } }` block
+		// suppress persistence the same way it does for every other action.
+		if e.credentialManager != nil && !skipPersist {
+			userName := values.Get("UserName")
+			if err := e.credentialManager.CreateUser(ctx, &iam_pb.Identity{Name: userName}); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
+		}
 	case "GetUser":
 		userName := values.Get("UserName")
 		var iamErr *iamError
@@ -2469,11 +2481,11 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy" {
+	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy" || action == "CreateUser" {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {
-			glog.Errorf("Failed to reload IAM configuration after managed policy mutation: %v", err)
+			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 		}
 	}
 	response.SetRequestId(reqID)

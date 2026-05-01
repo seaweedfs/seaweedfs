@@ -190,6 +190,91 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
 }
 
+// TestEmbeddedIamCreateUserDoesNotSaveAllUsers is a regression test for the bug
+// where creating a new user triggered a full SaveConfiguration over all existing
+// identities (causing N file writes + reload cycles in the filer_etc store).
+// The fix uses credentialManager.CreateUser for a targeted single-file write.
+func TestEmbeddedIamCreateUserDoesNotSaveAllUsers(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+
+	// Seed both mockConfig and the credential store directly so the test does
+	// not rely on the getS3ApiConfigurationFunc fixture's syncOnce side effect
+	// to populate the store. Pre-call assertions below fail loudly if seeding
+	// breaks for any reason.
+	existing := []string{"existing-user-1", "existing-user-2", "existing-user-3"}
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+	for _, name := range existing {
+		api.mockConfig.Identities = append(api.mockConfig.Identities, &iam_pb.Identity{Name: name})
+	}
+	require.NoError(t, api.credentialManager.SaveConfiguration(ctx, api.mockConfig))
+	for _, name := range existing {
+		u, err := api.credentialManager.GetUser(ctx, name)
+		require.NoError(t, err, "seed precondition: %s must exist", name)
+		require.Equal(t, name, u.Name)
+	}
+
+	// Track calls to PutS3ApiConfiguration (the full-config write path).
+	putConfigCalls := 0
+	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		putConfigCalls++
+		api.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
+		return api.credentialManager.SaveConfiguration(ctx, s3cfg)
+	}
+
+	params := &iam.CreateUserInput{UserName: aws.String("new-user")}
+	req, _ := iam.New(session.New()).CreateUserRequest(params)
+	_ = req.Build()
+	out := iamCreateUserResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	// The new user must be visible.
+	newUser, userErr := api.credentialManager.GetUser(ctx, "new-user")
+	require.NoError(t, userErr)
+	require.Equal(t, "new-user", newUser.Name)
+
+	// The critical assertion: full SaveConfiguration must NOT have been called.
+	// Previously this was called once for every CreateUser, re-writing all N user
+	// files and triggering N reload loops.
+	assert.Equal(t, 0, putConfigCalls, "CreateUser must not call PutS3ApiConfiguration (full-config save)")
+
+	// Pre-existing users must be untouched.
+	for _, name := range existing {
+		u, err := api.credentialManager.GetUser(ctx, name)
+		require.NoError(t, err, "pre-existing user %s should still exist", name)
+		assert.Equal(t, name, u.Name)
+	}
+}
+
+// TestEmbeddedIamCreateUserSkipPersist asserts that ExecuteAction("CreateUser",
+// skipPersist=true) performs no persistent write to the credential store. The
+// targeted-create optimization must respect the skipPersist contract documented
+// on ExecuteAction; otherwise no-persist callers would silently leak writes.
+func TestEmbeddedIamCreateUserSkipPersist(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+
+	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		t.Fatalf("PutS3ApiConfiguration must not be called when skipPersist=true")
+		return nil
+	}
+
+	vals := url.Values{}
+	vals.Set("Action", "CreateUser")
+	vals.Set("UserName", "no-persist-user")
+
+	resp, iamErr := api.ExecuteAction(ctx, vals, true /*skipPersist*/, "")
+	require.Nil(t, iamErr)
+	require.NotNil(t, resp)
+
+	// The credential store must not have the user — skipPersist contract.
+	_, err := api.credentialManager.GetUser(ctx, "no-persist-user")
+	require.ErrorIs(t, err, credential.ErrUserNotFound,
+		"skipPersist=true must not write the new user to the credential store")
+}
+
 // TestEmbeddedIamListUsers tests listing users via the embedded IAM API
 func TestEmbeddedIamListUsers(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
@@ -2503,17 +2588,13 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
-	// Explicitly set hook to debug panic
-	api.EmbeddedIamApi.reloadConfigurationFunc = func() error {
-		return nil
-	}
-
 	// Test case: CreateUser via ExecuteAction
 	vals := url.Values{}
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(context.Background(), vals, false, "")
+	ctx := context.Background()
+	resp, iamErr := api.ExecuteAction(ctx, vals, false, "")
 	assert.Nil(t, iamErr)
 
 	// Verify response type
@@ -2521,9 +2602,11 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
 
-	// Verify persistence
-	assert.Len(t, api.mockConfig.Identities, 1)
-	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
+	// CreateUser now uses a targeted write (credentialManager.CreateUser) rather than
+	// SaveConfiguration, so persistence is checked via the credential manager directly.
+	user, err := api.credentialManager.GetUser(ctx, "ExecuteActionUser")
+	assert.NoError(t, err)
+	assert.Equal(t, "ExecuteActionUser", user.Name)
 }
 
 // TestEmbeddedIamReadOnly tests that write operations are blocked when readOnly is true

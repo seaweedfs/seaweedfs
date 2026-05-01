@@ -18,6 +18,7 @@ import (
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -1123,6 +1124,18 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		changed = false
 	case "CreateUser":
 		response = iama.CreateUser(s3cfg, values)
+		// Use targeted create to avoid rewriting all existing user files via SaveConfiguration.
+		// credentialManager.CreateUser writes only the new user's file.
+		if iama.iam != nil {
+			if cm := iama.iam.GetCredentialManager(); cm != nil {
+				userName := values.Get("UserName")
+				if err := cm.CreateUser(r.Context(), &iam_pb.Identity{Name: userName}); err != nil {
+					writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+					return
+				}
+				changed = false
+			}
+		}
 	case "GetUser":
 		userName := values.Get("UserName")
 		var err *IamError
