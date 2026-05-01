@@ -144,6 +144,7 @@ Wal-shipper-spec **§9** names coarse tests — here map **package + style**:
 | 2026-04-27 | v0.12 — **§12.4**: backlog **stateful iterator vs stateless **`ReadAtLSN`**; **`appendWAL` / `writeExtentDirect`** receiver split (**consensus §6.3 / §6.10**) |
 | 2026-04-27 | v0.13 — **§12.4 #5**: **`RWMutex`** (**Wal `Lock`**, **BASE `RLock` + CAS**) cross-ref **consensus §6.10 v3.16** |
 | 2026-04-27 | v0.14 — **§11.8**: **`WriteExtentDirect`** **`6fccc62`**, **`9f7d918`** Pillar2C; **§12.4 #7–10** (**∅‑noop**, **OpenWALScan**, **`WriteExtentDirect` fsync**, **QA**); pillar 2 C row supersession note |
+| 2026-04-28 | v0.15 — **§11.9**: **`drive`** **`28fb142`**, **`LegacyOutOfOrderEmit`** default **`false`** **`d647db4`**; deprecation + Slice‑2B (**Path B tests**) |
 
 ---
 
@@ -318,6 +319,17 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 
 **Open (still spec / substrate / QA)**: **`OpenWALScan`** stateful iterator (**§6.3 CASE A**) — §12.4 **#8**; WALStore/smartwal **`WriteExtentDirect`** — **fsync** / persistence until next explicit **substrate sync or flush** (§12.4 **#9**); **`targetLSN`** audit / hardware **`#2`/`#6`** — **§11.6** (**grep** **`AdvanceFrontier`**, **`WriteExtentDirect`**, **`ApplyBaseBlock`**).
 
+### §11.9 **§6.3 sender — `drive` collapse** + **`LegacyOutOfOrderEmit`** (**`g7-redo/wal-shipper-impl`**)
+
+| SHA | Contents |
+|-----|----------|
+| **`28fb142`** | **Path A slice‑1**: single dispatch **`WalShipper.drive(driveInput)`** — **`NotifyAppend` / `drainOpportunity`** thin wrappers; **`drive`** holds **`shipMu`** for entire call (**single serializer**); **CASE A** debt‑first substrate scan, **CASE B** tail Live, **∅** noop when caught up; slice‑1 kept **`LegacyOutOfOrderEmit: true`** for zero-diff window. **`CONVENTION`**: internal **`cursor`** = last‑emitted; spec **`next`** = **`cursor+1`** (**`lsn`** match). |
+| **`d647db4`** | **Slice‑2A**: **`DefaultWalShipperConfig.LegacyOutOfOrderEmit → false`** (**§6.3 normative** — tail‑gap **fail‑closed**, no log+drop‑gap). **`cmd/blockvolume`**, **`cluster.go`** (**`NewWalShipper`**) inherit; steady path **`lsn == internalCursor+1`** → Live fast‑path; **gap** ⇒ error / rebuild. **Tests** (6 files): sequential production‑mirror LSNs; **`RegistryStableConcurrent`** → **Path B** (single **`Ship`** goroutine + concurrent lookups). **×5** sweep (**7 pkgs**) green. |
+
+**`LegacyOutOfOrderEmit`** — **deprecation**: production default **`false`** (**`d647db4`**). **`true`** = compat / emergency only (**owner + removal milestone**) — **no** new callers on **`WALSHIPPER-OUT-OF-ORDER`** + emit arbitrary gap tail.
+
+**Remaining — Slice‑2B**: re-author **four** skipped (**§13** era) dual-lane tests per **Path B** (architect §11.9): **barrier‑level replica vs primary parity** **or** **serialize live push sources** — **drop** per‑pusher **acceptedSet** instant mirror.
+
 ---
 
 ## 12. Design candidate — **`§6.9`‑driven shipper/receiver simplification** (**not normative until promoted**)
@@ -330,8 +342,7 @@ Choice — **per-connection format dispatch**, not single-format unification. Du
 |-------|-----|------|
 | **Consensus** | **`v3-recovery-algorithm-consensus.md`** **§I P5**, **§6.2–6.4**, **§6.3 `Drive`**, **§6.9**, **§6.10** (`Apply*` pseudocode), **§13**, **§IV T2** | **Normative** truth: single tape intent, **`targetLSN`** non‑segmentation, **`send(∅,·)`/`send(incoming,·)`**, **`bitmap`** CORE + **`INV‑RECV-*`** race rules. |
 | **Algorithm leaf** | **`v3-recovery-wal-shipper-spec.md`** **§7** | **Implementable sketches** (**§7.1 loop**, **receiver rewind + monotone §7.4**); **primary recover emit** = **§6.3 `Drive`** (**normative consensus**); **`Apply`/`bitmap` detail** ⇒ **§6.10**. |
-| **Bridge / receipts** | **This mini-plan §11** | What **already merged** on **`g7-redo/wal-shipper-impl`** + **pilots**. |
-| **This §12** | **Candidate refactor** | **Single normative `Drive(input)`** (**consensus §6.3** — **avoid duplicating here**); barrier‑only **`target`**, receiver **Wal naive**, **bitmap `CAS`** base — **diff** from today's **dual‑mode + bridging sink**. |
+| **Bridge / receipts** | **This mini-plan §11** (**§11.8–§11.9**) | Receipts **`g7-redo/wal-shipper-impl`**: **`WriteExtentDirect`**, **`WalShipper.drive`**, **`LegacyOutOfOrderEmit`** default (**`d647db4`**). || **This §12** | **Candidate refactor** | **Single normative `Drive(input)`** (**consensus §6.3** — **avoid duplicating here**); barrier‑only **`target`**, receiver **Wal naive**, **bitmap `CAS`** base — **diff** from today's **dual‑mode + bridging sink**. |
 
 ### 12.2 **Receiver — three models** (clears SW confusion)
 
