@@ -597,6 +597,10 @@ templ Plugin(page string, initialJob string, lane string) {
 
             var pluginLane = String(page.getAttribute('data-plugin-lane') || '').trim();
 
+            function basePath(path) {
+                return (window.__BASE_PATH__ || '') + path;
+            }
+
             var state = {
                 selectedJobType: '',
                 jobTypes: [],

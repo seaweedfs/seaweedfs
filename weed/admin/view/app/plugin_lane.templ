@@ -80,6 +80,10 @@ templ PluginLane(page string, lane string) {
         const lane = page.dataset.pluginLane || '';
         if (!lane) return;
 
+        function basePath(path) {
+            return (window.__BASE_PATH__ || '') + path;
+        }
+
         function fetchAndRender(url, containerId, renderFn) {
             fetch(basePath(url))
                 .then(r => r.json())
