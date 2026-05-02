@@ -478,7 +478,7 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
 	cmd := exec.Command(env.weedBinary, "shell",
-		fmt.Sprintf("-master=%s:%d.%d", env.bindIP, env.masterPort, env.masterGrpcPort),
+		fmt.Sprintf("-master=%s:%d:%d", env.bindIP, env.masterPort, env.masterGrpcPort),
 	)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
 	fmt.Printf(">>> EXECUTING: %v\n", cmd.Args)
