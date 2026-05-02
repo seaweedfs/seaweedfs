@@ -58,8 +58,20 @@ func TestDeterministicTableLocation(t *testing.T) {
 	t.Logf(">>> Verifying data insertion")
 	querySQL := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", namespace, tableName)
 	result := runDremioSQL(t, env.dremioContainer, querySQL)
-	if !strings.Contains(result, "3") {
-		t.Logf("Expected 3 rows, got: %s (query result may be formatted differently)", result)
+	rows := parseDremioResponse(t, result)
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("Expected single row with count, got: %v", rows)
+	}
+	count, ok := rows[0][0].(float64)
+	if !ok || count != 3 {
+		t.Fatalf("Expected 3 rows in table, got: %v", rows[0][0])
+	}
+
+	t.Logf(">>> Verifying table location")
+	describeSQL := fmt.Sprintf("DESCRIBE FORMATTED %s.%s", namespace, tableName)
+	describeResult := runDremioSQL(t, env.dremioContainer, describeSQL)
+	if !strings.Contains(describeResult, tableLocation) {
+		t.Fatalf("Expected table location %s in DESCRIBE output, but it was not found.\nOutput:\n%s", tableLocation, describeResult)
 	}
 
 	t.Logf(">>> TestDeterministicTableLocation PASSED")
@@ -90,33 +102,37 @@ func TestMultiLevelNamespace(t *testing.T) {
 
 	level1 := "analytics_" + randomString(4)
 	level2 := "daily_" + randomString(4)
-	namespace := level1 + "." + level2
 	tableName := "events_" + randomString(4)
 
-	t.Logf(">>> Creating multi-level namespace: %s", namespace)
-	runDremioSQL(t, env.dremioContainer, fmt.Sprintf(`CREATE SCHEMA "%s"`, namespace))
+	t.Logf(">>> Creating multi-level namespace: %s.%s", level1, level2)
+	runDremioSQL(t, env.dremioContainer, fmt.Sprintf(`CREATE SCHEMA "%s"."%s"`, level1, level2))
 
 	t.Logf(">>> Creating table in multi-level namespace")
-	createSQL := fmt.Sprintf(`CREATE TABLE "%s".%s (
+	createSQL := fmt.Sprintf(`CREATE TABLE "%s"."%s".%s (
 		id INTEGER,
 		event VARCHAR,
 		ts TIMESTAMP
-	) AS SELECT 1, 'test', CURRENT_TIMESTAMP WHERE FALSE`, namespace, tableName)
+	) AS SELECT 1, 'test', CURRENT_TIMESTAMP WHERE FALSE`, level1, level2, tableName)
 	runDremioSQL(t, env.dremioContainer, createSQL)
 
 	t.Logf(">>> Inserting data into multi-level namespace table")
-	insertSQL := fmt.Sprintf(`INSERT INTO "%s".%s VALUES
+	insertSQL := fmt.Sprintf(`INSERT INTO "%s"."%s".%s VALUES
 		(1, 'click', CURRENT_TIMESTAMP),
 		(2, 'view', CURRENT_TIMESTAMP),
 		(3, 'click', CURRENT_TIMESTAMP)
-	`, namespace, tableName)
+	`, level1, level2, tableName)
 	runDremioSQL(t, env.dremioContainer, insertSQL)
 
 	t.Logf(">>> Querying data from multi-level namespace table")
-	querySQL := fmt.Sprintf(`SELECT COUNT(*) FROM "%s".%s`, namespace, tableName)
+	querySQL := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"."%s".%s`, level1, level2, tableName)
 	result := runDremioSQL(t, env.dremioContainer, querySQL)
-	if !strings.Contains(result, "3") {
-		t.Logf("Expected 3 rows, got: %s", result)
+	rows := parseDremioResponse(t, result)
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("Expected single row with count, got: %v", rows)
+	}
+	count, ok := rows[0][0].(float64)
+	if !ok || count != 3 {
+		t.Fatalf("Expected 3 rows in multi-level namespace table, got: %v", rows[0][0])
 	}
 
 	t.Logf(">>> TestMultiLevelNamespace PASSED")
