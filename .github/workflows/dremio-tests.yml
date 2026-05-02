@@ -1,8 +1,6 @@
 name: "Dremio Iceberg Catalog Tests"
 
 on:
-  push:
-    branches: [ master ]
   pull_request:
 
 permissions:

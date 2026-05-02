@@ -1,8 +1,6 @@
 name: "S3 Tables Integration Tests"
 
 on:
-  push:
-    branches: [ master ]
   pull_request:
 
 permissions:
