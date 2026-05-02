@@ -213,7 +213,8 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull Dremio image
-        run: docker pull dremio/dremio:latest || echo "Warning: Failed to pre-pull Dremio image, will try at runtime"
+        run: |
+          docker pull dremio/dremio:latest || echo 'Warning: Failed to pre-pull Dremio image, will try at runtime'
         continue-on-error: true
 
       - name: Run go mod tidy
