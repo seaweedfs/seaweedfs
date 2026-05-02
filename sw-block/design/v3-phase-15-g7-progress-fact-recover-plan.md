@@ -8,6 +8,21 @@
 
 ---
 
+## 0. Current State And Gap
+
+The project already has coordinator layers; the issue is that their facts are still split.
+
+| Layer | Current owner | What exists today | Gap |
+|-------|---------------|-------------------|-----|
+| Semantic coordinator | `core/engine` via `adapter.VolumeReplicaAdapter` | `ProbeResult` normalizes into `R/S/H`; engine decides `none / catch_up / rebuild / unknown`. | No unified progress fact type; decisions are tied to probe/session events directly. |
+| Peer/probe host | `core/replication.ReplicationVolume` | Maintains peer set and degraded-peer probe loop; `G5_5C` covers restart → probe → auto catch-up. | Auto rebuild for no-trusted-R / R<S needs explicit component coverage. |
+| Session/pin coordinator | `core/recovery.PeerShipCoordinator` | Owns active session phase, route-local-write, barrier witness, and pin floor. | Durable ack updates pin, but is not yet a first-class engine progress fact. |
+| Feeder/executor | `core/transport` + `core/recovery` | Owns WAL/BASE movement and monotonic egress path. | Should remain execution-only; must not decide recovery class or membership. |
+
+Immediate conclusion: **do not invent a new top-level coordinator**. Instead, add a shared progress fact seam so existing coordinators consume the same facts with explicit authority rules.
+
+---
+
 ## 1. Target State
 
 ### 1.1 Roles
