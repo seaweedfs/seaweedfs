@@ -334,35 +334,23 @@ func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	}
 }
 
-// writeDremioConfig creates a Dremio configuration file with Iceberg catalog settings.
+// writeDremioConfig writes a minimal dremio.conf that overrides nothing.
+// Iceberg catalog sources are NOT configured via dremio.conf — Dremio
+// rejects any `catalog.*` keys at startup. Source configuration must
+// happen post-boot via the REST API (POST /apiv2/source). The
+// warehouseBucket arg is kept on the signature so call sites continue
+// to compile until the REST-API source setup lands; callers should
+// reference it when wiring the source themselves.
 func (env *TestEnvironment) writeDremioConfig(t *testing.T, warehouseBucket string) string {
 	t.Helper()
+	_ = warehouseBucket
 
 	configDir := filepath.Join(env.dataDir, "dremio")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("Failed to create Dremio config dir: %v", err)
 	}
 
-	config := fmt.Sprintf(`
-{
-  "catalog": {
-    "iceberg": {
-      "type": "rest",
-      "uri": "http://host.docker.internal:%d",
-      "warehouse": "s3://%s",
-      "s3": {
-        "endpoint": "http://host.docker.internal:%d",
-        "path-style-access": true,
-        "access-key": "%s",
-        "secret-key": "%s",
-        "region": "us-west-2"
-      }
-    }
-  }
-}
-`, env.icebergPort, warehouseBucket, env.s3Port, env.accessKey, env.secretKey)
-
-	if err := os.WriteFile(filepath.Join(configDir, "dremio.conf"), []byte(config), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "dremio.conf"), []byte("{}\n"), 0644); err != nil {
 		t.Fatalf("Failed to write Dremio config: %v", err)
 	}
 
