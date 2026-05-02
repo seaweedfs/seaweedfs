@@ -457,7 +457,6 @@ func (env *TestEnvironment) createDremioIcebergSource(t *testing.T, warehouseBuc
 		"type":       "RESTCATALOG",
 		"config": map[string]any{
 			"restEndpointUri":              fmt.Sprintf("http://host.docker.internal:%d", env.icebergPort),
-			"isUsingVendedCredentials":     false,
 			"enableAsync":                  true,
 			"isCachingEnabled":             false,
 			"maxCacheSpacePct":             100,
