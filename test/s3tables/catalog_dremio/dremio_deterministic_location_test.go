@@ -27,12 +27,8 @@ func TestDeterministicTableLocation(t *testing.T) {
 	createTableBucket(t, env, tableBucket)
 
 	configDir := env.writeDremioConfig(t, tableBucket)
-	if !env.startDremioContainer(t, configDir) {
-		t.Skip("Failed to start Dremio container, skipping Dremio integration test")
-	}
-	if !waitForDremio(t, env.dremioContainer, 120*time.Second) {
-		t.Skip("Dremio did not become ready, skipping Dremio integration test")
-	}
+	env.startDremioContainer(t, configDir)
+	waitForDremio(t, env.dremioContainer, 120*time.Second)
 
 	namespace := "ns_" + randomString(4)
 	tableName := "table_" + randomString(4)
@@ -89,12 +85,8 @@ func TestMultiLevelNamespace(t *testing.T) {
 	createTableBucket(t, env, tableBucket)
 
 	configDir := env.writeDremioConfig(t, tableBucket)
-	if !env.startDremioContainer(t, configDir) {
-		t.Skip("Failed to start Dremio container, skipping Dremio integration test")
-	}
-	if !waitForDremio(t, env.dremioContainer, 120*time.Second) {
-		t.Skip("Dremio did not become ready, skipping Dremio integration test")
-	}
+	env.startDremioContainer(t, configDir)
+	waitForDremio(t, env.dremioContainer, 120*time.Second)
 
 	level1 := "analytics_" + randomString(4)
 	level2 := "daily_" + randomString(4)

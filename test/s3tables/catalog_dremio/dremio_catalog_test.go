@@ -65,12 +65,8 @@ func TestDremioIcebergCatalog(t *testing.T) {
 	testIcebergRestAPI(t, env)
 
 	configDir := env.writeDremioConfig(t, catalogBucket)
-	if !env.startDremioContainer(t, configDir) {
-		t.Skip("Failed to start Dremio container, skipping Dremio integration test")
-	}
-	if !waitForDremio(t, env.dremioContainer, 120*time.Second) {
-		t.Skip("Dremio did not become ready, skipping Dremio integration test")
-	}
+	env.startDremioContainer(t, configDir)
+	waitForDremio(t, env.dremioContainer, 120*time.Second)
 
 	schemaName := "dremio_" + randomString(6)
 
@@ -102,12 +98,8 @@ func TestDremioTableOperations(t *testing.T) {
 	createTableBucket(t, env, tableBucket)
 
 	configDir := env.writeDremioConfig(t, tableBucket)
-	if !env.startDremioContainer(t, configDir) {
-		t.Skip("Failed to start Dremio container, skipping Dremio integration test")
-	}
-	if !waitForDremio(t, env.dremioContainer, 120*time.Second) {
-		t.Skip("Dremio did not become ready, skipping Dremio integration test")
-	}
+	env.startDremioContainer(t, configDir)
+	waitForDremio(t, env.dremioContainer, 120*time.Second)
 
 	schemaName := "test_schema_" + randomString(4)
 	tableName := "test_table_" + randomString(4)
@@ -375,8 +367,7 @@ func (env *TestEnvironment) writeDremioConfig(t *testing.T, warehouseBucket stri
 }
 
 // startDremioContainer starts a Dremio Docker container with the given configuration.
-// Returns false if the container fails to start.
-func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string) bool {
+func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string) {
 	t.Helper()
 
 	containerName := "seaweed-dremio-" + randomString(8)
@@ -393,31 +384,30 @@ func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string)
 		"dremio/dremio:latest",
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("Warning: Failed to start Dremio container: %v\n%s", err, string(output))
-		return false
+		t.Fatalf("Failed to start Dremio container: %v\n%s", err, string(output))
 	}
-	return true
 }
 
 // waitForDremio waits for Dremio container to be ready by polling its health endpoint.
-// Returns false if timeout or container not found.
-func waitForDremio(t *testing.T, containerName string, timeout time.Duration) bool {
+func waitForDremio(t *testing.T, containerName string, timeout time.Duration) {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
+	var lastOutput []byte
 	for time.Now().Before(deadline) {
 		cmd := exec.Command("docker", "exec", containerName,
 			"curl", "-s", "http://localhost:9047/api/v2/ping",
 		)
 		if output, err := cmd.CombinedOutput(); err == nil {
 			if strings.Contains(string(output), "pong") || strings.Contains(string(output), "\"ok\"") {
-				return true
+				return
 			}
 		} else {
+			lastOutput = output
 			outputStr := string(output)
 			if strings.Contains(outputStr, "No such container") ||
 				strings.Contains(outputStr, "is not running") {
-				return false
+				break
 			}
 		}
 		time.Sleep(2 * time.Second)
@@ -425,10 +415,11 @@ func waitForDremio(t *testing.T, containerName string, timeout time.Duration) bo
 
 	cmd := exec.Command("docker", "exec", containerName, "curl", "-I", "http://localhost:9047")
 	if err := cmd.Run(); err == nil {
-		return true
+		time.Sleep(5 * time.Second)
+		return
 	}
 
-	return false
+	t.Fatalf("Timed out waiting for Dremio to be ready\nLast output:\n%s", string(lastOutput))
 }
 
 // runDremioSQL executes a SQL statement in Dremio and returns the output.
