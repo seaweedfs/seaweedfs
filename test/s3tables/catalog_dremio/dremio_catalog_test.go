@@ -474,28 +474,24 @@ func parseDremioResponse(t *testing.T, output string) [][]interface{} {
 	return result
 }
 
-// createTableBucket creates an S3 table bucket via the S3Tables REST API.
+// createTableBucket creates an S3 table bucket using `weed shell`, which
+// talks to the filer over gRPC and bypasses S3 SigV4 auth (the test runs
+// with IAM enabled). The master address must use `host:port.grpcPort`
+// (dot, not colon) — the shell silently retries forever on a colon form.
+// A context timeout guards against any future hang.
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
-	endpoint := fmt.Sprintf("http://%s:%d/buckets", env.bindIP, env.s3Port)
-	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
-	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
-	if err != nil {
-		t.Fatalf("Failed to build create bucket request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	cmd := exec.CommandContext(ctx, env.weedBinary, "shell",
+		fmt.Sprintf("-master=%s:%d.%d", env.bindIP, env.masterPort, env.masterGrpcPort),
+	)
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to create table bucket %s: %v", bucketName, err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
+		t.Fatalf("Failed to create table bucket %s via weed shell: %v\nOutput: %s", bucketName, err, string(output))
 	}
 	t.Logf("Created table bucket: %s", bucketName)
 }
