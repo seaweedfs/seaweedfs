@@ -572,10 +572,10 @@ func decodeVacuumTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, erro
 		return params, nil
 	}
 
-	volumeID := pluginworker.ReadInt64Config(job.Parameters, "volume_id", 0)
+	volumeID := pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
 	server := pluginworker.ReadStringConfig(job.Parameters, "server", "")
 	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
-	if volumeID <= 0 {
+	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
 	if strings.TrimSpace(server) == "" {
@@ -584,12 +584,12 @@ func decodeVacuumTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, erro
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
-		VolumeId:   uint32(volumeID),
+		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
 			{
 				Node:     server,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		TaskParams: &worker_pb.TaskParams_VacuumParams{

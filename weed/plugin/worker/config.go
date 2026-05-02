@@ -2,6 +2,7 @@ package pluginworker
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -88,6 +89,40 @@ func ReadInt64Config(values map[string]*plugin_pb.ConfigValue, field string, fal
 		return 0
 	}
 	return fallback
+}
+
+// ReadInt32Config reads an int32-valued plugin config field, returning fallback
+// when the value is missing or out of int32 range. Used for protobuf int32
+// fields whose admin/worker config values arrive as int64.
+func ReadInt32Config(values map[string]*plugin_pb.ConfigValue, field string, fallback int32) int32 {
+	v := ReadInt64Config(values, field, int64(fallback))
+	if v < int64(math.MinInt32) || v > int64(math.MaxInt32) {
+		return fallback
+	}
+	return int32(v)
+}
+
+// ReadUint32Config reads a uint32-valued plugin config field, returning
+// fallback when the value is missing, negative, or exceeds math.MaxUint32.
+// Used for protobuf uint32 fields (volume IDs, shard counts, …).
+func ReadUint32Config(values map[string]*plugin_pb.ConfigValue, field string, fallback uint32) uint32 {
+	v := ReadInt64Config(values, field, int64(fallback))
+	if v < 0 || v > int64(math.MaxUint32) {
+		return fallback
+	}
+	return uint32(v)
+}
+
+// ReadIntConfig reads an int-valued plugin config field, returning fallback
+// when the value is missing or outside the int32 range. The int32 range is
+// used as the platform-portable safe range so that the same value parses
+// identically on 32-bit and 64-bit builds.
+func ReadIntConfig(values map[string]*plugin_pb.ConfigValue, field string, fallback int) int {
+	v := ReadInt64Config(values, field, int64(fallback))
+	if v < int64(math.MinInt32) || v > int64(math.MaxInt32) {
+		return fallback
+	}
+	return int(v)
 }
 
 // ReadBytesConfig reads a bytes-valued plugin config field, returning nil when

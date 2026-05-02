@@ -569,7 +569,7 @@ func (h *ErasureCodingHandler) collectVolumeMetrics(
 func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *erasureCodingWorkerConfig {
 	taskConfig := NewDefaultConfig()
 
-	quietForSeconds := int(pluginworker.ReadInt64Config(values, "quiet_for_seconds", int64(taskConfig.QuietForSeconds)))
+	quietForSeconds := pluginworker.ReadIntConfig(values, "quiet_for_seconds", taskConfig.QuietForSeconds)
 	if quietForSeconds < 0 {
 		quietForSeconds = 0
 	}
@@ -584,7 +584,7 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	}
 	taskConfig.FullnessRatio = fullnessRatio
 
-	minSizeMB := int(pluginworker.ReadInt64Config(values, "min_size_mb", int64(taskConfig.MinSizeMB)))
+	minSizeMB := pluginworker.ReadIntConfig(values, "min_size_mb", taskConfig.MinSizeMB)
 	if minSizeMB < 1 {
 		minSizeMB = 1
 	}
@@ -694,7 +694,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		return params, nil
 	}
 
-	volumeID := pluginworker.ReadInt64Config(job.Parameters, "volume_id", 0)
+	volumeID := pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
 	sourceNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "source_server", ""))
 	if sourceNode == "" {
 		sourceNode = strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "server", ""))
@@ -705,17 +705,17 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 	}
 	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
 
-	dataShards := int32(pluginworker.ReadInt64Config(job.Parameters, "data_shards", int64(ecstorage.DataShardsCount)))
+	dataShards := pluginworker.ReadInt32Config(job.Parameters, "data_shards", int32(ecstorage.DataShardsCount))
 	if dataShards <= 0 {
-		dataShards = ecstorage.DataShardsCount
+		dataShards = int32(ecstorage.DataShardsCount)
 	}
-	parityShards := int32(pluginworker.ReadInt64Config(job.Parameters, "parity_shards", int64(ecstorage.ParityShardsCount)))
+	parityShards := pluginworker.ReadInt32Config(job.Parameters, "parity_shards", int32(ecstorage.ParityShardsCount))
 	if parityShards <= 0 {
-		parityShards = ecstorage.ParityShardsCount
+		parityShards = int32(ecstorage.ParityShardsCount)
 	}
 	totalShards := int(dataShards + parityShards)
 
-	if volumeID <= 0 {
+	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
 	if sourceNode == "" {
@@ -737,7 +737,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		}
 		targets = append(targets, &worker_pb.TaskTarget{
 			Node:     targetNode,
-			VolumeId: uint32(volumeID),
+			VolumeId: volumeID,
 			ShardIds: shardAssignments[i],
 		})
 	}
@@ -747,12 +747,12 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
-		VolumeId:   uint32(volumeID),
+		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
 			{
 				Node:     sourceNode,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		Targets: targets,

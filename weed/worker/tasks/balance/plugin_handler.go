@@ -1013,7 +1013,7 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 	}
 	taskConfig.ImbalanceThreshold = imbalanceThreshold
 
-	minServerCount := int(pluginworker.ReadInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount)))
+	minServerCount := pluginworker.ReadIntConfig(values, "min_server_count", taskConfig.MinServerCount)
 	if minServerCount < 2 {
 		minServerCount = 2
 	}
@@ -1337,7 +1337,7 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		return params, nil
 	}
 
-	volumeID := pluginworker.ReadInt64Config(job.Parameters, "volume_id", 0)
+	volumeID := pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
 	sourceNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "source_server", ""))
 	if sourceNode == "" {
 		sourceNode = strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "server", ""))
@@ -1347,13 +1347,13 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		targetNode = strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "target", ""))
 	}
 	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
-	timeoutSeconds := int32(pluginworker.ReadInt64Config(job.Parameters, "timeout_seconds", int64(defaultBalanceTimeoutSeconds)))
+	timeoutSeconds := pluginworker.ReadInt32Config(job.Parameters, "timeout_seconds", defaultBalanceTimeoutSeconds)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = defaultBalanceTimeoutSeconds
 	}
 	forceMove := readBoolConfig(job.Parameters, "force_move", false)
 
-	if volumeID <= 0 {
+	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
 	if sourceNode == "" {
@@ -1365,18 +1365,18 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
-		VolumeId:   uint32(volumeID),
+		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
 			{
 				Node:     sourceNode,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		Targets: []*worker_pb.TaskTarget{
 			{
 				Node:     targetNode,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		TaskParams: &worker_pb.TaskParams_BalanceParams{
