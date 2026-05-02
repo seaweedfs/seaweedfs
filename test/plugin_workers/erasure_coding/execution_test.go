@@ -11,6 +11,7 @@ import (
 	pluginworkers "github.com/seaweedfs/seaweedfs/test/plugin_workers"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -22,7 +23,7 @@ func TestErasureCodingExecutionEncodesShards(t *testing.T) {
 	datSize := 1 * 1024 * 1024
 
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	handler := pluginworker.NewErasureCodingHandler(dialOption, t.TempDir())
+	handler := erasure_coding.NewErasureCodingHandler(dialOption, t.TempDir())
 	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
 		WorkerOptions: pluginworker.WorkerOptions{
 			GrpcDialOption: dialOption,
