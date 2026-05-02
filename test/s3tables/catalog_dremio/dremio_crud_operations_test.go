@@ -171,5 +171,25 @@ func TestDataInsertAndQuery(t *testing.T) {
 		t.Fatalf("Expected 3 categories, got %d rows", len(rows))
 	}
 
+	expectedSums := map[string]float64{
+		"category_a": 250.75,
+		"category_b": 200.75,
+		"category_c": 300.00,
+	}
+	for _, row := range rows {
+		category, ok := row[0].(string)
+		if !ok {
+			t.Fatalf("Expected category as string, got %v", row[0])
+		}
+		sum, ok := row[1].(float64)
+		if !ok {
+			t.Fatalf("Expected sum as float64, got %v", row[1])
+		}
+		expectedSum, exists := expectedSums[category]
+		if !exists || sum != expectedSum {
+			t.Fatalf("Category %s has sum %f, expected %f", category, sum, expectedSum)
+		}
+	}
+
 	t.Logf(">>> TestDataInsertAndQuery PASSED")
 }
