@@ -1,4 +1,4 @@
-package pluginworker
+package balance
 
 import (
 	"context"
@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -342,7 +342,7 @@ func TestVolumeBalanceHandlerRejectsUnsupportedJobType(t *testing.T) {
 
 func TestEmitVolumeBalanceDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
-	config := balancetask.NewDefaultConfig()
+	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.2
 	config.MinServerCount = 2
 
@@ -600,31 +600,31 @@ func TestFilterMetricsByLocation(t *testing.T) {
 	}
 
 	// Filter by DC
-	filtered := filterMetricsByLocation(metrics, "dc1", "", "")
+	filtered := pluginworker.FilterMetricsByLocation(metrics, "dc1", "", "")
 	if len(filtered) != 2 {
 		t.Fatalf("DC filter: expected 2, got %d", len(filtered))
 	}
 
 	// Filter by rack
-	filtered = filterMetricsByLocation(metrics, "", "rack1,rack2", "")
+	filtered = pluginworker.FilterMetricsByLocation(metrics, "", "rack1,rack2", "")
 	if len(filtered) != 3 {
 		t.Fatalf("rack filter: expected 3, got %d", len(filtered))
 	}
 
 	// Filter by node
-	filtered = filterMetricsByLocation(metrics, "", "", "node-a,node-c")
+	filtered = pluginworker.FilterMetricsByLocation(metrics, "", "", "node-a,node-c")
 	if len(filtered) != 2 {
 		t.Fatalf("node filter: expected 2, got %d", len(filtered))
 	}
 
 	// Combined DC + rack
-	filtered = filterMetricsByLocation(metrics, "dc2", "rack3", "")
+	filtered = pluginworker.FilterMetricsByLocation(metrics, "dc2", "rack3", "")
 	if len(filtered) != 1 {
 		t.Fatalf("DC+rack filter: expected 1, got %d", len(filtered))
 	}
 
 	// Empty filters pass all
-	filtered = filterMetricsByLocation(metrics, "", "", "")
+	filtered = pluginworker.FilterMetricsByLocation(metrics, "", "", "")
 	if len(filtered) != 4 {
 		t.Fatalf("no filter: expected 4, got %d", len(filtered))
 	}
@@ -674,7 +674,7 @@ func TestFilterMetricsByVolumeState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := filterMetricsByVolumeState(metrics, volumeState(tt.state))
+			result := pluginworker.FilterMetricsByVolumeState(metrics, pluginworker.VolumeState(tt.state))
 			if len(result) != len(tt.expectedIDs) {
 				t.Fatalf("expected %d metrics, got %d", len(tt.expectedIDs), len(result))
 			}
@@ -694,23 +694,23 @@ func TestFilterMetricsByVolumeState_NilElement(t *testing.T) {
 		nil,
 		{VolumeID: 2, FullnessRatio: 1.5},
 	}
-	result := filterMetricsByVolumeState(metrics, volumeStateActive)
+	result := pluginworker.FilterMetricsByVolumeState(metrics, pluginworker.VolumeStateActive)
 	if len(result) != 1 || result[0].VolumeID != 1 {
 		t.Fatalf("expected [vol 1] for ACTIVE with nil elements, got %d results", len(result))
 	}
-	result = filterMetricsByVolumeState(metrics, volumeStateFull)
+	result = pluginworker.FilterMetricsByVolumeState(metrics, pluginworker.VolumeStateFull)
 	if len(result) != 1 || result[0].VolumeID != 2 {
 		t.Fatalf("expected [vol 2] for FULL with nil elements, got %d results", len(result))
 	}
 }
 
 func TestFilterMetricsByVolumeState_EmptyInput(t *testing.T) {
-	result := filterMetricsByVolumeState(nil, volumeStateActive)
+	result := pluginworker.FilterMetricsByVolumeState(nil, pluginworker.VolumeStateActive)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 metrics for nil input, got %d", len(result))
 	}
 
-	result = filterMetricsByVolumeState([]*workertypes.VolumeHealthMetrics{}, volumeStateFull)
+	result = pluginworker.FilterMetricsByVolumeState([]*workertypes.VolumeHealthMetrics{}, pluginworker.VolumeStateFull)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 metrics for empty input, got %d", len(result))
 	}
@@ -757,4 +757,38 @@ func workerConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool
 		}
 	}
 	return false
+}
+
+type noopDetectionSender struct{}
+
+func (noopDetectionSender) SendProposals(*plugin_pb.DetectionProposals) error { return nil }
+func (noopDetectionSender) SendComplete(*plugin_pb.DetectionComplete) error   { return nil }
+func (noopDetectionSender) SendActivity(*plugin_pb.ActivityEvent) error       { return nil }
+
+type noopExecutionSender struct{}
+
+func (noopExecutionSender) SendProgress(*plugin_pb.JobProgressUpdate) error { return nil }
+func (noopExecutionSender) SendCompleted(*plugin_pb.JobCompleted) error     { return nil }
+
+type recordingDetectionSender struct {
+	proposals *plugin_pb.DetectionProposals
+	complete  *plugin_pb.DetectionComplete
+	events    []*plugin_pb.ActivityEvent
+}
+
+func (r *recordingDetectionSender) SendProposals(proposals *plugin_pb.DetectionProposals) error {
+	r.proposals = proposals
+	return nil
+}
+
+func (r *recordingDetectionSender) SendComplete(complete *plugin_pb.DetectionComplete) error {
+	r.complete = complete
+	return nil
+}
+
+func (r *recordingDetectionSender) SendActivity(event *plugin_pb.ActivityEvent) error {
+	if event != nil {
+		r.events = append(r.events, event)
+	}
+	return nil
 }

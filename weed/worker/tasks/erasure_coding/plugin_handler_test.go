@@ -1,4 +1,4 @@
-package pluginworker
+package erasure_coding
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
-	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -206,7 +205,7 @@ func TestErasureCodingHandlerRejectsUnsupportedJobType(t *testing.T) {
 
 func TestEmitErasureCodingDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
-	config := erasurecodingtask.NewDefaultConfig()
+	config := NewDefaultConfig()
 	config.QuietForSeconds = 5 * 60
 	config.MinSizeMB = 30
 	config.FullnessRatio = 0.91
@@ -290,4 +289,55 @@ func TestApplyErasureCodingExecutionDefaultsForcesLocalFields(t *testing.T) {
 	if !ecParams.CleanupSource {
 		t.Fatalf("expected cleanup_source true")
 	}
+}
+
+type noopDetectionSender struct{}
+
+func (noopDetectionSender) SendProposals(*plugin_pb.DetectionProposals) error { return nil }
+func (noopDetectionSender) SendComplete(*plugin_pb.DetectionComplete) error   { return nil }
+func (noopDetectionSender) SendActivity(*plugin_pb.ActivityEvent) error       { return nil }
+
+type noopExecutionSender struct{}
+
+func (noopExecutionSender) SendProgress(*plugin_pb.JobProgressUpdate) error { return nil }
+func (noopExecutionSender) SendCompleted(*plugin_pb.JobCompleted) error     { return nil }
+
+type recordingDetectionSender struct {
+	proposals *plugin_pb.DetectionProposals
+	complete  *plugin_pb.DetectionComplete
+	events    []*plugin_pb.ActivityEvent
+}
+
+func (r *recordingDetectionSender) SendProposals(proposals *plugin_pb.DetectionProposals) error {
+	r.proposals = proposals
+	return nil
+}
+
+func (r *recordingDetectionSender) SendComplete(complete *plugin_pb.DetectionComplete) error {
+	r.complete = complete
+	return nil
+}
+
+func (r *recordingDetectionSender) SendActivity(event *plugin_pb.ActivityEvent) error {
+	if event != nil {
+		r.events = append(r.events, event)
+	}
+	return nil
+}
+
+func workerConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool {
+	if form == nil {
+		return false
+	}
+	for _, section := range form.Sections {
+		if section == nil {
+			continue
+		}
+		for _, field := range section.Fields {
+			if field != nil && field.Name == fieldName {
+				return true
+			}
+		}
+	}
+	return false
 }

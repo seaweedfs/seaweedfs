@@ -1,4 +1,4 @@
-package pluginworker
+package vacuum
 
 import (
 	"context"
@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	vacuumtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -93,7 +93,7 @@ func TestDeriveVacuumConfigAllowsZeroValues(t *testing.T) {
 }
 
 func TestMasterAddressCandidates(t *testing.T) {
-	candidates := masterAddressCandidates("localhost:9333")
+	candidates := pluginworker.MasterAddressCandidates("localhost:9333")
 	if len(candidates) != 2 {
 		t.Fatalf("expected 2 candidates, got %d: %v", len(candidates), candidates)
 	}
@@ -110,20 +110,20 @@ func TestMasterAddressCandidates(t *testing.T) {
 }
 
 func TestShouldSkipDetectionByInterval(t *testing.T) {
-	if ShouldSkipDetectionByInterval(nil, 10) {
+	if pluginworker.ShouldSkipDetectionByInterval(nil, 10) {
 		t.Fatalf("expected false when timestamp is nil")
 	}
-	if ShouldSkipDetectionByInterval(timestamppb.Now(), 0) {
+	if pluginworker.ShouldSkipDetectionByInterval(timestamppb.Now(), 0) {
 		t.Fatalf("expected false when min interval is zero")
 	}
 
 	recent := timestamppb.New(time.Now().Add(-5 * time.Second))
-	if !ShouldSkipDetectionByInterval(recent, 10) {
+	if !pluginworker.ShouldSkipDetectionByInterval(recent, 10) {
 		t.Fatalf("expected true for recent successful run")
 	}
 
 	old := timestamppb.New(time.Now().Add(-30 * time.Second))
-	if ShouldSkipDetectionByInterval(old, 10) {
+	if pluginworker.ShouldSkipDetectionByInterval(old, 10) {
 		t.Fatalf("expected false for old successful run")
 	}
 }
@@ -146,7 +146,7 @@ func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
 }
 
 func TestBuildExecutorActivity(t *testing.T) {
-	activity := BuildExecutorActivity("running", "vacuum in progress")
+	activity := pluginworker.BuildExecutorActivity("running", "vacuum in progress")
 	if activity == nil {
 		t.Fatalf("expected non-nil activity")
 	}
@@ -166,7 +166,7 @@ func TestBuildExecutorActivity(t *testing.T) {
 
 func TestEmitVacuumDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
-	config := vacuumtask.NewDefaultConfig()
+	config := NewDefaultConfig()
 	config.GarbageThreshold = 0.3
 	config.MinVolumeAgeSeconds = 0
 
@@ -279,17 +279,17 @@ func TestVacuumFiltersVolumeState(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		state   volumeState
+		state   pluginworker.VolumeState
 		wantIDs []uint32
 	}{
-		{"ALL returns all", volumeStateAll, []uint32{1, 2, 3, 4}},
-		{"ACTIVE returns writable", volumeStateActive, []uint32{1, 3}},
-		{"FULL returns read-only", volumeStateFull, []uint32{2, 4}},
+		{"ALL returns all", pluginworker.VolumeStateAll, []uint32{1, 2, 3, 4}},
+		{"ACTIVE returns writable", pluginworker.VolumeStateActive, []uint32{1, 3}},
+		{"FULL returns read-only", pluginworker.VolumeStateFull, []uint32{2, 4}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filtered := filterMetricsByVolumeState(metrics, tt.state)
+			filtered := pluginworker.FilterMetricsByVolumeState(metrics, tt.state)
 			if len(filtered) != len(tt.wantIDs) {
 				t.Fatalf("got %d metrics, want %d", len(filtered), len(tt.wantIDs))
 			}
@@ -325,7 +325,7 @@ func TestVacuumFiltersLocation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filtered := filterMetricsByLocation(metrics, tt.dc, tt.rack, tt.node)
+			filtered := pluginworker.FilterMetricsByLocation(metrics, tt.dc, tt.rack, tt.node)
 			if len(filtered) != len(tt.wantIDs) {
 				t.Fatalf("got %d metrics, want %d", len(filtered), len(tt.wantIDs))
 			}

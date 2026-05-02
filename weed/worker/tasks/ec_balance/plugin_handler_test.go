@@ -1,11 +1,10 @@
-package pluginworker
+package ec_balance
 
 import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	ecbalancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_balance"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -290,7 +289,7 @@ func TestECBalanceHandlerCapability(t *testing.T) {
 }
 
 func TestECBalanceConfigRoundTrip(t *testing.T) {
-	config := ecbalancetask.NewDefaultConfig()
+	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.3
 	config.MinServerCount = 5
 	config.CollectionFilter = "my_col"
@@ -302,7 +301,7 @@ func TestECBalanceConfigRoundTrip(t *testing.T) {
 		t.Fatal("expected non-nil policy")
 	}
 
-	config2 := ecbalancetask.NewDefaultConfig()
+	config2 := NewDefaultConfig()
 	if err := config2.FromTaskPolicy(policy); err != nil {
 		t.Fatalf("failed to load from policy: %v", err)
 	}

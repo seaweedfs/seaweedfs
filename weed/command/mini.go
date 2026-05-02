@@ -22,12 +22,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
 	// Import task packages to trigger their auto-registration
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 type MiniOptions struct {
@@ -1373,7 +1373,7 @@ func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
-	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency), workerDir)
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(vacuum.DefaultMaxExecutionConcurrency), workerDir)
 	if err != nil {
 		glog.Fatalf("Failed to build mini plugin worker handlers: %v", err)
 	}
@@ -1391,7 +1391,7 @@ func startMiniPluginWorker(ctx context.Context, workerDir string) {
 		HeartbeatInterval:       15 * time.Second,
 		ReconnectDelay:          5 * time.Second,
 		MaxDetectionConcurrency: 1,
-		MaxExecutionConcurrency: int(pluginworker.DefaultMaxExecutionConcurrency),
+		MaxExecutionConcurrency: int(vacuum.DefaultMaxExecutionConcurrency),
 		GrpcDialOption:          grpcDialOption,
 		Handlers:                handlers,
 	})
