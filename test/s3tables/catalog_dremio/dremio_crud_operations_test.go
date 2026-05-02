@@ -29,8 +29,12 @@ func setupDremioTest(t *testing.T) *TestEnvironment {
 	createTableBucket(t, env, tableBucket)
 
 	configDir := env.writeDremioConfig(t, catalogBucket)
-	env.startDremioContainer(t, configDir)
-	waitForDremio(t, env.dremioContainer, 120*time.Second)
+	if !env.startDremioContainer(t, configDir) {
+		t.Skip("Failed to start Dremio container, skipping Dremio integration test")
+	}
+	if !waitForDremio(t, env.dremioContainer, 120*time.Second) {
+		t.Skip("Dremio did not become ready, skipping Dremio integration test")
+	}
 
 	return env
 }
