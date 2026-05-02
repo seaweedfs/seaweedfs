@@ -54,7 +54,7 @@ func TestSchemaCRUD(t *testing.T) {
 	t.Logf(">>> READ: Listing all schemas")
 	output := runDremioSQL(t, env.dremioContainer, "SHOW SCHEMAS")
 	if !strings.Contains(output, schema1) {
-		t.Logf("Expected schema %s in listing (output may be empty if not yet supported)", schema1)
+		t.Fatalf("Expected schema %s in listing, but it was not found.\nOutput:\n%s", schema1, output)
 	}
 
 	t.Logf(">>> DELETE: Dropping schema %s", schema1)
@@ -86,7 +86,7 @@ func TestTableCRUD(t *testing.T) {
 	t.Logf(">>> READ: Listing tables in schema")
 	output := runDremioSQL(t, env.dremioContainer, fmt.Sprintf("SHOW TABLES IN %s", schemaName))
 	if !strings.Contains(output, tableName) {
-		t.Logf("Table listing may not be fully supported yet: %s", output)
+		t.Fatalf("Expected table %s in listing, but it was not found.\nOutput:\n%s", tableName, output)
 	}
 
 	t.Logf(">>> UPDATE: Inserting rows")
@@ -95,7 +95,15 @@ func TestTableCRUD(t *testing.T) {
 
 	t.Logf(">>> READ: Querying table")
 	querySQL := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", schemaName, tableName)
-	_ = runDremioSQL(t, env.dremioContainer, querySQL)
+	output = runDremioSQL(t, env.dremioContainer, querySQL)
+	rows := parseDremioResponse(t, output)
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("Expected single row with count, got: %v", rows)
+	}
+	count, ok := rows[0][0].(float64)
+	if !ok || count != 2 {
+		t.Fatalf("Expected count of 2, got: %v", rows[0][0])
+	}
 
 	t.Logf(">>> DELETE: Dropping table %s.%s", schemaName, tableName)
 	runDremioSQL(t, env.dremioContainer, fmt.Sprintf("DROP TABLE %s.%s", schemaName, tableName))
@@ -133,15 +141,35 @@ func TestDataInsertAndQuery(t *testing.T) {
 
 	t.Logf(">>> Testing COUNT query")
 	countSQL := fmt.Sprintf("SELECT COUNT(*) as count FROM %s.%s", schemaName, tableName)
-	_ = runDremioSQL(t, env.dremioContainer, countSQL)
+	countOutput := runDremioSQL(t, env.dremioContainer, countSQL)
+	rows := parseDremioResponse(t, countOutput)
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("Expected single row with count, got: %v", rows)
+	}
+	totalCount, ok := rows[0][0].(float64)
+	if !ok || totalCount != 4 {
+		t.Fatalf("Expected total count of 4, got: %v", rows[0][0])
+	}
 
 	t.Logf(">>> Testing WHERE clause")
 	whereSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE category = 'category_a'", schemaName, tableName)
-	_ = runDremioSQL(t, env.dremioContainer, whereSQL)
+	whereOutput := runDremioSQL(t, env.dremioContainer, whereSQL)
+	rows = parseDremioResponse(t, whereOutput)
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("Expected single row with count, got: %v", rows)
+	}
+	filteredCount, ok := rows[0][0].(float64)
+	if !ok || filteredCount != 2 {
+		t.Fatalf("Expected filtered count of 2 for category_a, got: %v", rows[0][0])
+	}
 
 	t.Logf(">>> Testing aggregations")
 	aggregateSQL := fmt.Sprintf("SELECT category, SUM(amount) FROM %s.%s GROUP BY category", schemaName, tableName)
-	_ = runDremioSQL(t, env.dremioContainer, aggregateSQL)
+	aggregateOutput := runDremioSQL(t, env.dremioContainer, aggregateSQL)
+	rows = parseDremioResponse(t, aggregateOutput)
+	if len(rows) != 3 {
+		t.Fatalf("Expected 3 categories, got %d rows", len(rows))
+	}
 
 	t.Logf(">>> TestDataInsertAndQuery PASSED")
 }
