@@ -1,3 +1,4 @@
+// Package catalog_dremio provides integration tests for Dremio with SeaweedFS Iceberg REST Catalog.
 package catalog_dremio
 
 import (
