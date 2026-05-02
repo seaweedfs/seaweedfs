@@ -14,7 +14,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -212,6 +214,7 @@ Example Usage:
 	weed mini                   # Use current directory
 	weed mini -dir=/data        # Custom data directory
 	weed mini -dir=/data -master.port=9444  # Custom master port
+	weed mini -dir=/data -bucket=my-bucket  # Pre-create an S3 bucket on startup
 
 After starting, you can access:
 - Master UI:       http://localhost:9333
@@ -244,6 +247,7 @@ var (
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	miniBucket                      = cmdMini.Flag.String("bucket", "", "create this S3 bucket on startup if it does not already exist; leave empty to skip")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -1020,6 +1024,11 @@ func runMini(cmd *Command, args []string) bool {
 		triggerMiniClientsShutdown(10 * time.Second)
 	})
 
+	// Create the requested bucket (if any) before announcing readiness.
+	if err := ensureMiniBucket(*miniBucket); err != nil {
+		glog.Warningf("failed to create bucket %q: %v", *miniBucket, err)
+	}
+
 	// Print welcome message after all services are running
 	printWelcomeMessage()
 
@@ -1483,4 +1492,40 @@ func printWelcomeMessage() {
 
 	fmt.Print(sb.String())
 	fmt.Println("")
+}
+
+// ensureMiniBucket creates the named bucket on the embedded filer if it does
+// not already exist. Empty bucketName is a no-op so users who do not pass
+// -bucket pay nothing.
+func ensureMiniBucket(bucketName string) error {
+	if bucketName == "" {
+		return nil
+	}
+	if err := s3bucket.VerifyS3BucketName(bucketName); err != nil {
+		return fmt.Errorf("invalid bucket name %q: %w", bucketName, err)
+	}
+
+	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	const bucketsPath = "/buckets"
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		ctx := context.Background()
+		_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: bucketsPath,
+			Name:      bucketName,
+		})
+		if err == nil {
+			glog.V(0).Infof("bucket %s already exists", bucketName)
+			return nil
+		}
+		if err != filer_pb.ErrNotFound {
+			return fmt.Errorf("lookup bucket %s: %w", bucketName, err)
+		}
+		if err := filer_pb.DoMkdir(ctx, client, bucketsPath, bucketName, nil); err != nil {
+			return err
+		}
+		glog.V(0).Infof("created bucket %s", bucketName)
+		return nil
+	})
 }

@@ -101,6 +101,12 @@ This single command starts a complete SeaweedFS setup with:
 - **WebDAV**: http://localhost:7333
 - **Admin UI**: http://localhost:23646
 
+To start an object store with a pre-created bucket, pass `-bucket=<name>` (the bucket is created on first start if it does not already exist; the flag is a no-op when empty):
+
+```bash
+./weed mini -dir=/data -bucket=my-bucket
+```
+
 Perfect for development, testing, learning SeaweedFS, and single node deployments!
 
 ## Quick Start for S3 API on Docker ##
