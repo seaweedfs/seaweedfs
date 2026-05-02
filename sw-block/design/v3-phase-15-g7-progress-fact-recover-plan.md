@@ -220,6 +220,39 @@ ack_timeout
 
 Lagging-but-progressing is not failure. Stalled lag or missing probe becomes degraded/unknown, then catch-up/rebuild depending on `R/S/H`.
 
+### Step D.1 — Separate pin failure from primary flow control
+
+`PinUnderRetention` is a recovery-lineage contract failure: the replica's
+durable ack is already below the primary retained WAL tail, so the active
+session cannot continue safely. The correct response is to fail the session,
+publish degraded, and wait for a fresh probe / lineage decision. It is **not**
+retryable on the same lineage.
+
+This does **not** solve primary write/flush pressure. A primary can also fall
+behind because local fsync / WAL flush throughput cannot keep up with incoming
+writes, even if replica pin feedback is healthy. That needs a separate
+flow-control policy:
+
+```text
+inputs:
+  primary local flush backlog
+  WAL retention pressure
+  min durable ack across active replicas
+  sync/quorum miss rate
+  session backlog drain rate
+
+actions:
+  keep accepting writes
+  slow/shape writes
+  degrade slow replica
+  force fresh catch-up/rebuild
+  fail writes only under explicit durability contract
+```
+
+Do not encode this as `BaseBatchAck` semantics and do not make feeder wait per
+write. Feeder reports progress; coordinator/storage policy decides when primary
+must throttle or demote a peer.
+
 ### Step E — Retire targetLSN influence
 
 Run targeted grep and reduce remaining uses to:
