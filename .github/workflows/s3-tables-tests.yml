@@ -2,10 +2,6 @@ name: "S3 Tables Integration Tests"
 
 on:
   pull_request:
-  
-concurrency:
-  group: ${{ github.head_ref }}/s3-tables-tests
-  cancel-in-progress: true
 
 permissions:
   contents: read
