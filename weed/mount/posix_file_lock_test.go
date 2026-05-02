@@ -274,6 +274,32 @@ func TestReleasePosixOwnerDoesNotReleaseFlockLocks(t *testing.T) {
 	}
 }
 
+func TestHasPosixOwnerIgnoresMissingOwnerAndFlock(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	if plt.HasPosixOwner(inode, 1) {
+		t.Fatal("missing owner should not be reported as holding POSIX locks")
+	}
+
+	if s := plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10, IsFlock: true}); s != fuse.OK {
+		t.Fatalf("set flock: %v", s)
+	}
+	if plt.HasPosixOwner(inode, 1) {
+		t.Fatal("flock owner should not be reported as a POSIX lock owner")
+	}
+
+	if s := plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20}); s != fuse.OK {
+		t.Fatalf("set POSIX lock: %v", s)
+	}
+	if !plt.HasPosixOwner(inode, 2) {
+		t.Fatal("POSIX lock owner was not reported")
+	}
+	if plt.HasPosixOwner(inode, 0) {
+		t.Fatal("zero owner should not be reported")
+	}
+}
+
 func TestWakeEligibleWaitersKeepsInodeUntilWakeRefReleased(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)

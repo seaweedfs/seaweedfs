@@ -234,6 +234,31 @@ func (plt *PosixLockTable) releaseMatching(inode uint64, matches func(lockRange)
 	plt.maybeCleanupInode(inode, il)
 }
 
+// HasPosixOwner reports whether owner currently holds any POSIX byte-range
+// locks on inode. FUSE may provide a non-zero FlushIn.LockOwner even when no
+// locks were taken, so callers should consult the lock table before treating a
+// flush as lock-sensitive.
+func (plt *PosixLockTable) HasPosixOwner(inode uint64, owner uint64) bool {
+	if owner == 0 {
+		return false
+	}
+	il := plt.getInodeLocks(inode)
+	if il == nil {
+		return false
+	}
+	il.mu.Lock()
+	defer il.mu.Unlock()
+	if il.dead {
+		return false
+	}
+	for _, lk := range il.locks {
+		if !lk.IsFlock && lk.Owner == owner {
+			return true
+		}
+	}
+	return false
+}
+
 // releaseWakeRef drops the temporary reference that keeps inodeLocks live while
 // a woken waiter retries its SetLkw acquisition.
 func releaseWakeRef(il *inodeLocks, waiter *lockWaiter) {
