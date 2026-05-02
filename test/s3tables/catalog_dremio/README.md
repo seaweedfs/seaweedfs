@@ -23,6 +23,15 @@ cd test/s3tables/catalog_dremio
 go test -v -timeout 20m ./...
 ```
 
+The Dremio tests are currently skipped by default because the harness does not
+yet bootstrap a Dremio admin user, create an Iceberg REST source, or poll the
+asynchronous SQL API for job results. Enable them only after that setup is
+implemented:
+
+```bash
+SEAWEEDFS_RUN_DREMIO_TESTS=1 go test -v -timeout 20m ./...
+```
+
 ### Running Specific Tests
 
 ```bash
@@ -39,7 +48,8 @@ go test -v -run TestDeterministicTableLocation
 
 ### Skipping Integration Tests
 
-To run only unit tests (skip integration tests):
+The Dremio tests are skipped unless `SEAWEEDFS_RUN_DREMIO_TESTS=1` is set.
+Short mode also skips them:
 
 ```bash
 go test -short ./...
@@ -123,17 +133,14 @@ Tests use default configuration:
 
 ## CI/CD Integration
 
-Tests run automatically on pull requests via `.github/workflows/s3-tables-tests.yml`.
-
-The job:
-- Builds SeaweedFS from source
-- Pre-pulls the latest Dremio Docker image
-- Runs all tests with a 20-minute timeout
-- Uploads test logs on failure
+These tests are not run by the pull request workflows yet. Re-enable CI only
+after the Dremio bootstrap and SQL polling pieces are implemented, otherwise CI
+only reports skipped tests.
 
 ## Known Limitations
 
 - SQL output parsing depends on Dremio's output format
+- Dremio REST API requests require admin bootstrap and source configuration
 - Some Dremio-specific features may not be fully tested
 - Multi-container networking uses Docker's `host.docker.internal`
 

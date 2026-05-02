@@ -36,7 +36,9 @@ import (
 // suite whose failures don't tell us anything.
 func requireDremioCatalogConfigured(t *testing.T) {
 	t.Helper()
-	t.Skip("Dremio integration tests require auth bootstrap and Iceberg source setup; tracking as follow-up")
+	if os.Getenv("SEAWEEDFS_RUN_DREMIO_TESTS") == "" {
+		t.Skip("set SEAWEEDFS_RUN_DREMIO_TESTS=1 after Dremio auth bootstrap and Iceberg source setup are implemented")
+	}
 }
 
 type TestEnvironment struct {
