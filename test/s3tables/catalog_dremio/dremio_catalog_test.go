@@ -1,8 +1,10 @@
 package catalog_dremio
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -421,22 +423,50 @@ func waitForDremio(t *testing.T, containerName string, timeout time.Duration) {
 	t.Fatalf("Timed out waiting for Dremio to be ready\nLast output:\n%s", string(lastOutput))
 }
 
-// runDremioSQL executes a SQL statement in Dremio and returns the output.
-func runDremioSQL(t *testing.T, containerName, sql string) string {
+// runDremioSQL executes a SQL statement in Dremio and returns the raw output.
+func runDremioSQL(t *testing.T, containerName string, sql string) string {
 	t.Helper()
 
-	cmd := exec.Command("docker", "exec", containerName,
-		"/bin/sh", "-c",
-		fmt.Sprintf(`curl -s -X POST http://localhost:9047/api/v3/sql \
-			-H "Content-Type: application/json" \
-			-d '{"sql": %q}' | jq -r '.rows[][]? // empty'`, sql),
-	)
+	payload := map[string]string{"sql": sql}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Failed to marshal SQL payload: %v", err)
+	}
+
+	curlCmd := fmt.Sprintf("curl -s -X POST http://localhost:9047/api/v3/sql -H 'Content-Type: application/json' -d '%s'", string(payloadBytes))
+	cmd := exec.Command("docker", "exec", containerName, "/bin/sh", "-c", curlCmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Logf("Dremio command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, string(output))
-		return string(output)
+		t.Fatalf("Dremio command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, string(output))
 	}
 	return strings.TrimSpace(string(output))
+}
+
+// parseDremioResponse parses the JSON response from Dremio and extracts rows.
+func parseDremioResponse(t *testing.T, output string) [][]interface{} {
+	t.Helper()
+
+	var response map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &response); err != nil {
+		t.Fatalf("Failed to parse Dremio response as JSON: %v\nResponse: %s", err, output)
+	}
+
+	if errMsg, ok := response["errorMessage"]; ok {
+		t.Fatalf("Dremio returned an error: %v", errMsg)
+	}
+
+	rows, ok := response["rows"].([]interface{})
+	if !ok {
+		t.Fatalf("Dremio response does not contain 'rows' field: %s", output)
+	}
+
+	var result [][]interface{}
+	for _, row := range rows {
+		if rowData, ok := row.([]interface{}); ok {
+			result = append(result, rowData)
+		}
+	}
+	return result
 }
 
 // createTableBucket creates an S3 table bucket using weed shell command.
