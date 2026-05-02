@@ -1,0 +1,12 @@
+name: "Minimal Test"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+jobs:
+  minimal:
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo "Hello from GitHub Actions"
