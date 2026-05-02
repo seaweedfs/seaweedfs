@@ -380,7 +380,6 @@ func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string)
 		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
 		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
 		"-e", "AWS_REGION=us-west-2",
-		"-p", "9047:9047",
 		"dremio/dremio:latest",
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
