@@ -1,0 +1,90 @@
+# V3 Phase 15 — G9A ACK + Reintegration Policy Mini-Plan
+
+**Date**: 2026-05-02
+**Status**: ACTIVE; first ACK profile slice pushed on `p15-g9a/ack-reintegration-policy`
+**Predecessor**: G8 CLOSED 2026-05-02
+**Code repo**: `seaweed_block`
+
+---
+
+## 0. Product Sentence
+
+The system exposes an explicit replication ACK profile and does not silently return full-sync success while the required replica is lagging, recovering, or unable to acknowledge. Returned replicas re-enter through candidate/sync/rebuild states before they are treated as ready.
+
+---
+
+## 1. Scope
+
+### 1.1 In scope for first G9A slices
+
+1. Name the ACK profile at product-daemon level.
+2. Keep `best-effort` as the beta default.
+3. Add a strict write-ACK seam: missing observer, observer error, or recovering peer cannot be counted as full-sync success.
+4. Preserve recovery: lagging peers must still catch up or rebuild; best-effort does not disable recovery.
+5. Prepare the returned-replica reintegration path vocabulary.
+
+### 1.2 Out of scope
+
+1. RF>=3 placement/quorum policy.
+2. Rack/AZ placement.
+3. Transparent OS initiator failover.
+4. Full flow-control enforcement.
+5. CSI user-visible policy knobs.
+
+---
+
+## 2. ACK Profiles
+
+| Profile | Write success condition | Recovery implication |
+|---|---|---|
+| `best-effort` | Primary local write succeeds; replication errors are logged and drive recovery/degrade policy. | Lagging replicas still catch up or rebuild. |
+| `sync-quorum` | Primary local write plus enough sync-eligible peers to satisfy quorum. RF=2 requires the only secondary. | Replica in recovery is not sync-ack eligible. |
+| `sync-all` | Primary local write plus every configured peer is sync-eligible and accepts the write. | Any recovering/down peer fails foreground write ACK. |
+
+Rule: recovery progress is not a substitute for synchronous ACK eligibility.
+
+---
+
+## 3. TDD Plan
+
+### 3.1 Landed first slice
+
+| Commit | Evidence |
+|---|---|
+| `8ba4884` | durable `WriteAckPolicy`: default best-effort preserves observer-error ACK; strict mode fails without observer or on observer error. |
+| `1571212` | replication `OnLocalWrite`: `sync_all` / RF=2 `sync_quorum` fail when peer is recovering/non-Healthy; best-effort still retains. |
+| `5232e3a` | `cmd/blockvolume --replication-ack=best-effort|sync-quorum|sync-all` wires daemon mode to replication durability and durable write ACK policy. |
+
+### 3.2 Next red tests
+
+1. `TestG9A_ReturnedOldPrimary_IsReplicaCandidateNotReady`
+   - A returned old primary must not become `ReplicaReady` from heartbeat alone.
+2. `TestG9A_ReplicaCandidate_RequiresProgressFactBeforeReady`
+   - Candidate readiness requires durable/progress fact, not assignment presence.
+3. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
+   - Product-daemon subprocess path: `--replication-ack=sync-quorum`, peer in recovery/down, foreground iSCSI write fails.
+4. `TestG9A_BestEffortStillFeedsLaggingReplica`
+   - Best-effort write returns success, and progress policy still starts catch-up/rebuild for lagging peer.
+
+---
+
+## 4. Non-Claims
+
+G9A first slices do not claim:
+
+1. strict RF=2 no-loss under all crash timings;
+2. transparent kernel initiator failover;
+3. returned replica has completed reintegration;
+4. automatic operator policy selection between best-effort and sync modes;
+5. flow-control enforcement under primary flush pressure.
+
+---
+
+## 5. Immediate Next Step
+
+Continue on `p15-g9a/ack-reintegration-policy`:
+
+1. Add returned-replica state vocabulary at the authority/status seam.
+2. TDD candidate/syncing/ready distinctions.
+3. Add one subprocess strict ACK negative test after the unit/component seams are green.
+
