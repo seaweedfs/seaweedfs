@@ -433,8 +433,12 @@ func runDremioSQL(t *testing.T, containerName string, sql string) string {
 		t.Fatalf("Failed to marshal SQL payload: %v", err)
 	}
 
-	curlCmd := fmt.Sprintf("curl -s -X POST http://localhost:9047/api/v3/sql -H 'Content-Type: application/json' -d '%s'", string(payloadBytes))
-	cmd := exec.Command("docker", "exec", containerName, "/bin/sh", "-c", curlCmd)
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "curl -s -X POST http://localhost:9047/api/v3/sql ")
+	fmt.Fprintf(&buf, "-H 'Content-Type: application/json' ")
+	fmt.Fprintf(&buf, "-d %q", string(payloadBytes))
+
+	cmd := exec.Command("docker", "exec", containerName, "/bin/sh", "-c", buf.String())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Dremio command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, string(output))
