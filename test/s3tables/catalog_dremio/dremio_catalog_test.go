@@ -382,7 +382,7 @@ func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string)
 		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
 		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
 		"-e", "AWS_REGION=us-west-2",
-		"dremio/dremio:latest",
+		"dremio/dremio:25.0.0",
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to start Dremio container: %v\n%s", err, string(output))
