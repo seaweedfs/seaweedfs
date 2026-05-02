@@ -474,22 +474,29 @@ func parseDremioResponse(t *testing.T, output string) [][]interface{} {
 	return result
 }
 
-// createTableBucket creates an S3 table bucket using weed shell command.
+// createTableBucket creates an S3 table bucket via the S3Tables REST API.
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
-	cmd := exec.Command(env.weedBinary, "shell",
-		fmt.Sprintf("-master=%s:%d:%d", env.bindIP, env.masterPort, env.masterGrpcPort),
-	)
-	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
-	fmt.Printf(">>> EXECUTING: %v\n", cmd.Args)
-	output, err := cmd.CombinedOutput()
+	endpoint := fmt.Sprintf("http://%s:%d/buckets", env.bindIP, env.s3Port)
+	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
+	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
 	if err != nil {
-		fmt.Printf(">>> ERROR Output: %s\n", string(output))
-		t.Fatalf("Failed to create table bucket %s via weed shell: %v\nOutput: %s", bucketName, err, string(output))
+		t.Fatalf("Failed to build create bucket request: %v", err)
 	}
-	fmt.Printf(">>> SUCCESS: Created table bucket %s\n", bucketName)
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to create table bucket %s: %v", bucketName, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
+		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
+	}
 	t.Logf("Created table bucket: %s", bucketName)
 }
 
