@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 )

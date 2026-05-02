@@ -44,8 +44,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	icebergHandler "github.com/seaweedfs/seaweedfs/weed/worker/tasks/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	icebergHandler "github.com/seaweedfs/seaweedfs/weed/worker/tasks/iceberg"
 )
 
 // ---------------------------------------------------------------------------
