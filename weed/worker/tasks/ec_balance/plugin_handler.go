@@ -396,14 +396,11 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	}
 	taskConfig.ImbalanceThreshold = imbalanceThreshold
 
-	minServerCountRaw := pluginworker.ReadInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount))
-	if minServerCountRaw < int64(ecBalanceMinServerCount) {
-		minServerCountRaw = int64(ecBalanceMinServerCount)
+	minServerCount := pluginworker.ReadIntConfig(values, "min_server_count", taskConfig.MinServerCount)
+	if minServerCount < ecBalanceMinServerCount {
+		minServerCount = ecBalanceMinServerCount
 	}
-	if minServerCountRaw > math.MaxInt32 {
-		minServerCountRaw = math.MaxInt32
-	}
-	taskConfig.MinServerCount = int(minServerCountRaw)
+	taskConfig.MinServerCount = minServerCount
 
 	taskConfig.PreferredTags = util.NormalizeTagList(pluginworker.ReadStringListConfig(values, "preferred_tags"))
 

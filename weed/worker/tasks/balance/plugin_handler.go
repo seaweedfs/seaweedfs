@@ -1019,23 +1019,21 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 	}
 	taskConfig.MinServerCount = minServerCount
 
-	maxConcurrentMoves64 := pluginworker.ReadInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves))
-	if maxConcurrentMoves64 < 1 {
-		maxConcurrentMoves64 = 1
+	maxConcurrentMoves := pluginworker.ReadIntConfig(values, "max_concurrent_moves", defaultMaxConcurrentMoves)
+	if maxConcurrentMoves < 1 {
+		maxConcurrentMoves = 1
 	}
-	if maxConcurrentMoves64 > 50 {
-		maxConcurrentMoves64 = 50
+	if maxConcurrentMoves > 50 {
+		maxConcurrentMoves = 50
 	}
-	maxConcurrentMoves := int(maxConcurrentMoves64)
 
-	batchSize64 := pluginworker.ReadInt64Config(values, "batch_size", 20)
-	if batchSize64 < 1 {
-		batchSize64 = 1
+	batchSize := pluginworker.ReadIntConfig(values, "batch_size", 20)
+	if batchSize < 1 {
+		batchSize = 1
 	}
-	if batchSize64 > 100 {
-		batchSize64 = 100
+	if batchSize > 100 {
+		batchSize = 100
 	}
-	batchSize := int(batchSize64)
 
 	return &volumeBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
