@@ -370,6 +370,9 @@ func (env *TestEnvironment) writeDremioConfig(t *testing.T, warehouseBucket stri
 }
 
 // startDremioContainer starts a Dremio Docker container with the given configuration.
+// configDir's dremio.conf is bind-mounted as a single file so Dremio's default
+// log4j2.properties, dremio-env, and distrib.conf in /opt/dremio/conf remain
+// in place — mounting the whole directory causes the JVM to crash on startup.
 func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string) {
 	t.Helper()
 
@@ -379,7 +382,7 @@ func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string)
 	cmd := exec.Command("docker", "run", "-d",
 		"--name", containerName,
 		"--add-host", "host.docker.internal:host-gateway",
-		"-v", fmt.Sprintf("%s:/opt/dremio/conf", configDir),
+		"-v", fmt.Sprintf("%s/dremio.conf:/opt/dremio/conf/dremio.conf:ro", configDir),
 		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
 		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
 		"-e", "AWS_REGION=us-west-2",
@@ -388,6 +391,17 @@ func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to start Dremio container: %v\n%s", err, string(output))
 	}
+}
+
+// dremioContainerLogs returns up to ~200 tail lines from the Dremio container,
+// useful for diagnosing startup crashes.
+func dremioContainerLogs(containerName string) string {
+	cmd := exec.Command("docker", "logs", "--tail", "200", containerName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("(failed to fetch docker logs: %v)\n%s", err, string(output))
+	}
+	return string(output)
 }
 
 // waitForDremio waits for Dremio container to be ready by polling its health endpoint.
@@ -421,7 +435,8 @@ func waitForDremio(t *testing.T, containerName string, timeout time.Duration) {
 		return
 	}
 
-	t.Fatalf("Timed out waiting for Dremio to be ready\nLast output:\n%s", string(lastOutput))
+	t.Fatalf("Timed out waiting for Dremio to be ready\nLast output:\n%s\nContainer logs:\n%s",
+		string(lastOutput), dremioContainerLogs(containerName))
 }
 
 // runDremioSQL executes a SQL statement in Dremio and returns the raw output.
