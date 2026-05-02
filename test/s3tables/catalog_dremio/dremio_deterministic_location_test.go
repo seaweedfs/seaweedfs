@@ -12,6 +12,7 @@ func TestDeterministicTableLocation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	requireDremioCatalogConfigured(t)
 
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)
@@ -82,6 +83,7 @@ func TestMultiLevelNamespace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	requireDremioCatalogConfigured(t)
 
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)

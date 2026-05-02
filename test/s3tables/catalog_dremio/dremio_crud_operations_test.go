@@ -14,6 +14,7 @@ func setupDremioTest(t *testing.T) *TestEnvironment {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	requireDremioCatalogConfigured(t)
 
 	env := NewTestEnvironment(t)
 
