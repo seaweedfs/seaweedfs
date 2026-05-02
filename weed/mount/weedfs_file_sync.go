@@ -65,9 +65,12 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		return fuse.OK
 	}
 
-	// When a closing lock owner is present, flush synchronously before waking any
-	// blocked POSIX lock waiters so write-serialized callers cannot overtake each other.
-	allowAsync := in.LockOwner == 0
+	// FlushIn.LockOwner is populated by some FUSE kernels even when the process
+	// did not hold byte-range locks. Only force the synchronous close path when
+	// this owner actually has POSIX locks to release; otherwise writebackCache
+	// would silently degrade to a blocking flush for ordinary close().
+	hasPosixLocks := wfs.posixLocks.HasPosixOwner(in.NodeId, in.LockOwner)
+	allowAsync := !hasPosixLocks
 	status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync)
 	if in.LockOwner != 0 {
 		wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
