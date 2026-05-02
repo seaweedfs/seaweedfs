@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// TestDeterministicTableLocation tests that explicit table locations are preserved.
 func TestDeterministicTableLocation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -64,6 +65,7 @@ func TestDeterministicTableLocation(t *testing.T) {
 	t.Logf(">>> TestDeterministicTableLocation PASSED")
 }
 
+// TestMultiLevelNamespace tests multi-level namespace (dot-separated) support.
 func TestMultiLevelNamespace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")

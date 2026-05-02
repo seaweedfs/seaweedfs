@@ -39,6 +39,7 @@ type TestEnvironment struct {
 	secretKey       string
 }
 
+// TestDremioIcebergCatalog tests basic Dremio catalog connectivity and schema operations.
 func TestDremioIcebergCatalog(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -77,6 +78,7 @@ func TestDremioIcebergCatalog(t *testing.T) {
 	runDremioSQL(t, env.dremioContainer, fmt.Sprintf("SHOW TABLES IN %s", schemaName))
 }
 
+// TestDremioTableOperations tests table creation, insertion, and querying with Dremio.
 func TestDremioTableOperations(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -129,6 +131,7 @@ func TestDremioTableOperations(t *testing.T) {
 	t.Logf(">>> TestDremioTableOperations PASSED")
 }
 
+// NewTestEnvironment creates a new test environment with allocated ports and configuration.
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	t.Helper()
 
@@ -190,6 +193,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	return env
 }
 
+// StartSeaweedFS starts a SeaweedFS mini instance with all necessary services.
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
 
@@ -251,6 +255,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	}
 }
 
+// Cleanup stops all processes and removes temporary resources.
 func (env *TestEnvironment) Cleanup(t *testing.T) {
 	t.Helper()
 
@@ -272,6 +277,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 	}
 }
 
+// waitForService polls a URL until it responds with a success status or timeout is reached.
 func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
@@ -294,6 +300,7 @@ func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bo
 	return false
 }
 
+// testIcebergRestAPI verifies that the Iceberg REST API endpoint is responding.
 func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	t.Helper()
 	fmt.Printf(">>> Testing Iceberg REST API directly...\n")
@@ -324,6 +331,7 @@ func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	}
 }
 
+// writeDremioConfig creates a Dremio configuration file with Iceberg catalog settings.
 func (env *TestEnvironment) writeDremioConfig(t *testing.T, warehouseBucket string) string {
 	t.Helper()
 
@@ -358,6 +366,7 @@ func (env *TestEnvironment) writeDremioConfig(t *testing.T, warehouseBucket stri
 	return configDir
 }
 
+// startDremioContainer starts a Dremio Docker container with the given configuration.
 func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string) {
 	t.Helper()
 
@@ -379,6 +388,7 @@ func (env *TestEnvironment) startDremioContainer(t *testing.T, configDir string)
 	}
 }
 
+// waitForDremio waits for Dremio container to be ready by polling its health endpoint.
 func waitForDremio(t *testing.T, containerName string, timeout time.Duration) {
 	t.Helper()
 
@@ -412,6 +422,7 @@ func waitForDremio(t *testing.T, containerName string, timeout time.Duration) {
 	t.Fatalf("Timed out waiting for Dremio to be ready\nLast output:\n%s", string(lastOutput))
 }
 
+// runDremioSQL executes a SQL statement in Dremio and returns the output.
 func runDremioSQL(t *testing.T, containerName, sql string) string {
 	t.Helper()
 
@@ -429,6 +440,7 @@ func runDremioSQL(t *testing.T, containerName, sql string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// createTableBucket creates an S3 table bucket using weed shell command.
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
@@ -447,11 +459,13 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Logf("Created table bucket: %s", bucketName)
 }
 
+// hasDocker checks if Docker is available in the system.
 func hasDocker() bool {
 	cmd := exec.Command("docker", "version")
 	return cmd.Run() == nil
 }
 
+// randomString generates a random string of the specified length.
 func randomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, length)

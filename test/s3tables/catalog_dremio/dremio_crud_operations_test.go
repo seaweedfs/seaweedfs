@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// setupDremioTest creates a test environment with SeaweedFS and Dremio running.
 func setupDremioTest(t *testing.T) *TestEnvironment {
 	t.Helper()
 
@@ -34,6 +35,7 @@ func setupDremioTest(t *testing.T) *TestEnvironment {
 	return env
 }
 
+// TestSchemaCRUD tests schema creation, listing, and deletion operations.
 func TestSchemaCRUD(t *testing.T) {
 	env := setupDremioTest(t)
 	defer env.Cleanup(t)
@@ -62,6 +64,7 @@ func TestSchemaCRUD(t *testing.T) {
 	t.Logf(">>> TestSchemaCRUD PASSED")
 }
 
+// TestTableCRUD tests table creation, insertion, listing, and deletion operations.
 func TestTableCRUD(t *testing.T) {
 	env := setupDremioTest(t)
 	defer env.Cleanup(t)
@@ -100,6 +103,7 @@ func TestTableCRUD(t *testing.T) {
 	t.Logf(">>> TestTableCRUD PASSED")
 }
 
+// TestDataInsertAndQuery tests data insertion and querying with various SQL operations.
 func TestDataInsertAndQuery(t *testing.T) {
 	env := setupDremioTest(t)
 	defer env.Cleanup(t)
