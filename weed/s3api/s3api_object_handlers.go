@@ -3111,9 +3111,13 @@ func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId
 }
 
 // cachedEntryHasLocalData reports whether a CacheRemoteObjectToLocalCluster
-// response carries data the caller can read locally. The filer's caching path
-// normally writes chunks, but small objects already cached via other code paths
-// can be returned with only inline Content; both shapes are valid hits.
+// response carries data the *copy* path can read locally. The filer's caching
+// path normally writes chunks, but small objects could surface as inline
+// Content via other code paths and the copy code's inline branch handles
+// content-only entries correctly, so both shapes are valid hits *for copy*.
+//
+// The streaming path uses a stricter chunks-only check at the call site,
+// since its downstream is not wired for inline-content cache results.
 func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
 }
@@ -3122,6 +3126,11 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 // This is called from streamFromVolumeServers when the initial caching attempt timed out or failed.
 // Uses the request context (no artificial timeout) to allow the caching to complete.
 // For versioned objects, versionId determines the correct path in .versions/ directory.
+//
+// Returns the cached entry only when it has chunks. The streaming caller is not
+// wired to read from inline Content here, so accepting content-only entries
+// would just trigger the same 503 retry path (and worse, on a code path the
+// caller doesn't expect).
 func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
 	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
@@ -3133,8 +3142,8 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 		return nil
 	}
 
-	if cachedEntryHasLocalData(cachedEntry) {
-		glog.V(1).Infof("cacheRemoteObjectForStreaming: successfully cached %s/%s (chunks=%d, inline=%d)", dir, name, len(cachedEntry.GetChunks()), len(cachedEntry.Content))
+	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+		glog.V(1).Infof("cacheRemoteObjectForStreaming: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
 		return cachedEntry
 	}
 
