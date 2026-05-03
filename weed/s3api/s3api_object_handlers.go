@@ -993,8 +993,13 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		// This handles the case where initial caching attempt timed out or failed
 		if entry.IsInRemoteOnly() {
 			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting to cache before streaming")
-			// Try to cache the remote object synchronously (like filer does)
-			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, versionId)
+			// Try to cache the remote object synchronously (like filer does).
+			// Use the resolved entry's version id when the request didn't carry
+			// one: a GET of the *latest* object in a versioning-enabled bucket
+			// arrives with versionId="" but the entry lives at .versions/v_<id>,
+			// and caching the wrong path would just keep returning 503 forever.
+			cacheVersionId := resolvedSourceVersionId(versionId, entry)
+			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, cacheVersionId)
 			if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
@@ -3118,6 +3123,11 @@ func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId
 //
 // The streaming path uses a stricter chunks-only check at the call site,
 // since its downstream is not wired for inline-content cache results.
+//
+// Zero-byte remote objects are handled upstream of this predicate:
+// IsInRemoteOnly returns false when RemoteEntry.RemoteSize == 0, so the
+// cache helper is never called for them. The pre-existing CopyObject inline
+// branch then writes a correct empty destination directly from the source.
 func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
 }

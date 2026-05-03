@@ -461,6 +461,27 @@ func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 			expectInlineBranchHit:  false,
 			expectBrokenWithoutFix: false,
 		},
+		{
+			// Documents that the fix does NOT engage on zero-byte remote
+			// objects (RemoteSize == 0): IsInRemoteOnly returns false, so
+			// CopyObject's existing inline branch writes a correct empty
+			// destination without going through cacheRemoteObjectForCopy
+			// (would otherwise cause spurious 503s on legitimate empty
+			// objects, per #9305 review feedback).
+			name: "zero-byte remote object - fix does not engage, inline branch handles it",
+			entry: &filer_pb.Entry{
+				Name: "empty-on-remote.txt",
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: 0,
+				},
+				RemoteEntry: &filer_pb.RemoteEntry{
+					RemoteSize: 0,
+				},
+			},
+			expectRemoteOnly:       false,
+			expectInlineBranchHit:  true,
+			expectBrokenWithoutFix: false,
+		},
 	}
 
 	for _, tt := range tests {
