@@ -58,6 +58,7 @@ Rule: recovery progress is not a substitute for synchronous ACK eligibility.
 | `8362d42` | subprocess L2 strict ACK oracle: real blockmaster + 2x blockvolume + iSCSI, `--replication-ack=sync-quorum`, secondary down => foreground WRITE returns non-GOOD. |
 | `154bd96` | subprocess L2 best-effort oracle: same RF=2 daemon/iSCSI shape, secondary down => foreground WRITE still returns GOOD. |
 | `da8a321` | authority reintegration oracle: returned/high-evidence replica with `ReadyForPrimary=false` is skipped as failover target until a progress-ready fact exists. |
+| `6d4a0e7` | `/status` maps engine `ModeRecovering` to `ReplicationRole=recovering`, distinct from `not_ready` and `replica_ready` (not yet emitted). |
 
 ### 3.2 Next red tests
 
