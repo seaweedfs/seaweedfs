@@ -1,7 +1,7 @@
 # V3 Phase 15 G15d Mini-Plan — BlockVolume Launcher MVP
 
 Date: 2026-05-03
-Status: pure planner + pure K8s renderer slices landed on `p15-g15d/blockvolume-launcher`
+Status: pure planner + pure K8s renderer + cluster-spec node inventory slices landed on `p15-g15d/blockvolume-launcher`
 Depends on: G15c `CreateVolume -> lifecycle desired intent`
 
 ## 0. Product Sentence
@@ -46,6 +46,7 @@ OUT:
 Commits:
 - `56a1047 G15d: add blockvolume workload planner`
 - `f4d695f G15d: render blockvolume Kubernetes workloads`
+- `ae2cd1a G15d: import cluster spec node inventory`
 
 Implemented:
 - `core/lifecycle.BlockVolumeWorkloadPlan`
@@ -57,12 +58,14 @@ Implemented:
 - workload plan structs are not authority-shaped
 - pure K8s Deployment renderer for blockvolume workloads
 - renderer output pins hostNetwork DNS policy, deterministic names, args, ports, and no authority-shaped words
+- `--cluster-spec` can now carry node/pool inventory and blockmaster imports it into lifecycle node registration before the product loop runs
 
 Verification:
 
 ```powershell
 go test ./core/lifecycle -count=1
 go test ./core/lifecycle ./core/launcher -count=1
+go test ./cmd/blockmaster ./core/lifecycle ./core/host/master ./core/launcher -count=1
 ```
 
 ## 4. Next Slices
@@ -76,6 +79,7 @@ G15d-C — Apply loop:
 - Add a narrow launcher runner that applies generated workload specs.
 - First implementation may shell `kubectl apply -f` or write manifests for QA to apply.
 - It must be idempotent.
+- Before production apply, review accepted-topology / authority support for dynamically-created volumes. Current authority still treats accepted topology as startup config, so dynamic PVC may need a product-loop bridge to append a verified volume topology before assignment can mint.
 
 G15d-D — M02 dynamic PVC:
 - `StorageClass` + PVC without hand-written PV.
