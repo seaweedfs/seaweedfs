@@ -1,7 +1,7 @@
 # V3 Phase 15 — G15b Kubernetes Static PV Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; image build inputs added at `5375add`; Kubernetes run pending
+**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; image build inputs added at `5375add`; M02 first run found DNS/harness blockers; fixed at `eb13105`; Kubernetes re-run pending
 **Branch**: `p15-g15b/k8s-static-pv` from `ac49adb`
 **Goal**: prove a Kubernetes pod can consume a pre-provisioned V3 block volume through `cmd/blockcsi`, using real Kubernetes CSI control flow and real Linux iSCSI staging.
 
@@ -162,7 +162,7 @@ Result: PASS on `62325c9`.
 
 ### G15b-2 — K8s Lab Harness
 
-Status: **harness staged** at `seaweed_block@32b3a13`; image build inputs added at `seaweed_block@5375add`; real Kubernetes execution pending.
+Status: **harness staged** at `seaweed_block@32b3a13`; image build inputs added at `seaweed_block@5375add`; DNS/logging fixes at `seaweed_block@eb13105`; real Kubernetes re-run pending.
 
 Artifacts:
 
@@ -187,6 +187,19 @@ First topology:
 - iSCSI remains `127.0.0.1:3260`;
 - this intentionally preserves the G15a loopback-only frontend guard.
 
+M02 first-run findings:
+
+- `blockvolume` pods use `hostNetwork: true`.
+- Without `dnsPolicy: ClusterFirstWithHostNet`, they inherited host DNS and could not resolve `blockmaster.kube-system.svc.cluster.local`.
+- Result: no heartbeat, no frontend fact, `ControllerPublish` returned NotFound, and the pod stayed Pending.
+- The harness also collected daemon logs only after success, so failure-path evidence was lost unless captured manually.
+
+Fix at `eb13105`:
+
+- adds `dnsPolicy: ClusterFirstWithHostNet` to both `sw-blockvolume-r1` and `sw-blockvolume-r2`;
+- changes `scripts/run-g15b-k8s-static.sh` so daemon logs are collected from the EXIT trap before cleanup;
+- adds `.gitattributes` to keep `*.sh` as LF on future checkouts.
+
 Harness responsibilities:
 
 1. Build V3 binaries/images for `blockmaster`, `blockvolume`, and `blockcsi`.
@@ -205,7 +218,7 @@ Pass:
 - Pod writes and reads byte-equal data.
 - No dangling iSCSI session for the test IQN after cleanup.
 
-Pre-flight verification already green at `32b3a13`:
+Pre-flight verification green at `eb13105`:
 
 ```powershell
 go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
@@ -223,7 +236,7 @@ Result: PASS; built `sw-block:local` and `sw-block-csi:local`.
 Not yet proven:
 
 - Kubernetes API server availability;
-- image load path into the target cluster;
+- image load path into the target cluster after rebuilding at `eb13105`;
 - external-attacher calling `ControllerPublish`;
 - kubelet calling `NodeStage` / `NodePublish`;
 - pod checksum write/read.

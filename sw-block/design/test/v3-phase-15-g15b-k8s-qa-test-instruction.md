@@ -1,14 +1,14 @@
 # V3 Phase 15 G15b Kubernetes Static PV QA Test Instruction
 
 **Date**: 2026-05-03
-**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@5375add`; execution pending
+**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@eb13105`; M02 re-run pending
 **Scope**: single-node Kubernetes static PV/PVC/pod smoke through real V3 daemons and CSI.
 
 ---
 
 ## Headline
 
-At `seaweed_block@5375add`, the G15b lab harness and image build inputs are staged to prove:
+At `seaweed_block@eb13105`, the G15b lab harness, image build inputs, and M02 DNS/log-preservation fixes are staged to prove:
 
 ```text
 blockmaster + product-loop + r1/r2 blockvolume
@@ -39,6 +39,12 @@ Known current local limitation:
 
 - On the current dev workstation, `kubectl` context `rancher-desktop` exists but API server is not reachable. This instruction needs QA or a running K8s lab.
 
+M02 first-run blocker fixed:
+
+- `5375add` failed because `hostNetwork: true` blockvolume pods inherited host DNS and could not resolve `blockmaster.kube-system.svc.cluster.local`.
+- `eb13105` adds `dnsPolicy: ClusterFirstWithHostNet` to both blockvolume pods.
+- `eb13105` also collects daemon logs on every exit before cleanup, so failure evidence is preserved.
+
 ---
 
 ## Commands
@@ -65,6 +71,12 @@ G15B_KIND_CLUSTER=<kind-cluster-name> bash scripts/build-g15b-images.sh "$PWD"
 ```
 
 Local image build result already verified at `5375add`: PASS, images `sw-block:local` and `sw-block-csi:local` built.
+
+After pulling `eb13105`, rebuild images before rerun:
+
+```bash
+bash scripts/build-g15b-images.sh "$PWD"
+```
 
 Kubernetes lab run from Linux or WSL with `kubectl` configured:
 
