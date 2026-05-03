@@ -214,7 +214,8 @@ Example Usage:
 	weed mini                   # Use current directory
 	weed mini -dir=/data        # Custom data directory
 	weed mini -dir=/data -master.port=9444  # Custom master port
-	weed mini -dir=/data -bucket=my-bucket  # Pre-create an S3 bucket on startup
+	weed mini -dir=/data -bucket=my-bucket          # Pre-create an S3 bucket on startup
+	weed mini -dir=/data -bucket=bucket1,bucket2    # Pre-create multiple S3 buckets
 
 After starting, you can access:
 - Master UI:       http://localhost:9333
@@ -247,7 +248,7 @@ var (
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
-	miniBucket                      = cmdMini.Flag.String("bucket", "", "create this S3 bucket on startup if it does not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
+	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -1024,13 +1025,13 @@ func runMini(cmd *Command, args []string) bool {
 		triggerMiniClientsShutdown(10 * time.Second)
 	})
 
-	// Create the requested bucket (if any) before announcing readiness.
-	bucketName := *miniBucket
-	if bucketName == "" {
-		bucketName = os.Getenv("S3_BUCKET")
+	// Create the requested bucket(s) (if any) before announcing readiness.
+	bucketSpec := *miniBucket
+	if bucketSpec == "" {
+		bucketSpec = os.Getenv("S3_BUCKET")
 	}
-	if err := ensureMiniBucket(bucketName); err != nil {
-		glog.Warningf("failed to create bucket %q: %v", bucketName, err)
+	if err := ensureMiniBuckets(bucketSpec); err != nil {
+		glog.Warningf("failed to ensure buckets %q: %v", bucketSpec, err)
 	}
 
 	// Print welcome message after all services are running
@@ -1498,15 +1499,15 @@ func printWelcomeMessage() {
 	fmt.Println("")
 }
 
-// ensureMiniBucket creates the named bucket on the embedded filer if it does
-// not already exist. Empty bucketName is a no-op so users who do not pass
-// -bucket pay nothing.
-func ensureMiniBucket(bucketName string) error {
-	if bucketName == "" {
+// ensureMiniBuckets creates each named bucket on the embedded filer if it does
+// not already exist. bucketSpec is a comma-separated list (whitespace around
+// each name is trimmed); empty entries and an empty spec are no-ops so callers
+// who do not pass -bucket pay nothing. Per-bucket failures are logged and the
+// loop continues so a single bad name does not block creating the rest.
+func ensureMiniBuckets(bucketSpec string) error {
+	names := parseBucketList(bucketSpec)
+	if len(names) == 0 {
 		return nil
-	}
-	if err := s3bucket.VerifyS3BucketName(bucketName); err != nil {
-		return fmt.Errorf("invalid bucket name %q: %w", bucketName, err)
 	}
 
 	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
@@ -1514,26 +1515,56 @@ func ensureMiniBucket(bucketName string) error {
 
 	const bucketsPath = "/buckets"
 	// Derive from miniClientsCtx so Ctrl+C cancels the bucket RPCs, and bound
-	// with a short timeout so a stalled filer cannot block the welcome message
-	// indefinitely.
-	ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
-	defer cancel()
+	// with a short timeout (per bucket) so a stalled filer cannot block the
+	// welcome message indefinitely.
 	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: bucketsPath,
-			Name:      bucketName,
-		})
-		if err == nil {
-			glog.V(0).Infof("bucket %s already exists", bucketName)
-			return nil
+		for _, name := range names {
+			if err := s3bucket.VerifyS3BucketName(name); err != nil {
+				glog.Warningf("invalid bucket name %q: %v", name, err)
+				continue
+			}
+			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+			_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: bucketsPath,
+				Name:      name,
+			})
+			if err == nil {
+				glog.V(0).Infof("bucket %s already exists", name)
+				cancel()
+				continue
+			}
+			if err != filer_pb.ErrNotFound {
+				glog.Warningf("lookup bucket %s: %v", name, err)
+				cancel()
+				continue
+			}
+			if err := filer_pb.DoMkdir(ctx, client, bucketsPath, name, nil); err != nil {
+				glog.Warningf("create bucket %s: %v", name, err)
+				cancel()
+				continue
+			}
+			cancel()
+			glog.V(0).Infof("created bucket %s", name)
 		}
-		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("lookup bucket %s: %w", bucketName, err)
-		}
-		if err := filer_pb.DoMkdir(ctx, client, bucketsPath, bucketName, nil); err != nil {
-			return fmt.Errorf("create bucket %s: %w", bucketName, err)
-		}
-		glog.V(0).Infof("created bucket %s", bucketName)
 		return nil
 	})
+}
+
+// parseBucketList splits a comma-separated bucket spec into a deduplicated list
+// of trimmed, non-empty names, preserving the order they were given.
+func parseBucketList(spec string) []string {
+	if spec == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var names []string
+	for _, raw := range strings.Split(spec, ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
 }
