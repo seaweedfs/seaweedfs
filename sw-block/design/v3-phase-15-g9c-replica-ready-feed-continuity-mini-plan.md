@@ -1,7 +1,7 @@
 # V3 Phase 15 G9C — ReplicaReady Feed Continuity / Post-Close ACK Mini-Plan
 
 **Date**: 2026-05-02
-**Status**: B-slice landed (`ca5d4f6`)
+**Status**: C-slice landed (`b90798d`)
 **Code branch**: `p15-g9c/replica-ready-feed-continuity`
 **Predecessors**: G9B replica join lifecycle close
 
@@ -110,10 +110,32 @@ Both passed on `p15-g9c/replica-ready-feed-continuity`.
 
 ---
 
-## 7. Next Slice
+## 7. C-Slice Evidence
 
-G9C-C should move from transport signal shape to host/daemon lifecycle evidence:
+Code: `seaweed_block@b90798d` — `G9C: pin replica ready after post-close ack in dual-lane component path`
 
-1. Add one L2 or subprocess test where a recovered replica remains `recovering` immediately after close, then becomes `ready` only after the real progress callback.
-2. Prove the status endpoint reflects the same transition.
+What landed:
+
+1. Added `TestG9C_DualLaneRecoveredReplica_PublishesHealthyOnlyAfterPostCloseDurableAck`.
+2. The test runs the real component path: engine -> adapter -> dual-lane `BlockExecutor` -> receiver -> close callback -> durable ack callback -> engine.
+3. It pins the order: `SessionClosedCompleted` -> `publish_healthy_held` -> `DurableAckObserved` -> `post_close_durable_ack` -> `PublishHealthy`.
+4. Final projection must be `ModeHealthy`, proving `replica_ready` comes only after the post-close durable ack.
+
+Verification:
+
+```powershell
+go test ./core/replication/component -count=1
+go test ./core/authority ./core/recovery/... ./core/transport/... ./core/engine ./core/adapter ./core/host/volume ./core/replication/component -count=1
+```
+
+Both passed on `p15-g9c/replica-ready-feed-continuity`.
+
+---
+
+## 8. Next Slice
+
+G9C-D should move from component lifecycle evidence to host/daemon status evidence:
+
+1. Prove the status endpoint reflects the same recovered-replica transition.
+2. Prefer a narrow subprocess/L2 test if the harness can observe the intermediate `recovering` state without adding test-only production hooks.
 3. Keep placement and ACK voter eligibility out of this slice unless explicitly ratified.
