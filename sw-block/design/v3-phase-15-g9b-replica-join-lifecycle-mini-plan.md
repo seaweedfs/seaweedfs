@@ -82,7 +82,8 @@ Those remain P15-P4/P15-P5+ work. G9B only makes the lifecycle/join protocol hon
 | Commit | Meaning |
 |---|---|
 | `1faeda4` | G9B-A: observation/local-role cannot mint authority; genesis placement emits `AssignmentAsk`; publisher `IntentBind` mints the first authority line; `/status` does not report frontend ready before assignment. |
-| pending | G9B-B: returned/registered replica status lifecycle maps candidate -> `not_ready`, engine recovery -> `recovering`, completed same-lineage healthy support role -> `replica_ready`. |
+| `759dd0d` | G9B-B: `/status` vocabulary maps returned/registered replica candidate -> `not_ready`, engine recovery -> `recovering`, completed same-lineage healthy support role -> `replica_ready`; supporting `replica_ready` does not become frontend primary. |
+| `44aaae1` | G9B-B component proof: drives the same `not_ready -> recovering -> replica_ready` lifecycle through real `adapter.VolumeReplicaAdapter` events (`OnAssignment`, `OnProbeResult`, session close), not manual projection mutation. |
 
 ---
 
@@ -168,6 +169,8 @@ registered returned replica, current authority line names another replica
 
 This is intentionally status-only. It does not yet make `replica_ready` drive placement or ACK eligibility.
 
+`44aaae1` adds the adapter-backed component variant: a returned registered replica consumes an assignment, dispatches probe, starts catch-up from progress facts, and only publishes `replica_ready` after the session close evidence reaches the adapter/engine. The test keeps the current frontend authority on a different replica, so `replica_ready` is explicitly a supporting-replica state, not a frontend primary claim.
+
 ### G9B-C — L2 subprocess lifecycle smoke
 
 Shape:
@@ -214,6 +217,6 @@ G9B will not claim:
 1. user-facing volume create/delete API;
 2. k8s CSI lifecycle;
 3. automatic placement across racks/AZs;
-4. returned replica fully reintegrated unless G9B-B lands;
+4. returned replica driving placement or ACK eligibility from `replica_ready` status;
 5. transparent OS initiator failover;
 6. flow-control enforcement.
