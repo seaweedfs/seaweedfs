@@ -13,7 +13,16 @@ This directory contains a Dremio integration smoke test for SeaweedFS's Iceberg 
 5. Bootstraps a Dremio admin user and logs in.
 6. Creates a Dremio `RESTCATALOG` source that points at the SeaweedFS catalog.
 7. Submits Dremio SQL through `/api/v3/sql`, polls the job API, and reads job results.
-8. Queries the SeaweedFS-backed Iceberg table from Dremio.
+8. Runs subtests against the SeaweedFS-backed Iceberg table:
+   - `BasicSelect`: Dremio is alive and answering SQL.
+   - `CountEmptyTable`: catalog-to-table resolution and a scan of an empty table.
+   - `ColumnProjection`: `SELECT id, label` succeeds and the response schema reports both columns. Failure here means Dremio could not parse the schema returned by the SeaweedFS catalog.
+   - `InformationSchemaColumns`: the table's columns are exposed through Dremio's metadata layer with the expected ordinal order.
+   - `InformationSchemaTables`: the table is registered in Dremio's `INFORMATION_SCHEMA`.
+   - `MultiLevelNamespace`: a 2-level Iceberg namespace (created via the REST API) is exposed by Dremio as nested folders, and a table inside it is queryable with dot-separated identifiers.
+   - `ReadWrittenDataCount` and `ReadWrittenDataValues`: a separate table is populated with three rows by a PyIceberg writer container (`Dockerfile.writer` + `append_rows.py`) before Dremio bootstraps; Dremio reads the data back and the values are verified. This exercises the actual data path, not just metadata.
+
+The PyIceberg writer image is built on demand via Docker layer caching. The first build pulls `python:3.11-slim` and pip-installs PyIceberg + PyArrow (~1-2 min in CI); subsequent invocations are cheap.
 
 ## Running Locally
 
