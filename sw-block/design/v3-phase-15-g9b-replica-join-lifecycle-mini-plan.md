@@ -84,6 +84,7 @@ Those remain P15-P4/P15-P5+ work. G9B only makes the lifecycle/join protocol hon
 | `1faeda4` | G9B-A: observation/local-role cannot mint authority; genesis placement emits `AssignmentAsk`; publisher `IntentBind` mints the first authority line; `/status` does not report frontend ready before assignment. |
 | `759dd0d` | G9B-B: `/status` vocabulary maps returned/registered replica candidate -> `not_ready`, engine recovery -> `recovering`, completed same-lineage healthy support role -> `replica_ready`; supporting `replica_ready` does not become frontend primary. |
 | `44aaae1` | G9B-B component proof: drives the same `not_ready -> recovering -> replica_ready` lifecycle through real `adapter.VolumeReplicaAdapter` events (`OnAssignment`, `OnProbeResult`, session close), not manual projection mutation. |
+| `8db289b` | G9B-C L2 subprocess smoke: real `cmd/blockmaster` + two `cmd/blockvolume` processes prove r1 observation alone is not frontend-ready; after r2 joins and publisher assignment lands, r1 becomes frontend-ready and real iSCSI WRITE/READ is byte-equal. |
 
 ---
 
@@ -184,6 +185,8 @@ blockmaster + blockvolume r1
 
 This is a smoke, not a full CSI lifecycle claim.
 
+`8db289b` lands this exact smoke at `cmd/blockvolume` scope. The test intentionally withholds r2 at first under an RF=2 topology, so r1 can expose `/status` but must remain non-Healthy. Starting r2 lets the existing master topology/publisher path mint and deliver the assignment; only then does the iSCSI data path run.
+
 ---
 
 ## 6. Stop Rules
@@ -205,8 +208,9 @@ G9B can close when:
 
 1. G9B-A tests pass and pin genesis authority flow.
 2. G9B-B tests pass or any remaining `replica_ready` publication is explicitly forward-carried with no overclaim.
-3. Existing G7/G8/G9A scoped tests still pass.
-4. Mini-plan records exact commits and non-claims.
+3. G9B-C L2 smoke passes with real product subprocesses and iSCSI byte-equal oracle.
+4. Existing G7/G8/G9A scoped tests still pass.
+5. Mini-plan records exact commits and non-claims.
 
 ---
 
