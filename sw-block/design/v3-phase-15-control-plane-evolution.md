@@ -214,3 +214,26 @@ Before any master/control-plane change lands, check:
 
 Any "yes" is a design stop unless explicitly ratified as a new product contract.
 
+### 7.1 Structural Guard Pattern
+
+For each new control-plane fact layer, add a negative-shape test that mechanically prevents the layer from growing authority or readiness fields before that boundary is ratified.
+
+Example forbidden field set for pre-authority layers:
+
+```text
+Epoch
+EndpointVersion
+Assignment
+Ready
+Healthy
+Primary
+```
+
+Known applications:
+
+- G7: completion cannot be inferred from target/band facts alone.
+- G8: authority movement alone cannot close data-continuity claims.
+- G9D-D: `ReconcileResult` must not carry authority/readiness fields.
+- G9D-E: lifecycle read-only snapshots must not carry authority/readiness fields.
+
+This is the compile-time-ish version of the checklist above. If a planner/status/reconciler type needs one of those fields, stop and require a new mini-plan plus architect ratification before wiring it onward.
