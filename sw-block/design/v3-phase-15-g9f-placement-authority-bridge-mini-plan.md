@@ -1,9 +1,15 @@
 # V3 Phase 15 G9F - Placement Intent to Authority Bridge Mini-Plan
 
 Date: 2026-05-02
-Status: architect draft; code must not start until §1.A is accepted
+Status: §1.A architect-ratified 2026-05-02 for verify-only first slice; implemented and merged at `phase-15@eeef486`
 Branch target: `p15-g9d/volume-lifecycle-intent` or successor branch off `phase-15`
 Scope: first bridge from placement intent facts toward authority publication
+
+§1.A architect-ratified: 2026-05-02. Binding applies only to the verify-only first slice:
+`PlacementIntent + fresh Observation -> VerifiedPlacement`, with no publisher wiring and no
+authority minting. Any follow-up that turns `VerifiedPlacement` into an authority request,
+assignment ask, publisher apply, epoch, or endpoint-version change requires a separate G9F-2
+mini-plan and ratification.
 
 ## 0. Why this needs a mini-plan
 
@@ -168,4 +174,3 @@ Only after the verify-only bridge is green:
 1. decide whether verified placement becomes input to existing `TopologyController`, a new placement controller, or a publisher directive adapter;
 2. write a separate mini-plan for the authority-minting slice;
 3. add a negative test that observation-only and placement-only each fail, while placement+fresh-observation can request authority.
-
