@@ -1,7 +1,7 @@
 # V3 Phase 15 G9G-3 - Cluster Spec YAML Facade Mini-Plan
 
 Date: 2026-05-03
-Status: implemented at `seaweed_block@4fc0842`; QA verification pending
+Status: CLOSED; merged to `phase-15@2d13b02` after QA verification on `seaweed_block@4fc0842`
 Branch target: `p15-g9g3/cluster-spec-yaml`
 Scope: declarative bootstrap YAML that feeds existing lifecycle/product-loop stores
 
@@ -69,6 +69,7 @@ placements:
 ## 6. Implementation Snapshot
 
 Close candidate: `seaweed_block@4fc0842`.
+Merged target: `phase-15@2d13b02`.
 
 Implemented:
 
@@ -83,6 +84,8 @@ QA commands:
 go test ./cmd/blockvolume -run TestG9G_L2ProductLoopPublishesAssignmentToBlockvolume -count=1
 go test ./core/lifecycle ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
+
+QA signed: 2026-05-03.
 
 ## 5. Non-Claims
 

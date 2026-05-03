@@ -1,7 +1,7 @@
 # V3 Phase 15 G9G - Blockmaster Product Loop To Publisher Mini-Plan
 
 Date: 2026-05-03
-Status: close-ready on `p15-g9g/blockmaster-product-loop@7ed9ab2`; QA verification pending
+Status: CLOSED; G9G merged to `phase-15@2b90018`, G9G-3 usability follow-up merged to `phase-15@2d13b02`
 Branch target: `p15-g9g/blockmaster-product-loop`
 Scope: first live blockmaster loop that turns verified placement into publisher input
 
@@ -122,7 +122,7 @@ Only after that should we wire external API/CLI verbs or CSI create/publish.
 
 ## 7. Close Snapshot
 
-Close target: `seaweed_block@7ed9ab2`.
+Close target: `seaweed_block@7ed9ab2`; merged to `phase-15@2b90018`.
 
 G9G closes the first product-loop assignment path:
 
@@ -157,3 +157,5 @@ Close non-claims:
 - Create/delete/attach/detach user verbs are follow-up.
 - Blank-pool replica-id allocation is follow-up.
 - CSI and M01 hardware smoke are follow-up.
+
+Follow-up G9G-3 cluster-spec YAML facade closed at `phase-15@2d13b02`; it replaces the seed-file-only QA path with a declarative `--cluster-spec` bootstrap facade.
