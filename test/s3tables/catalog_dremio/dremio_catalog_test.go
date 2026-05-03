@@ -53,8 +53,18 @@ type TestEnvironment struct {
 }
 
 // TestDremioIcebergCatalog starts Dremio, registers SeaweedFS as an Iceberg
-// REST catalog source, and runs Dremio SQL against a table served by the
-// SeaweedFS catalog.
+// REST catalog source, and runs Dremio SQL against tables served by the
+// SeaweedFS catalog. The table and namespace are seeded via the Iceberg REST
+// API before Dremio bootstraps so they are visible on the source's first scan.
+//
+// Subtests cover:
+//   - BasicSelect: Dremio is alive and answering SQL.
+//   - CountEmptyTable: catalog→table resolution and a scan of an empty table.
+//   - ColumnProjection: the column names from the SeaweedFS-issued schema are
+//     usable in Dremio (failure here means Dremio could not parse the schema).
+//   - InformationSchemaColumns: the table's columns are exposed through
+//     Dremio's metadata layer with the expected name and ordinal positions.
+//   - InformationSchemaTables: the table is registered in Dremio's INFORMATION_SCHEMA.
 func TestDremioIcebergCatalog(t *testing.T) {
 	requireDremioRuntime(t)
 
@@ -83,12 +93,59 @@ func TestDremioIcebergCatalog(t *testing.T) {
 	waitForDremio(t, env.dremioContainer, 180*time.Second)
 	env.bootstrapDremio(t, tableBucket)
 
-	selectOutput := runDremioSQL(t, env, "SELECT 1 AS ok")
-	assertSingleNumericValue(t, selectOutput, 1)
-
 	tableRef := dremioObjectName(dremioSourceName, namespace, tableName)
-	countOutput := runDremioSQL(t, env, fmt.Sprintf("SELECT COUNT(*) AS row_count FROM %s", tableRef))
-	assertSingleNumericValue(t, countOutput, 0)
+
+	t.Run("BasicSelect", func(t *testing.T) {
+		out := runDremioSQL(t, env, "SELECT 1 AS ok")
+		assertSingleNumericValue(t, out, 1)
+	})
+
+	t.Run("CountEmptyTable", func(t *testing.T) {
+		out := runDremioSQL(t, env, fmt.Sprintf("SELECT COUNT(*) AS row_count FROM %s", tableRef))
+		assertSingleNumericValue(t, out, 0)
+	})
+
+	t.Run("ColumnProjection", func(t *testing.T) {
+		// SELECT COUNT(*) does not exercise the schema. A projection by
+		// column name fails fast with "column not found" if the schema
+		// from the SeaweedFS catalog response was not parsed.
+		out := runDremioSQL(t, env, fmt.Sprintf("SELECT id, label FROM %s", tableRef))
+		schema, rows := parseDremioResponseSchemaRows(t, out)
+		if len(rows) != 0 {
+			t.Fatalf("Expected empty result set, got %d rows: %v", len(rows), rows)
+		}
+		assertSchemaContainsAll(t, schema, "id", "label")
+	})
+
+	t.Run("InformationSchemaColumns", func(t *testing.T) {
+		// Filter only by TABLE_NAME (which is randomized and globally unique
+		// in this run) to avoid depending on the exact TABLE_SCHEMA path
+		// Dremio synthesizes for a nested REST-catalog folder.
+		query := fmt.Sprintf(
+			"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION",
+			tableName,
+		)
+		out := runDremioSQL(t, env, query)
+		_, rows := parseDremioResponseSchemaRows(t, out)
+		columnNames := extractColumnNames(t, rows)
+		expected := []string{"id", "label"}
+		if !equalStringSlices(columnNames, expected) {
+			t.Fatalf("INFORMATION_SCHEMA.COLUMNS for table %s = %v, want %v",
+				tableName, columnNames, expected)
+		}
+	})
+
+	t.Run("InformationSchemaTables", func(t *testing.T) {
+		query := fmt.Sprintf(
+			"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.\"TABLES\" WHERE TABLE_NAME = '%s'",
+			tableName,
+		)
+		out := runDremioSQL(t, env, query)
+		_, rows := parseDremioResponseSchemaRows(t, out)
+		if len(rows) == 0 {
+			t.Fatalf("INFORMATION_SCHEMA.TABLES did not list %s; raw response: %s", tableName, out)
+		}
+	})
 }
 
 // NewTestEnvironment creates a new test environment with allocated ports and configuration.
@@ -648,6 +705,17 @@ func (env *TestEnvironment) waitForDremioJob(t *testing.T, jobID, sql string) {
 // parseDremioResponse parses the JSON response from Dremio and extracts rows.
 func parseDremioResponse(t *testing.T, output string) [][]interface{} {
 	t.Helper()
+	_, rows := parseDremioResponseSchemaRows(t, output)
+	return rows
+}
+
+// parseDremioResponseSchemaRows parses Dremio's job-results JSON and returns
+// both the response schema (column names in declaration order) and the rows.
+// Tests that need to assert on column metadata (column projection,
+// INFORMATION_SCHEMA queries) use the schema; tests that only need values use
+// parseDremioResponse.
+func parseDremioResponseSchemaRows(t *testing.T, output string) ([]string, [][]interface{}) {
+	t.Helper()
 
 	var response map[string]interface{}
 	decoder := json.NewDecoder(strings.NewReader(output))
@@ -703,7 +771,59 @@ func parseDremioResponse(t *testing.T, output string) [][]interface{} {
 			result = append(result, values)
 		}
 	}
-	return result
+	return schemaNames, result
+}
+
+// assertSchemaContainsAll fails the test if any expected column name is
+// missing from the response schema. Order is not checked.
+func assertSchemaContainsAll(t *testing.T, schema []string, expected ...string) {
+	t.Helper()
+
+	present := make(map[string]bool, len(schema))
+	for _, name := range schema {
+		present[strings.ToLower(name)] = true
+	}
+	var missing []string
+	for _, name := range expected {
+		if !present[strings.ToLower(name)] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("Dremio response schema %v missing expected columns %v", schema, missing)
+	}
+}
+
+// extractColumnNames pulls the first value of each row as a string. Used to
+// turn a `SELECT some_name FROM ...` result into a flat slice.
+func extractColumnNames(t *testing.T, rows [][]interface{}) []string {
+	t.Helper()
+
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			t.Fatalf("Dremio result row is empty: %v", rows)
+		}
+		switch v := row[0].(type) {
+		case string:
+			names = append(names, v)
+		default:
+			names = append(names, fmt.Sprintf("%v", v))
+		}
+	}
+	return names
+}
+
+func equalStringSlices(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if !strings.EqualFold(got[i], want[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func assertSingleNumericValue(t *testing.T, output string, expected float64) {
