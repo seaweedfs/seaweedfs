@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/bits"
 	"net"
@@ -14,7 +15,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -212,6 +216,9 @@ Example Usage:
 	weed mini                   # Use current directory
 	weed mini -dir=/data        # Custom data directory
 	weed mini -dir=/data -master.port=9444  # Custom master port
+	weed mini -dir=/data -bucket=my-bucket             # Pre-create an S3 bucket on startup
+	weed mini -dir=/data -bucket=bucket1,bucket2       # Pre-create multiple S3 buckets
+	weed mini -dir=/data -tableBucket=iceberg-tables   # Pre-create an S3 Tables bucket
 
 After starting, you can access:
 - Master UI:       http://localhost:9333
@@ -244,6 +251,8 @@ var (
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
+	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -1020,6 +1029,22 @@ func runMini(cmd *Command, args []string) bool {
 		triggerMiniClientsShutdown(10 * time.Second)
 	})
 
+	// Create the requested bucket(s) (if any) before announcing readiness.
+	bucketSpec := *miniBucket
+	if bucketSpec == "" {
+		bucketSpec = os.Getenv("S3_BUCKET")
+	}
+	if err := ensureMiniBuckets(bucketSpec); err != nil {
+		glog.Warningf("failed to ensure buckets %q: %v", bucketSpec, err)
+	}
+	tableBucketSpec := *miniTableBucket
+	if tableBucketSpec == "" {
+		tableBucketSpec = os.Getenv("S3_TABLE_BUCKET")
+	}
+	if err := ensureMiniTableBuckets(tableBucketSpec); err != nil {
+		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
+	}
+
 	// Print welcome message after all services are running
 	printWelcomeMessage()
 
@@ -1483,4 +1508,112 @@ func printWelcomeMessage() {
 
 	fmt.Print(sb.String())
 	fmt.Println("")
+}
+
+// ensureMiniBuckets creates each named bucket on the embedded filer if it does
+// not already exist. bucketSpec is a comma-separated list (whitespace around
+// each name is trimmed); empty entries and an empty spec are no-ops so callers
+// who do not pass -bucket pay nothing. Per-bucket failures are logged and the
+// loop continues so a single bad name does not block creating the rest.
+func ensureMiniBuckets(bucketSpec string) error {
+	names := parseBucketList(bucketSpec)
+	if len(names) == 0 {
+		return nil
+	}
+
+	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	const bucketsPath = "/buckets"
+	// Derive from miniClientsCtx so Ctrl+C cancels the bucket RPCs, and bound
+	// with a short timeout (per bucket) so a stalled filer cannot block the
+	// welcome message indefinitely.
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		for _, name := range names {
+			if err := s3bucket.VerifyS3BucketName(name); err != nil {
+				glog.Warningf("invalid bucket name %q: %v", name, err)
+				continue
+			}
+			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+			_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: bucketsPath,
+				Name:      name,
+			})
+			if err == nil {
+				glog.V(0).Infof("bucket %s already exists", name)
+				cancel()
+				continue
+			}
+			if !errors.Is(err, filer_pb.ErrNotFound) {
+				glog.Warningf("lookup bucket %s: %v", name, err)
+				cancel()
+				continue
+			}
+			if err := filer_pb.DoMkdir(ctx, client, bucketsPath, name, nil); err != nil {
+				glog.Warningf("create bucket %s: %v", name, err)
+				cancel()
+				continue
+			}
+			cancel()
+			glog.V(0).Infof("created bucket %s", name)
+		}
+		return nil
+	})
+}
+
+// ensureMiniTableBuckets creates each named S3 Tables bucket on the embedded
+// filer if it does not already exist. bucketSpec is comma-separated; whitespace
+// is trimmed and duplicates are dropped. Per-bucket failures are logged so one
+// bad name does not block the rest. Buckets are owned by s3tables.DefaultAccountID
+// since mini does not yet model multi-account ownership.
+func ensureMiniTableBuckets(bucketSpec string) error {
+	names := parseBucketList(bucketSpec)
+	if len(names) == 0 {
+		return nil
+	}
+
+	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		manager := s3tables.NewManager()
+		mgrClient := s3tables.NewManagerClient(client)
+		for _, name := range names {
+			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+			req := &s3tables.CreateTableBucketRequest{Name: name}
+			var resp s3tables.CreateTableBucketResponse
+			err := manager.Execute(ctx, mgrClient, "CreateTableBucket", req, &resp, s3tables.DefaultAccountID)
+			cancel()
+			if err == nil {
+				glog.V(0).Infof("created table bucket %s", name)
+				continue
+			}
+			var s3Err *s3tables.S3TablesError
+			if errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeBucketAlreadyExists {
+				glog.V(0).Infof("table bucket %s already exists", name)
+				continue
+			}
+			glog.Warningf("create table bucket %s: %v", name, err)
+		}
+		return nil
+	})
+}
+
+// parseBucketList splits a comma-separated bucket spec into a deduplicated list
+// of trimmed, non-empty names, preserving the order they were given.
+func parseBucketList(spec string) []string {
+	if spec == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var names []string
+	for _, raw := range strings.Split(spec, ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
 }

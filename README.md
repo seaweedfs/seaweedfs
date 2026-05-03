@@ -80,28 +80,29 @@ Table of Contents
 
 
 ## Quick Start with weed mini ##
-The easiest way to get started with SeaweedFS for development and testing:
 
-* Download the latest binary from https://github.com/seaweedfs/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`.
-
-Example:
+Download the latest binary from https://github.com/seaweedfs/seaweedfs/releases and unzip the single `weed` (or `weed.exe`) file. Then start a ready-to-use S3 object store with credentials and a pre-created bucket in one command:
 
 ```bash
-# remove quarantine on macOS
-# xattr -d com.apple.quarantine  ./weed
-
+AWS_ACCESS_KEY_ID=admin \
+AWS_SECRET_ACCESS_KEY=secret \
+S3_BUCKET=my-bucket \
 ./weed mini -dir=/data
 ```
 
-This single command starts a complete SeaweedFS setup with:
+That's it — the S3 endpoint is at http://localhost:8333, `my-bucket` already exists, and `admin`/`secret` are valid credentials. `S3_BUCKET` accepts a comma-separated list (e.g. `raw,processed`); use `S3_TABLE_BUCKET` for S3 Tables (Iceberg) buckets. Drop any of the env vars to skip that piece (no AWS keys → S3 runs in unauthenticated "Allow All" mode for development).
+
+The same command starts everything else too:
+- **S3 Endpoint**: http://localhost:8333
 - **Master UI**: http://localhost:9333
 - **Volume Server**: http://localhost:9340
 - **Filer UI**: http://localhost:8888
-- **S3 Endpoint**: http://localhost:8333
 - **WebDAV**: http://localhost:7333
 - **Admin UI**: http://localhost:23646
 
-Perfect for development, testing, learning SeaweedFS, and single node deployments!
+> macOS: if the binary is quarantined, run `xattr -d com.apple.quarantine ./weed` first.
+
+Perfect for development, testing, learning SeaweedFS, and single-node deployments.
 
 ## Quick Start for S3 API on Docker ##
 
