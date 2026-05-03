@@ -102,20 +102,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// If the source object lives only in remote storage, cache it to the local
-	// cluster before copying. Otherwise the copy path below would write a
-	// destination entry with the source's FileSize but no chunks/content,
-	// producing the data-integrity error reported in #9304 on subsequent GETs.
-	//
-	// Use the resolved entry's version id when the request didn't carry one:
-	// CopyObject of the *latest* object in a versioning-enabled bucket leaves
-	// srcVersionId empty even though the entry lives at .versions/v_<id>, and
-	// caching the wrong path would just keep returning 503 forever.
+	// Cache remote-only sources before copying; otherwise the copy path below
+	// writes a destination with FileSize > 0 but no chunks/content (#9304).
 	if entry.IsInRemoteOnly() {
 		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
 		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
 		if cachedEntry == nil {
-			glog.Errorf("CopyObjectHandler: failed to cache remote-only source %s/%s (version %q); refusing to write metadata-only destination", srcBucket, srcObject, cacheVersionId)
+			glog.Errorf("CopyObjectHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
 			w.Header().Set("Retry-After", "5")
 			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
 			return
@@ -712,17 +705,13 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// If the source object lives only in remote storage, cache it locally
-	// before copying. The fast and re-encryption part-copy paths below both
-	// iterate entry.GetChunks(), and a remote-only entry has none, so they
-	// would silently produce a part with size > 0 but no data (#9304).
-	// resolvedSourceVersionId handles the latest-version-of-versioned-bucket
-	// case where srcVersionId is empty but the entry lives at .versions/v_<id>.
+	// Cache remote-only sources before copying; the part-copy paths below
+	// iterate entry.GetChunks() and would otherwise produce an empty part (#9304).
 	if entry.IsInRemoteOnly() {
 		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
 		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
 		if cachedEntry == nil {
-			glog.Errorf("CopyObjectPartHandler: failed to cache remote-only source %s/%s (version %q); refusing to write empty part", srcBucket, srcObject, cacheVersionId)
+			glog.Errorf("CopyObjectPartHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
 			w.Header().Set("Retry-After", "5")
 			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
 			return

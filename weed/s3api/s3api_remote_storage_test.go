@@ -272,13 +272,9 @@ func removeDuplicateSlashesTest(s string) string {
 	return s
 }
 
-// TestResolvedSourceVersionId pins the version-id resolution that the CopyObject
-// remote-only fix uses to compute the cache path. Regression guard for the
-// CodeRabbit-flagged versioned-bucket case in #9305 review:
-// when CopyObject reads the latest object in a versioning-enabled bucket,
-// the request carries no versionId but the resolved entry lives at
-// .versions/v_<id>, so the cache call must use the version id stored on
-// the resolved entry's Extended map.
+// TestResolvedSourceVersionId pins that latest-version reads in a versioning-
+// enabled bucket fall back to the entry's recorded version id when the
+// request carried none, so cache paths target .versions/v_<id> correctly.
 func TestResolvedSourceVersionId(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -335,11 +331,6 @@ func TestResolvedSourceVersionId(t *testing.T) {
 	}
 }
 
-// TestCachedEntryHasLocalData pins the success criterion for
-// CacheRemoteObjectToLocalCluster responses. The filer normally writes chunks,
-// but an "already cached" early-return path can also surface inline Content;
-// both shapes must count as a hit, otherwise CopyObject would return false-
-// positive 503s for small objects (gemini review on #9305).
 func TestCachedEntryHasLocalData(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -379,24 +370,16 @@ func TestCachedEntryHasLocalData(t *testing.T) {
 	}
 }
 
-// TestCopyObjectRemoteOnlySourceDetection is a regression test for #9304.
-//
-// CopyObject from a remote.mount source whose object only exists in the upstream
-// bucket (no local chunks yet) used to produce a destination entry with
-// FileSize > 0 but no chunks/content. A subsequent GET on that destination
-// returned 500 with "data integrity error: size N reported but no content".
-//
-// The fix detects entry.IsInRemoteOnly() before the copy proceeds and caches
-// the remote object locally. This test pins the classification of the entry
-// shapes the fix branches on, plus the pre-fix broken-output shape, so a
-// future refactor cannot silently regress to the old behavior.
+// TestCopyObjectRemoteOnlySourceDetection is a regression test for #9304: a
+// remote-only source used to fall through to CopyObject's inline branch with
+// empty Content, producing a destination with FileSize > 0 but no chunks.
 func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 	tests := []struct {
-		name                  string
-		entry                 *filer_pb.Entry
-		expectRemoteOnly      bool
-		expectInlineBranchHit bool // whether the pre-fix copy code's inline branch would catch this entry
-		expectBrokenWithoutFix bool // whether that inline branch would write a metadata-only destination
+		name                   string
+		entry                  *filer_pb.Entry
+		expectRemoteOnly       bool
+		expectInlineBranchHit  bool
+		expectBrokenWithoutFix bool
 	}{
 		{
 			name: "remote-only mp3 (matches #9304 reproduction)",
@@ -462,12 +445,9 @@ func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 			expectBrokenWithoutFix: false,
 		},
 		{
-			// Documents that the fix does NOT engage on zero-byte remote
-			// objects (RemoteSize == 0): IsInRemoteOnly returns false, so
-			// CopyObject's existing inline branch writes a correct empty
-			// destination without going through cacheRemoteObjectForCopy
-			// (would otherwise cause spurious 503s on legitimate empty
-			// objects, per #9305 review feedback).
+			// Zero-byte remote objects must not enter the cache branch:
+			// IsInRemoteOnly requires RemoteSize > 0, so CopyObject's
+			// pre-existing inline branch handles them with no 503.
 			name: "zero-byte remote object - fix does not engage, inline branch handles it",
 			entry: &filer_pb.Entry{
 				Name: "empty-on-remote.txt",
@@ -486,24 +466,20 @@ func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expectRemoteOnly, tt.entry.IsInRemoteOnly(),
-				"IsInRemoteOnly() must classify the entry correctly so the CopyObject fix can branch on it")
+			assert.Equal(t, tt.expectRemoteOnly, tt.entry.IsInRemoteOnly())
 
 			// Mirror the inline branch in s3api_object_handlers_copy.go:
 			//   if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0
 			inlineBranchHit := tt.entry.Attributes != nil &&
 				(tt.entry.Attributes.FileSize == 0 || len(tt.entry.GetChunks()) == 0)
-			assert.Equal(t, tt.expectInlineBranchHit, inlineBranchHit,
-				"the inline copy branch's classification of this entry has changed")
+			assert.Equal(t, tt.expectInlineBranchHit, inlineBranchHit)
 
-			// "Broken without fix" means the inline branch fires AND there is no
-			// inline content to copy AND FileSize > 0 — exactly the #9304 shape.
+			// The #9304 shape: inline branch fires, no inline content, FileSize > 0.
 			brokenWithoutFix := inlineBranchHit &&
 				len(tt.entry.Content) == 0 &&
 				tt.entry.Attributes != nil &&
 				tt.entry.Attributes.FileSize > 0
-			assert.Equal(t, tt.expectBrokenWithoutFix, brokenWithoutFix,
-				"the #9304 broken-destination shape must be recognized so the fix's precondition triggers")
+			assert.Equal(t, tt.expectBrokenWithoutFix, brokenWithoutFix)
 		})
 	}
 }

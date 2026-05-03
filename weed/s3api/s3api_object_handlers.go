@@ -993,11 +993,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		// This handles the case where initial caching attempt timed out or failed
 		if entry.IsInRemoteOnly() {
 			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting to cache before streaming")
-			// Try to cache the remote object synchronously (like filer does).
-			// Use the resolved entry's version id when the request didn't carry
-			// one: a GET of the *latest* object in a versioning-enabled bucket
-			// arrives with versionId="" but the entry lives at .versions/v_<id>,
-			// and caching the wrong path would just keep returning 503 forever.
+			// Latest-version reads carry an empty query versionId even when the
+			// entry lives at .versions/v_<id>; resolve from the entry itself.
 			cacheVersionId := resolvedSourceVersionId(versionId, entry)
 			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, cacheVersionId)
 			if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
@@ -3104,9 +3101,6 @@ func (s3a *S3ApiServer) cacheRemoteObjectWithDedup(ctx context.Context, bucket, 
 	return entry
 }
 
-// buildVersionedRemoteObjectPath returns the filer (dir, name) for a remote-mounted
-// object, taking versioning into account. When versionId is empty or "null" the
-// entry lives at the main bucket path; otherwise it lives under .versions/v_<id>.
 func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId string) (dir, name string) {
 	if versionId != "" && versionId != "null" {
 		normalizedObject := s3_constants.NormalizeObjectKey(object)
@@ -3115,32 +3109,17 @@ func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId
 	return s3a.buildRemoteObjectPath(bucket, object)
 }
 
-// cachedEntryHasLocalData reports whether a CacheRemoteObjectToLocalCluster
-// response carries data the *copy* path can read locally. The filer's caching
-// path normally writes chunks, but small objects could surface as inline
-// Content via other code paths and the copy code's inline branch handles
-// content-only entries correctly, so both shapes are valid hits *for copy*.
-//
-// The streaming path uses a stricter chunks-only check at the call site,
-// since its downstream is not wired for inline-content cache results.
-//
-// Zero-byte remote objects are handled upstream of this predicate:
-// IsInRemoteOnly returns false when RemoteEntry.RemoteSize == 0, so the
-// cache helper is never called for them. The pre-existing CopyObject inline
-// branch then writes a correct empty destination directly from the source.
+// cachedEntryHasLocalData reports whether a cache response carries data the
+// copy path can read locally. The streaming caller uses a stricter chunks-
+// only check inline since its downstream cannot read from inline Content.
 func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
 }
 
 // cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
-// This is called from streamFromVolumeServers when the initial caching attempt timed out or failed.
-// Uses the request context (no artificial timeout) to allow the caching to complete.
-// For versioned objects, versionId determines the correct path in .versions/ directory.
-//
-// Returns the cached entry only when it has chunks. The streaming caller is not
-// wired to read from inline Content here, so accepting content-only entries
-// would just trigger the same 503 retry path (and worse, on a code path the
-// caller doesn't expect).
+// Uses the request context (no artificial timeout) so the caching can complete.
+// Returns the cached entry only when chunks are present; the streaming caller
+// is not wired to read inline Content from a cache result here.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
 	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
@@ -3160,15 +3139,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 	return nil
 }
 
-// cacheRemoteObjectForCopy caches a remote-only source object to the local cluster
-// before a CopyObject / CopyObjectPart operation reads it. Without this, the copy
-// path would create a destination entry whose size metadata is non-zero but whose
-// chunks/content are empty (since a remote-only entry has no local data), producing
-// the data-integrity error reported in #9304.
-//
-// Returns the cached entry on success, or nil if caching failed or did not produce
-// any local data. Uses a bounded timeout so a stuck cache cannot hang the copy
-// request indefinitely. Handles versioned source paths.
+// cacheRemoteObjectForCopy caches a remote-only source before CopyObject /
+// CopyObjectPart reads it (#9304). Bounded so a stuck cache can't hang the
+// copy. Returns nil if caching failed or produced no local data.
 func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, object, versionId string) *filer_pb.Entry {
 	const cacheTimeout = 30 * time.Second
 	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
@@ -3196,11 +3169,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, ob
 	return nil
 }
 
-// resolvedSourceVersionId returns the version id to use for source-side path
-// construction during a copy. Callers pass the request's srcVersionId; when
-// that's empty (e.g. CopyObject reading the latest object in a versioning-
-// enabled bucket) the actual entry can still live under .versions/v_<id>, so
-// fall back to the version recorded on the resolved entry itself.
+// resolvedSourceVersionId falls back to the version recorded on the entry
+// when the request didn't carry one — necessary for latest-version reads
+// in versioning-enabled buckets, where the entry lives at .versions/v_<id>.
 func resolvedSourceVersionId(requestedVersionId string, entry *filer_pb.Entry) string {
 	if requestedVersionId != "" {
 		return requestedVersionId
