@@ -1,7 +1,7 @@
 # V3 Phase 15 — G15b Kubernetes Static PV Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: G15b-1 manifest skeleton + static guards implemented at `seaweed_block@62325c9`
+**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; Kubernetes run pending
 **Branch**: `p15-g15b/k8s-static-pv` from `ac49adb`
 **Goal**: prove a Kubernetes pod can consume a pre-provisioned V3 block volume through `cmd/blockcsi`, using real Kubernetes CSI control flow and real Linux iSCSI staging.
 
@@ -162,10 +162,27 @@ Result: PASS on `62325c9`.
 
 ### G15b-2 — K8s Lab Harness
 
+Status: **harness staged** at `seaweed_block@32b3a13`; real Kubernetes execution pending.
+
 Artifacts:
 
-- `V:\share\g15b-k8s\run-g15b-k8s-static.sh`
+- `scripts/run-g15b-k8s-static.sh`
 - `sw-block/design/test/v3-phase-15-g15b-k8s-qa-test-instruction.md`
+
+Additional manifests:
+
+- `deploy/k8s/g15b/block-stack.yaml`
+  - `sw-block-cluster-spec` ConfigMap
+  - `sw-blockmaster` Deployment + Service
+  - `sw-blockvolume-r1` Deployment
+  - `sw-blockvolume-r2` Deployment
+
+First topology:
+
+- single-node Kubernetes;
+- `blockvolume` pods use `hostNetwork: true`;
+- iSCSI remains `127.0.0.1:3260`;
+- this intentionally preserves the G15a loopback-only frontend guard.
 
 Harness responsibilities:
 
@@ -184,6 +201,21 @@ Pass:
 - Pod sees mounted filesystem.
 - Pod writes and reads byte-equal data.
 - No dangling iSCSI session for the test IQN after cleanup.
+
+Pre-flight verification already green at `32b3a13`:
+
+```powershell
+go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
+go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
+```
+
+Not yet proven:
+
+- Kubernetes API server availability;
+- image build/load path;
+- external-attacher calling `ControllerPublish`;
+- kubelet calling `NodeStage` / `NodePublish`;
+- pod checksum write/read.
 
 ### G15b-3 — First Kubernetes Close Run
 
