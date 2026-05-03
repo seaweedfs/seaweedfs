@@ -1,14 +1,14 @@
 # V3 Phase 15 G15b Kubernetes Static PV QA Test Instruction
 
 **Date**: 2026-05-03
-**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@eb13105`; M02 re-run pending
+**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@95b7217`; M02 re-run pending
 **Scope**: single-node Kubernetes static PV/PVC/pod smoke through real V3 daemons and CSI.
 
 ---
 
 ## Headline
 
-At `seaweed_block@eb13105`, the G15b lab harness, image build inputs, and M02 DNS/log-preservation fixes are staged to prove:
+At `seaweed_block@95b7217`, the G15b lab harness, image build inputs, M02 DNS/log-preservation fixes, CSI node `iscsi_tcp` module loading, and deterministic attachable-primary binding are staged to prove:
 
 ```text
 blockmaster + product-loop + r1/r2 blockvolume
@@ -39,11 +39,16 @@ Known current local limitation:
 
 - On the current dev workstation, `kubectl` context `rancher-desktop` exists but API server is not reachable. This instruction needs QA or a running K8s lab.
 
-M02 first-run blocker fixed:
+M02 first-run blockers fixed:
 
 - `5375add` failed because `hostNetwork: true` blockvolume pods inherited host DNS and could not resolve `blockmaster.kube-system.svc.cluster.local`.
 - `eb13105` adds `dnsPolicy: ClusterFirstWithHostNet` to both blockvolume pods.
 - `eb13105` also collects daemon logs on every exit before cleanup, so failure evidence is preserved.
+
+M02 second-run blockers fixed:
+
+- `eb13105` reached iSCSI attach but failed when M02 lacked the `iscsi_tcp` kernel module. `95b7217` adds a privileged CSI node init container that runs `modprobe iscsi_tcp || true` and adds `kmod` to the CSI image.
+- after manual module load, the lab exposed a primary/listener mismatch: r2 could win authority while only r1 exposed the static loopback iSCSI target. `95b7217` changes the G9F-2 bridge so RF>1 verified placements produce a single deterministic frontend-primary `Bind` ask and pins r1/s1 as the first attachable placement slot.
 
 ---
 
@@ -55,6 +60,8 @@ Pre-flight from the code repo:
 cd C:\work\seaweed_block_g9c
 git checkout p15-g15b/k8s-static-pv
 go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
+go test ./core/host/master -run 'TestG9F2|TestG15b_ProductLoop' -count=1 -v
+go test ./internal/testops ./core/host/master ./cmd/blockcsi -count=1
 go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
 
@@ -72,7 +79,7 @@ G15B_KIND_CLUSTER=<kind-cluster-name> bash scripts/build-g15b-images.sh "$PWD"
 
 Local image build result already verified at `5375add`: PASS, images `sw-block:local` and `sw-block-csi:local` built.
 
-After pulling `eb13105`, rebuild images before rerun:
+After pulling `95b7217`, rebuild images before rerun:
 
 ```bash
 bash scripts/build-g15b-images.sh "$PWD"
@@ -102,8 +109,11 @@ Expected result:
 | Manifest attach path requires `ControllerPublish`. | `TestG15b_Manifest_CSIDriverRequiresAttach` |
 | Controller deploy uses external-attacher, not provisioner. | `TestG15b_Manifest_ControllerUsesAttacherNotProvisioner` |
 | Product stack uses G9G cluster-spec/product-loop and RF=2 r1/r2. | `TestG15b_Manifest_ProductStackSingleNodeLoopbackShape` |
+| Product loop emits one deterministic frontend-primary Bind for RF=2 static placement. | `TestG15b_ProductLoop_RF2PlacementEmitsSingleDeterministicBind` |
+| Attachable r1/s1 is the first placement slot and only r1 exposes the static iSCSI target. | `TestG15b_Manifest_AttachableReplicaIsFirstPlacementSlot` |
 | Static PV does not carry target endpoint truth. | `TestG15b_Manifest_StaticPVDoesNotEmbedTargetFacts` |
 | Node plugin has privileged host mount shape. | `TestG15b_Manifest_NodePluginPrivilegedShape` |
+| Node plugin loads host `iscsi_tcp` before attach. | `TestG15b_Manifest_NodePluginLoadsISCSITCPModule` |
 | Pod write/read checksum path. | `scripts/run-g15b-k8s-static.sh` pod phase + `pod.log` |
 | Product logs captured for debug. | `blockmaster.log`, `blockvolume-r1.log`, `blockvolume-r2.log`, `blockcsi-controller.log` |
 

@@ -1,7 +1,7 @@
 # V3 Phase 15 — G15b Kubernetes Static PV Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; image build inputs added at `5375add`; M02 first run found DNS/harness blockers; fixed at `eb13105`; Kubernetes re-run pending
+**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; image build inputs added at `5375add`; M02 first run found DNS/harness blockers fixed at `eb13105`; M02 second run found `iscsi_tcp` + primary/listener alignment blockers fixed at `95b7217`; Kubernetes re-run pending
 **Branch**: `p15-g15b/k8s-static-pv` from `ac49adb`
 **Goal**: prove a Kubernetes pod can consume a pre-provisioned V3 block volume through `cmd/blockcsi`, using real Kubernetes CSI control flow and real Linux iSCSI staging.
 
@@ -162,7 +162,7 @@ Result: PASS on `62325c9`.
 
 ### G15b-2 — K8s Lab Harness
 
-Status: **harness staged** at `seaweed_block@32b3a13`; image build inputs added at `seaweed_block@5375add`; DNS/logging fixes at `seaweed_block@eb13105`; real Kubernetes re-run pending.
+Status: **harness staged** at `seaweed_block@32b3a13`; image build inputs added at `seaweed_block@5375add`; DNS/logging fixes at `seaweed_block@eb13105`; iSCSI TCP module loading + deterministic attachable-primary bridge fix at `seaweed_block@95b7217`; real Kubernetes re-run pending.
 
 Artifacts:
 
@@ -200,6 +200,19 @@ Fix at `eb13105`:
 - changes `scripts/run-g15b-k8s-static.sh` so daemon logs are collected from the EXIT trap before cleanup;
 - adds `.gitattributes` to keep `*.sh` as LF on future checkouts.
 
+M02 second-run findings:
+
+- M02 did not have `iscsi_tcp` loaded, so kubelet/CSI `NodeStage` failed with `iSCSI driver tcp is not loaded`;
+- after manual `modprobe iscsi_tcp`, Kubernetes reached `ControllerPublish` and iSCSI login, but the volume still did not materialize because r2 won authority while only r1 exposed the static loopback iSCSI target;
+- root cause: the G9F-2 product bridge mapped every RF=2 verified placement slot to a competing `Bind` ask for the same volume; authority's queue keeps latest desired ask per volume, so r2 could overwrite r1 nondeterministically.
+
+Fix at `95b7217`:
+
+- adds a privileged CSI node init container that runs `modprobe iscsi_tcp || true` and mounts host `/lib/modules`;
+- adds `kmod` to the `sw-block-csi:local` image;
+- changes the G9F-2 verified-placement bridge so RF>1 slots produce one deterministic frontend-primary `Bind` ask (first verified slot) instead of multiple competing `Bind` asks;
+- pins the G15b static manifest assumption that the attachable iSCSI replica (`r1/s1`) is the first placement slot and that r2 does not expose a competing static iSCSI target.
+
 Harness responsibilities:
 
 1. Build V3 binaries/images for `blockmaster`, `blockvolume`, and `blockcsi`.
@@ -218,10 +231,12 @@ Pass:
 - Pod writes and reads byte-equal data.
 - No dangling iSCSI session for the test IQN after cleanup.
 
-Pre-flight verification green at `eb13105`:
+Pre-flight verification green at `95b7217`:
 
 ```powershell
 go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
+go test ./core/host/master -run 'TestG9F2|TestG15b_ProductLoop' -count=1 -v
+go test ./internal/testops ./core/host/master ./cmd/blockcsi -count=1
 go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
 
@@ -236,7 +251,7 @@ Result: PASS; built `sw-block:local` and `sw-block-csi:local`.
 Not yet proven:
 
 - Kubernetes API server availability;
-- image load path into the target cluster after rebuilding at `eb13105`;
+- image load path into the target cluster after rebuilding at `95b7217`;
 - external-attacher calling `ControllerPublish`;
 - kubelet calling `NodeStage` / `NodePublish`;
 - pod checksum write/read.
