@@ -54,17 +54,17 @@ Rule: recovery progress is not a substitute for synchronous ACK eligibility.
 | `8ba4884` | durable `WriteAckPolicy`: default best-effort preserves observer-error ACK; strict mode fails without observer or on observer error. |
 | `1571212` | replication `OnLocalWrite`: `sync_all` / RF=2 `sync_quorum` fail when peer is recovering/non-Healthy; best-effort still retains. |
 | `5232e3a` | `cmd/blockvolume --replication-ack=best-effort|sync-quorum|sync-all` wires daemon mode to replication durability and durable write ACK policy. |
+| `520b25b` | `/status` append-only G9A vocabulary: returned old primary is `AuthorityRole=superseded`, `FrontendPrimaryReady=false`, `ReplicationRole=not_ready`; authority movement does not imply replica readiness. |
+| `8362d42` | subprocess L2 strict ACK oracle: real blockmaster + 2x blockvolume + iSCSI, `--replication-ack=sync-quorum`, secondary down => foreground WRITE returns non-GOOD. |
 
 ### 3.2 Next red tests
 
-1. `TestG9A_ReturnedOldPrimary_IsReplicaCandidateNotReady`
-   - A returned old primary must not become `ReplicaReady` from heartbeat alone.
-2. `TestG9A_ReplicaCandidate_RequiresProgressFactBeforeReady`
+1. `TestG9A_ReplicaCandidate_RequiresProgressFactBeforeReady`
    - Candidate readiness requires durable/progress fact, not assignment presence.
-3. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
-   - Product-daemon subprocess path: `--replication-ack=sync-quorum`, peer in recovery/down, foreground iSCSI write fails.
-4. `TestG9A_BestEffortStillFeedsLaggingReplica`
+2. `TestG9A_BestEffortStillFeedsLaggingReplica`
    - Best-effort write returns success, and progress policy still starts catch-up/rebuild for lagging peer.
+3. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
+   - Follow-up variant where peer is explicitly in recovery (not merely down) and the daemon path still fails foreground ACK.
 
 ---
 
@@ -86,5 +86,4 @@ Continue on `p15-g9a/ack-reintegration-policy`:
 
 1. Add returned-replica state vocabulary at the authority/status seam.
 2. TDD candidate/syncing/ready distinctions.
-3. Add one subprocess strict ACK negative test after the unit/component seams are green.
-
+3. Add best-effort lagging-peer feed/recovery evidence.
