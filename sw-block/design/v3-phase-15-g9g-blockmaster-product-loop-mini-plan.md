@@ -1,7 +1,7 @@
 # V3 Phase 15 G9G - Blockmaster Product Loop To Publisher Mini-Plan
 
 Date: 2026-05-03
-Status: component slice implemented at `seaweed_block@afac861`; subprocess L2 implemented at `seaweed_block@bdd56c7`; seed-file entry implemented at `seaweed_block@7ed9ab2`; QA verification pending
+Status: close-ready on `p15-g9g/blockmaster-product-loop@7ed9ab2`; QA verification pending
 Branch target: `p15-g9g/blockmaster-product-loop`
 Scope: first live blockmaster loop that turns verified placement into publisher input
 
@@ -119,3 +119,41 @@ pre-writing lifecycle store internals:
 - r2 reaches assignment-backed `Healthy=true`.
 
 Only after that should we wire external API/CLI verbs or CSI create/publish.
+
+## 7. Close Snapshot
+
+Close target: `seaweed_block@7ed9ab2`.
+
+G9G closes the first product-loop assignment path:
+
+```text
+seeded placement intent
+  -> blockmaster lifecycle store
+  -> product-loop tick
+  -> VerifiedPlacement
+  -> G9F-2 AssignmentAsk bridge
+  -> authority.Publisher
+  -> blockvolume assignment stream
+```
+
+Evidence expected from QA:
+
+```powershell
+go test ./core/lifecycle ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
+```
+
+Key L2 evidence:
+
+- `cmd/blockvolume::TestG9G_L2ProductLoopPublishesAssignmentToBlockvolume`
+- real `cmd/blockmaster`;
+- real `cmd/blockvolume`;
+- `--lifecycle-placement-seed` entry instead of pre-written internal lifecycle store;
+- product-loop assignment reaches blockvolume and makes r2 `Healthy=true`.
+
+Close non-claims:
+
+- `--lifecycle-placement-seed` is a temporary QA/M01 bridge, not the final product API.
+- YAML cluster spec is follow-up, not blocking G9G.
+- Create/delete/attach/detach user verbs are follow-up.
+- Blank-pool replica-id allocation is follow-up.
+- CSI and M01 hardware smoke are follow-up.
