@@ -1,7 +1,7 @@
 # V3 Phase 15 G15c Mini-Plan — CSI Dynamic Provisioning MVP
 
 Date: 2026-05-03
-Status: G15c-A/B/C first slice landed at `seaweed_block@20e6d3b`; G15c-D K8s dynamic PVC remains pending
+Status: G15c-A/B/C first slices landed through `seaweed_block@d29eac2`; G15c-D K8s dynamic PVC remains pending
 Code base: `seaweed_block` after G15b close, branch `p15-g15c/csi-dynamic-provisioning`
 
 ## 0. Product Sentence
@@ -82,19 +82,23 @@ G15c can close when:
 
 ## 7. First Slice Evidence
 
-Commit: `20e6d3b G15c: add CSI dynamic volume intent RPC`
+Commits:
+- `20e6d3b G15c: add CSI dynamic volume intent RPC`
+- `d29eac2 G15c: add L2 CSI create volume intent test`
 
 Implemented:
 - `LifecycleService.CreateVolume/DeleteVolume` in control proto and generated bindings.
 - blockmaster service handlers that write `core/lifecycle.VolumeSpec` only.
 - blockcsi `CreateVolume/DeleteVolume` backed by master lifecycle RPC.
 - product loop now reconciles desired volumes into placement intent before verification/publication.
+- L2 subprocess test proving real `blockcsi` -> real `blockmaster` CreateVolume writes lifecycle intent JSON.
 
 Verification run:
 
 ```powershell
 go test ./core/csi ./core/host/master ./cmd/blockcsi -count=1
 go test ./core/lifecycle ./core/host/master ./core/authority ./core/csi ./cmd/blockmaster ./cmd/blockcsi ./cmd/blockvolume ./internal/testops -count=1
+go test ./cmd/blockcsi -run TestG15c_BlockCSICreateVolumeWritesMasterLifecycleIntent -count=1 -v
 ```
 
-Both passed on 2026-05-03 before commit. The full package run took ~153s and is dominated by `cmd/blockvolume`.
+All passed on 2026-05-03 before commit. The full package run took ~153s and is dominated by `cmd/blockvolume`.
