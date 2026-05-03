@@ -1,7 +1,7 @@
 # V3 Phase 15 G15d Mini-Plan — BlockVolume Launcher MVP
 
 Date: 2026-05-03
-Status: pure planner + pure K8s renderer + cluster-spec node inventory slices landed on `p15-g15d/blockvolume-launcher`
+Status: planner + renderer + node inventory + replica-id materialization slices landed on `p15-g15d/blockvolume-launcher`
 Depends on: G15c `CreateVolume -> lifecycle desired intent`
 
 ## 0. Product Sentence
@@ -47,6 +47,7 @@ Commits:
 - `56a1047 G15d: add blockvolume workload planner`
 - `f4d695f G15d: render blockvolume Kubernetes workloads`
 - `ae2cd1a G15d: import cluster spec node inventory`
+- `1848099 G15d: materialize launcher replica identities`
 
 Implemented:
 - `core/lifecycle.BlockVolumeWorkloadPlan`
@@ -59,6 +60,8 @@ Implemented:
 - pure K8s Deployment renderer for blockvolume workloads
 - renderer output pins hostNetwork DNS policy, deterministic names, args, ports, and no authority-shaped words
 - `--cluster-spec` can now carry node/pool inventory and blockmaster imports it into lifecycle node registration before the product loop runs
+- master-side workload planning tick converts blank-pool placements into concrete replica workload identities and writes those replica IDs back as existing-replica placement intent
+- dynamic-volume assignment subscriptions can fall back to lifecycle placement slots when static accepted topology does not yet contain the volume
 
 Verification:
 
@@ -79,7 +82,7 @@ G15d-C — Apply loop:
 - Add a narrow launcher runner that applies generated workload specs.
 - First implementation may shell `kubectl apply -f` or write manifests for QA to apply.
 - It must be idempotent.
-- Before production apply, review accepted-topology / authority support for dynamically-created volumes. Current authority still treats accepted topology as startup config, so dynamic PVC may need a product-loop bridge to append a verified volume topology before assignment can mint.
+- It should call the materialization seam after rendering/applying concrete blockvolume workloads, but before expecting those workloads to subscribe successfully.
 
 G15d-D — M02 dynamic PVC:
 - `StorageClass` + PVC without hand-written PV.
