@@ -90,7 +90,7 @@ S3_BUCKET=my-bucket \
 ./weed mini -dir=/data
 ```
 
-That's it — the S3 endpoint is at http://localhost:8333, `my-bucket` already exists, and `admin`/`secret` are valid credentials. Drop any of the env vars to skip that piece (no `S3_BUCKET` → no bucket created; no AWS keys → S3 runs in unauthenticated "Allow All" mode for development).
+That's it — the S3 endpoint is at http://localhost:8333, `my-bucket` already exists, and `admin`/`secret` are valid credentials. `S3_BUCKET` accepts a comma-separated list (e.g. `raw,processed`); use `S3_TABLE_BUCKET` for S3 Tables (Iceberg) buckets. Drop any of the env vars to skip that piece (no AWS keys → S3 runs in unauthenticated "Allow All" mode for development).
 
 The same command starts everything else too:
 - **S3 Endpoint**: http://localhost:8333
