@@ -1,14 +1,14 @@
 # V3 Phase 15 G15b Kubernetes Static PV QA Test Instruction
 
 **Date**: 2026-05-03
-**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@32b3a13`; execution pending
+**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@5375add`; execution pending
 **Scope**: single-node Kubernetes static PV/PVC/pod smoke through real V3 daemons and CSI.
 
 ---
 
 ## Headline
 
-At `seaweed_block@32b3a13`, the G15b lab harness is staged to prove:
+At `seaweed_block@5375add`, the G15b lab harness and image build inputs are staged to prove:
 
 ```text
 blockmaster + product-loop + r1/r2 blockvolume
@@ -51,6 +51,20 @@ git checkout p15-g15b/k8s-static-pv
 go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
 go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
+
+Build local images:
+
+```bash
+bash scripts/build-g15b-images.sh "$PWD"
+```
+
+For kind clusters, build and load into the cluster:
+
+```bash
+G15B_KIND_CLUSTER=<kind-cluster-name> bash scripts/build-g15b-images.sh "$PWD"
+```
+
+Local image build result already verified at `5375add`: PASS, images `sw-block:local` and `sw-block-csi:local` built.
 
 Kubernetes lab run from Linux or WSL with `kubectl` configured:
 

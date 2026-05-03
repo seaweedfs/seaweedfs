@@ -1,7 +1,7 @@
 # V3 Phase 15 — G15b Kubernetes Static PV Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; Kubernetes run pending
+**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; image build inputs added at `5375add`; Kubernetes run pending
 **Branch**: `p15-g15b/k8s-static-pv` from `ac49adb`
 **Goal**: prove a Kubernetes pod can consume a pre-provisioned V3 block volume through `cmd/blockcsi`, using real Kubernetes CSI control flow and real Linux iSCSI staging.
 
@@ -162,12 +162,13 @@ Result: PASS on `62325c9`.
 
 ### G15b-2 — K8s Lab Harness
 
-Status: **harness staged** at `seaweed_block@32b3a13`; real Kubernetes execution pending.
+Status: **harness staged** at `seaweed_block@32b3a13`; image build inputs added at `seaweed_block@5375add`; real Kubernetes execution pending.
 
 Artifacts:
 
 - `scripts/run-g15b-k8s-static.sh`
 - `sw-block/design/test/v3-phase-15-g15b-k8s-qa-test-instruction.md`
+- `scripts/build-g15b-images.sh`
 
 Additional manifests:
 
@@ -176,6 +177,8 @@ Additional manifests:
   - `sw-blockmaster` Deployment + Service
   - `sw-blockvolume-r1` Deployment
   - `sw-blockvolume-r2` Deployment
+- `deploy/k8s/g15b/Dockerfile.sw-block`
+- `deploy/k8s/g15b/Dockerfile.blockcsi`
 
 First topology:
 
@@ -209,10 +212,18 @@ go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
 go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
 
+Image build verification added at `5375add`:
+
+```bash
+bash scripts/build-g15b-images.sh .
+```
+
+Result: PASS; built `sw-block:local` and `sw-block-csi:local`.
+
 Not yet proven:
 
 - Kubernetes API server availability;
-- image build/load path;
+- image load path into the target cluster;
 - external-attacher calling `ControllerPublish`;
 - kubelet calling `NodeStage` / `NodePublish`;
 - pod checksum write/read.
