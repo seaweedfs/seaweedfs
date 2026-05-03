@@ -1,7 +1,7 @@
 # V3 Phase 15 G9G - Blockmaster Product Loop To Publisher Mini-Plan
 
 Date: 2026-05-03
-Status: first product-loop slice implemented at `seaweed_block@afac861`; QA verification pending
+Status: component slice implemented at `seaweed_block@afac861`; subprocess L2 implemented at `seaweed_block@bdd56c7`; QA verification pending
 Branch target: `p15-g9g/blockmaster-product-loop`
 Scope: first live blockmaster loop that turns verified placement into publisher input
 
@@ -106,5 +106,13 @@ If G9G closes, the next M01-oriented slice is a subprocess L2:
 ```text
 real blockmaster + real blockvolume subscription + product-loop tick -> assignment delivered
 ```
+
+This subprocess L2 landed at `seaweed_block@bdd56c7`:
+
+- real `cmd/blockmaster` with `--lifecycle-store`;
+- real `cmd/blockvolume` subscribing to assignment stream;
+- only r2 observed, so legacy topology controller cannot satisfy RF=2 by itself;
+- lifecycle product loop publishes the verified existing-r2 placement;
+- r2 reaches assignment-backed `Healthy=true`.
 
 Only after that should we wire external API/CLI verbs or CSI create/publish.
