@@ -128,12 +128,13 @@ Do not use one boolean `Healthy` as the product state for all four concepts. `He
 P15-P0: Freeze and close G7
   -> P15-P1: G7 follow-up hardening
   -> P15-P2: G8 failover data continuity [CLOSED 2026-05-02 for first-close scope]
-  -> P15-P3: G9 lifecycle product verbs
-  -> P15-P4: G9A flat placement / desired topology
-  -> P15-P5: G17-lite observability + G15a CSI MVP in parallel
-  -> P15-P6: internal K8s dogfood checkpoint
-  -> P15-P7: remaining beta gates by dogfood feedback
-  -> P15-P8: G22 final validation
+  -> P15-P3: G9D/F lifecycle facts and verified placement [DONE at phase-15@eeef486]
+  -> P15-P4: G9F-2 verified placement -> authority request bridge
+  -> P15-P5: G9G blockmaster product loop to publisher
+  -> P15-P6: G17-lite observability + G15a CSI MVP in parallel
+  -> P15-P7: internal K8s dogfood checkpoint
+  -> P15-P8: remaining beta gates by dogfood feedback
+  -> P15-P9: G22 final validation
 ```
 
 This preserves the canonical gate graph while making the execution path concrete.
@@ -252,7 +253,68 @@ This boundary prevents G7 from becoming an unbounded recovery rewrite while stil
 
 ---
 
-### P15-P3 — G9 Volume Lifecycle
+### P15-P3 — G9D/F Lifecycle Facts And Verified Placement — ✅ done
+
+**Goal**: master can persist desired volumes, persist node inventory, compute placement intent, intersect it with fresh observation, and expose `VerifiedPlacement` without granting authority.
+
+**Status**: done at `phase-15@eeef486`.
+
+**Proven**:
+
+1. desired volume records persist;
+2. node inventory records persist;
+3. placement reconciler writes non-authority placement intent;
+4. verified placement requires fresh observation;
+5. verified placement does not mint authority or mutate publisher state.
+
+**Non-claim**: no product assignment loop yet; no blockvolume becomes primary/replica from lifecycle alone.
+
+---
+
+### P15-P4 — G9F-2 Verified Placement To Authority Request Bridge
+
+**Goal**: convert verified placement into bounded `authority.AssignmentAsk` values through a controller bridge, while preserving publisher-only authority minting.
+
+**Why this moved before lifecycle verbs**: an M01-usable product loop needs assignment publication before create/attach/delete can be meaningful. G9D/F already proved fact/readiness; the next missing link is `VerifiedPlacement -> AssignmentAsk -> Publisher`, not more verify-only lifecycle state.
+
+**Must ship**:
+
+1. bridge lives outside `core/lifecycle`; lifecycle remains fact/intent only;
+2. bridge accepts only `VerifiedPlacement{Verified:true}`;
+3. placement-only and observation-only inputs produce no asks;
+4. blank-pool slots emit first-bind asks only when a replica id can be allocated by the bridge/controller;
+5. existing-replica slots emit asks using the observed data/control addresses;
+6. publisher remains the only epoch/endpoint-version author.
+
+**TDD first**:
+
+1. unverified placement produces no ask;
+2. verified existing-replica placement emits `IntentBind` for first authority line;
+3. bridge output has no epoch/endpoint-version fields;
+4. running bridge output through real `authority.Publisher` mints exactly one authority line;
+5. lifecycle package does not import authority.
+
+**Pass**: component test proves verified placement can request authority through the publisher seam, and negative tests prove neither placement intent nor observation alone can do it.
+
+---
+
+### P15-P5 — G9G Product Loop To Publisher
+
+**Goal**: blockmaster can run the lifecycle/placement/verified-placement/authority-request loop without manual topology stuffing.
+
+**Must ship**:
+
+1. blockmaster opens lifecycle store and authority store;
+2. reconcile loop computes verified placement;
+3. bridge emits assignment asks into publisher directive;
+4. blockvolume receives assignment via existing subscription path;
+5. first L2 product-loop test shows automatic assignment after volume/node registration.
+
+**Pass**: subprocess L2 starts real blockmaster + blockvolume processes, registers product facts, observes assignment delivery, and reaches frontend-ready precondition without hand-authored assignment state.
+
+---
+
+### Deferred From Original G9 Volume Lifecycle
 
 **Goal**: users/tools can create, attach, detach, and delete volumes without hand-authoring internal authority state.
 
