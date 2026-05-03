@@ -1,7 +1,7 @@
 # V3 Phase 15 G15d Mini-Plan — BlockVolume Launcher MVP
 
 Date: 2026-05-03
-Status: planner + renderer + node inventory + replica-id materialization slices landed on `p15-g15d/blockvolume-launcher`
+Status: planner + renderer + node inventory + replica-id materialization + manifest writer loop landed on `p15-g15d/blockvolume-launcher`
 Depends on: G15c `CreateVolume -> lifecycle desired intent`
 
 ## 0. Product Sentence
@@ -48,6 +48,7 @@ Commits:
 - `f4d695f G15d: render blockvolume Kubernetes workloads`
 - `ae2cd1a G15d: import cluster spec node inventory`
 - `1848099 G15d: materialize launcher replica identities`
+- `109edd8 G15d: write launcher blockvolume manifests`
 
 Implemented:
 - `core/lifecycle.BlockVolumeWorkloadPlan`
@@ -62,6 +63,7 @@ Implemented:
 - `--cluster-spec` can now carry node/pool inventory and blockmaster imports it into lifecycle node registration before the product loop runs
 - master-side workload planning tick converts blank-pool placements into concrete replica workload identities and writes those replica IDs back as existing-replica placement intent
 - dynamic-volume assignment subscriptions can fall back to lifecycle placement slots when static accepted topology does not yet contain the volume
+- `blockmaster` can run an optional launcher loop that writes rendered blockvolume Deployment YAMLs to `--launcher-manifest-dir`; it does not call `kubectl apply`
 
 Verification:
 
@@ -79,10 +81,9 @@ G15d-B — K8s spec renderer:
 - Test generated args include `--volume-id`, `--replica-id`, `--data-addr`, `--ctrl-addr`, durable root, and optional iSCSI listen.
 
 G15d-C — Apply loop:
-- Add a narrow launcher runner that applies generated workload specs.
-- First implementation may shell `kubectl apply -f` or write manifests for QA to apply.
-- It must be idempotent.
-- It should call the materialization seam after rendering/applying concrete blockvolume workloads, but before expecting those workloads to subscribe successfully.
+- DONE for write-manifest mode: `blockmaster --launcher-loop-interval=<d> --launcher-manifest-dir=<dir>` renders workload manifests idempotently.
+- Still pending for K8s automation: a shell/script stage that `kubectl apply -f <dir>` after the manifests are written.
+- The writer intentionally stops before apply so QA can inspect exact Deployment YAML before the cluster mutates.
 
 G15d-D — M02 dynamic PVC:
 - `StorageClass` + PVC without hand-written PV.
