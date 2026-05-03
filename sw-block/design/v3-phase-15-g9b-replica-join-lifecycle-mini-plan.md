@@ -77,6 +77,13 @@ Those remain P15-P4/P15-P5+ work. G9B only makes the lifecycle/join protocol hon
 | Volume status vocabulary | `core/host/volume/status_server.go` | Extend only when evidence exists; do not overclaim `replica_ready`. |
 | ACK policy | G9A `Durability*` modes | Candidate/recovering replicas are not sync-ACK eligible. |
 
+### 3.1 Progress so far
+
+| Commit | Meaning |
+|---|---|
+| `1faeda4` | G9B-A: observation/local-role cannot mint authority; genesis placement emits `AssignmentAsk`; publisher `IntentBind` mints the first authority line; `/status` does not report frontend ready before assignment. |
+| pending | G9B-B: returned/registered replica status lifecycle maps candidate -> `not_ready`, engine recovery -> `recovering`, completed same-lineage healthy support role -> `replica_ready`. |
+
 ---
 
 ## 4. Protocol Rules
@@ -149,6 +156,18 @@ Authority publisher mints identity. Feeder/replication owns data catch-up. Neith
 2. `TestG9B_ReintegratedReplica_PublishesReplicaReadyOnlyAfterProgressEvidence`
 3. `TestG9B_CandidateNotSyncAckEligible`
 
+Initial G9B-B slice uses `/status` vocabulary as the component seam:
+
+```text
+registered returned replica, current authority line names another replica
+  -> engine degraded     => ReplicationRole=not_ready
+  -> engine recovering   => ReplicationRole=recovering
+  -> engine healthy at same authority lineage
+                      => ReplicationRole=replica_ready, FrontendPrimaryReady=false
+```
+
+This is intentionally status-only. It does not yet make `replica_ready` drive placement or ACK eligibility.
+
 ### G9B-C — L2 subprocess lifecycle smoke
 
 Shape:
@@ -198,4 +217,3 @@ G9B will not claim:
 4. returned replica fully reintegrated unless G9B-B lands;
 5. transparent OS initiator failover;
 6. flow-control enforcement.
-
