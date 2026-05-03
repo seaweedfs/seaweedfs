@@ -1,7 +1,7 @@
 # V3 Phase 15 TestOps Plan
 
 **Date**: 2026-05-03
-**Status**: DRAFT v0.2; V3 `internal/testops` contract skeleton implemented
+**Status**: DRAFT v0.3; V3 `internal/testops` contract skeleton implemented; first registered `go-test` scenario executable at `f51b79b`
 **Scope**: end-to-end V3 test operations covering dev loop, gate close, regression, debug, hardware, K8s, chaos
 **Code repo**: `seaweed_block` (V3 binaries / per-package go test)
 **Docs repo**: `seaweedfs/sw-block/design/test/`
@@ -100,9 +100,15 @@ Implementation note:
   - `Driver`
   - `Registry`
   - `ShellDriver`
+  - `GoTestDriver`
+  - registration decoding / driver construction
 - This package is the code-level insertion point for V3 scenarios. A future
   ported V2 testrunner should plug in by implementing `Driver`; it should not
   replace the contract.
+- Slice 1 landed at `seaweed_block@f51b79b`: `testops/registry/g15b-manifest.json`
+  loads into the registry, executes the G15b manifest/harness `go test`, and
+  writes standard `run-request.json`, `result.json`, and `test-stdout.log`
+  artifacts.
 
 ### 3.1 Layout
 
@@ -385,7 +391,7 @@ Each scenario has: a driver in `bridge/scenarios/`, a test instruction in
 |---|---|---|---|---|
 | `g15a-privileged` | `g15a-privileged.sh` | `v3-phase-15-g15a-privileged-qa-test-instruction.md` | `ac49adb` | L3 |
 | `g15a-non-privileged` | `g15a-non-privileged.sh` | `v3-phase-15-g15a-qa-test-instruction.md` | `ac49adb` | L2 |
-| `g15b-manifest` | `g15b-manifest.sh` | `v3-phase-15-g15b-manifest-qa-test-instruction.md` | `62325c9` | L1/L2 |
+| `g15b-manifest` | `go-test` via `testops/registry/g15b-manifest.json` | `v3-phase-15-g15b-k8s-qa-test-instruction.md` | `f51b79b` | L1/L2 |
 | `g15b-k8s-static` | `g15b-k8s-static.sh` | `v3-phase-15-g15b-k8s-qa-test-instruction.md` | `5375add` | L5 |
 | `g9g-l2` | `g9g-l2.sh` | `v3-phase-15-g9g-qa-test-instruction.md` | `7ed9ab2` | L2 |
 | `g8-failover-l2` | `g8-failover-l2.sh` | (forward-carry: derive from G8 mini-plan §12) | `b320336` | L2 |
@@ -439,7 +445,7 @@ Architect should override defaults before P1 starts.
 Current sw recommendation:
 
 - Ratify Q1/Q3/Q4 as default.
-- Start P1 on top of `internal/testops`, not directly on raw shell scripts.
+- Continue P1 on top of `internal/testops`, not directly on raw shell scripts; first executable registration is `g15b-manifest` at `f51b79b`.
 - Treat V2 testrunner port as a future `Driver` implementation.
 
 ---

@@ -3,7 +3,7 @@
 **Date**: 2026-05-03
 **Status**: architect draft; complements `v3-phase-15-testops-plan.md`
 **Scope**: how V3 gates/projects expose test scenarios so TestOps can discover, register, and run them independently
-**Code anchor**: `seaweed_block/internal/testops` introduced at `c2b5d9a`
+**Code anchor**: `seaweed_block/internal/testops` introduced at `c2b5d9a`; first registered `go-test` scenario landed at `f51b79b`
 
 ---
 
@@ -169,7 +169,7 @@ Initial driver types:
 | Driver | Purpose | Current status |
 |---|---|---|
 | `shell` | Runs an existing script that reads normalized request and writes result. | Implemented as `internal/testops.ShellDriver`. |
-| `go-test` | Runs `go test` package/focus commands and maps output to result. | Next recommended implementation. |
+| `go-test` | Runs `go test` package/focus commands and maps output to result. | Implemented as `internal/testops.GoTestDriver` at `f51b79b`. |
 | `k8s` | Applies manifests, waits for resources, collects logs. | Can start as shell wrapper; later native. |
 | `privileged-host` | Runs sudo/host OS checks and captures pre/post state. | Can start as shell wrapper. |
 | `yaml` | Runs future ported V2 testrunner parser/engine. | Future; conditional. |
@@ -220,7 +220,7 @@ The last rule is strict:
 
 | Scenario | Driver | Layer | Known green | Status |
 |---|---|---|---|---|
-| `g15b-manifest` | `go-test` | L1/L2 | `62325c9` | ready to register |
+| `g15b-manifest` | `go-test` | L1/L2 | `eb13105` | registered and executable at `f51b79b` |
 | `g15b-k8s-static` | `shell` | L5 | `5375add` preflight only; K8s run pending | ready to register as pending-lab |
 | `g15a-privileged` | `shell` | L3 | `ac49adb` | ready to register |
 | `g15a-non-privileged` | `go-test` | L2 | `ac49adb` | ready to register |
@@ -230,24 +230,26 @@ The last rule is strict:
 
 ---
 
-## §9 Recommended Next Slice
+## §9 Slice 1 Result
 
-Implement `testops/registry/g15b-manifest.json` and a minimal `go-test` driver.
+`testops/registry/g15b-manifest.json` and a minimal `go-test` driver landed at `seaweed_block@f51b79b`.
 
-Why this first:
+Why this was first:
 
 - It is non-privileged.
 - It is fast.
 - It proves the registration path without requiring K8s or m01.
 - It gives QA an example registration file to copy.
 
-Pass condition:
+Pass condition, verified on `p15-g15b/k8s-static-pv@f51b79b`:
 
 ```powershell
 go test ./internal/testops ./cmd/blockcsi -count=1
 ```
 
-plus a small smoke that loads `g15b-manifest.json`, runs the registered scenario, and emits a valid `result.json` in a temp artifact dir.
+The `internal/testops` suite includes the smoke that loads `g15b-manifest.json`, runs the registered scenario through `GoTestDriver`, and emits a valid `result.json` in a temp artifact dir.
+
+Next slice: register `g15b-k8s-static` as a shell-driver scenario once the M02 rerun is green on the `eb13105+` manifest/harness fix.
 
 ---
 
@@ -255,6 +257,6 @@ plus a small smoke that loads `g15b-manifest.json`, runs the registered scenario
 
 | Role | Status | Basis |
 |---|---|---|
-| sw | draft | captured V3 pluggable TestOps path after `internal/testops` skeleton |
+| sw | draft | captured V3 pluggable TestOps path after `internal/testops` skeleton; Slice 1 executable registration landed at `f51b79b` |
 | QA | pending | review registration shape and artifact expectations |
 | architect | pending | ratify product/runtime non-plugin boundary |
