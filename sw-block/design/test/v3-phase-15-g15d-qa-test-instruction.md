@@ -1,12 +1,12 @@
 # V3 Phase 15 G15d QA Test Instruction
 
 Date: 2026-05-03
-Status: QA-ready on `p15-g15d/blockvolume-launcher@0265b60`
+Status: QA-verified on `p15-g15d/blockvolume-launcher@a3d1e6a`
 Scope: Kubernetes dynamic PVC smoke through launcher-generated blockvolume workload
 
 ## Headline
 
-At `p15-g15d/blockvolume-launcher@0265b60`, G15d should prove a dynamic
+At `p15-g15d/blockvolume-launcher@a3d1e6a`, G15d proves a dynamic
 PVC can create a V3 lifecycle volume intent, trigger blockmaster's launcher to
 generate a blockvolume Deployment, apply that generated workload, and complete
 a pod filesystem checksum write/read through CSI + iSCSI.
@@ -24,7 +24,7 @@ path. It is still a single-node lab smoke, not a production operator.
 
 ## Command
 
-From the seaweed_block checkout at `0265b60`:
+From the seaweed_block checkout at `a3d1e6a`:
 
 ```bash
 bash scripts/run-g15d-k8s-dynamic.sh "$PWD"
@@ -61,6 +61,13 @@ It must contain a Deployment named like:
 
 ```text
 sw-blockvolume-<dynamic-volume-id>-r1
+```
+
+It must include a writable blockvolume state directory:
+
+```text
+mountPath: /var/lib/sw-block
+emptyDir: {}
 ```
 
 ## Scenarios
@@ -124,4 +131,17 @@ The script preserves:
 
 ## QA Sign
 
-Pending QA M02 run.
+QA verified: 2026-05-03 on M02/k3s.
+
+Evidence:
+
+- Tree: `p15-g15d/blockvolume-launcher@a3d1e6a`
+- Run ID: `20260503T185756Z-a3d1e6a`
+- Artifact directory: `V:\share\g15d-k8s\runs\20260503T185756Z-a3d1e6a\`
+- Result: PASS; dynamic PVC pod completed checksum write/read.
+- Pod oracle: `/data/payload.bin: OK`
+- Cleanup: no active iSCSI sessions; no `sw-block` pod/PVC leak from this run.
+
+Follow-up note: cleanup emits benign `command terminated with exit code 2`
+lines from best-effort post-delete log collection after resources are gone. It
+does not affect the PASS oracle or cleanup result.
