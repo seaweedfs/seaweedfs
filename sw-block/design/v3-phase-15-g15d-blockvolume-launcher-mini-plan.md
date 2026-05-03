@@ -1,7 +1,7 @@
 # V3 Phase 15 G15d Mini-Plan — BlockVolume Launcher MVP
 
 Date: 2026-05-03
-Status: planner + renderer + node inventory + replica-id materialization + manifest writer loop landed on `p15-g15d/blockvolume-launcher`
+Status: dynamic PVC K8s harness ready for QA on `p15-g15d/blockvolume-launcher`
 Depends on: G15c `CreateVolume -> lifecycle desired intent`
 
 ## 0. Product Sentence
@@ -49,6 +49,7 @@ Commits:
 - `ae2cd1a G15d: import cluster spec node inventory`
 - `1848099 G15d: materialize launcher replica identities`
 - `109edd8 G15d: write launcher blockvolume manifests`
+- `0265b60 G15d: add dynamic PVC K8s harness`
 
 Implemented:
 - `core/lifecycle.BlockVolumeWorkloadPlan`
@@ -64,6 +65,7 @@ Implemented:
 - master-side workload planning tick converts blank-pool placements into concrete replica workload identities and writes those replica IDs back as existing-replica placement intent
 - dynamic-volume assignment subscriptions can fall back to lifecycle placement slots when static accepted topology does not yet contain the volume
 - `blockmaster` can run an optional launcher loop that writes rendered blockvolume Deployment YAMLs to `--launcher-manifest-dir`; it does not call `kubectl apply`
+- G15d K8s dynamic harness exists: dynamic StorageClass/PVC/pod -> CSI CreateVolume -> master lifecycle -> launcher manifest -> script applies generated blockvolume -> pod checksum
 
 Verification:
 
@@ -71,6 +73,7 @@ Verification:
 go test ./core/lifecycle -count=1
 go test ./core/lifecycle ./core/launcher -count=1
 go test ./cmd/blockmaster ./core/lifecycle ./core/host/master ./core/launcher -count=1
+go test ./cmd/blockcsi ./core/launcher ./cmd/blockmaster ./core/host/master ./core/lifecycle -count=1
 ```
 
 ## 4. Next Slices
@@ -90,6 +93,11 @@ G15d-D — M02 dynamic PVC:
 - external-provisioner calls CSI CreateVolume.
 - launcher starts blockvolume workload.
 - pod writes 4 KiB + sync + checksum read-back OK.
+- QA command:
+
+```bash
+bash scripts/run-g15d-k8s-dynamic.sh "$PWD"
+```
 
 ## 5. Close Criteria
 
