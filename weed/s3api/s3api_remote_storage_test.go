@@ -272,6 +272,113 @@ func removeDuplicateSlashesTest(s string) string {
 	return s
 }
 
+// TestResolvedSourceVersionId pins the version-id resolution that the CopyObject
+// remote-only fix uses to compute the cache path. Regression guard for the
+// CodeRabbit-flagged versioned-bucket case in #9305 review:
+// when CopyObject reads the latest object in a versioning-enabled bucket,
+// the request carries no versionId but the resolved entry lives at
+// .versions/v_<id>, so the cache call must use the version id stored on
+// the resolved entry's Extended map.
+func TestResolvedSourceVersionId(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		entry     *filer_pb.Entry
+		expected  string
+	}{
+		{
+			name:      "explicit request versionId wins",
+			requested: "abc123",
+			entry: &filer_pb.Entry{
+				Extended: map[string][]byte{
+					s3_constants.ExtVersionIdKey: []byte("ignored"),
+				},
+			},
+			expected: "abc123",
+		},
+		{
+			name:      "empty request falls back to entry version (latest in versioned bucket)",
+			requested: "",
+			entry: &filer_pb.Entry{
+				Extended: map[string][]byte{
+					s3_constants.ExtVersionIdKey: []byte("xyz789"),
+				},
+			},
+			expected: "xyz789",
+		},
+		{
+			name:      "empty request and pre-versioning entry stays empty",
+			requested: "",
+			entry: &filer_pb.Entry{
+				Extended: map[string][]byte{},
+			},
+			expected: "",
+		},
+		{
+			name:      "empty request and nil Extended stays empty",
+			requested: "",
+			entry:     &filer_pb.Entry{Extended: nil},
+			expected:  "",
+		},
+		{
+			name:      "nil entry tolerated when no request version",
+			requested: "",
+			entry:     nil,
+			expected:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, resolvedSourceVersionId(tt.requested, tt.entry))
+		})
+	}
+}
+
+// TestCachedEntryHasLocalData pins the success criterion for
+// CacheRemoteObjectToLocalCluster responses. The filer normally writes chunks,
+// but an "already cached" early-return path can also surface inline Content;
+// both shapes must count as a hit, otherwise CopyObject would return false-
+// positive 503s for small objects (gemini review on #9305).
+func TestCachedEntryHasLocalData(t *testing.T) {
+	tests := []struct {
+		name     string
+		entry    *filer_pb.Entry
+		expected bool
+	}{
+		{
+			name:     "nil entry is not a hit",
+			entry:    nil,
+			expected: false,
+		},
+		{
+			name: "entry with chunks is a hit",
+			entry: &filer_pb.Entry{
+				Chunks: []*filer_pb.FileChunk{{FileId: "1,abc", Size: 10}},
+			},
+			expected: true,
+		},
+		{
+			name: "entry with inline content is a hit",
+			entry: &filer_pb.Entry{
+				Content: []byte("small file body"),
+			},
+			expected: true,
+		},
+		{
+			name:     "entry with neither chunks nor content is not a hit",
+			entry:    &filer_pb.Entry{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, cachedEntryHasLocalData(tt.entry))
+		})
+	}
+}
+
 // TestCopyObjectRemoteOnlySourceDetection is a regression test for #9304.
 //
 // CopyObject from a remote.mount source whose object only exists in the upstream
