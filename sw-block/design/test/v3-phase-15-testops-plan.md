@@ -1,7 +1,7 @@
 # V3 Phase 15 TestOps Plan
 
 **Date**: 2026-05-03
-**Status**: DRAFT v0.1 for architect / sw / QA review
+**Status**: DRAFT v0.2; V3 `internal/testops` contract skeleton implemented
 **Scope**: end-to-end V3 test operations covering dev loop, gate close, regression, debug, hardware, K8s, chaos
 **Code repo**: `seaweed_block` (V3 binaries / per-package go test)
 **Docs repo**: `seaweedfs/sw-block/design/test/`
@@ -90,6 +90,19 @@ under-testing — it slows everything else down.
 
 This is the foundation everything else builds on. Without a stable contract,
 neither the per-gate harnesses nor a future ported testrunner can be agent-driven.
+
+Implementation note:
+
+- `seaweed_block/internal/testops` now defines the V3-native contract skeleton:
+  - `RunRequest`
+  - `Result`
+  - `PhaseResult`
+  - `Driver`
+  - `Registry`
+  - `ShellDriver`
+- This package is the code-level insertion point for V3 scenarios. A future
+  ported V2 testrunner should plug in by implementing `Driver`; it should not
+  replace the contract.
 
 ### 3.1 Layout
 
@@ -422,6 +435,12 @@ Proposed bindings for ratification:
 | **Q7** | Should TestOps emit metrics to a Prometheus endpoint? | Forward-carry — wait until G17-lite observability lands so we have a target |
 
 Architect should override defaults before P1 starts.
+
+Current sw recommendation:
+
+- Ratify Q1/Q3/Q4 as default.
+- Start P1 on top of `internal/testops`, not directly on raw shell scripts.
+- Treat V2 testrunner port as a future `Driver` implementation.
 
 ---
 
