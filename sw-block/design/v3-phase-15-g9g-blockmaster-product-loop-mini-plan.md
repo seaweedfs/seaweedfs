@@ -1,7 +1,7 @@
 # V3 Phase 15 G9G - Blockmaster Product Loop To Publisher Mini-Plan
 
 Date: 2026-05-03
-Status: architect draft; red tests first, production wiring requires §1.A acceptance
+Status: first product-loop slice implemented at `seaweed_block@afac861`; QA verification pending
 Branch target: `p15-g9g/blockmaster-product-loop`
 Scope: first live blockmaster loop that turns verified placement into publisher input
 
@@ -30,7 +30,7 @@ to be published. That is useful for M01, but it is also the authority boundary.
 
 ## 1.A Architect Bindings
 
-Proposed for ratification:
+Bindings used by the first product-loop slice:
 
 1. **Publisher-only minting**: G9G may feed `authority.AssignmentAsk` into the existing publisher path; it must not construct `AssignmentInfo` or `AssignmentFact`.
 2. **Verified-only input**: only `VerifiedPlacement{Verified:true}` can produce a live ask.
