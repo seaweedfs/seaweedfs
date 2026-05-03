@@ -1,7 +1,7 @@
 # V3 Phase 15 G9C — ReplicaReady Feed Continuity / Post-Close ACK Mini-Plan
 
 **Date**: 2026-05-02
-**Status**: C-slice landed (`b90798d`)
+**Status**: D-slice landed (`6226c7f`)
 **Code branch**: `p15-g9c/replica-ready-feed-continuity`
 **Predecessors**: G9B replica join lifecycle close
 
@@ -132,10 +132,40 @@ Both passed on `p15-g9c/replica-ready-feed-continuity`.
 
 ---
 
-## 8. Next Slice
+## 8. D-Slice Evidence
 
-G9C-D should move from component lifecycle evidence to host/daemon status evidence:
+Code: `seaweed_block@6226c7f` — `G9C: expose replica ready transition through status projection`
 
-1. Prove the status endpoint reflects the same recovered-replica transition.
-2. Prefer a narrow subprocess/L2 test if the harness can observe the intermediate `recovering` state without adding test-only production hooks.
-3. Keep placement and ACK voter eligibility out of this slice unless explicitly ratified.
+What landed:
+
+1. Added `TestG9C_StatusProjection_DualLaneRecoveredReplicaReadyAfterPostCloseAck`.
+2. The test wires a real component cluster adapter into `NewStatusServer`.
+3. It drives real dual-lane rebuild and polls `/status?volume=v1`.
+4. It observes `replication_role=recovering` during the recovery window, then `replication_role=replica_ready` only after the post-close durable ack path completes.
+5. The supporting replica remains `frontend_primary_ready=false`.
+
+Verification:
+
+```powershell
+go test ./core/host/volume ./core/replication/component -count=1
+go test ./core/authority ./core/recovery/... ./core/transport/... ./core/engine ./core/adapter ./core/host/volume ./core/replication/component -count=1
+```
+
+Both passed on `p15-g9c/replica-ready-feed-continuity`.
+
+---
+
+## 9. Close Readiness
+
+G9C is close-ready at `seaweed_block@6226c7f` for the in-process/component + status-surface claim:
+
+1. Engine predicate: close alone does not publish ready.
+2. Transport signal: dual-lane close emits post-close durable ack from receiver witness.
+3. Component lifecycle: real engine/adapter/transport path publishes ready only after durable ack.
+4. Status surface: `/status` reports recovering first, then `replica_ready`, while not becoming frontend primary.
+
+Non-claims remain:
+
+1. Placement does not consume `replica_ready`.
+2. Sync ACK voter eligibility does not consume `replica_ready`.
+3. True subprocess/multi-daemon hardware evidence is forward-carry unless explicitly requested before close.
