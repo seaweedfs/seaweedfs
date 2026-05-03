@@ -1,7 +1,7 @@
 # V3 Phase 15 — G9A ACK + Reintegration Policy Mini-Plan
 
 **Date**: 2026-05-02
-**Status**: CLOSE-READY; first ACK/reintegration policy slice pushed on `p15-g9a/ack-reintegration-policy`
+**Status**: CLOSED 2026-05-02; first ACK/reintegration policy slice pushed on `p15-g9a/ack-reintegration-policy`
 **Predecessor**: G8 CLOSED 2026-05-02
 **Code repo**: `seaweed_block`
 
@@ -90,3 +90,47 @@ Non-claims to carry forward:
 1. Product-daemon L2 "peer explicitly in recovery" strict ACK variant.
 2. `replica_ready` publication after completed reintegration.
 3. RF>=3 quorum/placement policy.
+
+---
+
+## 6. Close Evidence
+
+### 6.1 Closure claim
+
+G9A establishes the MVP ACK/reintegration contract:
+
+1. `best-effort` remains the default and does not wait for secondary ACK.
+2. `sync-quorum` / `sync-all` do not silently return foreground success when the required replica is unavailable or not sync-eligible.
+3. Returned replicas are not treated as ready from heartbeat/authority observation alone; they remain `not_ready` / `recovering` until progress/reintegration evidence exists.
+4. Best-effort write success does not disable recovery; lagging replicas still enter the feeder/probe/recovery path and can converge byte-equal.
+
+### 6.2 Evidence commands
+
+Canonical scoped regression:
+
+```powershell
+go test ./core/authority ./cmd/blockvolume ./core/frontend/durable ./core/replication ./core/replication/component ./core/engine ./core/host/volume -count=1
+```
+
+Last verified by sw on 2026-05-02: green.
+
+### 6.3 Evidence commits
+
+| Commit | Role |
+|---|---|
+| `8ba4884` | durable write ACK policy seam |
+| `1571212` | replication strict ACK mode semantics |
+| `5232e3a` | product daemon `--replication-ack` flag |
+| `520b25b` | returned old primary status vocabulary |
+| `8362d42` | L2 subprocess strict ACK failure oracle |
+| `154bd96` | L2 subprocess best-effort success oracle |
+| `da8a321` | authority returned-replica progress-ready oracle |
+| `6d4a0e7` | status `recovering` role |
+| `f1117ce` | component best-effort still recovers lagging peer |
+
+### 6.4 Forward-carry register
+
+1. L2 product-daemon test for explicit `ReplicaCatchingUp` strict ACK failure. Requires a safe observable/control seam; do not add a test-only production RPC.
+2. Publish `ReplicationRole=replica_ready` only after completed reintegration evidence exists.
+3. RF>=3 quorum and placement policy.
+4. Flow-control enforcement under primary flush/pin pressure.
