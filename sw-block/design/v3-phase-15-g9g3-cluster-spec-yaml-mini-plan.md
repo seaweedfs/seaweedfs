@@ -1,7 +1,7 @@
 # V3 Phase 15 G9G-3 - Cluster Spec YAML Facade Mini-Plan
 
 Date: 2026-05-03
-Status: architect draft; usability facade only
+Status: implemented at `seaweed_block@4fc0842`; QA verification pending
 Branch target: `p15-g9g3/cluster-spec-yaml`
 Scope: declarative bootstrap YAML that feeds existing lifecycle/product-loop stores
 
@@ -65,6 +65,24 @@ placements:
 2. Existing G9G product loop consumes imported placement.
 3. Real subprocess L2 reaches blockvolume assignment-backed `Healthy=true`.
 4. No authority publisher call is added to the import path.
+
+## 6. Implementation Snapshot
+
+Close candidate: `seaweed_block@4fc0842`.
+
+Implemented:
+
+- `cmd/blockmaster --cluster-spec <yaml>`;
+- YAML imports accepted topology and placement intent;
+- existing G9G product loop consumes the imported placement;
+- focused L2 now uses `--cluster-spec` instead of `--lifecycle-placement-seed`.
+
+QA commands:
+
+```powershell
+go test ./cmd/blockvolume -run TestG9G_L2ProductLoopPublishesAssignmentToBlockvolume -count=1
+go test ./core/lifecycle ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
+```
 
 ## 5. Non-Claims
 
