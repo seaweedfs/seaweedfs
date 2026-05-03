@@ -62,11 +62,21 @@ def main() -> int:
     table_id = tuple(args.namespace) + (args.table,)
     table = catalog.load_table(table_id)
 
-    arrow_table = pa.table(
+    # Match the Iceberg table schema: id is `required long`, label is
+    # `optional string`. Default pyarrow columns are nullable, which fails
+    # PyIceberg's required-field compatibility check.
+    arrow_schema = pa.schema(
+        [
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("label", pa.string(), nullable=True),
+        ]
+    )
+    arrow_table = pa.Table.from_pydict(
         {
-            "id": pa.array([1, 2, 3], type=pa.int64()),
-            "label": pa.array(["one", "two", "three"], type=pa.string()),
-        }
+            "id": [1, 2, 3],
+            "label": ["one", "two", "three"],
+        },
+        schema=arrow_schema,
     )
     table.append(arrow_table)
     print(f"appended {arrow_table.num_rows} rows to {'.'.join(table_id)}")
