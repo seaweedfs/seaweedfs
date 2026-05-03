@@ -1,8 +1,8 @@
 # V3 Phase 15 — G15b Kubernetes Static PV Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: architect draft; follows G15a close on `seaweed_block@ac49adb`
-**Expected branch**: continue from `p15-g15a/csi-static-mvp`, or branch `p15-g15b/k8s-static-pv` from `ac49adb`
+**Status**: G15b-1 manifest skeleton + static guards implemented at `seaweed_block@62325c9`
+**Branch**: `p15-g15b/k8s-static-pv` from `ac49adb`
 **Goal**: prove a Kubernetes pod can consume a pre-provisioned V3 block volume through `cmd/blockcsi`, using real Kubernetes CSI control flow and real Linux iSCSI staging.
 
 ---
@@ -122,6 +122,8 @@ These tests are not a substitute for Kubernetes. They prevent the highest-risk c
 
 ### G15b-1 — K8s Manifest Skeleton + Static Guards
 
+Status: **implemented** at `seaweed_block@62325c9`.
+
 Code:
 
 - Add V3 Kubernetes manifests, likely under:
@@ -148,6 +150,15 @@ Pass:
 
 - All §4 manifest guards green.
 - No product behavior change.
+
+Verification:
+
+```powershell
+go test ./cmd/blockcsi -run TestG15b_Manifest -count=1 -v
+go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
+```
+
+Result: PASS on `62325c9`.
 
 ### G15b-2 — K8s Lab Harness
 
