@@ -1509,8 +1509,12 @@ func ensureMiniBucket(bucketName string) error {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	const bucketsPath = "/buckets"
+	// Derive from miniClientsCtx so Ctrl+C cancels the bucket RPCs, and bound
+	// with a short timeout so a stalled filer cannot block the welcome message
+	// indefinitely.
+	ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+	defer cancel()
 	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		ctx := context.Background()
 		_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: bucketsPath,
 			Name:      bucketName,
@@ -1523,7 +1527,7 @@ func ensureMiniBucket(bucketName string) error {
 			return fmt.Errorf("lookup bucket %s: %w", bucketName, err)
 		}
 		if err := filer_pb.DoMkdir(ctx, client, bucketsPath, bucketName, nil); err != nil {
-			return err
+			return fmt.Errorf("create bucket %s: %w", bucketName, err)
 		}
 		glog.V(0).Infof("created bucket %s", bucketName)
 		return nil
