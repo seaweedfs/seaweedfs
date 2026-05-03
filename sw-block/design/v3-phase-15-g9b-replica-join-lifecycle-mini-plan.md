@@ -1,7 +1,7 @@
 # V3 Phase 15 G9B — Replica Join / Lifecycle Protocol Mini-Plan
 
 **Date**: 2026-05-02
-**Status**: OPEN; starts after G9A ACK/reintegration policy close
+**Status**: CLOSED 2026-05-02
 **Code branch**: `p15-g9b/replica-join-lifecycle`
 **Predecessors**: G7 recovery data-plane close, G8 failover data continuity close, G9A ACK/reintegration policy close
 
@@ -224,3 +224,44 @@ G9B will not claim:
 4. returned replica driving placement or ACK eligibility from `replica_ready` status;
 5. transparent OS initiator failover;
 6. flow-control enforcement.
+
+---
+
+## 9. Close
+
+**Close target**: `p15-g9b/replica-join-lifecycle` at `8db289b`
+
+**Evidence commits**:
+
+| Commit | Evidence |
+|---|---|
+| `1faeda4` | Authority boundary tests: observation/local role cannot mint authority; genesis bind goes through publisher. |
+| `759dd0d` | Status vocabulary: returned/registered replica maps `not_ready -> recovering -> replica_ready` without becoming frontend primary. |
+| `44aaae1` | Adapter-backed component proof: assignment/probe/session-close events drive the returned-replica lifecycle. |
+| `8db289b` | L2 subprocess smoke: real `cmd/blockmaster` + two `cmd/blockvolume` daemons prove observation-alone is not primary; assignment unlocks iSCSI byte-equal write/read. |
+
+**Close regression**:
+
+```text
+go test ./core/authority ./core/host/volume ./cmd/blockvolume -count=1
+```
+
+Result: PASS on 2026-05-02.
+
+**Closed claim**:
+
+G9B pins the replica join lifecycle vocabulary and the two key negative rules:
+
+```text
+heartbeat / local role claim / first observed process != authority primary
+heartbeat / local role claim / returned process != replica_ready
+```
+
+The first primary for an RF=2 topology is minted only through the authority publisher after placement/topology conditions are satisfied. A returned/late replica can become `replica_ready` only after recovery progress evidence reaches adapter/engine state.
+
+**Forward-carry**:
+
+1. `replica_ready` does not yet drive placement membership.
+2. `replica_ready` does not yet drive sync ACK voter eligibility.
+3. Continuous WAL feeding after `replica_ready` remains governed by the G7/G9 feeder path, but the promotion of `replica_ready` into ACK/placement policy is a later gate.
+4. External create/delete/scale API and CSI lifecycle remain later MVP work.
