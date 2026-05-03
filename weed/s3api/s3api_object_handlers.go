@@ -3130,3 +3130,46 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 
 	return nil
 }
+
+// cacheRemoteObjectForCopy caches a remote-only source object to the local cluster
+// before a CopyObject / CopyObjectPart operation reads it. Without this, the copy
+// path would create a destination entry whose size metadata is non-zero but whose
+// chunks/content are empty (since a remote-only entry has no local data), producing
+// the data-integrity error reported in #9304.
+//
+// Returns the cached entry on success, or nil if caching failed or did not produce
+// any chunks. Uses a bounded timeout so a stuck cache cannot hang the copy request
+// indefinitely. Handles versioned source paths.
+func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, object, versionId string) *filer_pb.Entry {
+	const cacheTimeout = 30 * time.Second
+	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
+	defer cancel()
+
+	var dir, name string
+	if versionId != "" && versionId != "null" {
+		normalizedObject := s3_constants.NormalizeObjectKey(object)
+		dir = s3a.bucketDir(bucket) + "/" + normalizedObject + s3_constants.VersionsFolder
+		name = s3a.getVersionFileName(versionId)
+	} else {
+		dir, name = s3a.buildRemoteObjectPath(bucket, object)
+	}
+
+	glog.V(1).Infof("cacheRemoteObjectForCopy: caching %s/%s (versionId: %s)", dir, name, versionId)
+
+	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			glog.Warningf("cacheRemoteObjectForCopy: timeout caching %s/%s after %v", dir, name, cacheTimeout)
+		} else {
+			glog.Errorf("cacheRemoteObjectForCopy: failed to cache %s/%s: %v", dir, name, err)
+		}
+		return nil
+	}
+
+	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+		glog.V(1).Infof("cacheRemoteObjectForCopy: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
+		return cachedEntry
+	}
+
+	return nil
+}

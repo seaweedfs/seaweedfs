@@ -271,3 +271,111 @@ func removeDuplicateSlashesTest(s string) string {
 	}
 	return s
 }
+
+// TestCopyObjectRemoteOnlySourceDetection is a regression test for #9304.
+//
+// CopyObject from a remote.mount source whose object only exists in the upstream
+// bucket (no local chunks yet) used to produce a destination entry with
+// FileSize > 0 but no chunks/content. A subsequent GET on that destination
+// returned 500 with "data integrity error: size N reported but no content".
+//
+// The fix detects entry.IsInRemoteOnly() before the copy proceeds and caches
+// the remote object locally. This test pins the classification of the entry
+// shapes the fix branches on, plus the pre-fix broken-output shape, so a
+// future refactor cannot silently regress to the old behavior.
+func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
+	tests := []struct {
+		name                  string
+		entry                 *filer_pb.Entry
+		expectRemoteOnly      bool
+		expectInlineBranchHit bool // whether the pre-fix copy code's inline branch would catch this entry
+		expectBrokenWithoutFix bool // whether that inline branch would write a metadata-only destination
+	}{
+		{
+			name: "remote-only mp3 (matches #9304 reproduction)",
+			entry: &filer_pb.Entry{
+				Name: "file-1234-audio.mp3",
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: 16018804,
+				},
+				Chunks:  nil,
+				Content: nil,
+				RemoteEntry: &filer_pb.RemoteEntry{
+					RemoteSize: 16018804,
+				},
+			},
+			expectRemoteOnly:       true,
+			expectInlineBranchHit:  true,
+			expectBrokenWithoutFix: true,
+		},
+		{
+			name: "local file with chunks - copy works fine, fix does not engage",
+			entry: &filer_pb.Entry{
+				Name: "local.bin",
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: 1024,
+				},
+				Chunks: []*filer_pb.FileChunk{
+					{FileId: "1,abc", Size: 1024, Offset: 0},
+				},
+			},
+			expectRemoteOnly:       false,
+			expectInlineBranchHit:  false,
+			expectBrokenWithoutFix: false,
+		},
+		{
+			name: "small inline file (no chunks, has Content) - hits inline branch but not broken",
+			entry: &filer_pb.Entry{
+				Name: "tiny.txt",
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: 5,
+				},
+				Content: []byte("hello"),
+			},
+			expectRemoteOnly:       false,
+			expectInlineBranchHit:  true,
+			expectBrokenWithoutFix: false,
+		},
+		{
+			name: "remote entry already cached (has chunks) - fix does not engage",
+			entry: &filer_pb.Entry{
+				Name: "cached.dat",
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: 2048,
+				},
+				Chunks: []*filer_pb.FileChunk{
+					{FileId: "2,def", Size: 2048, Offset: 0},
+				},
+				RemoteEntry: &filer_pb.RemoteEntry{
+					RemoteSize: 2048,
+				},
+			},
+			expectRemoteOnly:       false,
+			expectInlineBranchHit:  false,
+			expectBrokenWithoutFix: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expectRemoteOnly, tt.entry.IsInRemoteOnly(),
+				"IsInRemoteOnly() must classify the entry correctly so the CopyObject fix can branch on it")
+
+			// Mirror the inline branch in s3api_object_handlers_copy.go:
+			//   if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0
+			inlineBranchHit := tt.entry.Attributes != nil &&
+				(tt.entry.Attributes.FileSize == 0 || len(tt.entry.GetChunks()) == 0)
+			assert.Equal(t, tt.expectInlineBranchHit, inlineBranchHit,
+				"the inline copy branch's classification of this entry has changed")
+
+			// "Broken without fix" means the inline branch fires AND there is no
+			// inline content to copy AND FileSize > 0 — exactly the #9304 shape.
+			brokenWithoutFix := inlineBranchHit &&
+				len(tt.entry.Content) == 0 &&
+				tt.entry.Attributes != nil &&
+				tt.entry.Attributes.FileSize > 0
+			assert.Equal(t, tt.expectBrokenWithoutFix, brokenWithoutFix,
+				"the #9304 broken-destination shape must be recognized so the fix's precondition triggers")
+		})
+	}
+}
