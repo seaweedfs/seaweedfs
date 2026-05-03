@@ -19,6 +19,7 @@ This directory contains a Dremio integration smoke test for SeaweedFS's Iceberg 
    - `ColumnProjection`: `SELECT id, label` succeeds and the response schema reports both columns. Failure here means Dremio could not parse the schema returned by the SeaweedFS catalog.
    - `InformationSchemaColumns`: the table's columns are exposed through Dremio's metadata layer with the expected ordinal order.
    - `InformationSchemaTables`: the table is registered in Dremio's `INFORMATION_SCHEMA`.
+   - `MultiLevelNamespace`: a 2-level Iceberg namespace (created via the REST API) is exposed by Dremio as nested folders, and a table inside it is queryable with dot-separated identifiers.
 
 ## Running Locally
 

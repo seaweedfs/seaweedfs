@@ -65,6 +65,8 @@ type TestEnvironment struct {
 //   - InformationSchemaColumns: the table's columns are exposed through
 //     Dremio's metadata layer with the expected name and ordinal positions.
 //   - InformationSchemaTables: the table is registered in Dremio's INFORMATION_SCHEMA.
+//   - MultiLevelNamespace: a 2-level Iceberg namespace is surfaced as nested
+//     folders and a table inside it is queryable with dot-separated identifiers.
 func TestDremioIcebergCatalog(t *testing.T) {
 	requireDremioRuntime(t)
 
@@ -87,6 +89,18 @@ func TestDremioIcebergCatalog(t *testing.T) {
 	icebergToken := requestIcebergOAuthToken(t, env)
 	createIcebergNamespace(t, env, icebergToken, tableBucket, namespace)
 	createIcebergTable(t, env, icebergToken, tableBucket, namespace, tableName)
+
+	// Seed a true multi-level namespace and a table inside it. Created before
+	// Dremio bootstraps so the source's first scan with
+	// isRecursiveAllowedNamespaces=true discovers both levels.
+	multiLevelNs := []string{
+		"ml_parent_" + randomString(4),
+		"ml_child_" + randomString(4),
+	}
+	multiLevelTable := "nested_" + randomString(6)
+	createIcebergNamespaceLevels(t, env, icebergToken, tableBucket, multiLevelNs[:1])
+	createIcebergNamespaceLevels(t, env, icebergToken, tableBucket, multiLevelNs)
+	createIcebergTableInLevels(t, env, icebergToken, tableBucket, multiLevelNs, multiLevelTable)
 
 	configDir := env.writeDremioConfig(t, tableBucket)
 	env.startDremioContainer(t, configDir)
@@ -145,6 +159,16 @@ func TestDremioIcebergCatalog(t *testing.T) {
 		if len(rows) == 0 {
 			t.Fatalf("INFORMATION_SCHEMA.TABLES did not list %s; raw response: %s", tableName, out)
 		}
+	})
+
+	t.Run("MultiLevelNamespace", func(t *testing.T) {
+		// Reference is "iceberg"."<level1>"."<level2>"."<table>", relying on
+		// isRecursiveAllowedNamespaces=true in the Dremio source config to
+		// surface nested namespaces as nested folders.
+		parts := append([]string{dremioSourceName}, append(append([]string{}, multiLevelNs...), multiLevelTable)...)
+		ref := dremioObjectName(parts...)
+		out := runDremioSQL(t, env, fmt.Sprintf("SELECT COUNT(*) AS row_count FROM %s", ref))
+		assertSingleNumericValue(t, out, 0)
 	})
 }
 
@@ -888,17 +912,34 @@ func requestIcebergOAuthToken(t *testing.T, env *TestEnvironment) string {
 
 func createIcebergNamespace(t *testing.T, env *TestEnvironment, token, bucketName, namespace string) {
 	t.Helper()
-
-	doIcebergJSONRequest(t, env, token, http.MethodPost, fmt.Sprintf("/v1/%s/namespaces", url.PathEscape(bucketName)), map[string]any{
-		"namespace": []string{namespace},
-	}, http.StatusOK, http.StatusConflict)
+	createIcebergNamespaceLevels(t, env, token, bucketName, []string{namespace})
 }
 
 func createIcebergTable(t *testing.T, env *TestEnvironment, token, bucketName, namespace, tableName string) {
 	t.Helper()
+	createIcebergTableInLevels(t, env, token, bucketName, []string{namespace}, tableName)
+}
 
+// createIcebergNamespaceLevels creates a multi-level Iceberg namespace via the
+// REST catalog. Single-element levels create a flat namespace; multi-element
+// levels create the nested form (e.g. ["analytics", "daily"]).
+func createIcebergNamespaceLevels(t *testing.T, env *TestEnvironment, token, bucketName string, levels []string) {
+	t.Helper()
+
+	doIcebergJSONRequest(t, env, token, http.MethodPost, fmt.Sprintf("/v1/%s/namespaces", url.PathEscape(bucketName)), map[string]any{
+		"namespace": levels,
+	}, http.StatusOK, http.StatusConflict)
+}
+
+// createIcebergTableInLevels creates a table in a (possibly multi-level)
+// namespace. The namespace path component is encoded with the unit-separator
+// (0x1F) convention used by SeaweedFS's Iceberg REST API.
+func createIcebergTableInLevels(t *testing.T, env *TestEnvironment, token, bucketName string, levels []string, tableName string) {
+	t.Helper()
+
+	encodedNs := strings.Join(levels, "\x1F")
 	doIcebergJSONRequest(t, env, token, http.MethodPost,
-		fmt.Sprintf("/v1/%s/namespaces/%s/tables", url.PathEscape(bucketName), url.PathEscape(namespace)),
+		fmt.Sprintf("/v1/%s/namespaces/%s/tables", url.PathEscape(bucketName), url.PathEscape(encodedNs)),
 		map[string]any{
 			"name": tableName,
 			"schema": map[string]any{
