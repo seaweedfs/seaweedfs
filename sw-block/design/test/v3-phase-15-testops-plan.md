@@ -1,7 +1,7 @@
 # V3 Phase 15 TestOps Plan
 
 **Date**: 2026-05-03
-**Status**: DRAFT v0.3; V3 `internal/testops` contract skeleton implemented; first registered `go-test` scenario executable at `f51b79b`
+**Status**: DRAFT v0.4; V3 `internal/testops` contract skeleton implemented; `g15b-manifest` executable at `f51b79b`; first K8s shell scenario registered at `7050654`
 **Scope**: end-to-end V3 test operations covering dev loop, gate close, regression, debug, hardware, K8s, chaos
 **Code repo**: `seaweed_block` (V3 binaries / per-package go test)
 **Docs repo**: `seaweedfs/sw-block/design/test/`
@@ -109,6 +109,9 @@ Implementation note:
   loads into the registry, executes the G15b manifest/harness `go test`, and
   writes standard `run-request.json`, `result.json`, and `test-stdout.log`
   artifacts.
+- Slice 2 landed at `seaweed_block@7050654`: `testops/registry/g15b-k8s-static.json`
+  records the M02 K8s static PV scenario as a shell-driver registration pinned
+  to the green `95b7217` lab run.
 
 ### 3.1 Layout
 
@@ -392,7 +395,7 @@ Each scenario has: a driver in `bridge/scenarios/`, a test instruction in
 | `g15a-privileged` | `g15a-privileged.sh` | `v3-phase-15-g15a-privileged-qa-test-instruction.md` | `ac49adb` | L3 |
 | `g15a-non-privileged` | `g15a-non-privileged.sh` | `v3-phase-15-g15a-qa-test-instruction.md` | `ac49adb` | L2 |
 | `g15b-manifest` | `go-test` via `testops/registry/g15b-manifest.json` | `v3-phase-15-g15b-k8s-qa-test-instruction.md` | `f51b79b` | L1/L2 |
-| `g15b-k8s-static` | `g15b-k8s-static.sh` | `v3-phase-15-g15b-k8s-qa-test-instruction.md` | `5375add` | L5 |
+| `g15b-k8s-static` | `shell` via `testops/registry/g15b-k8s-static.json` | `v3-phase-15-g15b-k8s-qa-test-instruction.md` | `7050654` | L5 |
 | `g9g-l2` | `g9g-l2.sh` | `v3-phase-15-g9g-qa-test-instruction.md` | `7ed9ab2` | L2 |
 | `g8-failover-l2` | `g8-failover-l2.sh` | (forward-carry: derive from G8 mini-plan §12) | `b320336` | L2 |
 | `g7-recovery-3scenarios` | `g7-recovery.sh` | (existing: V:\share\g5-test\scenarios-g7.sh) | `d09fcc6` | L4 |

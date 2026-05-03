@@ -1,7 +1,7 @@
 # V3 Phase 15 G15b Kubernetes Static PV QA Test Instruction
 
 **Date**: 2026-05-03
-**Status**: K8s lab instruction for `p15-g15b/k8s-static-pv@95b7217`; M02 re-run pending
+**Status**: VERIFIED PASS on M02 at `p15-g15b/k8s-static-pv@95b7217`; TestOps registration landed at `7050654`
 **Scope**: single-node Kubernetes static PV/PVC/pod smoke through real V3 daemons and CSI.
 
 ---
@@ -99,6 +99,14 @@ Expected result:
 - pod `default/sw-block-static-smoke` reaches `Succeeded`;
 - artifact dir contains pod logs and product daemon logs;
 - cleanup deletes the test PV/PVC/pod and product/CSI manifests.
+
+Verified result:
+
+- Tree: `p15-g15b/k8s-static-pv@95b7217`
+- Lab: M02 (`192.168.1.184`) k3s `v1.34.4+k3s1`
+- Run ID: `20260503T172122Z-95b7217`
+- Artifacts: `V:\share\g15b-k8s\runs\20260503T172122Z-95b7217\`
+- Result: PASS; pod completed after writing 4096 bytes through the PVC and `sha256sum -c` returned `OK`.
 
 ---
 

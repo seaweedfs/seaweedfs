@@ -1,7 +1,7 @@
 # V3 Phase 15 — G15b Kubernetes Static PV Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: G15b-1 manifests implemented at `62325c9`; G15b-2 lab harness staged at `32b3a13`; image build inputs added at `5375add`; M02 first run found DNS/harness blockers fixed at `eb13105`; M02 second run found `iscsi_tcp` + primary/listener alignment blockers fixed at `95b7217`; Kubernetes re-run pending
+**Status**: G15b K8s static PV verified PASS on M02 at `95b7217`; TestOps shell registration landed at `7050654`
 **Branch**: `p15-g15b/k8s-static-pv` from `ac49adb`
 **Goal**: prove a Kubernetes pod can consume a pre-provisioned V3 block volume through `cmd/blockcsi`, using real Kubernetes CSI control flow and real Linux iSCSI staging.
 
@@ -162,7 +162,7 @@ Result: PASS on `62325c9`.
 
 ### G15b-2 — K8s Lab Harness
 
-Status: **harness staged** at `seaweed_block@32b3a13`; image build inputs added at `seaweed_block@5375add`; DNS/logging fixes at `seaweed_block@eb13105`; iSCSI TCP module loading + deterministic attachable-primary bridge fix at `seaweed_block@95b7217`; real Kubernetes re-run pending.
+Status: **verified PASS** on M02 at `seaweed_block@95b7217`; TestOps shell registration landed at `seaweed_block@7050654`.
 
 Artifacts:
 
@@ -240,6 +240,14 @@ go test ./internal/testops ./core/host/master ./cmd/blockcsi -count=1
 go test ./core/csi ./cmd/blockcsi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
 
+Kubernetes lab evidence:
+
+- Tree: `p15-g15b/k8s-static-pv@95b7217`
+- Lab: M02 (`192.168.1.184`) k3s `v1.34.4+k3s1`
+- Run ID: `20260503T172122Z-95b7217`
+- Artifacts: `V:\share\g15b-k8s\runs\20260503T172122Z-95b7217\`
+- Result: PASS; pod `sw-block-static-smoke` completed; pod wrote 4096 bytes and `sha256sum -c` returned `OK`; r1 log shows SCSI WRITE + SYNCHRONIZE_CACHE backend success; cleanup left no dangling test iSCSI session.
+
 Image build verification added at `5375add`:
 
 ```bash
@@ -248,7 +256,7 @@ bash scripts/build-g15b-images.sh .
 
 Result: PASS; built `sw-block:local` and `sw-block-csi:local`.
 
-Not yet proven:
+Proven by the M02 run:
 
 - Kubernetes API server availability;
 - image load path into the target cluster after rebuilding at `95b7217`;

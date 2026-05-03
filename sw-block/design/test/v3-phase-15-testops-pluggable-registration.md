@@ -221,7 +221,7 @@ The last rule is strict:
 | Scenario | Driver | Layer | Known green | Status |
 |---|---|---|---|---|
 | `g15b-manifest` | `go-test` | L1/L2 | `eb13105` | registered and executable at `f51b79b` |
-| `g15b-k8s-static` | `shell` | L5 | `5375add` preflight only; K8s run pending | ready to register as pending-lab |
+| `g15b-k8s-static` | `shell` | L5 | `95b7217` | registered at `7050654`; M02 K8s static PV PASS |
 | `g15a-privileged` | `shell` | L3 | `ac49adb` | ready to register |
 | `g15a-non-privileged` | `go-test` | L2 | `ac49adb` | ready to register |
 | `g9g-l2` | `go-test` | L2 | `7ed9ab2` | ready to register |
@@ -249,7 +249,9 @@ go test ./internal/testops ./cmd/blockcsi -count=1
 
 The `internal/testops` suite includes the smoke that loads `g15b-manifest.json`, runs the registered scenario through `GoTestDriver`, and emits a valid `result.json` in a temp artifact dir.
 
-Next slice: register `g15b-k8s-static` as a shell-driver scenario once the M02 rerun is green on the `eb13105+` manifest/harness fix.
+Slice 2 result: `testops/registry/g15b-k8s-static.json` landed at `seaweed_block@7050654` after the M02 K8s lab passed on `95b7217`.
+
+Next slice: register `g15a-privileged` as a shell-driver scenario, or pause TestOps registration and merge G15b if the branch needs to close first.
 
 ---
 
