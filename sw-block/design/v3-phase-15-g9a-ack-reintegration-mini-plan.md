@@ -56,15 +56,16 @@ Rule: recovery progress is not a substitute for synchronous ACK eligibility.
 | `5232e3a` | `cmd/blockvolume --replication-ack=best-effort|sync-quorum|sync-all` wires daemon mode to replication durability and durable write ACK policy. |
 | `520b25b` | `/status` append-only G9A vocabulary: returned old primary is `AuthorityRole=superseded`, `FrontendPrimaryReady=false`, `ReplicationRole=not_ready`; authority movement does not imply replica readiness. |
 | `8362d42` | subprocess L2 strict ACK oracle: real blockmaster + 2x blockvolume + iSCSI, `--replication-ack=sync-quorum`, secondary down => foreground WRITE returns non-GOOD. |
+| `154bd96` | subprocess L2 best-effort oracle: same RF=2 daemon/iSCSI shape, secondary down => foreground WRITE still returns GOOD. |
 
 ### 3.2 Next red tests
 
 1. `TestG9A_ReplicaCandidate_RequiresProgressFactBeforeReady`
    - Candidate readiness requires durable/progress fact, not assignment presence.
-2. `TestG9A_BestEffortStillFeedsLaggingReplica`
-   - Best-effort write returns success, and progress policy still starts catch-up/rebuild for lagging peer.
-3. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
+2. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
    - Follow-up variant where peer is explicitly in recovery (not merely down) and the daemon path still fails foreground ACK.
+3. `TestG9A_BestEffortStillFeedsLaggingReplica`
+   - Follow-up variant that proves best-effort success does not disable catch-up/rebuild for the lagging peer.
 
 ---
 
