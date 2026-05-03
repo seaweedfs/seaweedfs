@@ -1,9 +1,8 @@
-package pluginworker
+package vacuum
 
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -11,11 +10,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	vacuumtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -24,11 +22,11 @@ const (
 )
 
 func init() {
-	RegisterHandler(HandlerFactory{
+	pluginworker.RegisterHandler(pluginworker.HandlerFactory{
 		JobType:  "vacuum",
-		Category: CategoryDefault,
+		Category: pluginworker.CategoryDefault,
 		Aliases:  []string{"vol.vacuum", "volume.vacuum"},
-		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
 			return NewVacuumHandler(opts.GrpcDialOption, int32(opts.MaxExecute)), nil
 		},
 	})
@@ -99,9 +97,9 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
 							Options: []*plugin_pb.ConfigOption{
-								{Value: string(volumeStateAll), Label: "All Volumes"},
-								{Value: string(volumeStateActive), Label: "Active (writable)"},
-								{Value: string(volumeStateFull), Label: "Full (read-only)"},
+								{Value: string(pluginworker.VolumeStateAll), Label: "All Volumes"},
+								{Value: string(pluginworker.VolumeStateActive), Label: "Active (writable)"},
+								{Value: string(pluginworker.VolumeStateFull), Label: "Full (read-only)"},
 							},
 						},
 						{
@@ -136,7 +134,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 				"volume_state": {
-					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(volumeStateAll)},
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(pluginworker.VolumeStateAll)},
 				},
 				"data_center_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
@@ -198,7 +196,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 	}
 }
 
-func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetectionRequest, sender DetectionSender) error {
+func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetectionRequest, sender pluginworker.DetectionSender) error {
 	if request == nil {
 		return fmt.Errorf("run detection request is nil")
 	}
@@ -210,7 +208,7 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	}
 
 	workerConfig := deriveVacuumConfig(request.GetWorkerConfigValues())
-	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
+	collectionFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	masters := make([]string, 0)
 	if request.ClusterContext != nil {
 		masters = append(masters, request.ClusterContext.MasterGrpcAddresses...)
@@ -220,19 +218,19 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 		return err
 	}
 
-	volState := volumeState(strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", string(volumeStateAll)))))
-	metrics = filterMetricsByVolumeState(metrics, volState)
+	volState := pluginworker.VolumeState(strings.ToUpper(strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "volume_state", string(pluginworker.VolumeStateAll)))))
+	metrics = pluginworker.FilterMetricsByVolumeState(metrics, volState)
 
-	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
-	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
-	nodeFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
+	dataCenterFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	rackFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
+	nodeFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
 
 	if dataCenterFilter != "" || rackFilter != "" || nodeFilter != "" {
-		metrics = filterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
+		metrics = pluginworker.FilterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
-	results, err := vacuumtask.Detection(metrics, clusterInfo, workerConfig)
+	results, err := Detection(metrics, clusterInfo, workerConfig)
 	if err != nil {
 		return err
 	}
@@ -273,9 +271,9 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 }
 
 func emitVacuumDetectionDecisionTrace(
-	sender DetectionSender,
+	sender pluginworker.DetectionSender,
 	metrics []*workertypes.VolumeHealthMetrics,
-	workerConfig *vacuumtask.Config,
+	workerConfig *Config,
 	results []*workertypes.TaskDetectionResult,
 ) error {
 	if sender == nil || workerConfig == nil {
@@ -313,7 +311,7 @@ func emitVacuumDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(BuildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(pluginworker.BuildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -345,7 +343,7 @@ func emitVacuumDetectionDecisionTrace(
 			metric.GarbageRatio*100,
 			workerConfig.GarbageThreshold*100,
 		)
-		if err := sender.SendActivity(BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(pluginworker.BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
 			"volume_id": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
 			},
@@ -363,7 +361,7 @@ func emitVacuumDetectionDecisionTrace(
 	return nil
 }
 
-func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequest, sender ExecutionSender) error {
+func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequest, sender pluginworker.ExecutionSender) error {
 	if request == nil || request.Job == nil {
 		return fmt.Errorf("execute request/job is nil")
 	}
@@ -397,7 +395,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		}
 	}
 
-	task := vacuumtask.NewVacuumTask(
+	task := NewVacuumTask(
 		request.Job.JobId,
 		params.Sources[0].Node,
 		params.VolumeId,
@@ -419,7 +417,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity(stage, message),
+				pluginworker.BuildExecutorActivity(stage, message),
 			},
 		}); err != nil {
 			execCancel()
@@ -434,7 +432,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		Stage:           "assigned",
 		Message:         "vacuum job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("assigned", "vacuum job accepted"),
+			pluginworker.BuildExecutorActivity("assigned", "vacuum job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -449,7 +447,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity("failed", err.Error()),
+				pluginworker.BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -472,7 +470,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("completed", resultSummary),
+			pluginworker.BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -482,13 +480,13 @@ func (h *VacuumHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	metrics, activeTopology, _, err := collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	metrics, activeTopology, _, err := pluginworker.CollectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 	return metrics, activeTopology, err
 }
 
-func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Config {
-	config := vacuumtask.NewDefaultConfig()
-	config.GarbageThreshold = readDoubleConfig(values, "garbage_threshold", config.GarbageThreshold)
+func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *Config {
+	config := NewDefaultConfig()
+	config.GarbageThreshold = pluginworker.ReadDoubleConfig(values, "garbage_threshold", config.GarbageThreshold)
 	config.MinVolumeAgeSeconds = 0 // plugin worker does not filter by volume age
 	return config
 }
@@ -529,7 +527,7 @@ func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.Jo
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
 		JobType:    "vacuum",
-		Priority:   mapTaskPriority(result.Priority),
+		Priority:   pluginworker.MapTaskPriority(result.Priority),
 		Summary:    summary,
 		Detail:     strings.TrimSpace(result.Reason),
 		Parameters: map[string]*plugin_pb.ConfigValue{
@@ -563,7 +561,7 @@ func decodeVacuumTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, erro
 		return nil, fmt.Errorf("job spec is nil")
 	}
 
-	if payload := readBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
+	if payload := pluginworker.ReadBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
 		params := &worker_pb.TaskParams{}
 		if err := proto.Unmarshal(payload, params); err != nil {
 			return nil, fmt.Errorf("unmarshal task_params_pb: %w", err)
@@ -574,10 +572,10 @@ func decodeVacuumTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, erro
 		return params, nil
 	}
 
-	volumeID := readInt64Config(job.Parameters, "volume_id", 0)
-	server := readStringConfig(job.Parameters, "server", "")
-	collection := readStringConfig(job.Parameters, "collection", "")
-	if volumeID <= 0 {
+	volumeID := pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
+	server := pluginworker.ReadStringConfig(job.Parameters, "server", "")
+	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
+	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
 	if strings.TrimSpace(server) == "" {
@@ -586,12 +584,12 @@ func decodeVacuumTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, erro
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
-		VolumeId:   uint32(volumeID),
+		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
 			{
 				Node:     server,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		TaskParams: &worker_pb.TaskParams_VacuumParams{
@@ -602,142 +600,4 @@ func decodeVacuumTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, erro
 			},
 		},
 	}, nil
-}
-
-func readStringConfig(values map[string]*plugin_pb.ConfigValue, field string, fallback string) string {
-	if values == nil {
-		return fallback
-	}
-	value := values[field]
-	if value == nil {
-		return fallback
-	}
-	switch kind := value.Kind.(type) {
-	case *plugin_pb.ConfigValue_StringValue:
-		return kind.StringValue
-	case *plugin_pb.ConfigValue_Int64Value:
-		return strconv.FormatInt(kind.Int64Value, 10)
-	case *plugin_pb.ConfigValue_DoubleValue:
-		return strconv.FormatFloat(kind.DoubleValue, 'f', -1, 64)
-	case *plugin_pb.ConfigValue_BoolValue:
-		return strconv.FormatBool(kind.BoolValue)
-	}
-	return fallback
-}
-
-func readDoubleConfig(values map[string]*plugin_pb.ConfigValue, field string, fallback float64) float64 {
-	if values == nil {
-		return fallback
-	}
-	value := values[field]
-	if value == nil {
-		return fallback
-	}
-	switch kind := value.Kind.(type) {
-	case *plugin_pb.ConfigValue_DoubleValue:
-		return kind.DoubleValue
-	case *plugin_pb.ConfigValue_Int64Value:
-		return float64(kind.Int64Value)
-	case *plugin_pb.ConfigValue_StringValue:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(kind.StringValue), 64)
-		if err == nil {
-			return parsed
-		}
-	case *plugin_pb.ConfigValue_BoolValue:
-		if kind.BoolValue {
-			return 1
-		}
-		return 0
-	}
-	return fallback
-}
-
-func readInt64Config(values map[string]*plugin_pb.ConfigValue, field string, fallback int64) int64 {
-	if values == nil {
-		return fallback
-	}
-	value := values[field]
-	if value == nil {
-		return fallback
-	}
-	switch kind := value.Kind.(type) {
-	case *plugin_pb.ConfigValue_Int64Value:
-		return kind.Int64Value
-	case *plugin_pb.ConfigValue_DoubleValue:
-		return int64(kind.DoubleValue)
-	case *plugin_pb.ConfigValue_StringValue:
-		parsed, err := strconv.ParseInt(strings.TrimSpace(kind.StringValue), 10, 64)
-		if err == nil {
-			return parsed
-		}
-	case *plugin_pb.ConfigValue_BoolValue:
-		if kind.BoolValue {
-			return 1
-		}
-		return 0
-	}
-	return fallback
-}
-
-func readBytesConfig(values map[string]*plugin_pb.ConfigValue, field string) []byte {
-	if values == nil {
-		return nil
-	}
-	value := values[field]
-	if value == nil {
-		return nil
-	}
-	if kind, ok := value.Kind.(*plugin_pb.ConfigValue_BytesValue); ok {
-		return kind.BytesValue
-	}
-	return nil
-}
-
-func mapTaskPriority(priority workertypes.TaskPriority) plugin_pb.JobPriority {
-	switch strings.ToLower(string(priority)) {
-	case "low":
-		return plugin_pb.JobPriority_JOB_PRIORITY_LOW
-	case "medium", "normal":
-		return plugin_pb.JobPriority_JOB_PRIORITY_NORMAL
-	case "high":
-		return plugin_pb.JobPriority_JOB_PRIORITY_HIGH
-	case "critical":
-		return plugin_pb.JobPriority_JOB_PRIORITY_CRITICAL
-	default:
-		return plugin_pb.JobPriority_JOB_PRIORITY_NORMAL
-	}
-}
-
-// ShouldSkipDetectionByInterval returns true when less than minIntervalSeconds
-// have elapsed since lastSuccessfulRun. Exported so sub-packages can reuse it.
-func ShouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, minIntervalSeconds int) bool {
-	if lastSuccessfulRun == nil || minIntervalSeconds <= 0 {
-		return false
-	}
-	lastRun := lastSuccessfulRun.AsTime()
-	if lastRun.IsZero() {
-		return false
-	}
-	return time.Since(lastRun) < time.Duration(minIntervalSeconds)*time.Second
-}
-
-// BuildExecutorActivity creates an executor activity event. Exported for sub-packages.
-func BuildExecutorActivity(stage string, message string) *plugin_pb.ActivityEvent {
-	return &plugin_pb.ActivityEvent{
-		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
-		Stage:     stage,
-		Message:   message,
-		CreatedAt: timestamppb.Now(),
-	}
-}
-
-// BuildDetectorActivity creates a detector activity event. Exported for sub-packages.
-func BuildDetectorActivity(stage string, message string, details map[string]*plugin_pb.ConfigValue) *plugin_pb.ActivityEvent {
-	return &plugin_pb.ActivityEvent{
-		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR,
-		Stage:     stage,
-		Message:   message,
-		Details:   details,
-		CreatedAt: timestamppb.Now(),
-	}
 }

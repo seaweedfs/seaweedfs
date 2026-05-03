@@ -1,4 +1,4 @@
-package pluginworker
+package ec_balance
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	ecbalancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_balance"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -25,18 +25,18 @@ const (
 )
 
 func init() {
-	RegisterHandler(HandlerFactory{
+	pluginworker.RegisterHandler(pluginworker.HandlerFactory{
 		JobType:  "ec_balance",
-		Category: CategoryDefault,
+		Category: pluginworker.CategoryDefault,
 		Aliases:  []string{"ec-balance", "ec.balance", "ec_shard_balance"},
-		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
 			return NewECBalanceHandler(opts.GrpcDialOption), nil
 		},
 	})
 }
 
 type ecBalanceWorkerConfig struct {
-	TaskConfig *ecbalancetask.Config
+	TaskConfig *Config
 }
 
 // ECBalanceHandler is the plugin job handler for EC shard balancing.
@@ -180,7 +180,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 func (h *ECBalanceHandler) Detect(
 	ctx context.Context,
 	request *plugin_pb.RunDetectionRequest,
-	sender DetectionSender,
+	sender pluginworker.DetectionSender,
 ) error {
 	if request == nil {
 		return fmt.Errorf("run detection request is nil")
@@ -195,15 +195,15 @@ func (h *ECBalanceHandler) Detect(
 	workerConfig := deriveECBalanceWorkerConfig(request.GetWorkerConfigValues())
 
 	// Apply admin-side scope filters
-	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
+	collectionFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	if collectionFilter != "" {
 		workerConfig.TaskConfig.CollectionFilter = collectionFilter
 	}
-	dcFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	dcFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
 	if dcFilter != "" {
 		workerConfig.TaskConfig.DataCenterFilter = dcFilter
 	}
-	diskType := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "disk_type", ""))
+	diskType := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "disk_type", ""))
 	if diskType != "" {
 		workerConfig.TaskConfig.DiskType = diskType
 	}
@@ -224,7 +224,7 @@ func (h *ECBalanceHandler) Detect(
 		maxResults = 0
 	}
 
-	results, hasMore, err := ecbalancetask.Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+	results, hasMore, err := Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
@@ -261,7 +261,7 @@ func (h *ECBalanceHandler) Detect(
 func (h *ECBalanceHandler) Execute(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
-	sender ExecutionSender,
+	sender pluginworker.ExecutionSender,
 ) error {
 	if request == nil || request.Job == nil {
 		return fmt.Errorf("execute request/job is nil")
@@ -285,7 +285,7 @@ func (h *ECBalanceHandler) Execute(
 		return fmt.Errorf("ec balance target node is required")
 	}
 
-	task := ecbalancetask.NewECBalanceTask(
+	task := NewECBalanceTask(
 		request.Job.JobId,
 		params.VolumeId,
 		params.Collection,
@@ -308,7 +308,7 @@ func (h *ECBalanceHandler) Execute(
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity(stage, message),
+				pluginworker.BuildExecutorActivity(stage, message),
 			},
 		}); err != nil {
 			glog.Warningf("EC balance job %s (%s): failed to send progress (%.0f%%, stage=%q): %v, cancelling execution",
@@ -325,7 +325,7 @@ func (h *ECBalanceHandler) Execute(
 		Stage:           "assigned",
 		Message:         "ec balance job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("assigned", "ec balance job accepted"),
+			pluginworker.BuildExecutorActivity("assigned", "ec balance job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -340,7 +340,7 @@ func (h *ECBalanceHandler) Execute(
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity("failed", err.Error()),
+				pluginworker.BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -370,7 +370,7 @@ func (h *ECBalanceHandler) Execute(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("completed", resultSummary),
+			pluginworker.BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -380,14 +380,14 @@ func (h *ECBalanceHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	metrics, activeTopology, _, err := collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	metrics, activeTopology, _, err := pluginworker.CollectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 	return metrics, activeTopology, err
 }
 
 func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBalanceWorkerConfig {
-	taskConfig := ecbalancetask.NewDefaultConfig()
+	taskConfig := NewDefaultConfig()
 
-	imbalanceThreshold := readDoubleConfig(values, "imbalance_threshold", taskConfig.ImbalanceThreshold)
+	imbalanceThreshold := pluginworker.ReadDoubleConfig(values, "imbalance_threshold", taskConfig.ImbalanceThreshold)
 	if imbalanceThreshold < ecBalanceMinImbalanceThreshold {
 		imbalanceThreshold = ecBalanceMinImbalanceThreshold
 	}
@@ -396,16 +396,13 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	}
 	taskConfig.ImbalanceThreshold = imbalanceThreshold
 
-	minServerCountRaw := readInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount))
-	if minServerCountRaw < int64(ecBalanceMinServerCount) {
-		minServerCountRaw = int64(ecBalanceMinServerCount)
+	minServerCount := pluginworker.ReadIntConfig(values, "min_server_count", taskConfig.MinServerCount)
+	if minServerCount < ecBalanceMinServerCount {
+		minServerCount = ecBalanceMinServerCount
 	}
-	if minServerCountRaw > math.MaxInt32 {
-		minServerCountRaw = math.MaxInt32
-	}
-	taskConfig.MinServerCount = int(minServerCountRaw)
+	taskConfig.MinServerCount = minServerCount
 
-	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
+	taskConfig.PreferredTags = util.NormalizeTagList(pluginworker.ReadStringListConfig(values, "preferred_tags"))
 
 	return &ecBalanceWorkerConfig{
 		TaskConfig: taskConfig,
@@ -467,7 +464,7 @@ func buildECBalanceProposal(result *workertypes.TaskDetectionResult) (*plugin_pb
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
 		JobType:    "ec_balance",
-		Priority:   mapTaskPriority(result.Priority),
+		Priority:   pluginworker.MapTaskPriority(result.Priority),
 		Summary:    summary,
 		Detail:     strings.TrimSpace(result.Reason),
 		Parameters: map[string]*plugin_pb.ConfigValue{
@@ -506,7 +503,7 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 	}
 
 	// Try protobuf-encoded params first (preferred path)
-	if payload := readBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
+	if payload := pluginworker.ReadBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
 		params := &worker_pb.TaskParams{}
 		if err := proto.Unmarshal(payload, params); err != nil {
 			return nil, fmt.Errorf("decodeECBalanceTaskParams: unmarshal task_params_pb: %w", err)
@@ -532,10 +529,10 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 
 	// Legacy fallback: construct TaskParams from individual scalar parameters.
 	// All execution-critical fields are required.
-	volumeID := readInt64Config(job.Parameters, "volume_id", 0)
-	sourceNode := strings.TrimSpace(readStringConfig(job.Parameters, "source_server", ""))
-	targetNode := strings.TrimSpace(readStringConfig(job.Parameters, "target_server", ""))
-	collection := readStringConfig(job.Parameters, "collection", "")
+	volumeID := pluginworker.ReadInt64Config(job.Parameters, "volume_id", 0)
+	sourceNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "source_server", ""))
+	targetNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "target_server", ""))
+	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
 
 	if volumeID <= 0 || volumeID > math.MaxUint32 {
 		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid or missing volume_id: %d", volumeID)
@@ -551,16 +548,16 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 	if !hasShardID || shardIDVal == nil {
 		return nil, fmt.Errorf("decodeECBalanceTaskParams: missing shard_id (required for EcBalanceTaskParams)")
 	}
-	shardID := readInt64Config(job.Parameters, "shard_id", -1)
+	shardID := pluginworker.ReadInt64Config(job.Parameters, "shard_id", -1)
 	if shardID < 0 || shardID > math.MaxUint32 {
 		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid shard_id: %d", shardID)
 	}
 
-	sourceDiskID := readInt64Config(job.Parameters, "source_disk_id", 0)
+	sourceDiskID := pluginworker.ReadInt64Config(job.Parameters, "source_disk_id", 0)
 	if sourceDiskID < 0 || sourceDiskID > math.MaxUint32 {
 		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid source_disk_id: %d", sourceDiskID)
 	}
-	targetDiskID := readInt64Config(job.Parameters, "target_disk_id", 0)
+	targetDiskID := pluginworker.ReadInt64Config(job.Parameters, "target_disk_id", 0)
 	if targetDiskID < 0 || targetDiskID > math.MaxUint32 {
 		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid target_disk_id: %d", targetDiskID)
 	}
@@ -588,8 +585,8 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 }
 
 func emitECBalanceDecisionTrace(
-	sender DetectionSender,
-	taskConfig *ecbalancetask.Config,
+	sender pluginworker.DetectionSender,
+	taskConfig *Config,
 	results []*workertypes.TaskDetectionResult,
 	maxResults int,
 	hasMore bool,
@@ -627,7 +624,7 @@ func emitECBalanceDecisionTrace(
 		phaseCounts["global"],
 	)
 
-	return sender.SendActivity(BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+	return sender.SendActivity(pluginworker.BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_moves": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(results))},
 		},

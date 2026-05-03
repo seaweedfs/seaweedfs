@@ -1,4 +1,4 @@
-package pluginworker
+package erasure_coding
 
 import (
 	"context"
@@ -11,28 +11,28 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
-	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
 func init() {
-	RegisterHandler(HandlerFactory{
+	pluginworker.RegisterHandler(pluginworker.HandlerFactory{
 		JobType:  "erasure_coding",
-		Category: CategoryHeavy,
+		Category: pluginworker.CategoryHeavy,
 		Aliases:  []string{"erasure-coding", "erasure.coding", "ec"},
-		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
 			return NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir), nil
 		},
 	})
 }
 
 type erasureCodingWorkerConfig struct {
-	TaskConfig *erasurecodingtask.Config
+	TaskConfig *Config
 }
 
 // ErasureCodingHandler is the plugin job handler for erasure coding.
@@ -188,7 +188,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 func (h *ErasureCodingHandler) Detect(
 	ctx context.Context,
 	request *plugin_pb.RunDetectionRequest,
-	sender DetectionSender,
+	sender pluginworker.DetectionSender,
 ) error {
 	if request == nil {
 		return fmt.Errorf("run detection request is nil")
@@ -202,7 +202,7 @@ func (h *ErasureCodingHandler) Detect(
 
 	workerConfig := deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues())
 
-	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
+	collectionFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	if collectionFilter != "" {
 		workerConfig.TaskConfig.CollectionFilter = collectionFilter
 	}
@@ -222,7 +222,7 @@ func (h *ErasureCodingHandler) Detect(
 	if maxResults < 0 {
 		maxResults = 0
 	}
-	results, hasMore, err := erasurecodingtask.Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+	results, hasMore, err := Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
@@ -256,9 +256,9 @@ func (h *ErasureCodingHandler) Detect(
 }
 
 func emitErasureCodingDetectionDecisionTrace(
-	sender DetectionSender,
+	sender pluginworker.DetectionSender,
 	metrics []*workertypes.VolumeHealthMetrics,
-	taskConfig *erasurecodingtask.Config,
+	taskConfig *Config,
 	results []*workertypes.TaskDetectionResult,
 	maxResults int,
 	hasMore bool,
@@ -352,7 +352,7 @@ func emitErasureCodingDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(pluginworker.BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -409,7 +409,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			metric.FullnessRatio*100,
 			taskConfig.FullnessRatio*100,
 		)
-		if err := sender.SendActivity(BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(pluginworker.BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
 			"volume_id": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
 			},
@@ -446,7 +446,7 @@ func emitErasureCodingDetectionDecisionTrace(
 func (h *ErasureCodingHandler) Execute(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
-	sender ExecutionSender,
+	sender pluginworker.ExecutionSender,
 ) error {
 	if request == nil || request.Job == nil {
 		return fmt.Errorf("execute request/job is nil")
@@ -472,7 +472,7 @@ func (h *ErasureCodingHandler) Execute(
 		return fmt.Errorf("erasure coding targets are required")
 	}
 
-	task := erasurecodingtask.NewErasureCodingTask(
+	task := NewErasureCodingTask(
 		request.Job.JobId,
 		params.Sources[0].Node,
 		params.VolumeId,
@@ -494,7 +494,7 @@ func (h *ErasureCodingHandler) Execute(
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity(stage, message),
+				pluginworker.BuildExecutorActivity(stage, message),
 			},
 		}); err != nil {
 			execCancel()
@@ -509,7 +509,7 @@ func (h *ErasureCodingHandler) Execute(
 		Stage:           "assigned",
 		Message:         "erasure coding job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("assigned", "erasure coding job accepted"),
+			pluginworker.BuildExecutorActivity("assigned", "erasure coding job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -524,7 +524,7 @@ func (h *ErasureCodingHandler) Execute(
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity("failed", err.Error()),
+				pluginworker.BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -552,7 +552,7 @@ func (h *ErasureCodingHandler) Execute(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("completed", resultSummary),
+			pluginworker.BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -562,20 +562,20 @@ func (h *ErasureCodingHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	metrics, activeTopology, _, err := collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	metrics, activeTopology, _, err := pluginworker.CollectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 	return metrics, activeTopology, err
 }
 
 func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *erasureCodingWorkerConfig {
-	taskConfig := erasurecodingtask.NewDefaultConfig()
+	taskConfig := NewDefaultConfig()
 
-	quietForSeconds := int(readInt64Config(values, "quiet_for_seconds", int64(taskConfig.QuietForSeconds)))
+	quietForSeconds := pluginworker.ReadIntConfig(values, "quiet_for_seconds", taskConfig.QuietForSeconds)
 	if quietForSeconds < 0 {
 		quietForSeconds = 0
 	}
 	taskConfig.QuietForSeconds = quietForSeconds
 
-	fullnessRatio := readDoubleConfig(values, "fullness_ratio", taskConfig.FullnessRatio)
+	fullnessRatio := pluginworker.ReadDoubleConfig(values, "fullness_ratio", taskConfig.FullnessRatio)
 	if fullnessRatio < 0 {
 		fullnessRatio = 0
 	}
@@ -584,13 +584,13 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	}
 	taskConfig.FullnessRatio = fullnessRatio
 
-	minSizeMB := int(readInt64Config(values, "min_size_mb", int64(taskConfig.MinSizeMB)))
+	minSizeMB := pluginworker.ReadIntConfig(values, "min_size_mb", taskConfig.MinSizeMB)
 	if minSizeMB < 1 {
 		minSizeMB = 1
 	}
 	taskConfig.MinSizeMB = minSizeMB
 
-	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
+	taskConfig.PreferredTags = util.NormalizeTagList(pluginworker.ReadStringListConfig(values, "preferred_tags"))
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig: taskConfig,
@@ -645,7 +645,7 @@ func buildErasureCodingProposal(
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
 		JobType:    "erasure_coding",
-		Priority:   mapTaskPriority(result.Priority),
+		Priority:   pluginworker.MapTaskPriority(result.Priority),
 		Summary:    summary,
 		Detail:     strings.TrimSpace(result.Reason),
 		Parameters: map[string]*plugin_pb.ConfigValue{
@@ -683,7 +683,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		return nil, fmt.Errorf("job spec is nil")
 	}
 
-	if payload := readBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
+	if payload := pluginworker.ReadBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
 		params := &worker_pb.TaskParams{}
 		if err := proto.Unmarshal(payload, params); err != nil {
 			return nil, fmt.Errorf("unmarshal task_params_pb: %w", err)
@@ -694,28 +694,28 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		return params, nil
 	}
 
-	volumeID := readInt64Config(job.Parameters, "volume_id", 0)
-	sourceNode := strings.TrimSpace(readStringConfig(job.Parameters, "source_server", ""))
+	volumeID := pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
+	sourceNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "source_server", ""))
 	if sourceNode == "" {
-		sourceNode = strings.TrimSpace(readStringConfig(job.Parameters, "server", ""))
+		sourceNode = strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "server", ""))
 	}
-	targetServers := readStringListConfig(job.Parameters, "target_servers")
+	targetServers := pluginworker.ReadStringListConfig(job.Parameters, "target_servers")
 	if len(targetServers) == 0 {
-		targetServers = readStringListConfig(job.Parameters, "targets")
+		targetServers = pluginworker.ReadStringListConfig(job.Parameters, "targets")
 	}
-	collection := readStringConfig(job.Parameters, "collection", "")
+	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
 
-	dataShards := int32(readInt64Config(job.Parameters, "data_shards", int64(ecstorage.DataShardsCount)))
+	dataShards := pluginworker.ReadInt32Config(job.Parameters, "data_shards", int32(ecstorage.DataShardsCount))
 	if dataShards <= 0 {
-		dataShards = ecstorage.DataShardsCount
+		dataShards = int32(ecstorage.DataShardsCount)
 	}
-	parityShards := int32(readInt64Config(job.Parameters, "parity_shards", int64(ecstorage.ParityShardsCount)))
+	parityShards := pluginworker.ReadInt32Config(job.Parameters, "parity_shards", int32(ecstorage.ParityShardsCount))
 	if parityShards <= 0 {
-		parityShards = ecstorage.ParityShardsCount
+		parityShards = int32(ecstorage.ParityShardsCount)
 	}
 	totalShards := int(dataShards + parityShards)
 
-	if volumeID <= 0 {
+	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
 	if sourceNode == "" {
@@ -737,7 +737,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		}
 		targets = append(targets, &worker_pb.TaskTarget{
 			Node:     targetNode,
-			VolumeId: uint32(volumeID),
+			VolumeId: volumeID,
 			ShardIds: shardAssignments[i],
 		})
 	}
@@ -747,12 +747,12 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
-		VolumeId:   uint32(volumeID),
+		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
 			{
 				Node:     sourceNode,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		Targets: targets,
@@ -817,71 +817,6 @@ func applyErasureCodingExecutionDefaults(
 			}
 		}
 	}
-}
-
-func readStringListConfig(values map[string]*plugin_pb.ConfigValue, field string) []string {
-	if values == nil {
-		return nil
-	}
-	value := values[field]
-	if value == nil {
-		return nil
-	}
-
-	switch kind := value.Kind.(type) {
-	case *plugin_pb.ConfigValue_StringList:
-		return normalizeStringList(kind.StringList.GetValues())
-	case *plugin_pb.ConfigValue_ListValue:
-		out := make([]string, 0, len(kind.ListValue.GetValues()))
-		for _, item := range kind.ListValue.GetValues() {
-			itemText := readStringFromConfigValue(item)
-			if itemText != "" {
-				out = append(out, itemText)
-			}
-		}
-		return normalizeStringList(out)
-	case *plugin_pb.ConfigValue_StringValue:
-		return normalizeStringList(strings.Split(kind.StringValue, ","))
-	}
-
-	return nil
-}
-
-func readStringFromConfigValue(value *plugin_pb.ConfigValue) string {
-	if value == nil {
-		return ""
-	}
-	switch kind := value.Kind.(type) {
-	case *plugin_pb.ConfigValue_StringValue:
-		return strings.TrimSpace(kind.StringValue)
-	case *plugin_pb.ConfigValue_Int64Value:
-		return fmt.Sprintf("%d", kind.Int64Value)
-	case *plugin_pb.ConfigValue_DoubleValue:
-		return fmt.Sprintf("%g", kind.DoubleValue)
-	case *plugin_pb.ConfigValue_BoolValue:
-		if kind.BoolValue {
-			return "true"
-		}
-		return "false"
-	}
-	return ""
-}
-
-func normalizeStringList(values []string) []string {
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		item := strings.TrimSpace(value)
-		if item == "" {
-			continue
-		}
-		if _, found := seen[item]; found {
-			continue
-		}
-		seen[item] = struct{}{}
-		normalized = append(normalized, item)
-	}
-	return normalized
 }
 
 func assignECShardIDs(totalShards int, targetCount int) [][]uint32 {

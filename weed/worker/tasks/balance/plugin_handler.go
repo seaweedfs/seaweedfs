@@ -1,4 +1,4 @@
-package pluginworker
+package balance
 
 import (
 	"context"
@@ -14,8 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
-	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -26,36 +25,19 @@ const (
 	maxProposalStringLength      = 200
 )
 
-// collectionFilterMode controls how collections are handled during balance detection.
-type collectionFilterMode string
-
-const (
-	collectionFilterAll  collectionFilterMode = "ALL_COLLECTIONS"
-	collectionFilterEach collectionFilterMode = "EACH_COLLECTION"
-)
-
-// volumeState controls which volumes participate in balance detection.
-type volumeState string
-
-const (
-	volumeStateAll    volumeState = "ALL"
-	volumeStateActive volumeState = "ACTIVE"
-	volumeStateFull   volumeState = "FULL"
-)
-
 func init() {
-	RegisterHandler(HandlerFactory{
+	pluginworker.RegisterHandler(pluginworker.HandlerFactory{
 		JobType:  "volume_balance",
-		Category: CategoryDefault,
+		Category: pluginworker.CategoryDefault,
 		Aliases:  []string{"balance", "volume.balance", "volume-balance"},
-		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
 			return NewVolumeBalanceHandler(opts.GrpcDialOption), nil
 		},
 	})
 }
 
 type volumeBalanceWorkerConfig struct {
-	TaskConfig         *balancetask.Config
+	TaskConfig         *Config
 	MaxConcurrentMoves int
 	BatchSize          int
 }
@@ -114,9 +96,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
 							Options: []*plugin_pb.ConfigOption{
-								{Value: string(volumeStateAll), Label: "All Volumes"},
-								{Value: string(volumeStateActive), Label: "Active (writable)"},
-								{Value: string(volumeStateFull), Label: "Full (read-only)"},
+								{Value: string(pluginworker.VolumeStateAll), Label: "All Volumes"},
+								{Value: string(pluginworker.VolumeStateActive), Label: "Active (writable)"},
+								{Value: string(pluginworker.VolumeStateFull), Label: "Full (read-only)"},
 							},
 						},
 						{
@@ -151,7 +133,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 				"volume_state": {
-					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(volumeStateAll)},
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(pluginworker.VolumeStateAll)},
 				},
 				"data_center_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
@@ -268,7 +250,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 func (h *VolumeBalanceHandler) Detect(
 	ctx context.Context,
 	request *plugin_pb.RunDetectionRequest,
-	sender DetectionSender,
+	sender pluginworker.DetectionSender,
 ) error {
 	if request == nil {
 		return fmt.Errorf("run detection request is nil")
@@ -281,7 +263,7 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	workerConfig := deriveBalanceWorkerConfig(request.GetWorkerConfigValues())
-	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
+	collectionFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	masters := make([]string, 0)
 	if request.ClusterContext != nil {
 		masters = append(masters, request.ClusterContext.MasterGrpcAddresses...)
@@ -292,15 +274,15 @@ func (h *VolumeBalanceHandler) Detect(
 		return err
 	}
 
-	volState := volumeState(strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", string(volumeStateAll)))))
-	metrics = filterMetricsByVolumeState(metrics, volState)
+	volState := pluginworker.VolumeState(strings.ToUpper(strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "volume_state", string(pluginworker.VolumeStateAll)))))
+	metrics = pluginworker.FilterMetricsByVolumeState(metrics, volState)
 
-	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
-	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
-	nodeFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
+	dataCenterFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	rackFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
+	nodeFilter := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
 
 	if dataCenterFilter != "" || rackFilter != "" || nodeFilter != "" {
-		metrics = filterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
+		metrics = pluginworker.FilterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
 	}
 
 	workerConfig.TaskConfig.DataCenterFilter = dataCenterFilter
@@ -316,7 +298,7 @@ func (h *VolumeBalanceHandler) Detect(
 	var results []*workertypes.TaskDetectionResult
 	var hasMore bool
 
-	if collectionFilterMode(collectionFilter) == collectionFilterEach {
+	if pluginworker.CollectionFilterMode(collectionFilter) == pluginworker.CollectionFilterEach {
 		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
 		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
 		for _, m := range metrics {
@@ -342,7 +324,7 @@ func (h *VolumeBalanceHandler) Detect(
 			if unlimitedBudget {
 				perCollectionLimit = 0 // Detection treats <= 0 as unbounded
 			}
-			perResults, perHasMore, perErr := balancetask.Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, perCollectionLimit)
+			perResults, perHasMore, perErr := Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, perCollectionLimit)
 			if perErr != nil {
 				return perErr
 			}
@@ -356,7 +338,7 @@ func (h *VolumeBalanceHandler) Detect(
 		}
 	} else {
 		var err error
-		results, hasMore, err = balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+		results, hasMore, err = Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 		if err != nil {
 			return err
 		}
@@ -397,10 +379,10 @@ func (h *VolumeBalanceHandler) Detect(
 }
 
 func emitVolumeBalanceDetectionDecisionTrace(
-	sender DetectionSender,
+	sender pluginworker.DetectionSender,
 	metrics []*workertypes.VolumeHealthMetrics,
 	activeTopology *topology.ActiveTopology,
-	taskConfig *balancetask.Config,
+	taskConfig *Config,
 	results []*workertypes.TaskDetectionResult,
 ) error {
 	if sender == nil || taskConfig == nil {
@@ -428,7 +410,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(pluginworker.BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -475,7 +457,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 				volumeCount,
 				minVolumeCount,
 			)
-			if err := sender.SendActivity(BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+			if err := sender.SendActivity(pluginworker.BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
 				"disk_type": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 				},
@@ -496,7 +478,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 		}
 
 		// Seed server counts from topology so zero-volume servers are included,
-		// matching the same logic used in balancetask.Detection.
+		// matching the same logic used in Detection.
 		serverVolumeCounts := make(map[string]int)
 		if activeTopology != nil {
 			topologyInfo := activeTopology.GetTopologyInfo()
@@ -524,7 +506,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 				len(serverVolumeCounts),
 				taskConfig.MinServerCount,
 			)
-			if err := sender.SendActivity(BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+			if err := sender.SendActivity(pluginworker.BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
 				"disk_type": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 				},
@@ -595,7 +577,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 			)
 		}
 
-		if err := sender.SendActivity(BuildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(pluginworker.BuildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
 			"disk_type": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 			},
@@ -633,39 +615,6 @@ func emitVolumeBalanceDetectionDecisionTrace(
 	return nil
 }
 
-// filterMetricsByVolumeState filters volume metrics by state.
-// "ACTIVE" keeps volumes with FullnessRatio < 1.01 (writable, below size limit).
-// "FULL" keeps volumes with FullnessRatio >= 1.01 (read-only, above size limit).
-// "ALL" or any other value returns all metrics unfiltered.
-func filterMetricsByVolumeState(metrics []*workertypes.VolumeHealthMetrics, state volumeState) []*workertypes.VolumeHealthMetrics {
-	const fullnessThreshold = 1.01
-
-	var predicate func(m *workertypes.VolumeHealthMetrics) bool
-	switch state {
-	case volumeStateActive:
-		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
-			return m.FullnessRatio < fullnessThreshold
-		}
-	case volumeStateFull:
-		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
-			return m.FullnessRatio >= fullnessThreshold
-		}
-	default:
-		return metrics
-	}
-
-	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
-	for _, m := range metrics {
-		if m == nil {
-			continue
-		}
-		if predicate(m) {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
-}
-
 func countBalanceDiskTypes(metrics []*workertypes.VolumeHealthMetrics) int {
 	diskTypes := make(map[string]struct{})
 	for _, metric := range metrics {
@@ -690,7 +639,7 @@ const (
 func (h *VolumeBalanceHandler) Execute(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
-	sender ExecutionSender,
+	sender pluginworker.ExecutionSender,
 ) error {
 	if request == nil || request.Job == nil {
 		return fmt.Errorf("execute request/job is nil")
@@ -722,7 +671,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
 	params *worker_pb.TaskParams,
-	sender ExecutionSender,
+	sender pluginworker.ExecutionSender,
 ) error {
 	if len(params.Sources) == 0 || strings.TrimSpace(params.Sources[0].Node) == "" {
 		return fmt.Errorf("volume balance source node is required")
@@ -731,7 +680,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 		return fmt.Errorf("volume balance target node is required")
 	}
 
-	task := balancetask.NewBalanceTask(
+	task := NewBalanceTask(
 		request.Job.JobId,
 		params.Sources[0].Node,
 		params.VolumeId,
@@ -753,7 +702,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity(stage, message),
+				pluginworker.BuildExecutorActivity(stage, message),
 			},
 		}); err != nil {
 			execCancel()
@@ -768,7 +717,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 		Stage:           "assigned",
 		Message:         "volume balance job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("assigned", "volume balance job accepted"),
+			pluginworker.BuildExecutorActivity("assigned", "volume balance job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -783,7 +732,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity("failed", err.Error()),
+				pluginworker.BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -812,7 +761,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("completed", resultSummary),
+			pluginworker.BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -822,7 +771,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
 	params *worker_pb.TaskParams,
-	sender ExecutionSender,
+	sender pluginworker.ExecutionSender,
 ) error {
 	bp := params.GetBalanceParams()
 	if len(bp.Moves) == 0 {
@@ -870,7 +819,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 		Stage:           "assigned",
 		Message:         fmt.Sprintf("batch volume balance accepted: %d moves", totalMoves),
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("assigned", fmt.Sprintf("batch volume balance: %d moves, concurrency %d", totalMoves, maxConcurrent)),
+			pluginworker.BuildExecutorActivity("assigned", fmt.Sprintf("batch volume balance: %d moves, concurrency %d", totalMoves, maxConcurrent)),
 		},
 	}); err != nil {
 		return err
@@ -914,7 +863,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			Stage:           fmt.Sprintf("move %d/%d", moveIndex+1, totalMoves),
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity(fmt.Sprintf("move-%d", moveIndex+1), message),
+				pluginworker.BuildExecutorActivity(fmt.Sprintf("move-%d", moveIndex+1), message),
 			},
 		}); err != nil {
 			sendErr = err
@@ -938,7 +887,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 		go func(idx int, m *worker_pb.BalanceMoveSpec) {
 			defer func() { <-sem }() // release slot
 
-			task := balancetask.NewBalanceTask(
+			task := NewBalanceTask(
 				fmt.Sprintf("%s-move-%d", request.Job.JobId, idx),
 				m.SourceNode,
 				m.VolumeId,
@@ -1010,7 +959,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			BuildExecutorActivity("completed", summary),
+			pluginworker.BuildExecutorActivity("completed", summary),
 		},
 	})
 }
@@ -1049,13 +998,13 @@ func (h *VolumeBalanceHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, map[uint32][]workertypes.ReplicaLocation, error) {
-	return collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	return pluginworker.CollectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 }
 
 func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volumeBalanceWorkerConfig {
-	taskConfig := balancetask.NewDefaultConfig()
+	taskConfig := NewDefaultConfig()
 
-	imbalanceThreshold := readDoubleConfig(values, "imbalance_threshold", taskConfig.ImbalanceThreshold)
+	imbalanceThreshold := pluginworker.ReadDoubleConfig(values, "imbalance_threshold", taskConfig.ImbalanceThreshold)
 	if imbalanceThreshold < 0 {
 		imbalanceThreshold = 0
 	}
@@ -1064,59 +1013,33 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 	}
 	taskConfig.ImbalanceThreshold = imbalanceThreshold
 
-	minServerCount := int(readInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount)))
+	minServerCount := pluginworker.ReadIntConfig(values, "min_server_count", taskConfig.MinServerCount)
 	if minServerCount < 2 {
 		minServerCount = 2
 	}
 	taskConfig.MinServerCount = minServerCount
 
-	maxConcurrentMoves64 := readInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves))
-	if maxConcurrentMoves64 < 1 {
-		maxConcurrentMoves64 = 1
+	maxConcurrentMoves := pluginworker.ReadIntConfig(values, "max_concurrent_moves", defaultMaxConcurrentMoves)
+	if maxConcurrentMoves < 1 {
+		maxConcurrentMoves = 1
 	}
-	if maxConcurrentMoves64 > 50 {
-		maxConcurrentMoves64 = 50
+	if maxConcurrentMoves > 50 {
+		maxConcurrentMoves = 50
 	}
-	maxConcurrentMoves := int(maxConcurrentMoves64)
 
-	batchSize64 := readInt64Config(values, "batch_size", 20)
-	if batchSize64 < 1 {
-		batchSize64 = 1
+	batchSize := pluginworker.ReadIntConfig(values, "batch_size", 20)
+	if batchSize < 1 {
+		batchSize = 1
 	}
-	if batchSize64 > 100 {
-		batchSize64 = 100
+	if batchSize > 100 {
+		batchSize = 100
 	}
-	batchSize := int(batchSize64)
 
 	return &volumeBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
 		MaxConcurrentMoves: maxConcurrentMoves,
 		BatchSize:          batchSize,
 	}
-}
-
-func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilter, rackFilter, nodeFilter string) []*workertypes.VolumeHealthMetrics {
-	dcMatchers := wildcard.CompileWildcardMatchers(dcFilter)
-	rackMatchers := wildcard.CompileWildcardMatchers(rackFilter)
-	nodeMatchers := wildcard.CompileWildcardMatchers(nodeFilter)
-
-	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
-	for _, m := range metrics {
-		if m == nil {
-			continue
-		}
-		if !wildcard.MatchesAnyWildcard(dcMatchers, m.DataCenter) {
-			continue
-		}
-		if !wildcard.MatchesAnyWildcard(rackMatchers, m.Rack) {
-			continue
-		}
-		if !wildcard.MatchesAnyWildcard(nodeMatchers, m.Server) {
-			continue
-		}
-		filtered = append(filtered, m)
-	}
-	return filtered
 }
 
 func buildVolumeBalanceProposal(
@@ -1171,7 +1094,7 @@ func buildVolumeBalanceProposal(
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
 		JobType:    "volume_balance",
-		Priority:   mapTaskPriority(result.Priority),
+		Priority:   pluginworker.MapTaskPriority(result.Priority),
 		Summary:    summary,
 		Detail:     strings.TrimSpace(result.Reason),
 		Parameters: map[string]*plugin_pb.ConfigValue{
@@ -1371,7 +1294,7 @@ func buildBatchVolumeBalanceProposals(
 			ProposalId: proposalID,
 			DedupeKey:  compositeDedupeKey,
 			JobType:    "volume_balance",
-			Priority:   mapTaskPriority(highestPriority),
+			Priority:   pluginworker.MapTaskPriority(highestPriority),
 			Summary:    summary,
 			Detail:     fmt.Sprintf("Batch of %d volume moves with concurrency %d", len(moves), maxConcurrentMoves),
 			Parameters: map[string]*plugin_pb.ConfigValue{
@@ -1401,7 +1324,7 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		return nil, fmt.Errorf("job spec is nil")
 	}
 
-	if payload := readBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
+	if payload := pluginworker.ReadBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
 		params := &worker_pb.TaskParams{}
 		if err := proto.Unmarshal(payload, params); err != nil {
 			return nil, fmt.Errorf("unmarshal task_params_pb: %w", err)
@@ -1412,23 +1335,23 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		return params, nil
 	}
 
-	volumeID := readInt64Config(job.Parameters, "volume_id", 0)
-	sourceNode := strings.TrimSpace(readStringConfig(job.Parameters, "source_server", ""))
+	volumeID := pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
+	sourceNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "source_server", ""))
 	if sourceNode == "" {
-		sourceNode = strings.TrimSpace(readStringConfig(job.Parameters, "server", ""))
+		sourceNode = strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "server", ""))
 	}
-	targetNode := strings.TrimSpace(readStringConfig(job.Parameters, "target_server", ""))
+	targetNode := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "target_server", ""))
 	if targetNode == "" {
-		targetNode = strings.TrimSpace(readStringConfig(job.Parameters, "target", ""))
+		targetNode = strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "target", ""))
 	}
-	collection := readStringConfig(job.Parameters, "collection", "")
-	timeoutSeconds := int32(readInt64Config(job.Parameters, "timeout_seconds", int64(defaultBalanceTimeoutSeconds)))
+	collection := pluginworker.ReadStringConfig(job.Parameters, "collection", "")
+	timeoutSeconds := pluginworker.ReadInt32Config(job.Parameters, "timeout_seconds", defaultBalanceTimeoutSeconds)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = defaultBalanceTimeoutSeconds
 	}
 	forceMove := readBoolConfig(job.Parameters, "force_move", false)
 
-	if volumeID <= 0 {
+	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
 	if sourceNode == "" {
@@ -1440,18 +1363,18 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
-		VolumeId:   uint32(volumeID),
+		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
 			{
 				Node:     sourceNode,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		Targets: []*worker_pb.TaskTarget{
 			{
 				Node:     targetNode,
-				VolumeId: uint32(volumeID),
+				VolumeId: volumeID,
 			},
 		},
 		TaskParams: &worker_pb.TaskParams_BalanceParams{

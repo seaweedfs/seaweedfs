@@ -140,8 +140,8 @@ func (h *AdminScriptHandler) Detect(ctx context.Context, request *plugin_pb.RunD
 		return fmt.Errorf("job type %q is not handled by admin_script worker", request.JobType)
 	}
 
-	script := normalizeAdminScript(readStringConfig(request.GetAdminConfigValues(), "script", ""))
-	scriptName := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "script_name", ""))
+	script := normalizeAdminScript(ReadStringConfig(request.GetAdminConfigValues(), "script", ""))
+	scriptName := strings.TrimSpace(ReadStringConfig(request.GetAdminConfigValues(), "script_name", ""))
 	runIntervalMinutes := readAdminScriptRunIntervalMinutes(request.GetAdminConfigValues())
 	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), runIntervalMinutes*60) {
 		_ = sender.SendActivity(BuildDetectorActivity(
@@ -228,13 +228,13 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 		return fmt.Errorf("job type %q is not handled by admin_script worker", request.Job.JobType)
 	}
 
-	script := normalizeAdminScript(readStringConfig(request.Job.Parameters, "script", ""))
-	scriptName := strings.TrimSpace(readStringConfig(request.Job.Parameters, "script_name", ""))
+	script := normalizeAdminScript(ReadStringConfig(request.Job.Parameters, "script", ""))
+	scriptName := strings.TrimSpace(ReadStringConfig(request.Job.Parameters, "script_name", ""))
 	if script == "" {
-		script = normalizeAdminScript(readStringConfig(request.GetAdminConfigValues(), "script", ""))
+		script = normalizeAdminScript(ReadStringConfig(request.GetAdminConfigValues(), "script", ""))
 	}
 	if scriptName == "" {
-		scriptName = strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "script_name", ""))
+		scriptName = strings.TrimSpace(ReadStringConfig(request.GetAdminConfigValues(), "script_name", ""))
 	}
 
 	commands := parseAdminScriptCommands(script)
@@ -411,7 +411,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 }
 
 func readAdminScriptRunIntervalMinutes(values map[string]*plugin_pb.ConfigValue) int {
-	runIntervalMinutes := int(readInt64Config(values, "run_interval_minutes", defaultAdminScriptRunMins))
+	runIntervalMinutes := int(ReadInt64Config(values, "run_interval_minutes", defaultAdminScriptRunMins))
 	if runIntervalMinutes <= 0 {
 		return defaultAdminScriptRunMins
 	}

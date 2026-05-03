@@ -10,13 +10,14 @@ import (
 	"testing"
 
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestBuildPluginWorkerHandlerExplicitTypes(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+	testMaxConcurrency := int(vacuum.DefaultMaxExecutionConcurrency)
 
 	for _, jobType := range []string{"vacuum", "volume_balance", "erasure_coding", "admin_script", "iceberg_maintenance"} {
 		handlers, err := buildPluginWorkerHandlers(jobType, dialOption, testMaxConcurrency, "")
@@ -31,7 +32,7 @@ func TestBuildPluginWorkerHandlerExplicitTypes(t *testing.T) {
 
 func TestBuildPluginWorkerHandlerAliases(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+	testMaxConcurrency := int(vacuum.DefaultMaxExecutionConcurrency)
 
 	for _, alias := range []string{"balance", "ec", "iceberg", "admin", "script"} {
 		handlers, err := buildPluginWorkerHandlers(alias, dialOption, testMaxConcurrency, "")
@@ -54,7 +55,7 @@ func TestBuildPluginWorkerHandlerUnknown(t *testing.T) {
 
 func TestBuildPluginWorkerHandlers(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+	testMaxConcurrency := int(vacuum.DefaultMaxExecutionConcurrency)
 
 	handlers, err := buildPluginWorkerHandlers("vacuum,volume_balance,erasure_coding", dialOption, testMaxConcurrency, "")
 	if err != nil {
@@ -80,7 +81,7 @@ func TestBuildPluginWorkerHandlers(t *testing.T) {
 
 func TestBuildPluginWorkerHandlersCategories(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+	testMaxConcurrency := int(vacuum.DefaultMaxExecutionConcurrency)
 
 	allHandlers, err := buildPluginWorkerHandlers("all", dialOption, testMaxConcurrency, "")
 	if err != nil {
@@ -146,7 +147,7 @@ func TestBuildPluginWorkerHandlersCategories(t *testing.T) {
 
 func TestPluginWorkerDefaultJobTypes(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+	testMaxConcurrency := int(vacuum.DefaultMaxExecutionConcurrency)
 
 	// defaultPluginWorkerJobTypes is "all", so it should match the "all" category exactly
 	defaultHandlers, err := buildPluginWorkerHandlers(defaultPluginWorkerJobTypes, dialOption, testMaxConcurrency, "")
