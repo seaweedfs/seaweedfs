@@ -57,14 +57,13 @@ Rule: recovery progress is not a substitute for synchronous ACK eligibility.
 | `520b25b` | `/status` append-only G9A vocabulary: returned old primary is `AuthorityRole=superseded`, `FrontendPrimaryReady=false`, `ReplicationRole=not_ready`; authority movement does not imply replica readiness. |
 | `8362d42` | subprocess L2 strict ACK oracle: real blockmaster + 2x blockvolume + iSCSI, `--replication-ack=sync-quorum`, secondary down => foreground WRITE returns non-GOOD. |
 | `154bd96` | subprocess L2 best-effort oracle: same RF=2 daemon/iSCSI shape, secondary down => foreground WRITE still returns GOOD. |
+| `da8a321` | authority reintegration oracle: returned/high-evidence replica with `ReadyForPrimary=false` is skipped as failover target until a progress-ready fact exists. |
 
 ### 3.2 Next red tests
 
-1. `TestG9A_ReplicaCandidate_RequiresProgressFactBeforeReady`
-   - Candidate readiness requires durable/progress fact, not assignment presence.
-2. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
+1. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
    - Follow-up variant where peer is explicitly in recovery (not merely down) and the daemon path still fails foreground ACK.
-3. `TestG9A_BestEffortStillFeedsLaggingReplica`
+2. `TestG9A_BestEffortStillFeedsLaggingReplica`
    - Follow-up variant that proves best-effort success does not disable catch-up/rebuild for the lagging peer.
 
 ---
@@ -85,6 +84,5 @@ G9A first slices do not claim:
 
 Continue on `p15-g9a/ack-reintegration-policy`:
 
-1. Add returned-replica state vocabulary at the authority/status seam.
-2. TDD candidate/syncing/ready distinctions.
-3. Add best-effort lagging-peer feed/recovery evidence.
+1. Decide whether first G9A closes here or includes explicit in-recovery daemon ACK variant.
+2. If continuing, add best-effort lagging-peer feed/recovery evidence.
