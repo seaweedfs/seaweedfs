@@ -1,7 +1,7 @@
 # V3 Phase 15 G15d Mini-Plan — BlockVolume Launcher MVP
 
 Date: 2026-05-03
-Status: first pure-planner slice landed on `p15-g15d/blockvolume-launcher`
+Status: pure planner + pure K8s renderer slices landed on `p15-g15d/blockvolume-launcher`
 Depends on: G15c `CreateVolume -> lifecycle desired intent`
 
 ## 0. Product Sentence
@@ -43,7 +43,9 @@ OUT:
 
 ## 3. First Slice Evidence
 
-Commit: `56a1047 G15d: add blockvolume workload planner`
+Commits:
+- `56a1047 G15d: add blockvolume workload planner`
+- `f4d695f G15d: render blockvolume Kubernetes workloads`
 
 Implemented:
 - `core/lifecycle.BlockVolumeWorkloadPlan`
@@ -52,12 +54,15 @@ Implemented:
   - blank-pool RF=2 creates deterministic replica workload intents
   - existing replica keeps replica ID
   - same inputs are idempotent
-  - workload plan structs are not authority-shaped
+- workload plan structs are not authority-shaped
+- pure K8s Deployment renderer for blockvolume workloads
+- renderer output pins hostNetwork DNS policy, deterministic names, args, ports, and no authority-shaped words
 
 Verification:
 
 ```powershell
 go test ./core/lifecycle -count=1
+go test ./core/lifecycle ./core/launcher -count=1
 ```
 
 ## 4. Next Slices
