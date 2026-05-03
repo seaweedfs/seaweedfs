@@ -1,7 +1,7 @@
 # V3 Phase 15 G9F-2 - Verified Placement To Authority Request Bridge Mini-Plan
 
 Date: 2026-05-02
-Status: first TDD slice implemented at `seaweed_block@05f0011`; product-loop wiring still requires §1.A acceptance
+Status: slice 1 ask-only bridge QA-signed at `seaweed_block@05f0011`; slice 2 product-loop wiring requires architect §1.A acceptance
 Branch target: `p15-g9f2/authority-request-bridge`
 Scope: first bounded bridge from `VerifiedPlacement` to `authority.AssignmentAsk`
 
@@ -21,7 +21,22 @@ VerifiedPlacement -> AssignmentAsk -> authority.Publisher -> AssignmentFact
 
 This is the first authority-adjacent bridge. It must not become a shortcut where placement intent or heartbeat observation directly mints epoch/endpoint-version truth.
 
-## 1.A Architect Bindings
+## 1.A Binding Status
+
+Slice 1 is an ask-only TDD bridge:
+
+- it produces `authority.AssignmentAsk` values;
+- it does not call `Publisher` in production;
+- it does not mint `AssignmentFact`, epoch, endpoint-version, or frontend readiness;
+- it is QA-signed at `seaweed_block@05f0011` against all five §3 tests plus the cross-package regression command.
+
+Slice 2 is the product-loop wiring:
+
+- it will feed bridge asks into the live blockmaster publisher path;
+- it changes product behavior from "verified placement visible" to "verified placement can create assignment";
+- it requires architect §1.A acceptance before code.
+
+## 1.B Slice 1 Bindings
 
 Bindings used by the first TDD slice:
 
