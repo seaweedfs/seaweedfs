@@ -1,7 +1,7 @@
 # V3 Phase 15 — G15a CSI Static MVP Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: G15a-1/2/3 implemented; G15a-4 binary-start slice implemented; G15a-4 privileged NodeStage L2 and G15a-5 pending
+**Status**: G15a-1/2/3 implemented; G15a-4 non-privileged ControllerPublish L2 implemented; G15a-4 privileged NodeStage L2 and G15a-5 pending
 **Branch**: `p15-g15a/csi-static-mvp` off `origin/phase-15`
 **Goal**: make Kubernetes CSI consume an already-provisioned V3 block assignment and mount it through the Linux node path.
 
@@ -75,6 +75,8 @@ Implementation note (2026-05-03):
   `blockvolume frontend -> heartbeat observation -> master QueryVolumeStatus -> CSI ControlStatusLookup`.
   This closes option 1 for the first iSCSI attach backend.
 - `94ff9cf` added `cmd/blockcsi`: CSI Identity/Controller/Node services, endpoint binding, and read-only master status lookup wiring.
+- `ac49adb` added the non-privileged ControllerPublish L2:
+  real `blockmaster + 2x blockvolume + blockcsi`, with `ControllerPublish` returning the iSCSI frontend fact reported by blockvolume.
 
 Boundary rules:
 
@@ -165,7 +167,7 @@ Tests:
 
 ### G15a-4 — L2 subprocess CSI smoke
 
-Status: **partially implemented** at `94ff9cf`.
+Status: **partially implemented** at `94ff9cf` and `ac49adb`.
 
 Code:
 - `cmd/blockcsi` binary.
@@ -173,8 +175,8 @@ Code:
 
 Test:
 - implemented: `cmd/blockcsi` subprocess starts and serves CSI Identity over gRPC.
+- implemented: `blockmaster + blockvolume + blockcsi` subprocess chain; CSI `ControllerPublish` gets target facts through the real master status lookup.
 - implemented by G15a-3: blockmaster + blockvolume L2 proves master status exposes frontend target facts.
-- pending: blockmaster + blockvolume + CSI controller/node subprocess in one L2.
 - pending: NodeStage/Publish uses mockable or real privileged path depending environment.
 - Non-privileged CI can stop at fake `ISCSIUtil` / `MountUtil`; M01/k8s executes real path.
 
@@ -227,6 +229,12 @@ Focused G15a-4 binary smoke:
 
 ```powershell
 go test ./cmd/blockcsi -run TestBlockCSI_BinaryStartsAndServesIdentity -count=1 -v
+```
+
+Focused G15a-4 ControllerPublish L2:
+
+```powershell
+go test ./cmd/blockcsi -run TestG15a_BlockCSIControllerPublishUsesMasterFrontendFact -count=1 -v
 ```
 
 Known wider-suite note: `go test ./core/...` currently includes pre-existing `core/calibration` and `core/conformance` failures unrelated to G15a frontend target facts. Do not use `./core/...` as the G15a gate until those tracks are reconciled.
