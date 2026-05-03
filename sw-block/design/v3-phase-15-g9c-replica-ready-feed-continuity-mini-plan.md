@@ -1,7 +1,7 @@
 # V3 Phase 15 G9C — ReplicaReady Feed Continuity / Post-Close ACK Mini-Plan
 
 **Date**: 2026-05-02
-**Status**: A-slice landed (`1e36a50`)
+**Status**: B-slice landed (`ca5d4f6`)
 **Code branch**: `p15-g9c/replica-ready-feed-continuity`
 **Predecessors**: G9B replica join lifecycle close
 
@@ -88,10 +88,32 @@ Both passed on `p15-g9c/replica-ready-feed-continuity`.
 
 ---
 
-## 6. Next Slice
+## 6. B-Slice Evidence
 
-G9C-B should move from component predicate to integration signal shape:
+Code: `seaweed_block@ca5d4f6` — `G9C: emit post-close durable ack from dual-lane recovery`
 
-1. Ensure the real recovery feeder path emits a post-close durable/progress fact after the recovery window closes.
-2. Add one L2 or subprocess test where a recovered replica remains `recovering` immediately after close, then becomes `ready` only after the real progress callback.
+What landed:
+
+1. Receiver `BarrierResp` now carries durable achieved LSN: `min(TryComplete achieved, Sync frontier)`.
+2. Dual-lane `BlockExecutor` emits `OnDurableAck` after successful `OnSessionClose`.
+3. The post-close ACK uses the receiver's durable BarrierResp witness, not the primary frontier intent.
+4. `TestDualLane_BlockExecutor_StartRebuild` now pins event order: close first, post-close durable ACK second.
+
+Verification:
+
+```powershell
+go test ./core/recovery/... ./core/transport/... ./core/engine ./core/adapter ./core/host/volume -count=1
+go test ./core/authority ./core/recovery/... ./core/transport/... ./core/engine ./core/adapter ./core/host/volume -count=1
+```
+
+Both passed on `p15-g9c/replica-ready-feed-continuity`.
+
+---
+
+## 7. Next Slice
+
+G9C-C should move from transport signal shape to host/daemon lifecycle evidence:
+
+1. Add one L2 or subprocess test where a recovered replica remains `recovering` immediately after close, then becomes `ready` only after the real progress callback.
+2. Prove the status endpoint reflects the same transition.
 3. Keep placement and ACK voter eligibility out of this slice unless explicitly ratified.
