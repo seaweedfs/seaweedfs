@@ -1,7 +1,7 @@
 # V3 Phase 15 — G9A ACK + Reintegration Policy Mini-Plan
 
 **Date**: 2026-05-02
-**Status**: ACTIVE; first ACK profile slice pushed on `p15-g9a/ack-reintegration-policy`
+**Status**: CLOSE-READY; first ACK/reintegration policy slice pushed on `p15-g9a/ack-reintegration-policy`
 **Predecessor**: G8 CLOSED 2026-05-02
 **Code repo**: `seaweed_block`
 
@@ -59,13 +59,13 @@ Rule: recovery progress is not a substitute for synchronous ACK eligibility.
 | `154bd96` | subprocess L2 best-effort oracle: same RF=2 daemon/iSCSI shape, secondary down => foreground WRITE still returns GOOD. |
 | `da8a321` | authority reintegration oracle: returned/high-evidence replica with `ReadyForPrimary=false` is skipped as failover target until a progress-ready fact exists. |
 | `6d4a0e7` | `/status` maps engine `ModeRecovering` to `ReplicationRole=recovering`, distinct from `not_ready` and `replica_ready` (not yet emitted). |
+| `f1117ce` | component oracle: best-effort foreground writes succeed while replica is down, then production probe/recovery path catches the lagging replica back up to byte-equal. |
 
-### 3.2 Next red tests
+### 3.2 Forward-carry tests
 
 1. `TestG9A_SyncQuorumWriteFailsWhenPeerInRecovery_Process`
-   - Follow-up variant where peer is explicitly in recovery (not merely down) and the daemon path still fails foreground ACK.
-2. `TestG9A_BestEffortStillFeedsLaggingReplica`
-   - Follow-up variant that proves best-effort success does not disable catch-up/rebuild for the lagging peer.
+   - Follow-up L2 variant where peer is explicitly in recovery (not merely down) and the daemon path still fails foreground ACK.
+   - Requires a product-safe way to force/observe peer `ReplicaCatchingUp` in subprocess harness; do not add a test-only production RPC just for this.
 
 ---
 
@@ -81,9 +81,12 @@ G9A first slices do not claim:
 
 ---
 
-## 5. Immediate Next Step
+## 5. Close-Ready Posture
 
-Continue on `p15-g9a/ack-reintegration-policy`:
+G9A first slice can close on current evidence if architect accepts subprocess-secondary-down as the L2 strict ACK oracle and component-level catching-up as the explicit recovery-state oracle.
 
-1. Decide whether first G9A closes here or includes explicit in-recovery daemon ACK variant.
-2. If continuing, add best-effort lagging-peer feed/recovery evidence.
+Non-claims to carry forward:
+
+1. Product-daemon L2 "peer explicitly in recovery" strict ACK variant.
+2. `replica_ready` publication after completed reintegration.
+3. RF>=3 quorum/placement policy.
