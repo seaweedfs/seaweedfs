@@ -1,8 +1,8 @@
 # V3 Phase 15 — G15a CSI Static MVP Mini-Plan
 
 **Date**: 2026-05-03
-**Status**: architect draft; code must start from this plan, not from direct V2 copy
-**Branch**: proposed `p15-g15a/csi-static-mvp` off `origin/phase-15`
+**Status**: G15a-1/2/3 implemented on `p15-g15a/csi-static-mvp`; G15a-4/5 pending
+**Branch**: `p15-g15a/csi-static-mvp` off `origin/phase-15`
 **Goal**: make Kubernetes CSI consume an already-provisioned V3 block assignment and mount it through the Linux node path.
 
 ---
@@ -69,6 +69,12 @@ Current V3 gap: `AssignmentFact` carries data/ctrl addresses, and `cmd/blockvolu
 
 The product direction is option 1. The test-only bridge in option 2 is allowed only as a temporary pre-product slice and must be named as such.
 
+Implementation note (2026-05-03):
+- `7b10413` added the CSI static skeleton + Node iSCSI path.
+- `4e150ca` added the read-only frontend target fact path:
+  `blockvolume frontend -> heartbeat observation -> master QueryVolumeStatus -> CSI ControlStatusLookup`.
+  This closes option 1 for the first iSCSI attach backend.
+
 Boundary rules:
 
 - CSI package may import CSI spec, OS attach helpers, and a narrow V3 publish-target lookup interface.
@@ -112,6 +118,8 @@ The first code slice must land tests before or with implementation:
 
 ### G15a-1 — CSI package skeleton + boundary guards
 
+Status: **implemented** at `7b10413`.
+
 Code:
 - New V3 CSI package, likely `core/csi` or `core/frontend/csi`.
 - Identity service.
@@ -126,6 +134,8 @@ Tests:
 
 ### G15a-2 — Node iSCSI attach/mount mechanism
 
+Status: **implemented** at `7b10413` for iSCSI. NVMe node attach remains forward-carry.
+
 Code:
 - Port V2 `node.go` iSCSI path and `iscsi_util.go` / mount helpers.
 - Remove local V2 manager fallback.
@@ -138,9 +148,11 @@ Tests:
 
 ### G15a-3 — ControllerPublish V3 backend
 
+Status: **implemented** at `4e150ca`.
+
 Code:
 - Define V3 CSI backend interface: `LookupPublishTarget(ctx, volumeID, nodeID)`.
-- Implement read-only backend against current blockmaster status / assignment surface plus frontend target facts, or a testable adapter around the existing product-loop state.
+- Implement read-only backend against current blockmaster status / assignment surface plus frontend target facts.
 - Return `publish_context` with iSCSI first; NVMe optional.
 
 Tests:
@@ -148,6 +160,7 @@ Tests:
 - no direct cluster-spec shortcut.
 - no authority minting.
 - target fact must match the frontend fact reported by blockvolume.
+- L2 subprocess: real `blockmaster` + two `blockvolume` processes, primary iSCSI target enabled, master `QueryVolumeStatus` exposes the assigned replica's iSCSI frontend fact.
 
 ### G15a-4 — L2 subprocess CSI smoke
 
@@ -191,10 +204,16 @@ Those belong to G15b/G15c after the static CSI path is stable.
 Default CI:
 
 ```powershell
-go test ./core/csi ./cmd/blockcsi ./cmd/blockvolume ./cmd/blockmaster -count=1
+go test ./core/csi ./core/host/volume ./core/host/master ./core/authority ./cmd/blockmaster ./cmd/blockvolume -count=1
 ```
 
-If the package/binary names differ, update this section in the first implementation commit.
+Focused G15a-3 L2:
+
+```powershell
+go test ./cmd/blockvolume -run TestG15a_BlockvolumeReportsFrontendTargetsToMasterStatus -count=1 -v
+```
+
+Known wider-suite note: `go test ./core/...` currently includes pre-existing `core/calibration` and `core/conformance` failures unrelated to G15a frontend target facts. Do not use `./core/...` as the G15a gate until those tracks are reconciled.
 
 M01 / privileged Linux:
 
