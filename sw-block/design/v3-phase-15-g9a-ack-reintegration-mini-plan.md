@@ -60,6 +60,7 @@ Rule: recovery progress is not a substitute for synchronous ACK eligibility.
 | `da8a321` | authority reintegration oracle: returned/high-evidence replica with `ReadyForPrimary=false` is skipped as failover target until a progress-ready fact exists. |
 | `6d4a0e7` | `/status` maps engine `ModeRecovering` to `ReplicationRole=recovering`, distinct from `not_ready` and `replica_ready` (not yet emitted). |
 | `f1117ce` | component oracle: best-effort foreground writes succeed while replica is down, then production probe/recovery path catches the lagging replica back up to byte-equal. |
+| `cfffc7d` | RF>2 ACK oracle: `sync-quorum` RF=3 tolerates one recovering peer but fails when both secondaries are recovering. |
 
 ### 3.2 Forward-carry tests
 
@@ -127,6 +128,7 @@ Last verified by sw on 2026-05-02: green.
 | `da8a321` | authority returned-replica progress-ready oracle |
 | `6d4a0e7` | status `recovering` role |
 | `f1117ce` | component best-effort still recovers lagging peer |
+| `cfffc7d` | RF=3 sync-quorum compatibility |
 
 ### 6.4 Forward-carry register
 
