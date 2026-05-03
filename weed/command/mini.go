@@ -247,7 +247,7 @@ var (
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
-	miniBucket                      = cmdMini.Flag.String("bucket", "", "create this S3 bucket on startup if it does not already exist; leave empty to skip")
+	miniBucket                      = cmdMini.Flag.String("bucket", "", "create this S3 bucket on startup if it does not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -1025,8 +1025,12 @@ func runMini(cmd *Command, args []string) bool {
 	})
 
 	// Create the requested bucket (if any) before announcing readiness.
-	if err := ensureMiniBucket(*miniBucket); err != nil {
-		glog.Warningf("failed to create bucket %q: %v", *miniBucket, err)
+	bucketName := *miniBucket
+	if bucketName == "" {
+		bucketName = os.Getenv("S3_BUCKET")
+	}
+	if err := ensureMiniBucket(bucketName); err != nil {
+		glog.Warningf("failed to create bucket %q: %v", bucketName, err)
 	}
 
 	// Print welcome message after all services are running
