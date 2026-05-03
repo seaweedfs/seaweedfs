@@ -1544,7 +1544,7 @@ func ensureMiniBuckets(bucketSpec string) error {
 				cancel()
 				continue
 			}
-			if err != filer_pb.ErrNotFound {
+			if !errors.Is(err, filer_pb.ErrNotFound) {
 				glog.Warningf("lookup bucket %s: %v", name, err)
 				cancel()
 				continue
