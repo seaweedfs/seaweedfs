@@ -3140,8 +3140,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 }
 
 // cacheRemoteObjectForCopy caches a remote-only source before CopyObject /
-// CopyObjectPart reads it (#9304). Bounded so a stuck cache can't hang the
-// copy. Returns nil if caching failed or produced no local data.
+// CopyObjectPart reads it; otherwise the copy would write a destination with
+// FileSize > 0 but no chunks/content. Bounded so a stuck cache can't hang
+// the copy. Returns nil if caching failed or produced no local data.
 func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, object, versionId string) *filer_pb.Entry {
 	const cacheTimeout = 30 * time.Second
 	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)

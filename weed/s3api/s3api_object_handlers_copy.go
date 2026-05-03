@@ -103,7 +103,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Cache remote-only sources before copying; otherwise the copy path below
-	// writes a destination with FileSize > 0 but no chunks/content (#9304).
+	// writes a destination with FileSize > 0 but no chunks/content.
 	if entry.IsInRemoteOnly() {
 		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
 		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
@@ -706,7 +706,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Cache remote-only sources before copying; the part-copy paths below
-	// iterate entry.GetChunks() and would otherwise produce an empty part (#9304).
+	// iterate entry.GetChunks() and would otherwise produce an empty part.
 	if entry.IsInRemoteOnly() {
 		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
 		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)

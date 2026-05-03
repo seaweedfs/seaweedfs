@@ -370,9 +370,10 @@ func TestCachedEntryHasLocalData(t *testing.T) {
 	}
 }
 
-// TestCopyObjectRemoteOnlySourceDetection is a regression test for #9304: a
-// remote-only source used to fall through to CopyObject's inline branch with
-// empty Content, producing a destination with FileSize > 0 but no chunks.
+// TestCopyObjectRemoteOnlySourceDetection guards against regressing the
+// remote-only source case: such a source used to fall through to
+// CopyObject's inline branch with empty Content, producing a destination
+// with FileSize > 0 but no chunks.
 func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -382,7 +383,7 @@ func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 		expectBrokenWithoutFix bool
 	}{
 		{
-			name: "remote-only mp3 (matches #9304 reproduction)",
+			name: "remote-only object with size and no chunks/content",
 			entry: &filer_pb.Entry{
 				Name: "file-1234-audio.mp3",
 				Attributes: &filer_pb.FuseAttributes{
@@ -474,7 +475,7 @@ func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 				(tt.entry.Attributes.FileSize == 0 || len(tt.entry.GetChunks()) == 0)
 			assert.Equal(t, tt.expectInlineBranchHit, inlineBranchHit)
 
-			// The #9304 shape: inline branch fires, no inline content, FileSize > 0.
+			// The broken shape: inline branch fires, no inline content, FileSize > 0.
 			brokenWithoutFix := inlineBranchHit &&
 				len(tt.entry.Content) == 0 &&
 				tt.entry.Attributes != nil &&
