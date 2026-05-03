@@ -20,6 +20,9 @@ This directory contains a Dremio integration smoke test for SeaweedFS's Iceberg 
    - `InformationSchemaColumns`: the table's columns are exposed through Dremio's metadata layer with the expected ordinal order.
    - `InformationSchemaTables`: the table is registered in Dremio's `INFORMATION_SCHEMA`.
    - `MultiLevelNamespace`: a 2-level Iceberg namespace (created via the REST API) is exposed by Dremio as nested folders, and a table inside it is queryable with dot-separated identifiers.
+   - `ReadWrittenDataCount` and `ReadWrittenDataValues`: a separate table is populated with three rows by a PyIceberg writer container (`Dockerfile.writer` + `append_rows.py`) before Dremio bootstraps; Dremio reads the data back and the values are verified. This exercises the actual data path, not just metadata.
+
+The PyIceberg writer image is built on demand via Docker layer caching. The first build pulls `python:3.11-slim` and pip-installs PyIceberg + PyArrow (~1-2 min in CI); subsequent invocations are cheap.
 
 ## Running Locally
 

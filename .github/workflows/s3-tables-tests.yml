@@ -211,6 +211,9 @@ jobs:
       - name: Pre-pull Dremio image
         run: docker pull dremio/dremio-oss:25.2.0
 
+      - name: Pre-pull Python image for PyIceberg writer
+        run: docker pull python:3.11-slim
+
       - name: Run go mod tidy
         run: go mod tidy
 

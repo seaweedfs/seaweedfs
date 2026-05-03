@@ -67,6 +67,10 @@ type TestEnvironment struct {
 //   - InformationSchemaTables: the table is registered in Dremio's INFORMATION_SCHEMA.
 //   - MultiLevelNamespace: a 2-level Iceberg namespace is surfaced as nested
 //     folders and a table inside it is queryable with dot-separated identifiers.
+//   - ReadWrittenDataCount / ReadWrittenDataValues: a separate table populated
+//     via PyIceberg before Dremio bootstrap is read back through Dremio with
+//     correct row count and values, exercising the actual data path (not just
+//     metadata).
 func TestDremioIcebergCatalog(t *testing.T) {
 	requireDremioRuntime(t)
 
@@ -101,6 +105,14 @@ func TestDremioIcebergCatalog(t *testing.T) {
 	createIcebergNamespaceLevels(t, env, icebergToken, tableBucket, multiLevelNs[:1])
 	createIcebergNamespaceLevels(t, env, icebergToken, tableBucket, multiLevelNs)
 	createIcebergTableInLevels(t, env, icebergToken, tableBucket, multiLevelNs, multiLevelTable)
+
+	// Seed a populated table by creating an empty one through the REST API
+	// and then appending rows via PyIceberg. Done before Dremio bootstrap so
+	// the snapshot is part of the source's first scan.
+	populatedTable := "populated_" + randomString(6)
+	createIcebergTable(t, env, icebergToken, tableBucket, namespace, populatedTable)
+	buildDremioWriterImage(t)
+	writeIcebergRows(t, env, tableBucket, []string{namespace}, populatedTable)
 
 	configDir := env.writeDremioConfig(t, tableBucket)
 	env.startDremioContainer(t, configDir)
@@ -169,6 +181,34 @@ func TestDremioIcebergCatalog(t *testing.T) {
 		ref := dremioObjectName(parts...)
 		out := runDremioSQL(t, env, fmt.Sprintf("SELECT COUNT(*) AS row_count FROM %s", ref))
 		assertSingleNumericValue(t, out, 0)
+	})
+
+	populatedRef := dremioObjectName(dremioSourceName, namespace, populatedTable)
+
+	t.Run("ReadWrittenDataCount", func(t *testing.T) {
+		out := runDremioSQL(t, env, fmt.Sprintf("SELECT COUNT(*) AS row_count FROM %s", populatedRef))
+		assertSingleNumericValue(t, out, 3)
+	})
+
+	t.Run("ReadWrittenDataValues", func(t *testing.T) {
+		out := runDremioSQL(t, env, fmt.Sprintf("SELECT id, label FROM %s ORDER BY id", populatedRef))
+		schema, rows := parseDremioResponseSchemaRows(t, out)
+		assertSchemaContainsAll(t, schema, "id", "label")
+		if len(rows) != 3 {
+			t.Fatalf("expected 3 rows from %s, got %d: %v", populatedRef, len(rows), rows)
+		}
+		expected := [][2]string{{"1", "one"}, {"2", "two"}, {"3", "three"}}
+		for i, row := range rows {
+			if len(row) != 2 {
+				t.Fatalf("row %d has %d columns, want 2: %v", i, len(row), row)
+			}
+			gotID := fmt.Sprintf("%v", row[0])
+			gotLabel := fmt.Sprintf("%v", row[1])
+			if gotID != expected[i][0] || gotLabel != expected[i][1] {
+				t.Errorf("row %d = (%s, %s), want (%s, %s)",
+					i, gotID, gotLabel, expected[i][0], expected[i][1])
+			}
+		}
 	})
 }
 
@@ -951,6 +991,60 @@ func createIcebergTableInLevels(t *testing.T, env *TestEnvironment, token, bucke
 				},
 			},
 		}, http.StatusOK)
+}
+
+const dremioWriterImage = "seaweedfs-dremio-writer"
+
+// buildDremioWriterImage builds the local PyIceberg writer image. Layer
+// caching makes repeat invocations cheap; the first build pulls
+// python:3.11-slim and pip-installs pyiceberg+pyarrow (~1-2 min in CI).
+func buildDremioWriterImage(t *testing.T) {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+
+	cmd := exec.Command("docker", "build",
+		"-t", dremioWriterImage,
+		"-f", filepath.Join(wd, "Dockerfile.writer"),
+		wd,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build %s image: %v\n%s", dremioWriterImage, err, out)
+	}
+}
+
+// writeIcebergRows runs the PyIceberg writer container, which loads the
+// already-created table and appends three rows. The container reaches
+// SeaweedFS via host.docker.internal (matching the Dremio container's path).
+func writeIcebergRows(t *testing.T, env *TestEnvironment, bucketName string, namespace []string, tableName string) {
+	t.Helper()
+
+	args := []string{
+		"run", "--rm",
+		"--add-host", "host.docker.internal:host-gateway",
+		dremioWriterImage,
+		"--catalog-url", fmt.Sprintf("http://host.docker.internal:%d", env.icebergPort),
+		"--warehouse", "s3://" + bucketName,
+		"--prefix", bucketName,
+		"--s3-endpoint", fmt.Sprintf("http://host.docker.internal:%d", env.s3Port),
+		"--access-key", env.accessKey,
+		"--secret-key", env.secretKey,
+		"--region", "us-west-2",
+		"--table", tableName,
+	}
+	for _, level := range namespace {
+		args = append(args, "--namespace", level)
+	}
+
+	cmd := exec.Command("docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("PyIceberg writer failed: %v\n%s", err, out)
+	}
+	t.Logf("PyIceberg writer output: %s", strings.TrimSpace(string(out)))
 }
 
 func doIcebergJSONRequest(t *testing.T, env *TestEnvironment, token, method, path string, payload any, expectedStatuses ...int) string {
