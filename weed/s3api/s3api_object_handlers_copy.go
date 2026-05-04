@@ -102,6 +102,20 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Cache remote-only sources before copying; otherwise the copy path below
+	// writes a destination with FileSize > 0 but no chunks/content.
+	if entry.IsInRemoteOnly() {
+		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
+		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
+		if cachedEntry == nil {
+			glog.Errorf("CopyObjectHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
+			w.Header().Set("Retry-After", "5")
+			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+			return
+		}
+		entry = cachedEntry
+	}
+
 	sameDestination := srcBucket == dstBucket && srcObject == dstObject
 	if sameDestination && !(replaceMeta || replaceTagging) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
@@ -689,6 +703,20 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
+	}
+
+	// Cache remote-only sources before copying; the part-copy paths below
+	// iterate entry.GetChunks() and would otherwise produce an empty part.
+	if entry.IsInRemoteOnly() {
+		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
+		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
+		if cachedEntry == nil {
+			glog.Errorf("CopyObjectPartHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
+			w.Header().Set("Retry-After", "5")
+			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+			return
+		}
+		entry = cachedEntry
 	}
 
 	// Validate conditional copy headers

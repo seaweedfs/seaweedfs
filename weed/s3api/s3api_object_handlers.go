@@ -993,8 +993,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		// This handles the case where initial caching attempt timed out or failed
 		if entry.IsInRemoteOnly() {
 			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting to cache before streaming")
-			// Try to cache the remote object synchronously (like filer does)
-			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, versionId)
+			// Latest-version reads carry an empty query versionId even when the
+			// entry lives at .versions/v_<id>; resolve from the entry itself.
+			cacheVersionId := resolvedSourceVersionId(versionId, entry)
+			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, cacheVersionId)
 			if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
@@ -3099,21 +3101,27 @@ func (s3a *S3ApiServer) cacheRemoteObjectWithDedup(ctx context.Context, bucket, 
 	return entry
 }
 
-// cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
-// This is called from streamFromVolumeServers when the initial caching attempt timed out or failed.
-// Uses the request context (no artificial timeout) to allow the caching to complete.
-// For versioned objects, versionId determines the correct path in .versions/ directory.
-func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
-	var dir, name string
+func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId string) (dir, name string) {
 	if versionId != "" && versionId != "null" {
-		// This is a specific version - entry is located at /buckets/<bucket>/<object>.versions/v_<versionId>
 		normalizedObject := s3_constants.NormalizeObjectKey(object)
-		dir = s3a.bucketDir(bucket) + "/" + normalizedObject + s3_constants.VersionsFolder
-		name = s3a.getVersionFileName(versionId)
-	} else {
-		// Non-versioned object or "null" version - lives at the main path
-		dir, name = s3a.buildRemoteObjectPath(bucket, object)
+		return s3a.bucketDir(bucket) + "/" + normalizedObject + s3_constants.VersionsFolder, s3a.getVersionFileName(versionId)
 	}
+	return s3a.buildRemoteObjectPath(bucket, object)
+}
+
+// cachedEntryHasLocalData reports whether a cache response carries data the
+// copy path can read locally. The streaming caller uses a stricter chunks-
+// only check inline since its downstream cannot read from inline Content.
+func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
+	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
+}
+
+// cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
+// Uses the request context (no artificial timeout) so the caching can complete.
+// Returns the cached entry only when chunks are present; the streaming caller
+// is not wired to read inline Content from a cache result here.
+func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
 	glog.V(1).Infof("cacheRemoteObjectForStreaming: caching %s/%s (remote size: %d, versionId: %s)", dir, name, entry.RemoteEntry.RemoteSize, versionId)
 
@@ -3129,4 +3137,51 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 	}
 
 	return nil
+}
+
+// cacheRemoteObjectForCopy caches a remote-only source before CopyObject /
+// CopyObjectPart reads it; otherwise the copy would write a destination with
+// FileSize > 0 but no chunks/content. Bounded so a stuck cache can't hang
+// the copy. Returns nil if caching failed or produced no local data.
+func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, object, versionId string) *filer_pb.Entry {
+	const cacheTimeout = 30 * time.Second
+	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
+	defer cancel()
+
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
+
+	glog.V(1).Infof("cacheRemoteObjectForCopy: caching %s/%s (versionId: %s)", dir, name, versionId)
+
+	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			glog.Warningf("cacheRemoteObjectForCopy: timeout caching %s/%s after %v", dir, name, cacheTimeout)
+		} else {
+			glog.Errorf("cacheRemoteObjectForCopy: failed to cache %s/%s: %v", dir, name, err)
+		}
+		return nil
+	}
+
+	if cachedEntryHasLocalData(cachedEntry) {
+		glog.V(1).Infof("cacheRemoteObjectForCopy: successfully cached %s/%s (chunks=%d, inline=%d)", dir, name, len(cachedEntry.GetChunks()), len(cachedEntry.Content))
+		return cachedEntry
+	}
+
+	return nil
+}
+
+// resolvedSourceVersionId falls back to the version recorded on the entry
+// when the request didn't carry one — necessary for latest-version reads
+// in versioning-enabled buckets, where the entry lives at .versions/v_<id>.
+func resolvedSourceVersionId(requestedVersionId string, entry *filer_pb.Entry) string {
+	if requestedVersionId != "" {
+		return requestedVersionId
+	}
+	if entry == nil || entry.Extended == nil {
+		return ""
+	}
+	if v, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
+		return string(v)
+	}
+	return ""
 }
