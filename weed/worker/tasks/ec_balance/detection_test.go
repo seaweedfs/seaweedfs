@@ -253,6 +253,79 @@ func TestDetectGlobalImbalance(t *testing.T) {
 	}
 }
 
+// TestDetectGlobalImbalance_HeterogeneousCapacity is a regression test for
+// the Phase 4 rebalancer on heterogeneous racks. node1 holds more shards in
+// absolute terms but has much higher capacity, so it is actually the LESS
+// utilized node; node2 holds fewer shards but is nearly full. The greedy
+// algorithm must pick the most-utilized node as the source and move shards
+// in the direction that reduces fractional fullness, NOT in the direction
+// that would equalize raw counts (which here would overfill node2).
+//
+// Scenario:
+//
+//	node1: 10 shards, freeSlots=90   → capacity 100, util 10%
+//	node2:  3 shards, freeSlots=2    → capacity  5, util 60%
+//
+// Correct behavior: move shards FROM node2 TO node1 (draining the
+// most-utilized node), until no further improvement is possible. Also
+// verifies that moves are de-duplicated — the inner loop must update
+// shardBits between iterations so each proposed move refers to a distinct
+// physical shard.
+func TestDetectGlobalImbalance_HeterogeneousCapacity(t *testing.T) {
+	nodes := map[string]*ecNodeInfo{
+		"node1": {
+			nodeID: "node1", address: "node1:8080", rack: "dc1:rack1", freeSlots: 90,
+			ecShards: map[uint32]*ecVolumeInfo{
+				100: {collection: "col1", shardBits: 0x3FF}, // 10 shards
+			},
+		},
+		"node2": {
+			nodeID: "node2", address: "node2:8080", rack: "dc1:rack1", freeSlots: 2,
+			ecShards: map[uint32]*ecVolumeInfo{
+				200: {collection: "col1", shardBits: 0b111}, // 3 shards
+			},
+		},
+	}
+	racks := map[string]*ecRackInfo{
+		"dc1:rack1": {
+			nodes:     map[string]*ecNodeInfo{"node1": nodes["node1"], "node2": nodes["node2"]},
+			freeSlots: 92,
+		},
+	}
+
+	config := NewDefaultConfig()
+	config.ImbalanceThreshold = 0.01
+	moves := detectGlobalImbalance(nodes, racks, config, nil)
+
+	if len(moves) == 0 {
+		t.Fatal("expected moves from high-util node2 to low-util node1, got 0")
+	}
+
+	// Every move must drain the higher-util node (node2) and target the
+	// lower-util node (node1). A raw-count-based greedy algorithm would
+	// pick the opposite direction — that is the bug this test guards.
+	for _, move := range moves {
+		if move.source.nodeID != "node2" {
+			t.Errorf("expected source node2 (util 0.60), got %s", move.source.nodeID)
+		}
+		if move.target.nodeID != "node1" {
+			t.Errorf("expected target node1 (util 0.10), got %s", move.target.nodeID)
+		}
+	}
+
+	// Verify no duplicate (volumeID, shardID) pairs — the inner loop must
+	// update shardBits between iterations so each move refers to a distinct
+	// physical shard.
+	seen := make(map[[2]int]bool, len(moves))
+	for _, move := range moves {
+		key := [2]int{int(move.volumeID), move.shardID}
+		if seen[key] {
+			t.Errorf("duplicate move for volume %d shard %d", move.volumeID, move.shardID)
+		}
+		seen[key] = true
+	}
+}
+
 func TestDetectGlobalImbalanceSkipsFullNodes(t *testing.T) {
 	// node2 has 0 free slots — should not be chosen as destination
 	nodes := map[string]*ecNodeInfo{

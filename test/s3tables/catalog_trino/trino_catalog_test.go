@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 type TestEnvironment struct {
@@ -40,7 +40,6 @@ type TestEnvironment struct {
 	dockerAvailable bool
 	accessKey       string
 	secretKey       string
-	closers         []io.Closer
 }
 
 func TestTrinoIcebergCatalog(t *testing.T) {
@@ -82,6 +81,101 @@ func TestTrinoIcebergCatalog(t *testing.T) {
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("SHOW TABLES FROM iceberg.%s", schemaName))
 }
 
+// TestTrinoMultiLevelNamespace tests that multi-level namespaces (dot-separated)
+// produce correct S3 paths so Trino can read back data it writes.
+// Regression test for https://github.com/seaweedfs/seaweedfs/issues/8959
+func TestTrinoMultiLevelNamespace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env := NewTestEnvironment(t)
+	defer env.Cleanup(t)
+
+	if !env.dockerAvailable {
+		t.Skip("Docker not available, skipping Trino integration test")
+	}
+
+	t.Logf(">>> Starting SeaweedFS...")
+	env.StartSeaweedFS(t)
+
+	tableBucket := "iceberg-tables"
+	createTableBucket(t, env, tableBucket)
+
+	configDir := env.writeTrinoConfig(t, tableBucket, withNestedNamespace())
+	env.startTrinoContainer(t, configDir)
+	waitForTrino(t, env.trinoContainer, 60*time.Second)
+
+	// Use a two-level namespace: "analytics.daily"
+	nsLevel1 := "analytics_" + randomString(4)
+	nsLevel2 := "daily_" + randomString(4)
+	flatNs := fmt.Sprintf("%s.%s", nsLevel1, nsLevel2)
+	// Trino uses double-quoted schema names for multi-level namespaces
+	multiNs := fmt.Sprintf(`"%s"`, flatNs)
+	tableName := "events_" + randomString(4)
+
+	// Create multi-level namespace (schema)
+	t.Logf(">>> Creating multi-level schema: %s", flatNs)
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", multiNs))
+
+	// Verify the schema shows up
+	output := runTrinoSQL(t, env.trinoContainer, "SHOW SCHEMAS FROM iceberg")
+	if !strings.Contains(output, flatNs) {
+		t.Fatalf("Expected schema %s in output:\n%s", flatNs, output)
+	}
+
+	// Create table with explicit location to avoid non-empty location conflict.
+	// The location uses the dot-separated namespace — if #8959 regresses
+	// (unit separator instead of dot), data would be written to the wrong path.
+	tableLocation := fmt.Sprintf("s3://%s/%s/%s_%s", tableBucket, flatNs, tableName, randomString(6))
+	t.Logf(">>> Creating table at location: %s", tableLocation)
+	createSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS iceberg.%s.%s (
+		id INTEGER,
+		event VARCHAR,
+		ts TIMESTAMP(6)
+	) WITH (
+		format = 'PARQUET',
+		location = '%s'
+	)`, multiNs, tableName, tableLocation)
+	runTrinoSQLAllowExists(t, env.trinoContainer, createSQL)
+
+	// Insert data
+	t.Logf(">>> Inserting data into multi-level namespace table")
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(`
+		INSERT INTO iceberg.%s.%s VALUES
+			(1, 'click', TIMESTAMP '2025-01-01 00:00:00'),
+			(2, 'view',  TIMESTAMP '2025-01-01 01:00:00'),
+			(3, 'click', TIMESTAMP '2025-01-02 00:00:00')
+	`, multiNs, tableName))
+
+	// Query data back — if the namespace path separator were wrong (\x1F
+	// instead of "."), the metadata location would point to a non-existent
+	// S3 path and this query would fail.
+	t.Logf(">>> Querying data from multi-level namespace table")
+	countOutput := runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(
+		"SELECT count(*) FROM iceberg.%s.%s", multiNs, tableName))
+	rowCount := mustParseCSVInt64(t, countOutput)
+	if rowCount != 3 {
+		t.Fatalf("expected row count 3, got %d", rowCount)
+	}
+
+	// Verify the S3 file path contains the dot-separated namespace, not \x1F.
+	filesOutput := runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(
+		`SELECT file_path FROM iceberg.%s."%s$files" LIMIT 1`, multiNs, tableName))
+	filePath := strings.TrimSpace(filesOutput)
+	if filePath == "" {
+		t.Fatalf("expected at least one data file, got empty output")
+	}
+	if !strings.Contains(filePath, flatNs+"/") {
+		t.Errorf("expected file path to contain dot-separated namespace %q, got: %s", flatNs, filePath)
+	}
+	if strings.Contains(filePath, "\x1F") {
+		t.Errorf("file path contains unit separator (\\x1F), expected dot separator: %s", filePath)
+	}
+
+	t.Logf(">>> Trino multi-level namespace test passed")
+}
+
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	t.Helper()
 
@@ -119,66 +213,30 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 
 	bindIP := testutil.FindBindIP()
 
-	env := &TestEnvironment{
-		seaweedDir: seaweedDir,
-		weedBinary: weedBinary,
-		dataDir:    dataDir,
-		bindIP:     bindIP,
-		closers:    []io.Closer{},
-	}
+	// 9 ports: master(2), volume(2), filer(2), s3(2), iceberg(1)
+	ports := testutil.MustAllocatePorts(t, 9)
 
-	env.masterPort, env.masterGrpcPort = env.mustFreePortPair("Master")
-	env.volumePort, env.volumeGrpcPort = env.mustFreePortPair("Volume")
-	env.filerPort, env.filerGrpcPort = env.mustFreePortPair("Filer")
-	env.s3Port, env.s3GrpcPort = env.mustFreePortPair("S3")
-	env.icebergPort = env.mustFreePort("Iceberg")
+	env := &TestEnvironment{
+		seaweedDir:     seaweedDir,
+		weedBinary:     weedBinary,
+		dataDir:        dataDir,
+		bindIP:         bindIP,
+		masterPort:     ports[0],
+		masterGrpcPort: ports[1],
+		volumePort:     ports[2],
+		volumeGrpcPort: ports[3],
+		filerPort:      ports[4],
+		filerGrpcPort:  ports[5],
+		s3Port:         ports[6],
+		s3GrpcPort:     ports[7],
+		icebergPort:    ports[8],
+	}
 
 	env.dockerAvailable = hasDocker()
 	env.accessKey = "AKIAIOSFODNN7EXAMPLE"
 	env.secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
 	return env
-}
-
-func (env *TestEnvironment) mustFreePort(name string) int {
-	port, closer, err := getFreePort()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get free port for %s: %v", name, err))
-	}
-	env.closers = append(env.closers, closer)
-	return port
-}
-
-func (env *TestEnvironment) mustFreePortPair(name string) (int, int) {
-	httpPort, httpCloser, grpcPort, grpcCloser, err := findAvailablePortPair()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get free port pair for %s: %v", name, err))
-	}
-	env.closers = append(env.closers, httpCloser, grpcCloser)
-	return httpPort, grpcPort
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-
-	port, closer, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for %s: %v", name, err)
-	}
-	closer.Close()
-	return port
-}
-
-func mustFreePortPair(t *testing.T, name string) (int, int) {
-	t.Helper()
-
-	httpPort, httpCloser, grpcPort, grpcCloser, err := findAvailablePortPair()
-	if err != nil {
-		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
-	}
-	httpCloser.Close()
-	grpcCloser.Close()
-	return httpPort, grpcPort
 }
 
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
@@ -197,12 +255,6 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
-
-	// Close all port listeners right before starting the weed process
-	for _, closer := range env.closers {
-		closer.Close()
-	}
-	env.closers = nil
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -332,20 +384,41 @@ func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	}
 }
 
-func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket string) string {
+func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket string, opts ...func(*trinoConfigOptions)) string {
 	t.Helper()
 
-	configDir := filepath.Join(env.dataDir, "trino")
+	o := trinoConfigOptions{}
+	for _, fn := range opts {
+		fn(&o)
+	}
+
+	dirName := "trino"
+	if o.nestedNamespace {
+		dirName = "trino-nested"
+	}
+	configDir := filepath.Join(env.dataDir, dirName)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("Failed to create Trino config dir: %v", err)
+	}
+
+	nestedLine := ""
+	if o.nestedNamespace {
+		nestedLine = "\niceberg.rest-catalog.nested-namespace-enabled=true"
+	}
+
+	uniqueTableLocation := "true"
+	if o.deterministicTableLocation {
+		// Skip UUID suffixing in TrinoRestCatalog.createLocationForTable so each
+		// table lands at the deterministic <namespace-location>/<table> path.
+		uniqueTableLocation = "false"
 	}
 
 	config := fmt.Sprintf(`connector.name=iceberg
 iceberg.catalog.type=rest
 iceberg.rest-catalog.uri=http://host.docker.internal:%d
-iceberg.rest-catalog.warehouse=s3://%s
+iceberg.rest-catalog.warehouse=s3://%s%s
 iceberg.file-format=PARQUET
-iceberg.unique-table-location=true
+iceberg.unique-table-location=%s
 
 # S3 storage config
 fs.native-s3.enabled=true
@@ -358,13 +431,29 @@ s3.region=us-west-2
 
 # REST catalog authentication
 iceberg.rest-catalog.security=SIGV4
-`, env.icebergPort, warehouseBucket, env.s3Port, env.accessKey, env.secretKey)
+`, env.icebergPort, warehouseBucket, nestedLine, uniqueTableLocation, env.s3Port, env.accessKey, env.secretKey)
 
 	if err := os.WriteFile(filepath.Join(configDir, "iceberg.properties"), []byte(config), 0644); err != nil {
 		t.Fatalf("Failed to write Trino config: %v", err)
 	}
 
 	return configDir
+}
+
+type trinoConfigOptions struct {
+	nestedNamespace            bool
+	deterministicTableLocation bool
+}
+
+func withNestedNamespace() func(*trinoConfigOptions) {
+	return func(o *trinoConfigOptions) { o.nestedNamespace = true }
+}
+
+// withDeterministicTableLocation flips Trino's iceberg.unique-table-location
+// flag to false so each table's <location> is the deterministic
+// <namespace-location>/<tableName> path instead of a UUID-suffixed one.
+func withDeterministicTableLocation() func(*trinoConfigOptions) {
+	return func(o *trinoConfigOptions) { o.deterministicTableLocation = true }
 }
 
 func (env *TestEnvironment) startTrinoContainer(t *testing.T, configDir string) {
@@ -512,29 +601,6 @@ func createObjectBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 func hasDocker() bool {
 	cmd := exec.Command("docker", "version")
 	return cmd.Run() == nil
-}
-
-func findAvailablePortPair() (int, io.Closer, int, io.Closer, error) {
-	httpPort, httpCloser, err := getFreePort()
-	if err != nil {
-		return 0, nil, 0, nil, err
-	}
-	grpcPort, grpcCloser, err := getFreePort()
-	if err != nil {
-		httpCloser.Close()
-		return 0, nil, 0, nil, err
-	}
-	return httpPort, httpCloser, grpcPort, grpcCloser, nil
-}
-
-func getFreePort() (int, io.Closer, error) {
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		return 0, nil, err
-	}
-
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, listener, nil
 }
 
 func randomString(length int) string {

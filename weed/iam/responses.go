@@ -178,6 +178,17 @@ type ListAttachedUserPoliciesResponse struct {
 	CommonResponse
 }
 
+// ListUserPoliciesResponse is the response for ListUserPolicies action.
+type ListUserPoliciesResponse struct {
+	XMLName                xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListUserPoliciesResponse"`
+	ListUserPoliciesResult struct {
+		PolicyNames []string `xml:"PolicyNames>member"`
+		IsTruncated bool     `xml:"IsTruncated"`
+		Marker      string   `xml:"Marker,omitempty"`
+	} `xml:"ListUserPoliciesResult"`
+	CommonResponse
+}
+
 // GetUserPolicyResponse is the response for GetUserPolicy action.
 type GetUserPolicyResponse struct {
 	XMLName             xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetUserPolicyResponse"`
@@ -357,6 +368,40 @@ type ListAttachedGroupPoliciesResponse struct {
 		IsTruncated      bool                  `xml:"IsTruncated"`
 		Marker           string                `xml:"Marker,omitempty"`
 	} `xml:"ListAttachedGroupPoliciesResult"`
+	CommonResponse
+}
+
+// PutGroupPolicyResponse is the response for PutGroupPolicy action.
+type PutGroupPolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ PutGroupPolicyResponse"`
+	CommonResponse
+}
+
+// GetGroupPolicyResponse is the response for GetGroupPolicy action.
+type GetGroupPolicyResponse struct {
+	XMLName              xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetGroupPolicyResponse"`
+	GetGroupPolicyResult struct {
+		GroupName      string `xml:"GroupName"`
+		PolicyName     string `xml:"PolicyName"`
+		PolicyDocument string `xml:"PolicyDocument"`
+	} `xml:"GetGroupPolicyResult"`
+	CommonResponse
+}
+
+// DeleteGroupPolicyResponse is the response for DeleteGroupPolicy action.
+type DeleteGroupPolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteGroupPolicyResponse"`
+	CommonResponse
+}
+
+// ListGroupPoliciesResponse is the response for ListGroupPolicies action.
+type ListGroupPoliciesResponse struct {
+	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupPoliciesResponse"`
+	ListGroupPoliciesResult struct {
+		PolicyNames []string `xml:"PolicyNames>member"`
+		IsTruncated bool     `xml:"IsTruncated"`
+		Marker      string   `xml:"Marker,omitempty"`
+	} `xml:"ListGroupPoliciesResult"`
 	CommonResponse
 }
 

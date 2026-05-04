@@ -70,7 +70,8 @@ print("WRITE_COUNT=" + str(count))
 		"issue-8285/output/_temporary/0/",
 		"issue-8285/output/_temporary/0/_temporary/",
 	}
-	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 35*time.Second)
+	// Empty folder cleanup has a 2m default delay + 30s processor interval
+	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 3*time.Minute)
 	if len(lingering) > 0 {
 		t.Fatalf("issue #8285 regression detected: lingering temporary directories: %v", lingering)
 	}

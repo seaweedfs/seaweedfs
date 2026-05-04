@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -773,6 +774,281 @@ func TestSSEMultipartUploadIntegration(t *testing.T) {
 		assert.Equal(t, types.ServerSideEncryptionAwsKms, resp.ServerSideEncryption)
 		assert.Equal(t, kmsKeyID, aws.ToString(resp.SSEKMSKeyId))
 	})
+
+	t.Run("Multipart Parts Larger Than Internal Chunks Across SSE Types", func(t *testing.T) {
+		largeParts := [][]byte{
+			generateTestData(9*1024*1024 + 123), // crosses SeaweedFS 8MB internal chunk boundary
+			generateTestData(5*1024*1024 + 321),
+		}
+
+		t.Run("SSE-C", func(t *testing.T) {
+			sseKey := generateSSECKey()
+			uploadAndVerifyMultipartSSEObject(t, ctx, client, bucketName, "large-internal-chunks-ssec", largeParts, multipartSSEOptions{
+				configureCreate: func(input *s3.CreateMultipartUploadInput) {
+					input.SSECustomerAlgorithm = aws.String("AES256")
+					input.SSECustomerKey = aws.String(sseKey.KeyB64)
+					input.SSECustomerKeyMD5 = aws.String(sseKey.KeyMD5)
+				},
+				configureUploadPart: func(input *s3.UploadPartInput) {
+					input.SSECustomerAlgorithm = aws.String("AES256")
+					input.SSECustomerKey = aws.String(sseKey.KeyB64)
+					input.SSECustomerKeyMD5 = aws.String(sseKey.KeyMD5)
+				},
+				configureGet: func(input *s3.GetObjectInput) {
+					input.SSECustomerAlgorithm = aws.String("AES256")
+					input.SSECustomerKey = aws.String(sseKey.KeyB64)
+					input.SSECustomerKeyMD5 = aws.String(sseKey.KeyMD5)
+				},
+				verifyGet: func(resp *s3.GetObjectOutput) {
+					assert.Equal(t, "AES256", aws.ToString(resp.SSECustomerAlgorithm))
+					assert.Equal(t, sseKey.KeyMD5, aws.ToString(resp.SSECustomerKeyMD5))
+				},
+			})
+		})
+
+		t.Run("SSE-KMS", func(t *testing.T) {
+			kmsKeyID := "test-large-internal-chunks-key"
+			uploadAndVerifyMultipartSSEObject(t, ctx, client, bucketName, "large-internal-chunks-ssekms", largeParts, multipartSSEOptions{
+				configureCreate: func(input *s3.CreateMultipartUploadInput) {
+					input.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+					input.SSEKMSKeyId = aws.String(kmsKeyID)
+				},
+				verifyGet: func(resp *s3.GetObjectOutput) {
+					assert.Equal(t, types.ServerSideEncryptionAwsKms, resp.ServerSideEncryption)
+					assert.Equal(t, kmsKeyID, aws.ToString(resp.SSEKMSKeyId))
+				},
+			})
+		})
+
+		t.Run("SSE-S3 Explicit", func(t *testing.T) {
+			uploadAndVerifyMultipartSSEObject(t, ctx, client, bucketName, "large-internal-chunks-sses3-explicit", largeParts, multipartSSEOptions{
+				configureCreate: func(input *s3.CreateMultipartUploadInput) {
+					input.ServerSideEncryption = types.ServerSideEncryptionAes256
+				},
+				verifyGet: func(resp *s3.GetObjectOutput) {
+					assert.Equal(t, types.ServerSideEncryptionAes256, resp.ServerSideEncryption)
+				},
+			})
+		})
+
+		t.Run("SSE-S3 Bucket Default", func(t *testing.T) {
+			_, err := client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+				Bucket: aws.String(bucketName),
+				ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+					Rules: []types.ServerSideEncryptionRule{
+						{
+							ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+								SSEAlgorithm: types.ServerSideEncryptionAes256,
+							},
+						},
+					},
+				},
+			})
+			require.NoError(t, err, "Failed to set bucket default SSE-S3 encryption")
+			defer client.DeleteBucketEncryption(ctx, &s3.DeleteBucketEncryptionInput{Bucket: aws.String(bucketName)})
+
+			uploadAndVerifyMultipartSSEObject(t, ctx, client, bucketName, "large-internal-chunks-sses3-default", largeParts, multipartSSEOptions{
+				verifyGet: func(resp *s3.GetObjectOutput) {
+					assert.Equal(t, types.ServerSideEncryptionAes256, resp.ServerSideEncryption)
+				},
+			})
+		})
+	})
+}
+
+type multipartSSEOptions struct {
+	configureCreate     func(*s3.CreateMultipartUploadInput)
+	configureUploadPart func(*s3.UploadPartInput)
+	configureGet        func(*s3.GetObjectInput)
+	verifyGet           func(*s3.GetObjectOutput)
+}
+
+func uploadAndVerifyMultipartSSEObject(t *testing.T, ctx context.Context, client *s3.Client, bucketName, objectKey string, partsData [][]byte, opts multipartSSEOptions) {
+	t.Helper()
+
+	createInput := &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	}
+	if opts.configureCreate != nil {
+		opts.configureCreate(createInput)
+	}
+	createResp, err := client.CreateMultipartUpload(ctx, createInput)
+	require.NoError(t, err, "Failed to create multipart upload")
+
+	uploadID := aws.ToString(createResp.UploadId)
+	completedParts := make([]types.CompletedPart, 0, len(partsData))
+
+	// Abort the multipart upload if anything between here and a successful
+	// CompleteMultipartUpload fails (require.NoError calls t.Fatal, which
+	// triggers t.Cleanup but skips inline defers). We use context.Background
+	// because the parent ctx may have been cancelled by the time cleanup runs,
+	// and we only Logf the abort error so it does not mask the real failure.
+	completed := false
+	t.Cleanup(func() {
+		if completed {
+			return
+		}
+		if _, abortErr := client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucketName),
+			Key:      aws.String(objectKey),
+			UploadId: aws.String(uploadID),
+		}); abortErr != nil {
+			t.Logf("AbortMultipartUpload(%s/%s, uploadID=%s) cleanup failed: %v", bucketName, objectKey, uploadID, abortErr)
+		}
+	})
+
+	for i, partData := range partsData {
+		partNumber := int32(i + 1)
+		uploadInput := &s3.UploadPartInput{
+			Bucket:     aws.String(bucketName),
+			Key:        aws.String(objectKey),
+			PartNumber: aws.Int32(partNumber),
+			UploadId:   aws.String(uploadID),
+			Body:       bytes.NewReader(partData),
+		}
+		if opts.configureUploadPart != nil {
+			opts.configureUploadPart(uploadInput)
+		}
+		partResp, err := client.UploadPart(ctx, uploadInput)
+		require.NoError(t, err, "Failed to upload part %d", partNumber)
+
+		completedParts = append(completedParts, types.CompletedPart{
+			ETag:       partResp.ETag,
+			PartNumber: aws.Int32(partNumber),
+		})
+	}
+
+	_, err = client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	require.NoError(t, err, "Failed to complete multipart upload")
+	completed = true
+
+	expectedData := bytes.Join(partsData, nil)
+	getInput := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	}
+	if opts.configureGet != nil {
+		opts.configureGet(getInput)
+	}
+	resp, err := client.GetObject(ctx, getInput)
+	require.NoError(t, err, "Failed to retrieve completed multipart object")
+	downloadedData, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.NoError(t, err, "Failed to read completed multipart object")
+	assertDataEqual(t, expectedData, downloadedData, "Multipart object data does not match original")
+	assert.Equal(t, int64(len(expectedData)), aws.ToInt64(resp.ContentLength), "Multipart content length mismatch")
+	if opts.verifyGet != nil {
+		opts.verifyGet(resp)
+	}
+
+	rangeStart := int64(8*1024*1024 - 64)
+	rangeEnd := int64(8*1024*1024 + 64)
+	rangeInput := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd)),
+	}
+	if opts.configureGet != nil {
+		opts.configureGet(rangeInput)
+	}
+	rangeResp, err := client.GetObject(ctx, rangeInput)
+	require.NoError(t, err, "Failed to retrieve range crossing internal chunk boundary")
+	rangeData, err := io.ReadAll(rangeResp.Body)
+	rangeResp.Body.Close()
+	require.NoError(t, err, "Failed to read range crossing internal chunk boundary")
+	assertDataEqual(t, expectedData[rangeStart:rangeEnd+1], rangeData, "Range crossing internal chunk boundary does not match")
+	if opts.verifyGet != nil {
+		opts.verifyGet(rangeResp)
+	}
+}
+
+// TestSSEMultipartManyChunksIntegration pins the end-to-end fix for issue
+// #8908. A Docker Registry blob upload typically produces a multipart upload
+// with many small parts (5MB each) that totals 100MB+. After the per-chunk
+// metadata fix in #9211 and the completion backfill in #9224, the remaining
+// failure mode reported in #8908 was that GET would return truncated bytes —
+// Docker registry then computed a SHA over the truncated bytes and reported
+// "Digest did not match." The root cause was that buildMultipartSSES3Reader
+// (and its SSE-KMS / SSE-C peers) opened a volume-server HTTP connection for
+// EVERY chunk upfront, then walked them with io.MultiReader; later chunks'
+// connections sat idle while earlier chunks were being consumed and could be
+// closed by the volume server's keep-alive logic under load, producing
+// unexpected EOFs at the S3 client.
+//
+// This test mirrors that shape: 25 parts of 5MB each (125MB total, 25
+// internal chunks since each part is below the 8MB internal chunk size) with
+// bucket-default SSE-S3. The full GET must return exactly the bytes we
+// uploaded, with the SHA-256 matching. The lazy chunk reader keeps at most
+// one volume-server HTTP connection open at a time, which both eliminates the
+// idle-connection failure mode and makes resource usage proportional to one
+// chunk regardless of object size.
+//
+// The function name ends in "Integration" so it is matched by the existing
+// `.*Multipart.*Integration` pattern in .github/workflows/s3-sse-tests.yml
+// (and the `TestSSE.*Integration` pattern in test/s3/sse/Makefile's `test`
+// target), so this regression coverage is run automatically in CI.
+func TestSSEMultipartManyChunksIntegration(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"sse-s3-many-chunks-")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	_, err = client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+		Bucket: aws.String(bucketName),
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{
+				{
+					ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+						SSEAlgorithm: types.ServerSideEncryptionAes256,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to set bucket default SSE-S3 encryption")
+
+	const numParts = 25
+	const partSize = 5 * 1024 * 1024 // S3 minimum part size
+	parts := make([][]byte, numParts)
+	for i := range parts {
+		parts[i] = generateTestData(partSize)
+	}
+	expected := bytes.Join(parts, nil)
+	expectedHash := sha256.Sum256(expected)
+
+	uploadAndVerifyMultipartSSEObject(t, ctx, client, bucketName, "many-chunks-blob", parts, multipartSSEOptions{
+		verifyGet: func(resp *s3.GetObjectOutput) {
+			assert.Equal(t, types.ServerSideEncryptionAes256, resp.ServerSideEncryption)
+		},
+	})
+
+	// Re-fetch and verify SHA-256 of the entire stream matches what we uploaded.
+	// uploadAndVerifyMultipartSSEObject already does a byte-equal check, but
+	// hashing is what Docker Registry actually does on pull, so pinning that
+	// path here is the most faithful reproduction of #8908's symptom.
+	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("many-chunks-blob"),
+	})
+	require.NoError(t, err, "Failed to GET many-chunks-blob for SHA verification")
+	defer getResp.Body.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, getResp.Body)
+	require.NoError(t, err, "Streaming GET body to SHA hasher must not error (this is the #8908 truncation symptom)")
+	assert.Equal(t, int64(len(expected)), n, "GET stream returned %d bytes, expected %d (truncation reproduces #8908)", n, len(expected))
+	assert.Equal(t, expectedHash, sha256.Sum256(expected), "sanity") // tautology for clarity
+	assert.Equal(t, expectedHash, [32]byte(h.Sum(nil)), "SHA-256 of GET stream must match SHA-256 of uploaded bytes (this is exactly the digest check Docker Registry does)")
 }
 
 // TestDebugSSEMultipart helps debug the multipart SSE-KMS data mismatch

@@ -10,6 +10,6 @@ const (
 	// Suffix appended to a path, e.g. "/buckets/b/foo/bar is a file"
 	ErrMsgIsAFile = " is a file"
 	// Prefix + suffix, e.g. "existing /buckets/b/foo is a directory"
-	ErrMsgExistingPrefix  = "existing "
-	ErrMsgIsADirectory    = " is a directory"
+	ErrMsgExistingPrefix = "existing "
+	ErrMsgIsADirectory   = " is a directory"
 )

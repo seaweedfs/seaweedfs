@@ -27,6 +27,7 @@ type InodeEntry struct {
 	lastRefresh       time.Time
 	updateWindowStart time.Time
 	updateCount       int
+	subdirCount       int32 // tracked in-memory for POSIX directory nlink
 }
 
 func (ie *InodeEntry) resetCacheState() {
@@ -165,6 +166,21 @@ func (i *InodeToPath) GetPath(inode uint64) (util.FullPath, fuse.Status) {
 	return path.paths[0], fuse.OK
 }
 
+// GetAllPaths returns a copy of all paths associated with an inode. For a
+// hard-linked file, this includes every link that the mount currently knows
+// about. Returns nil if the inode is unknown.
+func (i *InodeToPath) GetAllPaths(inode uint64) []util.FullPath {
+	i.RLock()
+	defer i.RUnlock()
+	ie, found := i.inode2path[inode]
+	if !found || len(ie.paths) == 0 {
+		return nil
+	}
+	out := make([]util.FullPath, len(ie.paths))
+	copy(out, ie.paths)
+	return out
+}
+
 func (i *InodeToPath) HasPath(path util.FullPath) bool {
 	i.RLock()
 	defer i.RUnlock()
@@ -248,6 +264,55 @@ func (i *InodeToPath) InvalidateChildrenCache(fullpath util.FullPath) {
 		return
 	}
 	entry.resetCacheState()
+}
+
+// AdjustSubdirCount adjusts the subdirectory count for a directory inode.
+// delta is typically +1 (mkdir) or -1 (rmdir).
+func (i *InodeToPath) AdjustSubdirCount(dirPath util.FullPath, delta int32) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[dirPath]
+	if !found {
+		return
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return
+	}
+	entry.subdirCount += delta
+	if entry.subdirCount < 0 {
+		entry.subdirCount = 0
+	}
+}
+
+// GetSubdirCount returns the tracked subdirectory count for a directory.
+func (i *InodeToPath) GetSubdirCount(dirPath util.FullPath) int32 {
+	i.RLock()
+	defer i.RUnlock()
+	inode, found := i.path2inode[dirPath]
+	if !found {
+		return 0
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return 0
+	}
+	return entry.subdirCount
+}
+
+// SetSubdirCount sets the subdirectory count for a directory (used after readdir).
+func (i *InodeToPath) SetSubdirCount(dirPath util.FullPath, count int32) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[dirPath]
+	if !found {
+		return
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return
+	}
+	entry.subdirCount = count
 }
 
 func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {

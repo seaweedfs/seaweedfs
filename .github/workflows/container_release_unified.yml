@@ -39,7 +39,82 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+
+  # ── Pre-build Rust volume server binaries natively ──────────────────
+  # Cross-compiles for amd64 and arm64 without QEMU, turning a 5-hour
+  # emulated cargo build into ~15 minutes of native compilation.
+  build-rust-binaries:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: amd64
+          - target: aarch64-unknown-linux-musl
+            arch: arm64
+            cross: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (amd64)
+        if: ${{ !matrix.cross }}
+        run: sudo apt-get install -y musl-tools
+
+      - name: Install cross-compilation tools (arm64)
+        if: matrix.cross
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          # Disable glibc fortify source — its __memcpy_chk etc. symbols don't exist in musl
+          echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-docker-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-docker-${{ matrix.target }}-
+
+      - name: Build large-disk variant
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/weed-volume ../weed-volume-large-disk-${{ matrix.arch }}
+
+      - name: Build normal variant
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }} --no-default-features
+          cp target/${{ matrix.target }}/release/weed-volume ../weed-volume-normal-${{ matrix.arch }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-volume-${{ matrix.arch }}
+          path: |
+            weed-volume-large-disk-${{ matrix.arch }}
+            weed-volume-normal-${{ matrix.arch }}
+
+  # ── Build Docker containers ─────────────────────────────────────────
   build:
+    needs: [build-rust-binaries]
     runs-on: ubuntu-latest
     strategy:
       # Build sequentially to avoid rate limits
@@ -52,20 +127,23 @@ jobs:
             dockerfile: ./docker/Dockerfile.go_build
             build_args: ""
             tag_suffix: ""
-            
-          # Large disk - multi-arch  
+            rust_variant: normal
+
+          # Large disk - multi-arch
           - variant: large_disk
             platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/386
             dockerfile: ./docker/Dockerfile.go_build
             build_args: TAGS=5BytesOffset
             tag_suffix: _large_disk
-            
+            rust_variant: large-disk
+
           # Full tags - multi-arch
           - variant: full
             platforms: linux/amd64,linux/arm64
             dockerfile: ./docker/Dockerfile.go_build
             build_args: TAGS=elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb
             tag_suffix: _full
+            rust_variant: normal
 
           # Large disk + full tags - multi-arch
           - variant: large_disk_full
@@ -73,19 +151,42 @@ jobs:
             dockerfile: ./docker/Dockerfile.go_build
             build_args: TAGS=5BytesOffset,elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb
             tag_suffix: _large_disk_full
-            
+            rust_variant: large-disk
+
           # RocksDB large disk - amd64 only
           - variant: rocksdb
             platforms: linux/amd64
             dockerfile: ./docker/Dockerfile.rocksdb_large
             build_args: ""
             tag_suffix: _large_disk_rocksdb
+            rust_variant: large-disk
             
     steps:
       - name: Checkout
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/checkout@v6
-        
+
+      - name: Download pre-built Rust binaries
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: actions/download-artifact@v8
+        with:
+          pattern: rust-volume-*
+          merge-multiple: true
+          path: ./rust-bins
+
+      - name: Place Rust binaries in Docker context
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        run: |
+          mkdir -p docker/weed-volume-prebuilt
+          for arch in amd64 arm64; do
+            src="./rust-bins/weed-volume-${{ matrix.rust_variant }}-${arch}"
+            if [ -f "$src" ]; then
+              cp "$src" "docker/weed-volume-prebuilt/weed-volume-${arch}"
+              echo "Placed pre-built Rust binary for ${arch}"
+            fi
+          done
+          ls -la docker/weed-volume-prebuilt/
+
       - name: Free Disk Space
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
@@ -135,14 +236,14 @@ jobs:
           
       - name: Login to Docker Hub
         if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.1.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
       - name: Login to GHCR
         if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.1.0
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
@@ -198,14 +299,14 @@ jobs:
     steps:
       - name: Login to Docker Hub
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.1.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
       - name: Login to GHCR
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.1.0
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}

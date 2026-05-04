@@ -17,4 +17,5 @@ type CommandTag string
 
 const (
 	ResourceHeavy CommandTag = "resourceHeavy"
+	Hidden        CommandTag = "hidden"
 )

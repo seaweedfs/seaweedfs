@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -703,43 +703,12 @@ func uniqueName(prefix string) string {
 
 // --- Test setup helpers ---
 
-func findAvailablePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
-}
-
-// findAvailablePortPair finds an available http port P such that P and P+10000 (grpc) are both available
-func findAvailablePortPair() (int, int, error) {
-	httpPort, err := findAvailablePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	for i := 0; i < 100; i++ {
-		grpcPort, err := findAvailablePort()
-		if err != nil {
-			return 0, 0, err
-		}
-		if grpcPort != httpPort {
-			return httpPort, grpcPort, nil
-		}
-	}
-	return 0, 0, fmt.Errorf("failed to find available port pair")
-}
-
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
-	masterPort, masterGrpcPort, err := findAvailablePortPair()
-	require.NoError(t, err)
-	volumePort, volumeGrpcPort, err := findAvailablePortPair()
-	require.NoError(t, err)
-	filerPort, filerGrpcPort, err := findAvailablePortPair()
-	require.NoError(t, err)
-	s3Port, s3GrpcPort, err := findAvailablePortPair()
-	require.NoError(t, err)
+	ports := testutil.MustAllocatePorts(t, 8)
+	masterPort, masterGrpcPort := ports[0], ports[1]
+	volumePort, volumeGrpcPort := ports[2], ports[3]
+	filerPort, filerGrpcPort := ports[4], ports[5]
+	s3Port, s3GrpcPort := ports[6], ports[7]
 
 	testDir := t.TempDir()
 
@@ -760,13 +729,15 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	// Disable authentication for tests
 	securityToml := filepath.Join(testDir, "security.toml")
-	err = os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
+	err := os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
 	require.NoError(t, err)
 
-	// Configure credential store for IAM tests
+	// Configure credential store for IAM tests.
+	// Use filer_etc instead of memory because the memory store does not
+	// persist groups or service accounts through LoadConfiguration/SaveConfiguration.
 	credentialToml := filepath.Join(testDir, "credential.toml")
 	credentialConfig := `
-[credential.memory]
+[credential.filer_etc]
 enabled = true
 `
 	err = os.WriteFile(credentialToml, []byte(credentialConfig), 0644)
@@ -819,10 +790,9 @@ enabled = true
 	}()
 
 	// Wait for S3
-	err = waitForS3Ready(cluster.s3Endpoint, 60*time.Second)
-	if err != nil {
+	if !testutil.WaitForService(cluster.s3Endpoint, 60*time.Second) {
 		cancel()
-		return nil, err
+		return nil, fmt.Errorf("timeout waiting for S3 at %s", cluster.s3Endpoint)
 	}
 
 	// If VOLUME_SERVER_IMPL=rust, start a Rust volume server alongside weed mini
@@ -837,20 +807,6 @@ enabled = true
 	return cluster, nil
 }
 
-func waitForS3Ready(endpoint string, timeout time.Duration) error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(endpoint)
-		if err == nil {
-			resp.Body.Close()
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout waiting for S3")
-}
-
 // startRustVolumeServer starts a Rust volume server that registers with the same master.
 func (c *TestCluster) startRustVolumeServer(t *testing.T) error {
 	t.Helper()
@@ -860,14 +816,12 @@ func (c *TestCluster) startRustVolumeServer(t *testing.T) error {
 		return fmt.Errorf("resolve rust volume binary: %v", err)
 	}
 
-	rustVolumePort, err := findAvailablePort()
+	rustPorts, err := testutil.AllocatePorts(2)
 	if err != nil {
-		return fmt.Errorf("find rust volume port: %v", err)
+		return fmt.Errorf("find rust volume ports: %v", err)
 	}
-	rustVolumeGrpcPort, err := findAvailablePort()
-	if err != nil {
-		return fmt.Errorf("find rust volume grpc port: %v", err)
-	}
+	rustVolumePort := rustPorts[0]
+	rustVolumeGrpcPort := rustPorts[1]
 
 	rustVolumeDir := filepath.Join(c.dataDir, "rust-volume")
 	if err := os.MkdirAll(rustVolumeDir, 0o755); err != nil {

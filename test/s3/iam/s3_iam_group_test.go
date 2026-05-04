@@ -778,6 +778,105 @@ func TestIAMGroupRawAPI(t *testing.T) {
 	})
 }
 
+// TestIAMGroupInlinePolicy tests group inline policy operations:
+// PutGroupPolicy, GetGroupPolicy, ListGroupPolicies, DeleteGroupPolicy
+func TestIAMGroupInlinePolicy(t *testing.T) {
+	framework := NewS3IAMTestFramework(t)
+	defer framework.Cleanup()
+
+	iamClient, err := framework.CreateIAMClientWithJWT("admin-user", "TestAdminRole")
+	require.NoError(t, err)
+
+	// Skip if running against embedded IAM (which returns NotImplemented for group inline policies)
+	_, probeErr := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{GroupName: aws.String("probe-group-inline-support")})
+	if probeErr != nil {
+		if awsErr, ok := probeErr.(awserr.Error); ok && awsErr.Code() == "NotImplemented" {
+			t.Skip("Skipping: group inline policies not supported in embedded IAM mode")
+		}
+	}
+	require.NoError(t, err)
+
+	groupName := "test-group-inline-policy"
+	policyName := "TestInlinePolicy"
+	_, err = iamClient.CreateGroup(&iam.CreateGroupInput{
+		GroupName: aws.String(groupName),
+	})
+	require.NoError(t, err)
+	defer func() {
+		// Clean up inline policies before deleting the group
+		iamClient.DeleteGroupPolicy(&iam.DeleteGroupPolicyInput{
+			GroupName:  aws.String(groupName),
+			PolicyName: aws.String(policyName),
+		})
+		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
+	}()
+
+	t.Run("list_empty", func(t *testing.T) {
+		resp, err := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{
+			GroupName: aws.String(groupName),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, resp.PolicyNames)
+		assert.False(t, *resp.IsTruncated)
+	})
+
+	policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`
+
+	t.Run("put_group_policy", func(t *testing.T) {
+		_, err := iamClient.PutGroupPolicy(&iam.PutGroupPolicyInput{
+			GroupName:      aws.String(groupName),
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(policyDoc),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("list_after_put", func(t *testing.T) {
+		resp, err := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{
+			GroupName: aws.String(groupName),
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, resp.PolicyNames)
+	})
+
+	t.Run("get_group_policy", func(t *testing.T) {
+		resp, err := iamClient.GetGroupPolicy(&iam.GetGroupPolicyInput{
+			GroupName:  aws.String(groupName),
+			PolicyName: aws.String(policyName),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, groupName, *resp.GroupName)
+		assert.Equal(t, policyName, *resp.PolicyName)
+		assert.Contains(t, *resp.PolicyDocument, "s3:GetObject")
+	})
+
+	t.Run("delete_group_policy", func(t *testing.T) {
+		_, err := iamClient.DeleteGroupPolicy(&iam.DeleteGroupPolicyInput{
+			GroupName:  aws.String(groupName),
+			PolicyName: aws.String(policyName),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("list_after_delete", func(t *testing.T) {
+		resp, err := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{
+			GroupName: aws.String(groupName),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, resp.PolicyNames)
+	})
+
+	t.Run("nonexistent_group", func(t *testing.T) {
+		_, err := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{
+			GroupName: aws.String("nonexistent-group-for-policies"),
+		})
+		require.Error(t, err)
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok, "Expected AWS error type")
+		assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+}
+
 // createS3Client creates an S3 client with static credentials
 func createS3Client(t *testing.T, accessKey, secretKey string) *s3.S3 {
 	sess, err := session.NewSession(&aws.Config{

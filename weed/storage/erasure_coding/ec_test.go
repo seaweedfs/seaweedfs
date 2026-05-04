@@ -217,7 +217,9 @@ func (this Interval) sameAs(that Interval) bool {
 }
 
 func TestLocateData2(t *testing.T) {
-	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 3221225472, 21479557912, 4194339)
+	// Use ecdFileSize-1 to simulate the fallback path in LocateEcShardNeedleInterval
+	// when datFileSize is not available (old EC volumes without .vif datFileSize).
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 3221225472-1, 21479557912, 4194339)
 	assert.Equal(t, intervals, []Interval{
 		{BlockIndex: 4, InnerBlockOffset: 527128, Size: 521448, IsLargeBlock: false, LargeBlockRowsCount: 2},
 		{BlockIndex: 5, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
@@ -228,7 +230,8 @@ func TestLocateData2(t *testing.T) {
 }
 
 func TestLocateData3(t *testing.T) {
-	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 3221225472, 30782909808, 112568)
+	// Use ecdFileSize-1 to simulate the fallback path in LocateEcShardNeedleInterval
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 3221225472-1, 30782909808, 112568)
 	for _, interval := range intervals {
 		fmt.Printf("%+v\n", interval)
 	}
@@ -237,13 +240,29 @@ func TestLocateData3(t *testing.T) {
 	})
 }
 
+func TestLocateData_ExactMultiple_Issue8947(t *testing.T) {
+	// When datFileSize is available, shardDatSize = datFileSize / DataShards.
+	// For a 30GB volume with 10 data shards, shardDatSize = 3GB = 3 * ErasureCodingLargeBlockSize.
+	// The encoder produces 3 large block rows, 0 small block rows.
+	// nLargeBlockRows must be 3, not 2.
+	shardDatSize := int64(3) * ErasureCodingLargeBlockSize // 3GB per shard from datFileSize/DataShards
+
+	// Reading from the 3rd large block row (offsets 20GB-30GB) should work
+	offset := int64(2) * ErasureCodingLargeBlockSize * DataShardsCount // 20GB
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shardDatSize, offset, 1024)
+	assert.Equal(t, 1, len(intervals))
+	assert.True(t, intervals[0].IsLargeBlock, "data in 3rd large row should be in large blocks")
+	assert.Equal(t, 3, intervals[0].LargeBlockRowsCount)
+	assert.Equal(t, 20, intervals[0].BlockIndex) // block 20 = shard 0 of 3rd row
+}
+
 func TestLocateData_Issue8179(t *testing.T) {
 	large := int64(10000)
 	small := int64(100)
 	shardSize := int64(259092) // Resulting in nLargeBlockRows = 25 as seen in panic log
 
 	// Testing range through the large-to-small transition boundary
-	nLargeBlockRows := (shardSize - 1) / large
+	nLargeBlockRows := shardSize / large
 	largeAreaSize := nLargeBlockRows * int64(DataShardsCount) * large
 
 	for offset := largeAreaSize - 500; offset < largeAreaSize+500; offset++ {

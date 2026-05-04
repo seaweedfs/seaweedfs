@@ -445,7 +445,7 @@ jobs:
         # Test consumer group functionality with explicit timeout
         ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 100 || echo "Warning: Could not set process limit"
-        timeout 240s go test -v -run "^TestConsumerGroups" -timeout 180s ./integration/... || echo "Test execution timed out or failed"
+        timeout 240s go test -v -run "^TestConsumerGroups" -timeout 180s ./integration/...
       env:
         GOMAXPROCS: 1
         SEAWEEDFS_MASTERS: 127.0.0.1:9333

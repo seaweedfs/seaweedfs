@@ -64,18 +64,6 @@ type PlacementRequest struct {
 	PreferDifferentRacks bool
 }
 
-// DefaultPlacementRequest returns the default placement configuration
-func DefaultPlacementRequest() PlacementRequest {
-	return PlacementRequest{
-		ShardsNeeded:           14,
-		MaxShardsPerServer:     0,
-		MaxShardsPerRack:       0,
-		MaxTaskLoad:            5,
-		PreferDifferentServers: true,
-		PreferDifferentRacks:   true,
-	}
-}
-
 // PlacementResult contains the selected destinations for EC shards
 type PlacementResult struct {
 	SelectedDisks []*DiskCandidate
@@ -270,15 +258,6 @@ func groupDisksByRack(disks []*DiskCandidate) map[string][]*DiskCandidate {
 	return result
 }
 
-// groupDisksByServer groups disks by their server
-func groupDisksByServer(disks []*DiskCandidate) map[string][]*DiskCandidate {
-	result := make(map[string][]*DiskCandidate)
-	for _, disk := range disks {
-		result[disk.NodeID] = append(result[disk.NodeID], disk)
-	}
-	return result
-}
-
 // getRackKey returns the unique key for a rack (dc:rack)
 func getRackKey(disk *DiskCandidate) string {
 	return fmt.Sprintf("%s:%s", disk.DataCenter, disk.Rack)
@@ -392,29 +371,4 @@ func addDiskToResult(result *PlacementResult, disk *DiskCandidate,
 	result.ShardsPerServer[disk.NodeID]++
 	result.ShardsPerRack[rackKey]++
 	result.ShardsPerDC[disk.DataCenter]++
-}
-
-// VerifySpread checks if the placement result meets diversity requirements
-func VerifySpread(result *PlacementResult, minServers, minRacks int) error {
-	if result.ServersUsed < minServers {
-		return fmt.Errorf("only %d servers used, need at least %d", result.ServersUsed, minServers)
-	}
-	if result.RacksUsed < minRacks {
-		return fmt.Errorf("only %d racks used, need at least %d", result.RacksUsed, minRacks)
-	}
-	return nil
-}
-
-// CalculateIdealDistribution returns the ideal number of shards per server
-// when we have a certain number of shards and servers
-func CalculateIdealDistribution(totalShards, numServers int) (min, max int) {
-	if numServers <= 0 {
-		return 0, totalShards
-	}
-	min = totalShards / numServers
-	max = min
-	if totalShards%numServers != 0 {
-		max = min + 1
-	}
-	return
 }

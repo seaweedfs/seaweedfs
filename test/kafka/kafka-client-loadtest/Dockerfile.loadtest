@@ -17,16 +17,18 @@ COPY test/kafka/kafka-client-loadtest/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o /kafka-loadtest ./cmd/loadtest
 
 # Stage 2: Runtime
-FROM ubuntu:22.04
+# Use alpine so we don't depend on Ubuntu apt mirrors, which intermittently
+# refuse connections from GitHub Actions runners and fail the CI build.
+# All runtime dependencies we need (ca-certificates, curl, jq, bash, nc)
+# are in the Alpine main repo.
+FROM alpine:3.20
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apk add --no-cache \
     ca-certificates \
     curl \
     jq \
     bash \
-    netcat \
-    && rm -rf /var/lib/apt/lists/*
+    netcat-openbsd
 
 # Copy built binary from builder stage
 COPY --from=builder /kafka-loadtest /usr/local/bin/kafka-loadtest

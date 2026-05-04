@@ -41,6 +41,8 @@ func runMount(cmd *Command, args []string) bool {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
 	}
 
+	*mountCpuProfile = util.ResolvePath(*mountCpuProfile)
+	*mountMemProfile = util.ResolvePath(*mountMemProfile)
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 	if *mountReadRetryTime < time.Second {
 		*mountReadRetryTime = time.Second
@@ -166,7 +168,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return false
 	}
 
-	unmount.Unmount(dir)
+	if err := unmount.Unmount(dir); err != nil {
+		glog.V(1).Infof("pre-mount cleanup unmount %s: %v", dir, err)
+	}
 
 	// start on local unix socket
 	if *option.localSocket == "" {
@@ -186,7 +190,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
-		os.MkdirAll(dir, os.FileMode(0777)&^umask)
+		if err := os.MkdirAll(dir, os.FileMode(0777)&^umask); err != nil {
+			glog.Fatalf("failed to create directory %s:%v", dir, err)
+		}
 	}
 	fileInfo, err := os.Stat(dir)
 
@@ -238,11 +244,21 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fsName = "fuse"
 	}
 
+	maxBackground := 128
+	if option.fuseMaxBackground != nil && *option.fuseMaxBackground > 0 {
+		maxBackground = *option.fuseMaxBackground
+	}
+	congestionThreshold := 0
+	if option.fuseCongestionThreshold != nil && *option.fuseCongestionThreshold > 0 {
+		congestionThreshold = *option.fuseCongestionThreshold
+	}
+
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
 		Options:                  option.extraOptions,
-		MaxBackground:            128,
+		MaxBackground:            maxBackground,
+		CongestionThreshold:      congestionThreshold,
 		MaxWrite:                 1024 * 1024 * 2,
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
@@ -251,7 +267,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
-		Debug:                    *option.debug,
+		Debug:                    *option.debugFuse,
 		EnableLocks:              true,
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
@@ -306,9 +322,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
-	cacheDirForWrite := *option.cacheDirForWrite
+	cacheDirForRead := util.ResolvePath(*option.cacheDirForRead)
+	cacheDirForWrite := util.ResolvePath(*option.cacheDirForWrite)
 	if cacheDirForWrite == "" {
-		cacheDirForWrite = *option.cacheDirForRead
+		cacheDirForWrite = cacheDirForRead
 	}
 
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
@@ -325,9 +342,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:           *option.concurrentWriters,
 		ConcurrentReaders:           *option.concurrentReaders,
-		CacheDirForRead:             *option.cacheDirForRead,
+		CacheDirForRead:             cacheDirForRead,
 		CacheSizeMBForRead:          *option.cacheSizeMBForRead,
 		CacheDirForWrite:            cacheDirForWrite,
+		WriteBufferSizeMB:           *option.writeBufferSizeMB,
 		CacheMetaTTlSec:             *option.cacheMetaTtlSec,
 		DataCenter:                  *option.dataCenter,
 		Quota:                       int64(*option.collectionQuota) * 1024 * 1024,
@@ -345,14 +363,22 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		IsMacOs:                     runtime.GOOS == "darwin",
 		MetadataFlushSeconds:        *option.metadataFlushSeconds,
 		// RDMA acceleration options
-		RdmaEnabled:       *option.rdmaEnabled,
-		RdmaSidecarAddr:   *option.rdmaSidecarAddr,
-		RdmaFallback:      *option.rdmaFallback,
-		RdmaReadOnly:      *option.rdmaReadOnly,
-		RdmaMaxConcurrent: *option.rdmaMaxConcurrent,
-		RdmaTimeoutMs:     *option.rdmaTimeoutMs,
-		DirIdleEvictSec:   *option.dirIdleEvictSec,
-		WritebackCache:    option.writebackCache != nil && *option.writebackCache,
+		RdmaEnabled:           *option.rdmaEnabled,
+		RdmaSidecarAddr:       *option.rdmaSidecarAddr,
+		RdmaFallback:          *option.rdmaFallback,
+		RdmaReadOnly:          *option.rdmaReadOnly,
+		RdmaMaxConcurrent:     *option.rdmaMaxConcurrent,
+		RdmaTimeoutMs:         *option.rdmaTimeoutMs,
+		DirIdleEvictSec:       *option.dirIdleEvictSec,
+		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
+		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
+		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
+		// Peer chunk sharing
+		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
+		PeerListen:     peerStringOrEmpty(option.peerListen),
+		PeerAdvertise:  peerStringOrEmpty(option.peerAdvertise),
+		PeerDataCenter: peerStringOrEmpty(option.peerDataCenter),
+		PeerRack:       peerStringOrEmpty(option.peerRack),
 	})
 
 	// create mount root
@@ -372,7 +398,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		glog.Fatalf("Mount fail: %v", err)
 	}
 	grace.OnInterrupt(func() {
-		unmount.Unmount(dir)
+		if err := unmount.Unmount(dir); err != nil {
+			glog.Errorf("failed to unmount %s: %v", dir, err)
+		}
 	})
 
 	if mountOptions.fuseCommandPid != 0 {
@@ -407,4 +435,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	seaweedFileSystem.ClearCacheDir()
 
 	return true
+}
+
+func peerStringOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

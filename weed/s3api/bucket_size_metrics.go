@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 const (
@@ -197,13 +198,30 @@ func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
 	return buckets, err
 }
 
+// ecVolumeAgg accumulates per-volume EC counts across the shard holders.
+// fileCount is volume-wide (every holder sees the same .ecx) so we take the
+// max across reporters to avoid a slow node with a not-yet-loaded .ecx
+// pinning the aggregate at 0. deleteCount is node-local to each .ecj
+// deletion journal, so it's summed across reporters.
+type ecVolumeAgg struct {
+	collection  string
+	fileCount   uint64
+	deleteCount uint64
+}
+
 // collectCollectionInfoFromTopology extracts collection info from topology.
 // Deduplicates by volume ID to correctly handle missing replicas.
 // Unlike dividing by copyCount (which would give wrong results if replicas are missing),
 // we track seen volume IDs and only count each volume once for logical size/count.
+// EC-encoded volumes are folded in via per-shard aggregation: every shard is
+// node-local (not a replica), so shard sizes are summed across nodes; the
+// per-volume file/delete counts carried on each shard message are deduped
+// via max/sum so the aggregate doesn't double-count or drop after a volume
+// is converted from regular to erasure coding.
 func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
 	// Track which volumes we've already seen to deduplicate by volume ID
 	seenVolumes := make(map[volumeKey]bool)
+	ecVolumes := make(map[volumeKey]*ecVolumeAgg)
 
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
@@ -235,8 +253,49 @@ func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfo
 						cif.DeletedByteCount += float64(vi.DeletedByteCount)
 						cif.VolumeCount++
 					}
+
+					for _, esi := range diskInfo.EcShardInfos {
+						c := esi.Collection
+						cif, found := collectionInfos[c]
+						if !found {
+							cif = &CollectionInfo{}
+							collectionInfos[c] = cif
+						}
+
+						// EC shards are node-local (no replication), so both
+						// physical and logical shard sizes sum across nodes
+						// without any dedupe. Logical size excludes parity
+						// shards; physical size includes them. Upstream OSS
+						// uses the fixed 10+4 ratio (dataShards=0 → default);
+						// forks with per-volume ratio metadata can pass the
+						// configured value here.
+						cif.PhysicalSize += float64(erasure_coding.EcShardsTotalSize(esi))
+						cif.Size += float64(erasure_coding.EcShardsDataSize(esi, 0))
+
+						key := volumeKey{collection: c, volumeId: esi.Id}
+						agg, ok := ecVolumes[key]
+						if !ok {
+							agg = &ecVolumeAgg{collection: c}
+							ecVolumes[key] = agg
+							cif.VolumeCount++
+						}
+						if esi.FileCount > agg.fileCount {
+							agg.fileCount = esi.FileCount
+						}
+						agg.deleteCount += esi.DeleteCount
+					}
 				}
 			}
 		}
+	}
+
+	// Fold deduped EC file/delete counts into each collection's totals.
+	for _, agg := range ecVolumes {
+		cif := collectionInfos[agg.collection]
+		if cif == nil {
+			continue
+		}
+		cif.FileCount += float64(agg.fileCount)
+		cif.DeleteCount += float64(agg.deleteCount)
 	}
 }

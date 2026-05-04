@@ -289,8 +289,8 @@ func (cp *ConfigPersistence) LoadVacuumTaskConfig() (*VacuumTaskConfig, error) {
 
 	// Return default config if no valid config found
 	return &VacuumTaskConfig{
-		GarbageThreshold:   0.3,
-		MinVolumeAgeHours:  24,
+		GarbageThreshold:  0.3,
+		MinVolumeAgeHours: 24,
 	}, nil
 }
 
@@ -305,8 +305,8 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   0.3,
-					MinVolumeAgeHours:  24,
+					GarbageThreshold:  0.3,
+					MinVolumeAgeHours: 24,
 				},
 			},
 		}, nil
@@ -325,8 +325,8 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   0.3,
-					MinVolumeAgeHours:  24,
+					GarbageThreshold:  0.3,
+					MinVolumeAgeHours: 24,
 				},
 			},
 		}, nil
@@ -705,8 +705,8 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
+					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
+					MinVolumeAgeHours: int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
 				},
 			},
 		}
@@ -1091,7 +1091,7 @@ func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.Ma
 	// Convert protobuf to maintenance task
 	task := cp.protobufToMaintenanceTask(taskStateFile.Task)
 
-	glog.V(2).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
+	glog.V(3).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
 	return task, nil
 }
 
@@ -1133,6 +1133,43 @@ func (cp *ConfigPersistence) loadAllTaskStatesLocked() ([]*maintenance.Maintenan
 
 	glog.V(1).Infof("Loaded %d task states from disk", len(tasks))
 	return tasks, nil
+}
+
+// DeleteAllTaskStates removes all task state .pb files from disk without reading them.
+// Used at startup to clean up stale files from previous runs — the scanner will
+// re-detect any tasks that are still needed from live cluster state.
+func (cp *ConfigPersistence) DeleteAllTaskStates() error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+
+	if cp.dataDir == "" {
+		return nil
+	}
+
+	tasksDir := filepath.Join(cp.dataDir, TasksSubdir)
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read tasks directory: %w", err)
+	}
+
+	var removed int
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".pb" {
+			if err := os.Remove(filepath.Join(tasksDir, entry.Name())); err != nil && !os.IsNotExist(err) {
+				glog.Warningf("Failed to delete task file %s: %v", entry.Name(), err)
+			} else {
+				removed++
+			}
+		}
+	}
+
+	if removed > 0 {
+		glog.Infof("Cleaned up %d stale task files from disk", removed)
+	}
+	return nil
 }
 
 // DeleteTaskState removes a task state file from disk

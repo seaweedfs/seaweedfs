@@ -43,6 +43,22 @@ type EcVolume struct {
 	datFileSize               int64
 	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
+
+	// ecjFileSize mirrors the on-disk size of the .ecj deletion journal and
+	// is maintained under ecjFileAccessLock. It is only used by IO helpers
+	// (seek/truncate) — the authoritative runtime delete count comes from
+	// deletedNeedles.
+	ecjFileSize int64
+
+	// deletedNeedles is the in-memory set of needle ids that have been
+	// deleted since the volume was encoded. .ecx is immutable at runtime —
+	// it only stores the sorted (id, offset, size) index written at encode
+	// time — and runtime deletes are journaled to .ecj + tracked here.
+	// Reads consult this set to mask out deleted needles on top of the
+	// sealed .ecx lookup. Heartbeat delete_count is derived from len(set).
+	// Seeded from .ecj in NewEcVolume and updated under deletedNeedlesLock.
+	deletedNeedlesLock sync.RWMutex
+	deletedNeedles     map[types.NeedleId]struct{}
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -75,14 +91,37 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.ecxFileSize = ecxFi.Size()
 	ev.ecxCreatedAt = ecxFi.ModTime()
 
-	// open ecj file
+	// open ecj file and seed the in-memory deleted set from it.
 	if ev.ecjFile, err = os.OpenFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE, 0644); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume journal %s.ecj: %v", indexBaseFileName, err)
 	}
+	if ecjFi, statErr := ev.ecjFile.Stat(); statErr == nil {
+		ev.ecjFileSize = ecjFi.Size()
+	} else {
+		glog.Warningf("stat ec volume journal %s.ecj: %v", indexBaseFileName, statErr)
+	}
+	ev.deletedNeedles = make(map[types.NeedleId]struct{})
+	if loadErr := ev.loadDeletedNeedlesFromEcj(); loadErr != nil {
+		glog.Warningf("ec volume %d: load deleted needles from .ecj: %v", vid, loadErr)
+	}
 
-	// read volume info
+	// read volume info. Prefer .vif at the data dir (where shards live), but
+	// fall back to the index dir when the data dir does not have one — the
+	// orphan-shard reconciliation in Store loads shards on a disk whose only
+	// EC artefacts are .ec?? files, with .ecx / .ecj / .vif on a sibling disk
+	// (issue #9212). Without this fallback we'd write a stub .vif on the
+	// shard disk and lose the real EC config + datFileSize.
+	vifFileName := dataBaseFileName + ".vif"
+	if dirIdx != dir {
+		if _, statErr := os.Stat(vifFileName); statErr != nil && os.IsNotExist(statErr) {
+			altVif := EcShardFileName(collection, dirIdx, int(vid)) + ".vif"
+			if _, altStatErr := os.Stat(altVif); altStatErr == nil {
+				vifFileName = altVif
+			}
+		}
+	}
 	ev.Version = needle.Version3
-	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
+	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifFileName); found {
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
@@ -109,7 +148,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			ev.ECContext = NewDefaultECContext(collection, vid)
 		}
 	} else {
-		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
+		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, vifFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 		ev.ECContext = NewDefaultECContext(collection, vid)
 	}
@@ -254,6 +293,8 @@ func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
 func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages []*master_pb.VolumeEcShardInformationMessage) {
 	ecInfoPerVolume := map[needle.VolumeId]*master_pb.VolumeEcShardInformationMessage{}
 
+	fileCount, deleteCount := ev.FileAndDeleteCount()
+
 	for _, s := range ev.Shards {
 		m, ok := ecInfoPerVolume[s.VolumeId]
 		if !ok {
@@ -263,6 +304,8 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 				DiskType:    string(ev.diskType),
 				ExpireAtSec: ev.ExpireAtSec,
 				DiskId:      diskId,
+				FileCount:   fileCount,
+				DeleteCount: deleteCount,
 			}
 			ecInfoPerVolume[s.VolumeId] = m
 		}
@@ -280,6 +323,67 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 	return
 }
 
+// FileAndDeleteCount returns the current (fileCount, deleteCount) for this
+// EC volume.
+//
+//   - fileCount = .ecx size / NeedleMapEntrySize — the total number of
+//     needles recorded in the sealed sorted index. Because .ecx is written
+//     at encode time and only overwritten during decode/rebuild (which
+//     preserves record count), this matches the "cumulative put count"
+//     semantics of regular volume FileCount.
+//
+//   - deleteCount = len(deletedNeedles) — the number of unique runtime
+//     deletes tracked in memory. The set is seeded from .ecj on load and
+//     appended to on every successful DeleteNeedleFromEcx. Because a
+//     needle delete is applied on exactly one shard holder, the admin
+//     aggregation sums deleteCount across nodes to get the volume's true
+//     delete total.
+//
+// Both values are O(1) — no index walking.
+func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
+	fileCount = uint64(ev.ecxFileSize) / uint64(types.NeedleMapEntrySize)
+	ev.deletedNeedlesLock.RLock()
+	deleteCount = uint64(len(ev.deletedNeedles))
+	ev.deletedNeedlesLock.RUnlock()
+	return
+}
+
+// IsNeedleDeleted reports whether the given needle id is in the in-memory
+// deleted set. Callers that have already looked the needle up in .ecx
+// should consult this to apply runtime deletion state on top of the
+// sealed index.
+func (ev *EcVolume) IsNeedleDeleted(needleId types.NeedleId) bool {
+	ev.deletedNeedlesLock.RLock()
+	_, ok := ev.deletedNeedles[needleId]
+	ev.deletedNeedlesLock.RUnlock()
+	return ok
+}
+
+// markNeedleDeletedInMemory inserts a needle id into the deleted set.
+func (ev *EcVolume) markNeedleDeletedInMemory(needleId types.NeedleId) {
+	ev.deletedNeedlesLock.Lock()
+	ev.deletedNeedles[needleId] = struct{}{}
+	ev.deletedNeedlesLock.Unlock()
+}
+
+// loadDeletedNeedlesFromEcj walks the .ecj journal and populates the
+// in-memory deleted set. Called once from NewEcVolume under the exclusive
+// ownership of the just-constructed (and not yet shared) EcVolume.
+func (ev *EcVolume) loadDeletedNeedlesFromEcj() error {
+	if ev.ecjFile == nil || ev.ecjFileSize < int64(types.NeedleIdSize) {
+		return nil
+	}
+	buf := make([]byte, types.NeedleIdSize)
+	for off := int64(0); off+int64(types.NeedleIdSize) <= ev.ecjFileSize; off += int64(types.NeedleIdSize) {
+		if _, err := ev.ecjFile.ReadAt(buf, off); err != nil {
+			return fmt.Errorf("read ecj at %d: %w", off, err)
+		}
+		id := types.BytesToNeedleId(buf)
+		ev.deletedNeedles[id] = struct{}{}
+	}
+	return nil
+}
+
 func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.Version) (offset types.Offset, size types.Size, intervals []Interval, err error) {
 
 	// find the needle from ecx file
@@ -294,14 +398,17 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 
 func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset int64, size types.Size) (intervals []Interval) {
 	shard := ev.Shards[0]
-	// Usually shard will be padded to round of ErasureCodingSmallBlockSize.
-	// So in most cases, if shardSize equals to n * ErasureCodingLargeBlockSize,
-	// the data would be in small blocks.
-	shardSize := shard.ecdFileSize - 1
+	var shardSize int64
 	if ev.datFileSize > 0 {
-		// To get the correct LargeBlockRowsCount
-		// use datFileSize to calculate the shardSize to match the EC encoding logic.
+		// Use datFileSize to calculate the shardSize to match the EC encoding logic.
+		// This is the authoritative value stored in .vif during EC encoding.
 		shardSize = ev.datFileSize / int64(ev.ECContext.DataShards)
+	} else {
+		// Fallback for old EC volumes without datFileSize in .vif.
+		// Subtract 1 to handle the ambiguous case where ecdFileSize is an exact
+		// multiple of ErasureCodingLargeBlockSize but the data is actually in small
+		// blocks (e.g., datFileSize was just under DataShards*ErasureCodingLargeBlockSize).
+		shardSize = shard.ecdFileSize - 1
 	}
 	// calculate the locations in the ec shards
 	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shardSize, offset, types.Size(needle.GetActualSize(size, version)))
@@ -310,7 +417,15 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
-	return SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
+	offset, size, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
+	if err != nil {
+		return
+	}
+	// Apply runtime deletion state on top of the sealed .ecx lookup.
+	if ev.IsNeedleDeleted(needleId) {
+		size = types.TombstoneFileSize
+	}
+	return
 }
 
 func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId types.NeedleId, processNeedleFn func(file *os.File, offset int64) error) (offset types.Offset, size types.Size, err error) {

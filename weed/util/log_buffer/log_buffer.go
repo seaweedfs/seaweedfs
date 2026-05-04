@@ -81,6 +81,7 @@ type LogBuffer struct {
 	subscribersMu sync.RWMutex
 	subscribers   map[string]chan struct{} // subscriberID -> notification channel
 	isStopping    *atomic.Bool
+	shutdownCh    chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
 	isAllFlushed  bool
 	flushChan     chan *dataToFlush
 	// Offset range tracking for Kafka integration
@@ -104,6 +105,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		subscribers:    make(map[string]chan struct{}),
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
+		shutdownCh:     make(chan struct{}),
 		offset:         0, // Will be initialized from existing data if available
 		diskChunkCache: &DiskChunkCache{
 			chunks:    make(map[int64]*CachedDiskChunk),
@@ -492,6 +494,10 @@ func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	if isAlreadyStopped {
 		return
 	}
+	// Wake any subscribers blocked in awaitNotificationOrTimeout so they can
+	// notice IsStopping() and exit promptly, even on an idle buffer where no
+	// flush notification would otherwise fire.
+	close(logBuffer.shutdownCh)
 	toFlush := logBuffer.copyToFlush()
 	logBuffer.flushChan <- toFlush
 	close(logBuffer.flushChan)
@@ -514,6 +520,12 @@ func (logBuffer *LogBuffer) loopFlush() {
 			if !d.stopTime.IsZero() {
 				logBuffer.lastFlushTsNs.Store(d.stopTime.UnixNano())
 			}
+
+			// Wake readers that may be waiting to retry disk reads after the flush lands.
+			if logBuffer.notifyFn != nil {
+				logBuffer.notifyFn()
+			}
+			logBuffer.notifySubscribers()
 
 			// Signal completion if there's a callback channel
 			if d.done != nil {
@@ -603,8 +615,27 @@ func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
 	}
 }
 
+// GetEarliestTime returns the oldest timestamp still resident in the buffer.
+// It must consider the sealed prev buffers in addition to the active buffer,
+// because ReadFromBuffer's tsMemory (and therefore ResumeFromDiskError) is
+// computed from the min across both.  Returning only the active startTime
+// would cause gap-detection callers to skip past data still living in prev
+// buffers, and can also silently equal the consumer's lastReadTime and
+// stall on listenersCond.Wait().
 func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
-	return logBuffer.startTime
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+
+	earliest := logBuffer.startTime
+	for _, prevBuf := range logBuffer.prevBuffers.buffers {
+		if prevBuf.startTime.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || prevBuf.startTime.Before(earliest) {
+			earliest = prevBuf.startTime
+		}
+	}
+	return earliest
 }
 
 func (logBuffer *LogBuffer) HasData() bool {

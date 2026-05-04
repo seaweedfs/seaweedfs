@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -32,6 +33,7 @@ type SwapFileChunk struct {
 	logicChunkIndex  LogicChunkIndex
 	actualChunkIndex ActualChunkIndex
 	activityScore    *ActivityScore
+	lastWriteTsNs    atomic.Int64
 	//memChunk         *MemChunk
 }
 
@@ -124,6 +126,7 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	}
 	//sc.memChunk.WriteDataAt(src, offset, tsNs)
 	sc.activityScore.MarkWrite()
+	sc.lastWriteTsNs.Store(tsNs)
 
 	return
 }
@@ -177,6 +180,10 @@ func (sc *SwapFileChunk) WrittenSize() int64 {
 	sc.RLock()
 	defer sc.RUnlock()
 	return sc.usage.WrittenSize()
+}
+
+func (sc *SwapFileChunk) LastWriteTsNs() int64 {
+	return sc.lastWriteTsNs.Load()
 }
 
 func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {

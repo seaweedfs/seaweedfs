@@ -50,46 +50,6 @@ func (h *S3TablesHandler) ensureDirectory(ctx context.Context, client filer_pb.S
 	return err
 }
 
-// upsertFile creates or updates a small file with the given content
-func (h *S3TablesHandler) upsertFile(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, data []byte) error {
-	dir, name := splitPath(path)
-	now := time.Now().Unix()
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		if !errors.Is(err, filer_pb.ErrNotFound) {
-			return err
-		}
-		return filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
-			Directory: dir,
-			Entry: &filer_pb.Entry{
-				Name:    name,
-				Content: data,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    now,
-					Crtime:   now,
-					FileMode: uint32(0644),
-					FileSize: uint64(len(data)),
-				},
-			},
-		})
-	}
-
-	entry := resp.Entry
-	if entry.Attributes == nil {
-		entry.Attributes = &filer_pb.FuseAttributes{}
-	}
-	entry.Attributes.Mtime = now
-	entry.Attributes.FileSize = uint64(len(data))
-	entry.Content = data
-	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-		Directory: dir,
-		Entry:     entry,
-	})
-}
-
 // deleteEntryIfExists removes an entry if it exists, ignoring missing errors
 func (h *S3TablesHandler) deleteEntryIfExists(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -46,8 +47,13 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 		return nil
 	}
 
-	// Record failure for current filer
-	s3a.filerClient.RecordFilerFailure(currentFiler)
+	// ErrNotFound is a valid application-level response (entry doesn't exist on this filer),
+	// not a filer health issue. Only record true failures (transport errors, timeouts, etc.)
+	// in the health tracker to avoid poisoning the circuit breaker with normal "not found"
+	// responses in multi-filer setups.
+	if !errors.Is(err, filer_pb.ErrNotFound) {
+		s3a.filerClient.RecordFilerFailure(currentFiler)
+	}
 
 	// Current filer failed - try all other filers with health-aware selection
 	filers := s3a.filerClient.GetAllFilers()
@@ -77,8 +83,10 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 			return nil
 		}
 
-		// Record failure for health tracking
-		s3a.filerClient.RecordFilerFailure(filer)
+		// Only record real failures, not ErrNotFound
+		if !errors.Is(err, filer_pb.ErrNotFound) {
+			s3a.filerClient.RecordFilerFailure(filer)
+		}
 		glog.V(2).Infof("WithFilerClient: failover to %s failed: %v", filer, err)
 		lastErr = err
 	}

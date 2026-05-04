@@ -10,6 +10,7 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -46,9 +47,9 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var2 templ.SafeURL
-			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)))
+			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("//localhost:%d/v1/config", data.IcebergPort)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 23, Col: 124}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 24, Col: 119}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
@@ -66,7 +67,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IcebergPort))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 30, Col: 91}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 31, Col: 91}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -84,26 +85,26 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IcebergPort))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 37, Col: 109}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 38, Col: 109}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\">Each table bucket is an Iceberg catalog. Connect clients to: <code>http://<span id=\"s3tables-iceberg-host\">localhost</span>:")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\">Each table bucket is an Iceberg catalog. Connect clients to: <code><span id=\"s3tables-iceberg-protocol\">http</span>://<span id=\"s3tables-iceberg-host\">localhost</span>:")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IcebergPort))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 39, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 40, Col: 151}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "/v1</code></p><script>\n\t\t\t\t\t\t\tconst s3tablesInfo = document.getElementById('s3tables-iceberg-info');\n\t\t\t\t\t\t\tconst s3tablesIcebergHost = window.location.hostname;\n\t\t\t\t\t\t\tconst s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';\n\t\t\t\t\t\t\tdocument.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;\n\t\t\t\t\t\t\tconst s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');\n\t\t\t\t\t\t\tif (s3tablesRestLink && s3tablesIcebergPort) {\n\t\t\t\t\t\t\t\ts3tablesRestLink.href = `http://${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t</script></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "/v1</code></p><script>\n\t\t\t\t\t\t\tconst s3tablesInfo = document.getElementById('s3tables-iceberg-info');\n\t\t\t\t\t\t\tconst s3tablesIcebergHost = window.location.hostname;\n\t\t\t\t\t\t\tconst s3tablesIcebergProtocol = window.location.protocol.slice(0, -1);\n\t\t\t\t\t\t\tconst s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';\n\t\t\t\t\t\t\tdocument.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;\n\t\t\t\t\t\t\tconst s3tablesIcebergProtocolEl = document.getElementById('s3tables-iceberg-protocol');\n\t\t\t\t\t\t\tif (s3tablesIcebergProtocolEl) {\n\t\t\t\t\t\t\t\ts3tablesIcebergProtocolEl.innerText = s3tablesIcebergProtocol;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\tconst s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');\n\t\t\t\t\t\t\tif (s3tablesRestLink && s3tablesIcebergPort) {\n\t\t\t\t\t\t\t\ts3tablesRestLink.href = `//${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t</script></div></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -120,7 +121,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalBuckets))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 69, Col: 47}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 75, Col: 47}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -133,7 +134,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 88, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 94, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -147,7 +148,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IcebergPort))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 108, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 114, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -171,7 +172,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 146, Col: 28}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 152, Col: 28}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -184,7 +185,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.OwnerAccountID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 147, Col: 38}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 153, Col: 38}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -197,7 +198,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.ARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 148, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 154, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -210,7 +211,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 149, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 155, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -223,7 +224,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.CreatedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 150, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 156, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -240,9 +241,9 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var14 templ.SafeURL
-				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)))
+				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 155, Col: 149}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 161, Col: 166}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 				if templ_7745c5c3_Err != nil {
@@ -265,7 +266,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.ARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 163, Col: 122}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 169, Col: 122}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -278,7 +279,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.ARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 166, Col: 126}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 172, Col: 126}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -291,7 +292,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.ARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 169, Col: 128}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 175, Col: 128}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -304,7 +305,7 @@ func S3TablesBuckets(data dash.S3TablesBucketsData) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 169, Col: 161}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 175, Col: 161}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -342,7 +343,7 @@ CREATE SECRET (
 
 SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 219, Col: 74}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 225, Col: 74}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
@@ -365,7 +366,7 @@ catalog = load_catalog(
 
 namespaces = catalog.list_namespaces()`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 235, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_buckets.templ`, Line: 241, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {

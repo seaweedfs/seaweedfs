@@ -41,7 +41,7 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 		// Add the current server itself (Peers() only returns other peers)
 		resp.ClusterServers = append(resp.ClusterServers, &master_pb.RaftListClusterServersResponse_ClusterServers{
 			Id:       currentServerName,
-			Address:  string(ms.option.Master),
+			Address:  ms.option.Master.ToGrpcAddress(),
 			Suffrage: "Voter",
 			IsLeader: currentServerName == leader,
 		})

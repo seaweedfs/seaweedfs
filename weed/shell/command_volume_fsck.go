@@ -14,9 +14,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -45,18 +47,19 @@ const (
 )
 
 type commandVolumeFsck struct {
-	env                      *CommandEnv
-	writer                   io.Writer
-	bucketsPath              string
-	collection               *string
-	volumeIds                map[uint32]bool
-	tempFolder               string
-	verbose                  *bool
-	forcePurging             *bool
-	skipEcVolumes            *bool
-	findMissingChunksInFiler *bool
-	verifyNeedle             *bool
-	filerSigningKey          string
+	env                       *CommandEnv
+	writer                    io.Writer
+	bucketsPath               string
+	collection                *string
+	volumeIds                 map[uint32]bool
+	tempFolder                string
+	verbose                   *bool
+	forcePurging              *bool
+	skipEcVolumes             *bool
+	findMissingChunksInFiler  *bool
+	verifyNeedle              *bool
+	filerSigningKey           string
+	unresolvedManifestEntries atomic.Int64
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -113,6 +116,12 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
+	// The command struct is a singleton registered in init(), so any state
+	// not bound to a flag persists across shell invocations. Reset the
+	// unresolved-manifest counter so a previous failed run can't permanently
+	// suppress -reallyDeleteFromVolume in this session.
+	c.unresolvedManifestEntries.Store(0)
+
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
@@ -136,7 +145,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// create a temp folder
-	c.tempFolder, err = os.MkdirTemp(*tempPath, "sw_fsck")
+	c.tempFolder, err = os.MkdirTemp(util.ResolvePath(*tempPath), "sw_fsck")
 	if err != nil {
 		return fmt.Errorf("failed to create temp folder: %w", err)
 	}
@@ -153,8 +162,27 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("failed to collect all volume locations: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("read filer buckets path: %w", err)
+	// If the operator specified -volumeId, reject unknown ids up front instead
+	// of silently filtering them out and reporting "no orphan data". A silent
+	// success on a missing volume looks identical to a clean volume and hides
+	// typos, already-deleted volumes, and stale scripts.
+	if len(c.volumeIds) > 0 {
+		known := make(map[uint32]bool)
+		for _, vidMap := range dataNodeVolumeIdToVInfo {
+			for vid := range vidMap {
+				known[vid] = true
+			}
+		}
+		var missing []uint32
+		for vid := range c.volumeIds {
+			if !known[vid] {
+				missing = append(missing, vid)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+			return fmt.Errorf("volume(s) not found on master: %v", missing)
+		}
 	}
 
 	var collectCutoffFromAtNs int64 = 0
@@ -219,8 +247,19 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %w", err)
 		}
+		// If any entry's manifest could not be resolved, our in-use fid set
+		// is missing the sub-chunks behind it. Purging orphans now would
+		// delete live data referenced only via the unresolved manifest, so
+		// disable -reallyDeleteFromVolume for this run and tell the operator
+		// to fix the broken entries first.
+		applyPurgingEffective := *applyPurging
+		if unresolved := c.unresolvedManifestEntries.Load(); unresolved > 0 && applyPurgingEffective {
+			fmt.Fprintf(c.writer, "WARNING: %d entry(ies) had unresolvable chunk manifests; refusing to apply -reallyDeleteFromVolume to avoid deleting live sub-chunks. Fix the entries listed above (e.g. delete or repair them) and re-run.\n",
+				unresolved)
+			applyPurgingEffective = false
+		}
 		// volume file ids subtract filer file ids
-		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, *applyPurging, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
+		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, applyPurgingEffective, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
 			return fmt.Errorf("findExtraChunksInVolumeServers: %w", err)
 		}
 	}
@@ -257,9 +296,28 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
 			if resolveErr != nil {
-				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
+				// Cancellation/deadline isn't manifest corruption; surface it
+				// so the BFS bails out cleanly without polluting the
+				// unresolved-manifest counter (which would otherwise block
+				// purges and mislead the operator about the failure cause).
+				if errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded) {
+					return resolveErr
+				}
+				// A single broken manifest used to abort the whole traversal,
+				// leaving the operator with no way to identify orphans without
+				// first fixing the broken file. Instead, record only the
+				// top-level chunk fids (data chunks plus the manifest needles
+				// themselves — sub-chunks behind the unreadable manifest are
+				// unknown), warn, and keep going. The unresolved counter blocks
+				// any purge step downstream so we never delete a sub-chunk we
+				// couldn't account for.
+				fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — recording top-level chunk fids only; purging will be disabled\n",
+					util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
+				c.unresolvedManifestEntries.Add(1)
+				dataChunks = entry.Entry.GetChunks()
+				manifestChunks = nil
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
@@ -328,30 +386,39 @@ func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInf
 func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, applyPurging bool, modifyFrom, cutoffFrom uint64) error {
 
 	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
-	volumeIdOrphanFileIds := make(map[uint32]map[string]bool)
-	isSeveralReplicas := make(map[uint32]bool)
+	// map[volumeId]map[fid]replicaCount — counts how many replicas reported
+	// this fid as orphan. A fid is safe to purge without -forcePurging only
+	// when replicaCount == volumeReplicaCounts[volumeId] (i.e. every replica
+	// agrees it's orphan). The previous bool-based tracking treated "seen on
+	// any 2 replicas" as "seen on all replicas", which was wrong for
+	// 3+-replica volumes.
+	volumeIdOrphanFileIds := make(map[uint32]map[string]int)
+	volumeReplicaCounts := make(map[uint32]int)
 	isEcVolumeReplicas := make(map[uint32]bool)
-	isReadOnlyReplicas := make(map[uint32]bool)
-	serverReplicas := make(map[uint32][]pb.ServerAddress)
+	// Track which specific replicas were read-only so we only flip those
+	// back on exit. The old `isReadOnlyReplicas[volumeId] = bool` leaked
+	// read-only state across replicas: if one replica was RO and another RW,
+	// the deferred cleanup would mark the originally-RW replica RO too.
+	readOnlyServerReplicas := make(map[uint32][]pb.ServerAddress)
+	// Phase 1: collect orphan fids from every replica of every volume.
+	// The purge step runs in Phase 2, AFTER every replica has contributed.
+	// Running purge inside this loop (as the original code did) meant the
+	// first replica's orphans were deleted before later replicas could
+	// participate in the intersection — so the "only purge fids seen on
+	// all replicas" safety net only worked by accident, and purge also
+	// fired multiple times per volume (once per data-node iteration).
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
 			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, &vinfo, modifyFrom, cutoffFrom)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
-			isSeveralReplicas[volumeId] = false
 			if _, found := volumeIdOrphanFileIds[volumeId]; !found {
-				volumeIdOrphanFileIds[volumeId] = make(map[string]bool)
-			} else {
-				isSeveralReplicas[volumeId] = true
+				volumeIdOrphanFileIds[volumeId] = make(map[string]int)
 			}
+			volumeReplicaCounts[volumeId]++
 			for _, fid := range orphanFileIds {
-				if isSeveralReplicas[volumeId] {
-					if _, found := volumeIdOrphanFileIds[volumeId][fid]; !found {
-						continue
-					}
-				}
-				volumeIdOrphanFileIds[volumeId][fid] = isSeveralReplicas[volumeId]
+				volumeIdOrphanFileIds[volumeId][fid]++
 			}
 
 			totalInUseCount += inUseCount
@@ -364,54 +431,30 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 				}
 			}
 			isEcVolumeReplicas[volumeId] = vinfo.isEcVolume
-			if isReadOnly, found := isReadOnlyReplicas[volumeId]; !(found && isReadOnly) {
-				isReadOnlyReplicas[volumeId] = vinfo.isReadOnly
+			if vinfo.isReadOnly {
+				readOnlyServerReplicas[volumeId] = append(readOnlyServerReplicas[volumeId], vinfo.server)
 			}
-			serverReplicas[volumeId] = append(serverReplicas[volumeId], vinfo.server)
 		}
+	}
 
+	// Phase 2: purge. At most one call to purgeFileIdsForOneVolume per
+	// volume — that helper already fans out to all replica locations via
+	// MasterClient.GetLocations, so iterating per replica here (as the old
+	// code did) would issue N*N delete RPCs for N replicas.
+	if applyPurging {
 		for volumeId, orphanReplicaFileIds := range volumeIdOrphanFileIds {
-			if !(applyPurging && len(orphanReplicaFileIds) > 0) {
+			if len(orphanReplicaFileIds) == 0 {
 				continue
 			}
-			orphanFileIds := []string{}
-			for fid, foundInAllReplicas := range orphanReplicaFileIds {
-				if !isSeveralReplicas[volumeId] || *c.forcePurging || (isSeveralReplicas[volumeId] && foundInAllReplicas) {
-					orphanFileIds = append(orphanFileIds, fid)
-				}
-			}
-			if !(len(orphanFileIds) > 0) {
-				continue
-			}
-			if *c.verbose {
-				fmt.Fprintf(c.writer, "purging process for volume %d.\n", volumeId)
-			}
-
 			if isEcVolumeReplicas[volumeId] {
 				fmt.Fprintf(c.writer, "skip purging for Erasure Coded volume %d.\n", volumeId)
 				continue
 			}
-			for _, server := range serverReplicas[volumeId] {
-				needleVID := needle.VolumeId(volumeId)
-
-				if isReadOnlyReplicas[volumeId] {
-					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false)
-					if err != nil {
-						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
-					}
-					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
-					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
-
-					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
-				}
-
-				if *c.verbose {
-					fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
-				}
-
-				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
-					return fmt.Errorf("purging volume %d: %v", volumeId, err)
-				}
+			// Call out to a closure per volume so the deferred "mark
+			// readonly again" fires between volumes instead of piling up
+			// until findExtraChunksInVolumeServers returns.
+			if err := c.purgeOneVolume(volumeId, orphanReplicaFileIds, volumeReplicaCounts[volumeId], readOnlyServerReplicas[volumeId]); err != nil {
+				return err
 			}
 		}
 	}
@@ -433,6 +476,47 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 		fmt.Fprintf(c.writer, "no orphan data\n")
 	}
 
+	return nil
+}
+
+// purgeOneVolume picks the orphan fids to delete for a single volume and
+// fires the delete RPC. It's split out of findExtraChunksInVolumeServers so
+// the `defer markVolumeWritable(..., false, false)` at the bottom fires
+// between volumes — putting that defer inside the caller's for-loop would
+// leave every processed volume writable until the whole fsck run finished.
+func (c *commandVolumeFsck) purgeOneVolume(volumeId uint32, orphanReplicaFileIds map[string]int, replicaCount int, readOnlyReplicas []pb.ServerAddress) error {
+	orphanFileIds := make([]string, 0, len(orphanReplicaFileIds))
+	for fid, foundInReplicaCount := range orphanReplicaFileIds {
+		// Default safety net: only purge fids every replica reported as
+		// orphan. -forcePurging bypasses this for operators who've already
+		// decided they're OK with the single-replica evidence.
+		if foundInReplicaCount == replicaCount || *c.forcePurging {
+			orphanFileIds = append(orphanFileIds, fid)
+		}
+	}
+	if len(orphanFileIds) == 0 {
+		return nil
+	}
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "purging process for volume %d.\n", volumeId)
+	}
+
+	needleVID := needle.VolumeId(volumeId)
+	for _, server := range readOnlyReplicas {
+		if err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
+			return fmt.Errorf("mark volume %d on %v read/write: %v", volumeId, server, err)
+		}
+		fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
+		defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
+	}
+
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
+	}
+
+	if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
+		return fmt.Errorf("purging volume %d: %v", volumeId, err)
+	}
 	return nil
 }
 

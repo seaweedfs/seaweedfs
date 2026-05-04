@@ -150,14 +150,6 @@ func isBucketOwnedByIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 	return true
 }
 
-// isBucketVisibleToIdentity is kept for backward compatibility with tests.
-// It checks if a bucket should be visible based on ownership only.
-// Deprecated: Use isBucketOwnedByIdentity instead. The ListBucketsHandler
-// now uses OR logic: a bucket is visible if user owns it OR has List permission.
-func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
-	return isBucketOwnedByIdentity(entry, identity)
-}
-
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// collect parameters
@@ -412,6 +404,17 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	// Clean up bucket-related caches, locks, and metrics after successful deletion
 	s3a.invalidateBucketConfigCache(bucket)
 	stats_collect.DeleteBucketMetrics(bucket)
+
+	// Prune identity actions that were scoped to this bucket via s3.configure.
+	// Use a bounded background context so the cleanup survives client disconnect;
+	// the bucket is already gone and this is best-effort bookkeeping.
+	if s3a.iam != nil {
+		pruneCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if _, err := s3a.iam.PruneBucketFromConfiguration(pruneCtx, bucket); err != nil {
+			glog.Errorf("DeleteBucketHandler: failed to prune IAM actions for bucket %s: %v", bucket, err)
+		}
+		cancel()
+	}
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }

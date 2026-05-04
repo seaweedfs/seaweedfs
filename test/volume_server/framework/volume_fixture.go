@@ -80,6 +80,42 @@ func EnableMaintenanceMode(t testing.TB, ctx context.Context, client volume_serv
 	}
 }
 
+// CorruptDatFile truncates a volume's .dat file to just the superblock (8 bytes)
+// so that needle reads fail during a full scrub due to data file size mismatch.
+func CorruptDatFile(t testing.TB, baseDir string, volumeID uint32) {
+	t.Helper()
+	datPath := filepath.Join(baseDir, "volume", fmt.Sprintf("%d.dat", volumeID))
+	// Truncate to superblock size only, removing all needle data.
+	if err := os.Truncate(datPath, 8); err != nil {
+		t.Fatalf("truncate dat file for corruption: %v", err)
+	}
+}
+
+// CorruptEcxFile appends garbage bytes to a volume's .ecx file on disk so
+// that CheckIndexFile detects a size mismatch during EC index scrub.
+func CorruptEcxFile(t testing.TB, baseDir string, volumeID uint32) {
+	t.Helper()
+	ecxPath := filepath.Join(baseDir, "volume", fmt.Sprintf("%d.ecx", volumeID))
+	f, err := os.OpenFile(ecxPath, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		t.Fatalf("open ecx file for corruption: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.Write([]byte{0xDE, 0xAD}); err != nil {
+		t.Fatalf("corrupt ecx file: %v", err)
+	}
+}
+
+// CorruptEcShardFile truncates an EC shard file to 1 byte so that local shard
+// reads fail during an EC scrub.
+func CorruptEcShardFile(t testing.TB, baseDir string, volumeID uint32, shardID int) {
+	t.Helper()
+	shardPath := filepath.Join(baseDir, "volume", fmt.Sprintf("%d.ec%02d", volumeID, shardID))
+	if err := os.Truncate(shardPath, 1); err != nil {
+		t.Fatalf("truncate EC shard file %s: %v", shardPath, err)
+	}
+}
+
 func ReadBytes(t testing.TB, client *http.Client, volumeURL, fid string) *http.Response {
 	t.Helper()
 

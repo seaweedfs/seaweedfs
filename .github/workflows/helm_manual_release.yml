@@ -1,6 +1,9 @@
-name: "helm: manual release"
+name: "helm: release"
 
 on:
+  push:
+    tags:
+      - '*'
   workflow_dispatch:
 
 permissions:

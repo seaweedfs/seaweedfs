@@ -204,6 +204,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.startAdminScripts()
 	}
 
+	stats.MasterStartTimeSeconds.Set(float64(time.Now().Unix()))
 	return ms
 }
 
@@ -219,7 +220,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.SetLastLeaderChangeTime(time.Now())
-				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
+				if pb.ServerAddress(ms.Topo.RaftServer.Leader()).Equals(pb.ServerAddress(ms.Topo.RaftServer.Name())) {
 					go ms.ensureTopologyId()
 				}
 			}

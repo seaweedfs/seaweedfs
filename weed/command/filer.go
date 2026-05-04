@@ -11,11 +11,10 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
-	"google.golang.org/grpc/credentials/tls/certprovider"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -31,6 +30,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -80,7 +80,14 @@ type FilerOptions struct {
 	allowedOrigins            *string
 	exposeDirectoryData       *bool
 	tusBasePath               *string
-	certProvider              certprovider.Provider
+	s3ConfigFile              *string // optional path to static S3 identity config
+	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
+	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
+	// and by weed mini; nil for standalone weed filer.
+	shutdownCtx context.Context
+	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
+	// stop before forcing the server to stop. Zero means the default of 10s.
+	gracefulStopTimeout time.Duration
 }
 
 func init() {
@@ -146,6 +153,8 @@ func init() {
 	filerS3Options.iamReadOnly = cmdFiler.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
 	filerS3Options.portIceberg = cmdFiler.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	filerS3Options.externalUrl = cmdFiler.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	filerS3Options.defaultFileMode = cmdFiler.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
+	filerS3Options.cacheSizeMB = cmdFiler.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -221,6 +230,10 @@ func runFiler(cmd *Command, args []string) bool {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *f.debugPort), nil)
 	}
 
+	*f.defaultLevelDbDirectory = util.ResolvePath(*f.defaultLevelDbDirectory)
+	filerS3Options.resolvePaths()
+	filerWebDavOptions.resolvePaths()
+	filerSftpOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
 
 	switch {
@@ -301,15 +314,6 @@ func runFiler(cmd *Command, args []string) bool {
 	return true
 }
 
-// GetCertificateWithUpdate Auto refreshing TSL certificate
-func (fo *FilerOptions) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	certs, err := fo.certProvider.KeyMaterial(context.Background())
-	if certs == nil {
-		return nil, err
-	}
-	return &certs.Certs[0], err
-}
-
 func (fo *FilerOptions) startFiler() {
 
 	defaultMux := http.NewServeMux()
@@ -328,7 +332,7 @@ func (fo *FilerOptions) startFiler() {
 		*fo.allowedOrigins = "*"
 	}
 
-	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
+	defaultLevelDbDirectory := *fo.defaultLevelDbDirectory + "/filerldb2"
 
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
@@ -340,6 +344,15 @@ func (fo *FilerOptions) startFiler() {
 		glog.Warningf("Failed to initialize credential manager: %v", err)
 	} else {
 		glog.V(0).Infof("Initialized credential manager: %s", credentialManager.GetStoreName())
+	}
+
+	// Load static S3 identities from config file if specified
+	if fo.s3ConfigFile != nil && *fo.s3ConfigFile != "" {
+		if credentialManager != nil {
+			if err := credentialManager.LoadS3ConfigFile(*fo.s3ConfigFile); err != nil {
+				glog.Warningf("Failed to load S3 config file for static identities: %v", err)
+			}
+		}
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
@@ -368,6 +381,15 @@ func (fo *FilerOptions) startFiler() {
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
+	}
+
+	// Ensure fs.Shutdown() runs exactly once, whether triggered by a signal hook
+	// or by the main goroutine after Serve() returns (e.g., MiniCluster tests).
+	var shutdownOnce sync.Once
+	shutdownFiler := func() {
+		shutdownOnce.Do(func() {
+			fs.Shutdown()
+		})
 	}
 
 	if *fo.publicPort != 0 {
@@ -423,6 +445,28 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
+	// Helper to gracefully stop the gRPC server, waiting for active RPCs.
+	gracefulTimeout := fo.gracefulStopTimeout
+	if gracefulTimeout <= 0 {
+		gracefulTimeout = 10 * time.Second
+	}
+	stopGrpcServer := func() {
+		glog.V(0).Infof("Gracefully stopping gRPC server")
+		stopped := make(chan struct{})
+		go func() {
+			grpcS.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+			glog.V(0).Infof("gRPC server stopped gracefully")
+		case <-time.After(gracefulTimeout):
+			glog.V(0).Infof("gRPC server graceful stop timed out after %s, forcing stop", gracefulTimeout)
+			grpcS.Stop()
+		}
+	}
+
+	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
@@ -431,14 +475,12 @@ func (fo *FilerOptions) startFiler() {
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
 			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
-		go func() {
-			// start on local unix socket
-			filerSocketListener, err := net.Listen("unix", localSocket)
-			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			newHttpServer(defaultMux, nil).Serve(filerSocketListener)
-		}()
+		filerSocketListener, err := net.Listen("unix", localSocket)
+		if err != nil {
+			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+		}
+		socketServer = newHttpServer(defaultMux, nil)
+		go socketServer.Serve(filerSocketListener)
 	}
 
 	if viper.GetString("https.filer.key") != "" {
@@ -447,14 +489,11 @@ func (fo *FilerOptions) startFiler() {
 		caCertFile := viper.GetString("https.filer.ca")
 		disbaleTlsVerifyClientCert := viper.GetBool("https.filer.disable_tls_verify_client_cert")
 
-		pemfileOptions := pemfile.Options{
-			CertFile:        certFile,
-			KeyFile:         keyFile,
-			RefreshDuration: security.CredRefreshingInterval,
+		getCert, certProvider, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("Filer failed to load HTTPS certificate: %v", err)
 		}
-		if fo.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
-		}
+		defer certProvider.Close()
 
 		caCertPool := x509.NewCertPool()
 		if caCertFile != "" {
@@ -471,25 +510,57 @@ func (fo *FilerOptions) startFiler() {
 		}
 
 		tlsConfig := &tls.Config{
-			GetCertificate: fo.GetCertificateWithUpdate,
+			GetCertificate: getCert,
 			ClientAuth:     clientAuth,
 			ClientCAs:      caCertPool,
 		}
 
-		security.FixTlsConfig(util.GetViper(), tlsConfig)
+		err = security.FixTlsConfig(util.GetViper(), tlsConfig)
+		if err != nil {
+			glog.Fatalf("Filer failed to fix TLS config: %v", err)
+		}
 
+		var localTLSServer *http.Server
 		if filerLocalListener != nil {
+			localTLSServer = newHttpServer(defaultMux, tlsConfig)
 			go func() {
-				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
+				if err := localTLSServer.ServeTLS(filerLocalListener, "", ""); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(defaultMux, tlsConfig)
-		if MiniClusterCtx != nil {
-			ctx := MiniClusterCtx
+
+		// Register a single shutdown hook that runs the steps in the correct order:
+		// stop accepting new gRPC/HTTP requests, then close the filer database.
+		// Combining them into one hook keeps ordering intact regardless of how
+		// grace fires interrupt hooks (FIFO vs LIFO).
+		grace.OnInterrupt(func() {
+			stopGrpcServer()
+			glog.V(0).Infof("Gracefully stopping all HTTP servers")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if socketServer != nil {
+				err = socketServer.Shutdown(shutdownCtx)
+				if err != nil {
+					glog.Warningf("socket server shutdown: %v", err)
+				}
+			}
+			if localTLSServer != nil {
+				err = localTLSServer.Shutdown(shutdownCtx)
+				if err != nil {
+					glog.Warningf("local TLS server shutdown: %v", err)
+				}
+			}
+			if err := httpS.Shutdown(shutdownCtx); err != nil {
+				glog.Warningf("HTTPS server shutdown: %v", err)
+			}
+			shutdownFiler()
+		})
+
+		if fo.shutdownCtx != nil {
 			go func() {
-				<-ctx.Done()
+				<-fo.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -497,19 +568,44 @@ func (fo *FilerOptions) startFiler() {
 		if err := httpS.ServeTLS(filerListener, "", ""); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
+		// Close database after servers have stopped to prevent data corruption
+		shutdownFiler()
 	} else {
+		var localHTTPServer *http.Server
 		if filerLocalListener != nil {
+			localHTTPServer = newHttpServer(defaultMux, nil)
 			go func() {
-				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
+				if err := localHTTPServer.Serve(filerLocalListener); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(defaultMux, nil)
-		if MiniClusterCtx != nil {
-			ctx := MiniClusterCtx
+
+		// Register a single shutdown hook that runs the steps in the correct order:
+		// stop accepting new gRPC/HTTP requests, then close the filer database.
+		// Combining them into one hook keeps ordering intact regardless of how
+		// grace fires interrupt hooks (FIFO vs LIFO).
+		grace.OnInterrupt(func() {
+			stopGrpcServer()
+			glog.V(0).Infof("Gracefully stopping all HTTP servers")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if socketServer != nil {
+				socketServer.Shutdown(shutdownCtx)
+			}
+			if localHTTPServer != nil {
+				localHTTPServer.Shutdown(shutdownCtx)
+			}
+			if err := httpS.Shutdown(shutdownCtx); err != nil {
+				glog.Warningf("HTTP server shutdown: %v", err)
+			}
+			shutdownFiler()
+		})
+
+		if fo.shutdownCtx != nil {
 			go func() {
-				<-ctx.Done()
+				<-fo.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -517,5 +613,7 @@ func (fo *FilerOptions) startFiler() {
 		if err := httpS.Serve(filerListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
+		// Close database after servers have stopped to prevent data corruption
+		shutdownFiler()
 	}
 }

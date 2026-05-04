@@ -1,0 +1,12 @@
+# Iceberg writer used by the Dremio integration test to populate a table with
+# data files via PyIceberg, so the downstream Dremio SELECT verifies the read
+# path against non-empty results rather than just COUNT(*) = 0.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "pyiceberg[s3fs]" pyarrow
+
+COPY append_rows.py /app/
+
+ENTRYPOINT ["python3", "/app/append_rows.py"]

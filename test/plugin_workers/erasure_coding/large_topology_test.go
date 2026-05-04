@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -94,7 +95,7 @@ func TestErasureCodingDetectionLargeTopology(t *testing.T) {
 	master := pluginworkers.NewMasterServer(t, response)
 
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	handler := pluginworker.NewErasureCodingHandler(dialOption, t.TempDir())
+	handler := erasure_coding.NewErasureCodingHandler(dialOption, t.TempDir())
 	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
 		WorkerOptions: pluginworker.WorkerOptions{
 			GrpcDialOption: dialOption,

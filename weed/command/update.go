@@ -85,8 +85,9 @@ func runUpdate(cmd *Command, args []string) bool {
 	path, _ := os.Executable()
 	_, name := filepath.Split(path)
 
+	*updateOpt.dir = util.ResolvePath(*updateOpt.dir)
 	if *updateOpt.dir != "" {
-		if err := util.TestFolderWritable(util.ResolvePath(*updateOpt.dir)); err != nil {
+		if err := util.TestFolderWritable(*updateOpt.dir); err != nil {
 			glog.Fatalf("Check Folder(-dir) Writable %s : %s", *updateOpt.dir, err)
 			return false
 		}

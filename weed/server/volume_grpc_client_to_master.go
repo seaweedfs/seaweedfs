@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"google.golang.org/grpc"
 
@@ -84,6 +85,7 @@ func (vs *VolumeServer) heartbeat() {
 					time.Sleep(vs.pulsePeriod)
 				}
 
+				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
 				newLeader = ""
 				vs.store.MasterAddress = ""
 			} else {
@@ -104,10 +106,6 @@ func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
 	vs.isHeartbeating = false
 	close(vs.stopChan)
 	return false
-}
-
-func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
-	return vs.doHeartbeatWithRetry(masterAddress, grpcDialOption, sleepInterval, 0)
 }
 
 func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration, duplicateRetryCount int) (newLeader pb.ServerAddress, err error) {
@@ -183,7 +181,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					}
 				}
 			}
-			if in.GetLeader() != "" && string(vs.currentMaster) != in.GetLeader() {
+			if in.GetLeader() != "" && !vs.currentMaster.Equals(pb.ServerAddress(in.GetLeader())) {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
 				newLeader = pb.ServerAddress(in.GetLeader())
 				doneChan <- nil

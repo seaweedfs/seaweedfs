@@ -83,7 +83,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if isS3TablesNotFound(err) {
-				location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+				location := fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 				tableUUID := generatedLegacyUUID
 				baseMetadataVersion := 0
 				baseMetadataLocation := ""
@@ -195,7 +195,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 
 		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 		if location == "" {
-			location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+			location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 		}
 		tableUUID := uuid.Nil
 		if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {

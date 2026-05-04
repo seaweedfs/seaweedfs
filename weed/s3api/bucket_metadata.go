@@ -224,12 +224,6 @@ func (r *BucketRegistry) removeMetadataCache(bucket string) {
 	delete(r.metadataCache, bucket)
 }
 
-func (r *BucketRegistry) markNotFound(bucket string) {
-	r.notFoundLock.Lock()
-	defer r.notFoundLock.Unlock()
-	r.notFound[bucket] = struct{}{}
-}
-
 func (r *BucketRegistry) unMarkNotFound(bucket string) {
 	r.notFoundLock.Lock()
 	defer r.notFoundLock.Unlock()

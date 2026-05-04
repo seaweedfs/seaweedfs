@@ -93,6 +93,11 @@ func (h *UserHandlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.adminServer.IsStaticUser(username) {
+		writeJSONError(w, http.StatusForbidden, "Cannot modify static user "+username+" (loaded from config file)")
+		return
+	}
+
 	var req dash.UpdateUserRequest
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
@@ -117,6 +122,11 @@ func (h *UserHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	username := mux.Vars(r)["username"]
 	if username == "" {
 		writeJSONError(w, http.StatusBadRequest, "Username is required")
+		return
+	}
+
+	if h.adminServer.IsStaticUser(username) {
+		writeJSONError(w, http.StatusForbidden, "Cannot delete static user "+username+" (loaded from config file)")
 		return
 	}
 

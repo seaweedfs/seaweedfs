@@ -19,6 +19,7 @@ jobs:
     steps:
       - name: Delete old Rust volume dev assets
         uses: mknejp/delete-release-assets@v1
+        continue-on-error: true
         with:
           token: ${{ github.token }}
           tag: dev
@@ -83,7 +84,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload dev release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: dev
           prerelease: true
@@ -154,7 +155,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload dev release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: dev
           prerelease: true

@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -398,7 +399,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 
 	// Create the upload URL - the httpClient will normalize to the correct scheme (http/https)
 	// based on the https.client configuration in security.toml
-	uploadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	uploadURL := filerFileURL(filerHttpAddress, cleanFilePath)
 
 	// Normalize the URL scheme based on TLS configuration
 	uploadURL, err = h.httpClient.NormalizeHttpScheme(uploadURL)
@@ -503,12 +504,14 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 
-	// Additional validation: ensure path doesn't contain dangerous characters
-	if strings.ContainsAny(cleanPath, "\x00\r\n") {
-		return "", fmt.Errorf("path contains invalid characters")
-	}
-
 	return cleanPath, nil
+}
+
+// filerFileURL joins the filer HTTP address with a validated file path, URL-escaping
+// the path so that control characters and other bytes that are legal in S3 object keys
+// cannot inject into the HTTP request target.
+func filerFileURL(filerHttpAddress, cleanFilePath string) string {
+	return filerHttpAddress + (&url.URL{Path: cleanFilePath}).EscapedPath()
 }
 
 // fetchFileContent fetches file content from the filer and returns the content or an error.
@@ -529,7 +532,7 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
-	fileURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	fileURL := filerFileURL(filerHttpAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to construct file URL: %w", err)
@@ -597,7 +600,7 @@ func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create the download URL with proper scheme based on TLS configuration
-	downloadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	downloadURL := filerFileURL(filerHttpAddress, cleanFilePath)
 	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to construct download URL: "+err.Error())
@@ -696,8 +699,7 @@ func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
 			size = int64(entry.Attributes.FileSize)
 		}
 
-		// Determine MIME type with comprehensive extension support
-		mime := h.determineMimeType(entry.Name)
+		mime := dash.ResolveEntryMime(entry)
 
 		fileEntry = dash.FileEntry{
 			Name:        entry.Name,
@@ -851,10 +853,8 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 			properties["chunk_count"] = len(entry.Chunks)
 		}
 
-		// Determine MIME type
 		if !entry.IsDirectory {
-			mime := h.determineMimeType(entry.Name)
-			properties["mime_type"] = mime
+			properties["mime_type"] = dash.ResolveEntryMime(entry)
 		}
 
 		return nil
@@ -881,148 +881,6 @@ func (h *FileBrowserHandlers) formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// Helper function to determine MIME type from filename
-func (h *FileBrowserHandlers) determineMimeType(filename string) string {
-	ext := strings.ToLower(filepath.Ext(filename))
-
-	// Text files
-	switch ext {
-	case ".txt", ".log", ".cfg", ".conf", ".ini", ".properties":
-		return "text/plain"
-	case ".md", ".markdown":
-		return "text/markdown"
-	case ".html", ".htm":
-		return "text/html"
-	case ".css":
-		return "text/css"
-	case ".js", ".mjs":
-		return "application/javascript"
-	case ".ts":
-		return "text/typescript"
-	case ".json":
-		return "application/json"
-	case ".xml":
-		return "application/xml"
-	case ".yaml", ".yml":
-		return "text/yaml"
-	case ".csv":
-		return "text/csv"
-	case ".sql":
-		return "text/sql"
-	case ".sh", ".bash", ".zsh", ".fish":
-		return "text/x-shellscript"
-	case ".py":
-		return "text/x-python"
-	case ".go":
-		return "text/x-go"
-	case ".java":
-		return "text/x-java"
-	case ".c":
-		return "text/x-c"
-	case ".cpp", ".cc", ".cxx", ".c++":
-		return "text/x-c++"
-	case ".h", ".hpp":
-		return "text/x-c-header"
-	case ".php":
-		return "text/x-php"
-	case ".rb":
-		return "text/x-ruby"
-	case ".pl":
-		return "text/x-perl"
-	case ".rs":
-		return "text/x-rust"
-	case ".swift":
-		return "text/x-swift"
-	case ".kt":
-		return "text/x-kotlin"
-	case ".scala":
-		return "text/x-scala"
-	case ".dockerfile":
-		return "text/x-dockerfile"
-	case ".gitignore", ".gitattributes":
-		return "text/plain"
-	case ".env":
-		return "text/plain"
-
-	// Image files
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".bmp":
-		return "image/bmp"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-
-	// Document files
-	case ".pdf":
-		return "application/pdf"
-	case ".doc":
-		return "application/msword"
-	case ".docx":
-		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	case ".xls":
-		return "application/vnd.ms-excel"
-	case ".xlsx":
-		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	case ".ppt":
-		return "application/vnd.ms-powerpoint"
-	case ".pptx":
-		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-
-	// Archive files
-	case ".zip":
-		return "application/zip"
-	case ".tar":
-		return "application/x-tar"
-	case ".gz":
-		return "application/gzip"
-	case ".bz2":
-		return "application/x-bzip2"
-	case ".7z":
-		return "application/x-7z-compressed"
-	case ".rar":
-		return "application/x-rar-compressed"
-
-	// Video files
-	case ".mp4":
-		return "video/mp4"
-	case ".avi":
-		return "video/x-msvideo"
-	case ".mov":
-		return "video/quicktime"
-	case ".wmv":
-		return "video/x-ms-wmv"
-	case ".flv":
-		return "video/x-flv"
-	case ".webm":
-		return "video/webm"
-
-	// Audio files
-	case ".mp3":
-		return "audio/mpeg"
-	case ".wav":
-		return "audio/wav"
-	case ".flac":
-		return "audio/flac"
-	case ".aac":
-		return "audio/aac"
-	case ".ogg":
-		return "audio/ogg"
-
-	default:
-		// For files without extension or unknown extensions,
-		// we'll check if they might be text files by content
-		return "application/octet-stream"
-	}
-}
-
 // Helper function to check if a file is likely a text file by checking content
 func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int64) bool {
 	filerAddress := h.adminServer.GetFilerAddress()
@@ -1043,7 +901,7 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
-	fileURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	fileURL := filerFileURL(filerHttpAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
 		glog.Errorf("Failed to normalize URL scheme: %v", err)

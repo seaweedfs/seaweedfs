@@ -7,7 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -69,5 +74,68 @@ func TestIsIgnorable404_NonIgnorableError(t *testing.T) {
 
 	if isIgnorable404(genErr) {
 		t.Errorf("expected not ignorable, got ignorable: %v", genErr)
+	}
+}
+
+// stubSink is a minimal ReplicationSink used to exercise initialSnapshotTargetKey
+// without standing up a real sink. Only the two methods read by the key builder
+// (GetName, IsIncremental) need meaningful behavior; the rest satisfy the interface.
+type stubSink struct {
+	name          string
+	isIncremental bool
+}
+
+func (s *stubSink) GetName() string                           { return s.name }
+func (s *stubSink) Initialize(util.Configuration, string) error { return nil }
+func (s *stubSink) DeleteEntry(string, bool, bool, []int32) error {
+	return nil
+}
+func (s *stubSink) CreateEntry(string, *filer_pb.Entry, []int32) error { return nil }
+func (s *stubSink) UpdateEntry(string, *filer_pb.Entry, string, *filer_pb.Entry, bool, []int32) (bool, error) {
+	return false, nil
+}
+func (s *stubSink) GetSinkToDirectory() string       { return "" }
+func (s *stubSink) SetSourceFiler(*source.FilerSource) {}
+func (s *stubSink) IsIncremental() bool              { return s.isIncremental }
+
+var _ sink.ReplicationSink = (*stubSink)(nil)
+
+func TestInitialSnapshotTargetKey(t *testing.T) {
+	// Mirror the non-incremental path of buildKey so a refactor of one without
+	// the other will fail this test.
+	mirror := &stubSink{name: "mirror", isIncremental: false}
+	got := initialSnapshotTargetKey(mirror, "/backup", "/data", util.FullPath("/data/sub/file.txt"), &filer_pb.Entry{})
+	if got != "/backup/sub/file.txt" {
+		t.Errorf("mirror sink: got %q, want %q", got, "/backup/sub/file.txt")
+	}
+
+	// Incremental sinks partition by entry mtime, so the seed must use the same
+	// YYYY-MM-DD prefix a replayed CreateEntry would produce. buildKey in
+	// filer_sync.go formats the date in local time, so compute the expected
+	// key the same way to keep the test timezone-independent.
+	inc := &stubSink{name: "inc", isIncremental: true}
+	mtime := int64(1704196800) // 2024-01-02T12:00:00 UTC — unambiguously Jan 2 in nearly all timezones
+	gotInc := initialSnapshotTargetKey(inc, "/backup", "/data", util.FullPath("/data/sub/file.txt"), &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtime},
+	})
+	wantInc := "/backup/" + time.Unix(mtime, 0).Format("2006-01-02") + "/sub/file.txt"
+	if gotInc != wantInc {
+		t.Errorf("incremental sink: got %q, want %q", gotInc, wantInc)
+	}
+
+	// Trailing-slash sourcePath still produces a clean relative key.
+	gotTrail := initialSnapshotTargetKey(mirror, "/backup", "/data/", util.FullPath("/data/file.txt"), &filer_pb.Entry{})
+	if gotTrail != "/backup/file.txt" {
+		t.Errorf("trailing-slash sourcePath: got %q, want %q", gotTrail, "/backup/file.txt")
+	}
+
+	// Edge cases CodeRabbit called out: sourceKey equal to sourcePath
+	// (non-trailing and trailing variants). Real TraverseBfs walks never emit
+	// the root itself, but the helper must not panic if something else does.
+	if got := initialSnapshotTargetKey(mirror, "/backup", "/data", util.FullPath("/data"), &filer_pb.Entry{}); got != "/backup" {
+		t.Errorf("sourceKey == sourcePath (no slash): got %q, want %q", got, "/backup")
+	}
+	if got := initialSnapshotTargetKey(mirror, "/backup", "/data/", util.FullPath("/data"), &filer_pb.Entry{}); got != "/backup" {
+		t.Errorf("sourceKey == sourcePath (trailing slash mismatch): got %q, want %q", got, "/backup")
 	}
 }

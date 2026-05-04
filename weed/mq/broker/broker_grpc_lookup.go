@@ -336,7 +336,7 @@ func (b *MessageQueueBroker) GetTopicPublishers(ctx context.Context, request *mq
 	// Collect publishers from each partition that is hosted on this broker
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		// Only collect from partitions where this broker is the leader
-		if assignment.LeaderBroker == b.option.BrokerAddress().String() {
+		if pb.ServerAddress(assignment.LeaderBroker).Equals(b.option.BrokerAddress()) {
 			partition := topic.FromPbPartition(assignment.Partition)
 			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
 				// Get publisher information from local partition
@@ -390,7 +390,7 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 	// Collect subscribers from each partition that is hosted on this broker
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		// Only collect from partitions where this broker is the leader
-		if assignment.LeaderBroker == b.option.BrokerAddress().String() {
+		if pb.ServerAddress(assignment.LeaderBroker).Equals(b.option.BrokerAddress()) {
 			partition := topic.FromPbPartition(assignment.Partition)
 			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
 				// Get subscriber information from local partition
@@ -430,5 +430,5 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 }
 
 func (b *MessageQueueBroker) isLockOwner() bool {
-	return b.lockAsBalancer.LockOwner() == b.option.BrokerAddress().String()
+	return pb.ServerAddress(b.lockAsBalancer.LockOwner()).Equals(b.option.BrokerAddress())
 }

@@ -2,6 +2,7 @@
 vendor
 tags
 *.swp
+.claude/
 ### OSX template
 .DS_Store
 .AppleDouble

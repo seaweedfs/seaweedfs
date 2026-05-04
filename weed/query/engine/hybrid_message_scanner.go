@@ -1156,6 +1156,12 @@ func (h *HybridMessageScanner) ReadParquetStatistics(partitionPath string) ([]*P
 
 // extractParquetFileStats extracts column statistics from a single parquet file
 func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunkCache *chunk_cache.ChunkCacheInMemory) (*ParquetFileStats, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("cannot operate on nil entry")
+	}
+	if chunkCache == nil {
+		return nil, fmt.Errorf("cannot operate on nil chunkCache")
+	}
 	// Create reader for the parquet file
 	fileSize := filer.FileSize(entry)
 	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))

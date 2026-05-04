@@ -101,6 +101,10 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 	identity, err := s.credentialManager.GetUser(ctx, req.Username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
+			// Fall back to static identities (loaded from -s3.config file)
+			if si := s.credentialManager.GetStaticIdentity(req.Username); si != nil {
+				return &iam_pb.GetUserResponse{Identity: si}, nil
+			}
 			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
 		}
 		glog.Errorf("Failed to get user %s: %v", req.Username, err)
@@ -164,6 +168,20 @@ func (s *IamGrpcServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequ
 	if err != nil {
 		glog.Errorf("Failed to list users: %v", err)
 		return nil, err
+	}
+
+	// Merge static identities (from -s3.config file) into the result
+	staticNames := s.credentialManager.GetStaticUsernames()
+	if len(staticNames) > 0 {
+		dynamicSet := make(map[string]bool, len(usernames))
+		for _, name := range usernames {
+			dynamicSet[name] = true
+		}
+		for _, name := range staticNames {
+			if !dynamicSet[name] {
+				usernames = append(usernames, name)
+			}
+		}
 	}
 
 	return &iam_pb.ListUsersResponse{

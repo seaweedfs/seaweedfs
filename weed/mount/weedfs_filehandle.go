@@ -1,7 +1,10 @@
 package mount
 
 import (
+	"fmt"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -23,13 +26,29 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		}
 		// Check unix permission bits for the requested access mode.
 		if entry != nil && entry.Attributes != nil {
-			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode, mask) {
+			fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
+			if wfs.option.UidGidMapper != nil {
+				fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+			}
+			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
 				return nil, fuse.EACCES
 			}
 		}
 		// need to AcquireFileHandle again to ensure correct handle counter
 		fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
 		fileHandle.RememberPath(path)
+
+		// Acquire distributed lock for write opens. The lock is held with
+		// auto-renewal until the file handle is released (close).
+		// Use the filer path as the lock key since inode numbers are
+		// assigned per-mount and differ across mount instances.
+		if wfs.lockClient != nil && flags&fuse.O_ANYWRITE != 0 && fileHandle.dlmLock == nil {
+			owner := fmt.Sprintf("mount-%d", wfs.signature)
+			fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+				string(path), owner, lock_manager.LiveLockTTL,
+			)
+			glog.V(1).Infof("DLM lock acquired for %s", path)
+		}
 	}
 	return
 }

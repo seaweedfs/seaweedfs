@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -12,6 +13,7 @@ func (vs *VolumeServer) ReadAllNeedles(req *volume_server_pb.ReadAllNeedlesReque
 
 	for _, vid := range req.VolumeIds {
 		if err := vs.streamReadOneVolume(needle.VolumeId(vid), stream); err != nil {
+			stats.VolumeServerFileReadFailures.Inc()
 			return err
 		}
 	}

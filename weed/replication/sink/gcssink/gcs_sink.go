@@ -115,23 +115,37 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	totalSize := filer.FileSize(entry)
 	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
-	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
-	defer wc.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
 
 	writeFunc := func(data []byte) error {
 		_, writeErr := wc.Write(data)
 		return writeErr
 	}
 
+	var writeErr error
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		content, decErr := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if decErr != nil {
+			writeErr = fmt.Errorf("decrypt inline SSE content: %w", decErr)
+		} else {
+			writeErr = writeFunc(content)
+		}
+	} else {
+		writeErr = repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry)
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
-		return err
+	if writeErr != nil {
+		// Cancel the context to abort the GCS upload without touching
+		// any existing object at this key.
+		cancel()
+		wc.Close()
+		return writeErr
 	}
 
-	return nil
+	return wc.Close()
 
 }
 

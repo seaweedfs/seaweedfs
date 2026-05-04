@@ -75,6 +75,23 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 		glog.V(4).Infof("RDMA read failed for %s, falling back to HTTP: %v", fileFullPath, err)
 	}
 
+	// Peer chunk sharing: try a peer mount's cache before the volume tier.
+	// Any failure falls through transparently. See design-weed-mount-
+	// peer-chunk-sharing.md §4.3.
+	if fh.wfs.option.PeerEnabled && fh.wfs.peerGrpcServer != nil {
+		totalRead, ts, err := fh.tryPeerRead(ctx, fileSize, buff, offset, entry)
+		if err == nil {
+			glog.V(4).Infof("peer read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
+			return int64(totalRead), ts, nil
+		}
+		// Skip the "failed" log for benign skip reasons (local cache
+		// hit, no peer owner yet, etc.) — the cache/volume fallback is
+		// the expected outcome, not a failure.
+		if err != errPeerReadSkipped {
+			glog.V(4).Infof("peer read failed for %s, falling back to volume: %v", fileFullPath, err)
+		}
+	}
+
 	// Fall back to normal chunk reading
 	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(ctx, fileSize, buff, offset)
 

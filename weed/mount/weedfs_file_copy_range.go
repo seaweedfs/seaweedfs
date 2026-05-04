@@ -251,7 +251,11 @@ func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstP
 	}
 	fhOut.dirtyMetadata = false
 	wfs.updateServerSideWholeFileCopyMetaCache(dstPath, entry)
-	wfs.invalidateCopyDestinationCache(fhOut.inode, dstPath)
+	// Note: we intentionally skip fuseServer.InodeNotify/EntryNotify here.
+	// This runs inside the CopyFileRange request handler; those notifies
+	// would write onto the same /dev/fuse fd the kernel is still waiting
+	// on for this request's reply, deadlocking the mount. The kernel will
+	// re-read attrs once its attr-cache TTL expires.
 }
 
 func (wfs *WFS) updateServerSideWholeFileCopyMetaCache(dstPath util.FullPath, entry *filer_pb.Entry) {
@@ -288,8 +292,12 @@ func synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut *FileHandle, sou
 		}
 	}
 
+	copyNow := time.Now()
 	localEntry.Attributes.FileSize = uint64(sourceSize)
-	localEntry.Attributes.Mtime = time.Now().Unix()
+	localEntry.Attributes.Mtime = copyNow.Unix()
+	localEntry.Attributes.MtimeNs = int32(copyNow.Nanosecond())
+	localEntry.Attributes.Ctime = copyNow.Unix()
+	localEntry.Attributes.CtimeNs = int32(copyNow.Nanosecond())
 	return localEntry
 }
 
@@ -497,16 +505,3 @@ func (wfs *WFS) filerCopyJWT() security.EncodedJwt {
 	return security.GenJwtForFilerServer(wfs.option.FilerSigningKey, wfs.option.FilerSigningExpiresAfterSec)
 }
 
-func (wfs *WFS) invalidateCopyDestinationCache(inode uint64, fullPath util.FullPath) {
-	if wfs.fuseServer != nil {
-		if status := wfs.fuseServer.InodeNotify(inode, 0, -1); status != fuse.OK {
-			glog.V(4).Infof("CopyFileRange invalidate inode %d: %v", inode, status)
-		}
-		dir, name := fullPath.DirAndName()
-		if parentInode, found := wfs.inodeToPath.GetInode(util.FullPath(dir)); found {
-			if status := wfs.fuseServer.EntryNotify(parentInode, name); status != fuse.OK {
-				glog.V(4).Infof("CopyFileRange invalidate entry %s: %v", fullPath, status)
-			}
-		}
-	}
-}

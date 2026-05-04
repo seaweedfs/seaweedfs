@@ -262,16 +262,3 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 	return
 }
 
-func (f *Filer) readPersistedLogBufferPosition(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
-	lastReadPosition = startPosition
-
-	lastTsNs, isDone, err := f.ReadPersistedLogBuffer(startPosition, stopTsNs, eachLogEntryFn)
-	if err != nil {
-		return lastReadPosition, isDone, err
-	}
-	if lastTsNs != 0 {
-		lastReadPosition = log_buffer.NewMessagePosition(lastTsNs, 1)
-	}
-
-	return lastReadPosition, isDone, nil
-}

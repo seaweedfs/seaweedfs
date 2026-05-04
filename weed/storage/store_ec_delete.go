@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -35,6 +36,12 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 
 }
 
+// errEcShardMissing indicates that no data node in the topology currently
+// holds the requested EC shard. Callers use this to trigger fallback to
+// another shard, distinguishing "no home for this shard" from "the shard
+// holder is reachable but the RPC failed".
+var errEcShardMissing = fmt.Errorf("ec shard missing")
+
 func (s *Store) doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume *erasure_coding.EcVolume, needleId types.NeedleId) error {
 
 	_, _, intervals, err := ecVolume.LocateEcShardNeedle(needleId, ecVolume.Version)
@@ -45,15 +52,22 @@ func (s *Store) doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume *erasure_cod
 		return erasure_coding.NotFoundError
 	}
 
-	shardId, _ := intervals[0].ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
+	primaryShardId, _ := intervals[0].ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 
-	err = s.doDeleteNeedleFromRemoteEcShardServers(shardId, ecVolume, needleId)
-	if err == nil {
-		return nil
+	// Normal path: delete on exactly one node holding the primary data shard.
+	err = s.doDeleteNeedleFromRemoteEcShardServers(primaryShardId, ecVolume, needleId)
+	if err == nil || !errors.Is(err, errEcShardMissing) {
+		return err
 	}
 
-	for shardId = erasure_coding.DataShardsCount; shardId < erasure_coding.TotalShardsCount; shardId++ {
-		if parityDeletionError := s.doDeleteNeedleFromRemoteEcShardServers(shardId, ecVolume, needleId); parityDeletionError == nil {
+	// Primary data shard has no live holders; fall back to any other shard
+	// (remaining data shards first, then parity) so a shard holder can still
+	// tombstone the .ecx and the delete is durable.
+	for shardId := erasure_coding.ShardId(0); shardId < erasure_coding.TotalShardsCount; shardId++ {
+		if shardId == primaryShardId {
+			continue
+		}
+		if fallbackErr := s.doDeleteNeedleFromRemoteEcShardServers(shardId, ecVolume, needleId); fallbackErr == nil {
 			return nil
 		}
 	}
@@ -68,18 +82,25 @@ func (s *Store) doDeleteNeedleFromRemoteEcShardServers(shardId erasure_coding.Sh
 	sourceDataNodes, hasShardLocations := ecVolume.ShardLocations[shardId]
 	ecVolume.ShardLocationsLock.RUnlock()
 
-	if !hasShardLocations {
-		return fmt.Errorf("ec shard %d.%d not located", ecVolume.VolumeId, shardId)
+	if !hasShardLocations || len(sourceDataNodes) == 0 {
+		return fmt.Errorf("ec shard %d.%d: %w", ecVolume.VolumeId, shardId, errEcShardMissing)
 	}
 
+	// Apply the delete on exactly one node. Replicas of the same shard all
+	// hold identical .ecx copies, so tombstoning more than one would double
+	// the delete count in heartbeat reporting. Try nodes in order and stop
+	// at the first success; only return error if every replica failed.
+	var lastErr error
 	for _, sourceDataNode := range sourceDataNodes {
 		glog.V(4).Infof("delete from remote ec shard %d.%d from %s", ecVolume.VolumeId, shardId, sourceDataNode)
-		if err := s.doDeleteNeedleFromRemoteEcShard(sourceDataNode, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err != nil {
-			return err
+		if err := s.doDeleteNeedleFromRemoteEcShard(sourceDataNode, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 	}
 
-	return nil
+	return lastErr
 
 }
 

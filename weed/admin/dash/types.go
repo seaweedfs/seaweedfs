@@ -76,7 +76,6 @@ type S3Bucket struct {
 	CreatedAt          time.Time `json:"created_at"`
 	LogicalSize        int64     `json:"logical_size"`  // Actual data size (used space)
 	PhysicalSize       int64     `json:"physical_size"` // Total allocated volume space
-	ObjectCount        int64     `json:"object_count"`
 	LastModified       time.Time `json:"last_modified"`
 	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
 	QuotaEnabled       bool      `json:"quota_enabled"`        // Whether quota is enabled
@@ -446,11 +445,6 @@ type MaintenanceQueueData = maintenance.MaintenanceQueueData
 type QueueStats = maintenance.QueueStats
 type WorkerDetailsData = maintenance.WorkerDetailsData
 type WorkerPerformance = maintenance.WorkerPerformance
-
-// GetTaskIcon returns the icon CSS class for a task type from its UI provider
-func GetTaskIcon(taskType MaintenanceTaskType) string {
-	return maintenance.GetTaskIcon(taskType)
-}
 
 // Status constants (these are still static)
 const (

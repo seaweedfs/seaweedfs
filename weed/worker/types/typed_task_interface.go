@@ -90,33 +90,10 @@ func (r *TypedTaskRegistry) RegisterTypedTask(taskType TaskType, creator TypedTa
 	r.creators[taskType] = creator
 }
 
-// CreateTypedTask creates a new typed task instance
-func (r *TypedTaskRegistry) CreateTypedTask(taskType TaskType) (TypedTaskInterface, error) {
-	creator, exists := r.creators[taskType]
-	if !exists {
-		return nil, ErrTaskTypeNotFound
-	}
-	return creator(), nil
-}
-
-// GetSupportedTypes returns all registered typed task types
-func (r *TypedTaskRegistry) GetSupportedTypes() []TaskType {
-	types := make([]TaskType, 0, len(r.creators))
-	for taskType := range r.creators {
-		types = append(types, taskType)
-	}
-	return types
-}
-
 // Global typed task registry
 var globalTypedTaskRegistry = NewTypedTaskRegistry()
 
 // RegisterGlobalTypedTask registers a typed task globally
 func RegisterGlobalTypedTask(taskType TaskType, creator TypedTaskCreator) {
 	globalTypedTaskRegistry.RegisterTypedTask(taskType, creator)
-}
-
-// GetGlobalTypedTaskRegistry returns the global typed task registry
-func GetGlobalTypedTaskRegistry() *TypedTaskRegistry {
-	return globalTypedTaskRegistry
 }

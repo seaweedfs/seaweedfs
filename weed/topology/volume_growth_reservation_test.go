@@ -7,20 +7,12 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 // MockGrpcDialOption simulates grpc connection for testing
 type MockGrpcDialOption struct{}
-
-// simulateVolumeAllocation mocks the volume allocation process
-func simulateVolumeAllocation(server *DataNode, vid needle.VolumeId, option *VolumeGrowOption) error {
-	// Simulate some processing time
-	time.Sleep(time.Millisecond * 10)
-	return nil
-}
 
 func TestVolumeGrowth_ReservationBasedAllocation(t *testing.T) {
 	// Create test topology with single server for predictable behavior

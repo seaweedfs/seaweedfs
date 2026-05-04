@@ -2,6 +2,9 @@ package mount
 
 import (
 	"math"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -268,6 +271,32 @@ func TestReleasePosixOwnerDoesNotReleaseFlockLocks(t *testing.T) {
 	plt.GetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20, IsFlock: true}, &out)
 	if out.Lk.Typ != syscall.F_WRLCK {
 		t.Fatalf("expected flock lock to remain after ReleasePosixOwner, got type %d", out.Lk.Typ)
+	}
+}
+
+func TestHasPosixOwnerIgnoresMissingOwnerAndFlock(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	if plt.HasPosixOwner(inode, 1) {
+		t.Fatal("missing owner should not be reported as holding POSIX locks")
+	}
+
+	if s := plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10, IsFlock: true}); s != fuse.OK {
+		t.Fatalf("set flock: %v", s)
+	}
+	if plt.HasPosixOwner(inode, 1) {
+		t.Fatal("flock owner should not be reported as a POSIX lock owner")
+	}
+
+	if s := plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20}); s != fuse.OK {
+		t.Fatalf("set POSIX lock: %v", s)
+	}
+	if !plt.HasPosixOwner(inode, 2) {
+		t.Fatal("POSIX lock owner was not reported")
+	}
+	if plt.HasPosixOwner(inode, 0) {
+		t.Fatal("zero owner should not be reported")
 	}
 }
 
@@ -613,5 +642,209 @@ func TestAdjacencyNoOverflowAtMaxUint64(t *testing.T) {
 	}
 	if ownerLocks != 2 {
 		t.Fatalf("expected 2 separate locks (no overflow merge), got %d", ownerLocks)
+	}
+}
+
+// TestSetLkRetriesPastDeadInodeLocks deterministically exercises the
+// getOrCreateInodeLocks vs maybeCleanupInode race: a caller holding a
+// pointer to an inodeLocks that is concurrently marked dead must refetch
+// from the map instead of mutating the orphaned instance (which would be
+// invisible to subsequent callers and let two exclusive flock holders
+// coexist). The test bypasses scheduling by hand-installing a dead il into
+// the table and asserting that the next SetLk routes around it.
+func TestSetLkRetriesPastDeadInodeLocks(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(42)
+
+	// Acquire and release a lock so maybeCleanupInode marks the il dead and
+	// removes it from the map.
+	lock := lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, IsFlock: true}
+	if s := plt.SetLk(inode, lock); s != fuse.OK {
+		t.Fatalf("prime SetLk: got %v", s)
+	}
+	dead := plt.getInodeLocks(inode)
+	unlock := lock
+	unlock.Typ = syscall.F_UNLCK
+	if s := plt.SetLk(inode, unlock); s != fuse.OK {
+		t.Fatalf("prime unlock: got %v", s)
+	}
+	if !dead.dead {
+		t.Fatal("expected il to be marked dead after unlock+cleanup")
+	}
+	plt.mu.Lock()
+	_, stillMapped := plt.inodes[inode]
+	plt.mu.Unlock()
+	if stillMapped {
+		t.Fatal("expected the dead il to be removed from the map")
+	}
+
+	// Simulate the race: the next caller's getOrCreateInodeLocks races with
+	// the cleanup and ends up holding a pointer to the dead il. We force that
+	// state by re-publishing `dead` into the map.
+	plt.mu.Lock()
+	plt.inodes[inode] = dead
+	plt.mu.Unlock()
+
+	// SetLk must notice dead, refetch, and install the new lock in a fresh il.
+	if s := plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 2, IsFlock: true}); s != fuse.OK {
+		t.Fatalf("SetLk after dead: got %v", s)
+	}
+
+	dead.mu.Lock()
+	if n := len(dead.locks); n != 0 {
+		t.Fatalf("dead il should not have accepted the insert, found %d locks", n)
+	}
+	dead.mu.Unlock()
+
+	plt.mu.Lock()
+	live := plt.inodes[inode]
+	plt.mu.Unlock()
+	if live == nil || live == dead {
+		t.Fatalf("expected a fresh live il, got %v", live)
+	}
+
+	// A conflicting owner must see the new lock and be rejected.
+	if s := plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 3, IsFlock: true}); s != fuse.EAGAIN {
+		t.Fatalf("second owner should conflict with owner 2, got %v", s)
+	}
+
+	// GetLk must report the conflict as well: without the dead-recheck the
+	// GetLk path would answer F_UNLCK off the orphaned il.
+	var out fuse.LkOut
+	plt.GetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 4, IsFlock: true}, &out)
+	if out.Lk.Typ != syscall.F_WRLCK {
+		t.Fatalf("GetLk should report the live conflict, got Typ=%d", out.Lk.Typ)
+	}
+}
+
+// TestGetInodeLocksEvictsDeadEntry verifies that a dead inodeLocks which
+// somehow ends up in the map (e.g. through a future refactor that reorders
+// delete and dead=true) is dropped on read so callers never observe one.
+// This is the backstop that lets GetLk's and SetLk's retry loops terminate.
+func TestGetInodeLocksEvictsDeadEntry(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(42)
+
+	lock := lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, IsFlock: true}
+	if s := plt.SetLk(inode, lock); s != fuse.OK {
+		t.Fatalf("prime SetLk: got %v", s)
+	}
+	dead := plt.getInodeLocks(inode)
+	unlock := lock
+	unlock.Typ = syscall.F_UNLCK
+	if s := plt.SetLk(inode, unlock); s != fuse.OK {
+		t.Fatalf("prime unlock: got %v", s)
+	}
+	if !dead.dead {
+		t.Fatal("expected dead after cleanup")
+	}
+
+	// Force the broken state that production cannot reach but tests and
+	// future refactors might: dead entry still in the map.
+	plt.mu.Lock()
+	plt.inodes[inode] = dead
+	plt.mu.Unlock()
+
+	if il := plt.getInodeLocks(inode); il != nil {
+		t.Fatalf("getInodeLocks should drop a dead map entry, got %p", il)
+	}
+	plt.mu.Lock()
+	_, stillMapped := plt.inodes[inode]
+	plt.mu.Unlock()
+	if stillMapped {
+		t.Fatal("expected dead entry to be removed from the map")
+	}
+
+	// getOrCreateInodeLocks must also self-heal (replace the dead entry with
+	// a fresh live one) so SetLk's retry path cannot spin.
+	plt.mu.Lock()
+	plt.inodes[inode] = dead
+	plt.mu.Unlock()
+	fresh := plt.getOrCreateInodeLocks(inode)
+	if fresh == dead {
+		t.Fatal("getOrCreateInodeLocks should not return a dead entry")
+	}
+	if fresh.dead {
+		t.Fatal("fresh entry should not be dead")
+	}
+}
+
+// TestConcurrentFlockChurnPreservesMutualExclusion is a stress companion to
+// the deterministic tests above. It uses a Swap+CAS detector that flags
+// overlap at two points (on acquire and on release), so a second granted
+// holder is caught even if it sneaks in after the first goroutine's claim
+// but before its release. 16 goroutines churn whole-file exclusive flock on
+// one inode; with the race the detector fires hundreds of times per run,
+// with the fix it stays at zero.
+func TestConcurrentFlockChurnPreservesMutualExclusion(t *testing.T) {
+	plt := NewPosixLockTable()
+	const (
+		inode      = uint64(42)
+		numWorkers = 16
+		iterations = 500
+	)
+	var (
+		wg          sync.WaitGroup
+		holder      atomic.Int64 // 0 = nobody; otherwise = holder's claim token
+		overlapSeen atomic.Int32
+	)
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			owner := uint64(100 + id)
+			lock := lockRange{
+				Start:   0,
+				End:     math.MaxUint64,
+				Typ:     syscall.F_WRLCK,
+				Owner:   owner,
+				Pid:     uint32(id + 1),
+				IsFlock: true,
+			}
+			unlock := lock
+			unlock.Typ = syscall.F_UNLCK
+			token := int64(id + 1)
+			for i := 0; i < iterations; i++ {
+				// SetLk(WRLCK) may only return OK (granted) or EAGAIN
+				// (conflict); anything else indicates a bug and the test
+				// must fail rather than spin. Use Errorf + return because
+				// Fatalf is not safe from a non-test goroutine.
+				for {
+					s := plt.SetLk(inode, lock)
+					if s == fuse.OK {
+						break
+					}
+					if s != fuse.EAGAIN {
+						t.Errorf("worker %d iter %d: unexpected SetLk(WRLCK) status %v", id, i, s)
+						return
+					}
+					runtime.Gosched()
+				}
+				// Claim the slot. If Swap observes a non-zero predecessor,
+				// another goroutine already believes it holds the lock.
+				if prev := holder.Swap(token); prev != 0 {
+					overlapSeen.Add(1)
+				}
+				// Widen the window so a concurrently-granted peer has a
+				// chance to race into its own Swap before we release.
+				runtime.Gosched()
+				runtime.Gosched()
+				// Release the slot. If CAS fails someone else overwrote our
+				// claim, which only happens when two holders raced.
+				if !holder.CompareAndSwap(token, 0) {
+					overlapSeen.Add(1)
+				}
+				if s := plt.SetLk(inode, unlock); s != fuse.OK {
+					t.Errorf("worker %d iter %d: unexpected SetLk(UNLCK) status %v", id, i, s)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	if n := overlapSeen.Load(); n != 0 {
+		t.Fatalf("flock overlap detected %d times: two owners simultaneously granted the same exclusive lock", n)
 	}
 }

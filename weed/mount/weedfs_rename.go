@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fs"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -168,7 +169,12 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if s := checkName(newName); s != fuse.OK {
+	// Both names end up in StreamRenameEntryRequest (proto string fields), so
+	// sanitize both. checkName handles newName's length check; oldName may
+	// legitimately be a pre-existing entry whose bytes were not validated.
+	oldName = sanitizeFuseName(oldName)
+	var s fuse.Status
+	if newName, s = checkName(newName); s != fuse.OK {
 		return s
 	}
 
@@ -196,6 +202,32 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	oldEntry, status := wfs.maybeLoadEntry(oldPath)
 	if status != fuse.OK {
 		return status
+	}
+
+	// POSIX: enforce sticky bit on the source directory.
+	if oldDirEntry, dirCode := wfs.maybeLoadEntry(oldDir); dirCode == fuse.OK && oldDirEntry != nil && oldDirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if oldEntry != nil && oldEntry.Attributes != nil {
+			targetUid = oldEntry.Attributes.Uid
+		}
+		if code := checkStickyBit(oldDirEntry.Attributes.FileMode, oldDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+			return code
+		}
+	}
+
+	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
+	if in.Flags != RenameNoReplace {
+		if newEntry, newStatus := wfs.maybeLoadEntry(newPath); newStatus == fuse.OK && newEntry != nil {
+			if newDirEntry, dirCode := wfs.maybeLoadEntry(newDir); dirCode == fuse.OK && newDirEntry != nil && newDirEntry.Attributes != nil {
+				targetUid := uint32(0)
+				if newEntry.Attributes != nil {
+					targetUid = newEntry.Attributes.Uid
+				}
+				if code := checkStickyBit(newDirEntry.Attributes.FileMode, newDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+					return code
+				}
+			}
+		}
 	}
 
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(oldPath, oldEntry); wormEnforced {
@@ -233,6 +265,41 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		wfs.waitForPendingAsyncFlush(inode)
 	}
 
+	// Acquire DLM locks on both old and new paths to prevent another mount
+	// from opening either path for writing during the rename. Lock in
+	// sorted order to prevent deadlocks when two mounts rename in opposite
+	// directions (A→B vs B→A).
+	//
+	// Skip the old-path lock if this mount already holds it via an open
+	// file handle (otherwise we'd deadlock trying to re-acquire our own lock).
+	if wfs.lockClient != nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+
+		// Check if the source file handle already holds a DLM lock on oldPath
+		oldPathAlreadyLocked := false
+		if sourceInode, found := wfs.inodeToPath.GetInode(oldPath); found {
+			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dlmLock != nil {
+				oldPathAlreadyLocked = true
+			}
+		}
+
+		// Determine which paths need new DLM locks
+		pathsToLock := []string{string(newPath)}
+		if !oldPathAlreadyLocked {
+			pathsToLock = append(pathsToLock, string(oldPath))
+		}
+		// Sort for consistent lock ordering
+		if len(pathsToLock) == 2 && pathsToLock[0] > pathsToLock[1] {
+			pathsToLock[0], pathsToLock[1] = pathsToLock[1], pathsToLock[0]
+		}
+
+		for _, p := range pathsToLock {
+			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
+			defer dlmLock.Stop()
+		}
+		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
+	}
+
 	// update remote filer
 	request := &filer_pb.StreamRenameEntryRequest{
 		OldDirectory: string(oldDir),
@@ -261,6 +328,15 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)
+	wfs.touchDirMtimeCtimeBest(oldDir)
+	if oldDir != newDir {
+		wfs.touchDirMtimeCtimeBest(newDir)
+		// Adjust subdirectory counts when moving a directory across parents.
+		if oldEntry != nil && oldEntry.IsDirectory {
+			wfs.inodeToPath.AdjustSubdirCount(oldDir, -1)
+			wfs.inodeToPath.AdjustSubdirCount(newDir, 1)
+		}
+	}
 
 	return fuse.OK
 
@@ -296,6 +372,23 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				// Keep the saved handle path current so any flush fallback
 				// after Forget uses the post-rename location, not the old one.
 				fh.RememberPath(newPath)
+
+				// Migrate the DLM lock from old path to new path so the
+				// lock key matches the current file location. Hold the
+				// fhLockTable to prevent ReleaseHandle from concurrently
+				// stopping the lock during migration.
+				if wfs.lockClient != nil {
+					fhActiveLock := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
+					if fh.dlmLock != nil {
+						owner := fmt.Sprintf("mount-%d", wfs.signature)
+						fh.dlmLock.Stop()
+						fh.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+							string(newPath), owner, lock_manager.LiveLockTTL,
+						)
+						glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+					}
+					wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+				}
 			}
 			// invalidate attr and data
 			// wfs.fuseServer.InodeNotify(sourceInode, 0, -1)

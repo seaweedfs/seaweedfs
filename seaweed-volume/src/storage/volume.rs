@@ -19,6 +19,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::warn;
 
+#[cfg(test)]
+use crate::storage::idx;
 use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
@@ -71,6 +73,24 @@ pub enum VolumeError {
 
     #[error("streaming from remote-backed volume requires buffered fallback")]
     StreamingUnsupported,
+}
+
+/// Returns true when a needle read failed because the on-disk bytes are
+/// unreadable in a permanent way (offset past EOF, header corruption, CRC
+/// mismatch, malformed v2/v3/v4 fields). Vacuum can safely drop such entries
+/// during compaction. Anything else (real disk EIO, ERROR_CRC on Windows,
+/// network timeouts, EROFS, etc.) is transient or environmental and must
+/// abort the compaction so an operator notices.
+fn is_skippable_needle_read_error(e: &VolumeError) -> bool {
+    match e {
+        VolumeError::Io(io_err) => io_err.kind() == io::ErrorKind::UnexpectedEof,
+        VolumeError::Needle(NeedleError::SizeMismatch { .. }) => true,
+        VolumeError::Needle(NeedleError::CrcMismatch { .. }) => true,
+        VolumeError::Needle(NeedleError::IndexOutOfRange(_)) => true,
+        VolumeError::Needle(NeedleError::TailTooShort) => true,
+        VolumeError::SizeMismatch => true,
+        _ => false,
+    }
 }
 
 // ============================================================================
@@ -712,6 +732,28 @@ impl Volume {
                         "volumeDataIntegrityChecking failed"
                     );
                 }
+
+                // Structural check: no .idx entry may reference bytes past the
+                // end of .dat. The needle map's load walk above already
+                // populated max_needle_end, so this is a numeric comparison
+                // — no extra disk I/O. A violation marks the volume read-only
+                // so vacuum doesn't silently drop reachable data based on a
+                // corrupt .idx left over from a crashed batched write.
+                // See issue #8928.
+                if let Some(ref nm) = self.nm {
+                    if let Ok(dat_size) = self.current_dat_file_size() {
+                        let max_end = nm.max_needle_end();
+                        if dat_size > 0 && max_end > dat_size as i64 {
+                            self.no_write_or_delete = true;
+                            warn!(
+                                volume_id = self.id.0,
+                                max_needle_end = max_end,
+                                dat_size,
+                                "idx references bytes past end of .dat; marking volume read-only"
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -734,7 +776,7 @@ impl Volume {
     fn load_index(&mut self) -> Result<(), VolumeError> {
         let use_redb = matches!(
             self.needle_map_kind,
-            NeedleMapKind::LevelDb | NeedleMapKind::LevelDbMedium | NeedleMapKind::LevelDbLarge
+            NeedleMapKind::Redb | NeedleMapKind::RedbMedium | NeedleMapKind::RedbLarge
         );
 
         let idx_path = self.file_name(".idx");
@@ -759,7 +801,7 @@ impl Volume {
             // Open read-only
             if Path::new(&idx_path).exists() {
                 let mut idx_file = File::open(&idx_path)?;
-                let nm = CompactNeedleMap::load_from_idx(&mut idx_file)?;
+                let nm = CompactNeedleMap::load_from_idx(&mut idx_file, self.version())?;
                 self.nm = Some(NeedleMap::InMemory(nm));
             } else {
                 // Missing .idx with existing .dat could orphan needles
@@ -785,7 +827,7 @@ impl Volume {
 
             let idx_size = idx_file.metadata()?.len();
             let mut idx_reader = io::BufReader::new(&idx_file);
-            let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader)?;
+            let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader, self.version())?;
 
             // Re-open for append-only writes
             let write_file = OpenOptions::new()
@@ -808,7 +850,7 @@ impl Volume {
             // Open read-only
             if Path::new(&idx_path).exists() {
                 let mut idx_file = File::open(&idx_path)?;
-                let nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_file)?;
+                let nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_file, self.version())?;
                 self.nm = Some(NeedleMap::Redb(nm));
             } else {
                 // Missing .idx with existing .dat could orphan needles
@@ -834,7 +876,7 @@ impl Volume {
 
             let idx_size = idx_file.metadata()?.len();
             let mut idx_reader = io::BufReader::new(&idx_file);
-            let mut nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_reader)?;
+            let mut nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_reader, self.version())?;
 
             // Re-open for append-only writes
             let write_file = OpenOptions::new()
@@ -1751,6 +1793,11 @@ impl Volume {
         }
 
         let version = self.version();
+
+        // The deeper-than-tail structural check (every (offset + actual size)
+        // fits inside .dat — issue #8928) is now handled in load() via the
+        // needle map's max_needle_end accumulator, so we don't pay for a
+        // second linear scan of the .idx here.
 
         // Check last 10 index entries (matching Go's CheckVolumeDataIntegrity).
         // Go starts healthyIndexSize = indexSize and reduces on EOF.
@@ -2683,6 +2730,8 @@ impl Volume {
         }
         entries.sort_by_key(|(_, offset, _)| *offset);
 
+        let mut skipped_needles: u64 = 0;
+        let mut skipped_data_bytes: u64 = 0;
         for (id, offset, size) in entries {
             // Progress callback
             if !progress_fn(offset.to_actual_offset()) {
@@ -2699,7 +2748,41 @@ impl Volume {
                 id,
                 ..Needle::default()
             };
-            self.read_needle_data_at(&mut n, offset.to_actual_offset(), size)?;
+            match self.read_needle_data_at(&mut n, offset.to_actual_offset(), size) {
+                Ok(()) => {}
+                Err(e) => {
+                    // Record EIO for health monitoring (parity with Go's checkReadWriteError).
+                    if let VolumeError::Io(ref io_err) = e {
+                        self.check_read_write_error(Some(io_err));
+                    }
+                    // Only drop the entry when the failure is one of the well-
+                    // known permanent-corruption shapes. A transient disk fault,
+                    // a tiered-read timeout, or a Windows hardware error (which
+                    // surfaces as a generic Io rather than UnexpectedEof) must
+                    // abort so an operator notices, rather than silently
+                    // compacting away data that might come back on retry.
+                    // See issue #8928.
+                    if !is_skippable_needle_read_error(&e) {
+                        return Err(VolumeError::Io(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("cannot hydrate needle from file: {}", e),
+                        )));
+                    }
+                    skipped_needles += 1;
+                    if size.is_valid() {
+                        skipped_data_bytes += size.0 as u64;
+                    }
+                    warn!(
+                        volume_id = self.id.0,
+                        key = id.0,
+                        offset = offset.to_actual_offset(),
+                        size = size.0,
+                        error = %e,
+                        "vacuum: dropping unreadable needle"
+                    );
+                    continue;
+                }
+            }
 
             // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
             if n.has_ttl() {
@@ -2719,6 +2802,15 @@ impl Volume {
             // Update new index
             new_nm.put(id, Offset::from_actual_offset(new_offset), n.size)?;
             new_offset += bytes.len() as i64;
+        }
+
+        if skipped_needles > 0 {
+            warn!(
+                volume_id = self.id.0,
+                skipped_needles,
+                skipped_data_bytes,
+                "vacuum: dropped unreadable index entries during compaction"
+            );
         }
 
         dst.sync_all()?;
@@ -3225,6 +3317,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
 
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -3279,6 +3372,7 @@ mod tests {
                 }));
 
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let _ = ready_tx.send(());
                 axum::serve(listener, app)
                     .with_graceful_shutdown(async move {
                         let _ = shutdown_rx.await;
@@ -3288,6 +3382,8 @@ mod tests {
             });
         });
 
+        // Wait for the server thread to be ready before returning.
+        ready_rx.recv().unwrap();
         (format!("http://{}", addr), shutdown_tx)
     }
 
@@ -3706,6 +3802,138 @@ mod tests {
         v.cleanup_compact().unwrap();
     }
 
+    /// Vacuum compaction must tolerate an .idx entry whose offset points past
+    /// the end of the .dat file (the failure mode in issue #8928). The bad
+    /// entry is silently dropped from the resulting .cpx; healthy needles
+    /// survive untouched.
+    #[test]
+    fn test_compact_by_index_drops_dangling_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        // Write a handful of healthy needles to establish a baseline .dat/.idx.
+        for i in 1..=5u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("payload-{}", i).into_bytes(),
+                data_size: format!("payload-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let dat_size = v.dat_file_size().unwrap();
+        let bad_key = NeedleId(9999);
+        let bad_offset = Offset::from_actual_offset((dat_size + 1024 * 1024) as i64);
+        let bad_size = Size(2048);
+        v.nm
+            .as_mut()
+            .expect("needle map present")
+            .put(bad_key, bad_offset, bad_size)
+            .unwrap();
+        v.nm.as_ref().unwrap().sync().unwrap();
+
+        // Vacuum must succeed in spite of the dangling entry.
+        v.compact_by_index(0, 0, |_| true)
+            .expect("compact_by_index should tolerate dangling entries");
+
+        // Walk the resulting .cpx and confirm the bad key was dropped while
+        // every healthy key made it through.
+        let cpx_path = v.file_name(".cpx");
+        let mut cpx = File::open(&cpx_path).unwrap();
+        let mut kept: Vec<u64> = Vec::new();
+        idx::walk_index_file(&mut cpx, 0, |key, _, size| {
+            if !size.is_deleted() {
+                kept.push(key.0);
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(
+            !kept.contains(&bad_key.0),
+            "dangling key {} should have been dropped from .cpx, got {:?}",
+            bad_key.0,
+            kept
+        );
+        for i in 1..=5u64 {
+            assert!(
+                kept.contains(&i),
+                "healthy key {} missing from compacted .cpx, got {:?}",
+                i,
+                kept
+            );
+        }
+    }
+
+    /// The needle map's max_needle_end accumulator must let volume.load
+    /// detect an .idx whose entries point past the end of the .dat — the
+    /// deeper-than-tail corruption shape from issue #8928 that the existing
+    /// last-10-entries scan cannot see. The check is populated by the load
+    /// walk and read in volume.load() to flip the volume read-only.
+    #[test]
+    fn test_max_needle_end_detects_dangling_entry() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=4u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let dat_size = v.dat_file_size().unwrap() as i64;
+        let idx_path = v.file_name(".idx");
+        let version = v.version();
+
+        // Sanity: a fresh load walk over the healthy .idx puts max_needle_end
+        // somewhere inside the .dat.
+        let mut idx_reader = File::open(&idx_path).unwrap();
+        let healthy_nm =
+            CompactNeedleMap::load_from_idx(&mut idx_reader, version).unwrap();
+        let healthy_end = healthy_nm.max_needle_end();
+        assert!(
+            healthy_end > 0 && healthy_end <= dat_size,
+            "healthy volume should have max_needle_end ({}) in [1, dat_size={}]",
+            healthy_end,
+            dat_size
+        );
+
+        // Inject a dangling entry by appending a bogus 16/17-byte record
+        // directly to the .idx, then reload. The load walk should observe
+        // max_needle_end past dat_size — which is exactly the signal
+        // volume.load uses to mark the volume read-only.
+        let bad_offset = Offset::from_actual_offset(dat_size + 4 * 1024 * 1024);
+        let mut idx_append = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&idx_path)
+            .unwrap();
+        idx::write_index_entry(&mut idx_append, NeedleId(9999), bad_offset, Size(1024))
+            .unwrap();
+        idx_append.sync_all().unwrap();
+
+        let mut idx_reread = File::open(&idx_path).unwrap();
+        let bad_nm = CompactNeedleMap::load_from_idx(&mut idx_reread, version).unwrap();
+        let bad_end = bad_nm.max_needle_end();
+        assert!(
+            bad_end > dat_size,
+            "after dangling-entry inject max_needle_end ({}) should exceed dat_size ({})",
+            bad_end,
+            dat_size
+        );
+    }
+
     #[test]
     fn test_compaction_revision_relookup() {
         // Verifies that re_lookup_needle_data_offset returns the correct data offset
@@ -3833,7 +4061,7 @@ mod tests {
             let vif = VifVolumeInfo {
                 files: vec![VifRemoteFile {
                     backend_type: "s3".to_string(),
-                    backend_id: "default".to_string(),
+                    backend_id: "vif_rw_test".to_string(),
                     key: "remote-key".to_string(),
                     offset: 0,
                     file_size: v.dat_file_size().unwrap(),
@@ -3848,6 +4076,27 @@ mod tests {
                 serde_json::to_string_pretty(&vif).unwrap(),
             )
             .unwrap();
+
+            // Register a dummy S3 backend so load_remote_dat_file can look it
+            // up.  This test never reads remote data, so a dead endpoint is fine.
+            // Use a test-specific backend_id to avoid racing with other tests
+            // that share the global registry.
+            let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint: "http://127.0.0.1:1".to_string(),
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            };
+            crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .write()
+                .unwrap()
+                .register(
+                    "s3.vif_rw_test".to_string(),
+                    crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+                );
 
             v.dat_file_size().unwrap()
         };
@@ -3892,6 +4141,11 @@ mod tests {
             .unwrap();
         assert!(deleted_size.0 > 0);
         assert_eq!(v.dat_file_size().unwrap(), dat_size_before_reload);
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_rw_test");
     }
 
     #[test]
@@ -4054,10 +4308,9 @@ mod tests {
         std::fs::remove_file(&dat_path).unwrap();
 
         let (endpoint, shutdown_tx) = spawn_fake_s3_server(dat_bytes.clone());
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .clear();
+        // Use a test-specific backend_id to avoid racing with other tests
+        // that share the global registry.  Never call clear() — only
+        // register/remove our own entries.
         let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
             access_key: "access".to_string(),
             secret_key: "secret".to_string(),
@@ -4072,11 +4325,7 @@ mod tests {
                 .write()
                 .unwrap();
             registry.register(
-                "s3.default".to_string(),
-                crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
-            );
-            registry.register(
-                "s3".to_string(),
+                "s3.remote_only_rw".to_string(),
                 crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
             );
         }
@@ -4084,7 +4333,7 @@ mod tests {
         let vif = VifVolumeInfo {
             files: vec![VifRemoteFile {
                 backend_type: "s3".to_string(),
-                backend_id: "default".to_string(),
+                backend_id: "remote_only_rw".to_string(),
                 key: "remote-key".to_string(),
                 offset: 0,
                 file_size: dat_bytes.len() as u64,
@@ -4141,6 +4390,10 @@ mod tests {
         assert_eq!(meta.data_size, 11);
 
         let _ = shutdown_tx.send(());
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.remote_only_rw");
     }
 
     /// Volume destroy removes .vif alongside the primary data files.

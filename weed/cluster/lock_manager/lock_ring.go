@@ -22,7 +22,7 @@ type LockRing struct {
 	onTakeSnapshot   func(snapshot []pb.ServerAddress)
 	cleanupWg        sync.WaitGroup
 	Ring             *HashRing // consistent hash ring
-	version          int64    // monotonic version from master, rejects stale updates
+	version          int64     // monotonic version from master, rejects stale updates
 }
 
 func NewLockRing(snapshotInterval time.Duration) *LockRing {

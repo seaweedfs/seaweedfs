@@ -20,10 +20,10 @@ var NoLockServerError = fmt.Errorf("no lock server found")
 type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool)
 
 type DistributedLockManager struct {
-	lockManager   *LockManager
-	LockRing      *LockRing
-	Host          pb.ServerAddress
-	ReplicateFn   ReplicateFunc // set by filer server after creation
+	lockManager *LockManager
+	LockRing    *LockRing
+	Host        pb.ServerAddress
+	ReplicateFn ReplicateFunc // set by filer server after creation
 }
 
 func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {

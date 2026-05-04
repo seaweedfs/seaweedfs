@@ -76,6 +76,16 @@ const (
 	AmzObjectLockRetainUntilDate = "X-Amz-Object-Lock-Retain-Until-Date"
 	AmzObjectLockLegalHold       = "X-Amz-Object-Lock-Legal-Hold"
 
+	// S3 checksum headers
+	AmzChecksumAlgorithm    = "X-Amz-Checksum-Algorithm"
+	AmzChecksumCRC32        = "X-Amz-Checksum-Crc32"
+	AmzChecksumCRC32C       = "X-Amz-Checksum-Crc32c"
+	AmzChecksumCRC64NVME    = "X-Amz-Checksum-Crc64nvme"
+	AmzChecksumSHA1         = "X-Amz-Checksum-Sha1"
+	AmzChecksumSHA256       = "X-Amz-Checksum-Sha256"
+	AmzTrailer              = "X-Amz-Trailer"
+	AmzSdkChecksumAlgorithm = "X-Amz-Sdk-Checksum-Algorithm"
+
 	// S3 conditional headers
 	IfMatch           = "If-Match"
 	IfNoneMatch       = "If-None-Match"
@@ -139,6 +149,17 @@ const (
 	SeaweedFSSSEKMSBaseIVHeader = "X-SeaweedFS-SSE-KMS-Base-IV" // Header for passing base IV for multipart SSE-KMS
 	SeaweedFSSSES3BaseIVHeader  = "X-SeaweedFS-SSE-S3-Base-IV"  // Header for passing base IV for multipart SSE-S3
 	SeaweedFSSSES3KeyDataHeader = "X-SeaweedFS-SSE-S3-Key-Data" // Header for passing key data for multipart SSE-S3
+
+	// SeaweedFSPrincipalHeader and SeaweedFSSessionTokenHeader carry the
+	// server-derived principal ARN and session token from the auth layer to
+	// downstream authorization (IAM policy evaluation, S3Tables IAM checks).
+	// These headers are trusted: callers of AuthSignatureOnly /
+	// authenticateRequestInternal must scrub any client-supplied values at the
+	// very start of authentication to prevent privilege escalation via header
+	// injection. Prefer these constants over literals so that any future scrub
+	// or consumer cannot drift by typo.
+	SeaweedFSPrincipalHeader    = "X-SeaweedFS-Principal"
+	SeaweedFSSessionTokenHeader = "X-SeaweedFS-Session-Token"
 )
 
 // Non-Standard S3 HTTP request constants

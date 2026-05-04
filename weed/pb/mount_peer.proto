@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package mount_peer_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/mount_peer_pb";
+
+//////////////////////////////////////////////////
+// Peer chunk sharing — mount-to-mount chunk directory
+//
+// Each weed mount exposes this service on its -peer.listen address.
+// Ownership of fid -> holders tracking is sharded across the mount fleet
+// via rendezvous (HRW) hashing on the registered mount list. See
+// design-weed-mount-peer-chunk-sharing.md for protocol details.
+//////////////////////////////////////////////////
+
+service MountPeer {
+
+    // ChunkAnnounce: the caller asserts it currently holds the listed fids in
+    // its local chunk cache and is willing to serve them to peers. The
+    // receiver accepts only fids for which it is the HRW-assigned owner on
+    // its current seed view; others are returned in rejected_file_ids.
+    rpc ChunkAnnounce (ChunkAnnounceRequest) returns (ChunkAnnounceResponse) {
+    }
+
+    // ChunkLookup: asks the receiver for known holders of each requested fid.
+    // The receiver responds only for fids it owns; others are listed in
+    // not_owner_file_ids so the caller can retry against the correct owner
+    // after refreshing its own seed view.
+    rpc ChunkLookup (ChunkLookupRequest) returns (ChunkLookupResponse) {
+    }
+
+    // FetchChunk: server-streams the bytes of a cached chunk to a peer.
+    // Streaming avoids the default gRPC 4 MiB message cap for typical
+    // 16 MiB chunks and lets the receiver assemble into a preallocated
+    // buffer. Not-cached / cache-miss returns a gRPC NOT_FOUND status.
+    // The fetcher re-verifies MD5 against expected_etag end-to-end after
+    // the stream completes.
+    rpc FetchChunk (FetchChunkRequest) returns (stream FetchChunkResponse) {
+    }
+}
+
+message ChunkAnnounceRequest {
+    repeated string file_ids = 1;
+    string peer_addr = 2;
+    string rack = 3;
+    int32 ttl_seconds = 4;
+    string data_center = 5;
+}
+
+message ChunkAnnounceResponse {
+    repeated string rejected_file_ids = 1; // receiver is not the owner of these fids
+}
+
+message ChunkLookupRequest {
+    repeated string file_ids = 1;
+}
+
+message ChunkLookupResponse {
+    map<string, PeerSet> peers_by_fid = 1;
+    repeated string not_owner_file_ids = 2;
+}
+
+message PeerSet {
+    repeated PeerInfo peers = 1;
+}
+
+message PeerInfo {
+    string peer_addr = 1;
+    string rack = 2;
+    string data_center = 3;
+}
+
+message FetchChunkRequest {
+    string file_id = 1;
+    string expected_etag = 2;  // caller's expected MD5 over the FULL chunk.
+                                // Only meaningful when offset=0 and length=0
+                                // (a whole-chunk fetch); partial reads can't
+                                // be verified against a whole-chunk MD5.
+                                // Fetcher re-verifies end-to-end.
+    uint64 expected_size = 3;  // filer-reported chunk byte count; server sizes
+                                // its cache-read buffer to exactly this so a
+                                // sub-max-part-size chunk doesn't trigger the
+                                // cache wrapper's all-or-nothing miss path.
+    uint64 offset = 4;         // optional: byte offset within the chunk to
+                                // start reading from. 0 (default) means a
+                                // whole-chunk transfer starting at byte zero.
+    uint64 length = 5;         // optional: number of bytes to return from
+                                // offset. 0 (default) means "until end of
+                                // chunk". Range is capped server-side by
+                                // maxFetchChunkBytes regardless.
+}
+
+message FetchChunkResponse {
+    bytes data = 1;  // next frame of chunk bytes; concatenate across stream
+}

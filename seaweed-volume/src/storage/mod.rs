@@ -4,6 +4,7 @@ pub mod idx;
 pub mod needle;
 pub mod needle_map;
 pub mod store;
+pub mod store_ec_reconcile;
 pub mod super_block;
 pub mod types;
 pub mod volume;

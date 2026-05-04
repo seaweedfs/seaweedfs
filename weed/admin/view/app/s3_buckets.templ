@@ -136,12 +136,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             </a>
                                         </th>
                                         <th>
-                                            <a href="#" onclick="sortTable('objects')" class="text-decoration-none text-dark">
-                                                Objects
-                                                @getSortIcon("objects", data.SortBy, data.SortOrder)
-                                            </a>
-                                        </th>
-                                        <th>
                                             <a href="#" onclick="sortTable('logical_size')" class="text-decoration-none text-dark">
                                                 Logical Size
                                                 @getSortIcon("logical_size", data.SortBy, data.SortOrder)
@@ -163,7 +157,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     for _, bucket := range data.Buckets {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
+                                                <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                    class="text-decoration-none">
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
@@ -179,7 +173,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
-                                            <td>{fmt.Sprintf("%d", bucket.ObjectCount)}</td>
                                             <td>
                                                 <div>{formatBytes(bucket.LogicalSize)}</div>
                                                 if bucket.PhysicalSize > 0 && bucket.LogicalSize > 0 && bucket.PhysicalSize > bucket.LogicalSize {
@@ -236,7 +229,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
+                                                    <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                        class="btn btn-outline-success btn-sm"
                                                        title="Browse Files">
                                                         <i class="fas fa-folder-open"></i>
@@ -719,7 +712,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             // Only fetch if not already populated
             if (ownerSelect.options.length <= 1) {
                 try {
-                    const response = await fetch('/api/users');
+                    const response = await fetch(basePath('/api/users'));
                     const data = await response.json();
                     const users = data.users || [];
                     
@@ -763,7 +756,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 return;
             }
 
-            fetch('/api/s3/buckets', {
+            fetch(basePath('/api/s3/buckets'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -853,7 +846,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 quota_enabled: enabled
             };
 
-            fetch(`/api/s3/buckets/${bucketName}/quota`, {
+            fetch(basePath(`/api/s3/buckets/${bucketName}/quota`), {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -904,7 +897,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 // Fetch users if not cached
                 try {
                     if (!cachedUsers) {
-                        const response = await fetch('/api/users');
+                        const response = await fetch(basePath('/api/users'));
                         const data = await response.json();
                         cachedUsers = data.users || [];
                     }
@@ -948,7 +941,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             const owner = document.getElementById('bucketOwnerSelect').value;
             const data = { owner: owner };
 
-            fetch(`/api/s3/buckets/${bucketName}/owner`, {
+            fetch(basePath(`/api/s3/buckets/${bucketName}/owner`), {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -995,7 +988,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 detailsModalInstance.show();
                 
                 // Fetch bucket details
-                fetch('/api/s3/buckets/' + bucketName)
+                fetch(basePath('/api/s3/buckets/' + bucketName))
                     .then(response => response.json())
                     .then(data => {
                         if (data.error) {
@@ -1024,7 +1017,7 @@ templ S3Buckets(data dash.S3BucketsData) {
         const bucketName = document.getElementById('deleteBucketModal').dataset.bucketName;
         if (!bucketName) return;
 
-        fetch(`/api/s3/buckets/${bucketName}`, {
+        fetch(basePath(`/api/s3/buckets/${bucketName}`), {
             method: 'DELETE'
         })
         .then(response => response.json())
@@ -1114,7 +1107,6 @@ function displayBucketDetails(data) {
         '<tr><td><strong>Last Modified:</strong></td><td>' + formatDate(bucket.last_modified) + '<\/td><\/tr>',
         '<tr><td><strong>Logical Size:</strong></td><td>' + formatBytes(bucket.logical_size) + '<\/td><\/tr>',
         '<tr><td><strong>Physical Size:</strong></td><td>' + formatBytes(bucket.physical_size) + usageHtml + '<\/td><\/tr>',
-        '<tr><td><strong>Object Count:</strong></td><td>' + bucket.object_count + '<\/td><\/tr>',
         '<\/table>',
         '<\/div>',
         '<div class="col-md-6">',
@@ -1180,7 +1172,7 @@ function displayBucketDetails(data) {
         }
 
         // Fetch all buckets from the API (not just the current page)
-        fetch('/api/s3/buckets')
+        fetch(basePath('/api/s3/buckets'))
             .then(response => response.json())
             .then(data => {
                 if (data.error) {
@@ -1190,13 +1182,12 @@ function displayBucketDetails(data) {
 
                 const buckets = data.buckets || [];
                 const csvContent = "data:text/csv;charset=utf-8," +
-                    "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
+                    "Name,Owner,Logical Size,Physical Size,Created,Quota,Versioning,Object Lock\n" +
                     buckets.map(b => [
                         escapeCsvField(b.name),
                         escapeCsvField(b.owner),
                         escapeCsvField(formatBytes(b.logical_size)),
                         escapeCsvField(formatBytes(b.physical_size)),
-                        escapeCsvField(b.object_count),
                         escapeCsvField(b.created_at),
                         escapeCsvField(b.quota_enabled ? formatBytes(b.quota) : 'No quota'),
                         escapeCsvField(b.versioning_status || 'Not configured'),

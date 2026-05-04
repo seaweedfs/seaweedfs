@@ -47,3 +47,28 @@ func grpcErrorToFuseStatus(err error) fuse.Status {
 
 	return fuse.EIO
 }
+
+// isRetryableFilerError reports whether a filer RPC error looks transient
+// enough to retry. It takes a conservative whitelist approach: only errors
+// that clearly describe a permanent application-level failure
+// (NotFound/AlreadyExists/InvalidArgument/PermissionDenied/Unauthenticated/
+// FailedPrecondition) short-circuit the retry loop. Everything else —
+// transport errors, Canceled/Unavailable/ResourceExhausted, or errors with no
+// gRPC status — is treated as potentially transient and retried.
+func isRetryableFilerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if s, ok := status.FromError(err); ok {
+		switch s.Code() {
+		case codes.NotFound,
+			codes.AlreadyExists,
+			codes.InvalidArgument,
+			codes.PermissionDenied,
+			codes.Unauthenticated,
+			codes.FailedPrecondition:
+			return false
+		}
+	}
+	return true
+}

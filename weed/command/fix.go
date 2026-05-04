@@ -195,7 +195,9 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 		if *fixIgnoreError {
 			glog.Error(err)
 		} else {
-			os.Remove(indexFileName)
+			if err := os.Remove(indexFileName); err != nil {
+				glog.Errorf("failed to cleanup file %s:%v", indexFileName, err)
+			}
 			glog.Fatal(err)
 		}
 	}

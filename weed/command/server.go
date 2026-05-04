@@ -102,7 +102,7 @@ func init() {
 	masterOptions.garbageThreshold = cmdServer.Flag.Float64("master.garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterOptions.metricsAddress = cmdServer.Flag.String("master.metrics.address", "", "Prometheus gateway address")
 	masterOptions.metricsIntervalSec = cmdServer.Flag.Int("master.metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
-	masterOptions.raftResumeState = cmdServer.Flag.Bool("master.resumeState", false, "resume previous state on start master server")
+	masterOptions.raftResumeState = cmdServer.Flag.Bool("master.resumeState", true, "resume previous state on start master server")
 	masterOptions.raftHashicorp = cmdServer.Flag.Bool("master.raftHashicorp", false, "use hashicorp raft")
 	masterOptions.raftBootstrap = cmdServer.Flag.Bool("master.raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	masterOptions.heartbeatInterval = cmdServer.Flag.Duration("master.heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
@@ -180,6 +180,8 @@ func init() {
 	s3Options.iamReadOnly = cmdServer.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
 	s3Options.cipher = cmdServer.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
 	s3Options.externalUrl = cmdServer.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	s3Options.defaultFileMode = cmdServer.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
+	s3Options.cacheSizeMB = cmdServer.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
 	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
@@ -222,6 +224,13 @@ func runServer(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
+	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)
+	*serverIamConfig = util.ResolvePath(*serverIamConfig)
+	*masterOptions.metaFolder = util.ResolvePath(*masterOptions.metaFolder)
+	s3Options.resolvePaths()
+	webdavOptions.resolvePaths()
+	sftpOptions.resolvePaths()
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {
@@ -316,6 +325,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*serverMetricsHttpIp, *serverMetricsHttpPort)
 
+	*volumeDataFolders = util.ResolveCommaSeparatedPaths(*volumeDataFolders)
 	folders := strings.Split(*volumeDataFolders, ",")
 
 	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
@@ -325,7 +335,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterOptions.metaFolder == "" {
 		*masterOptions.metaFolder = folders[0]
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*masterOptions.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*masterOptions.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder
@@ -348,7 +358,7 @@ func runServer(cmd *Command, args []string) bool {
 			if *svc.portGrpc == 0 {
 				*svc.portGrpc = 10000 + *svc.port
 			}
-			pb.RegisterLocalGrpcSocket(*svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
+			pb.RegisterLocalGrpcSocket(*serverIp, *svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
 		}
 	}
 
@@ -371,6 +381,8 @@ func runServer(cmd *Command, args []string) bool {
 		} else if *serverIamConfig != "" && *s3Options.iamConfig != *serverIamConfig {
 			glog.V(0).Infof("both -s3.iam.config(%s) and -iam.config(%s) provided; using -s3.iam.config", *s3Options.iamConfig, *serverIamConfig)
 		}
+		// Share the S3 static identity config file with the filer
+		filerOptions.s3ConfigFile = s3Options.config
 		go func() {
 			time.Sleep(2 * time.Second)
 			s3Options.localFilerSocket = filerOptions.localSocket

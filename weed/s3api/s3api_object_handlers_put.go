@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
@@ -71,6 +72,9 @@ type SSEResponseMetadata struct {
 	SSEType          string
 	KMSKeyID         string
 	BucketKeyEnabled bool
+	// Checksum fields for S3 additional checksum support
+	ChecksumHeaderName string // e.g. "X-Amz-Checksum-Sha256"
+	ChecksumValue      string // base64-encoded checksum value
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +362,25 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	plaintextHash := md5.New()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
 
+	// Parse the request's query string once. AWS SDK presigners hoist signed
+	// headers such as x-amz-sdk-checksum-algorithm into the URL's query string,
+	// so the checksum detection and (later) expected-checksum verification below
+	// both need to consult the query in addition to headers.
+	requestQuery := parseRequestQuery(r)
+
+	// Detect and set up additional checksum computation (S3 checksum algorithm support)
+	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithmQ(r, requestQuery)
+	if checksumErrCode != s3err.ErrNone {
+		return "", checksumErrCode, SSEResponseMetadata{}
+	}
+	var checksumHash hash.Hash
+	if checksumAlgo != ChecksumAlgorithmNone {
+		checksumHash = getCheckSumWriter(checksumAlgo)
+		if checksumHash != nil {
+			dataReader = io.TeeReader(dataReader, checksumHash)
+		}
+	}
+
 	// Handle all SSE encryption types in a unified manner
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
@@ -431,16 +454,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Create assign function for chunked upload
-	assignFunc := func(ctx context.Context, count int) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
 		var assignResult *filer_pb.AssignVolumeResponse
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
-				Count:       int32(count),
-				Replication: "",
-				Collection:  collection,
-				DiskType:    "",
-				DataCenter:  s3a.option.DataCenter,
-				Path:        filePath,
+				Count:            int32(count),
+				Replication:      "",
+				Collection:       collection,
+				DiskType:         "",
+				DataCenter:       s3a.option.DataCenter,
+				Path:             filePath,
+				ExpectedDataSize: expectedDataSize,
 			})
 			if err != nil {
 				return fmt.Errorf("assign volume: %w", err)
@@ -603,13 +627,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Create entry
+	fileMode := s3a.resolveFileMode(r)
 	entry := &filer_pb.Entry{
 		Name:        path.Base(filePath),
 		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
 			Crtime:   now.Unix(),
 			Mtime:    now.Unix(),
-			FileMode: 0660,
+			FileMode: fileMode,
 			Uid:      0,
 			Gid:      0,
 			Mime:     mimeType,
@@ -632,6 +657,24 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
 	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+	// Store additional checksum if one was computed
+	checksumBase64 := ""
+	if checksumHash != nil && checksumHeaderName != "" {
+		checksumBase64 = base64.StdEncoding.EncodeToString(checksumHash.Sum(nil))
+		// Verify against client-provided checksum if present in request headers
+		// (non-chunked uploads send the value directly; chunked uploads validate in the reader)
+		if expectedChecksum := lookupHeaderOrQuery(r, requestQuery, checksumHeaderName); expectedChecksum != "" {
+			if expectedChecksum != checksumBase64 {
+				glog.Warningf("putToFiler: checksum mismatch for %s: expected %s, got %s", checksumHeaderName, expectedChecksum, checksumBase64)
+				s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+				return "", s3err.ErrBadDigest, SSEResponseMetadata{}
+			}
+		}
+		entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(checksumHeaderName)
+		entry.Extended[s3_constants.ExtChecksumValue] = []byte(checksumBase64)
+		glog.V(3).Infof("putToFiler: stored checksum %s=%s for %s", checksumHeaderName, checksumBase64, filePath)
+	}
 
 	// Set object owner according to bucket ownership settings.
 	s3a.setObjectOwnerFromRequest(r, bucket, entry)
@@ -801,7 +844,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Build SSE response metadata with encryption details
 	responseMetadata := SSEResponseMetadata{
-		SSEType: sseType,
+		SSEType:            sseType,
+		ChecksumHeaderName: checksumHeaderName,
+		ChecksumValue:      checksumBase64,
 	}
 
 	// For SSE-KMS, include key ID and bucket-key-enabled flag from stored metadata
@@ -813,6 +858,168 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	return etag, s3err.ErrNone, responseMetadata
+}
+
+// checksumAlgorithmMapping maps algorithm name strings to their enum and header name.
+var checksumAlgorithmMapping = map[string]struct {
+	alg  ChecksumAlgorithm
+	name string
+}{
+	"CRC32":     {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"CRC32C":    {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"CRC64NVME": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	"SHA1":      {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"SHA256":    {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// trailerToChecksumAlgorithm maps trailer header names to their algorithm and canonical header name.
+var trailerToChecksumAlgorithm = map[string]struct {
+	alg  ChecksumAlgorithm
+	name string
+}{
+	"x-amz-checksum-crc32":     {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"x-amz-checksum-crc32c":    {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"x-amz-checksum-crc64nvme": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	"x-amz-checksum-sha1":      {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"x-amz-checksum-sha256":    {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// checksumHeaders is the ordered list of individual checksum headers to check.
+// Using a slice ensures deterministic selection order.
+var checksumHeaders = []struct {
+	header string
+	alg    ChecksumAlgorithm
+	name   string
+}{
+	{s3_constants.AmzChecksumCRC32, ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	{s3_constants.AmzChecksumCRC32C, ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	{s3_constants.AmzChecksumCRC64NVME, ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	{s3_constants.AmzChecksumSHA1, ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// lookupHeaderOrQuery returns the value of an x-amz-* parameter, checking the
+// request headers first and falling back to the pre-parsed query values. AWS
+// SDK presigners hoist headers such as x-amz-sdk-checksum-algorithm into the
+// signed URL's query string, so the server must accept either location.
+// Query parameter lookup is case-insensitive to tolerate SDK/canonicalization
+// variations.
+func lookupHeaderOrQuery(r *http.Request, query url.Values, key string) string {
+	if v := r.Header.Get(key); v != "" {
+		return v
+	}
+	if len(query) == 0 {
+		return ""
+	}
+	if v := query.Get(key); v != "" {
+		return v
+	}
+	for k, vs := range query {
+		if len(vs) == 0 || vs[0] == "" {
+			continue
+		}
+		if strings.EqualFold(k, key) {
+			return vs[0]
+		}
+	}
+	return ""
+}
+
+// parseRequestQuery returns the parsed query for a request, or nil if there
+// is no raw query to parse. Callers that perform multiple header-or-query
+// lookups on the same request should call this once and thread the result
+// into lookupHeaderOrQuery / detectRequestedChecksumAlgorithmQ to avoid
+// re-parsing the query on every lookup.
+func parseRequestQuery(r *http.Request) url.Values {
+	if r == nil || r.URL == nil || r.URL.RawQuery == "" {
+		return nil
+	}
+	return r.URL.Query()
+}
+
+// detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
+// It checks the x-amz-sdk-checksum-algorithm header, x-amz-checksum-algorithm header,
+// x-amz-trailer header (including comma-separated values), and individual x-amz-checksum-*
+// headers. For presigned URLs, the same parameters are accepted from the query string
+// because AWS SDK presigners hoist those headers into the query. Returns the algorithm
+// enum, the canonical HTTP header name, and an error code if an unsupported algorithm is
+// specified.
+//
+// This wrapper parses the query string on the caller's behalf. Hot paths that
+// also need to inspect the query for other parameters (see putToFiler) should
+// call detectRequestedChecksumAlgorithmQ with a pre-parsed url.Values.
+func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string, s3err.ErrorCode) {
+	return detectRequestedChecksumAlgorithmQ(r, parseRequestQuery(r))
+}
+
+// detectRequestedChecksumAlgorithmQ is the pre-parsed-query variant of
+// detectRequestedChecksumAlgorithm. Pass nil for `query` when the caller has
+// no parsed query to reuse.
+func detectRequestedChecksumAlgorithmQ(r *http.Request, query url.Values) (ChecksumAlgorithm, string, s3err.ErrorCode) {
+	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs; hoisted to query for presigned URLs)
+	if algo := lookupHeaderOrQuery(r, query, s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
+		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
+			return m.alg, m.name, s3err.ErrNone
+		}
+		glog.Warningf("unsupported checksum algorithm in %s: %q", s3_constants.AmzSdkChecksumAlgorithm, algo)
+		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
+	}
+
+	// Check x-amz-checksum-algorithm header (also accept from query for presigned URLs)
+	if algo := lookupHeaderOrQuery(r, query, s3_constants.AmzChecksumAlgorithm); algo != "" {
+		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
+			return m.alg, m.name, s3err.ErrNone
+		}
+		glog.Warningf("unsupported checksum algorithm in %s: %q", s3_constants.AmzChecksumAlgorithm, algo)
+		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
+	}
+
+	// Check x-amz-trailer header (used by chunked uploads, may be comma-separated)
+	if trailer := r.Header.Get(s3_constants.AmzTrailer); trailer != "" {
+		for _, part := range strings.Split(trailer, ",") {
+			part = strings.TrimSpace(strings.ToLower(part))
+			if part == "" {
+				continue
+			}
+			if m, ok := trailerToChecksumAlgorithm[part]; ok {
+				return m.alg, m.name, s3err.ErrNone
+			}
+			// Non-checksum trailers (e.g. x-amz-server-side-encryption) are fine — skip them
+		}
+	}
+
+	// Check individual checksum headers (non-chunked uploads send the value directly;
+	// presigned URLs may hoist them to the query string)
+	// Uses ordered slice for deterministic selection
+	for _, entry := range checksumHeaders {
+		if lookupHeaderOrQuery(r, query, entry.header) != "" {
+			return entry.alg, entry.name, s3err.ErrNone
+		}
+	}
+
+	return ChecksumAlgorithmNone, "", s3err.ErrNone
+}
+
+const defaultFileMode = uint32(0660)
+
+// resolveFileMode determines the file permission mode for an S3 upload.
+// Priority: per-object X-Amz-Acl header > server default > defaultFileMode.
+func (s3a *S3ApiServer) resolveFileMode(r *http.Request) uint32 {
+	if cannedAcl := r.Header.Get(s3_constants.AmzCannedAcl); cannedAcl != "" {
+		switch cannedAcl {
+		case s3_constants.CannedAclPublicRead, s3_constants.CannedAclAuthenticatedRead,
+			s3_constants.CannedAclBucketOwnerRead:
+			return 0644
+		case s3_constants.CannedAclPublicReadWrite:
+			return 0666
+		case s3_constants.CannedAclPrivate, s3_constants.CannedAclBucketOwnerFullControl:
+			return defaultFileMode
+		}
+	}
+	if s3a.option.DefaultFileMode != 0 {
+		return s3a.option.DefaultFileMode
+	}
+	return defaultFileMode
 }
 
 func setEtag(w http.ResponseWriter, etag string) {
@@ -859,6 +1066,11 @@ func (s3a *S3ApiServer) setSSEResponseHeaders(w http.ResponseWriter, r *http.Req
 		} else if bucketKeyEnabled := r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled == "true" {
 			w.Header().Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
 		}
+	}
+
+	// Set checksum response header if a checksum was computed
+	if sseMetadata.ChecksumHeaderName != "" && sseMetadata.ChecksumValue != "" {
+		w.Header().Set(sseMetadata.ChecksumHeaderName, sseMetadata.ChecksumValue)
 	}
 }
 
@@ -1836,28 +2048,6 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	return s3err.ErrNone
 }
 
-// checkConditionalHeadersWithGetter is a testable method that accepts a simple EntryGetter
-// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
-func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
-	headers, errCode := parseConditionalHeaders(r)
-	if errCode != s3err.ErrNone {
-		return errCode
-	}
-	// Get object entry for conditional checks.
-	bucketDir := "/buckets/" + bucket
-	entry, entryErr := getter.getEntry(bucketDir, object)
-	if entryErr != nil {
-		if errors.Is(entryErr, filer_pb.ErrNotFound) {
-			entry = nil
-		} else {
-			glog.Errorf("checkConditionalHeadersWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
-			return s3err.ErrInternalError
-		}
-	}
-
-	return s3a.validateConditionalHeaders(r, headers, entry, bucket, object)
-}
-
 // checkConditionalHeaders is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object string) s3err.ErrorCode {
 	// Fast path: if no conditional headers are present, skip object resolution entirely.
@@ -1977,28 +2167,6 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 
 	// Return success with the fetched entry for reuse
 	return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: entry}
-}
-
-// checkConditionalHeadersForReadsWithGetter is a testable method for read operations
-// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
-func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) ConditionalHeaderResult {
-	headers, errCode := parseConditionalHeaders(r)
-	if errCode != s3err.ErrNone {
-		return ConditionalHeaderResult{ErrorCode: errCode}
-	}
-	// Get object entry for conditional checks.
-	bucketDir := "/buckets/" + bucket
-	entry, entryErr := getter.getEntry(bucketDir, object)
-	if entryErr != nil {
-		if errors.Is(entryErr, filer_pb.ErrNotFound) {
-			entry = nil
-		} else {
-			glog.Errorf("checkConditionalHeadersForReadsWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
-			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError}
-		}
-	}
-
-	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
 }
 
 // checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter

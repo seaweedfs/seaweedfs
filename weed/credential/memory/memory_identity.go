@@ -176,6 +176,46 @@ func (store *MemoryStore) DeleteUser(ctx context.Context, username string) error
 
 	// Remove user
 	delete(store.users, username)
+	delete(store.inlinePolicies, username)
+
+	return nil
+}
+
+// RenameUser implements credential.UserRenamer for the memory store.
+// Renames the user and re-points access-key and inline-policy indexes
+// to the new name. The whole operation is performed under the store
+// lock so it is atomic with respect to concurrent reads.
+func (store *MemoryStore) RenameUser(ctx context.Context, oldName, newName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+	if oldName == newName {
+		return nil
+	}
+
+	user, exists := store.users[oldName]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+	if _, clash := store.users[newName]; clash {
+		return credential.ErrUserAlreadyExists
+	}
+
+	user.Name = newName
+	store.users[newName] = user
+	delete(store.users, oldName)
+
+	for _, cred := range user.Credentials {
+		store.accessKeys[cred.AccessKey] = newName
+	}
+
+	if policies, ok := store.inlinePolicies[oldName]; ok {
+		store.inlinePolicies[newName] = policies
+		delete(store.inlinePolicies, oldName)
+	}
 
 	return nil
 }

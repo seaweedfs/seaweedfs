@@ -16,15 +16,6 @@ type ItemList struct {
 	prefix    string
 }
 
-func newItemList(client redis.UniversalClient, prefix string, store skiplist.ListStore, batchSize int) *ItemList {
-	return &ItemList{
-		skipList:  skiplist.New(store),
-		batchSize: batchSize,
-		client:    client,
-		prefix:    prefix,
-	}
-}
-
 /*
 Be reluctant to create new nodes. Try to fit into either previous node or next node.
 Prefer to add to previous node.

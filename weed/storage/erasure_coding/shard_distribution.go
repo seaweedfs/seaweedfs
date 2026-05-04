@@ -110,6 +110,9 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 	log := ensureLogger(logger)
 
 	shardAssignment := make(map[string][]string)
+	// node → shardType → planner-assigned diskID. Metadata files (ecx/ecj/vif)
+	// inherit the first data shard's disk so they land next to the shards.
+	shardDisks := make(map[string]map[string]uint32)
 
 	for _, target := range targets {
 		if len(target.ShardIds) == 0 {
@@ -131,6 +134,15 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 			}
 			if _, hasVif := shardFiles["vif"]; hasVif {
 				assignedShards = append(assignedShards, "vif")
+			}
+		}
+
+		if shardDisks[target.Node] == nil {
+			shardDisks[target.Node] = make(map[string]uint32)
+		}
+		for _, shardType := range assignedShards {
+			if _, already := shardDisks[target.Node][shardType]; !already {
+				shardDisks[target.Node][shardType] = target.DiskId
 			}
 		}
 
@@ -183,7 +195,11 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 				}).Info("Starting shard file transfer")
 			}
 
-			if err := sendShardFileToDestination(volumeID, collection, dialOption, destNode, filePath, shardType); err != nil {
+			diskID := uint32(0)
+			if byShard, ok := shardDisks[destNode]; ok {
+				diskID = byShard[shardType]
+			}
+			if err := sendShardFileToDestination(volumeID, collection, dialOption, destNode, diskID, filePath, shardType); err != nil {
 				return nil, fmt.Errorf("failed to send %s to %s: %w", shardType, destNode, err)
 			}
 
@@ -277,8 +293,8 @@ func MountEcShards(volumeID uint32, collection string, shardAssignment map[strin
 	return nil
 }
 
-// sendShardFileToDestination sends a single shard file to a destination server using ReceiveFile API.
-func sendShardFileToDestination(volumeID uint32, collection string, dialOption grpc.DialOption, destServer, filePath, shardType string) error {
+// diskID=0 leaves disk placement to the server's auto-select.
+func sendShardFileToDestination(volumeID uint32, collection string, dialOption grpc.DialOption, destServer string, diskID uint32, filePath, shardType string) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(destServer), dialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			file, err := os.Open(filePath)
@@ -324,6 +340,7 @@ func sendShardFileToDestination(volumeID uint32, collection string, dialOption g
 						IsEcVolume: true,
 						ShardId:    shardId,
 						FileSize:   uint64(fileInfo.Size()),
+						DiskId:     diskID,
 					},
 				},
 			})

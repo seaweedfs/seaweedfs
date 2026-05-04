@@ -95,16 +95,6 @@ func (r *Plugin) laneSchedulerLoop(ls *schedulerLaneState) {
 	}
 }
 
-// schedulerLoop is kept for backward compatibility; it delegates to
-// laneSchedulerLoop with the default lane. New code should not call this.
-func (r *Plugin) schedulerLoop() {
-	ls := r.lanes[LaneDefault]
-	if ls == nil {
-		ls = newLaneState(LaneDefault)
-	}
-	r.laneSchedulerLoop(ls)
-}
-
 // runLaneSchedulerIteration runs one scheduling pass for a single lane,
 // processing only the job types assigned to that lane.
 //
@@ -227,82 +217,6 @@ func (r *Plugin) runLaneSchedulerIterationConcurrent(ls *schedulerLaneState, job
 	r.pruneDetectorLeases(active)
 	r.setLaneLoopState(ls, "", "idle")
 	return hadJobs.Load()
-}
-
-// runSchedulerIteration is kept for backward compatibility. It runs a
-// single iteration across ALL job types (equivalent to the old single-loop
-// behavior). It is only used by the legacy schedulerLoop() fallback.
-func (r *Plugin) runSchedulerIteration() bool {
-	ls := r.lanes[LaneDefault]
-	if ls == nil {
-		ls = newLaneState(LaneDefault)
-	}
-	// For backward compat, the old function processes all job types.
-	r.expireStaleJobs(time.Now().UTC())
-
-	jobTypes := r.registry.DetectableJobTypes()
-	if len(jobTypes) == 0 {
-		r.setSchedulerLoopState("", "idle")
-		return false
-	}
-
-	r.setSchedulerLoopState("", "waiting_for_lock")
-	releaseLock, err := r.acquireAdminLock("plugin scheduler iteration")
-	if err != nil {
-		glog.Warningf("Plugin scheduler failed to acquire lock: %v", err)
-		r.setSchedulerLoopState("", "idle")
-		return false
-	}
-	if releaseLock != nil {
-		defer releaseLock()
-	}
-
-	active := make(map[string]struct{}, len(jobTypes))
-	hadJobs := false
-
-	for _, jobType := range jobTypes {
-		active[jobType] = struct{}{}
-
-		policy, enabled, err := r.loadSchedulerPolicy(jobType)
-		if err != nil {
-			glog.Warningf("Plugin scheduler failed to load policy for %s: %v", jobType, err)
-			continue
-		}
-		if !enabled {
-			r.clearSchedulerJobType(jobType)
-			continue
-		}
-		initialDelay := time.Duration(0)
-		if runInfo := r.snapshotSchedulerRun(jobType); runInfo.lastRunStartedAt.IsZero() {
-			initialDelay = 5 * time.Second
-		}
-		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
-			continue
-		}
-
-		detected := r.runJobTypeIteration(jobType, policy)
-		if detected {
-			hadJobs = true
-		}
-	}
-
-	r.pruneSchedulerState(active)
-	r.pruneDetectorLeases(active)
-	r.setSchedulerLoopState("", "idle")
-	return hadJobs
-}
-
-// wakeLane wakes the scheduler goroutine for a specific lane.
-func (r *Plugin) wakeLane(lane SchedulerLane) {
-	if r == nil {
-		return
-	}
-	if ls, ok := r.lanes[lane]; ok {
-		select {
-		case ls.wakeCh <- struct{}{}:
-		default:
-		}
-	}
 }
 
 // wakeAllLanes wakes all lane scheduler goroutines.
@@ -554,7 +468,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 	policy := schedulerPolicy{
 		DetectionInterval:      durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
 		DetectionTimeout:       durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
-		ExecutionTimeout:       defaultScheduledExecutionTimeout,
+		ExecutionTimeout:       durationFromSeconds(adminRuntime.ExecutionTimeoutSeconds, defaultScheduledExecutionTimeout),
 		JobTypeMaxRuntime:      durationFromSeconds(adminRuntime.JobTypeMaxRuntimeSeconds, defaultScheduledJobTypeMaxRuntime),
 		RetryBackoff:           durationFromSeconds(adminRuntime.RetryBackoffSeconds, defaultScheduledRetryBackoff),
 		MaxResults:             adminRuntime.MaxJobsPerDetection,
@@ -589,12 +503,9 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		policy.JobTypeMaxRuntime = defaultScheduledJobTypeMaxRuntime
 	}
 
-	// Plugin protocol currently has only detection timeout in admin settings.
-	execTimeout := time.Duration(adminRuntime.DetectionTimeoutSeconds*2) * time.Second
-	if execTimeout < defaultScheduledExecutionTimeout {
-		execTimeout = defaultScheduledExecutionTimeout
+	if policy.ExecutionTimeout < defaultScheduledExecutionTimeout {
+		policy.ExecutionTimeout = defaultScheduledExecutionTimeout
 	}
-	policy.ExecutionTimeout = execTimeout
 
 	return policy, true, nil
 }
@@ -696,6 +607,37 @@ func deriveSchedulerAdminRuntime(
 ) *plugin_pb.AdminRuntimeConfig {
 	if cfg != nil && cfg.AdminRuntime != nil {
 		adminConfig := *cfg.AdminRuntime
+		// Overlay descriptor defaults for any zero numeric fields. Persisted
+		// configs from older versions have no execution_timeout_seconds, and
+		// without this overlay the scheduler would fall back to the 90s
+		// default instead of the handler's declared baseline.
+		if descriptor != nil && descriptor.AdminRuntimeDefaults != nil {
+			defaults := descriptor.AdminRuntimeDefaults
+			if adminConfig.DetectionIntervalSeconds <= 0 {
+				adminConfig.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+			}
+			if adminConfig.DetectionTimeoutSeconds <= 0 {
+				adminConfig.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds
+			}
+			if adminConfig.MaxJobsPerDetection <= 0 {
+				adminConfig.MaxJobsPerDetection = defaults.MaxJobsPerDetection
+			}
+			if adminConfig.GlobalExecutionConcurrency <= 0 {
+				adminConfig.GlobalExecutionConcurrency = defaults.GlobalExecutionConcurrency
+			}
+			if adminConfig.PerWorkerExecutionConcurrency <= 0 {
+				adminConfig.PerWorkerExecutionConcurrency = defaults.PerWorkerExecutionConcurrency
+			}
+			if adminConfig.RetryBackoffSeconds <= 0 {
+				adminConfig.RetryBackoffSeconds = defaults.RetryBackoffSeconds
+			}
+			if adminConfig.JobTypeMaxRuntimeSeconds <= 0 {
+				adminConfig.JobTypeMaxRuntimeSeconds = defaults.JobTypeMaxRuntimeSeconds
+			}
+			if adminConfig.ExecutionTimeoutSeconds <= 0 {
+				adminConfig.ExecutionTimeoutSeconds = defaults.ExecutionTimeoutSeconds
+			}
+		}
 		return &adminConfig
 	}
 
@@ -714,6 +656,7 @@ func deriveSchedulerAdminRuntime(
 		RetryLimit:                    defaults.RetryLimit,
 		RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
 		JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
+		ExecutionTimeoutSeconds:       defaults.ExecutionTimeoutSeconds,
 	}
 }
 

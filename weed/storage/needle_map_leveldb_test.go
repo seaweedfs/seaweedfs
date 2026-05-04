@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -25,7 +26,7 @@ func TestLevelDbNeedleMap_Concurrency(t *testing.T) {
 	dbFileName := filepath.Join(dir, prefix+".ldb")
 
 	// Create and initialize map
-	m, err := NewLevelDbNeedleMap(dbFileName, indexFile, nil, 1)
+	m, err := NewLevelDbNeedleMap(dbFileName, indexFile, nil, 1, needle.GetCurrentVersion())
 	if err != nil {
 		t.Fatalf("NewLevelDbNeedleMap: %v", err)
 	}

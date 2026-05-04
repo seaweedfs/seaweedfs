@@ -13,5 +13,6 @@ type PageChunk interface {
 	IsComplete() bool
 	ActivityScore() int64
 	WrittenSize() int64
+	LastWriteTsNs() int64
 	SaveContent(saveFn SaveToStorageFunc)
 }

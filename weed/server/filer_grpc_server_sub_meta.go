@@ -415,6 +415,24 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						time.Unix(0, lastDiskReadTsNs), time.Unix(0, currentReadTsNs))
 					continue
 				}
+				// No flush or read-position progress — there may be a gap
+				// between the last persisted data and the earliest in-memory
+				// data (e.g. a slow consumer that fell behind while writes
+				// already stopped). Skip forward to the earliest in-memory
+				// time so the consumer can resume instead of blocking forever.
+				earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
+				if !earliestTime.IsZero() && earliestTime.After(lastReadTime.Time) {
+					glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
+						lastReadTime.Time, earliestTime, clientName)
+					lastReadTime = log_buffer.NewMessagePosition(earliestTime.UnixNano(), -2)
+					// Clear the stale ResumeFromDiskError so the next
+					// iteration's shouldReadFromDisk path (triggered by the
+					// advanced lastReadTime) doesn't re-enter the gap branch
+					// at line 360 with earliestTime == lastReadTime.Time and
+					// stall on listenersCond.Wait().
+					readInMemoryLogErr = nil
+					continue
+				}
 				// No progress possible, wait for new data to arrive (event-driven, not polling)
 				fs.listenersLock.Lock()
 				atomic.AddInt64(&fs.listenersWaits, 1)

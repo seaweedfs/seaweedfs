@@ -350,13 +350,13 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(ctx context.Context, so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
+	return func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
 		var fileId string
 		var uploadResult *operation.UploadResult
 
 		err := util.Retry("saveAsChunk", func() error {
 			// assign one file id for one chunk
-			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
+			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, expectedDataSize)
 			if assignErr != nil {
 				return assignErr
 			}

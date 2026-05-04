@@ -74,7 +74,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "s3.image" . }}
+          image: {{ template "seaweedfs.s3.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
@@ -127,8 +127,8 @@ spec:
               {{- if .Values.global.seaweedfs.enableSecurity }}
               {{- if .Values.s3.httpsPort }}
               -port.https={{ .Values.s3.httpsPort }} \
-              {{- end }}
               {{- include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "") | nindent 14 }}
+              {{- end }}
               {{- end }}
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
@@ -226,7 +226,7 @@ spec:
           securityContext: {{- omit .Values.s3.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.s3.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
         {{- if .Values.s3.enableAuth }}

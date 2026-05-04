@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
@@ -28,6 +29,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	volumeId, ve := needle.NewVolumeId(vid)
 	if ve != nil {
 		glog.V(0).InfolnCtx(ctx, "NewVolumeId error:", ve)
+		stats.VolumeServerFileWriteFailures.Inc()
 		writeJsonError(w, r, http.StatusBadRequest, ve)
 		return
 	}
@@ -42,6 +44,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)
 	if ne != nil {
+		stats.VolumeServerFileWriteFailures.Inc()
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
 	}
@@ -50,6 +53,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	// use context.WithoutCancel to avoid context cancellation when the client connection is closed
 	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
 	if writeError != nil {
+		stats.VolumeServerFileWriteFailures.Inc()
 		writeJsonError(w, r, http.StatusInternalServerError, writeError)
 		return
 	}
@@ -57,6 +61,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
 		SetEtag(w, reqNeedle.Etag())
+		w.Header().Set("Content-MD5", contentMd5)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -116,11 +121,13 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if n.IsChunkedManifest() {
 		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsCompressed())
 		if e != nil {
+			stats.VolumeServerFileWriteFailures.Inc()
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
 		if e := chunkManifest.DeleteChunks(vs.GetMaster, false, vs.grpcDialOption); e != nil {
+			stats.VolumeServerFileWriteFailures.Inc()
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}
@@ -147,6 +154,7 @@ func writeDeleteResult(err error, count int64, w http.ResponseWriter, r *http.Re
 		m["size"] = count
 		writeJsonQuiet(w, r, http.StatusAccepted, m)
 	} else {
+		stats.VolumeServerFileWriteFailures.Inc()
 		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %w", err))
 	}
 }
@@ -159,12 +167,4 @@ func SetEtag(w http.ResponseWriter, etag string) {
 			w.Header().Set("ETag", "\""+etag+"\"")
 		}
 	}
-}
-
-func getEtag(resp *http.Response) (etag string) {
-	etag = resp.Header.Get("ETag")
-	if strings.HasPrefix(etag, "\"") && strings.HasSuffix(etag, "\"") {
-		return etag[1 : len(etag)-1]
-	}
-	return
 }

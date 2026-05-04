@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -16,11 +15,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
@@ -390,30 +386,10 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 				return true, nil
 			}
 
-			err := operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dst.dataNode), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				stream, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
-					VolumeId:       replica.info.Id,
-					SourceDataNode: string(pb.NewServerAddressFromDataNode(replica.location.dataNode)),
-				})
-				if replicateErr != nil {
-					return fmt.Errorf("copying from %s => %s : %v", replica.location.dataNode.Id, dst.dataNode.Id, replicateErr)
-				}
-				for {
-					resp, recvErr := stream.Recv()
-					if recvErr != nil {
-						if recvErr == io.EOF {
-							break
-						} else {
-							return recvErr
-						}
-					}
-					if resp.ProcessedBytes > 0 {
-						fmt.Fprintf(writer, "volume %d processed %s bytes\n", replica.info.Id, util.BytesToHumanReadable(uint64(resp.ProcessedBytes)))
-					}
-				}
-
-				return nil
-			})
+			err := replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
+				pb.NewServerAddressFromDataNode(replica.location.dataNode),
+				pb.NewServerAddressFromDataNode(dst.dataNode),
+				replica.info.DiskType)
 
 			if err != nil {
 				return false, err

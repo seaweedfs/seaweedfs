@@ -46,9 +46,9 @@ type streamMutateMux struct {
 	cancel     context.CancelFunc
 	grpcConn   *grpc.ClientConn // dedicated connection, closed on stream teardown
 	closed     bool
-	disabled   bool       // permanently disabled if filer doesn't support the RPC
+	disabled   bool          // permanently disabled if filer doesn't support the RPC
 	stopSend   chan struct{} // closed to signal the current sendLoop to exit
-	generation uint64     // incremented each time a new stream is created
+	generation uint64        // incremented each time a new stream is created
 
 	nextID atomic.Uint64
 
@@ -64,7 +64,7 @@ type streamMutateMux struct {
 type streamMutateReq struct {
 	req   *filer_pb.StreamMutateEntryRequest
 	errCh chan error // send error feedback
-	gen   uint64    // stream generation this request targets
+	gen   uint64     // stream generation this request targets
 }
 
 func newStreamMutateMux(wfs *WFS) *streamMutateMux {

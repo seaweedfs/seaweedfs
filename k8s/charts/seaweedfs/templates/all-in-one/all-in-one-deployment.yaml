@@ -77,7 +77,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "master.image" . }}
+          image: {{ template "seaweedfs.master.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
@@ -247,8 +247,8 @@ spec:
               {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
               {{- if $httpsPort }}
               -s3.port.https={{ $httpsPort }} \
-              {{- end }}
               {{- include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "s3.") | nindent 14 }}
+              {{- end }}
               {{- end }}
               {{- if or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/s3/seaweedfs_s3_config \
@@ -418,7 +418,7 @@ spec:
             {{- omit .Values.allInOne.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.allInOne.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
         - name: data

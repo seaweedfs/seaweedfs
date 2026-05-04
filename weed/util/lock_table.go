@@ -175,7 +175,3 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	// Notify the next waiter
 	entry.cond.Broadcast()
 }
-
-func main() {
-
-}

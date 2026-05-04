@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
 var ErrNotFound = fmt.Errorf("not found")
@@ -31,6 +32,28 @@ var (
 	jwtSigningReadKeyExpires int
 	loadJwtConfigOnce        sync.Once
 )
+
+func AppendQueryParameter(rawURL, key, value string) string {
+	encoded := url.Values{key: []string{value}}.Encode()
+	fragment := ""
+	if fragmentIndex := strings.Index(rawURL, "#"); fragmentIndex >= 0 {
+		fragment = rawURL[fragmentIndex:]
+		rawURL = rawURL[:fragmentIndex]
+	}
+
+	var result string
+	switch {
+	case strings.Contains(rawURL, "?"):
+		if strings.HasSuffix(rawURL, "?") || strings.HasSuffix(rawURL, "&") {
+			result = rawURL + encoded
+		} else {
+			result = rawURL + "&" + encoded
+		}
+	default:
+		result = rawURL + "?" + encoded
+	}
+	return result + fragment
+}
 
 func loadJwtConfig() {
 	v := util.GetViper()
@@ -202,6 +225,16 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 }
 
 func DownloadFile(fileUrl string, jwt string, offset ...int64) (filename string, header http.Header, resp *http.Response, e error) {
+	return DownloadFileWithClient(GetGlobalHttpClient(), fileUrl, jwt, offset...)
+}
+
+// DownloadFileWithClient is like DownloadFile but uses the provided HTTP client
+// instead of the global one. This is used by filer.sync to download from
+// remote clusters that use different TLS certificates.
+func DownloadFileWithClient(client *util_http_client.HTTPClient, fileUrl string, jwt string, offset ...int64) (filename string, header http.Header, resp *http.Response, e error) {
+	if client == nil {
+		return "", nil, nil, fmt.Errorf("nil HTTP client in DownloadFileWithClient")
+	}
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return "", nil, nil, err
@@ -217,7 +250,7 @@ func DownloadFile(fileUrl string, jwt string, offset ...int64) (filename string,
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", rangeOffset))
 	}
 
-	response, err := GetGlobalHttpClient().Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -372,7 +405,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	var (
 		m int
 	)
-	buf := mem.Allocate(64 * 1024)
+	buf := mem.Allocate(256 * 1024)
 	defer mem.Free(buf)
 
 	for {
@@ -534,7 +567,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(ctx, urlString+"?readDeleted=true", string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				// Check for context cancellation during data processing
 				select {
 				case <-ctx.Done():
@@ -597,7 +630,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 			default:
 			}
 
-			n, shouldRetry, err = readUrlDirectToBuffer(ctx, urlString+"?readDeleted=true", jwt, buffer)
+			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), jwt, buffer)
 			if err == nil {
 				return n, nil
 			}

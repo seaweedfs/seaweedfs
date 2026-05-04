@@ -1,0 +1,137 @@
+name: "NFS Integration Tests"
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/server/nfs/**'
+      - 'weed/command/nfs.go'
+      - 'weed/filer/filer_inode.go'
+      - 'weed/filer/filer_inode_index.go'
+      - 'weed/filer/filerstore_wrapper.go'
+      - 'weed/server/filer_grpc_server_rename.go'
+      - 'test/nfs/**'
+      - '.github/workflows/nfs-tests.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'weed/server/nfs/**'
+      - 'weed/command/nfs.go'
+      - 'weed/filer/filer_inode.go'
+      - 'weed/filer/filer_inode_index.go'
+      - 'weed/filer/filerstore_wrapper.go'
+      - 'weed/server/filer_grpc_server_rename.go'
+      - 'test/nfs/**'
+      - '.github/workflows/nfs-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/nfs-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TEST_TIMEOUT: '15m'
+
+jobs:
+  nfs-integration:
+    name: NFS Integration Testing
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Build SeaweedFS
+      run: |
+        cd weed
+        go build -o weed .
+        chmod +x weed
+        ./weed version
+
+    - name: Run NFS Integration Tests
+      run: |
+        cd test/nfs
+
+        echo "Running NFS integration tests..."
+        echo "============================================"
+
+        # Install test dependencies
+        go mod download
+
+        # Run the protocol-layer tests. The kernel-mount tests require root
+        # for mount(2) and are exercised in their own privileged step below;
+        # skip them here so a "skipped because not root" line doesn't show
+        # up as noise on every CI run.
+        go test -v -timeout=${{ env.TEST_TIMEOUT }} -skip '^TestKernelMount' ./...
+
+        echo "============================================"
+        echo "NFS integration tests completed"
+
+    - name: Install kernel NFS client
+      run: |
+        # nfs-common provides mount.nfs; netbase provides /etc/protocols
+        # which mount.nfs's protocol-name lookups (`tcp`, `udp`) need.
+        sudo apt-get update
+        sudo apt-get install -y nfs-common netbase
+
+    - name: Run kernel-mount E2E tests
+      run: |
+        cd test/nfs
+
+        echo "Running kernel-mount end-to-end tests..."
+        echo "These mount the running 'weed nfs' subprocess via the actual"
+        echo "Linux NFS client to catch protocol regressions invisible to"
+        echo "the go-nfs-client-based tests above."
+        echo "============================================"
+
+        # mount(2) is privileged. Preserve PATH so 'go' (and the weed
+        # binary that test/nfs/framework.go locates via $PATH) resolve
+        # correctly under sudo, and pass through the Go module/cache dirs
+        # so we don't redownload modules under root.
+        sudo env "PATH=$PATH" \
+          GOMODCACHE="$(go env GOMODCACHE)" \
+          GOCACHE="$(go env GOCACHE)" \
+          go test -v -timeout=${{ env.TEST_TIMEOUT }} -run '^TestKernelMount' ./...
+
+        echo "============================================"
+        echo "Kernel-mount E2E tests completed"
+
+    - name: Test Summary
+      if: always()
+      run: |
+        echo "## NFS Integration Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Coverage" >> $GITHUB_STEP_SUMMARY
+        echo "- **Read/Write Round Trip**: Basic file create + read" >> $GITHUB_STEP_SUMMARY
+        echo "- **Directory Operations**: Mkdir, ReadDirPlus, RmDir" >> $GITHUB_STEP_SUMMARY
+        echo "- **Nested Directories**: Deep tree creation and leaf I/O" >> $GITHUB_STEP_SUMMARY
+        echo "- **Rename**: Content preserved across rename" >> $GITHUB_STEP_SUMMARY
+        echo "- **Overwrite + Truncate**: Setattr(size=0) + shorter write" >> $GITHUB_STEP_SUMMARY
+        echo "- **Large Files**: 3 MiB binary round trip" >> $GITHUB_STEP_SUMMARY
+        echo "- **Edge Payloads**: All 256 byte values + empty files" >> $GITHUB_STEP_SUMMARY
+        echo "- **Symlinks**: Symlink + Lookup" >> $GITHUB_STEP_SUMMARY
+        echo "- **Missing Path**: Remove on missing entry errors cleanly" >> $GITHUB_STEP_SUMMARY
+        echo "- **FSINFO**: Non-zero rtpref/wtpref advertised" >> $GITHUB_STEP_SUMMARY
+        echo "- **Sequential Append**: Two-part concatenation" >> $GITHUB_STEP_SUMMARY
+        echo "- **ReadDir After Remove**: Meta cache does not serve stale entries" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Kernel-Mount E2E Coverage" >> $GITHUB_STEP_SUMMARY
+        echo "- **V3 over TCP**: baseline NFSv3 mount + readdir" >> $GITHUB_STEP_SUMMARY
+        echo "- **V3 with mountproto=udp**: regression test for UDP MOUNT v3 responder" >> $GITHUB_STEP_SUMMARY
+        echo "- **V4 rejects cleanly**: regression test for the v4 PROG_MISMATCH path (#9262)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Harness" >> $GITHUB_STEP_SUMMARY
+        echo "Most tests boot their own master + volume + filer + nfs subprocess" >> $GITHUB_STEP_SUMMARY
+        echo "stack on loopback and drive it via the NFSv3 RPC protocol using" >> $GITHUB_STEP_SUMMARY
+        echo "go-nfs-client. The kernel-mount E2E tests reuse the same harness" >> $GITHUB_STEP_SUMMARY
+        echo "but mount the export through the in-tree Linux NFS client to" >> $GITHUB_STEP_SUMMARY
+        echo "catch protocol regressions a Go-only client can't see; they run" >> $GITHUB_STEP_SUMMARY
+        echo "in a separate privileged step (mount(2) requires root)." >> $GITHUB_STEP_SUMMARY

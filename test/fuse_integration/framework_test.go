@@ -82,12 +82,16 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	}
 }
 
-// freePort asks the OS for a free TCP port.
+// freePort asks the OS for a free TCP port in a range where the gRPC
+// offset (port + 10000) won't collide with well-known ports.
+// Stay below the Linux ephemeral floor (32768) so the kernel does not
+// reuse the chosen port for an outbound connection between close() here
+// and re-bind in the child "weed mini" process.
 func freePort(t *testing.T) int {
 	t.Helper()
 	const (
 		minServicePort = 20000
-		maxServicePort = 55535 // SeaweedFS gRPC service uses httpPort + 10000.
+		maxServicePort = 32000
 	)
 
 	portCount := maxServicePort - minServicePort + 1
@@ -246,6 +250,7 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"mini",
 		"-dir=" + f.dataDir,
 		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
 		"-filer.port=" + strconv.Itoa(f.filerPort),
 		"-s3=false",
 		"-webdav=false",
@@ -365,11 +370,77 @@ func findWeedBinary() string {
 
 // Helper functions for test assertions
 
-// AssertFileExists checks if a file exists in the mount point
+// AssertFileExists checks if a file exists in the mount point. On failure,
+// it gathers diagnostic state (retry stat, parent listing, direct open) so
+// transient FUSE flakes leave enough information to identify the layer that
+// dropped the entry. The diagnostic block runs only on the failure path.
 func (f *FuseTestFramework) AssertFileExists(relativePath string) {
 	fullPath := filepath.Join(f.mountPoint, relativePath)
 	_, err := os.Stat(fullPath)
-	require.NoError(f.t, err, "file should exist: %s", relativePath)
+	if err == nil {
+		return
+	}
+	f.dumpExistenceDiagnostics(relativePath, fullPath, err)
+	require.NoError(f.t, err, "file should exist: %s (see diagnostic logs above)", relativePath)
+}
+
+// dumpExistenceDiagnostics is invoked when AssertFileExists fails. It probes
+// whether the missing entry is transient (retries appear), missing from the
+// parent directory listing, or missing via a direct open syscall — three
+// signals that triangulate where the entry was lost (kernel dentry cache vs
+// mount lookup vs filer).
+func (f *FuseTestFramework) dumpExistenceDiagnostics(relativePath, fullPath string, initialErr error) {
+	f.t.Logf("AssertFileExists diagnostic dump for %s", relativePath)
+	f.t.Logf("  initial stat: err=%v isNotExist=%v", initialErr, os.IsNotExist(initialErr))
+
+	// Retry stat to detect transient invisibility — if it becomes visible
+	// the issue is a short-lived dentry/cache window; if it stays missing
+	// the entry is genuinely gone from the filer or the local cache.
+	for attempt := 1; attempt <= 5; attempt++ {
+		time.Sleep(100 * time.Millisecond)
+		_, err := os.Stat(fullPath)
+		f.t.Logf("  retry #%d after %dms: err=%v", attempt, attempt*100, err)
+		if err == nil {
+			break
+		}
+	}
+
+	// List the parent directory: if the file appears here but stat fails,
+	// the failure is in the kernel's per-name dentry cache; if not, the
+	// mount-side LOOKUP itself is dropping the entry.
+	parentDir := filepath.Dir(fullPath)
+	target := filepath.Base(fullPath)
+	if entries, listErr := os.ReadDir(parentDir); listErr != nil {
+		f.t.Logf("  ReadDir(%s) failed: %v", parentDir, listErr)
+	} else {
+		found := false
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+			if e.Name() == target {
+				found = true
+			}
+		}
+		f.t.Logf("  ReadDir(%s): %d entries, target %q present=%v", parentDir, len(entries), target, found)
+		if len(names) <= 32 {
+			f.t.Logf("  ReadDir entries: %v", names)
+		}
+	}
+
+	// Direct O_RDONLY open — exercises the same FUSE Lookup+Open path
+	// userspace would, but separately from stat, in case stat-only caching
+	// is interfering.
+	if fd, openErr := os.OpenFile(fullPath, os.O_RDONLY, 0); openErr != nil {
+		f.t.Logf("  Open(%s, O_RDONLY): %v", fullPath, openErr)
+	} else {
+		st, statErr := fd.Stat()
+		fd.Close()
+		size := int64(-1)
+		if statErr == nil && st != nil {
+			size = st.Size()
+		}
+		f.t.Logf("  Open(%s, O_RDONLY): success size=%d statErr=%v", fullPath, size, statErr)
+	}
 }
 
 // AssertFileNotExists checks if a file does not exist in the mount point

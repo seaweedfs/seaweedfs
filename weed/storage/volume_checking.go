@@ -122,6 +122,10 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	if indexSize == 0 {
 		return 0, nil
 	}
+	// The deeper-than-tail structural check (every (offset + actual size)
+	// fits inside .dat — issue #8928) lives in volume.load(): it reads
+	// MaximumNeedleEnd from the needle map after the load walk, so we don't
+	// need a redundant linear scan of the .idx here.
 	healthyIndexSize := indexSize
 	for i := 1; i <= 10 && indexSize >= int64(i)*types.NeedleMapEntrySize; i++ {
 		// check and fix last 10 entries
@@ -151,8 +155,8 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	}
 	if size < 0 {
 		// read the deletion entry
-		if lastAppendAtNs, err = verifyDeletedNeedleIntegrity(v.DataBackend, v.Version(), key); err != nil {
-			return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), err)
+		if lastAppendAtNs, err = verifyDeletedNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key); err != nil {
+			return lastAppendAtNs, fmt.Errorf("verifyDeletedNeedleIntegrity %s failed: %v", indexFile.Name(), err)
 		}
 	} else {
 		if lastAppendAtNs, err = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key, size); err != nil {
@@ -164,6 +168,7 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	}
 	return lastAppendAtNs, nil
 }
+
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
@@ -236,16 +241,11 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 	return n.AppendAtNs, err
 }
 
-func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, key types.NeedleId) (lastAppendAtNs uint64, err error) {
+func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key types.NeedleId) (lastAppendAtNs uint64, err error) {
 	n := new(needle.Needle)
-	size := n.DiskSize(v)
-	var fileSize int64
-	fileSize, _, err = datFile.GetStat()
-	if err != nil {
-		return 0, fmt.Errorf("GetStat: %w", err)
-	}
-	if err = n.ReadData(datFile, fileSize-size, types.Size(0), v); err != nil {
-		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", fileSize-size, size, err)
+	size := types.TombstoneFileSize
+	if err = n.ReadData(datFile, offset, size, v); err != nil {
+		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+needle.GetActualSize(size, v), err)
 	}
 	if n.Id != key {
 		return n.AppendAtNs, fmt.Errorf("index key %v does not match needle's Id %v", key, n.Id)

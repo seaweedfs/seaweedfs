@@ -68,7 +68,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		return parseErr
 	}
 
-	fileName := *outputFileName
+	fileName := util.ResolvePath(*outputFileName)
 	if fileName == "" {
 		t := time.Now()
 		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta.gz",

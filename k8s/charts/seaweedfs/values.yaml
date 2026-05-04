@@ -1339,9 +1339,14 @@ worker:
   # Admin server to connect to
   adminServer: ""
 
-  # Worker job types - comma-separated list
-  # Available: vacuum, volume_balance, erasure_coding
-  jobType: "vacuum,volume_balance,erasure_coding"
+  # Worker job types - categories or comma-separated list of names/aliases
+  # Categories: all, default, heavy
+  #   default: vacuum, volume_balance, ec_balance, admin_script
+  #   heavy: erasure_coding, iceberg_maintenance
+  #   all: every registered job type
+  # Examples: "all", "default", "heavy", "default,iceberg" (default+iceberg), "vacuum,volume_balance"
+  # Refer: https://github.com/seaweedfs/seaweedfs/wiki/Worker
+  jobType: "all"
 
   # Maximum number of concurrent detection requests
   maxDetect: 1

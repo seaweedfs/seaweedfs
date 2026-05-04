@@ -162,6 +162,16 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	if !matchedAction {
 		matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, args.Action, args)
 	}
+	// Multipart upload actions (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, etc.)
+	// are implicitly allowed by s3:PutObject, since multipart upload is an implementation
+	// detail of putting objects. Check if this is a multipart action and the statement
+	// grants s3:PutObject.
+	if !matchedAction && multipartActionSet[args.Action] {
+		matchedAction = engine.matchesPatterns(stmt.ActionPatterns, "s3:PutObject")
+		if !matchedAction {
+			matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, "s3:PutObject", args)
+		}
+	}
 	if !matchedAction {
 		return false
 	}
@@ -608,92 +618,6 @@ func BuildActionName(action string) string {
 		return action
 	}
 	return fmt.Sprintf("s3:%s", action)
-}
-
-// IsReadAction checks if an action is a read action
-func IsReadAction(action string) bool {
-	readActions := []string{
-		"s3:GetObject",
-		"s3:GetObjectVersion",
-		"s3:GetObjectAcl",
-		"s3:GetObjectVersionAcl",
-		"s3:GetObjectTagging",
-		"s3:GetObjectVersionTagging",
-		"s3:ListBucket",
-		"s3:ListBucketVersions",
-		"s3:GetBucketLocation",
-		"s3:GetBucketVersioning",
-		"s3:GetBucketAcl",
-		"s3:GetBucketCors",
-		"s3:GetBucketPolicy",
-		"s3:GetBucketTagging",
-		"s3:GetBucketNotification",
-		"s3:GetBucketObjectLockConfiguration",
-		"s3:GetObjectRetention",
-		"s3:GetObjectLegalHold",
-	}
-
-	for _, readAction := range readActions {
-		if action == readAction {
-			return true
-		}
-	}
-	return false
-}
-
-// IsWriteAction checks if an action is a write action
-func IsWriteAction(action string) bool {
-	writeActions := []string{
-		"s3:PutObject",
-		"s3:PutObjectAcl",
-		"s3:PutObjectTagging",
-		"s3:DeleteObject",
-		"s3:DeleteObjectVersion",
-		"s3:DeleteObjectTagging",
-		"s3:AbortMultipartUpload",
-		"s3:ListMultipartUploads",
-		"s3:ListParts",
-		"s3:PutBucketAcl",
-		"s3:PutBucketCors",
-		"s3:PutBucketPolicy",
-		"s3:PutBucketTagging",
-		"s3:PutBucketNotification",
-		"s3:PutBucketVersioning",
-		"s3:DeleteBucketPolicy",
-		"s3:DeleteBucketTagging",
-		"s3:DeleteBucketCors",
-		"s3:PutBucketObjectLockConfiguration",
-		"s3:PutObjectRetention",
-		"s3:PutObjectLegalHold",
-		"s3:BypassGovernanceRetention",
-	}
-
-	for _, writeAction := range writeActions {
-		if action == writeAction {
-			return true
-		}
-	}
-	return false
-}
-
-// GetBucketNameFromArn extracts bucket name from ARN
-func GetBucketNameFromArn(arn string) string {
-	if strings.HasPrefix(arn, "arn:aws:s3:::") {
-		parts := strings.SplitN(arn[13:], "/", 2)
-		return parts[0]
-	}
-	return ""
-}
-
-// GetObjectNameFromArn extracts object name from ARN
-func GetObjectNameFromArn(arn string) string {
-	if strings.HasPrefix(arn, "arn:aws:s3:::") {
-		parts := strings.SplitN(arn[13:], "/", 2)
-		if len(parts) > 1 {
-			return parts[1]
-		}
-	}
-	return ""
 }
 
 // GetPolicyStatements returns all policy statements for a bucket

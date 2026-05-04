@@ -17,7 +17,10 @@ import (
 	"google.golang.org/grpc"
 )
 
-func collectVolumeMetricsFromMasters(
+// CollectVolumeMetricsFromMasters dials the provided master addresses in order
+// until one returns a usable volume list, then converts that into per-volume
+// health metrics, an active-topology view, and a replica-location map.
+func CollectVolumeMetricsFromMasters(
 	ctx context.Context,
 	masterAddresses []string,
 	collectionFilter string,
@@ -31,7 +34,7 @@ func collectVolumeMetricsFromMasters(
 	}
 
 	for _, masterAddress := range masterAddresses {
-		response, err := fetchVolumeList(ctx, masterAddress, grpcDialOption)
+		response, err := FetchVolumeList(ctx, masterAddress, grpcDialOption)
 		if err != nil {
 			glog.Warningf("Plugin worker failed master volume list at %s: %v", masterAddress, err)
 			continue
@@ -53,9 +56,12 @@ func collectVolumeMetricsFromMasters(
 	return nil, nil, nil, fmt.Errorf("failed to load topology from all provided masters")
 }
 
-func fetchVolumeList(ctx context.Context, address string, grpcDialOption grpc.DialOption) (*master_pb.VolumeListResponse, error) {
+// FetchVolumeList dials the given master address (trying both the address as
+// given and the gRPC port variant) and returns the master's volume list. Used
+// by detection helpers that already know which master address to talk to.
+func FetchVolumeList(ctx context.Context, address string, grpcDialOption grpc.DialOption) (*master_pb.VolumeListResponse, error) {
 	var lastErr error
-	for _, candidate := range masterAddressCandidates(address) {
+	for _, candidate := range MasterAddressCandidates(address) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -101,8 +107,8 @@ func buildVolumeMetrics(
 
 	var collectionRegex *regexp.Regexp
 	trimmedFilter := strings.TrimSpace(collectionFilter)
-	filterMode := collectionFilterMode(trimmedFilter)
-	if trimmedFilter != "" && filterMode != collectionFilterAll && filterMode != collectionFilterEach && trimmedFilter != "*" {
+	filterMode := CollectionFilterMode(trimmedFilter)
+	if trimmedFilter != "" && filterMode != CollectionFilterAll && filterMode != CollectionFilterEach && trimmedFilter != "*" {
 		var err error
 		collectionRegex, err = regexp.Compile(trimmedFilter)
 		if err != nil {
@@ -186,7 +192,10 @@ func isConfigError(err error) bool {
 	return errors.As(err, &ce)
 }
 
-func masterAddressCandidates(address string) []string {
+// MasterAddressCandidates returns address forms to try when dialing a master:
+// the address as given plus the gRPC variant (port + 10000). Both are tried
+// because callers may pass either an HTTP-port or gRPC-port address.
+func MasterAddressCandidates(address string) []string {
 	trimmed := strings.TrimSpace(address)
 	if trimmed == "" {
 		return nil

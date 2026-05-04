@@ -15,7 +15,6 @@ import (
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -45,8 +44,6 @@ type WebDavOption struct {
 
 type WebDavServer struct {
 	option         *WebDavOption
-	secret         security.SigningKey
-	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
 	Handler        *webdav.Handler
 }
@@ -86,12 +83,10 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 // adapted from https://github.com/mattn/davfs/blob/master/plugin/mysql/mysql.go
 
 type WebDavFileSystem struct {
-	option         *WebDavOption
-	secret         security.SigningKey
-	grpcDialOption grpc.DialOption
-	chunkCache     *chunk_cache.TieredChunkCache
-	readerCache    *filer.ReaderCache
-	signature      int32
+	option      *WebDavOption
+	chunkCache  *chunk_cache.TieredChunkCache
+	readerCache *filer.ReaderCache
+	signature   int32
 }
 
 type FileInfo struct {
@@ -407,44 +402,27 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 	return fs.stat(ctx, name)
 }
 
-func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
-	uploader, uploaderErr := operation.NewUploader()
-	if uploaderErr != nil {
-		glog.V(0).Infof("upload data %v: %v", f.name, uploaderErr)
-		return nil, fmt.Errorf("upload data: %w", uploaderErr)
+func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64, _ uint64) (chunk *filer_pb.FileChunk, err error) {
+	// Delegate to the shared filer-gateway helper so WebDAV, NFS, and
+	// any future filer-backed protocols go through one implementation of
+	// AssignVolume + volume-server upload.
+	chunk, err = filer.SaveGatewayDataAsChunk(filer.GatewayChunkUploadRequest{
+		FilerClient: f.fs,
+		Reader:      reader,
+		FullPath:    name,
+		Filename:    f.name,
+		Offset:      offset,
+		TsNs:        tsNs,
+		Collection:  f.fs.option.Collection,
+		Replication: f.fs.option.Replication,
+		DiskType:    f.fs.option.DiskType,
+		Cipher:      f.fs.option.Cipher,
+	})
+	if err != nil {
+		glog.V(0).Infof("upload data %v: %v", f.name, err)
+		return nil, err
 	}
-
-	fileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
-		f.fs,
-		&filer_pb.AssignVolumeRequest{
-			Count:       1,
-			Replication: f.fs.option.Replication,
-			Collection:  f.fs.option.Collection,
-			DiskType:    f.fs.option.DiskType,
-			Path:        name,
-		},
-		&operation.UploadOption{
-			Filename:          f.name,
-			Cipher:            f.fs.option.Cipher,
-			IsInputCompressed: false,
-			MimeType:          "",
-			PairMap:           nil,
-		},
-		func(host, fileId string) string {
-			return fmt.Sprintf("http://%s/%s", host, fileId)
-		},
-		reader,
-	)
-
-	if flushErr != nil {
-		glog.V(0).Infof("upload data %v: %v", f.name, flushErr)
-		return nil, fmt.Errorf("upload data: %w", flushErr)
-	}
-	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)
-		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
-	}
-	return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
+	return chunk, nil
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
@@ -471,7 +449,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset, time.Now().UnixNano())
+			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset, time.Now().UnixNano(), uint64(len(data)))
 
 			if flushErr != nil {
 				if f.entry.Attributes.Mtime == 0 {

@@ -20,7 +20,7 @@ default = ["5bytes"]
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 tokio-io-timeout = "1"
 
 # gRPC + protobuf
@@ -65,8 +65,6 @@ reed-solomon-erasure = "6"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-pprof = { version = "0.15", features = ["prost-codec"] }
-
 # Config
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -84,7 +82,7 @@ memmap2 = "0.9"
 uuid = { version = "1", features = ["v4"] }
 
 # HTTP client (for proxying, remote fetch)
-reqwest = { version = "0.12", features = ["rustls-tls", "stream", "multipart", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart", "json"] }
 
 # Content hashing
 md-5 = "0.10"
@@ -126,6 +124,10 @@ aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.125.0", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-credential-types = "1"
 aws-types = "1"
+
+# pprof is Unix-only (requires libc/nix APIs not available on Windows)
+[target.'cfg(unix)'.dependencies]
+pprof = { version = "0.15", features = ["prost-codec"] }
 
 [dev-dependencies]
 tempfile = "3"

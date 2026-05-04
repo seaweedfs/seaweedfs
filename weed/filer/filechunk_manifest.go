@@ -151,7 +151,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 			retriedCnt++
 			var localProcessed int
 			var writeErr error
-			shouldRetry, err = util_http.ReadUrlAsStream(ctx, urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+			shouldRetry, err = util_http.ReadUrlAsStream(ctx, util_http.AppendQueryParameter(urlString, "readDeleted", "true"), jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 				// Check for context cancellation during data processing
 				select {
 				case <-ctx.Done():
@@ -270,7 +270,7 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 		}
 	}
 
-	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0, 0)
+	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0, 0, uint64(len(data)))
 	if err != nil {
 		return nil, err
 	}
@@ -281,4 +281,4 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 	return
 }
 
-type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error)
+type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (chunk *filer_pb.FileChunk, err error)

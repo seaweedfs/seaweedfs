@@ -78,19 +78,55 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
+	// Evict members whose session has expired before processing this join.
+	// The cleanup goroutine runs every 30s, but session timeouts can be as
+	// short as 6s — so a lost LeaveGroup or an ungraceful disconnect can leave
+	// a phantom member in the group long enough for the next rejoin to land
+	// in a stale composition. Sweeping here forces the new join into a clean
+	// view of the group and unblocks fast restart-and-rejoin patterns
+	// (TestOffsetManagement/ConsumerGroupResumption was burning all 5
+	// test-level retries because the dead previous member kept it from
+	// becoming leader / making progress).
+	if expired := h.groupCoordinator.EvictExpiredMembersLocked(group); len(expired) > 0 {
+		glog.V(1).Infof("[JoinGroup] evicted %d expired member(s) from group %s on rejoin: %v",
+			len(expired), request.GroupID, expired)
+		h.updateGroupSubscription(group)
+		if len(group.Members) == 0 {
+			// Mark the group Empty without bumping generation — the
+			// Empty/Stable case in the state-machine switch below will do the
+			// bump as part of this new member joining.
+			group.State = consumer.GroupStateEmpty
+			group.Leader = ""
+		} else {
+			// Surviving members must rebalance to drop the dead member's
+			// partitions. Bump here so the PreparingRebalance branch in the
+			// switch below is a no-op (avoids a double generation bump) and
+			// clear cached assignments so the non-leader SyncGroup path
+			// returns REBALANCE_IN_PROGRESS instead of serving stale
+			// pre-eviction partitions to a rejoiner.
+			group.State = consumer.GroupStatePreparingRebalance
+			group.Generation++
+			for _, m := range group.Members {
+				m.State = consumer.MemberStatePending
+				m.Assignment = nil
+			}
+		}
+	}
+
 	// Handle member ID logic with static membership support
 	var memberID string
 	var isNewMember bool
 	var existingMember *consumer.GroupMember
 
-	// Use the actual ClientID from Kafka protocol header for unique member ID generation
-	clientKey := connContext.ClientID
-	if clientKey == "" {
-		// Fallback to deterministic key if ClientID not available
-		clientKey = fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
-		glog.Warningf("[JoinGroup] No ClientID in ConnectionContext for group %s, using fallback: %s", request.GroupID, clientKey)
+	// Dedup and memberID generation must be scoped per-connection, not per-ClientID:
+	// two Sarama consumers in the same process share the default ClientID ("sarama"),
+	// so keying on ClientID alone collapses them into a single member and breaks rebalancing.
+	connectionKey := connContext.ConnectionID
+	if connectionKey == "" {
+		connectionKey = fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
+		glog.Warningf("[JoinGroup] No ConnectionID in ConnectionContext for group %s, using fallback: %s", request.GroupID, connectionKey)
 	} else {
-		glog.V(1).Infof("[JoinGroup] Using ClientID from ConnectionContext for group %s: %s", request.GroupID, clientKey)
+		glog.V(1).Infof("[JoinGroup] Using ConnectionID %s (ClientID=%q) for group %s", connectionKey, connContext.ClientID, request.GroupID)
 	}
 
 	// Check for static membership first
@@ -107,22 +143,23 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	} else {
 		// Dynamic membership logic
 		if request.MemberID == "" {
-			// New member - check if we already have a member for this client
+			// New member - reuse the existing slot only if the SAME TCP connection
+			// is rejoining with an empty MemberID (e.g. retry after the gateway
+			// evicted it). Matching on ClientID would collapse distinct consumers
+			// that share a default ClientID.
 			var existingMemberID string
 			for existingID, member := range group.Members {
-				if member.ClientID == clientKey && !h.groupCoordinator.IsStaticMember(member) {
+				if member.ConnectionID == connectionKey && !h.groupCoordinator.IsStaticMember(member) {
 					existingMemberID = existingID
 					break
 				}
 			}
 
 			if existingMemberID != "" {
-				// Reuse existing member ID for this client
 				memberID = existingMemberID
 				isNewMember = false
 			} else {
-				// Generate new deterministic member ID
-				memberID = h.groupCoordinator.GenerateMemberID(clientKey, "consumer")
+				memberID = h.groupCoordinator.GenerateMemberID(connectionKey, "consumer")
 				isNewMember = true
 			}
 		} else {
@@ -150,7 +187,32 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 			group.State = consumer.GroupStateCompletingRebalance
 		}
 	case consumer.GroupStateCompletingRebalance:
-		// Allow join but don't change generation until SyncGroup
+		// A new member joining here — after the leader has already taken its
+		// member-list snapshot in its JoinGroup response — means the
+		// leader's upcoming SyncGroup will omit this member. That leaves it
+		// with an empty Assignment when the group goes Stable, and its own
+		// SyncGroup then silently serves the empty assignment (the
+		// CI-observed orphan). Pre-empt that: bump the generation so the
+		// leader's in-flight SyncGroup fails its generation check and the
+		// join cycle restarts with the new member in the leader's snapshot.
+		// (handleSyncGroup also catches this at commit time as a
+		// belt-and-suspenders check in case a new member slipped in between
+		// the leader's JoinGroup reply and its SyncGroup without hitting
+		// CompletingRebalance state here.)
+		if isNewMember {
+			group.State = consumer.GroupStatePreparingRebalance
+			group.Generation++
+			// Clear prior-generation assignments. The non-leader SyncGroup
+			// path in handleSyncGroup only returns REBALANCE_IN_PROGRESS
+			// when `member.Assignment` is empty; without clearing, a
+			// member rejoining at the new generation would be served its
+			// stale old-generation partitions from the pre-rebalance
+			// state.
+			for _, m := range group.Members {
+				m.State = consumer.MemberStatePending
+				m.Assignment = nil
+			}
+		}
 	case consumer.GroupStateDead:
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
@@ -164,24 +226,36 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 		groupInstanceID = &request.GroupInstanceID
 	}
 
-	member := &consumer.GroupMember{
-		ID:               memberID,
-		ClientID:         clientKey,  // Use actual Kafka ClientID for unique member identification
-		ClientHost:       clientHost, // Now extracted from actual connection
-		GroupInstanceID:  groupInstanceID,
-		SessionTimeout:   request.SessionTimeout,
-		RebalanceTimeout: request.RebalanceTimeout,
-		Subscription:     h.extractSubscriptionFromProtocolsEnhanced(request.GroupProtocols),
-		State:            consumer.MemberStatePending,
-		LastHeartbeat:    time.Now(),
-		JoinedAt:         time.Now(),
-	}
-
-	// Add or update the member in the group before computing subscriptions or leader
 	if group.Members == nil {
 		group.Members = make(map[string]*consumer.GroupMember)
 	}
-	group.Members[memberID] = member
+
+	// Update existing member in place rather than replacing it, so the assignment
+	// (and any other state the leader populated in a prior SyncGroup) is preserved
+	// across rejoins. Replacing the struct clobbered member.Assignment, so the next
+	// non-leader SyncGroup returned an empty assignment and the consumer re-looped.
+	member, existing := group.Members[memberID]
+	// Snapshot pre-mutation state so we can roll back if the join is rejected
+	// (e.g. INCONSISTENT_GROUP_PROTOCOL) without corrupting an existing member.
+	var previousMember consumer.GroupMember
+	if existing {
+		previousMember = *member
+	} else {
+		member = &consumer.GroupMember{
+			ID:       memberID,
+			JoinedAt: time.Now(),
+		}
+		group.Members[memberID] = member
+	}
+	member.ClientID = connContext.ClientID
+	member.ConnectionID = connectionKey
+	member.ClientHost = clientHost
+	member.GroupInstanceID = groupInstanceID
+	member.SessionTimeout = request.SessionTimeout
+	member.RebalanceTimeout = request.RebalanceTimeout
+	member.Subscription = h.extractSubscriptionFromProtocolsEnhanced(request.GroupProtocols)
+	member.State = consumer.MemberStatePending
+	member.LastHeartbeat = time.Now()
 
 	// Store consumer group and member ID in connection context for use in fetch requests
 	connContext.ConsumerGroup = request.GroupID
@@ -242,12 +316,20 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 
 	// If a protocol is already selected for the group, reject joins that do not support it.
 	if len(existingProtocols) > 0 && (groupProtocol == "" || groupProtocol != group.Protocol) {
-		// Rollback member addition and static registration before returning error
-		delete(group.Members, memberID)
-		if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
-			h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+		if existing {
+			// Existing member rejoined with an incompatible protocol — restore the
+			// pre-mutation snapshot rather than deleting, so we don't corrupt the
+			// group state for a member that was already part of it.
+			restored := previousMember
+			group.Members[memberID] = &restored
+		} else {
+			// New member was never actually part of the group: drop and unregister.
+			delete(group.Members, memberID)
+			if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
+				h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+			}
 		}
-		// Recompute group subscription without the rejected member
+		// Recompute group subscription with the member state restored to pre-join.
 		h.updateGroupSubscription(group)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
 	}
@@ -807,6 +889,8 @@ type SyncGroupRequest struct {
 	GenerationID     int32
 	MemberID         string
 	GroupInstanceID  string
+	ProtocolType     string
+	ProtocolName     string
 	GroupAssignments []GroupAssignment // Only from group leader
 }
 
@@ -857,9 +941,20 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
-	// Validate generation
+	// Validate generation. When a late joiner forces us back to
+	// PreparingRebalance mid-round, the in-flight leader's SyncGroup carries
+	// the stale generation. Returning ILLEGAL_GENERATION here would tear down
+	// Sarama's Consume() (it does not re-enter on that error); returning
+	// REBALANCE_IN_PROGRESS while the group is rebalancing lets Sarama's
+	// newSession retry the join/sync cycle at the new generation, mirroring
+	// the handling in handleHeartbeat.
 	if request.GenerationID != group.Generation {
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
+		switch group.State {
+		case consumer.GroupStatePreparingRebalance, consumer.GroupStateCompletingRebalance:
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeRebalanceInProgress, apiVersion), nil
+		default:
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
+		}
 	}
 
 	// Check if this is the group leader with assignments
@@ -867,13 +962,72 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		request.MemberID, group.Leader, group.State, len(request.GroupAssignments) > 0, len(group.Members), request.GenerationID)
 
 	if request.MemberID == group.Leader && len(request.GroupAssignments) > 0 {
-		// Leader is providing assignments - process and store them
+		// Leader is providing assignments - process and store them.
+		// Note: the len(...) > 0 gate matters. Schema Registry's
+		// SchemaRegistryCoordinator uses a server-side-assignment
+		// protocol and sends leader SyncGroup with an empty
+		// GroupAssignments array by design; that case has to fall
+		// through to the server-side-assignment else-branch below, not
+		// be treated as a missing-member situation. Dropping the gate
+		// here puts the schema-registry group into an infinite
+		// REBALANCE_IN_PROGRESS / rejoin loop (observed in the kafka
+		// loadtest CI job).
+
+		// Before committing, verify the leader's assignment covers every
+		// current member. A late joiner can arrive either during the
+		// leader's JoinGroup call (added to group.Members but not in the
+		// response the leader already built) or during the narrow window
+		// between the leader's JoinGroup reply and this SyncGroup. In both
+		// cases the missing member's ID won't appear in GroupAssignments;
+		// committing now would leave it with an empty Assignment, and once
+		// state goes Stable its own SyncGroup would silently serve that
+		// empty assignment (the CI-observed orphan).
+		//
+		// Reject instead: bump the generation, reset state to
+		// PreparingRebalance, and return REBALANCE_IN_PROGRESS so Sarama's
+		// newSession retries the join/sync cycle at the new generation
+		// with the complete member list in the leader's JoinGroup response.
+		// The stale SyncGroup that the leader is still trying to deliver
+		// will hit the generation-mismatch branch above and also retry.
+		assigned := make(map[string]bool, len(request.GroupAssignments))
+		for _, ga := range request.GroupAssignments {
+			assigned[ga.MemberID] = true
+		}
+		for mid := range group.Members {
+			if !assigned[mid] {
+				glog.V(1).Infof("[SYNCGROUP] Leader %s assignment omits member %s (late joiner); forcing rebalance",
+					request.MemberID, mid)
+				group.State = consumer.GroupStatePreparingRebalance
+				group.Generation++
+				// Clear prior-generation assignments so the non-leader
+				// SyncGroup path (which only returns REBALANCE_IN_PROGRESS
+				// when member.Assignment is empty) doesn't serve stale
+				// partitions between now and the next successful
+				// leader SyncGroup.
+				for _, m := range group.Members {
+					m.State = consumer.MemberStatePending
+					m.Assignment = nil
+				}
+				return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeRebalanceInProgress, apiVersion), nil
+			}
+		}
+
 		glog.V(2).Infof("[SYNCGROUP] Leader %s providing client-side assignments for group %s (%d assignments)",
 			request.MemberID, request.GroupID, len(request.GroupAssignments))
-		err = h.processGroupAssignments(group, request.GroupAssignments)
-		if err != nil {
-			glog.Errorf("[SYNCGROUP] ERROR processing leader assignments: %v", err)
-			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+		if request.GroupID == "schema-registry" {
+			// Schema Registry's group assignment payload is its own leader-election
+			// data, not ConsumerGroupMemberAssignment partition bytes. We only need
+			// the group to become stable; serializeSchemaRegistryAssignment builds
+			// the response from the elected leader's JoinGroup metadata below.
+			for _, m := range group.Members {
+				m.Assignment = nil
+			}
+		} else {
+			err = h.processGroupAssignments(group, request.GroupAssignments)
+			if err != nil {
+				glog.Errorf("[SYNCGROUP] ERROR processing leader assignments: %v", err)
+				return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+			}
 		}
 
 		// Move group to stable state
@@ -885,12 +1039,22 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		}
 		glog.V(2).Infof("[SYNCGROUP] Leader assignments processed successfully, group now STABLE")
 	} else if request.MemberID != group.Leader && len(request.GroupAssignments) == 0 {
-		// Non-leader member requesting its assignment
-		// CRITICAL FIX: Non-leader members should ALWAYS wait for leader's client-side assignments
-		// This is the correct behavior for Sarama and other client-side assignment protocols
-		glog.V(3).Infof("[SYNCGROUP] Non-leader %s waiting for/retrieving assignment in group %s (state=%s)",
-			request.MemberID, request.GroupID, group.State)
-		// Assignment will be retrieved from member.Assignment below
+		// Non-leader member requesting its assignment. Real Kafka blocks this
+		// call until the leader's SyncGroup arrives; the gateway doesn't hold the
+		// request, so if the leader hasn't published assignments for the current
+		// generation we return REBALANCE_IN_PROGRESS and let Sarama back off and
+		// retry the join/sync cycle (Consumer.Group.Rebalance.Retry.Max=4,
+		// Backoff=2s by default). If the member already has a non-empty
+		// assignment (steady-state re-sync) or the group has reached Stable
+		// (e.g. fewer partitions than members, so empty is a valid answer),
+		// serve member.Assignment directly.
+		if group.State != consumer.GroupStateStable && len(member.Assignment) == 0 {
+			glog.V(2).Infof("[SYNCGROUP] Non-leader %s in group %s: leader not ready (state=%s), returning REBALANCE_IN_PROGRESS",
+				request.MemberID, request.GroupID, group.State)
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeRebalanceInProgress, apiVersion), nil
+		}
+		glog.V(3).Infof("[SYNCGROUP] Non-leader %s retrieving assignment in group %s (state=%s assignment_len=%d)",
+			request.MemberID, request.GroupID, group.State, len(member.Assignment))
 	} else {
 		// Trigger partition assignment using built-in strategy (server-side assignment)
 		// This should only happen for server-side assignment protocols (not Sarama's client-side)
@@ -1047,6 +1211,26 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 	// Parse assignments array if present (leader sends assignments)
 	assignments := make([]GroupAssignment, 0)
 
+	var protocolType string
+	var protocolName string
+	if apiVersion >= 5 {
+		if isFlexible {
+			var consumed int
+			var decodeErr error
+			protocolType, consumed, decodeErr = DecodeFlexibleString(data[offset:])
+			if decodeErr != nil {
+				return nil, fmt.Errorf("invalid protocol type compact string: %w", decodeErr)
+			}
+			offset += consumed
+
+			protocolName, consumed, decodeErr = DecodeFlexibleString(data[offset:])
+			if decodeErr != nil {
+				return nil, fmt.Errorf("invalid protocol name compact string: %w", decodeErr)
+			}
+			offset += consumed
+		}
+	}
+
 	if offset < len(data) {
 		var assignmentsCount uint32
 		if isFlexible {
@@ -1155,6 +1339,8 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		GenerationID:     generationID,
 		MemberID:         memberID,
 		GroupInstanceID:  groupInstanceID,
+		ProtocolType:     protocolType,
+		ProtocolName:     protocolName,
 		GroupAssignments: assignments,
 	}, nil
 }

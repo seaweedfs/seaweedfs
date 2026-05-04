@@ -125,22 +125,6 @@ func (c *NormalizedValueCache) evictLeastRecentlyUsed() {
 	delete(c.cache, tail.key)
 }
 
-// Clear clears all cached values
-func (c *NormalizedValueCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cache = make(map[string]*LRUNode)
-	c.head.next = c.tail
-	c.tail.prev = c.head
-}
-
-// GetStats returns cache statistics
-func (c *NormalizedValueCache) GetStats() (size int, maxSize int) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.cache), c.maxSize
-}
-
 // Global cache instance with size limit
 var normalizedValueCache = NewNormalizedValueCache(1000)
 
@@ -762,37 +746,6 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 			// Pass substituted values (casted to interface{} to match signature if needed, or update evaluators to accept []string)
 			// The evaluators take interface{}, but getCachedNormalizedValues handles []string.
 			if !conditionEvaluator.Evaluate(substitutedValues, contextVals) {
-				return false // If any condition fails, the whole condition block fails
-			}
-		}
-	}
-
-	return true
-}
-
-// EvaluateConditionsLegacy evaluates conditions using the old interface{} format for backward compatibility
-// objectEntry is the object's metadata from entry.Extended (can be nil)
-func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues map[string][]string, objectEntry map[string][]byte) bool {
-	if len(conditions) == 0 {
-		return true // No conditions means always true
-	}
-
-	for operator, conditionMap := range conditions {
-		conditionEvaluator, err := GetConditionEvaluator(operator)
-		if err != nil {
-			glog.Warningf("Unsupported condition operator: %s", operator)
-			continue
-		}
-
-		conditionMapTyped, ok := conditionMap.(map[string]interface{})
-		if !ok {
-			glog.Warningf("Invalid condition format for operator: %s", operator)
-			continue
-		}
-
-		for key, value := range conditionMapTyped {
-			contextVals := getConditionContextValue(key, contextValues, objectEntry)
-			if !conditionEvaluator.Evaluate(value, contextVals) {
 				return false // If any condition fails, the whole condition block fails
 			}
 		}

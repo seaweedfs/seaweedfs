@@ -14,7 +14,8 @@ import (
 
 func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
@@ -43,6 +44,13 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	wfs.outputFilerEntry(out, inode, localEntry)
+
+	if localEntry.IsDirectory() {
+		wfs.applyInMemoryDirMtime(&out.Attr, inode)
+		if wfs.option.PosixDirNlink {
+			wfs.applyDirNlink(&out.Attr, fullFilePath)
+		}
+	}
 
 	return fuse.OK
 

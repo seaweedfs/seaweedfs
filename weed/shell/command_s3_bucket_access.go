@@ -61,8 +61,8 @@ func (c *commandS3BucketAccess) Help() string {
 `
 }
 
-func (c *commandS3BucketAccess) HasTag(CommandTag) bool {
-	return false
+func (c *commandS3BucketAccess) HasTag(tag CommandTag) bool {
+	return tag == Hidden
 }
 
 func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
