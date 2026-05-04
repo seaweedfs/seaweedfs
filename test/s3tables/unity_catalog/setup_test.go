@@ -159,7 +159,7 @@ func (env *testEnv) startSeaweedFS(t *testing.T, iamJSON string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
-	weedArgs := []string{"-v", "2", "mini",
+	weedArgs := []string{"-v", "4", "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -211,7 +211,11 @@ func (env *testEnv) startUnityCatalog(t *testing.T, ctx context.Context, opts uc
 		fmt.Sprintf("aws.secretKey=%s", env.secretKey),
 		"aws.region=us-east-1",
 		fmt.Sprintf("aws.endpoint=%s", s3EndpointForContainer),
-		fmt.Sprintf("s3.bucketPath.0=s3://%s/%s", ucWarehouse, ucWarehouseKey),
+		// UC keys perBucketS3Configs by NormalizedURL.from(bucketPath) and
+		// looks up using the storageBase, which is "s3://<bucket>" (scheme +
+		// authority only). The playground's "s3://lakehouse/warehouse" never
+		// matches because of that asymmetry; the bucket-only form works.
+		fmt.Sprintf("s3.bucketPath.0=s3://%s", ucWarehouse),
 		"s3.region.0=us-east-1",
 		fmt.Sprintf("s3.awsRoleArn.0=%s", opts.MasterRoleArn),
 		fmt.Sprintf("s3.accessKey.0=%s", env.accessKey),
