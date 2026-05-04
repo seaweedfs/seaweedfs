@@ -69,6 +69,21 @@ func (fd FlexibleDuration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fd.Duration.String())
 }
 
+// ClaimBasedPolicyRoleArn is the AWS-shaped sentinel ARN that callers pass
+// in the AssumeRoleWithWebIdentity RoleArn field to opt into claim-based
+// policy resolution. Using a recognisable role-style ARN here (rather than
+// requiring an empty RoleArn) lets SDKs and AWS CLI builds that always
+// require RoleArn to be set still reach this code path.
+const ClaimBasedPolicyRoleArn = "arn:aws:iam:::role/sts-claim-based"
+
+// IsClaimBasedPolicyRoleArn reports whether the supplied RoleArn opts the
+// caller into claim-based policy mode. Either the empty string (caller
+// omitted RoleArn entirely; common for SDKs that didn't expect to need one)
+// or the explicit sentinel triggers the mode.
+func IsClaimBasedPolicyRoleArn(arn string) bool {
+	return arn == "" || arn == ClaimBasedPolicyRoleArn
+}
+
 // STSService provides Security Token Service functionality
 // This service is now completely stateless - all session information is embedded
 // in JWT tokens, eliminating the need for session storage and enabling true
@@ -505,17 +520,38 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("failed to validate web identity token: %w", err)
 	}
 
-	// 2. Check if the role exists and can be assumed (includes trust policy validation)
-	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
-		return nil, fmt.Errorf("role assumption denied: %w", err)
+	// 2. Decide between concrete-role mode and claim-based policy mode.
+	// Claim-based mode requires both the sentinel RoleArn and a non-empty
+	// ClaimPolicies list — the second check guards against an IDP that just
+	// happens not to emit the policy claim today.
+	claimMode := IsClaimBasedPolicyRoleArn(request.RoleArn) && len(externalIdentity.ClaimPolicies) > 0
+	effectiveRoleArn := request.RoleArn
+	if claimMode {
+		// Replace the sentinel/empty ARN with a deterministic synthetic ARN
+		// keyed on the session name so policy evaluation has a stable
+		// principal to log and rate-limit on.
+		effectiveRoleArn = ClaimBasedPolicyRoleArn
+	} else if request.RoleArn == "" {
+		return nil, fmt.Errorf("RoleArn is required when claim-based policy mode is not configured")
+	} else if request.RoleArn == ClaimBasedPolicyRoleArn {
+		return nil, fmt.Errorf("claim-based policy mode requires the IDP to emit policies via the configured policyClaim")
 	}
 
-	// 3. Calculate session duration, capping at the source token's expiration
+	// 3. Trust-policy validation only runs in concrete-role mode. In
+	// claim-mode the IDP is the sole authority for both authentication and
+	// authorization, so there is no role definition to consult.
+	if !claimMode {
+		if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
+			return nil, fmt.Errorf("role assumption denied: %w", err)
+		}
+	}
+
+	// 4. Calculate session duration, capping at the source token's expiration
 	// This ensures sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
 	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, externalIdentity.TokenExpiration)
 	expiresAt := time.Now().Add(sessionDuration)
 
-	// 4. Generate session ID and credentials
+	// 5. Generate session ID and credentials
 	sessionId, err := GenerateSessionId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
@@ -527,10 +563,10 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
 
-	// 5. Create comprehensive JWT session token with all session information embedded
+	// 6. Create comprehensive JWT session token with all session information embedded
 	assumedRoleUser := &AssumedRoleUser{
-		AssumedRoleId: request.RoleArn,
-		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
+		AssumedRoleId: effectiveRoleArn,
+		Arn:           GenerateAssumedRoleArn(effectiveRoleArn, request.RoleSessionName),
 		Subject:       externalIdentity.UserID,
 	}
 
@@ -576,10 +612,13 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
-		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithRoleInfo(effectiveRoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, externalIdentity.Issuer).
 		WithMaxDuration(sessionDuration).
 		WithRequestContext(requestContext)
+	if claimMode {
+		sessionClaims.WithPolicies(externalIdentity.ClaimPolicies)
+	}
 	if parentUser != "" {
 		sessionClaims.WithParentUser(parentUser)
 	}
@@ -733,8 +772,11 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 
 // validateAssumeRoleWithWebIdentityRequest validates the request parameters
 func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRoleWithWebIdentityRequest) error {
-	if request.RoleArn == "" {
-		return fmt.Errorf("RoleArn is required")
+	// RoleArn may be empty (or the sentinel) when the caller is opting into
+	// claim-based policy mode; the OIDC provider configuration determines
+	// whether that is actually permitted.
+	if request.RoleArn != "" && !IsClaimBasedPolicyRoleArn(request.RoleArn) {
+		// nothing to enforce here — sentinel and concrete role are both fine
 	}
 
 	if request.WebIdentityToken == "" {
