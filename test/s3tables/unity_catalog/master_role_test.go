@@ -165,28 +165,20 @@ func TestUnityCatalogMasterRoleIntegration(t *testing.T) {
 // using the Go AWS SDK, mirroring how lakekeeper/polaris tests prove
 // SeaweedFS' STS path works.
 func assumeRoleViaSeaweedFS(ctx context.Context, endpoint, accessKey, secretKey, roleArn string) (aws.Credentials, error) {
-	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		if service == sts.ServiceID {
-			return aws.Endpoint{
-				URL:               endpoint,
-				HostnameImmutable: true,
-				SigningRegion:     "us-east-1",
-				Source:            aws.EndpointSourceCustom,
-			}, nil
-		}
-		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-	})
-
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		config.WithEndpointResolverWithOptions(resolver),
 	)
 	if err != nil {
 		return aws.Credentials{}, fmt.Errorf("load aws config: %w", err)
 	}
 
-	client := sts.NewFromConfig(cfg)
+	// Override the STS endpoint via service-specific BaseEndpoint instead of
+	// the deprecated EndpointResolverWithOptions wired through the global
+	// config. This is the supported path in aws-sdk-go-v2 since v1.21.
+	client := sts.NewFromConfig(cfg, func(o *sts.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
 	resp, err := client.AssumeRole(ctx, &sts.AssumeRoleInput{
 		RoleArn:         aws.String(roleArn),
 		RoleSessionName: aws.String("uc-master-role-test"),
