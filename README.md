@@ -105,7 +105,15 @@ Perfect for development, testing, learning SeaweedFS, and single-node deployment
 
 ## Quick Start for S3 API on Docker ##
 
-`docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
+```bash
+docker run -p 8333:8333 \
+  -e AWS_ACCESS_KEY_ID=admin \
+  -e AWS_SECRET_ACCESS_KEY=secret \
+  -e S3_BUCKET=my-bucket \
+  chrislusf/seaweedfs
+```
+
+Same behavior as the `weed mini` command above — the S3 endpoint is at http://localhost:8333 with `my-bucket` pre-created. Drop the env vars to run anonymously for development.
 
 # Introduction #
 
