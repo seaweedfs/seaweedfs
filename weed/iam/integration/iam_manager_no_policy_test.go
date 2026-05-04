@@ -58,3 +58,47 @@ func TestIsActionAllowed_RegisteredUserWithoutPoliciesIsDenied(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, allowed, "registered user with no policies must not get default-allow access")
 }
+
+// TestIsActionAllowed_RegisteredUserWithNonMatchingPolicyIsDenied covers the
+// adjacent case: the user has policies attached, but none of the policy
+// statements match the requested action/resource. The DefaultEffect=Allow
+// fallback must not silently grant access when an attached policy simply
+// does not say anything about this action.
+func TestIsActionAllowed_RegisteredUserWithNonMatchingPolicyIsDenied(t *testing.T) {
+	manager := NewIAMManager()
+	require.NoError(t, manager.Initialize(&IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: string(policy.EffectAllow),
+			StoreType:     sts.StoreTypeMemory,
+		},
+		Roles: &RoleStoreConfig{StoreType: sts.StoreTypeMemory},
+	}, func() string { return "localhost:8888" }))
+
+	ctx := context.Background()
+	require.NoError(t, manager.CreatePolicy(ctx, "", "ReadOnlyOneBucket", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:   "Allow",
+			Action:   []string{"s3:GetObject"},
+			Resource: []string{"arn:aws:s3:::reports/*"},
+		}},
+	}))
+
+	manager.SetUserStore(&fakeUserStore{users: map[string]*iam_pb.Identity{
+		"alice": {Name: "alice", PolicyNames: []string{"ReadOnlyOneBucket"}},
+	}})
+
+	allowed, err := manager.IsActionAllowed(ctx, &ActionRequest{
+		Principal: "arn:aws:iam::seaweedfs:user/alice",
+		Action:    "s3:DeleteBucket",
+		Resource:  "arn:aws:s3:::other-bucket",
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "action outside the user's attached policy must be denied")
+}
