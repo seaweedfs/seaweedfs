@@ -321,20 +321,6 @@ func (env *testEnv) newHostS3ClientWithCreds(t *testing.T, ctx context.Context, 
 	})
 }
 
-func splitS3URI(t *testing.T, uri string) (bucket, key string) {
-	t.Helper()
-	const prefix = "s3://"
-	if !strings.HasPrefix(uri, prefix) {
-		t.Fatalf("not an s3 uri: %s", uri)
-	}
-	rest := strings.TrimPrefix(uri, prefix)
-	idx := strings.Index(rest, "/")
-	if idx < 0 {
-		t.Fatalf("missing key in s3 uri: %s", uri)
-	}
-	return rest[:idx], rest[idx+1:]
-}
-
 // stsEnabledIAMConfig returns an iam.json that defines an admin user, the
 // UnityCatalogVendedRole role with a permissive trust policy, and a FullAccess
 // policy attached to it. This is the SeaweedFS-side counterpart of the
