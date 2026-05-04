@@ -117,6 +117,13 @@ func CreateSSES3EncryptedReader(reader io.Reader, key *SSES3Key) (io.Reader, []b
 
 // CreateSSES3DecryptedReader creates a decrypted reader for SSE-S3 using IV from metadata
 func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key, iv []byte) (io.Reader, error) {
+	// IV comes from object metadata, which is mutable. Validate before passing
+	// to cipher.NewCTR so a tampered length produces an error rather than the
+	// crypto/cipher panic the documentation specifies.
+	if err := ValidateIV(iv, "SSE-S3 IV"); err != nil {
+		return nil, err
+	}
+
 	// Verify key commitment before decryption if one exists in metadata
 	if err := VerifyKeyCommitment(key.Key, iv, key.Algorithm, key.KeyCommitment); err != nil {
 		return nil, err
