@@ -662,8 +662,24 @@ func (km *SSES3KeyManager) GetMasterKey() []byte {
 	return derived
 }
 
+// SSES3KEKPassphraseEnv is the environment variable from which the global
+// SSE-S3 key manager picks up its KEK-wrapping passphrase. When set, the
+// global KEK is stored on the filer wrapped under a key derived from this
+// passphrase; when unset, the KEK is stored in plaintext (with a warning at
+// startup) for backward compatibility with deployments that haven't migrated.
+const SSES3KEKPassphraseEnv = "WEED_S3_SSE_KEK_PASSPHRASE"
+
 // Global SSE-S3 key manager instance
 var globalSSES3KeyManager = NewSSES3KeyManager()
+
+// SetKEKPassphrase configures the KEK-wrapping passphrase. Must be called
+// before InitializeWithFiler — the load path reads the passphrase to decide
+// whether to attempt unwrap or fall back to plaintext-hex parsing.
+func (km *SSES3KeyManager) SetKEKPassphrase(passphrase string) {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	km.kekPassphrase = passphrase
+}
 
 // GetSSES3KeyManager returns the global SSE-S3 key manager
 func GetSSES3KeyManager() *SSES3KeyManager {
@@ -688,8 +704,19 @@ func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(file
 	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, fn)
 }
 
-// InitializeGlobalSSES3KeyManager initializes the global key manager with filer access
+// InitializeGlobalSSES3KeyManager initializes the global key manager with
+// filer access. The KEK-wrapping passphrase is read from the environment
+// variable named by SSES3KEKPassphraseEnv before the load path runs; if
+// unset, the KEK falls back to plaintext at-rest storage (with a startup
+// warning) so operators upgrading from earlier builds keep working until
+// they explicitly set the passphrase.
 func InitializeGlobalSSES3KeyManager(filerClient *wdclient.FilerClient, grpcDialOption grpc.DialOption) error {
+	if passphrase := os.Getenv(SSES3KEKPassphraseEnv); passphrase != "" {
+		globalSSES3KeyManager.SetKEKPassphrase(passphrase)
+	} else {
+		glog.Warningf("SSE-S3 KeyManager: %s is not set; the KEK will be stored on the filer in plaintext. Set this environment variable to enable encrypted-at-rest KEK storage.", SSES3KEKPassphraseEnv)
+	}
+
 	wrapper := &KeyManagerFilerClient{
 		FilerClient:    filerClient,
 		grpcDialOption: grpcDialOption,
