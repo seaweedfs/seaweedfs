@@ -100,18 +100,14 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata using utility function
+	// Create the SSE-KMS metadata using utility function. createSSEKMSKey
+	// computes the key commitment too, so all encryption paths produce
+	// commitment-bound metadata uniformly.
 	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
-
-	// Compute key commitment before plaintext key is cleared by deferred clearKMSDataKey
-	sseKey.KeyCommitment = ComputeKeyCommitment(dataKeyResult.Response.Plaintext, iv, s3_constants.SSEAlgorithmKMS)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Store IV in the SSE key for metadata storage
-	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
 }
@@ -320,13 +316,16 @@ func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucket
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(block, iv)
 
-	// Create the encrypting reader
+	// Create the encrypting reader. Compute the HMAC commitment alongside
+	// every other field so this bucket-scoped path is on the same downgrade-
+	// resistant footing as the helper-driven paths above.
 	sseKey := &SSEKMSKey{
 		KeyID:             keyID,
 		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
 		EncryptionContext: encryptionContext,
 		BucketKeyEnabled:  bucketKeyEnabled,
 		IV:                iv,
+		KeyCommitment:     ComputeKeyCommitment(dataKeyResp.Plaintext, iv, s3_constants.SSEAlgorithmKMS),
 	}
 
 	return &cipher.StreamReader{S: stream, R: r}, sseKey, nil
