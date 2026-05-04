@@ -121,6 +121,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"ICEBERG_WAREHOUSE=s3://iceberg-tables",
 		"S3TABLES_DEFAULT_BUCKET=iceberg-tables",
 	)
+	env.masterProcess.Stdout = os.Stdout
+	env.masterProcess.Stderr = os.Stderr
 	if err := env.masterProcess.Start(); err != nil {
 		t.Fatalf("failed to start weed mini: %v", err)
 	}
