@@ -151,20 +151,26 @@ func (k *KafkaGoClient) ConsumeMessages(topicName string, expectedCount int) ([]
 // member's LeaveGroup / session cleanup and can surface as an i/o timeout on
 // the first FetchMessage.
 func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCount int) ([]kafka.Message, error) {
-	return k.consumeWithGroup(topicName, groupID, expectedCount, nil)
+	return k.consumeWithGroup(topicName, groupID, expectedCount, nil, nil)
 }
 
-func (k *KafkaGoClient) ConsumeWithGroupDebug(topicName, groupID string, expectedCount int, onRetry func(ConsumeGroupRetryDebug)) ([]kafka.Message, error) {
-	return k.consumeWithGroup(topicName, groupID, expectedCount, onRetry)
+// ConsumeWithGroupDebug runs ConsumeWithGroup with diagnostic hooks.
+//   - onRetry fires after each failed attempt; the snapshot is post-LeaveGroup
+//     because reader.Close() has already run by then (group will look Empty).
+//   - onTick fires every ~1.5s while an attempt is in flight, so the caller
+//     can observe live group state during the join/sync/fetch cycle — the
+//     only place we get to see PreparingRebalance / CompletingRebalance churn.
+func (k *KafkaGoClient) ConsumeWithGroupDebug(topicName, groupID string, expectedCount int, onRetry func(ConsumeGroupRetryDebug), onTick func()) ([]kafka.Message, error) {
+	return k.consumeWithGroup(topicName, groupID, expectedCount, onRetry, onTick)
 }
 
-func (k *KafkaGoClient) consumeWithGroup(topicName, groupID string, expectedCount int, onRetry func(ConsumeGroupRetryDebug)) ([]kafka.Message, error) {
+func (k *KafkaGoClient) consumeWithGroup(topicName, groupID string, expectedCount int, onRetry func(ConsumeGroupRetryDebug), onTick func()) ([]kafka.Message, error) {
 	k.t.Helper()
 
 	const maxJoinAttempts = 5
 	var lastErr error
 	for attempt := 1; attempt <= maxJoinAttempts; attempt++ {
-		messages, err, progressed := k.consumeWithGroupOnce(topicName, groupID, expectedCount)
+		messages, err, progressed := k.consumeWithGroupOnce(topicName, groupID, expectedCount, onTick)
 		if err == nil {
 			return messages, nil
 		}
@@ -198,7 +204,7 @@ func (k *KafkaGoClient) consumeWithGroup(topicName, groupID string, expectedCoun
 // consumeWithGroupOnce runs a single consume attempt. Returns the messages
 // fetched, any error, and whether any message was received (used to decide
 // whether a retry is safe).
-func (k *KafkaGoClient) consumeWithGroupOnce(topicName, groupID string, expectedCount int) ([]kafka.Message, error, bool) {
+func (k *KafkaGoClient) consumeWithGroupOnce(topicName, groupID string, expectedCount int, onTick func()) ([]kafka.Message, error, bool) {
 	// Give each reader its own ClientID so restarts do not get mistaken for the
 	// still-shutting-down reader they are replacing.
 	dialer := &kafka.Dialer{
@@ -228,6 +234,32 @@ func (k *KafkaGoClient) consumeWithGroupOnce(topicName, groupID string, expected
 	// member instead of burning most of the overall test timeout on one try.
 	ctx, cancel := context.WithTimeout(context.Background(), consumerGroupAttemptTimeout)
 	defer cancel()
+
+	// While the reader is still alive (i.e. before defer reader.Close() runs),
+	// periodically invoke onTick so the caller can snapshot the gateway's view
+	// of the group during the join/sync/fetch cycle. Stop it before reader.Close
+	// fires — defers run LIFO, so this defer comes after the reader.Close defer.
+	if onTick != nil {
+		tickStop := make(chan struct{})
+		tickDone := make(chan struct{})
+		go func() {
+			defer close(tickDone)
+			ticker := time.NewTicker(1500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-tickStop:
+					return
+				case <-ticker.C:
+					onTick()
+				}
+			}
+		}()
+		defer func() {
+			close(tickStop)
+			<-tickDone
+		}()
+	}
 
 	var messages []kafka.Message
 	for i := 0; i < expectedCount; i++ {
