@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -27,10 +29,42 @@ type IAMManager struct {
 	policyEngine         *policy.PolicyEngine
 	roleStore            RoleStore
 	userStore            UserStore
+	oidcProviderStore    OIDCProviderStore
 	filerAddressProvider func() string // Function to get current filer address
 	initialized          bool
 	runtimePolicyMu      sync.Mutex
 	runtimePolicyNames   map[string]struct{}
+}
+
+// SetOIDCProviderStore configures the IAM-managed OIDC provider store. When
+// nil, OIDC provider IAM actions return ServiceNotReady. The store is the
+// source of truth for AssumeRoleWithWebIdentity provider resolution once
+// Phase 2b lands; in Phase 2a it is read-only and populated from static
+// configuration at boot.
+func (m *IAMManager) SetOIDCProviderStore(store OIDCProviderStore) {
+	m.oidcProviderStore = store
+}
+
+// GetOIDCProviderStore returns the configured store (may be nil).
+func (m *IAMManager) GetOIDCProviderStore() OIDCProviderStore {
+	return m.oidcProviderStore
+}
+
+// GetOIDCProvider returns the record for the given ARN, or an error if the
+// store is not configured or the record is missing.
+func (m *IAMManager) GetOIDCProvider(ctx context.Context, arn string) (*OIDCProviderRecord, error) {
+	if m.oidcProviderStore == nil {
+		return nil, fmt.Errorf("OIDC provider store not configured")
+	}
+	return m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+}
+
+// ListOIDCProviders enumerates all configured OIDC providers.
+func (m *IAMManager) ListOIDCProviders(ctx context.Context) ([]*OIDCProviderRecord, error) {
+	if m.oidcProviderStore == nil {
+		return nil, fmt.Errorf("OIDC provider store not configured")
+	}
+	return m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
 }
 
 // IAMConfig holds configuration for all IAM components
@@ -43,6 +77,17 @@ type IAMConfig struct {
 
 	// Role store configuration
 	Roles *RoleStoreConfig `json:"roleStore"`
+
+	// OIDCProviders configures the IAM-managed OIDC provider store. Optional;
+	// if absent the manager defaults to an in-memory store hydrated from
+	// STS.Providers at boot.
+	OIDCProviders *OIDCProviderStoreConfig `json:"oidcProviderStore,omitempty"`
+}
+
+// OIDCProviderStoreConfig holds OIDC provider store configuration.
+type OIDCProviderStoreConfig struct {
+	StoreType   string                 `json:"storeType"` // memory, filer
+	StoreConfig map[string]interface{} `json:"storeConfig,omitempty"`
 }
 
 // RoleStoreConfig holds role store configuration
@@ -196,7 +241,99 @@ func (m *IAMManager) Initialize(config *IAMConfig, filerAddressProvider func() s
 	}
 	m.roleStore = roleStore
 
+	// Initialize OIDC provider store and hydrate from static configuration so
+	// the read-only IAM API can return the same providers the STS service
+	// already accepts. Mutations will land in Phase 2b.
+	if err := m.initOIDCProviderStore(config); err != nil {
+		return fmt.Errorf("failed to initialize OIDC provider store: %w", err)
+	}
+
 	m.initialized = true
+	return nil
+}
+
+// initOIDCProviderStore creates the OIDC provider store and seeds it from the
+// static STS provider configuration. The static path remains the bootstrap
+// source: each enabled OIDC entry under STS.Providers is mirrored as an
+// OIDCProviderRecord so the IAM API surfaces the same set the STS service
+// validates against.
+func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
+	store, err := m.createOIDCProviderStore(config.OIDCProviders)
+	if err != nil {
+		return err
+	}
+	m.oidcProviderStore = store
+
+	if config.STS == nil {
+		return nil
+	}
+	for _, pc := range config.STS.Providers {
+		if pc == nil || !pc.Enabled || pc.Type != sts.ProviderTypeOIDC {
+			continue
+		}
+		issuer, _ := pc.Config["issuer"].(string)
+		if issuer == "" {
+			glog.Warningf("OIDC provider %s in static config has empty issuer; skipping mirror to store", pc.Name)
+			continue
+		}
+		accountID := ""
+		if config.STS != nil {
+			accountID = config.STS.AccountId
+		}
+		arn, err := DeriveOIDCProviderARN(accountID, issuer)
+		if err != nil {
+			glog.Warningf("derive ARN for static OIDC provider %s: %v", pc.Name, err)
+			continue
+		}
+		clientIDs := extractClientIDs(pc.Config)
+		now := time.Now()
+		rec := &OIDCProviderRecord{
+			AccountID: accountID,
+			ARN:       arn,
+			URL:       issuer,
+			ClientIDs: clientIDs,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := store.StoreProvider(context.Background(), m.getFilerAddress(), rec); err != nil {
+			glog.Warningf("mirror static OIDC provider %s into store: %v", pc.Name, err)
+		}
+	}
+	return nil
+}
+
+// createOIDCProviderStore selects an OIDCProviderStore implementation. Defaults
+// to memory; "filer" requires a filerAddressProvider to be configured.
+func (m *IAMManager) createOIDCProviderStore(cfg *OIDCProviderStoreConfig) (OIDCProviderStore, error) {
+	if cfg == nil || cfg.StoreType == "" || cfg.StoreType == "memory" {
+		return NewMemoryOIDCProviderStore(), nil
+	}
+	if cfg.StoreType == "filer" {
+		return NewFilerOIDCProviderStore(cfg.StoreConfig, m.filerAddressProvider), nil
+	}
+	return nil, fmt.Errorf("unsupported OIDC provider store type: %s", cfg.StoreType)
+}
+
+// extractClientIDs reads a single clientId or a clientIds list from the
+// provider's static config map. Mirrors the OIDCConfig schema.
+func extractClientIDs(cfg map[string]interface{}) []string {
+	if cfg == nil {
+		return nil
+	}
+	if list, ok := cfg["clientIds"].([]interface{}); ok {
+		out := make([]string, 0, len(list))
+		for _, v := range list {
+			if s, ok := v.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if id, ok := cfg["clientId"].(string); ok && id != "" {
+		return []string{id}
+	}
 	return nil
 }
 

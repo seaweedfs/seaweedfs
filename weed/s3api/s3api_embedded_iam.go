@@ -2165,11 +2165,22 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	if e.readOnly {
 		switch action {
 		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListUserPolicies", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListPolicyVersions", "GetPolicyVersion", "ListServiceAccounts", "GetServiceAccount",
-			"GetGroup", "ListGroups", "ListAttachedGroupPolicies", "GetGroupPolicy", "ListGroupPolicies", "ListGroupsForUser":
+			"GetGroup", "ListGroups", "ListAttachedGroupPolicies", "GetGroupPolicy", "ListGroupPolicies", "ListGroupsForUser",
+			actionListOpenIDConnectProviders, actionGetOpenIDConnectProvider:
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
 		}
+	}
+
+	// OIDC provider actions don't operate on S3ApiConfiguration; dispatch
+	// before the unrelated config load + reload churn.
+	if response, iamErr, ok := e.dispatchOIDCProviderAction(ctx, values); ok {
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		response.SetRequestId(reqID)
+		return response, nil
 	}
 
 	s3cfg := &iam_pb.S3ApiConfiguration{}
