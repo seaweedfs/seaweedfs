@@ -405,9 +405,17 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 			}
 			glog.Warningf("SSE-S3 KeyManager: migrating plaintext KEK to encrypted storage")
 			key = legacyKey
-			// Re-save in encrypted form
-			if wrapped, wrapErr := km.wrapKEK(key); wrapErr == nil {
-				_ = km.updateKEKContent(wrapped)
+			// Re-save in encrypted form. Both failure modes used to be swallowed,
+			// which left the KEK on disk in plaintext while startup proceeded —
+			// an operator setting a passphrase saw a silent no-op and no signal
+			// that the migration had failed. Log loudly so the next restart
+			// makes the unmigrated state obvious; we still load the in-memory
+			// key so the server stays up.
+			wrapped, wrapErr := km.wrapKEK(key)
+			if wrapErr != nil {
+				glog.Errorf("SSE-S3 KeyManager: failed to wrap legacy KEK during migration; KEK remains plaintext on filer: %v", wrapErr)
+			} else if updErr := km.updateKEKContent(wrapped); updErr != nil {
+				glog.Errorf("SSE-S3 KeyManager: failed to persist wrapped KEK during migration; KEK remains plaintext on filer: %v", updErr)
 			}
 		}
 	} else {
