@@ -23,13 +23,13 @@ func TestSetKEKPassphraseEnablesEncryptedRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wrapKEK: %v", err)
 	}
-	if !isV2WrappedKEK(wrapped) {
-		t.Fatal("wrapped output should use v2 magic prefix")
-	}
 
-	got, err := km.unwrapKEK(wrapped)
+	got, isV2, err := km.unwrapKEK(wrapped)
 	if err != nil {
 		t.Fatalf("unwrapKEK: %v", err)
+	}
+	if !isV2 {
+		t.Fatal("wrapped output should be reported as v2 by unwrapKEK")
 	}
 	if string(got) != string(original) {
 		t.Fatalf("round-trip mismatch: got %x want %x", got, original)
@@ -64,10 +64,10 @@ func TestSetKEKPassphraseDifferentInstancesNoCollision(t *testing.T) {
 	}
 
 	// Both must still self-roundtrip.
-	if got, _ := a.unwrapKEK(wa); string(got) != string(kek) {
+	if got, _, _ := a.unwrapKEK(wa); string(got) != string(kek) {
 		t.Fatal("manager a failed self roundtrip")
 	}
-	if got, _ := b.unwrapKEK(wb); string(got) != string(kek) {
+	if got, _, _ := b.unwrapKEK(wb); string(got) != string(kek) {
 		t.Fatal("manager b failed self roundtrip")
 	}
 }

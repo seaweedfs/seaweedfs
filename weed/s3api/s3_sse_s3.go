@@ -286,16 +286,6 @@ var kekWrappedV2Magic = []byte{0x53, 0x57, 0x76, 0x32} // "SWv2"
 // 32 bytes matches the SHA-256 output and is the standard recommendation.
 const kekRandomSaltSize = 32
 
-// isV2WrappedKEK reports whether the base64-encoded `wrapped` payload uses
-// the per-installation-salt format. Used at load time to decide whether to
-// opportunistically rewrap a legacy fixed-salt KEK.
-func isV2WrappedKEK(wrapped []byte) bool {
-	raw, err := base64.StdEncoding.DecodeString(string(wrapped))
-	if err != nil {
-		return false
-	}
-	return len(raw) >= len(kekWrappedV2Magic) && bytes.Equal(raw[:len(kekWrappedV2Magic)], kekWrappedV2Magic)
-}
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption.
 // If kekPassphrase is non-empty, the KEK is encrypted at rest using a key derived from it.
@@ -368,10 +358,14 @@ func (km *SSES3KeyManager) wrapKEK(kek []byte) ([]byte, error) {
 //	v1 (legacy):    nonce || ciphertext+tag — falls back to the fixed
 //	    legacyKEKWrappingSalt; rewrapping into v2 happens via the migration
 //	    path in loadSuperKeyFromFiler.
-func (km *SSES3KeyManager) unwrapKEK(wrapped []byte) ([]byte, error) {
+//
+// The returned `isV2` flag tells the caller which format was on disk, so
+// the migration path can rewrap legacy entries without re-decoding the
+// base64 payload a second time.
+func (km *SSES3KeyManager) unwrapKEK(wrapped []byte) (kek []byte, isV2 bool, err error) {
 	raw, err := base64.StdEncoding.DecodeString(string(wrapped))
 	if err != nil {
-		return nil, fmt.Errorf("base64 decode wrapped KEK: %w", err)
+		return nil, false, fmt.Errorf("base64 decode wrapped KEK: %w", err)
 	}
 
 	salt := legacyKEKWrappingSalt
@@ -379,26 +373,31 @@ func (km *SSES3KeyManager) unwrapKEK(wrapped []byte) ([]byte, error) {
 	if len(raw) > len(kekWrappedV2Magic)+kekRandomSaltSize && bytes.Equal(raw[:len(kekWrappedV2Magic)], kekWrappedV2Magic) {
 		salt = raw[len(kekWrappedV2Magic) : len(kekWrappedV2Magic)+kekRandomSaltSize]
 		payload = raw[len(kekWrappedV2Magic)+kekRandomSaltSize:]
+		isV2 = true
 	}
 
 	wrappingKey, err := km.deriveWrappingKey(salt)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	block, err := aes.NewCipher(wrappingKey)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(payload) < gcm.NonceSize() {
-		return nil, fmt.Errorf("wrapped KEK too short")
+		return nil, false, fmt.Errorf("wrapped KEK too short")
 	}
 	nonce := payload[:gcm.NonceSize()]
 	ciphertext := payload[gcm.NonceSize():]
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	out, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, isV2, nil
 }
 
 // InitializeWithFiler initializes the key manager with a filer client
@@ -451,12 +450,15 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 	var key []byte
 	if km.kekPassphrase != "" {
 		// Try to unwrap encrypted KEK first
-		key, err = km.unwrapKEK(entry.Content)
+		var wasV2 bool
+		key, wasV2, err = km.unwrapKEK(entry.Content)
 		if err == nil {
 			// Successful unwrap: if the payload was the legacy fixed-salt
 			// format, opportunistically rewrap it under a fresh per-installation
-			// salt so the next restart picks up the stronger format.
-			if !isV2WrappedKEK(entry.Content) {
+			// salt so the next restart picks up the stronger format. The
+			// version flag comes straight out of unwrapKEK, avoiding a second
+			// base64 decode pass over the same content.
+			if !wasV2 {
 				if rewrapped, wrapErr := km.wrapKEK(key); wrapErr != nil {
 					glog.Warningf("SSE-S3 KeyManager: failed to rewrap legacy fixed-salt KEK to v2: %v", wrapErr)
 				} else if updErr := km.updateKEKContent(rewrapped); updErr != nil {
