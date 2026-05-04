@@ -638,4 +638,3 @@ func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string
 		}
 	}
 }
-

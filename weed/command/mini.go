@@ -900,6 +900,9 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	// applyConfigFileOptions above may have overwritten -dir from the
+	// mini.options file, so re-resolve it here alongside the other paths.
+	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
 	*miniOptions.cpuprofile = util.ResolvePath(*miniOptions.cpuprofile)
 	*miniOptions.memprofile = util.ResolvePath(*miniOptions.memprofile)
 	*miniS3Config = util.ResolvePath(*miniS3Config)
