@@ -987,9 +987,13 @@ func runMini(cmd *Command, args []string) bool {
 	}
 
 	if *miniMasterOptions.metaFolder == "" {
-		*miniMasterOptions.metaFolder = *miniDataFolders
+		// -dir may be comma-separated (dir[,dir]...); the master expects a
+		// single directory, so default to the first entry. Both miniDataFolders
+		// and miniMasterOptions.metaFolder were already tilde-resolved at the
+		// top of runMini.
+		*miniMasterOptions.metaFolder = util.StringSplit(*miniDataFolders, ",")[0]
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*miniMasterOptions.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*miniMasterOptions.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-dir=\"%s\") Writable: %s", *miniMasterOptions.metaFolder, err)
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
@@ -998,9 +1002,9 @@ func runMini(cmd *Command, args []string) bool {
 	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
 	if !isFlagPassed("master.volumeSizeLimitMB") {
 		// User didn't override, use auto-calculated value
-		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation
-		resolvedDataFolder := util.ResolvePath(util.StringSplit(*miniDataFolders, ",")[0])
-		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
+		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation.
+		// miniDataFolders was already tilde-resolved at the top of runMini.
+		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(util.StringSplit(*miniDataFolders, ",")[0])
 		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
 		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
 	} else {

@@ -147,6 +147,11 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		grace.StartDebugServer(*syncOptions.debugPort)
 	}
 
+	*syncCpuProfile = util.ResolvePath(*syncCpuProfile)
+	*syncMemProfile = util.ResolvePath(*syncMemProfile)
+	*syncOptions.aSecurity = util.ResolvePath(*syncOptions.aSecurity)
+	*syncOptions.bSecurity = util.ResolvePath(*syncOptions.bSecurity)
+
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -181,10 +186,6 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		}
 	}
 
-	*syncCpuProfile = util.ResolvePath(*syncCpuProfile)
-	*syncMemProfile = util.ResolvePath(*syncMemProfile)
-	*syncOptions.aSecurity = util.ResolvePath(*syncOptions.aSecurity)
-	*syncOptions.bSecurity = util.ResolvePath(*syncOptions.bSecurity)
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
 
 	filerA := pb.ServerAddress(*syncOptions.filerA)
