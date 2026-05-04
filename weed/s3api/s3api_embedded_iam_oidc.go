@@ -12,12 +12,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 )
 
-// OIDC provider IAM actions handled by this file. Mutating actions are
-// reserved for Phase 2b; the read-only set lands now so existing static-config
-// providers become discoverable through the AWS IAM API.
+// OIDC provider IAM actions handled by this file.
 const (
-	actionGetOpenIDConnectProvider   = "GetOpenIDConnectProvider"
-	actionListOpenIDConnectProviders = "ListOpenIDConnectProviders"
+	actionGetOpenIDConnectProvider                  = "GetOpenIDConnectProvider"
+	actionListOpenIDConnectProviders                = "ListOpenIDConnectProviders"
+	actionCreateOpenIDConnectProvider               = "CreateOpenIDConnectProvider"
+	actionDeleteOpenIDConnectProvider               = "DeleteOpenIDConnectProvider"
+	actionAddClientIDToOpenIDConnectProvider        = "AddClientIDToOpenIDConnectProvider"
+	actionRemoveClientIDFromOpenIDConnectProvider   = "RemoveClientIDFromOpenIDConnectProvider"
+	actionUpdateOpenIDConnectProviderThumbprint     = "UpdateOpenIDConnectProviderThumbprint"
+	actionTagOpenIDConnectProvider                  = "TagOpenIDConnectProvider"
+	actionUntagOpenIDConnectProvider                = "UntagOpenIDConnectProvider"
 )
 
 // isOIDCProviderAction reports whether an action belongs to the OIDC provider
@@ -26,7 +31,14 @@ const (
 func isOIDCProviderAction(action string) bool {
 	switch action {
 	case actionGetOpenIDConnectProvider,
-		actionListOpenIDConnectProviders:
+		actionListOpenIDConnectProviders,
+		actionCreateOpenIDConnectProvider,
+		actionDeleteOpenIDConnectProvider,
+		actionAddClientIDToOpenIDConnectProvider,
+		actionRemoveClientIDFromOpenIDConnectProvider,
+		actionUpdateOpenIDConnectProviderThumbprint,
+		actionTagOpenIDConnectProvider,
+		actionUntagOpenIDConnectProvider:
 		return true
 	default:
 		return false
@@ -56,8 +68,219 @@ func (e *EmbeddedIamApi) dispatchOIDCProviderAction(ctx context.Context, values 
 	case actionGetOpenIDConnectProvider:
 		resp, err := e.getOpenIDConnectProvider(ctx, mgr, values)
 		return resp, err, true
+	case actionCreateOpenIDConnectProvider:
+		resp, err := e.createOpenIDConnectProvider(ctx, mgr, values)
+		return resp, err, true
+	case actionDeleteOpenIDConnectProvider:
+		resp, err := e.deleteOpenIDConnectProvider(ctx, mgr, values)
+		return resp, err, true
+	case actionAddClientIDToOpenIDConnectProvider:
+		resp, err := e.addClientIDToOpenIDConnectProvider(ctx, mgr, values)
+		return resp, err, true
+	case actionRemoveClientIDFromOpenIDConnectProvider:
+		resp, err := e.removeClientIDFromOpenIDConnectProvider(ctx, mgr, values)
+		return resp, err, true
+	case actionUpdateOpenIDConnectProviderThumbprint:
+		resp, err := e.updateOpenIDConnectProviderThumbprint(ctx, mgr, values)
+		return resp, err, true
+	case actionTagOpenIDConnectProvider:
+		resp, err := e.tagOpenIDConnectProvider(ctx, mgr, values)
+		return resp, err, true
+	case actionUntagOpenIDConnectProvider:
+		resp, err := e.untagOpenIDConnectProvider(ctx, mgr, values)
+		return resp, err, true
 	}
 	return nil, nil, false
+}
+
+// extractMemberList collects all values from `Foo.member.<n>=...` form
+// parameters in order of N. AWS query-string conventions encode list inputs
+// this way, so List/Add/Update/Tag actions all share this helper.
+func extractMemberList(values url.Values, prefix string) []string {
+	out := []string{}
+	// Members are indexed from 1; iterate until a missing index breaks the run.
+	for i := 1; ; i++ {
+		key := fmt.Sprintf("%s.member.%d", prefix, i)
+		v := values.Get(key)
+		if v == "" {
+			break
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (e *EmbeddedIamApi) createOpenIDConnectProvider(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.CreateOpenIDConnectProviderResponse, *iamError) {
+	urlStr := strings.TrimSpace(values.Get("Url"))
+	if urlStr == "" {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("Url is required")}
+	}
+	clientIDs := extractMemberList(values, "ClientIDList")
+	if len(clientIDs) == 0 {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientIDList must contain at least one entry")}
+	}
+	thumbprints := extractMemberList(values, "ThumbprintList")
+
+	// Tags are encoded as parallel Tags.member.N.Key / Tags.member.N.Value.
+	var tags map[string]string
+	for i := 1; ; i++ {
+		k := values.Get(fmt.Sprintf("Tags.member.%d.Key", i))
+		if k == "" {
+			break
+		}
+		if tags == nil {
+			tags = make(map[string]string)
+		}
+		tags[k] = values.Get(fmt.Sprintf("Tags.member.%d.Value", i))
+	}
+
+	accountID := mgr.GetSTSService().Config.AccountId
+	arn, err := integration.DeriveOIDCProviderARN(accountID, urlStr)
+	if err != nil {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	rec := &integration.OIDCProviderRecord{
+		AccountID:   accountID,
+		ARN:         arn,
+		URL:         urlStr,
+		ClientIDs:   clientIDs,
+		Thumbprints: thumbprints,
+		Tags:        tags,
+	}
+	if err := mgr.CreateOIDCProvider(ctx, rec); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return nil, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: err}
+		}
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	resp := &iamlib.CreateOpenIDConnectProviderResponse{}
+	resp.CreateOpenIDConnectProviderResult.OpenIDConnectProviderArn = rec.ARN
+	if len(rec.Tags) > 0 {
+		out := make([]*iamlib.IAMTag, 0, len(rec.Tags))
+		for k, v := range rec.Tags {
+			out = append(out, &iamlib.IAMTag{Key: k, Value: v})
+		}
+		resp.CreateOpenIDConnectProviderResult.Tags = out
+	}
+	return resp, nil
+}
+
+func (e *EmbeddedIamApi) deleteOpenIDConnectProvider(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.DeleteOpenIDConnectProviderResponse, *iamError) {
+	arn, iamErr := requireProviderArn(values)
+	if iamErr != nil {
+		return nil, iamErr
+	}
+	if err := mgr.DeleteOIDCProvider(ctx, arn); err != nil {
+		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	return &iamlib.DeleteOpenIDConnectProviderResponse{}, nil
+}
+
+func (e *EmbeddedIamApi) addClientIDToOpenIDConnectProvider(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.AddClientIDToOpenIDConnectProviderResponse, *iamError) {
+	arn, iamErr := requireProviderArn(values)
+	if iamErr != nil {
+		return nil, iamErr
+	}
+	clientID := strings.TrimSpace(values.Get("ClientID"))
+	if clientID == "" {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientID is required")}
+	}
+	if err := mgr.AddClientIDToOIDCProvider(ctx, arn, clientID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
+		}
+		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	return &iamlib.AddClientIDToOpenIDConnectProviderResponse{}, nil
+}
+
+func (e *EmbeddedIamApi) removeClientIDFromOpenIDConnectProvider(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.RemoveClientIDFromOpenIDConnectProviderResponse, *iamError) {
+	arn, iamErr := requireProviderArn(values)
+	if iamErr != nil {
+		return nil, iamErr
+	}
+	clientID := strings.TrimSpace(values.Get("ClientID"))
+	if clientID == "" {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientID is required")}
+	}
+	if err := mgr.RemoveClientIDFromOIDCProvider(ctx, arn, clientID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
+		}
+		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	return &iamlib.RemoveClientIDFromOpenIDConnectProviderResponse{}, nil
+}
+
+func (e *EmbeddedIamApi) updateOpenIDConnectProviderThumbprint(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.UpdateOpenIDConnectProviderThumbprintResponse, *iamError) {
+	arn, iamErr := requireProviderArn(values)
+	if iamErr != nil {
+		return nil, iamErr
+	}
+	thumbprints := extractMemberList(values, "ThumbprintList")
+	if len(thumbprints) == 0 {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ThumbprintList must contain at least one entry")}
+	}
+	if err := mgr.UpdateOIDCProviderThumbprints(ctx, arn, thumbprints); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
+		}
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	return &iamlib.UpdateOpenIDConnectProviderThumbprintResponse{}, nil
+}
+
+func (e *EmbeddedIamApi) tagOpenIDConnectProvider(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.TagOpenIDConnectProviderResponse, *iamError) {
+	arn, iamErr := requireProviderArn(values)
+	if iamErr != nil {
+		return nil, iamErr
+	}
+	tags := map[string]string{}
+	for i := 1; ; i++ {
+		k := values.Get(fmt.Sprintf("Tags.member.%d.Key", i))
+		if k == "" {
+			break
+		}
+		tags[k] = values.Get(fmt.Sprintf("Tags.member.%d.Value", i))
+	}
+	if len(tags) == 0 {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("Tags must contain at least one Key/Value pair")}
+	}
+	if err := mgr.TagOIDCProvider(ctx, arn, tags); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
+		}
+		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	return &iamlib.TagOpenIDConnectProviderResponse{}, nil
+}
+
+func (e *EmbeddedIamApi) untagOpenIDConnectProvider(ctx context.Context, mgr *integration.IAMManager, values url.Values) (*iamlib.UntagOpenIDConnectProviderResponse, *iamError) {
+	arn, iamErr := requireProviderArn(values)
+	if iamErr != nil {
+		return nil, iamErr
+	}
+	keys := extractMemberList(values, "TagKeys")
+	if len(keys) == 0 {
+		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("TagKeys must contain at least one entry")}
+	}
+	if err := mgr.UntagOIDCProvider(ctx, arn, keys); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
+		}
+		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	return &iamlib.UntagOpenIDConnectProviderResponse{}, nil
+}
+
+func requireProviderArn(values url.Values) (string, *iamError) {
+	arn := strings.TrimSpace(values.Get("OpenIDConnectProviderArn"))
+	if arn == "" {
+		return "", &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("OpenIDConnectProviderArn is required")}
+	}
+	return arn, nil
 }
 
 func (e *EmbeddedIamApi) oidcIAMManager() *integration.IAMManager {

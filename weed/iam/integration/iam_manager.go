@@ -67,6 +67,184 @@ func (m *IAMManager) ListOIDCProviders(ctx context.Context) ([]*OIDCProviderReco
 	return m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
 }
 
+// CreateOIDCProvider persists a new IAM-managed OIDC provider record. Refuses
+// to overwrite an existing record so callers see EntityAlreadyExists semantics.
+func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRecord) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if rec == nil {
+		return fmt.Errorf("record cannot be nil")
+	}
+	if err := validateOIDCProviderRecord(rec); err != nil {
+		return err
+	}
+	if existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN); err == nil && existing != nil {
+		return fmt.Errorf("OIDC provider already exists: %s", rec.ARN)
+	}
+	now := time.Now().UTC()
+	rec.CreatedAt = now
+	rec.UpdatedAt = now
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// DeleteOIDCProvider removes the IAM-managed record. Idempotent.
+func (m *IAMManager) DeleteOIDCProvider(ctx context.Context, arn string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	return m.oidcProviderStore.DeleteProvider(ctx, m.getFilerAddress(), arn)
+}
+
+// AddClientIDToOIDCProvider appends `clientID` to the provider's allowed
+// audience list. Adding an existing client ID is a no-op (AWS-compat).
+func (m *IAMManager) AddClientIDToOIDCProvider(ctx context.Context, arn, clientID string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if clientID == "" {
+		return fmt.Errorf("ClientID cannot be empty")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	for _, existing := range rec.ClientIDs {
+		if existing == clientID {
+			return nil // idempotent
+		}
+	}
+	rec.ClientIDs = append(rec.ClientIDs, clientID)
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// RemoveClientIDFromOIDCProvider drops `clientID` from the allowed audience
+// list. Removing a missing client ID is a no-op.
+func (m *IAMManager) RemoveClientIDFromOIDCProvider(ctx context.Context, arn, clientID string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	pruned := make([]string, 0, len(rec.ClientIDs))
+	for _, existing := range rec.ClientIDs {
+		if existing != clientID {
+			pruned = append(pruned, existing)
+		}
+	}
+	if len(pruned) == len(rec.ClientIDs) {
+		return nil // not present; no-op
+	}
+	rec.ClientIDs = pruned
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// UpdateOIDCProviderThumbprints replaces the entire thumbprint list. AWS
+// constrains the list to 1..5 entries when non-empty; we mirror that bound.
+func (m *IAMManager) UpdateOIDCProviderThumbprints(ctx context.Context, arn string, thumbprints []string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if len(thumbprints) > 5 {
+		return fmt.Errorf("ThumbprintList must contain at most 5 entries, got %d", len(thumbprints))
+	}
+	for _, tp := range thumbprints {
+		if !isValidSHA1Thumbprint(tp) {
+			return fmt.Errorf("invalid thumbprint %q: must be 40-character SHA-1 hex", tp)
+		}
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	rec.Thumbprints = append([]string(nil), thumbprints...)
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// TagOIDCProvider merges the supplied tags into the provider's tag set.
+func (m *IAMManager) TagOIDCProvider(ctx context.Context, arn string, tags map[string]string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	if rec.Tags == nil {
+		rec.Tags = make(map[string]string, len(tags))
+	}
+	for k, v := range tags {
+		rec.Tags[k] = v
+	}
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// UntagOIDCProvider removes the named tags from the provider's tag set.
+func (m *IAMManager) UntagOIDCProvider(ctx context.Context, arn string, keys []string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		delete(rec.Tags, k)
+	}
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// validateOIDCProviderRecord enforces the invariants AWS imposes on the
+// underlying CreateOpenIDConnectProvider call.
+func validateOIDCProviderRecord(rec *OIDCProviderRecord) error {
+	if rec.URL == "" {
+		return fmt.Errorf("Url is required")
+	}
+	if rec.ARN == "" {
+		return fmt.Errorf("ARN is required")
+	}
+	if len(rec.ClientIDs) == 0 {
+		return fmt.Errorf("ClientIDList must contain at least one entry")
+	}
+	if len(rec.ClientIDs) > 100 {
+		return fmt.Errorf("ClientIDList must contain at most 100 entries")
+	}
+	if len(rec.Thumbprints) > 5 {
+		return fmt.Errorf("ThumbprintList must contain at most 5 entries")
+	}
+	for _, tp := range rec.Thumbprints {
+		if !isValidSHA1Thumbprint(tp) {
+			return fmt.Errorf("invalid thumbprint %q: must be 40-character SHA-1 hex", tp)
+		}
+	}
+	return nil
+}
+
+// isValidSHA1Thumbprint returns true iff `s` is exactly 40 hex characters,
+// matching the SHA-1 digest format AWS expects.
+func isValidSHA1Thumbprint(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // IAMConfig holds configuration for all IAM components
 type IAMConfig struct {
 	// STS service configuration
