@@ -63,6 +63,8 @@ var cmdFilerSyncVerify = &Command{
 }
 
 func runFilerSyncVerify(cmd *Command, args []string) bool {
+	*syncVerifyOptions.aSecurity = util.ResolvePath(*syncVerifyOptions.aSecurity)
+	*syncVerifyOptions.bSecurity = util.ResolvePath(*syncVerifyOptions.bSecurity)
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 

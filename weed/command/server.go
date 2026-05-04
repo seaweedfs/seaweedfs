@@ -224,6 +224,13 @@ func runServer(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
+	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)
+	*serverIamConfig = util.ResolvePath(*serverIamConfig)
+	*masterOptions.metaFolder = util.ResolvePath(*masterOptions.metaFolder)
+	s3Options.resolvePaths()
+	webdavOptions.resolvePaths()
+	sftpOptions.resolvePaths()
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {
@@ -318,6 +325,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*serverMetricsHttpIp, *serverMetricsHttpPort)
 
+	*volumeDataFolders = util.ResolveCommaSeparatedPaths(*volumeDataFolders)
 	folders := strings.Split(*volumeDataFolders, ",")
 
 	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
@@ -327,7 +335,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterOptions.metaFolder == "" {
 		*masterOptions.metaFolder = folders[0]
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*masterOptions.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*masterOptions.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder

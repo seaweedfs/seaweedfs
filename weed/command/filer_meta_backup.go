@@ -65,6 +65,8 @@ When both match, the deeper prefix wins.
 
 func runFilerMetaBackup(cmd *Command, args []string) bool {
 
+	*metaBackup.backupFilerConfig = util.ResolvePath(*metaBackup.backupFilerConfig)
+
 	util.LoadSecurityConfiguration()
 	metaBackup.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 

@@ -150,6 +150,8 @@ func runVolume(cmd *Command, args []string) bool {
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof
 	if !*v.pprof {
+		*v.cpuProfile = util.ResolvePath(*v.cpuProfile)
+		*v.memProfile = util.ResolvePath(*v.memProfile)
 		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 	}
 
@@ -179,9 +181,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
-	for _, folder := range v.folders {
-		if err := util.TestFolderWritable(util.ResolvePath(folder)); err != nil {
-			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
+	for i, folder := range v.folders {
+		v.folders[i] = util.ResolvePath(folder)
+		if err := util.TestFolderWritable(v.folders[i]); err != nil {
+			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", v.folders[i], err)
 		}
 	}
 
@@ -284,7 +287,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
-		*v.idxFolder,
+		util.ResolvePath(*v.idxFolder),
 		volumeNeedleMapKind,
 		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
 		v.whiteList,

@@ -875,7 +875,7 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
-	*miniDataFolders = util.ResolvePath(*miniDataFolders)
+	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
@@ -900,6 +900,17 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	// applyConfigFileOptions above may have overwritten -dir from the
+	// mini.options file, so re-resolve it here alongside the other paths.
+	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
+	*miniOptions.cpuprofile = util.ResolvePath(*miniOptions.cpuprofile)
+	*miniOptions.memprofile = util.ResolvePath(*miniOptions.memprofile)
+	*miniS3Config = util.ResolvePath(*miniS3Config)
+	*miniIamConfig = util.ResolvePath(*miniIamConfig)
+	*miniMasterOptions.metaFolder = util.ResolvePath(*miniMasterOptions.metaFolder)
+	*miniAdminOptions.dataDir = util.ResolvePath(*miniAdminOptions.dataDir)
+	miniS3Options.resolvePaths()
+	miniWebDavOptions.resolvePaths()
 	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
 
 	// Determine bind IP
@@ -976,9 +987,13 @@ func runMini(cmd *Command, args []string) bool {
 	}
 
 	if *miniMasterOptions.metaFolder == "" {
-		*miniMasterOptions.metaFolder = *miniDataFolders
+		// -dir may be comma-separated (dir[,dir]...); the master expects a
+		// single directory, so default to the first entry. Both miniDataFolders
+		// and miniMasterOptions.metaFolder were already tilde-resolved at the
+		// top of runMini.
+		*miniMasterOptions.metaFolder = util.StringSplit(*miniDataFolders, ",")[0]
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*miniMasterOptions.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*miniMasterOptions.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-dir=\"%s\") Writable: %s", *miniMasterOptions.metaFolder, err)
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
@@ -987,9 +1002,9 @@ func runMini(cmd *Command, args []string) bool {
 	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
 	if !isFlagPassed("master.volumeSizeLimitMB") {
 		// User didn't override, use auto-calculated value
-		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation
-		resolvedDataFolder := util.ResolvePath(util.StringSplit(*miniDataFolders, ",")[0])
-		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
+		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation.
+		// miniDataFolders was already tilde-resolved at the top of runMini.
+		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(util.StringSplit(*miniDataFolders, ",")[0])
 		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
 		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
 	} else {

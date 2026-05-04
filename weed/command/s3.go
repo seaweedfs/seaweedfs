@@ -211,6 +211,7 @@ func runS3(cmd *Command, args []string) bool {
 		grace.StartDebugServer(*s3StandaloneOptions.debugPort)
 	}
 
+	s3StandaloneOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
 
 	switch {
@@ -242,6 +243,19 @@ func (s3opt *S3Options) parseDefaultFileMode() (uint32, error) {
 		return 0, fmt.Errorf("invalid defaultFileMode %q: %v", *s3opt.defaultFileMode, err)
 	}
 	return uint32(mode), nil
+}
+
+// resolvePaths expands "~" in every user-supplied path flag so callers
+// that share these pointers (e.g. server.go propagating s3Options.config
+// to filerOptions.s3ConfigFile before startS3Server runs) see resolved
+// values. Idempotent — safe to call from any entry point.
+func (s3opt *S3Options) resolvePaths() {
+	*s3opt.config = util.ResolvePath(*s3opt.config)
+	*s3opt.iamConfig = util.ResolvePath(*s3opt.iamConfig)
+	*s3opt.tlsCertificate = util.ResolvePath(*s3opt.tlsCertificate)
+	*s3opt.tlsPrivateKey = util.ResolvePath(*s3opt.tlsPrivateKey)
+	*s3opt.tlsCACertificate = util.ResolvePath(*s3opt.tlsCACertificate)
+	*s3opt.auditLogConfig = util.ResolvePath(*s3opt.auditLogConfig)
 }
 
 func (s3opt *S3Options) startS3Server() bool {
