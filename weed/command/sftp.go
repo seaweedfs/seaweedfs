@@ -98,6 +98,11 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	if *sftpOpt.bindIp == "" {
 		*sftpOpt.bindIp = "0.0.0.0"
 	}
+
+	// Resolve "~" in user-supplied path flags.
+	*sftpOpt.sshPrivateKey = util.ResolvePath(*sftpOpt.sshPrivateKey)
+	*sftpOpt.hostKeysFolder = util.ResolvePath(*sftpOpt.hostKeysFolder)
+	*sftpOpt.userStoreFile = util.ResolvePath(*sftpOpt.userStoreFile)
 	filerAddress := pb.ServerAddress(*sftpOpt.filer)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 

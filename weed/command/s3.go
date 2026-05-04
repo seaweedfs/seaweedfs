@@ -246,6 +246,15 @@ func (s3opt *S3Options) parseDefaultFileMode() (uint32, error) {
 
 func (s3opt *S3Options) startS3Server() bool {
 
+	// Resolve "~" in user-supplied path flags so values like "~/iam.json"
+	// passed via -s3.config (etc.) work without shell expansion.
+	*s3opt.config = util.ResolvePath(*s3opt.config)
+	*s3opt.iamConfig = util.ResolvePath(*s3opt.iamConfig)
+	*s3opt.tlsCertificate = util.ResolvePath(*s3opt.tlsCertificate)
+	*s3opt.tlsPrivateKey = util.ResolvePath(*s3opt.tlsPrivateKey)
+	*s3opt.tlsCACertificate = util.ResolvePath(*s3opt.tlsCACertificate)
+	*s3opt.auditLogConfig = util.ResolvePath(*s3opt.auditLogConfig)
+
 	filerAddresses := pb.ServerAddresses(*s3opt.filer).ToAddresses()
 
 	filerBucketsPath := "/buckets"

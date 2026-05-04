@@ -150,6 +150,8 @@ func runVolume(cmd *Command, args []string) bool {
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof
 	if !*v.pprof {
+		*v.cpuProfile = util.ResolvePath(*v.cpuProfile)
+		*v.memProfile = util.ResolvePath(*v.memProfile)
 		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 	}
 
@@ -284,7 +286,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
-		*v.idxFolder,
+		util.ResolvePath(*v.idxFolder),
 		volumeNeedleMapKind,
 		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
 		v.whiteList,

@@ -144,6 +144,8 @@ func runMaster(cmd *Command, args []string) bool {
 		*m.metaFolder = v
 	}
 
+	*masterCpuProfile = util.ResolvePath(*masterCpuProfile)
+	*masterMemProfile = util.ResolvePath(*masterMemProfile)
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
 	parent, _ := util.FullPath(*m.metaFolder).DirAndName()

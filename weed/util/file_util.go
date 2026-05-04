@@ -82,25 +82,46 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 	return
 }
 
+// ResolvePath expands a leading "~", "~/", or "~username/" in path to the
+// corresponding home directory, mirroring shell tilde expansion. A path
+// without a leading "~" or whose tilde cannot be resolved is returned
+// unchanged so callers can pass any user-supplied path through this helper
+// without worrying about non-tilde inputs or lookup failures.
 func ResolvePath(path string) string {
 
-	if !strings.Contains(path, "~") {
+	if !strings.HasPrefix(path, "~") {
 		return path
 	}
 
-	usr, _ := user.Current()
-	dir := usr.HomeDir
-
 	if path == "~" {
-		// In case of "~", which won't be caught by the "else if"
-		path = dir
-	} else if strings.HasPrefix(path, "~/") {
-		// Use strings.HasPrefix so we don't match paths like
-		// "/something/~/something/"
-		path = filepath.Join(dir, path[2:])
+		if usr, err := user.Current(); err == nil {
+			return usr.HomeDir
+		}
+		return path
 	}
 
-	return path
+	if strings.HasPrefix(path, "~/") {
+		if usr, err := user.Current(); err == nil {
+			return filepath.Join(usr.HomeDir, path[2:])
+		}
+		return path
+	}
+
+	// "~username" or "~username/rest"
+	rest := ""
+	name := path[1:]
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		rest = name[i+1:]
+		name = name[:i]
+	}
+	usr, err := user.Lookup(name)
+	if err != nil {
+		return path
+	}
+	if rest == "" {
+		return usr.HomeDir
+	}
+	return filepath.Join(usr.HomeDir, rest)
 }
 
 func FileNameBase(filename string) string {

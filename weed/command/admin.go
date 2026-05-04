@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -173,6 +172,8 @@ func runAdmin(cmd *Command, args []string) bool {
 		grace.StartDebugServer(*a.debugPort)
 	}
 
+	*a.cpuProfile = util.ResolvePath(*a.cpuProfile)
+	*a.memProfile = util.ResolvePath(*a.memProfile)
 	grace.SetupProfiling(*a.cpuProfile, *a.memProfile)
 
 	// Load security configuration
@@ -309,18 +310,10 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
 	if *options.dataDir != "" {
-		// Expand tilde (~) to home directory
-		expandedDir, err := expandHomeDir(*options.dataDir)
-		if err != nil {
-			return fmt.Errorf("failed to expand dataDir path %s: %v", *options.dataDir, err)
-		}
-		dataDir = expandedDir
-
-		// Show path expansion if it occurred
+		dataDir = util.ResolvePath(*options.dataDir)
 		if dataDir != *options.dataDir {
 			fmt.Printf("Expanded dataDir: %s -> %s\n", *options.dataDir, dataDir)
 		}
-
 		if err := os.MkdirAll(dataDir, 0755); err != nil {
 			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
 		}
@@ -646,42 +639,3 @@ func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string
 	}
 }
 
-// expandHomeDir expands the tilde (~) in a path to the user's home directory
-func expandHomeDir(path string) (string, error) {
-	if path == "" {
-		return path, nil
-	}
-
-	if !strings.HasPrefix(path, "~") {
-		return path, nil
-	}
-
-	// Get current user
-	currentUser, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("failed to get current user: %w", err)
-	}
-
-	// Handle different tilde patterns
-	if path == "~" {
-		return currentUser.HomeDir, nil
-	}
-
-	if strings.HasPrefix(path, "~/") {
-		return filepath.Join(currentUser.HomeDir, path[2:]), nil
-	}
-
-	// Handle ~username/ patterns
-	parts := strings.SplitN(path[1:], "/", 2)
-	username := parts[0]
-
-	targetUser, err := user.Lookup(username)
-	if err != nil {
-		return "", fmt.Errorf("user %s not found: %v", username, err)
-	}
-
-	if len(parts) == 1 {
-		return targetUser.HomeDir, nil
-	}
-	return filepath.Join(targetUser.HomeDir, parts[1]), nil
-}

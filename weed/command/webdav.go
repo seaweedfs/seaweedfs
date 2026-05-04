@@ -80,6 +80,10 @@ func runWebDav(cmd *Command, args []string) bool {
 
 func (wo *WebDavOption) startWebDav() bool {
 
+	// Resolve "~" in user-supplied path flags.
+	*wo.tlsCertificate = util.ResolvePath(*wo.tlsCertificate)
+	*wo.tlsPrivateKey = util.ResolvePath(*wo.tlsPrivateKey)
+
 	// detect current user
 	uid, gid := uint32(0), uint32(0)
 	if u, err := user.Current(); err == nil {

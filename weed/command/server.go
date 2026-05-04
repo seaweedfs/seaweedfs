@@ -224,6 +224,8 @@ func runServer(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
+	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {

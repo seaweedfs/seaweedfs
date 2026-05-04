@@ -900,6 +900,9 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	*miniOptions.cpuprofile = util.ResolvePath(*miniOptions.cpuprofile)
+	*miniOptions.memprofile = util.ResolvePath(*miniOptions.memprofile)
+	*miniAdminOptions.dataDir = util.ResolvePath(*miniAdminOptions.dataDir)
 	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
 
 	// Determine bind IP
