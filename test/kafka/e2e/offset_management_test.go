@@ -101,11 +101,21 @@ func testConsumerGroupResumption(t *testing.T, gateway *testutil.GatewayTestServ
 
 	// Simulate consumer restart by consuming remaining messages with same group ID
 	t.Logf("=== Phase 3: Second consumer (simulated restart) - consuming remaining messages with same group %s ===", groupID)
-	consumed2, err := client.ConsumeWithGroupDebug(topic, groupID, 2, func(info testutil.ConsumeGroupRetryDebug) {
-		t.Logf("Consumer restart attempt %d/%d for group %s failed before receiving any messages: %v",
-			info.Attempt, info.MaxAttempts, info.GroupID, info.Err)
-		gateway.LogConsumerGroupSnapshot(groupID)
-	})
+	consumed2, err := client.ConsumeWithGroupDebug(topic, groupID, 2,
+		func(info testutil.ConsumeGroupRetryDebug) {
+			t.Logf("Consumer restart attempt %d/%d for group %s failed before receiving any messages: %v",
+				info.Attempt, info.MaxAttempts, info.GroupID, info.Err)
+			gateway.LogConsumerGroupSnapshot(groupID)
+		},
+		func() {
+			// Live snapshot taken while the reader is still joined — this is
+			// the only place we get to see the group's transient state
+			// (PreparingRebalance, leader, members) during a stuck attempt.
+			// The onRetry snapshot above runs after reader.Close() and only
+			// ever shows the post-LeaveGroup Empty state.
+			gateway.LogConsumerGroupSnapshot(groupID)
+		},
+	)
 	if err != nil {
 		gateway.LogConsumerGroupSnapshot(groupID)
 	}
