@@ -31,14 +31,15 @@ import (
 //     table CRUD when configured with `aws.masterRoleArn` set to that role
 //     and AWS_ENDPOINT_URL_STS pointed at SeaweedFS.
 //
-// What it does NOT verify (yet) is the third hop -- UC's Java StsClient
-// successfully calling SeaweedFS STS during /temporary-table-credentials.
-// In local runs the JVM AWS SDK STS request lands on a SeaweedFS S3 path
-// rather than the STS handler, returning "AccessDenied". The Go SDK STS path
-// from step (1) works in the same SeaweedFS instance, so the gap is in how
-// UC's StsClient targets SeaweedFS, not in SeaweedFS' STS itself. That bit
-// is logged via t.Logf and not asserted, so the test stays green and clearly
-// documents which slice still needs work.
+// What it does NOT verify is the third hop -- UC's Java StsClient
+// reaching SeaweedFS' STS handler. UC's
+// AwsCredentialGenerator.StsAwsCredentialGenerator builds the StsClient
+// without an endpointOverride and doesn't propagate aws.endpoint to it, so
+// the SDK's generic AWS_ENDPOINT_URL_STS resolution doesn't kick in and the
+// request always targets real AWS, returning InvalidClientTokenId. Verified
+// by pointing AWS_ENDPOINT_URL_STS at port 1: same 403 either way, and a
+// sniffer in front of SeaweedFS records zero traffic. The fix is upstream
+// in UC, not in SeaweedFS. That bit is logged via t.Logf and not asserted.
 func TestUnityCatalogMasterRoleIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
@@ -153,9 +154,9 @@ func TestUnityCatalogMasterRoleIntegration(t *testing.T) {
 		// known-good (slice 1 above), and UC's CRUD is known-good (this slice).
 		_, ucCredErr := uc.generateTemporaryTableCredentials(ctx, created.TableID, "READ_WRITE")
 		if ucCredErr != nil {
-			t.Logf("KNOWN GAP: UC's StsClient handoff to SeaweedFS STS still failing: %v", ucCredErr)
+			t.Logf("UC StsClient still hits real AWS (UC bug, not a SeaweedFS gap): %v", ucCredErr)
 		} else {
-			t.Logf("UNEXPECTED SUCCESS: UC's StsClient handoff worked. The known gap may be resolved.")
+			t.Logf("UC StsClient now honors endpoint override; the upstream UC patch landed.")
 		}
 	})
 }

@@ -7,7 +7,7 @@ S3 endpoint. The `server.properties` mirrors the upstream playground at
 | Test | Variant | Status |
 | --- | --- | --- |
 | `TestUnityCatalogDeltaIntegration` | static keys, `aws.masterRoleArn=` empty | passes; covers catalog/schema/EXTERNAL Delta CRUD against SeaweedFS-backed warehouse and asserts that UC's `/temporary-table-credentials` *cannot* vend usable creds with this configuration -- exactly the gap the playground reports. |
-| `TestUnityCatalogMasterRoleIntegration` | `aws.masterRoleArn=arn:aws:iam::000000000000:role/UnityCatalogVendedRole` | passes; proves SeaweedFS' STS endpoint accepts `sts:AssumeRole` for the role UC would use (Go SDK round-trip), and that UC starts and accepts CRUD when wired with the master-role config. The third hop -- UC's Java `StsClient` actually reaching SeaweedFS STS -- is currently a known gap, logged via `t.Logf` but not asserted. |
+| `TestUnityCatalogMasterRoleIntegration` | `aws.masterRoleArn=arn:aws:iam::000000000000:role/UnityCatalogVendedRole` | passes; proves SeaweedFS' STS endpoint accepts `sts:AssumeRole` for the role UC would use (Go SDK round-trip), and that UC starts and accepts CRUD when wired with the master-role config. UC's own StsClient still talks to real AWS regardless of `aws.endpoint` / `AWS_ENDPOINT_URL_STS` (UC bug, see below); that hop is logged via `t.Logf` rather than asserted. |
 | `TestUnityCatalogDeltaRsRoundTrip` | static keys + `delta-rs` Python client | passes; resolves table metadata through UC and writes/reads a real Delta table at the registered `storage_location` using `python:3.11-slim + deltalake` with the SeaweedFS test credentials. |
 
 ## Prerequisites
@@ -55,13 +55,21 @@ but the response carries that stub session token -- SeaweedFS won't
 recognize it on the next S3 call, so the vended creds aren't usable for
 table I/O. Clients have to fall back to the static keys directly.
 
-With `aws.masterRoleArn` set and `AWS_ENDPOINT_URL_STS` pointed at
-SeaweedFS (the master-role test), UC's Java `StsClient` actually fires
-AssumeRole, but the request lands on a SeaweedFS S3 path rather than the
-STS handler and comes back as `AccessDenied`. The Go SDK STS path against
-the same instance (`assumeRoleViaSeaweedFS`) works, so the gap is in how
-UC's Java SDK signs or routes STS form-encoded POSTs against SeaweedFS'
-router, not in SeaweedFS' STS itself.
+With `aws.masterRoleArn` set, UC's `AwsCredentialGenerator.StsAwsCredentialGenerator`
+builds the StsClient with only `.region(...)` and `.credentialsProvider(...)` --
+no `.endpointOverride()`. The SDK's generic env-var resolution doesn't kick in
+for that builder shape, so even with `AWS_ENDPOINT_URL_STS=...` (or the
+matching `aws.endpointUrlSts` Java property, or the catch-all
+`AWS_ENDPOINT_URL=...`) the StsClient still targets real AWS and gets back
+`InvalidClientTokenId`. Verified by pointing the env var at port 1: UC reports
+the same AWS-issued 403 that it reports against SeaweedFS, and a sniffer in
+front of SeaweedFS' STS port records zero traffic. SeaweedFS' STS handler
+itself works -- the Go SDK round-trip in `assumeRoleViaSeaweedFS` proves that
+against the same SeaweedFS instance.
+
+Fix is upstream: UC needs to apply `aws.endpoint` (or expose an
+`aws.stsEndpoint`) on the StsClient too. Until then the master-role test
+logs the failure but does not assert it.
 
 ## What the tests actually validate today
 
@@ -76,13 +84,8 @@ router, not in SeaweedFS' STS itself.
 
 ## What is still pending
 
-- UC's Java `StsClient` reaching SeaweedFS' STS handler. Likely needs a
-  closer look at how SeaweedFS' router treats POST `/` with `Action=...`
-  in the form body when the embedded IAM router is not enabled in `weed
-  mini`. Until that's resolved, the master-role test logs the failure but
-  does not assert it.
-- Spark client pointed at a UC catalog. The Delta-RS path runs as part of
-  `TestUnityCatalogDeltaRsRoundTrip`.
+Nothing on the SeaweedFS side. The remaining gap (UC's StsClient ignoring
+endpoint config) needs a UC OSS patch upstream.
 
 ## MANAGED tables
 
