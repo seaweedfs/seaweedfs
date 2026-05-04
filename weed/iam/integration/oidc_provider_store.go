@@ -81,6 +81,7 @@ type OIDCProviderStore interface {
 	StoreProvider(ctx context.Context, filerAddress string, record *OIDCProviderRecord) error
 	GetProviderByARN(ctx context.Context, filerAddress string, arn string) (*OIDCProviderRecord, error)
 	GetProviderByIssuer(ctx context.Context, filerAddress string, issuer string) (*OIDCProviderRecord, error)
+	GetProviderByIssuerAndAccount(ctx context.Context, filerAddress string, issuer, accountID string) (*OIDCProviderRecord, error)
 	ListProviders(ctx context.Context, filerAddress string) ([]*OIDCProviderRecord, error)
 	DeleteProvider(ctx context.Context, filerAddress string, arn string) error
 }
@@ -135,6 +136,29 @@ func (m *MemoryOIDCProviderStore) GetProviderByIssuer(ctx context.Context, _ str
 		}
 	}
 	return nil, fmt.Errorf("no OIDC provider registered for issuer: %s", issuer)
+}
+
+// GetProviderByIssuerAndAccount returns the record matching `issuer` whose
+// AccountID is empty (global) or equals `accountID`. AWS-style account
+// scoping: cross-account references must go through a shared/global
+// provider, which is why an empty AccountID is treated as a wildcard.
+//
+// `accountID` may itself be empty when the caller has no specific account
+// context (e.g. claim-based mode); in that case any registered provider
+// matching the issuer is acceptable.
+func (m *MemoryOIDCProviderStore) GetProviderByIssuerAndAccount(ctx context.Context, _ string, issuer, accountID string) (*OIDCProviderRecord, error) {
+	want := normalizeIssuer(issuer)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, rec := range m.providers {
+		if normalizeIssuer(rec.URL) != want {
+			continue
+		}
+		if rec.AccountID == "" || accountID == "" || rec.AccountID == accountID {
+			return copyOIDCProviderRecord(rec), nil
+		}
+	}
+	return nil, fmt.Errorf("no OIDC provider registered for issuer %s in account %s", issuer, accountID)
 }
 
 // ListProviders returns every record sorted by ARN for stable output.
@@ -281,6 +305,25 @@ func (f *FilerOIDCProviderStore) GetProviderByIssuer(ctx context.Context, filerA
 		}
 	}
 	return nil, fmt.Errorf("no OIDC provider registered for issuer: %s", issuer)
+}
+
+// GetProviderByIssuerAndAccount filters by AccountID on top of the issuer scan.
+// See the MemoryOIDCProviderStore equivalent for semantics.
+func (f *FilerOIDCProviderStore) GetProviderByIssuerAndAccount(ctx context.Context, filerAddress string, issuer, accountID string) (*OIDCProviderRecord, error) {
+	records, err := f.ListProviders(ctx, filerAddress)
+	if err != nil {
+		return nil, err
+	}
+	want := normalizeIssuer(issuer)
+	for _, rec := range records {
+		if normalizeIssuer(rec.URL) != want {
+			continue
+		}
+		if rec.AccountID == "" || accountID == "" || rec.AccountID == accountID {
+			return rec, nil
+		}
+	}
+	return nil, fmt.Errorf("no OIDC provider registered for issuer %s in account %s", issuer, accountID)
 }
 
 // ListProviders enumerates every record in the directory.
