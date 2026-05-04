@@ -146,6 +146,10 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 		}
 	}
 
+	if policyClaim, ok := configMap[ConfigFieldPolicyClaim].(string); ok {
+		config.PolicyClaim = policyClaim
+	}
+
 	if tlsInsecureSkipVerify, ok := configMap[ConfigFieldTLSInsecureSkipVerify].(bool); ok {
 		config.TLSInsecureSkipVerify = tlsInsecureSkipVerify
 	}
