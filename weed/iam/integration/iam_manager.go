@@ -27,15 +27,58 @@ const maxPoliciesForEvaluation = 1024
 
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
-	stsService           *sts.STSService
-	policyEngine         *policy.PolicyEngine
-	roleStore            RoleStore
-	userStore            UserStore
-	oidcProviderStore    OIDCProviderStore
-	filerAddressProvider func() string // Function to get current filer address
-	initialized          bool
-	runtimePolicyMu      sync.Mutex
-	runtimePolicyNames   map[string]struct{}
+	stsService             *sts.STSService
+	policyEngine           *policy.PolicyEngine
+	roleStore              RoleStore
+	userStore              UserStore
+	oidcProviderStore      OIDCProviderStore
+	revocationStore        SessionRevocationStore
+	filerAddressProvider   func() string // Function to get current filer address
+	initialized            bool
+	runtimePolicyMu        sync.Mutex
+	runtimePolicyNames     map[string]struct{}
+}
+
+// SetSessionRevocationStore configures the per-session revocation list. When
+// nil, RevokeSession returns an error and IsSessionRevoked is a no-op (every
+// session is considered live until natural expiry). Operators who want
+// revocation must wire a store explicitly.
+func (m *IAMManager) SetSessionRevocationStore(store SessionRevocationStore) {
+	m.revocationStore = store
+}
+
+// RevokeSession marks a session as revoked using its JTI (which equals the
+// session ID for STS-issued tokens).
+func (m *IAMManager) RevokeSession(ctx context.Context, jti string, expiresAt time.Time, reason string) error {
+	if m.revocationStore == nil {
+		return fmt.Errorf("session revocation store not configured")
+	}
+	if jti == "" {
+		return fmt.Errorf("jti cannot be empty")
+	}
+	return m.revocationStore.Revoke(ctx, m.getFilerAddress(), &RevocationEntry{
+		JTI:       jti,
+		ExpiresAt: expiresAt,
+		Reason:    reason,
+	})
+}
+
+// IsSessionRevoked returns true if the given JTI has been revoked. Returns
+// false (with nil error) when no revocation store is configured.
+func (m *IAMManager) IsSessionRevoked(ctx context.Context, jti string) (bool, error) {
+	if m.revocationStore == nil || jti == "" {
+		return false, nil
+	}
+	return m.revocationStore.IsRevoked(ctx, m.getFilerAddress(), jti)
+}
+
+// PurgeRevokedSessions removes revocation entries whose underlying session
+// has already expired. Safe to call on a cron schedule.
+func (m *IAMManager) PurgeRevokedSessions(ctx context.Context) (int, error) {
+	if m.revocationStore == nil {
+		return 0, nil
+	}
+	return m.revocationStore.Purge(ctx, m.getFilerAddress(), time.Now().UTC())
 }
 
 // SetOIDCProviderStore configures the IAM-managed OIDC provider store. When
@@ -914,6 +957,18 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 			sessionInfo, err = m.stsService.ValidateSessionToken(ctx, request.SessionToken)
 			if err != nil {
 				return false, fmt.Errorf("invalid session: %w", err)
+			}
+			// Reject sessions whose JTI has been added to the revocation
+			// blocklist. SessionId == JTI for STS-issued tokens; this lookup
+			// is hot, so the store implementation must be O(1).
+			if sessionInfo != nil && sessionInfo.SessionId != "" {
+				revoked, rerr := m.IsSessionRevoked(ctx, sessionInfo.SessionId)
+				if rerr != nil {
+					return false, fmt.Errorf("revocation check failed: %w", rerr)
+				}
+				if revoked {
+					return false, fmt.Errorf("session has been revoked")
+				}
 			}
 		}
 	}

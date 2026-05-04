@@ -79,6 +79,10 @@ func NewSTSSessionClaims(sessionId, issuer string, expiresAt time.Time) *STSSess
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			NotBefore: jwt.NewNumericDate(now),
+			// jti = sessionId. The session id is already a unique random
+			// identifier, so reusing it as the JWT id avoids a second secret
+			// while still giving the revocation layer a stable lookup key.
+			ID: sessionId,
 		},
 		SessionId: sessionId,
 		TokenType: TokenTypeSession,
