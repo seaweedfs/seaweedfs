@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -95,7 +96,8 @@ func (c *ucClient) createCatalog(ctx context.Context, in ucCreateCatalog) (*ucCa
 }
 
 func (c *ucClient) deleteCatalog(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "/catalogs/"+name+"?force=true", nil, nil)
+	q := url.Values{"force": []string{"true"}}
+	return c.do(ctx, http.MethodDelete, "/catalogs/"+url.PathEscape(name)+"?"+q.Encode(), nil, nil)
 }
 
 func (c *ucClient) createSchema(ctx context.Context, in ucCreateSchema) (*ucSchemaInfo, error) {
@@ -104,7 +106,8 @@ func (c *ucClient) createSchema(ctx context.Context, in ucCreateSchema) (*ucSche
 }
 
 func (c *ucClient) deleteSchema(ctx context.Context, fullName string) error {
-	return c.do(ctx, http.MethodDelete, "/schemas/"+fullName+"?force=true", nil, nil)
+	q := url.Values{"force": []string{"true"}}
+	return c.do(ctx, http.MethodDelete, "/schemas/"+url.PathEscape(fullName)+"?"+q.Encode(), nil, nil)
 }
 
 func (c *ucClient) createTable(ctx context.Context, in ucCreateTable) (*ucTableInfo, error) {
@@ -114,12 +117,16 @@ func (c *ucClient) createTable(ctx context.Context, in ucCreateTable) (*ucTableI
 
 func (c *ucClient) getTable(ctx context.Context, fullName string) (*ucTableInfo, error) {
 	var out ucTableInfo
-	return &out, c.do(ctx, http.MethodGet, "/tables/"+fullName, nil, &out)
+	return &out, c.do(ctx, http.MethodGet, "/tables/"+url.PathEscape(fullName), nil, &out)
 }
 
 func (c *ucClient) listTables(ctx context.Context, catalog, schema string) ([]ucTableInfo, error) {
 	var out ucListTablesResp
-	path := fmt.Sprintf("/tables?catalog_name=%s&schema_name=%s", catalog, schema)
+	q := url.Values{
+		"catalog_name": []string{catalog},
+		"schema_name":  []string{schema},
+	}
+	path := "/tables?" + q.Encode()
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
@@ -127,7 +134,7 @@ func (c *ucClient) listTables(ctx context.Context, catalog, schema string) ([]uc
 }
 
 func (c *ucClient) deleteTable(ctx context.Context, fullName string) error {
-	return c.do(ctx, http.MethodDelete, "/tables/"+fullName, nil, nil)
+	return c.do(ctx, http.MethodDelete, "/tables/"+url.PathEscape(fullName), nil, nil)
 }
 
 func (c *ucClient) generateTemporaryTableCredentials(ctx context.Context, tableID, op string) (*ucTempCreds, error) {
@@ -158,7 +165,10 @@ func (c *ucClient) do(ctx context.Context, method, path string, in any, out any)
 		return err
 	}
 	defer resp.Body.Close()
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read %s %s: %w", method, path, err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(respBytes)))
 	}

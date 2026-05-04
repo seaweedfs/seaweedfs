@@ -291,7 +291,6 @@ func (env *testEnv) cleanup(t *testing.T) {
 		env.weedCancel()
 	}
 	if env.weedProcess != nil {
-		time.Sleep(500 * time.Millisecond)
 		_ = env.weedProcess.Wait()
 	}
 	if env.dataDir != "" {

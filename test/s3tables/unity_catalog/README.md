@@ -8,7 +8,7 @@ S3 endpoint. The `server.properties` mirrors the upstream playground at
 | --- | --- | --- |
 | `TestUnityCatalogDeltaIntegration` | static keys, `aws.masterRoleArn=` empty | passes; covers catalog/schema/EXTERNAL Delta CRUD against SeaweedFS-backed warehouse and asserts that UC's `/temporary-table-credentials` *cannot* vend usable creds with this configuration -- exactly the gap the playground reports. |
 | `TestUnityCatalogMasterRoleIntegration` | `aws.masterRoleArn=arn:aws:iam::000000000000:role/UnityCatalogVendedRole` | passes; proves SeaweedFS' STS endpoint accepts `sts:AssumeRole` for the role UC would use (Go SDK round-trip), and that UC starts and accepts CRUD when wired with the master-role config. The third hop -- UC's Java `StsClient` actually reaching SeaweedFS STS -- is currently a known gap, logged via `t.Logf` but not asserted. |
-| `TestUnityCatalogDeltaRsRoundTrip` | static keys + `delta-rs` Python client | gated on `UC_DELTA_RS_RUN=1`; depends on UC's `/temporary-table-credentials` working end-to-end against SeaweedFS, which today doesn't (see above). When that's solved, the test writes/reads a real Delta table at the registered `storage_location` using `python:3.11-slim + deltalake`. |
+| `TestUnityCatalogDeltaRsRoundTrip` | static keys + `delta-rs` Python client | passes; resolves table metadata through UC and writes/reads a real Delta table at the registered `storage_location` using `python:3.11-slim + deltalake` with the SeaweedFS test credentials. |
 
 ## Prerequisites
 
@@ -17,7 +17,7 @@ S3 endpoint. The `server.properties` mirrors the upstream playground at
 
 ## Run
 
-```
+```bash
 go test -timeout 15m \
     -run 'TestUnityCatalog' \
     ./test/s3tables/unity_catalog/...
@@ -26,7 +26,7 @@ go test -timeout 15m \
 Pin a specific Unity Catalog image (defaults to
 `unitycatalog/unitycatalog:main`):
 
-```
+```bash
 UC_IMAGE=unitycatalog/unitycatalog:latest \
     go test -timeout 15m -run TestUnityCatalogDeltaIntegration \
     ./test/s3tables/unity_catalog/...
@@ -63,6 +63,8 @@ then rejects the vended `X-Amz-Security-Token` since it didn't issue it.
 - SeaweedFS' STS endpoint correctly issues `sts:AssumeRole` credentials
   for the `UnityCatalogVendedRole` and those credentials are accepted on
   S3 round-trips (Go AWS SDK).
+- Delta-RS resolves a UC table's `storage_location` and can write/read Delta
+  data through the SeaweedFS S3 endpoint with the test credentials.
 
 ## What is still pending
 
@@ -71,8 +73,8 @@ then rejects the vended `X-Amz-Security-Token` since it didn't issue it.
   in the form body when the embedded IAM router is not enabled in `weed
   mini`. Until that's resolved, the master-role test logs the failure but
   does not assert it.
-- Spark / Delta-RS client pointed at a UC catalog: gated on
-  `UC_DELTA_RS_RUN=1`, will run as soon as the temp-creds path is green.
+- Spark client pointed at a UC catalog. The Delta-RS path runs as part of
+  `TestUnityCatalogDeltaRsRoundTrip`.
 
 ## MANAGED tables
 

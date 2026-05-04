@@ -3,7 +3,6 @@ package unity_catalog
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -18,24 +17,14 @@ import (
 
 // TestUnityCatalogDeltaRsRoundTrip writes and reads a real Delta table at
 // the registered storage_location using the delta-rs Python library inside
-// a Docker container. The script fetches temporary table credentials from
-// UC and uses them as delta-rs storage_options.
-//
-// The test is gated on UC's /temporary-table-credentials returning vended
-// creds against a SeaweedFS-backed configuration -- which today does not
-// work end-to-end (see TestUnityCatalogDeltaIntegration's
-// TemporaryTableCredentialsRejected subtest). When that's solved, the
-// envvar UC_DELTA_RS_RUN=1 enables the full round-trip; otherwise the test
-// skips with a clear message.
+// a Docker container. The script resolves table metadata from UC and uses the
+// test SeaweedFS credentials as delta-rs storage_options.
 func TestUnityCatalogDeltaRsRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
 	if !testutil.HasDocker() {
 		t.Skip("docker not available")
-	}
-	if os.Getenv("UC_DELTA_RS_RUN") != "1" {
-		t.Skip("set UC_DELTA_RS_RUN=1 to run; depends on UC's temporary-table-credentials working against SeaweedFS")
 	}
 
 	env := newTestEnv(t)
@@ -120,12 +109,13 @@ func TestUnityCatalogDeltaRsRoundTrip(t *testing.T) {
 		"-e", "UC_SCHEMA="+schemaName,
 		"-e", "UC_TABLE="+tableName,
 		"-e", "UC_TABLE_ID="+created.TableID,
+		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
+		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
 		imageTag,
 	)
-	cmd.Stdout = os.Stdout
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("delta-rs container failed: %v\nstdout:\n%s", err, out)
+		t.Fatalf("delta-rs container failed: %v\noutput:\n%s", err, out)
 	}
 	got := string(out)
 	if !strings.Contains(got, "DELTA_RS_OK rows=3") {

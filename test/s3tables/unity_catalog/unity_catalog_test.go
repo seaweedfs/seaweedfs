@@ -160,7 +160,7 @@ func TestUnityCatalogDeltaIntegration(t *testing.T) {
 		// variant can pin s3.sessionToken.0 (UC's StaticAwsCredentialGenerator
 		// path) once SeaweedFS' SigV4 path tolerates the vended session token.
 		if createdTable.TableID == "" {
-			t.Skip("no table_id available; cannot request temporary credentials")
+			t.Fatalf("created table has empty table_id; cannot request temporary credentials")
 		}
 		_, err := uc.generateTemporaryTableCredentials(ctx, createdTable.TableID, "READ_WRITE")
 		if err == nil {

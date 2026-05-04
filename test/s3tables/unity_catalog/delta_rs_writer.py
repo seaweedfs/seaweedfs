@@ -8,11 +8,14 @@ Reads connection settings from environment variables:
     UC_SCHEMA       Schema name
     UC_TABLE        Table name
     UC_TABLE_ID     Optional: pre-fetched table_id; falls back to GET /tables/{full_name}
+    AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+                    Optional: direct S3 credentials. If omitted, the script
+                    asks UC for temporary table credentials.
 
 Steps:
 
-    1. GET the table info (if UC_TABLE_ID is unset).
-    2. POST /temporary-table-credentials with operation=READ_WRITE.
+    1. GET the table info from UC.
+    2. Resolve S3 credentials from env or UC temporary-table-credentials.
     3. write_deltalake() a small pyarrow Table to storage_location.
     4. Read it back with DeltaTable() and assert row count.
 
@@ -49,16 +52,13 @@ def main() -> int:
     full_name = f"{catalog}.{schema}.{table}"
     api = f"{uc_url}/api/2.1/unity-catalog"
 
+    encoded_full_name = urllib.parse.quote(full_name, safe="")
+    r = requests.get(f"{api}/tables/{encoded_full_name}", timeout=10)
+    r.raise_for_status()
+    info = r.json()
     if not table_id:
-        r = requests.get(f"{api}/tables/{urllib.parse.quote(full_name)}", timeout=10)
-        r.raise_for_status()
-        info = r.json()
         table_id = info.get("table_id") or ""
-        storage_location = info.get("storage_location") or ""
-    else:
-        r = requests.get(f"{api}/tables/{urllib.parse.quote(full_name)}", timeout=10)
-        r.raise_for_status()
-        storage_location = r.json().get("storage_location") or ""
+    storage_location = info.get("storage_location") or ""
 
     if not table_id:
         print("ERROR: table_id is empty in UC response", file=sys.stderr)
@@ -67,28 +67,45 @@ def main() -> int:
         print("ERROR: storage_location is empty in UC response", file=sys.stderr)
         return 1
 
-    creds_resp = requests.post(
-        f"{api}/temporary-table-credentials",
-        json={"table_id": table_id, "operation": "READ_WRITE"},
-        timeout=15,
-    )
-    creds_resp.raise_for_status()
-    creds = creds_resp.json().get("aws_temp_credentials") or {}
-    if not creds.get("access_key_id") or not creds.get("secret_access_key"):
-        print(f"ERROR: missing aws_temp_credentials in {creds_resp.json()}", file=sys.stderr)
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    session_token = os.environ.get("AWS_SESSION_TOKEN", "").strip()
+    if bool(access_key) != bool(secret_key):
+        print(
+            "ERROR: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together",
+            file=sys.stderr,
+        )
         return 1
+    if not access_key:
+        creds_resp = requests.post(
+            f"{api}/temporary-table-credentials",
+            json={"table_id": table_id, "operation": "READ_WRITE"},
+            timeout=15,
+        )
+        creds_resp.raise_for_status()
+        creds = creds_resp.json().get("aws_temp_credentials") or {}
+        access_key = creds.get("access_key_id") or ""
+        secret_key = creds.get("secret_access_key") or ""
+        session_token = creds.get("session_token") or ""
+        if not access_key or not secret_key:
+            print(
+                "ERROR: missing aws_temp_credentials; "
+                f"response status {creds_resp.status_code}",
+                file=sys.stderr,
+            )
+            return 1
 
     storage_options = {
-        "AWS_ACCESS_KEY_ID": creds["access_key_id"],
-        "AWS_SECRET_ACCESS_KEY": creds["secret_access_key"],
+        "AWS_ACCESS_KEY_ID": access_key,
+        "AWS_SECRET_ACCESS_KEY": secret_key,
         "AWS_REGION": "us-east-1",
         "AWS_ENDPOINT_URL": s3_endpoint,
         "AWS_ALLOW_HTTP": "true",
         # delta-rs requires this for non-S3 backends that lack atomic rename.
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
     }
-    if creds.get("session_token"):
-        storage_options["AWS_SESSION_TOKEN"] = creds["session_token"]
+    if session_token:
+        storage_options["AWS_SESSION_TOKEN"] = session_token
 
     arrow_table = pa.table(
         {
@@ -112,4 +129,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # deltalake/pyarrow can abort during native teardown after a successful
+    # round-trip in the short-lived test container. Preserve main's result.
+    os._exit(exit_code)
