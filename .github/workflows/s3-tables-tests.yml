@@ -610,7 +610,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull Unity Catalog image
-        run: docker pull unitycatalog/unitycatalog:main
+        run: docker pull unitycatalog/unitycatalog:v0.4.0
 
       - name: Pre-pull Python image for delta-rs writer
         run: docker pull python:3.11-slim

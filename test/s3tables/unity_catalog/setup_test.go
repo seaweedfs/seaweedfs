@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ucImageDefault = "unitycatalog/unitycatalog:main"
+	ucImageDefault = "unitycatalog/unitycatalog:v0.4.0"
 	ucContainerCfg = "/home/unitycatalog/etc/conf/server.properties"
 	ucStartupGrace = 90 * time.Second
 	ucAPIBase      = "/api/2.1/unity-catalog"
@@ -263,7 +263,7 @@ func (env *testEnv) startUnityCatalog(t *testing.T, ctx context.Context, opts uc
 		resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
 		if err == nil {
 			resp.Body.Close()
-			if resp.StatusCode < 500 {
+			if resp.StatusCode == http.StatusOK {
 				return
 			}
 			lastErr = fmt.Errorf("status %d", resp.StatusCode)

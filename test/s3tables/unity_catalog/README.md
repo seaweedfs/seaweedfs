@@ -24,10 +24,10 @@ go test -timeout 15m \
 ```
 
 Pin a specific Unity Catalog image (defaults to
-`unitycatalog/unitycatalog:main`):
+`unitycatalog/unitycatalog:v0.4.0`):
 
 ```bash
-UC_IMAGE=unitycatalog/unitycatalog:latest \
+UC_IMAGE=unitycatalog/unitycatalog:main \
     go test -timeout 15m -run TestUnityCatalogDeltaIntegration \
     ./test/s3tables/unity_catalog/...
 ```
