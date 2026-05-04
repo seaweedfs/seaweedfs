@@ -226,6 +226,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
 	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)
+	*masterOptions.metaFolder = util.ResolvePath(*masterOptions.metaFolder)
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {
@@ -330,7 +331,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *masterOptions.metaFolder == "" {
 		*masterOptions.metaFolder = folders[0]
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*masterOptions.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*masterOptions.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder

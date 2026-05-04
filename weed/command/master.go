@@ -144,6 +144,7 @@ func runMaster(cmd *Command, args []string) bool {
 		*m.metaFolder = v
 	}
 
+	*m.metaFolder = util.ResolvePath(*m.metaFolder)
 	*masterCpuProfile = util.ResolvePath(*masterCpuProfile)
 	*masterMemProfile = util.ResolvePath(*masterMemProfile)
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
@@ -154,7 +155,7 @@ func runMaster(cmd *Command, args []string) bool {
 			glog.Fatalf("Could not create Meta Folder %s: %v", *m.metaFolder, err)
 		}
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 

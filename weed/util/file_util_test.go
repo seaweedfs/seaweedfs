@@ -45,6 +45,9 @@ func TestResolvePath(t *testing.T) {
 		{"tilde with current user", "~" + usr.Username, home},
 		{"tilde with current user and subpath", "~" + usr.Username + "/data", filepath.Join(home, "data")},
 		{"tilde unknown user falls back to literal", "~no-such-user-xyz/data", "~no-such-user-xyz/data"},
+		// Native separator: identical to "~/data" on Unix; exercises backslash on Windows.
+		{"tilde with native separator", "~" + string(filepath.Separator) + "data", filepath.Join(home, "data")},
+		{"tilde user with native separator", "~" + usr.Username + string(filepath.Separator) + "data", filepath.Join(home, "data")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

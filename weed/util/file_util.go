@@ -87,6 +87,12 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 // without a leading "~" or whose tilde cannot be resolved is returned
 // unchanged so callers can pass any user-supplied path through this helper
 // without worrying about non-tilde inputs or lookup failures.
+//
+// Forward slashes are always recognised as separators after the tilde;
+// the platform-native separator is also accepted so "~\\data" works on
+// Windows. Backslashes are deliberately not treated as separators on
+// other platforms because they are legal characters in usernames and
+// path segments there.
 func ResolvePath(path string) string {
 
 	if !strings.HasPrefix(path, "~") {
@@ -100,19 +106,26 @@ func ResolvePath(path string) string {
 		return path
 	}
 
-	if strings.HasPrefix(path, "~/") {
+	isSep := func(b byte) bool {
+		return b == '/' || b == byte(filepath.Separator)
+	}
+
+	if isSep(path[1]) {
 		if usr, err := user.Current(); err == nil {
 			return filepath.Join(usr.HomeDir, path[2:])
 		}
 		return path
 	}
 
-	// "~username" or "~username/rest"
-	rest := ""
+	// "~username" or "~username<sep>rest"
 	name := path[1:]
-	if i := strings.IndexByte(name, '/'); i >= 0 {
-		rest = name[i+1:]
-		name = name[:i]
+	rest := ""
+	for i := 0; i < len(name); i++ {
+		if isSep(name[i]) {
+			rest = name[i+1:]
+			name = name[:i]
+			break
+		}
 	}
 	usr, err := user.Lookup(name)
 	if err != nil {
