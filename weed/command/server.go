@@ -226,7 +226,11 @@ func runServer(cmd *Command, args []string) bool {
 
 	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
 	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)
+	*serverIamConfig = util.ResolvePath(*serverIamConfig)
 	*masterOptions.metaFolder = util.ResolvePath(*masterOptions.metaFolder)
+	s3Options.resolvePaths()
+	webdavOptions.resolvePaths()
+	sftpOptions.resolvePaths()
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {

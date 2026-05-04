@@ -69,6 +69,7 @@ var cmdWebDav = &Command{
 
 func runWebDav(cmd *Command, args []string) bool {
 
+	webDavStandaloneOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
 
 	listenAddress := fmt.Sprintf("%s:%d", *webDavStandaloneOptions.ipBind, *webDavStandaloneOptions.port)
@@ -78,12 +79,15 @@ func runWebDav(cmd *Command, args []string) bool {
 
 }
 
-func (wo *WebDavOption) startWebDav() bool {
-
-	// Resolve "~" in user-supplied path flags.
+// resolvePaths expands "~" in every user-supplied path flag.
+// Idempotent — safe to call from any entry point.
+func (wo *WebDavOption) resolvePaths() {
 	*wo.cacheDir = util.ResolvePath(*wo.cacheDir)
 	*wo.tlsCertificate = util.ResolvePath(*wo.tlsCertificate)
 	*wo.tlsPrivateKey = util.ResolvePath(*wo.tlsPrivateKey)
+}
+
+func (wo *WebDavOption) startWebDav() bool {
 
 	// detect current user
 	uid, gid := uint32(0), uint32(0)

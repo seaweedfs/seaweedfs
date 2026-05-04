@@ -230,6 +230,10 @@ func runFiler(cmd *Command, args []string) bool {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *f.debugPort), nil)
 	}
 
+	*f.defaultLevelDbDirectory = util.ResolvePath(*f.defaultLevelDbDirectory)
+	filerS3Options.resolvePaths()
+	filerWebDavOptions.resolvePaths()
+	filerSftpOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
 
 	switch {
@@ -328,7 +332,7 @@ func (fo *FilerOptions) startFiler() {
 		*fo.allowedOrigins = "*"
 	}
 
-	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
+	defaultLevelDbDirectory := *fo.defaultLevelDbDirectory + "/filerldb2"
 
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 

@@ -79,6 +79,7 @@ func init() {
 
 // runSftp is the command entry point.
 func runSftp(cmd *Command, args []string) bool {
+	sftpOptionsStandalone.resolvePaths()
 	// Load security configuration as done in other SeaweedFS services.
 	util.LoadSecurityConfiguration()
 
@@ -94,15 +95,18 @@ func runSftp(cmd *Command, args []string) bool {
 	return sftpOptionsStandalone.startSftpServer()
 }
 
+// resolvePaths expands "~" in every user-supplied path flag.
+// Idempotent — safe to call from any entry point.
+func (sftpOpt *SftpOptions) resolvePaths() {
+	*sftpOpt.sshPrivateKey = util.ResolvePath(*sftpOpt.sshPrivateKey)
+	*sftpOpt.hostKeysFolder = util.ResolvePath(*sftpOpt.hostKeysFolder)
+	*sftpOpt.userStoreFile = util.ResolvePath(*sftpOpt.userStoreFile)
+}
+
 func (sftpOpt *SftpOptions) startSftpServer() bool {
 	if *sftpOpt.bindIp == "" {
 		*sftpOpt.bindIp = "0.0.0.0"
 	}
-
-	// Resolve "~" in user-supplied path flags.
-	*sftpOpt.sshPrivateKey = util.ResolvePath(*sftpOpt.sshPrivateKey)
-	*sftpOpt.hostKeysFolder = util.ResolvePath(*sftpOpt.hostKeysFolder)
-	*sftpOpt.userStoreFile = util.ResolvePath(*sftpOpt.userStoreFile)
 	filerAddress := pb.ServerAddress(*sftpOpt.filer)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
