@@ -564,6 +564,14 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		requestContext["aws:userid"] = parentUser
 	}
 
+	// Surface principal session tags as aws:PrincipalTag/<key>. Filtering
+	// against any per-provider allowlist happens upstream in the provider
+	// (or here once Phase 2b records flow through). For now, anything the
+	// IDP signs is acceptable: the IDP is trusted to police its own claims.
+	for k, v := range externalIdentity.PrincipalTags {
+		requestContext["aws:PrincipalTag/"+k] = v
+	}
+
 	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).

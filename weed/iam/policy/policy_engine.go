@@ -48,16 +48,19 @@ var (
 
 // isSafePolicyVariable reports whether a policy variable may be substituted
 // with a value from RequestContext. The fixed allowlist covers AWS-defined
-// variables; any jwt:/saml:/oidc: claim is also allowed because those come
-// from a validated identity token (the STS session JWT or federated assertion)
-// and the claim set is controlled by the trusted identity provider.
+// variables; any jwt:/saml:/oidc:/aws:PrincipalTag/ claim is also allowed
+// because those come from a validated identity token (the STS session JWT
+// or federated assertion) and the claim set is controlled by the trusted
+// identity provider.
 func isSafePolicyVariable(variable string) bool {
 	if safePolicyVariables[variable] {
 		return true
 	}
 	return strings.HasPrefix(variable, "jwt:") ||
 		strings.HasPrefix(variable, "saml:") ||
-		strings.HasPrefix(variable, "oidc:")
+		strings.HasPrefix(variable, "oidc:") ||
+		strings.HasPrefix(variable, "aws:PrincipalTag/") ||
+		strings.HasPrefix(variable, "aws:RequestTag/")
 }
 
 // PolicyEngine evaluates policies against requests
