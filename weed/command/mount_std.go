@@ -41,6 +41,8 @@ func runMount(cmd *Command, args []string) bool {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
 	}
 
+	*mountCpuProfile = util.ResolvePath(*mountCpuProfile)
+	*mountMemProfile = util.ResolvePath(*mountMemProfile)
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 	if *mountReadRetryTime < time.Second {
 		*mountReadRetryTime = time.Second

@@ -181,6 +181,8 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		}
 	}
 
+	*syncCpuProfile = util.ResolvePath(*syncCpuProfile)
+	*syncMemProfile = util.ResolvePath(*syncMemProfile)
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
 
 	filerA := pb.ServerAddress(*syncOptions.filerA)

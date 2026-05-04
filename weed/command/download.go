@@ -59,8 +59,9 @@ func runDownload(cmd *Command, args []string) bool {
 		masterServer = *d.server
 	}
 
+	*d.dir = util.ResolvePath(*d.dir)
 	for _, fid := range args {
-		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(masterServer) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(masterServer) }, grpcDialOption, fid, *d.dir); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}

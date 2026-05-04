@@ -59,7 +59,7 @@ func runScaffold(cmd *Command, args []string) bool {
 	}
 
 	if *outputPath != "" {
-		util.WriteFile(filepath.Join(*outputPath, *config+".toml"), []byte(content), 0644)
+		util.WriteFile(filepath.Join(util.ResolvePath(*outputPath), *config+".toml"), []byte(content), 0644)
 	} else {
 		fmt.Println(content)
 	}

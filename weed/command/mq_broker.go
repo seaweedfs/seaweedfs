@@ -73,6 +73,8 @@ func runMqBroker(cmd *Command, args []string) bool {
 
 func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 
+	*mqBrokerStandaloneOptions.cpuprofile = util.ResolvePath(*mqBrokerStandaloneOptions.cpuprofile)
+	*mqBrokerStandaloneOptions.memprofile = util.ResolvePath(*mqBrokerStandaloneOptions.memprofile)
 	grace.SetupProfiling(*mqBrokerStandaloneOptions.cpuprofile, *mqBrokerStandaloneOptions.memprofile)
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.msg_broker")

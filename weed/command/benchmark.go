@@ -123,6 +123,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 		*b.maxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*b.maxCpu)
+	*b.cpuprofile = util.ResolvePath(*b.cpuprofile)
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {

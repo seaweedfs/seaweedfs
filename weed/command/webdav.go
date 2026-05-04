@@ -81,6 +81,7 @@ func runWebDav(cmd *Command, args []string) bool {
 func (wo *WebDavOption) startWebDav() bool {
 
 	// Resolve "~" in user-supplied path flags.
+	*wo.cacheDir = util.ResolvePath(*wo.cacheDir)
 	*wo.tlsCertificate = util.ResolvePath(*wo.tlsCertificate)
 	*wo.tlsPrivateKey = util.ResolvePath(*wo.tlsPrivateKey)
 
@@ -130,7 +131,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		Uid:            uid,
 		Gid:            gid,
 		Cipher:         cipher,
-		CacheDir:       util.ResolvePath(*wo.cacheDir),
+		CacheDir:       *wo.cacheDir,
 		CacheSizeMB:    *wo.cacheSizeMB,
 		MaxMB:          *wo.maxMB,
 	})
