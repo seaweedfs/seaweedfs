@@ -164,15 +164,20 @@ func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, e
 	// Ensure we clear the plaintext data key from memory when done
 	defer clearKMSDataKey(dataKeyResult)
 
-	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads
-	// Skip is not used here because we're encrypting from the start (not reading a range)
+	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads.
+	// Skip is not used here because we're encrypting from the start (not reading a range).
 	iv, _ := calculateIVWithOffset(baseIV, offset)
 
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata using utility function
-	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, offset)
+	// Store the BASE IV (not the offset-derived IV) in metadata. The decrypt
+	// path applies calculateIVWithOffset to sseKey.IV when ChunkOffset > 0;
+	// storing the derived IV here would cause it to offset twice and produce
+	// the wrong CTR keystream. The key commitment, computed inside
+	// createSSEKMSKey, therefore binds the base IV — exactly the value the
+	// verify call at decrypt time hashes.
+	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, baseIV, offset)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
