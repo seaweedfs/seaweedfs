@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
+	"strconv"
 	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -84,6 +86,9 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 	v.doClose()
 	removeVolumeFiles(v.DataFileName())
 	removeVolumeFiles(v.IndexFileName())
+	if v.dirDat != v.dir {
+		removeVolumeFiles(path.Join(v.dirDat, strconv.Itoa(int(v.Id))))
+	}
 	return
 }
 

@@ -42,6 +42,7 @@ type VolumeServerOptions struct {
 	folders                   []string
 	folderMaxLimits           []int32
 	idxFolder                 *string
+	datFolder                 *string
 	ip                        *string
 	id                        *string
 	publicUrl                 *string
@@ -116,6 +117,7 @@ func init() {
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.metricsHttpIp = cmdVolume.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
+	v.datFolder = cmdVolume.Flag.String("dir.dat", "", "directory to store .dat and .cpd files (e.g. HM-SMR sequential write zone). Defaults to -dir if empty.")
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
 	v.inflightDownloadDataTimeout = cmdVolume.Flag.Duration("inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
@@ -288,6 +290,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
 		util.ResolvePath(*v.idxFolder),
+		util.ResolvePath(*v.datFolder),
 		volumeNeedleMapKind,
 		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
 		v.whiteList,

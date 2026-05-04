@@ -23,6 +23,7 @@ type Volume struct {
 	Id                 needle.VolumeId
 	dir                string
 	dirIdx             string
+	dirDat             string
 	Collection         string
 	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
@@ -56,9 +57,9 @@ type Volume struct {
 	lastIoError error
 }
 
-func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {
+func NewVolume(dirname string, dirIdx string, dirDat string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
-	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
+	v = &Volume{dir: dirname, dirIdx: dirIdx, dirDat: dirDat, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
 		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
@@ -71,7 +72,7 @@ func NewVolume(dirname string, dirIdx string, collection string, id needle.Volum
 func (v *Volume) String() string {
 	v.noWriteLock.RLock()
 	defer v.noWriteLock.RUnlock()
-	return fmt.Sprintf("Id:%v dir:%s dirIdx:%s Collection:%s dataFile:%v nm:%v noWrite:%v canDelete:%v", v.Id, v.dir, v.dirIdx, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
+	return fmt.Sprintf("Id:%v dir:%s dirIdx:%s dirDat:%s Collection:%s dataFile:%v nm:%v noWrite:%v canDelete:%v", v.Id, v.dir, v.dirIdx, v.dirDat, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
 }
 
 func VolumeFileName(dir string, collection string, id int) (fileName string) {
@@ -96,8 +97,10 @@ func (v *Volume) FileName(ext string) (fileName string) {
 	switch ext {
 	case ".idx", ".cpx", ".ldb", ".cpldb", ".rdb":
 		return VolumeFileName(v.dirIdx, v.Collection, int(v.Id)) + ext
+	case ".dat", ".cpd":
+		return path.Join(v.dirDat, strconv.Itoa(int(v.Id))) + ext
 	}
-	// .dat, .cpd, .vif
+	// .vif and any unknown extensions → C-Zone (v.dir)
 	return VolumeFileName(v.dir, v.Collection, int(v.Id)) + ext
 }
 
