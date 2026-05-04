@@ -32,6 +32,13 @@ type OIDCProvider struct {
 	httpClient    *http.Client
 	jwksFetchedAt time.Time
 	jwksTTL       time.Duration
+
+	// resolvedJWKSUri is the JWKS URI as determined by discovery (or fallback).
+	// Populated lazily on first fetch and reused until the cache TTL expires.
+	resolvedJWKSUri string
+	// discoveryFailed records that .well-known/openid-configuration was tried and
+	// failed once, so subsequent fetches go straight to the fallback path.
+	discoveryFailed bool
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -272,6 +279,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		Groups:      groups,
 		Attributes:  attributes,
 		Provider:    p.name,
+		Issuer:      claims.Issuer,
 	}
 
 	// Pass the token expiration to limit session duration
@@ -578,11 +586,91 @@ func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{
 	return nil, fmt.Errorf("key with ID %s not found in JWKS after refresh", kid)
 }
 
+// discoveryDocument is the subset of the OpenID Provider Configuration we need.
+// See https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata.
+type discoveryDocument struct {
+	Issuer  string `json:"issuer"`
+	JWKSUri string `json:"jwks_uri"`
+}
+
+// resolveJWKSUri determines the JWKS URI for the provider.
+// Order of resolution:
+//  1. explicit config.JWKSUri (operator override; never overridden by discovery).
+//  2. cached resolvedJWKSUri from a prior discovery (refreshed when JWKS cache expires).
+//  3. .well-known/openid-configuration discovery (per OIDC Discovery 1.0).
+//  4. fallback to {issuer}/.well-known/jwks.json (compat path for IDPs that
+//     don't publish discovery).
+func (p *OIDCProvider) resolveJWKSUri(ctx context.Context) (string, error) {
+	if p.config.JWKSUri != "" {
+		return p.config.JWKSUri, nil
+	}
+	if p.resolvedJWKSUri != "" {
+		return p.resolvedJWKSUri, nil
+	}
+
+	issuer := strings.TrimSuffix(p.config.Issuer, "/")
+
+	if !p.discoveryFailed {
+		discoveryURL := issuer + "/.well-known/openid-configuration"
+		uri, err := p.fetchDiscoveryJWKSUri(ctx, discoveryURL)
+		switch {
+		case err == nil:
+			p.resolvedJWKSUri = uri
+			return uri, nil
+		default:
+			// Cache the failure so we don't pay the discovery RTT on every refresh.
+			// Operators with non-discovery IDPs see one failed lookup at startup.
+			glog.V(3).Infof("OIDC discovery at %s failed (%v); falling back to /.well-known/jwks.json", discoveryURL, err)
+			p.discoveryFailed = true
+		}
+	}
+
+	return issuer + "/.well-known/jwks.json", nil
+}
+
+// fetchDiscoveryJWKSUri retrieves the OIDC discovery document and returns
+// the jwks_uri field. The issuer claim in the document must match config.Issuer
+// to defend against issuer-substitution attacks during discovery.
+func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create discovery request: %v", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch discovery document: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("discovery endpoint returned status %d", resp.StatusCode)
+	}
+
+	var doc discoveryDocument
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", fmt.Errorf("decode discovery document: %v", err)
+	}
+
+	if doc.JWKSUri == "" {
+		return "", fmt.Errorf("discovery document missing jwks_uri")
+	}
+
+	// Issuer must match: a discovery doc that points to a different issuer is
+	// either a misconfiguration or an attack against issuer-confusion.
+	if doc.Issuer != "" && doc.Issuer != p.config.Issuer {
+		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
+	}
+
+	return doc.JWKSUri, nil
+}
+
 // fetchJWKS fetches the JWKS from the provider
 func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
-	jwksURL := p.config.JWKSUri
-	if jwksURL == "" {
-		jwksURL = strings.TrimSuffix(p.config.Issuer, "/") + "/.well-known/jwks.json"
+	jwksURL, err := p.resolveJWKSUri(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve JWKS URI: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", jwksURL, nil)
