@@ -739,11 +739,17 @@ func requestIcebergOAuthToken(t *testing.T, env *TestEnvironment) string {
 	return tokenResp.AccessToken
 }
 
+// createIcebergNamespace creates a single-level Iceberg namespace through
+// the REST catalog. Wrapper around createIcebergNamespaceLevels for the
+// common single-level case.
 func createIcebergNamespace(t *testing.T, env *TestEnvironment, token, bucketName, namespace string) {
 	t.Helper()
 	createIcebergNamespaceLevels(t, env, token, bucketName, []string{namespace})
 }
 
+// createIcebergTable creates a table inside a single-level namespace through
+// the REST catalog. The table is created with the canonical
+// (id long not null, label string nullable) schema used by all subtests.
 func createIcebergTable(t *testing.T, env *TestEnvironment, token, bucketName, namespace, tableName string) {
 	t.Helper()
 	createIcebergTableInLevels(t, env, token, bucketName, []string{namespace}, tableName)
@@ -834,6 +840,11 @@ func writeIcebergRows(t *testing.T, env *TestEnvironment, bucketName string, nam
 	t.Logf("PyIceberg writer output: %s", strings.TrimSpace(string(out)))
 }
 
+// doIcebergJSONRequest issues an authenticated JSON request to the Iceberg
+// REST endpoint and returns the response body. It fails the test unless the
+// response status matches one of expectedStatuses. Used by namespace and
+// table seeding so the tests can fail fast with a useful error if the REST
+// API rejects a setup call.
 func doIcebergJSONRequest(t *testing.T, env *TestEnvironment, token, method, path string, payload any, expectedStatuses ...int) string {
 	t.Helper()
 
@@ -873,8 +884,14 @@ func doIcebergJSONRequest(t *testing.T, env *TestEnvironment, token, method, pat
 	return ""
 }
 
-// createTableBucket creates an S3 table bucket using `weed shell` (gRPC), which
-// bypasses the S3 SigV4 path and works whether IAM is enabled or not.
+// createTableBucket creates an S3 table bucket using `weed shell`, which
+// talks to the master over gRPC and bypasses the S3 SigV4 path so the test
+// works whether IAM is enabled or not. The `-master` flag uses SeaweedFS's
+// canonical `host:port.grpcPort` ServerAddress format produced by
+// pb.NewServerAddress (see weed/pb/server_address.go) — the dot is the
+// separator between the HTTP port and the gRPC port and is required, not
+// a typo. Replacing it with a colon would make the parser treat the gRPC
+// port as the HTTP port and synthesize the wrong gRPC port.
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
@@ -892,6 +909,8 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Logf("Created table bucket: %s", bucketName)
 }
 
+// requireDorisRuntime skips the test in `-short` mode or when Docker isn't
+// available, since the test cannot run without the Doris container.
 func requireDorisRuntime(t *testing.T) {
 	t.Helper()
 
@@ -903,6 +922,8 @@ func requireDorisRuntime(t *testing.T) {
 	}
 }
 
+// hasDocker reports whether `docker version` can run, which we treat as a
+// sufficient signal that a Docker daemon is reachable from this process.
 func hasDocker() bool {
 	cmd := exec.Command("docker", "version")
 	return cmd.Run() == nil
