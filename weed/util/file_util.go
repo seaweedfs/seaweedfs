@@ -124,6 +124,21 @@ func ResolvePath(path string) string {
 	return filepath.Join(usr.HomeDir, rest)
 }
 
+// ResolveCommaSeparatedPaths splits paths on "," and runs each entry through
+// ResolvePath, then rejoins them. This lets flags like `weed mini -dir` or
+// `weed volume -dir` accept tilde-prefixed entries (e.g. "~/d1,~/d2") even
+// in the comma-separated form the help text advertises.
+func ResolveCommaSeparatedPaths(paths string) string {
+	if !strings.Contains(paths, "~") {
+		return paths
+	}
+	parts := strings.Split(paths, ",")
+	for i, p := range parts {
+		parts[i] = ResolvePath(p)
+	}
+	return strings.Join(parts, ",")
+}
+
 func FileNameBase(filename string) string {
 	lastDotIndex := strings.LastIndex(filename, ".")
 	if lastDotIndex < 0 {

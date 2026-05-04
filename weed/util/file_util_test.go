@@ -54,3 +54,32 @@ func TestResolvePath(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveCommaSeparatedPaths(t *testing.T) {
+	usr, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current: %v", err)
+	}
+	home := usr.HomeDir
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"single absolute", "/a", "/a"},
+		{"single tilde", "~/a", filepath.Join(home, "a")},
+		{"two absolutes", "/a,/b", "/a,/b"},
+		{"two tildes", "~/a,~/b", filepath.Join(home, "a") + "," + filepath.Join(home, "b")},
+		{"mixed", "/a,~/b,/c", "/a," + filepath.Join(home, "b") + ",/c"},
+		{"no tilde fast path", "/a,/b,/c", "/a,/b,/c"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ResolveCommaSeparatedPaths(c.in); got != c.want {
+				t.Errorf("ResolveCommaSeparatedPaths(%q) = %q; want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

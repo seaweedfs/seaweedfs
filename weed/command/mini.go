@@ -875,7 +875,7 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
-	*miniDataFolders = util.ResolvePath(*miniDataFolders)
+	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options

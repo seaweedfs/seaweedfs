@@ -320,6 +320,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*serverMetricsHttpIp, *serverMetricsHttpPort)
 
+	*volumeDataFolders = util.ResolveCommaSeparatedPaths(*volumeDataFolders)
 	folders := strings.Split(*volumeDataFolders, ",")
 
 	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
