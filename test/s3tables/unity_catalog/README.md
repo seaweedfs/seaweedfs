@@ -46,14 +46,27 @@ if (config.getSessionToken() != null && !config.getSessionToken().isEmpty()) {
 return createStsCredentialGenerator(config);
 ```
 
-With the playground's `aws.masterRoleArn=` empty and no `s3.sessionToken.0`,
-UC always falls back to an internal `StsClient.assumeRole(...)`. Against
-SeaweedFS that call comes back as `AccessDenied` because the AWS Java SDK's
-STS request lands on a SeaweedFS S3 path rather than the STS handler (the
-Go SDK STS path from `assumeRoleViaSeaweedFS` works in the same SeaweedFS
-instance). Setting a stub `s3.sessionToken.0` makes UC use
-`StaticAwsCredentialGenerator` and *return* the static keys, but SeaweedFS
-then rejects the vended `X-Amz-Security-Token` since it didn't issue it.
+Two layers fail independently:
+
+- With `aws.masterRoleArn=` empty and `s3.sessionToken.0=` empty (the
+  configuration this test uses), `/temporary-table-credentials` returns
+  `"S3 bucket configuration not found."` -- UC short-circuits before any
+  STS call. Setting a stub `s3.sessionToken.0` switches UC to
+  `StaticAwsCredentialGenerator`, which makes the endpoint *return* the
+  static keys (the playground fix at
+  [data-engineering-helpers/mds-in-a-box#1](https://github.com/data-engineering-helpers/mds-in-a-box/pull/1)).
+  But the response still carries that stub session token; SeaweedFS won't
+  recognize it on the next S3 call, so the vended creds aren't usable for
+  actual table I/O. Clients have to fall back to the static keys directly.
+
+- With `aws.masterRoleArn` set and `AWS_ENDPOINT_URL_STS` pointed at
+  SeaweedFS (the master-role test), UC's Java `StsClient` actually fires
+  the AssumeRole, but the request lands on a SeaweedFS S3 path rather
+  than the STS handler and comes back as `AccessDenied`. The Go SDK STS
+  path against the same instance (`assumeRoleViaSeaweedFS` in the
+  master-role test) works, so the gap is in how UC's Java SDK signs/routes
+  STS form-encoded POSTs against SeaweedFS' router, not in SeaweedFS' STS
+  itself.
 
 ## What the tests actually validate today
 
@@ -79,5 +92,5 @@ then rejects the vended `X-Amz-Security-Token` since it didn't issue it.
 ## MANAGED tables
 
 Not exercised. UC OSS gates them behind `server.managed-table.enabled=true`
-and a two-step staging flow; EXTERNAL Delta is the simpler path and
-matches what most playground users actually run.
+and a two-step staging flow (`POST /staging-tables` then `POST /tables`);
+EXTERNAL Delta is the simpler path and what these tests cover.
