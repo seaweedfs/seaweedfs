@@ -32,11 +32,37 @@ type IAMManager struct {
 	roleStore              RoleStore
 	userStore              UserStore
 	oidcProviderStore      OIDCProviderStore
+	oidcAuditSink          OIDCProviderAuditSink
 	revocationStore        SessionRevocationStore
 	filerAddressProvider   func() string // Function to get current filer address
 	initialized            bool
 	runtimePolicyMu        sync.Mutex
 	runtimePolicyNames     map[string]struct{}
+}
+
+// SetOIDCProviderAuditSink configures the lifecycle event sink. When nil
+// (default), GlogAuditSink is used so events still surface in logs.
+func (m *IAMManager) SetOIDCProviderAuditSink(sink OIDCProviderAuditSink) {
+	m.oidcAuditSink = sink
+}
+
+// emitOIDCAudit logs a lifecycle event. Errors are swallowed: an audit
+// failure must never block an IAM mutation that has already succeeded.
+func (m *IAMManager) emitOIDCAudit(ctx context.Context, eventType OIDCProviderAuditEventType, arn, url string, detail map[string]string) {
+	sink := m.oidcAuditSink
+	if sink == nil {
+		sink = GlogAuditSink{}
+	}
+	event := &OIDCProviderAuditEvent{
+		Type:       eventType,
+		ARN:        arn,
+		URL:        url,
+		Detail:     detail,
+		OccurredAt: time.Now().UTC(),
+	}
+	if err := sink.Emit(ctx, event); err != nil {
+		glog.Warningf("OIDC audit emit %s for %s: %v", eventType, arn, err)
+	}
 }
 
 // SetSessionRevocationStore configures the per-session revocation list. When
@@ -138,6 +164,7 @@ func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRe
 		return err
 	}
 	m.refreshOIDCProvidersBestEffort(ctx, "CreateOIDCProvider", rec.ARN)
+	m.emitOIDCAudit(ctx, OIDCAuditEventCreated, rec.ARN, rec.URL, nil)
 	return nil
 }
 
@@ -150,6 +177,7 @@ func (m *IAMManager) DeleteOIDCProvider(ctx context.Context, arn string) error {
 		return err
 	}
 	m.refreshOIDCProvidersBestEffort(ctx, "DeleteOIDCProvider", arn)
+	m.emitOIDCAudit(ctx, OIDCAuditEventDeleted, arn, "", nil)
 	return nil
 }
 
@@ -180,6 +208,7 @@ func (m *IAMManager) AddClientIDToOIDCProvider(ctx context.Context, arn, clientI
 		return err
 	}
 	m.refreshOIDCProvidersBestEffort(ctx, "AddClientIDToOIDCProvider", arn)
+	m.emitOIDCAudit(ctx, OIDCAuditEventClientIDAdded, rec.ARN, rec.URL, map[string]string{"clientId": clientID})
 	return nil
 }
 
@@ -208,6 +237,7 @@ func (m *IAMManager) RemoveClientIDFromOIDCProvider(ctx context.Context, arn, cl
 		return err
 	}
 	m.refreshOIDCProvidersBestEffort(ctx, "RemoveClientIDFromOIDCProvider", arn)
+	m.emitOIDCAudit(ctx, OIDCAuditEventClientIDRemoved, rec.ARN, rec.URL, map[string]string{"clientId": clientID})
 	return nil
 }
 
@@ -235,6 +265,7 @@ func (m *IAMManager) UpdateOIDCProviderThumbprints(ctx context.Context, arn stri
 		return err
 	}
 	m.refreshOIDCProvidersBestEffort(ctx, "UpdateOIDCProviderThumbprints", arn)
+	m.emitOIDCAudit(ctx, OIDCAuditEventThumbprintsSet, rec.ARN, rec.URL, map[string]string{"count": fmt.Sprintf("%d", len(thumbprints))})
 	return nil
 }
 
@@ -254,7 +285,11 @@ func (m *IAMManager) TagOIDCProvider(ctx context.Context, arn string, tags map[s
 		rec.Tags[k] = v
 	}
 	rec.UpdatedAt = time.Now().UTC()
-	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+	if err := m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
+		return err
+	}
+	m.emitOIDCAudit(ctx, OIDCAuditEventTagsAdded, rec.ARN, rec.URL, map[string]string{"count": fmt.Sprintf("%d", len(tags))})
+	return nil
 }
 
 // UntagOIDCProvider removes the named tags from the provider's tag set.
@@ -270,7 +305,11 @@ func (m *IAMManager) UntagOIDCProvider(ctx context.Context, arn string, keys []s
 		delete(rec.Tags, k)
 	}
 	rec.UpdatedAt = time.Now().UTC()
-	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+	if err := m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
+		return err
+	}
+	m.emitOIDCAudit(ctx, OIDCAuditEventTagsRemoved, rec.ARN, rec.URL, map[string]string{"count": fmt.Sprintf("%d", len(keys))})
+	return nil
 }
 
 // validateOIDCProviderRecord enforces the invariants AWS imposes on the
