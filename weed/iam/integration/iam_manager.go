@@ -352,16 +352,15 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 }
 
 // capDurationByRole returns the requested duration clamped to the role's
-// MaxSessionDuration. A nil requested duration with a role cap returns the
-// role cap so the STS service does not silently mint a session longer than
-// the role permits.
+// MaxSessionDuration. A nil requested duration is left nil so the STS
+// service's calculateSessionDuration applies the global default (typically
+// 1 hour) — substituting the role's max here would silently mint a 12h
+// session for any caller who omitted DurationSeconds, which AWS does not
+// do. The role-max upper bound still applies in the downstream cap chain
+// once the request has a concrete duration.
 func capDurationByRole(requested *int64, roleMax int64) *int64 {
-	if roleMax <= 0 {
+	if roleMax <= 0 || requested == nil {
 		return requested
-	}
-	if requested == nil {
-		v := roleMax
-		return &v
 	}
 	if *requested > roleMax {
 		v := roleMax

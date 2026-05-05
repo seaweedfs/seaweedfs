@@ -13,7 +13,7 @@ func TestCapDurationByRole(t *testing.T) {
 	}{
 		{"no cap, no request", nil, 0, nil},
 		{"no cap, with request", intPtr(7200), 0, intPtr(7200)},
-		{"cap only, no request -> use cap", nil, 3600, intPtr(3600)},
+		{"cap only, no request -> nil so STS default applies", nil, 3600, nil},
 		{"request below cap -> request", intPtr(1800), 3600, intPtr(1800)},
 		{"request equal cap -> request", intPtr(3600), 3600, intPtr(3600)},
 		{"request above cap -> cap", intPtr(43200), 3600, intPtr(3600)},
