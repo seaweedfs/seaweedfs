@@ -17,7 +17,7 @@ import (
 // id. The hash is base64-rawurl-encoded SHA-256 over "openid:<sub>:<iss>" so
 // it stays filesystem-safe and bounded in length for storage in audit paths.
 func ComputeParentUser(sub, iss string) string {
-	if sub == "" {
+	if sub == "" || iss == "" {
 		return ""
 	}
 	h := sha256.Sum256([]byte("openid:" + sub + ":" + iss))
