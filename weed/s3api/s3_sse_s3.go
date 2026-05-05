@@ -658,58 +658,6 @@ func (km *SSES3KeyManager) updateKEKContent(content []byte) error {
 	})
 }
 
-// generateAndSaveSuperKeyToFiler generates a new KEK and saves it to the filer.
-// Same justification as updateKEKContent above.
-func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
-	if km.filerClient == nil {
-		return fmt.Errorf("filer client not initialized")
-	}
-
-	// Generate a random 256-bit super key (KEK)
-	superKey := make([]byte, SSES3KeySize)
-	if _, err := io.ReadFull(rand.Reader, superKey); err != nil {
-		return fmt.Errorf("failed to generate KEK: %w", err)
-	}
-
-	// Encode KEK for storage: encrypted if passphrase is set, hex otherwise
-	var encodedKey []byte
-	if km.kekPassphrase != "" {
-		var wrapErr error
-		encodedKey, wrapErr = km.wrapKEK(superKey)
-		if wrapErr != nil {
-			return fmt.Errorf("failed to wrap KEK: %w", wrapErr)
-		}
-	} else {
-		glog.Warningf("SSE-S3 KeyManager: saving KEK in plaintext — set a KEK passphrase for encrypted storage")
-		encodedKey = []byte(hex.EncodeToString(superKey))
-	}
-
-	// Create the entry in filer
-	// First ensure the parent directory exists
-	if err := filer_pb.Mkdir(context.Background(), km.filerClient, SSES3KEKParentDir, SSES3KEKDirName, func(entry *filer_pb.Entry) {
-		// Set appropriate permissions for the directory
-		entry.Attributes.FileMode = uint32(0700 | os.ModeDir)
-	}); err != nil {
-		// Only ignore "already exists" errors.
-		if !errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-			return fmt.Errorf("failed to create KEK directory %s: %w", SSES3KEKDirectory, err)
-		}
-		glog.V(3).Infof("Parent directory %s already exists, continuing.", SSES3KEKDirectory)
-	}
-
-	// Create the KEK file
-	if err := filer_pb.MkFile(context.Background(), km.filerClient, SSES3KEKDirectory, SSES3KEKFileName, nil, func(entry *filer_pb.Entry) {
-		entry.Content = encodedKey
-		entry.Attributes.FileMode = 0600 // Read/write for owner only
-		entry.Attributes.FileSize = uint64(len(encodedKey))
-	}); err != nil {
-		return fmt.Errorf("failed to create KEK file in filer: %w", err)
-	}
-
-	km.superKey = superKey
-	glog.Infof("SSE-S3 KeyManager: Generated and saved new KEK to filer %s", km.kekPath)
-	return nil
-}
 // GetOrCreateKey gets an existing key or creates a new one
 // With envelope encryption, we always generate a new DEK since we don't store them
 func (km *SSES3KeyManager) GetOrCreateKey(keyID string) (*SSES3Key, error) {
