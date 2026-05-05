@@ -165,7 +165,9 @@ func (c *ucClient) do(ctx context.Context, method, path string, in any, out any)
 		return err
 	}
 	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
+	// 10 MiB cap is well above any reasonable Unity Catalog response and
+	// keeps a runaway server from OOMing the test runner.
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		return fmt.Errorf("read %s %s: %w", method, path, err)
 	}
