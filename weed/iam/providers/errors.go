@@ -19,4 +19,7 @@ var (
 
 	// ErrProviderMissingClaims indicates that required claims are missing from the token
 	ErrProviderMissingClaims = errors.New("provider: missing required claims")
+
+	// ErrProviderTokenReplayed is returned when a token with duplicate JTI is detected
+	ErrProviderTokenReplayed = errors.New("provider: token has been replayed")
 )
