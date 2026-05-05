@@ -145,6 +145,37 @@ pub struct VolumeGrpcService {
 }
 
 impl VolumeGrpcService {
+    /// Verifies the gRPC caller is allowed to invoke a destructive admin
+    /// operation. Mirrors the Go side's checkGrpcAdminAuth: an empty
+    /// whitelist accepts everyone (insecure-by-default for tests and
+    /// upgrades), a populated whitelist accepts only matching peer IPs.
+    ///
+    /// `remote_addr()` on a real gRPC connection always yields the peer's
+    /// SocketAddr; if it is somehow None we deny, matching "if we don't
+    /// know who the caller is, refuse."
+    fn check_grpc_admin_auth<T>(&self, request: &Request<T>) -> Result<(), Status> {
+        let remote = match request.remote_addr() {
+            Some(addr) => addr,
+            None => {
+                tracing::warn!("gRPC admin auth failed: no peer info");
+                return Err(Status::permission_denied("no peer info"));
+            }
+        };
+        let host = remote.ip().to_string();
+        let guard = self.state.guard.read().unwrap();
+        if !guard.check_whitelist(&host) {
+            tracing::warn!(
+                "gRPC admin auth failed: {} is not whitelisted (remote: {})",
+                host,
+                remote,
+            );
+            return Err(Status::permission_denied(format!(
+                "not authorized: {host}"
+            )));
+        }
+        Ok(())
+    }
+
     async fn notify_master_volume_readonly(
         &self,
         info: &MasterVolumeInfo,
@@ -459,6 +490,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VacuumVolumeCompactRequest>,
     ) -> Result<Response<Self::VacuumVolumeCompactStream>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -518,6 +550,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VacuumVolumeCommitRequest>,
     ) -> Result<Response<volume_server_pb::VacuumVolumeCommitResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let vid = VolumeId(request.into_inner().volume_id);
 
@@ -553,6 +586,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VacuumVolumeCleanupRequest>,
     ) -> Result<Response<volume_server_pb::VacuumVolumeCleanupResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let vid = VolumeId(request.into_inner().volume_id);
         let mut store = self.state.store.write().unwrap();
@@ -568,6 +602,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::DeleteCollectionRequest>,
     ) -> Result<Response<volume_server_pb::DeleteCollectionResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let collection = &request.into_inner().collection;
         let mut store = self.state.store.write().unwrap();
         store
@@ -580,6 +615,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::AllocateVolumeRequest>,
     ) -> Result<Response<volume_server_pb::AllocateVolumeResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -728,6 +764,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMountRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMountResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
@@ -744,6 +781,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeUnmountRequest>,
     ) -> Result<Response<volume_server_pb::VolumeUnmountResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let vid = VolumeId(request.into_inner().volume_id);
         let mut store = self.state.store.write().unwrap();
         // Go returns nil when volume is not found (idempotent unmount)
@@ -757,6 +795,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeDeleteResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -780,6 +819,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMarkReadonlyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkReadonlyResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         // Go: volume lookup (L239-241) happens before maintenance check (L166 in makeVolumeReadonly)
@@ -799,6 +839,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMarkWritableRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkWritableResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let info = {
@@ -848,6 +889,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeConfigureRequest>,
     ) -> Result<Response<volume_server_pb::VolumeConfigureResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -2542,6 +2584,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsDeleteResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -3240,8 +3283,9 @@ impl VolumeServer for VolumeGrpcService {
 
     async fn volume_server_leave(
         &self,
-        _request: Request<volume_server_pb::VolumeServerLeaveRequest>,
+        request: Request<volume_server_pb::VolumeServerLeaveRequest>,
     ) -> Result<Response<volume_server_pb::VolumeServerLeaveResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         *self.state.is_stopping.write().unwrap() = true;
         self.state.is_heartbeating.store(false, Ordering::Relaxed);
         // Wake heartbeat loop to send deregistration.
@@ -3391,6 +3435,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::ScrubVolumeRequest>,
     ) -> Result<Response<volume_server_pb::ScrubVolumeResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
 
         // Validate mode

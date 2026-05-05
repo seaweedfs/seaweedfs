@@ -14,6 +14,9 @@ import (
 )
 
 func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.ScrubVolumeRequest) (*volume_server_pb.ScrubVolumeResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	vids := []needle.VolumeId{}
 	if len(req.GetVolumeIds()) == 0 {
 		for _, l := range vs.store.Locations {

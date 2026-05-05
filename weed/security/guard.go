@@ -98,31 +98,35 @@ func GetActualRemoteHost(r *http.Request) string {
 }
 
 func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
-	if g.isEmptyWhiteList {
-		return nil
-	}
-
 	host := GetActualRemoteHost(r)
-
-	// Check exact match first (works for both IPs and hostnames)
-	if _, ok := g.whiteListIp[host]; ok {
+	if g.IsWhiteListed(host) {
 		return nil
 	}
+	glog.V(0).Infof("Not in whitelist: %s (original RemoteAddr: %s)", host, r.RemoteAddr)
+	return fmt.Errorf("Not in whitelist: %s", host)
+}
 
-	// Check CIDR ranges (only for valid IP addresses)
+// IsWhiteListed returns true if the given host IP is allowed by the guard.
+// When no whitelist is configured (security inactive), all hosts are allowed.
+func (g *Guard) IsWhiteListed(host string) bool {
+	if !g.isWriteActive {
+		return true
+	}
+	if g.isEmptyWhiteList {
+		return true
+	}
+	if _, ok := g.whiteListIp[host]; ok {
+		return true
+	}
 	remote := net.ParseIP(host)
 	if remote != nil {
 		for _, cidrnet := range g.whiteListCIDR {
-			// If the whitelist entry contains a "/" it
-			// is a CIDR range, and we should check the
 			if cidrnet.Contains(remote) {
-				return nil
+				return true
 			}
 		}
 	}
-
-	glog.V(0).Infof("Not in whitelist: %s (original RemoteAddr: %s)", host, r.RemoteAddr)
-	return fmt.Errorf("Not in whitelist: %s", host)
+	return false
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {
