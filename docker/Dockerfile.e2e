@@ -2,13 +2,15 @@ FROM ubuntu:22.04
 
 LABEL author="Chris Lu"
 
-# Use faster mirrors and optimize package installation
+# Use Azure's Ubuntu mirror — much faster than archive.ubuntu.com from GitHub-hosted runners,
+# which have been hanging long enough on Ign:/retry to trip the 10-min step timeout.
 # Note: This e2e test image intentionally runs as root for simplicity and compatibility.
 # Production images (Dockerfile.go_build) use proper user isolation with su-exec.
 # For testing purposes, running as root avoids permission complexities and dependency
 # on Alpine-specific tools like su-exec (not available in Ubuntu repos).
-RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && \
+    apt-get -o Acquire::http::Timeout=15 update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::http::Timeout=15 install -y \
     --no-install-recommends \
     --no-install-suggests \
     curl \
