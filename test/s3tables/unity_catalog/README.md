@@ -67,9 +67,19 @@ front of SeaweedFS' STS port records zero traffic. SeaweedFS' STS handler
 itself works -- the Go SDK round-trip in `assumeRoleViaSeaweedFS` proves that
 against the same SeaweedFS instance.
 
-Fix is upstream: UC needs to apply `aws.endpoint` (or expose an
-`aws.stsEndpoint`) on the StsClient too. Until then the master-role test
-logs the failure but does not assert it.
+UC's own AWS credential-vending tests don't catch this because they mock
+`StsClient` away entirely -- `BaseCRUDTestWithMockCredentials` injects a
+custom `stsClientBuilderSupplier` returning an `EchoAwsStsClient` that
+synthesizes credentials in-process, and `CloudCredentialVendorTest` uses
+`Mockito.mockStatic(StsClient.class)`. No test ever exercises the wire
+path between UC's Java SDK and a real STS endpoint, so the missing
+`endpointOverride` slipped through.
+
+Fix is upstream in
+[unitycatalog/unitycatalog#1532](https://github.com/unitycatalog/unitycatalog/pull/1532),
+which adds an `aws.endpoint` property and applies it to both the StsClient
+and the S3Client builders. Until that lands, the master-role test logs
+the failure but does not assert it.
 
 ## What the tests actually validate today
 

@@ -38,8 +38,11 @@ import (
 // the SDK's generic AWS_ENDPOINT_URL_STS resolution doesn't kick in and the
 // request always targets real AWS, returning InvalidClientTokenId. Verified
 // by pointing AWS_ENDPOINT_URL_STS at port 1: same 403 either way, and a
-// sniffer in front of SeaweedFS records zero traffic. The fix is upstream
-// in UC, not in SeaweedFS. That bit is logged via t.Logf and not asserted.
+// sniffer in front of SeaweedFS records zero traffic. UC's own tests mock
+// StsClient out (BaseCRUDTestWithMockCredentials' EchoAwsStsClient,
+// Mockito.mockStatic in CloudCredentialVendorTest), so this never showed
+// up upstream. Fix is in unitycatalog/unitycatalog#1532; that bit is
+// logged via t.Logf and not asserted.
 func TestUnityCatalogMasterRoleIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
@@ -154,9 +157,9 @@ func TestUnityCatalogMasterRoleIntegration(t *testing.T) {
 		// known-good (slice 1 above), and UC's CRUD is known-good (this slice).
 		_, ucCredErr := uc.generateTemporaryTableCredentials(ctx, created.TableID, "READ_WRITE")
 		if ucCredErr != nil {
-			t.Logf("UC StsClient still hits real AWS (UC bug, not a SeaweedFS gap): %v", ucCredErr)
+			t.Logf("UC StsClient still hits real AWS (UC bug, fix in unitycatalog/unitycatalog#1532): %v", ucCredErr)
 		} else {
-			t.Logf("UC StsClient now honors endpoint override; the upstream UC patch landed.")
+			t.Logf("UC StsClient honors endpoint override; unitycatalog/unitycatalog#1532 (or equivalent) is in this image.")
 		}
 	})
 }
