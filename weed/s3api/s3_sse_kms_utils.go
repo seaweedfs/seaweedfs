@@ -86,7 +86,12 @@ func clearKMSDataKey(result *KMSDataKeyResult) {
 	}
 }
 
-// createSSEKMSKey creates an SSEKMSKey struct from data key result and parameters
+// createSSEKMSKey creates an SSEKMSKey struct from data key result and parameters.
+// The HMAC key commitment is computed here (rather than at each call site) so
+// every SSE-KMS encryption path produces metadata that can later be verified
+// against tampering — a missing commitment was an attacker-controlled silent
+// downgrade vector. plaintext must still be live; deferred clearKMSDataKey
+// runs after this function returns.
 func createSSEKMSKey(result *KMSDataKeyResult, encryptionContext map[string]string, bucketKeyEnabled bool, iv []byte, chunkOffset int64) *SSEKMSKey {
 	return &SSEKMSKey{
 		KeyID:             result.Response.KeyID,
@@ -95,5 +100,6 @@ func createSSEKMSKey(result *KMSDataKeyResult, encryptionContext map[string]stri
 		BucketKeyEnabled:  bucketKeyEnabled,
 		IV:                iv,
 		ChunkOffset:       chunkOffset,
+		KeyCommitment:     ComputeKeyCommitment(result.Response.Plaintext, iv, s3_constants.SSEAlgorithmKMS),
 	}
 }

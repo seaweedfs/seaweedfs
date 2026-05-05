@@ -1,11 +1,82 @@
 package s3api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"strings"
+	"sync/atomic"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+// RequireKeyCommitmentEnv is the environment variable that flips the
+// commitment check from "skip when missing" (the AWS-compatible default,
+// needed for objects written before commitments shipped) to "reject when
+// missing". Operators who have either re-encrypted all legacy objects or
+// who never wrote any objects under the pre-commitment code path can opt
+// in via this env var to close the silent downgrade vector that an
+// attacker with write access to object metadata could otherwise exploit
+// by stripping the commitment field.
+const RequireKeyCommitmentEnv = "WEED_S3_REQUIRE_KEY_COMMITMENT"
+
+// requireKeyCommitment is the runtime mirror of the env var, kept as an
+// atomic so config-reload paths can flip it without a global mutex.
+var requireKeyCommitment atomic.Bool
+
+func init() {
+	if v := os.Getenv(RequireKeyCommitmentEnv); v == "1" || strings.EqualFold(v, "true") {
+		requireKeyCommitment.Store(true)
+		glog.V(1).Infof("SSE: %s=true; SSE objects without a key commitment will be rejected", RequireKeyCommitmentEnv)
+	}
+}
+
+// SetRequireKeyCommitment toggles strict-commitment enforcement at runtime.
+// Used by tests and by future config-reload code paths.
+func SetRequireKeyCommitment(require bool) {
+	requireKeyCommitment.Store(require)
+}
+
+// ComputeKeyCommitment computes an HMAC-SHA256 key commitment over the
+// encryption parameters (IV + algorithm). This binds the ciphertext to the
+// exact key material and IV that were used, preventing key-confusion and
+// IV-manipulation attacks against unauthenticated AES-CTR.
+//
+// The commitment is stored alongside the IV in object metadata. On decrypt
+// the commitment is re-derived and compared; a mismatch means the key or IV
+// was tampered with.
+func ComputeKeyCommitment(key []byte, iv []byte, algorithm string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(iv)
+	mac.Write([]byte(algorithm))
+	return mac.Sum(nil)
+}
+
+// VerifyKeyCommitment checks a previously stored commitment against the
+// current key, IV, and algorithm. Returns nil on success.
+//
+// When the commitment is empty (legacy object written before commitments
+// shipped), the default behaviour is to accept the object — this is the
+// AWS-compatible path. Setting WEED_S3_REQUIRE_KEY_COMMITMENT=true (via
+// env at startup or via SetRequireKeyCommitment at runtime) flips that
+// to reject, closing the silent-downgrade vector at the cost of locking
+// out un-migrated legacy objects.
+func VerifyKeyCommitment(key []byte, iv []byte, algorithm string, commitment []byte) error {
+	if len(commitment) == 0 {
+		if requireKeyCommitment.Load() {
+			return fmt.Errorf("key commitment is required but missing from object metadata: %s set; legacy objects must be re-encrypted before this flag can be enabled", RequireKeyCommitmentEnv)
+		}
+		// Legacy data written before key commitments were added; skip.
+		return nil
+	}
+	expected := ComputeKeyCommitment(key, iv, algorithm)
+	if !hmac.Equal(expected, commitment) {
+		return fmt.Errorf("key commitment verification failed: encryption parameters may have been tampered with")
+	}
+	return nil
+}
 
 // isValidKMSKeyID performs basic validation of KMS key identifiers.
 // Following Minio's approach: be permissive and accept any reasonable key format.
