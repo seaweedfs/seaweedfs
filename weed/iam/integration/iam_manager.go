@@ -744,6 +744,14 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 		return nil, fmt.Errorf("IAM manager not initialized")
 	}
 
+	// Claim-based mode bypasses role lookup and trust policy entirely; the
+	// STS service handles the policy resolution from the JWT itself. Account
+	// scoping still applies but at the provider-resolution layer in Phase 3c
+	// (we'll plug that in once a multi-account assume path lands).
+	if sts.IsClaimBasedPolicyRoleArn(request.RoleArn) {
+		return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
+	}
+
 	// Extract role name from ARN
 	roleName := utils.ExtractRoleNameFromArn(request.RoleArn)
 
@@ -751,6 +759,14 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
+	}
+
+	// Account scoping: when the role lives in account A, the OIDC provider
+	// validating the token must be either global (AccountID="") or also live
+	// in account A. Skip when we can't resolve account context; fall through
+	// to the existing trust-policy enforcement.
+	if err := m.enforceProviderAccountScope(ctx, request); err != nil {
+		return nil, err
 	}
 
 	// Validate trust policy before allowing STS to assume the role
@@ -765,6 +781,63 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
+}
+
+// enforceProviderAccountScope checks that the OIDC provider matching the
+// token's issuer is registered in either the role's account or as a global
+// (account-less) provider. Returns nil when no provider store is configured
+// (preserves the static-config-only path) or when the issuer is not known to
+// the store (the existing STS-layer issuer→provider map handles that case
+// during validation).
+func (m *IAMManager) enforceProviderAccountScope(ctx context.Context, request *sts.AssumeRoleWithWebIdentityRequest) error {
+	if m.oidcProviderStore == nil {
+		return nil
+	}
+	roleAccount := utils.ParseRoleARN(request.RoleArn).AccountID
+	if roleAccount == "" {
+		// Legacy ARN form (no account): nothing to enforce.
+		return nil
+	}
+	issuer, err := extractIssuerFromJWT(request.WebIdentityToken)
+	if err != nil {
+		return nil // signature validation will reject, no need to fail twice
+	}
+	// Look for a provider that is either global or scoped to the role's
+	// account. Multiple providers may share an issuer (e.g. one global plus
+	// one per tenant), and GetProviderByIssuer returns the first match
+	// arbitrarily — using it here would falsely reject a valid request
+	// whenever the wrong record happens to come back first.
+	if _, err := m.oidcProviderStore.GetProviderByIssuerAndAccount(ctx, m.getFilerAddress(), issuer, roleAccount); err == nil {
+		return nil
+	}
+	// No allowed match. Distinguish "issuer entirely unknown" (let the STS
+	// layer reject with the existing not-registered error) from "issuer is
+	// registered but only in a different account" (surface a precise error
+	// so the operator knows the call was cross-account).
+	if other, err := m.oidcProviderStore.GetProviderByIssuer(ctx, m.getFilerAddress(), issuer); err == nil {
+		return fmt.Errorf("OIDC provider for issuer %s is registered in account %s; cannot be used to assume a role in account %s", issuer, other.AccountID, roleAccount)
+	}
+	return nil
+}
+
+// extractIssuerFromJWT returns the iss claim of a JWT without verifying its
+// signature. Safe here because the caller still goes through full signature
+// + issuer validation in the STS service; this is purely for routing.
+func extractIssuerFromJWT(token string) (string, error) {
+	parser := new(jwt.Parser)
+	parsed, _, err := parser.ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		return "", err
+	}
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", fmt.Errorf("invalid claims")
+	}
+	iss, _ := claims["iss"].(string)
+	if iss == "" {
+		return "", fmt.Errorf("token has no iss claim")
+	}
+	return iss, nil
 }
 
 // capDurationByRole returns the requested duration clamped to the role's
