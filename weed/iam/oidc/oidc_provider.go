@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -25,19 +26,20 @@ import (
 
 // OIDCProvider implements OpenID Connect authentication
 type OIDCProvider struct {
-	name          string
-	config        *OIDCConfig
-	initialized   bool
-	jwksCache     *JWKS
-	httpClient    *http.Client
-	jwksFetchedAt time.Time
-	jwksTTL       time.Duration
+	name        string
+	config      *OIDCConfig
+	initialized bool
+	httpClient  *http.Client
+	jwksTTL     time.Duration
 
-	// resolvedJWKSUri is the JWKS URI as determined by discovery (or fallback).
-	// Populated lazily on first fetch and reused until the cache TTL expires.
+	// mu guards the lazily-mutated cache fields below: jwksCache, jwksFetchedAt,
+	// resolvedJWKSUri, and discoveryFailed are all populated on the first
+	// validate-token call and refreshed when the cache expires. Multiple S3
+	// requests can land here in parallel, so they need synchronization.
+	mu              sync.RWMutex
+	jwksCache       *JWKS
+	jwksFetchedAt   time.Time
 	resolvedJWKSUri string
-	// discoveryFailed records that .well-known/openid-configuration was tried and
-	// failed once, so subsequent fetches go straight to the fallback path.
 	discoveryFailed bool
 }
 
@@ -558,29 +560,50 @@ func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims)
 	return roles
 }
 
-// getPublicKey retrieves the public key for the given key ID from JWKS
+// getPublicKey retrieves the public key for the given key ID from JWKS.
+// Cache hits use the read lock so concurrent token validations don't
+// serialize on JWKS lookup. Misses and expirations promote to the write
+// lock so the JWKS fetch + cache write happens once per refresh cycle.
 func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{}, error) {
-	// Fetch JWKS if not cached or refresh if expired
-	if p.jwksCache == nil || (!p.jwksFetchedAt.IsZero() && time.Since(p.jwksFetchedAt) > p.jwksTTL) {
-		if err := p.fetchJWKS(ctx); err != nil {
+	// Fast path: read lock and look in cache.
+	p.mu.RLock()
+	if p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL) {
+		for _, key := range p.jwksCache.Keys {
+			if key.Kid == kid {
+				k := key
+				p.mu.RUnlock()
+				return p.parseJWK(&k)
+			}
+		}
+	}
+	p.mu.RUnlock()
+
+	// Slow path: take the write lock for the (re)fetch + retry. Re-check the
+	// cache under the write lock in case another goroutine already refreshed.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cacheValid := p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL)
+	if !cacheValid {
+		if err := p.fetchJWKSLocked(ctx); err != nil {
 			return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
 		}
 	}
-
-	// Find the key with matching kid
 	for _, key := range p.jwksCache.Keys {
 		if key.Kid == kid {
-			return p.parseJWK(&key)
+			k := key
+			return p.parseJWK(&k)
 		}
 	}
 
-	// Key not found in cache. Refresh JWKS once to handle key rotation and retry.
-	if err := p.fetchJWKS(ctx); err != nil {
+	// Key not found in cache. Refresh JWKS once to handle key rotation.
+	if err := p.fetchJWKSLocked(ctx); err != nil {
 		return nil, fmt.Errorf("failed to refresh JWKS after key miss: %v", err)
 	}
 	for _, key := range p.jwksCache.Keys {
 		if key.Kid == kid {
-			return p.parseJWK(&key)
+			k := key
+			return p.parseJWK(&k)
 		}
 	}
 	return nil, fmt.Errorf("key with ID %s not found in JWKS after refresh", kid)
@@ -593,14 +616,17 @@ type discoveryDocument struct {
 	JWKSUri string `json:"jwks_uri"`
 }
 
-// resolveJWKSUri determines the JWKS URI for the provider.
+// resolveJWKSUriLocked determines the JWKS URI for the provider. The caller
+// must hold p.mu (write lock); the function reads/writes p.resolvedJWKSUri
+// and p.discoveryFailed without taking the lock itself.
+//
 // Order of resolution:
 //  1. explicit config.JWKSUri (operator override; never overridden by discovery).
 //  2. cached resolvedJWKSUri from a prior discovery (refreshed when JWKS cache expires).
 //  3. .well-known/openid-configuration discovery (per OIDC Discovery 1.0).
 //  4. fallback to {issuer}/.well-known/jwks.json (compat path for IDPs that
 //     don't publish discovery).
-func (p *OIDCProvider) resolveJWKSUri(ctx context.Context) (string, error) {
+func (p *OIDCProvider) resolveJWKSUriLocked(ctx context.Context) (string, error) {
 	if p.config.JWKSUri != "" {
 		return p.config.JWKSUri, nil
 	}
@@ -666,9 +692,20 @@ func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL s
 	return doc.JWKSUri, nil
 }
 
-// fetchJWKS fetches the JWKS from the provider
+// fetchJWKS is a thin wrapper around fetchJWKSLocked that acquires the
+// write lock. Used by tests; production callers in getPublicKey already
+// hold the lock and call fetchJWKSLocked directly.
 func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
-	jwksURL, err := p.resolveJWKSUri(ctx)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fetchJWKSLocked(ctx)
+}
+
+// fetchJWKSLocked fetches the JWKS from the provider. The caller must hold
+// p.mu (write lock); the function writes p.jwksCache and p.jwksFetchedAt
+// without taking the lock itself.
+func (p *OIDCProvider) fetchJWKSLocked(ctx context.Context) error {
+	jwksURL, err := p.resolveJWKSUriLocked(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve JWKS URI: %v", err)
 	}
