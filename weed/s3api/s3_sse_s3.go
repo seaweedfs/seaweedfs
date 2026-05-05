@@ -16,6 +16,7 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -630,19 +631,23 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 // entry is guaranteed to exist. MkFile uses CreateEntry which fails with
 // ErrEntryAlreadyExists when the file is already there — we need
 // UpdateEntry instead so the migration actually persists.
+//
+// Splits km.kekPath at the last "/" so an operator-overridden path is
+// honoured. Defaults match defaultKEKPath when km.kekPath is unset.
 func (km *SSES3KeyManager) updateKEKContent(content []byte) error {
+	dir, name := splitKEKPath(km.kekPath)
 	ctx := context.Background()
 	return km.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: SSES3KEKDirectory,
-			Name:      SSES3KEKFileName,
+			Directory: dir,
+			Name:      name,
 		})
 		if err != nil {
 			return fmt.Errorf("lookup KEK entry: %w", err)
 		}
 		entry := resp.Entry
 		if entry == nil {
-			return fmt.Errorf("KEK entry not found at %s/%s", SSES3KEKDirectory, SSES3KEKFileName)
+			return fmt.Errorf("KEK entry not found at %s/%s", dir, name)
 		}
 		entry.Content = content
 		if entry.Attributes == nil {
@@ -652,10 +657,23 @@ func (km *SSES3KeyManager) updateKEKContent(content []byte) error {
 		entry.Attributes.FileSize = uint64(len(content))
 		entry.Attributes.Mtime = time.Now().Unix()
 		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-			Directory: SSES3KEKDirectory,
+			Directory: dir,
 			Entry:     entry,
 		})
 	})
+}
+
+// splitKEKPath splits an absolute KEK file path into (directory, name).
+// Falls back to the default location if the path is empty or has no slash.
+func splitKEKPath(p string) (dir, name string) {
+	if p == "" {
+		return SSES3KEKDirectory, SSES3KEKFileName
+	}
+	idx := strings.LastIndex(p, "/")
+	if idx <= 0 {
+		return SSES3KEKDirectory, SSES3KEKFileName
+	}
+	return p[:idx], p[idx+1:]
 }
 
 // GetOrCreateKey gets an existing key or creates a new one
