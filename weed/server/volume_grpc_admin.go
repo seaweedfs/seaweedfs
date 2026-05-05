@@ -83,6 +83,10 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_pb.AllocateVolumeRequest) (*volume_server_pb.AllocateVolumeResponse, error) {
 	resp := &volume_server_pb.AllocateVolumeResponse{}
 
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return resp, err
 	}
@@ -114,6 +118,10 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 
 	resp := &volume_server_pb.VolumeMountResponse{}
 
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
 	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
@@ -129,6 +137,10 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb.VolumeUnmountRequest) (*volume_server_pb.VolumeUnmountResponse, error) {
 
 	resp := &volume_server_pb.VolumeUnmountResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
 
@@ -167,6 +179,10 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {
 	resp := &volume_server_pb.VolumeConfigureResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return resp, err
@@ -282,6 +298,10 @@ func (vs *VolumeServer) notifyMasterVolumeReadonly(ctx context.Context, v *stora
 func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
 	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
 
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return resp, fmt.Errorf("volume %d not found", req.VolumeId)
@@ -296,6 +316,10 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 
 func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
 	resp := &volume_server_pb.VolumeMarkWritableResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
