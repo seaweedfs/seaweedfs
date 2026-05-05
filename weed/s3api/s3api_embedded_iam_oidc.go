@@ -137,7 +137,7 @@ func (e *EmbeddedIamApi) createOpenIDConnectProvider(ctx context.Context, mgr *i
 		Tags:        tags,
 	}
 	if err := mgr.CreateOIDCProvider(ctx, rec); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, integration.ErrOIDCProviderAlreadyExists) {
 			return nil, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: err}
 		}
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
@@ -176,7 +176,7 @@ func (e *EmbeddedIamApi) addClientIDToOpenIDConnectProvider(ctx context.Context,
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientID is required")}
 	}
 	if err := mgr.AddClientIDToOIDCProvider(ctx, arn, clientID); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
 		}
 		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -194,7 +194,7 @@ func (e *EmbeddedIamApi) removeClientIDFromOpenIDConnectProvider(ctx context.Con
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientID is required")}
 	}
 	if err := mgr.RemoveClientIDFromOIDCProvider(ctx, arn, clientID); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
 		}
 		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -212,7 +212,7 @@ func (e *EmbeddedIamApi) updateOpenIDConnectProviderThumbprint(ctx context.Conte
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ThumbprintList must contain at least one entry")}
 	}
 	if err := mgr.UpdateOIDCProviderThumbprints(ctx, arn, thumbprints); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
 		}
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
@@ -230,7 +230,7 @@ func (e *EmbeddedIamApi) tagOpenIDConnectProvider(ctx context.Context, mgr *inte
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("Tags must contain at least one Key/Value pair")}
 	}
 	if err := mgr.TagOIDCProvider(ctx, arn, tags); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
 		}
 		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -248,7 +248,7 @@ func (e *EmbeddedIamApi) untagOpenIDConnectProvider(ctx context.Context, mgr *in
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("TagKeys must contain at least one entry")}
 	}
 	if err := mgr.UntagOIDCProvider(ctx, arn, keys); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
 		}
 		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}

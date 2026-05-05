@@ -20,6 +20,15 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Sentinel errors returned by the IAM manager and OIDCProviderStore. Callers
+// in the s3api layer use errors.Is rather than substring-matching the
+// formatted message, so the message can be edited freely without changing
+// the IAM error code surfaced to the API caller.
+var (
+	ErrOIDCProviderNotFound      = errors.New("OIDC provider not found")
+	ErrOIDCProviderAlreadyExists = errors.New("OIDC provider already exists")
+)
+
 // OIDCProviderRecord is the persisted, IAM-managed view of an OIDC identity
 // provider. It is the source of truth consulted at AssumeRoleWithWebIdentity
 // time. Static configuration entries are loaded into this same store at
@@ -109,7 +118,7 @@ func (m *MemoryOIDCProviderStore) GetProviderByARN(ctx context.Context, _ string
 	defer m.mu.RUnlock()
 	rec, ok := m.providers[arn]
 	if !ok {
-		return nil, fmt.Errorf("OIDC provider not found: %s", arn)
+		return nil, fmt.Errorf("%w: %s", ErrOIDCProviderNotFound, arn)
 	}
 	return copyOIDCProviderRecord(rec), nil
 }
@@ -239,7 +248,7 @@ func (f *FilerOIDCProviderStore) GetProviderByARN(ctx context.Context, filerAddr
 			Name:      f.fileName(arn),
 		})
 		if err != nil {
-			return fmt.Errorf("OIDC provider not found: %v", err)
+			return fmt.Errorf("%w: %v", ErrOIDCProviderNotFound, err)
 		}
 		if resp.Entry == nil {
 			return fmt.Errorf("OIDC provider not found: %s", arn)

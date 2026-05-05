@@ -80,7 +80,7 @@ func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRe
 		return err
 	}
 	if existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN); err == nil && existing != nil {
-		return fmt.Errorf("OIDC provider already exists: %s", rec.ARN)
+		return fmt.Errorf("%w: %s", ErrOIDCProviderAlreadyExists, rec.ARN)
 	}
 	now := time.Now().UTC()
 	rec.CreatedAt = now
