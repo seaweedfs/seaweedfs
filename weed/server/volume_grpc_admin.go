@@ -45,11 +45,8 @@ func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
 	}
 	pr, ok := peer.FromContext(ctx)
 	if !ok {
-		// Empty host hits the IsWhiteListed allow-all path when no whitelist
-		// is configured, but won't match any whitelist entry when one is.
-		if vs.guard.IsWhiteListed("") {
-			return nil
-		}
+		// Real gRPC connections always populate peer info; if we don't know
+		// who the caller is, deny.
 		glog.V(0).Infof("gRPC admin auth failed: no peer info")
 		return status.Error(codes.PermissionDenied, "no peer info")
 	}
