@@ -252,7 +252,14 @@ func (env *testEnv) startUnityCatalog(t *testing.T, ctx context.Context, opts uc
 	if err != nil {
 		t.Fatalf("docker run unity-catalog: %v\n%s", err, out)
 	}
-	env.ucContainerID = strings.TrimSpace(string(out))
+	// docker run -d prefixes pull progress / warnings before the final container
+	// ID line when the image isn't cached locally. Trim to the last whitespace-
+	// separated token so the ID survives a fresh CI runner.
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		t.Fatalf("docker run produced no output; combined: %q", string(out))
+	}
+	env.ucContainerID = fields[len(fields)-1]
 	t.Logf("unity-catalog container id: %s", env.ucContainerID)
 
 	probe := fmt.Sprintf("http://127.0.0.1:%d%s/catalogs", env.ucHostPort, ucAPIBase)
