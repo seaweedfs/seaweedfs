@@ -87,12 +87,91 @@ type OIDCConfig struct {
 	// root store" (or whatever TLSCACert configures).
 	Thumbprints []string `json:"thumbprints,omitempty"`
 
+	// AllowedPrincipalTagKeys filters the keys read from the AWS principal
+	// session tags claim. Empty means "no tags surfaced". Provide an explicit
+	// allowlist (e.g. ["team", "env"]) to opt specific keys in.
+	AllowedPrincipalTagKeys []string `json:"allowedPrincipalTagKeys,omitempty"`
+
 	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
 	TLSCACert string `json:"tlsCaCert,omitempty"`
 
 	// TLSInsecureSkipVerify controls whether to skip TLS verification.
 	// WARNING: Should only be used in development/testing environments. Never use in production.
 	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
+}
+
+// PrincipalTagsClaim is the AWS-defined namespace claim that carries
+// principal session tags. Tokens that include this claim must encode it as
+// an object whose top-level keys are tag names. AWS uses the same string;
+// see https://docs.aws.amazon.com/IAM/latest/UserGuide/id_session-tags.html.
+const PrincipalTagsClaim = "https://aws.amazon.com/tags/principal_tags"
+
+// filterPrincipalTags drops keys that are not on `allowed`. An empty
+// allowlist means "deny all" — security-conservative default that forces
+// operators to explicitly opt tags in. Returns nil when the result is empty.
+//
+// Comparison is case-insensitive on the key, matching AWS IAM's session-tag
+// rules (the AWS docs explicitly state tag keys are case-insensitive even
+// though the original casing is preserved on the value side). Without this
+// an IDP whose claim casing drifts from the operator's allowlist string
+// would fail in surprising ways.
+func filterPrincipalTags(tags map[string]string, allowed []string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	allowSet := make(map[string]struct{}, len(allowed))
+	for _, k := range allowed {
+		allowSet[strings.ToLower(k)] = struct{}{}
+	}
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		if _, ok := allowSet[strings.ToLower(k)]; ok {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// extractPrincipalTags pulls the principal-tags namespace claim out of the
+// JWT claim map. Only string values survive — everything else is dropped to
+// avoid surfacing structured data into a flat policy condition key. Returns
+// nil when the claim is absent or empty.
+func extractPrincipalTags(claims map[string]interface{}) map[string]string {
+	raw, ok := claims[PrincipalTagsClaim]
+	if !ok {
+		return nil
+	}
+	obj, ok := raw.(map[string]interface{})
+	if !ok || len(obj) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(obj))
+	for k, v := range obj {
+		switch s := v.(type) {
+		case string:
+			out[k] = s
+		case []interface{}:
+			// Multi-value tag: AWS condition keys carry only a single value, so
+			// take the first stringy element. Multi-value matching can land
+			// later if a real customer needs it.
+			for _, e := range s {
+				if str, ok := e.(string); ok {
+					out[k] = str
+					break
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // normalizeThumbprints lowercases and de-duplicates the configured allowlist.
@@ -388,13 +467,14 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	}
 
 	identity := &providers.ExternalIdentity{
-		UserID:      claims.Subject,
-		Email:       email,
-		DisplayName: displayName,
-		Groups:      groups,
-		Attributes:  attributes,
-		Provider:    p.name,
-		Issuer:      claims.Issuer,
+		UserID:        claims.Subject,
+		Email:         email,
+		DisplayName:   displayName,
+		Groups:        groups,
+		Attributes:    attributes,
+		Provider:      p.name,
+		Issuer:        claims.Issuer,
+		PrincipalTags: filterPrincipalTags(extractPrincipalTags(claims.Claims), p.config.AllowedPrincipalTagKeys),
 	}
 
 	// Pass the token expiration to limit session duration

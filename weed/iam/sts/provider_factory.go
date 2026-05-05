@@ -140,6 +140,12 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 		}
 	}
 
+	if rawAllowed, ok := configMap[ConfigFieldAllowedPrincipalTagKeys]; ok {
+		if list, err := f.convertToStringSlice(rawAllowed); err == nil {
+			config.AllowedPrincipalTagKeys = list
+		}
+	}
+
 	if tlsInsecureSkipVerify, ok := configMap[ConfigFieldTLSInsecureSkipVerify].(bool); ok {
 		config.TLSInsecureSkipVerify = tlsInsecureSkipVerify
 	}

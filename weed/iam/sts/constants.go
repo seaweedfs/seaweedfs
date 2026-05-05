@@ -48,6 +48,7 @@ const (
 	ConfigFieldClientID              = "clientId"
 	ConfigFieldClientIDs             = "clientIds"
 	ConfigFieldThumbprints           = "thumbprints"
+	ConfigFieldAllowedPrincipalTagKeys = "allowedPrincipalTagKeys"
 	ConfigFieldClientSecret          = "clientSecret"
 	ConfigFieldJWKSUri               = "jwksUri"
 	ConfigFieldScopes                = "scopes"
