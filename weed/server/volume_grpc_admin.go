@@ -30,31 +30,40 @@ import (
 // checkGrpcAdminAuth verifies the gRPC caller is authorized for destructive
 // admin operations by checking the peer address against the guard's whitelist.
 //
-// When the peer address can't be parsed into host:port (in-process / passthrough
-// connections used in tests, or unix sockets) we hand the raw address string
-// to IsWhiteListed. With an empty whitelist that returns true so insecure
-// deployments are unaffected; with a whitelist configured the unparseable
-// address won't match anything and the call is denied as it should be.
+// IP extraction prefers a typed *net.TCPAddr where available, falling back to
+// SplitHostPort on the string form, then to the raw string. The fallback
+// chain matters because in-process/passthrough connections used in tests
+// surface as unparseable strings like "@"; with an empty whitelist the
+// allow-all branch in IsWhiteListed accepts them, with a whitelist they're
+// denied as expected.
+//
+// Failed authorization attempts are logged so an operator running with a
+// configured whitelist can spot misconfigured callers and probe attempts.
 func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
 	if vs.guard == nil {
 		return nil
 	}
 	pr, ok := peer.FromContext(ctx)
 	if !ok {
-		// Same fallback: an empty host hits the IsWhiteListed allow-all path
-		// when no whitelist is configured, but won't match any whitelist entry
-		// when one is.
+		// Empty host hits the IsWhiteListed allow-all path when no whitelist
+		// is configured, but won't match any whitelist entry when one is.
 		if vs.guard.IsWhiteListed("") {
 			return nil
 		}
+		glog.V(0).Infof("gRPC admin auth failed: no peer info")
 		return status.Error(codes.PermissionDenied, "no peer info")
 	}
 	addr := pr.Addr.String()
-	host, _, splitErr := net.SplitHostPort(addr)
-	if splitErr != nil {
+	var host string
+	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
+		host = tcpAddr.IP.String()
+	} else if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+		host = h
+	} else {
 		host = addr
 	}
 	if !vs.guard.IsWhiteListed(host) {
+		glog.V(0).Infof("gRPC admin auth failed: %s is not whitelisted (remote: %s)", host, addr)
 		return status.Errorf(codes.PermissionDenied, "not authorized: %s", host)
 	}
 	return nil
