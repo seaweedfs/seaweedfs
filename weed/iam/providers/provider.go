@@ -49,6 +49,11 @@ type ExternalIdentity struct {
 	// Provider is the name of the identity provider
 	Provider string `json:"provider"`
 
+	// Issuer is the OIDC `iss` claim (or equivalent) from the source token.
+	// Stable per (provider, identity) and used together with UserID to derive
+	// a stable parent-user hash that survives token rotation.
+	Issuer string `json:"issuer,omitempty"`
+
 	// TokenExpiration is the expiration time of the source identity token
 	// This is used to limit session duration to not exceed the token's exp claim
 	TokenExpiration *time.Time `json:"tokenExpiration,omitempty"`

@@ -254,6 +254,9 @@ type SessionInfo struct {
 
 	// Credentials are the temporary credentials for this session
 	Credentials *Credentials `json:"credentials"`
+
+	// ParentUser is the stable hashed identity (sub+iss) derived at federation time.
+	ParentUser string `json:"parentUser,omitempty"`
 }
 
 // NewSTSService creates a new STS service
@@ -506,13 +509,26 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// Add sub as well since it's commonly used
 	requestContext["sub"] = externalIdentity.UserID
 
+	// Compute a stable parent-user hash from (sub, iss). Only this tuple is
+	// guaranteed stable across token refresh per OIDC Core 1.0, so this is the
+	// right key for any per-identity state (audit trail, future quotas).
+	parentUser := ComputeParentUser(externalIdentity.UserID, externalIdentity.Issuer)
+	if parentUser != "" {
+		// Surface as aws:userid so policies can reference it directly without
+		// caring about token-rotation churn.
+		requestContext["aws:userid"] = parentUser
+	}
+
 	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
-		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
+		WithIdentityProvider(provider.Name(), externalIdentity.UserID, externalIdentity.Issuer).
 		WithMaxDuration(sessionDuration).
 		WithRequestContext(requestContext)
+	if parentUser != "" {
+		sessionClaims.WithParentUser(parentUser)
+	}
 	if sessionPolicy != "" {
 		sessionClaims.WithSessionPolicy(sessionPolicy)
 	}

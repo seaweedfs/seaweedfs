@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -25,13 +26,21 @@ import (
 
 // OIDCProvider implements OpenID Connect authentication
 type OIDCProvider struct {
-	name          string
-	config        *OIDCConfig
-	initialized   bool
-	jwksCache     *JWKS
-	httpClient    *http.Client
-	jwksFetchedAt time.Time
-	jwksTTL       time.Duration
+	name        string
+	config      *OIDCConfig
+	initialized bool
+	httpClient  *http.Client
+	jwksTTL     time.Duration
+
+	// mu guards the lazily-mutated cache fields below: jwksCache, jwksFetchedAt,
+	// resolvedJWKSUri, and discoveryFailed are all populated on the first
+	// validate-token call and refreshed when the cache expires. Multiple S3
+	// requests can land here in parallel, so they need synchronization.
+	mu              sync.RWMutex
+	jwksCache       *JWKS
+	jwksFetchedAt   time.Time
+	resolvedJWKSUri string
+	discoveryFailed bool
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -272,6 +281,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		Groups:      groups,
 		Attributes:  attributes,
 		Provider:    p.name,
+		Issuer:      claims.Issuer,
 	}
 
 	// Pass the token expiration to limit session duration
@@ -550,39 +560,169 @@ func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims)
 	return roles
 }
 
-// getPublicKey retrieves the public key for the given key ID from JWKS
+// getPublicKey retrieves the public key for the given key ID from JWKS.
+// Cache hits use the read lock so concurrent token validations don't
+// serialize on JWKS lookup. Misses and expirations promote to the write
+// lock so the JWKS fetch + cache write happens once per refresh cycle.
 func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{}, error) {
-	// Fetch JWKS if not cached or refresh if expired
-	if p.jwksCache == nil || (!p.jwksFetchedAt.IsZero() && time.Since(p.jwksFetchedAt) > p.jwksTTL) {
-		if err := p.fetchJWKS(ctx); err != nil {
+	// Fast path: read lock and look in cache.
+	p.mu.RLock()
+	if p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL) {
+		for _, key := range p.jwksCache.Keys {
+			if key.Kid == kid {
+				k := key
+				p.mu.RUnlock()
+				return p.parseJWK(&k)
+			}
+		}
+	}
+	p.mu.RUnlock()
+
+	// Slow path: take the write lock for the (re)fetch + retry. Re-check the
+	// cache under the write lock in case another goroutine already refreshed.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cacheValid := p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL)
+	if !cacheValid {
+		if err := p.fetchJWKSLocked(ctx); err != nil {
 			return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
 		}
 	}
-
-	// Find the key with matching kid
 	for _, key := range p.jwksCache.Keys {
 		if key.Kid == kid {
-			return p.parseJWK(&key)
+			k := key
+			return p.parseJWK(&k)
 		}
 	}
 
-	// Key not found in cache. Refresh JWKS once to handle key rotation and retry.
-	if err := p.fetchJWKS(ctx); err != nil {
+	// Key not found in cache. Refresh JWKS once to handle key rotation.
+	if err := p.fetchJWKSLocked(ctx); err != nil {
 		return nil, fmt.Errorf("failed to refresh JWKS after key miss: %v", err)
 	}
 	for _, key := range p.jwksCache.Keys {
 		if key.Kid == kid {
-			return p.parseJWK(&key)
+			k := key
+			return p.parseJWK(&k)
 		}
 	}
 	return nil, fmt.Errorf("key with ID %s not found in JWKS after refresh", kid)
 }
 
-// fetchJWKS fetches the JWKS from the provider
+// discoveryDocument is the subset of the OpenID Provider Configuration we need.
+// See https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata.
+type discoveryDocument struct {
+	Issuer  string `json:"issuer"`
+	JWKSUri string `json:"jwks_uri"`
+}
+
+// resolveJWKSUriLocked determines the JWKS URI for the provider. The caller
+// must hold p.mu (write lock); the function reads/writes p.resolvedJWKSUri
+// and p.discoveryFailed without taking the lock itself.
+//
+// Order of resolution:
+//  1. explicit config.JWKSUri (operator override; never overridden by discovery).
+//  2. cached resolvedJWKSUri from a prior discovery (refreshed when JWKS cache expires).
+//  3. .well-known/openid-configuration discovery (per OIDC Discovery 1.0).
+//  4. fallback to {issuer}/.well-known/jwks.json (compat path for IDPs that
+//     don't publish discovery).
+func (p *OIDCProvider) resolveJWKSUriLocked(ctx context.Context) (string, error) {
+	if p.config.JWKSUri != "" {
+		return p.config.JWKSUri, nil
+	}
+	if p.resolvedJWKSUri != "" {
+		return p.resolvedJWKSUri, nil
+	}
+
+	issuer := strings.TrimSuffix(p.config.Issuer, "/")
+
+	if !p.discoveryFailed {
+		discoveryURL := issuer + "/.well-known/openid-configuration"
+		uri, err := p.fetchDiscoveryJWKSUri(ctx, discoveryURL)
+		switch {
+		case err == nil:
+			p.resolvedJWKSUri = uri
+			return uri, nil
+		default:
+			// Cache the failure so we don't pay the discovery RTT on every refresh.
+			// Operators with non-discovery IDPs see one failed lookup at startup.
+			glog.V(3).Infof("OIDC discovery at %s failed (%v); falling back to /.well-known/jwks.json", discoveryURL, err)
+			p.discoveryFailed = true
+		}
+	}
+
+	return issuer + "/.well-known/jwks.json", nil
+}
+
+// fetchDiscoveryJWKSUri retrieves the OIDC discovery document and returns
+// the jwks_uri field. The issuer claim in the document must match config.Issuer
+// to defend against issuer-substitution attacks during discovery.
+func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create discovery request: %v", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch discovery document: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("discovery endpoint returned status %d", resp.StatusCode)
+	}
+
+	var doc discoveryDocument
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", fmt.Errorf("decode discovery document: %v", err)
+	}
+
+	if doc.JWKSUri == "" {
+		return "", fmt.Errorf("discovery document missing jwks_uri")
+	}
+
+	// Issuer must be present and match: a discovery doc that points to a
+	// different issuer is either a misconfiguration or an attack against
+	// issuer-confusion, and a doc that omits the issuer field entirely
+	// would have bypassed the previous check (doc.Issuer != "" guard) and
+	// silently accepted whatever JWKS URI the document supplied. OIDC
+	// Discovery 1.0 §3 mandates the issuer field, so treat missing as a
+	// hard failure. Compare after trimming a single trailing slash on each
+	// side because real IdPs disagree on whether the configured issuer
+	// has one.
+	if strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
+		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
+	}
+
+	return doc.JWKSUri, nil
+}
+
+// fetchJWKS is a thin wrapper around fetchJWKSLocked that acquires the
+// write lock. Used by tests; production callers in getPublicKey already
+// hold the lock and call fetchJWKSLocked directly.
 func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
-	jwksURL := p.config.JWKSUri
-	if jwksURL == "" {
-		jwksURL = strings.TrimSuffix(p.config.Issuer, "/") + "/.well-known/jwks.json"
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fetchJWKSLocked(ctx)
+}
+
+// fetchJWKSLocked fetches the JWKS from the provider. The caller must hold
+// p.mu (write lock); the function writes p.jwksCache and p.jwksFetchedAt
+// without taking the lock itself.
+//
+// Each fetch reattempts discovery if the previous attempt failed: a
+// transient 5xx that flipped discoveryFailed at startup shouldn't lock the
+// provider into the fallback path forever. The retry rate is bounded by
+// the JWKS TTL (typically 1h), so the discovery RTT cost is amortized.
+func (p *OIDCProvider) fetchJWKSLocked(ctx context.Context) error {
+	if p.config.JWKSUri == "" && p.resolvedJWKSUri == "" {
+		p.discoveryFailed = false
+	}
+	jwksURL, err := p.resolveJWKSUriLocked(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve JWKS URI: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", jwksURL, nil)

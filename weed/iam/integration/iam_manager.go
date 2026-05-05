@@ -75,6 +75,12 @@ type RoleDefinition struct {
 
 	// Description is an optional description of the role
 	Description string `json:"description,omitempty"`
+
+	// MaxSessionDuration is the upper bound (in seconds) on session length when
+	// callers assume this role. Zero means "use the global STS default". When
+	// set it must satisfy AWS bounds: 3600 ≤ MaxSessionDuration ≤ 43200.
+	// Honoured by AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithCredentials.
+	MaxSessionDuration int64 `json:"maxSessionDuration,omitempty"`
 }
 
 // ActionRequest represents a request to perform an action
@@ -272,6 +278,13 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 		}
 	}
 
+	// Validate per-role MaxSessionDuration if specified. AWS bounds: 1h..12h.
+	if roleDef.MaxSessionDuration != 0 {
+		if roleDef.MaxSessionDuration < 3600 || roleDef.MaxSessionDuration > 43200 {
+			return fmt.Errorf("MaxSessionDuration must be between 3600 and 43200 seconds, got %d", roleDef.MaxSessionDuration)
+		}
+	}
+
 	// Store role definition
 	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
 }
@@ -329,8 +342,31 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 		return nil, fmt.Errorf("trust policy validation failed: %w", err)
 	}
 
+	// Apply role-level MaxSessionDuration cap. The STS service still applies
+	// the global MaxSessionLength and the source-token-expiry cap on top of
+	// this; per-role takes precedence whenever it is the tightest bound.
+	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration)
+
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
+}
+
+// capDurationByRole returns the requested duration clamped to the role's
+// MaxSessionDuration. A nil requested duration is left nil so the STS
+// service's calculateSessionDuration applies the global default (typically
+// 1 hour) — substituting the role's max here would silently mint a 12h
+// session for any caller who omitted DurationSeconds, which AWS does not
+// do. The role-max upper bound still applies in the downstream cap chain
+// once the request has a concrete duration.
+func capDurationByRole(requested *int64, roleMax int64) *int64 {
+	if roleMax <= 0 || requested == nil {
+		return requested
+	}
+	if *requested > roleMax {
+		v := roleMax
+		return &v
+	}
+	return requested
 }
 
 // AssumeRoleWithCredentials assumes a role using credentials (LDAP)
@@ -352,6 +388,9 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	if err := m.validateTrustPolicyForCredentials(ctx, roleDef, request); err != nil {
 		return nil, fmt.Errorf("trust policy validation failed: %w", err)
 	}
+
+	// Apply role-level MaxSessionDuration cap.
+	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration)
 
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithCredentials(ctx, request)
