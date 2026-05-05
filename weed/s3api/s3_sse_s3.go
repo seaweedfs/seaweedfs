@@ -624,16 +624,37 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 	return nil
 }
 
-// updateKEKContent updates the KEK file content in the filer.
+// updateKEKContent overwrites the existing KEK file content in the filer.
 // Used by the plaintext→encrypted migration path and by the v1→v2 salt
-// rewrap. Master removed this as "unreachable" in #8913 because the
-// pre-merge codebase had no callers; this branch reintroduces both
-// callers, so the helper has to come back too.
+// rewrap; both run after a successful read of the current KEK, so the
+// entry is guaranteed to exist. MkFile uses CreateEntry which fails with
+// ErrEntryAlreadyExists when the file is already there — we need
+// UpdateEntry instead so the migration actually persists.
 func (km *SSES3KeyManager) updateKEKContent(content []byte) error {
-	return filer_pb.MkFile(context.Background(), km.filerClient, SSES3KEKDirectory, SSES3KEKFileName, nil, func(entry *filer_pb.Entry) {
+	ctx := context.Background()
+	return km.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: SSES3KEKDirectory,
+			Name:      SSES3KEKFileName,
+		})
+		if err != nil {
+			return fmt.Errorf("lookup KEK entry: %w", err)
+		}
+		entry := resp.Entry
+		if entry == nil {
+			return fmt.Errorf("KEK entry not found at %s/%s", SSES3KEKDirectory, SSES3KEKFileName)
+		}
 		entry.Content = content
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
 		entry.Attributes.FileMode = 0600
 		entry.Attributes.FileSize = uint64(len(content))
+		entry.Attributes.Mtime = time.Now().Unix()
+		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+			Directory: SSES3KEKDirectory,
+			Entry:     entry,
+		})
 	})
 }
 
