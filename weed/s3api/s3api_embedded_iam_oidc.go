@@ -120,19 +120,7 @@ func (e *EmbeddedIamApi) createOpenIDConnectProvider(ctx context.Context, mgr *i
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientIDList must contain at least one entry")}
 	}
 	thumbprints := extractMemberList(values, "ThumbprintList")
-
-	// Tags are encoded as parallel Tags.member.N.Key / Tags.member.N.Value.
-	var tags map[string]string
-	for i := 1; ; i++ {
-		k := values.Get(fmt.Sprintf("Tags.member.%d.Key", i))
-		if k == "" {
-			break
-		}
-		if tags == nil {
-			tags = make(map[string]string)
-		}
-		tags[k] = values.Get(fmt.Sprintf("Tags.member.%d.Value", i))
-	}
+	tags := extractTags(values)
 
 	accountID := mgr.GetSTSService().Config.AccountId
 	arn, err := integration.DeriveOIDCProviderARN(accountID, urlStr)
@@ -237,14 +225,7 @@ func (e *EmbeddedIamApi) tagOpenIDConnectProvider(ctx context.Context, mgr *inte
 	if iamErr != nil {
 		return nil, iamErr
 	}
-	tags := map[string]string{}
-	for i := 1; ; i++ {
-		k := values.Get(fmt.Sprintf("Tags.member.%d.Key", i))
-		if k == "" {
-			break
-		}
-		tags[k] = values.Get(fmt.Sprintf("Tags.member.%d.Value", i))
-	}
+	tags := extractTags(values)
 	if len(tags) == 0 {
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("Tags must contain at least one Key/Value pair")}
 	}
@@ -273,6 +254,25 @@ func (e *EmbeddedIamApi) untagOpenIDConnectProvider(ctx context.Context, mgr *in
 		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 	return &iamlib.UntagOpenIDConnectProviderResponse{}, nil
+}
+
+// extractTags walks the AWS IAM "Tags.member.N.Key / Tags.member.N.Value"
+// query-string convention and returns the parsed map. Returns nil (not an
+// empty map) when no tags are present so the caller can distinguish
+// "untouched" from "empty".
+func extractTags(values url.Values) map[string]string {
+	var out map[string]string
+	for i := 1; ; i++ {
+		k := values.Get(fmt.Sprintf("Tags.member.%d.Key", i))
+		if k == "" {
+			break
+		}
+		if out == nil {
+			out = make(map[string]string)
+		}
+		out[k] = values.Get(fmt.Sprintf("Tags.member.%d.Value", i))
+	}
+	return out
 }
 
 func requireProviderArn(values url.Values) (string, *iamError) {
