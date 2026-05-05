@@ -43,6 +43,14 @@ func TestComputeParentUserEmptySub(t *testing.T) {
 	}
 }
 
+func TestComputeParentUserEmptyIss(t *testing.T) {
+	// Without an issuer, two different IDPs that both name a user "alice"
+	// would collide on the same parent_user. Refuse rather than hash.
+	if got := ComputeParentUser("alice", ""); got != "" {
+		t.Fatalf("empty iss should produce empty parent user, got %q", got)
+	}
+}
+
 func TestComputeParentUserEncoding(t *testing.T) {
 	got := ComputeParentUser("alice", "https://idp.example/")
 	// Base64 RawURL has no padding and uses URL-safe alphabet — important
