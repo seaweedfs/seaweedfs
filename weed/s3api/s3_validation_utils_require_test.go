@@ -38,7 +38,11 @@ func TestVerifyKeyCommitment_StrictAcceptsValidCommitment(t *testing.T) {
 	requireKeyCommitment.Store(true)
 
 	key := []byte("strict-mode-test-key")
-	iv := []byte("strict-mode-iv-16")
+	// IV here is just an opaque input to the HMAC commitment; the test
+	// doesn't pass it into AES-CTR so it doesn't have to be the AES block
+	// size. The 16 bytes match the AES block size to keep the literal
+	// realistic.
+	iv := []byte("strict-mode-iv16")
 	commit := ComputeKeyCommitment(key, iv, "AES256")
 	if err := VerifyKeyCommitment(key, iv, "AES256", commit); err != nil {
 		t.Fatalf("strict mode should accept valid commitment, got: %v", err)
