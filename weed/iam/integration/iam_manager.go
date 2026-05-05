@@ -585,12 +585,15 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 			createdAt = existing.CreatedAt
 		}
 		rec := &OIDCProviderRecord{
-			AccountID: accountID,
-			ARN:       arn,
-			URL:       issuer,
-			ClientIDs: clientIDs,
-			CreatedAt: createdAt,
-			UpdatedAt: now,
+			AccountID:               accountID,
+			ARN:                     arn,
+			URL:                     issuer,
+			ClientIDs:               clientIDs,
+			Thumbprints:             extractStringList(pc.Config, "thumbprints"),
+			AllowedPrincipalTagKeys: extractStringList(pc.Config, "allowedPrincipalTagKeys"),
+			PolicyClaim:             extractString(pc.Config, "policyClaim"),
+			CreatedAt:               createdAt,
+			UpdatedAt:               now,
 		}
 		if err := store.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
 			glog.Warningf("mirror static OIDC provider %s into store: %v", pc.Name, err)
@@ -699,6 +702,39 @@ func extractClientIDs(cfg map[string]interface{}) []string {
 		return []string{id}
 	}
 	return nil
+}
+
+// extractStringList reads a JSON string array out of the provider's static
+// config map and returns the non-empty entries. Returns nil when the key is
+// missing, the value is the wrong shape, or every entry is empty.
+func extractStringList(cfg map[string]interface{}, key string) []string {
+	if cfg == nil {
+		return nil
+	}
+	list, ok := cfg[key].([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if s, ok := v.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// extractString reads a single string field from the provider's static
+// config map; missing or non-string values produce "".
+func extractString(cfg map[string]interface{}, key string) string {
+	if cfg == nil {
+		return ""
+	}
+	s, _ := cfg[key].(string)
+	return s
 }
 
 // getFilerAddress returns the current filer address using the provider function
