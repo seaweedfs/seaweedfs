@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -68,6 +71,11 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 			}
 		}
 	}
+
+	scrubLabels := prometheus.Labels{"mode": req.GetMode().String()}
+	stats.VolumeServerScrubLastTimeSeconds.With(scrubLabels).Set(float64(time.Now().Unix()))
+	stats.VolumeServerScrubVolumeFailures.With(scrubLabels).Add(float64(len(brokenVolumes)))
+
 	if len(errs) != 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -128,6 +136,11 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 			}
 		}
 	}
+
+	scrubLabels := prometheus.Labels{"mode": req.GetMode().String()}
+	stats.VolumeServerScrubLastTimeSeconds.With(scrubLabels).Set(float64(time.Now().Unix()))
+	stats.VolumeServerScrubVolumeFailures.With(scrubLabels).Add(float64(len(brokenVolumeIds)))
+	stats.VolumeServerScrubShardFailures.With(scrubLabels).Add(float64(len(brokenShardInfos)))
 
 	res := &volume_server_pb.ScrubEcVolumeResponse{
 		TotalVolumes:     totalVolumes,

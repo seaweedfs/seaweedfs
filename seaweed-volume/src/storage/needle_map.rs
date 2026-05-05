@@ -19,6 +19,7 @@ use compact_map::CompactMap;
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::storage::idx;
+use crate::storage::needle::needle::get_actual_size;
 use crate::storage::types::*;
 
 // ============================================================================
@@ -63,6 +64,11 @@ pub struct NeedleMapMetric {
     pub deletion_count: AtomicI64,
     pub deletion_byte_count: AtomicU64,
     pub max_file_key: AtomicU64,
+    /// Largest (offset.to_actual_offset() + get_actual_size(size, version))
+    /// observed during the load walk. Used at volume load to verify that no
+    /// .idx entry references bytes past the end of .dat (issue #8928)
+    /// without paying for a second linear scan.
+    pub max_needle_end: AtomicI64,
 }
 
 impl NeedleMapMetric {
@@ -108,6 +114,29 @@ impl NeedleMapMetric {
             }
         }
     }
+
+    /// Update `max_needle_end` if this entry's (offset + actual size) exceeds
+    /// the running maximum. Skips deleted/zero-offset entries because they
+    /// don't reserve space in .dat.
+    fn maybe_set_max_needle_end(&self, offset: Offset, size: Size, version: Version) {
+        if offset.is_zero() || !size.is_valid() {
+            return;
+        }
+        let end = offset.to_actual_offset() + get_actual_size(size, version);
+        loop {
+            let current = self.max_needle_end.load(Ordering::Relaxed);
+            if end <= current {
+                break;
+            }
+            if self
+                .max_needle_end
+                .compare_exchange(current, end, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                break;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -117,9 +146,9 @@ impl NeedleMapMetric {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NeedleMapKind {
     InMemory,
-    LevelDb,
-    LevelDbMedium,
-    LevelDbLarge,
+    Redb,
+    RedbMedium,
+    RedbLarge,
 }
 
 // ============================================================================
@@ -163,9 +192,10 @@ impl CompactNeedleMap {
     }
 
     /// Load from an .idx file, building the in-memory map.
-    pub fn load_from_idx<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
+    pub fn load_from_idx<R: Read + Seek>(reader: &mut R, version: Version) -> io::Result<Self> {
         let mut nm = CompactNeedleMap::new();
         idx::walk_index_file(reader, 0, |key, offset, size| {
+            nm.metric.maybe_set_max_needle_end(offset, size, version);
             if offset.is_zero() || size.is_deleted() {
                 nm.delete_from_map(key);
             } else {
@@ -282,6 +312,12 @@ impl CompactNeedleMap {
 
     pub fn max_file_key(&self) -> NeedleId {
         NeedleId(self.metric.max_file_key.load(Ordering::Relaxed))
+    }
+
+    /// Largest (offset + actual size) seen during the load walk; 0 if the
+    /// map is empty. See `NeedleMapMetric::maybe_set_max_needle_end`.
+    pub fn max_needle_end(&self) -> i64 {
+        self.metric.max_needle_end.load(Ordering::Relaxed)
     }
 
     pub fn index_file_size(&self) -> u64 {
@@ -431,7 +467,7 @@ impl RedbNeedleMap {
 
     /// Rebuild metrics by scanning all entries in the redb table.
     /// Called when reusing an existing .rdb without a full rebuild.
-    fn rebuild_metrics_from_db(&self) -> io::Result<()> {
+    fn rebuild_metrics_from_db(&self, version: Version) -> io::Result<()> {
         let txn = self
             .db
             .begin_read()
@@ -453,6 +489,8 @@ impl RedbNeedleMap {
                 arr.copy_from_slice(bytes);
                 let nv = unpack_needle_value(&arr);
                 self.metric.maybe_set_max_file_key(key);
+                self.metric
+                    .maybe_set_max_needle_end(nv.offset, nv.size, version);
                 if nv.size.is_valid() {
                     self.metric.file_count.fetch_add(1, Ordering::Relaxed);
                     self.metric
@@ -477,20 +515,24 @@ impl RedbNeedleMap {
     /// 2. If .idx size matches → reuse .rdb, rebuild metrics from scan
     /// 3. If .idx is larger → replay new entries incrementally
     /// 4. Otherwise (missing, corrupted, .idx smaller) → full rebuild
-    pub fn load_from_idx<R: Read + Seek>(db_path: &str, reader: &mut R) -> io::Result<Self> {
+    pub fn load_from_idx<R: Read + Seek>(
+        db_path: &str,
+        reader: &mut R,
+        version: Version,
+    ) -> io::Result<Self> {
         let idx_size = reader.seek(io::SeekFrom::End(0))?;
         reader.seek(io::SeekFrom::Start(0))?;
 
         // Try to reuse existing .rdb
         if Path::new(db_path).exists() {
-            if let Ok(nm) = Self::try_reuse_rdb(db_path, reader, idx_size) {
+            if let Ok(nm) = Self::try_reuse_rdb(db_path, reader, idx_size, version) {
                 return Ok(nm);
             }
             // Reuse failed — fall through to full rebuild
             reader.seek(io::SeekFrom::Start(0))?;
         }
 
-        Self::full_rebuild(db_path, reader, idx_size)
+        Self::full_rebuild(db_path, reader, idx_size, version)
     }
 
     /// Try to reuse an existing .rdb file. Returns Ok if successful,
@@ -499,6 +541,7 @@ impl RedbNeedleMap {
         db_path: &str,
         reader: &mut R,
         idx_size: u64,
+        version: Version,
     ) -> io::Result<Self> {
         let db = Database::open(db_path)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open: {}", e)))?;
@@ -523,7 +566,7 @@ impl RedbNeedleMap {
         }
 
         // Rebuild metrics from existing data
-        nm.rebuild_metrics_from_db()?;
+        nm.rebuild_metrics_from_db(version)?;
 
         if stored_idx_size < idx_size {
             // .idx grew — replay new entries incrementally
@@ -534,6 +577,7 @@ impl RedbNeedleMap {
                     io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
                 })?;
                 idx::walk_index_file(reader, start_entry, |key, offset, size| {
+                    nm.metric.maybe_set_max_needle_end(offset, size, version);
                     let key_u64: u64 = key.into();
                     if offset.is_zero() || size.is_deleted() {
                         // Delete: look up old value for metric update, then
@@ -607,6 +651,7 @@ impl RedbNeedleMap {
         db_path: &str,
         reader: &mut R,
         idx_size: u64,
+        version: Version,
     ) -> io::Result<Self> {
         let _ = std::fs::remove_file(db_path);
         let nm = RedbNeedleMap::new(db_path)?;
@@ -614,6 +659,7 @@ impl RedbNeedleMap {
         // Collect entries from idx file, resolving duplicates/deletions
         let mut entries: HashMap<NeedleId, Option<NeedleValue>> = HashMap::new();
         idx::walk_index_file(reader, 0, |key, offset, size| {
+            nm.metric.maybe_set_max_needle_end(offset, size, version);
             if offset.is_zero() || size.is_deleted() {
                 entries.insert(key, None);
             } else {
@@ -786,6 +832,12 @@ impl RedbNeedleMap {
 
     pub fn max_file_key(&self) -> NeedleId {
         NeedleId(self.metric.max_file_key.load(Ordering::Relaxed))
+    }
+
+    /// Largest (offset + actual size) seen during the load walk; 0 if the
+    /// map is empty. See `NeedleMapMetric::maybe_set_max_needle_end`.
+    pub fn max_needle_end(&self) -> i64 {
+        self.metric.max_needle_end.load(Ordering::Relaxed)
     }
 
     pub fn index_file_size(&self) -> u64 {
@@ -988,6 +1040,16 @@ impl NeedleMap {
         }
     }
 
+    /// Largest (offset + actual size) seen during the load walk; 0 if the
+    /// map is empty. Used at volume load to detect .idx entries that
+    /// reference past the end of .dat (issue #8928) without a second scan.
+    pub fn max_needle_end(&self) -> i64 {
+        match self {
+            NeedleMap::InMemory(nm) => nm.max_needle_end(),
+            NeedleMap::Redb(nm) => nm.max_needle_end(),
+        }
+    }
+
     /// Index file size in bytes.
     pub fn index_file_size(&self) -> u64 {
         match self {
@@ -1157,7 +1219,7 @@ mod tests {
         .unwrap();
 
         let mut cursor = Cursor::new(idx_data);
-        let nm = CompactNeedleMap::load_from_idx(&mut cursor).unwrap();
+        let nm = CompactNeedleMap::load_from_idx(&mut cursor, Version::current()).unwrap();
 
         assert!(nm.get(NeedleId(1)).is_some());
         assert!(nm.get(NeedleId(2)).is_none()); // deleted
@@ -1300,7 +1362,7 @@ mod tests {
         .unwrap();
 
         let mut cursor = Cursor::new(idx_data);
-        let nm = RedbNeedleMap::load_from_idx(db_path.to_str().unwrap(), &mut cursor).unwrap();
+        let nm = RedbNeedleMap::load_from_idx(db_path.to_str().unwrap(), &mut cursor, Version::current()).unwrap();
 
         assert!(nm.get(NeedleId(1)).is_some());
         assert!(nm.get(NeedleId(2)).is_none()); // deleted and removed
@@ -1377,7 +1439,7 @@ mod tests {
 
         // Load back with CompactNeedleMap to verify
         let mut idx_file = std::fs::File::open(&idx_path).unwrap();
-        let loaded = CompactNeedleMap::load_from_idx(&mut idx_file).unwrap();
+        let loaded = CompactNeedleMap::load_from_idx(&mut idx_file, Version::current()).unwrap();
         assert_eq!(loaded.file_count(), 2); // only live entries
         assert!(loaded.get(NeedleId(1)).is_some());
         assert!(loaded.get(NeedleId(2)).is_none()); // deleted, not saved

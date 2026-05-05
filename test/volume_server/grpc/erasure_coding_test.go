@@ -752,6 +752,87 @@ func TestEcShardsCopyFromPeerSuccess(t *testing.T) {
 	}
 }
 
+// TestEcIndexConsistencyAfterEncode verifies that every needle indexed in .ecx
+// can be read back correctly from EC shards after VolumeEcShardsGenerate.
+// This catches the race condition fixed in this PR where .ecx could reference
+// data not present in EC shards.
+func TestEcIndexConsistencyAfterEncode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(130)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+
+	// Upload multiple needles of varying sizes
+	type testNeedle struct {
+		fid     string
+		payload []byte
+	}
+	needles := []testNeedle{
+		{framework.NewFileID(volumeID, 1001, 0xAABB0001), []byte("small-needle-1")},
+		{framework.NewFileID(volumeID, 1002, 0xAABB0002), make([]byte, 1024)},     // 1KB
+		{framework.NewFileID(volumeID, 1003, 0xAABB0003), make([]byte, 64*1024)},  // 64KB
+		{framework.NewFileID(volumeID, 1004, 0xAABB0004), make([]byte, 256*1024)}, // 256KB
+		{framework.NewFileID(volumeID, 1005, 0xAABB0005), []byte("small-needle-2")},
+	}
+
+	// Fill larger payloads with recognizable data
+	for i := range needles {
+		for j := range needles[i].payload {
+			needles[i].payload[j] = byte(i*37 + j%251)
+		}
+	}
+
+	for _, n := range needles {
+		resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload)
+		_ = framework.ReadAllAndClose(t, resp)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload %s expected 201, got %d", n.fid, resp.StatusCode)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// EC encode
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	// Mount all data shards so reads go through the EC path
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount failed: %v", err)
+	}
+
+	// Read every needle back from EC shards and verify payload
+	for _, n := range needles {
+		readResp := framework.ReadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid)
+		readBody := framework.ReadAllAndClose(t, readResp)
+		if readResp.StatusCode != http.StatusOK {
+			t.Fatalf("EC read %s expected 200, got %d", n.fid, readResp.StatusCode)
+		}
+		if string(readBody) != string(n.payload) {
+			t.Fatalf("EC read %s payload mismatch: got %d bytes, want %d bytes", n.fid, len(readBody), len(n.payload))
+		}
+	}
+}
+
 func TestEcShardsCopyFailsWhenSourceUnavailable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

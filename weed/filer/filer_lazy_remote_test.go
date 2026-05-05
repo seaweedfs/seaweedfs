@@ -276,6 +276,7 @@ func newTestFiler(t *testing.T, store *stubFilerStore, rs *FilerRemoteStorage) *
 		FilerConf:           NewFilerConf(),
 		MaxFilenameLength:   255,
 		MasterClient:        mc,
+		inodeSequencer:      newInodeSequencer("test-filer"),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		deletionQuit:        make(chan struct{}),
 		LocalMetaLogBuffer: log_buffer.NewLogBuffer("test", time.Minute,

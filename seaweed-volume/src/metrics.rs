@@ -142,6 +142,35 @@ lazy_static::lazy_static! {
         &["code"],
     ).expect("metric can be created");
 
+    // ---- Scrubbing metrics (Go: VolumeServerScrub*) ----
+
+    /// Last scrub execution time, as seconds since UNIX epoch, with label `mode`.
+    pub static ref SCRUB_LAST_TIME_SECONDS: GaugeVec = GaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_scrub_last_time_seconds",
+            "Last scrub execution time, as seconds since UNIX epoch.",
+        ),
+        &["mode"],
+    ).expect("metric can be created");
+
+    /// Counter of overall volumes with issues detected during scrubbing, with label `mode`.
+    pub static ref SCRUB_VOLUME_FAILURES: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_scrub_volume_failures",
+            "Counter of overall volumes with issues detected during scrubbing.",
+        ),
+        &["mode"],
+    ).expect("metric can be created");
+
+    /// Counter of overall EC shards with issues detected during scrubbing, with label `mode`.
+    pub static ref SCRUB_SHARD_FAILURES: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_scrub_shard_failures",
+            "Counter of overall EC shards with issues detected during scrubbing.",
+        ),
+        &["mode"],
+    ).expect("metric can be created");
+
     // ---- Legacy aliases for backward compat with existing code ----
 
     /// Total number of volumes on this server (flat gauge).
@@ -251,6 +280,9 @@ pub fn register_metrics() {
             Box::new(INFLIGHT_DOWNLOAD_SIZE.clone()),
             Box::new(INFLIGHT_UPLOAD_SIZE.clone()),
             Box::new(UPLOAD_ERROR_COUNTER.clone()),
+            Box::new(SCRUB_LAST_TIME_SECONDS.clone()),
+            Box::new(SCRUB_VOLUME_FAILURES.clone()),
+            Box::new(SCRUB_SHARD_FAILURES.clone()),
             // Legacy metrics
             Box::new(VOLUMES_TOTAL.clone()),
             Box::new(DISK_SIZE_BYTES.clone()),

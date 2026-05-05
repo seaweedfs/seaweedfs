@@ -111,15 +111,6 @@ func BeforeEntrySerialization(chunks []*FileChunk) {
 	}
 }
 
-func EnsureFid(chunk *FileChunk) {
-	if chunk.Fid != nil {
-		return
-	}
-	if fid, err := ToFileIdObject(chunk.FileId); err == nil {
-		chunk.Fid = fid
-	}
-}
-
 func AfterEntryDeserialization(chunks []*FileChunk) {
 
 	for _, chunk := range chunks {
@@ -307,16 +298,6 @@ func MetadataEventTouchesDirectory(event *SubscribeMetadataResponse, dir string)
 		event.EventNotification != nil &&
 		event.EventNotification.NewEntry != nil &&
 		MetadataEventTargetDirectory(event) == dir
-}
-
-func MetadataEventTouchesDirectoryPrefix(event *SubscribeMetadataResponse, prefix string) bool {
-	if strings.HasPrefix(MetadataEventSourceDirectory(event), prefix) {
-		return true
-	}
-	return event != nil &&
-		event.EventNotification != nil &&
-		event.EventNotification.NewEntry != nil &&
-		strings.HasPrefix(MetadataEventTargetDirectory(event), prefix)
 }
 
 func MetadataEventMatchesSubscription(event *SubscribeMetadataResponse, pathPrefix string, pathPrefixes []string, directories []string) bool {

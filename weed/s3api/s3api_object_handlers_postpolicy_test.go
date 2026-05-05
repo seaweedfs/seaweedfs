@@ -2,14 +2,20 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 )
@@ -306,6 +312,171 @@ func TestPostPolicyPathConstruction(t *testing.T) {
 	}
 }
 
+// canonicalFormValues builds an http.Header mirroring how
+// extractPostPolicyFormValues canonicalizes the keys in the POST form.
+func canonicalFormValues(pairs map[string]string) http.Header {
+	h := make(http.Header)
+	for k, v := range pairs {
+		h[http.CanonicalHeaderKey(k)] = []string{v}
+	}
+	return h
+}
+
+// TestApplyPostPolicyFormHeaders_ForwardsAcl ensures the acl form field is
+// promoted to the X-Amz-Acl header on the underlying PUT.
+func TestApplyPostPolicyFormHeaders_ForwardsAcl(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+	formValues := canonicalFormValues(map[string]string{
+		"acl": "public-read",
+	})
+
+	applyPostPolicyFormHeaders(r, formValues)
+
+	assert.Equal(t, "public-read", r.Header.Get(s3_constants.AmzCannedAcl))
+	assert.Equal(t, "public-read", r.Header.Get("X-Amz-Acl"))
+	// The raw "Acl" form key must not be copied verbatim onto the request.
+	assert.Empty(t, r.Header.Get("Acl"))
+}
+
+// TestApplyPostPolicyFormHeaders_ForwardsContentHeaders ensures the
+// Content-Encoding and Content-Language form fields are copied to the
+// request header so they reach the underlying PUT.
+func TestApplyPostPolicyFormHeaders_ForwardsContentHeaders(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{
+			name:   "Content-Encoding",
+			header: "Content-Encoding",
+			value:  "gzip",
+		},
+		{
+			name:   "Content-Language",
+			header: "Content-Language",
+			value:  "en-US",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+			formValues := canonicalFormValues(map[string]string{
+				tt.header: tt.value,
+			})
+
+			applyPostPolicyFormHeaders(r, formValues)
+
+			assert.Equal(t, tt.value, r.Header.Get(tt.header))
+		})
+	}
+}
+
+// TestApplyPostPolicyFormHeaders_ForwardsXAmzHeaders ensures arbitrary
+// x-amz-* form fields (storage class, tagging, SSE, object lock, website
+// redirect, metadata) are all forwarded to the request.
+func TestApplyPostPolicyFormHeaders_ForwardsXAmzHeaders(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+	formValues := canonicalFormValues(map[string]string{
+		"x-amz-storage-class":             "STANDARD_IA",
+		"x-amz-tagging":                   "project=alpha&env=prod",
+		"x-amz-server-side-encryption":    "AES256",
+		"x-amz-object-lock-mode":          "GOVERNANCE",
+		"x-amz-website-redirect-location": "/redirected",
+		"x-amz-meta-foo":                  "bar",
+	})
+
+	applyPostPolicyFormHeaders(r, formValues)
+
+	assert.Equal(t, "STANDARD_IA", r.Header.Get("X-Amz-Storage-Class"))
+	assert.Equal(t, "project=alpha&env=prod", r.Header.Get("X-Amz-Tagging"))
+	assert.Equal(t, "AES256", r.Header.Get("X-Amz-Server-Side-Encryption"))
+	assert.Equal(t, "GOVERNANCE", r.Header.Get("X-Amz-Object-Lock-Mode"))
+	assert.Equal(t, "/redirected", r.Header.Get("X-Amz-Website-Redirect-Location"))
+	assert.Equal(t, "bar", r.Header.Get("X-Amz-Meta-Foo"))
+}
+
+// TestApplyPostPolicyFormHeaders_SkipsReserved ensures POST-policy
+// mechanism fields (signatures, key, bucket, success actions, etc.) are not
+// leaked as headers on the forwarded PUT.
+func TestApplyPostPolicyFormHeaders_SkipsReserved(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+	formValues := canonicalFormValues(map[string]string{
+		"Policy":                  "base64-encoded-policy",
+		"Signature":               "v2-signature",
+		"AWSAccessKeyId":          "AKIAEXAMPLE",
+		"x-amz-signature":         "v4-signature",
+		"x-amz-credential":        "AKIAEXAMPLE/20260417/us-east-1/s3/aws4_request",
+		"x-amz-algorithm":         "AWS4-HMAC-SHA256",
+		"x-amz-date":              "20260417T000000Z",
+		"x-amz-security-token":    "session-token",
+		"key":                     "uploads/file.txt",
+		"file":                    "ignored",
+		"bucket":                  "my-bucket",
+		"success_action_redirect": "https://example.com/ok",
+		"success_action_status":   "201",
+		"redirect":                "https://example.com/legacy",
+	})
+
+	applyPostPolicyFormHeaders(r, formValues)
+
+	reserved := []string{
+		"Policy",
+		"Signature",
+		"Awsaccesskeyid",
+		"X-Amz-Signature",
+		"X-Amz-Credential",
+		"X-Amz-Algorithm",
+		"X-Amz-Date",
+		"X-Amz-Security-Token",
+		"Key",
+		"File",
+		"Bucket",
+		"Success_action_redirect",
+		"Success_action_status",
+		"Redirect",
+	}
+	for _, k := range reserved {
+		assert.Empty(t, r.Header.Get(k), "reserved field %q must not be forwarded", k)
+	}
+}
+
+// TestApplyPostPolicyFormHeaders_KeepsExistingCacheControl is a regression
+// check that the headers previously forwarded (Cache-Control, Expires,
+// Content-Disposition) remain forwarded by the refactored helper.
+func TestApplyPostPolicyFormHeaders_KeepsExistingCacheControl(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+	formValues := canonicalFormValues(map[string]string{
+		"Cache-Control":       "max-age=3600",
+		"Expires":             "Wed, 21 Oct 2026 07:28:00 GMT",
+		"Content-Disposition": `attachment; filename="report.pdf"`,
+	})
+
+	applyPostPolicyFormHeaders(r, formValues)
+
+	assert.Equal(t, "max-age=3600", r.Header.Get("Cache-Control"))
+	assert.Equal(t, "Wed, 21 Oct 2026 07:28:00 GMT", r.Header.Get("Expires"))
+	assert.Equal(t, `attachment; filename="report.pdf"`, r.Header.Get("Content-Disposition"))
+}
+
+// TestApplyPostPolicyFormHeaders_IgnoresContentType ensures Content-Type is
+// left alone by the helper (it is set by the caller from either the form
+// value or the uploaded file part just before invoking the helper).
+func TestApplyPostPolicyFormHeaders_IgnoresContentType(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+	r.Header.Set("Content-Type", "image/png")
+	formValues := canonicalFormValues(map[string]string{
+		"Content-Type": "text/plain",
+	})
+
+	applyPostPolicyFormHeaders(r, formValues)
+
+	// The helper must not overwrite the Content-Type that the handler has
+	// already resolved from the form or from the file part.
+	assert.Equal(t, "image/png", r.Header.Get("Content-Type"))
+}
+
 // TestPostPolicyBucketHandlerKeyExtraction tests that the handler correctly
 // extracts and normalizes the key from a POST request
 func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
@@ -382,4 +553,112 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 				"Path should contain properly separated bucket and key")
 		})
 	}
+}
+
+// TestPostPolicyBucketHandler_PolicyViolationReturns403 drives the handler
+// end-to-end with a signed multipart POST whose policy conditions cannot be
+// satisfied by the form fields. It verifies the handler responds 403
+// AccessDenied with no Location redirect, rather than the old 307 Temporary
+// Redirect that obscured the policy failure.
+func TestPostPolicyBucketHandler_PolicyViolationReturns403(t *testing.T) {
+	const (
+		accessKey  = "AKIATESTTESTTEST"
+		secretKey  = "secret-key-for-tests"
+		region     = "us-east-1"
+		service    = "s3"
+		testBucket = "test-bucket"
+	)
+
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "tester",
+			Credentials: []*iam_pb.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			Actions:     []string{"Admin", "Read", "Write"},
+		}},
+	})
+	assert.NoError(t, err, "loadS3ApiConfiguration should succeed")
+
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{BucketsPath: "/buckets"},
+		iam:    iam,
+	}
+	// Pre-populate the bucket registry so validateTableBucketObjectPath sees
+	// a non-table bucket without needing a live filer connection.
+	s3a.bucketRegistry = &BucketRegistry{
+		metadataCache: map[string]*BucketMetaData{
+			testBucket: {Name: testBucket, IsTableBucket: false},
+		},
+		notFound: make(map[string]struct{}),
+		s3a:      s3a,
+	}
+
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	yyyymmddStr := now.Format(yyyymmdd)
+	credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", accessKey, yyyymmddStr, region, service)
+	expiration := now.Add(1 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+
+	policyJSON := fmt.Sprintf(
+		`{"expiration":"%s","conditions":[`+
+			`["eq","$bucket","%s"],`+
+			`["eq","$key","required.txt"],`+
+			`["eq","$x-amz-credential","%s"],`+
+			`["eq","$x-amz-algorithm","AWS4-HMAC-SHA256"],`+
+			`["eq","$x-amz-date","%s"]`+
+			`]}`,
+		expiration, testBucket, credential, amzDate,
+	)
+	encodedPolicy := base64.StdEncoding.EncodeToString([]byte(policyJSON))
+
+	signingKey := getSigningKey(secretKey, yyyymmddStr, region, service)
+	signature := getSignature(signingKey, encodedPolicy)
+	// Sanity-check: the signature must be valid hex of the expected length so
+	// that doesPolicySignatureV4Match does not trip on formatting.
+	_, decodeErr := hex.DecodeString(signature)
+	assert.NoError(t, decodeErr, "computed signature should be hex-encoded")
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	assert.NoError(t, writer.WriteField("bucket", testBucket))
+	// Deliberately mismatch the policy's required key to force a violation.
+	assert.NoError(t, writer.WriteField("key", "wrong.txt"))
+	assert.NoError(t, writer.WriteField("x-amz-credential", credential))
+	assert.NoError(t, writer.WriteField("x-amz-algorithm", "AWS4-HMAC-SHA256"))
+	assert.NoError(t, writer.WriteField("x-amz-date", amzDate))
+	assert.NoError(t, writer.WriteField("policy", encodedPolicy))
+	assert.NoError(t, writer.WriteField("x-amz-signature", signature))
+
+	filePart, err := writer.CreateFormFile("file", "payload.txt")
+	assert.NoError(t, err)
+	_, err = filePart.Write([]byte("contents that should never be uploaded"))
+	assert.NoError(t, err)
+	assert.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/"+testBucket, &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = mux.SetURLVars(req, map[string]string{"bucket": testBucket})
+	rec := httptest.NewRecorder()
+
+	s3a.PostPolicyBucketHandler(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"policy violation must return 403, actual body: %s", rec.Body.String())
+	assert.NotEqual(t, http.StatusTemporaryRedirect, rec.Code,
+		"must not return 307 Temporary Redirect on policy violation")
+	assert.Empty(t, rec.Header().Get("Location"),
+		"403 response must not set a redirect Location header")
+	assert.Contains(t, rec.Body.String(), "AccessDenied",
+		"response body should identify AccessDenied; actual body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "Policy Condition failed",
+		"response body should carry the specific policy-failure message; actual body: %s", rec.Body.String())
+	// Guard against the signing setup silently failing before the policy
+	// branch ever runs, which would make the 403 assertion meaningless.
+	assert.NotContains(t, rec.Body.String(), "SignatureDoesNotMatch",
+		"signature must match so the handler reaches the policy-check branch")
+	assert.NotContains(t, rec.Body.String(), "InvalidAccessKeyId",
+		"access key must be known so the handler reaches the policy-check branch")
 }

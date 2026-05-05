@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -94,9 +94,10 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	env.masterPort = testutil.MustFreeMiniPort(t, "Master")
-	env.filerPort = testutil.MustFreeMiniPort(t, "Filer")
-	env.s3Port = testutil.MustFreeMiniPort(t, "S3")
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3"})
+	env.masterPort = ports[0]
+	env.filerPort = ports[1]
+	env.s3Port = ports[2]
 
 	bindIP := testutil.FindBindIP()
 	iamConfigPath, err := testutil.WriteIAMConfig(env.seaweedfsDataDir, env.accessKey, env.secretKey)

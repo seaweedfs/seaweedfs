@@ -336,7 +336,11 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	for _, dn := range dataNodes {
 		if dn.Ip == req.Ip && dn.Port == int(req.Port) {
 			if req.IsReadonly {
-				vl.SetVolumeReadOnly(dn, needle.VolumeId(req.VolumeId))
+				vid := needle.VolumeId(req.VolumeId)
+				vl.SetVolumeReadOnly(dn, vid)
+				if pending := vl.GetPendingSize(vid); pending > 0 {
+					glog.V(0).Infof("volume %d marked readonly with %d pending bytes", vid, pending)
+				}
 			} else {
 				vl.SetVolumeWritable(dn, needle.VolumeId(req.VolumeId))
 			}

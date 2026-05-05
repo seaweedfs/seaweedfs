@@ -185,20 +185,19 @@ func TestRebalanceTimeoutManager_ForceCompleteRebalance(t *testing.T) {
 		State: MemberStatePending,
 	}
 	group.Members["member1"] = member
-	group.Mu.Unlock()
 
+	// ForceCompleteRebalance expects the caller to hold group.Mu.Lock()
 	rtm.ForceCompleteRebalance(group)
 
-	group.Mu.RLock()
 	if group.State != GroupStateCompletingRebalance {
 		t.Errorf("Expected group state to be CompletingRebalance, got %s", group.State.String())
 	}
-	group.Mu.RUnlock()
+	group.Mu.Unlock()
 
 	// Test forcing completion from CompletingRebalance
+	group.Mu.Lock()
 	rtm.ForceCompleteRebalance(group)
 
-	group.Mu.RLock()
 	if group.State != GroupStateStable {
 		t.Errorf("Expected group state to be Stable, got %s", group.State.String())
 	}
@@ -206,7 +205,7 @@ func TestRebalanceTimeoutManager_ForceCompleteRebalance(t *testing.T) {
 	if member.State != MemberStateStable {
 		t.Errorf("Expected member state to be Stable, got %s", member.State.String())
 	}
-	group.Mu.RUnlock()
+	group.Mu.Unlock()
 }
 
 func TestRebalanceTimeoutManager_GetRebalanceStatus(t *testing.T) {

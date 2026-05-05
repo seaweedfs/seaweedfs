@@ -25,11 +25,11 @@ func TestAdminScriptDescriptorDefaults(t *testing.T) {
 	if descriptor.AdminConfigForm == nil {
 		t.Fatalf("expected admin config form")
 	}
-	runInterval := readInt64Config(descriptor.AdminConfigForm.DefaultValues, "run_interval_minutes", 0)
+	runInterval := ReadInt64Config(descriptor.AdminConfigForm.DefaultValues, "run_interval_minutes", 0)
 	if runInterval != defaultAdminScriptRunMins {
 		t.Fatalf("unexpected run_interval_minutes default: got=%d want=%d", runInterval, defaultAdminScriptRunMins)
 	}
-	script := readStringConfig(descriptor.AdminConfigForm.DefaultValues, "script", "")
+	script := ReadStringConfig(descriptor.AdminConfigForm.DefaultValues, "script", "")
 	if strings.TrimSpace(script) == "" {
 		t.Fatalf("expected non-empty default script")
 	}

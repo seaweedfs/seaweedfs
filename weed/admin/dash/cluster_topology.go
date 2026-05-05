@@ -10,11 +10,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-var dirStatusClient = &http.Client{
-	Timeout: 5 * time.Second,
-}
+const dirStatusTimeout = 5 * time.Second
 
 // GetClusterTopology returns the current cluster topology with caching
 func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
@@ -50,8 +49,16 @@ func (s *AdminServer) fetchPublicUrlMap() map[string]string {
 		return nil
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), dirStatusTimeout)
+	defer cancel()
+
 	url := fmt.Sprintf("http://%s/dir/status", currentMaster.ToHttpAddress())
-	resp, err := dirStatusClient.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		glog.V(1).Infof("Failed to build /dir/status request for %s: %v", currentMaster, err)
+		return nil
+	}
+	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		glog.V(1).Infof("Failed to fetch /dir/status from %s: %v", currentMaster, err)
 		return nil
@@ -117,6 +124,13 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 		}
 
 		if resp.TopologyInfo != nil {
+			// Dedupe EC volume file counts across the nodes that report
+			// shards for the same volume: every shard holder reports the
+			// same .ecx-derived file_count, so we keep the max and sum
+			// node-local tombstones.
+			ecFile := make(map[uint32]uint64)
+			ecDel := make(map[uint32]uint64)
+
 			// Process gRPC response
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				dataCenter := DataCenter{
@@ -147,11 +161,20 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 								totalFiles += int64(volInfo.FileCount)
 							}
 
-							// Sum up EC shard sizes
+							// Sum up EC shard sizes on this node and collect
+							// volume-wide file/delete counts for later folding
+							// into topology.TotalFiles. ShardSizes is local to
+							// this node, so summing across nodes is correct;
+							// FileCount/DeleteCount are per-volume and must be
+							// deduped per volume id.
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
 								for _, shardSize := range ecShardInfo.ShardSizes {
 									totalSize += shardSize
 								}
+								if ecShardInfo.FileCount > ecFile[ecShardInfo.Id] {
+									ecFile[ecShardInfo.Id] = ecShardInfo.FileCount
+								}
+								ecDel[ecShardInfo.Id] += ecShardInfo.DeleteCount
 							}
 						}
 
@@ -190,6 +213,18 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 				}
 
 				topology.DataCenters = append(topology.DataCenters, dataCenter)
+			}
+
+			// Fold deduped EC file counts into the cluster total so the
+			// dashboard header does not drop after volumes are converted
+			// to erasure coding.
+			for vid, fc := range ecFile {
+				dc := ecDel[vid]
+				if fc >= dc {
+					topology.TotalFiles += int64(fc - dc)
+				} else {
+					glog.Warningf("ec volume %d: summed delete_count=%d exceeds file_count=%d; skipping from TotalFiles", vid, dc, fc)
+				}
 			}
 		}
 

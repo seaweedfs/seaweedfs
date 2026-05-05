@@ -493,7 +493,7 @@ func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) ([]
 
 func isReplicaServer(target pb.ServerAddress, replicas []*VolumeReplica) bool {
 	for _, replica := range replicas {
-		if pb.NewServerAddressFromDataNode(replica.location.dataNode) == target {
+		if pb.NewServerAddressFromDataNode(replica.location.dataNode).Equals(target) {
 			return true
 		}
 	}

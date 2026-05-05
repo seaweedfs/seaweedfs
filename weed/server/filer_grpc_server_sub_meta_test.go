@@ -14,16 +14,19 @@ import (
 
 // slowStream simulates a gRPC stream with configurable per-Send latency.
 // It counts individual events including those packed inside batches.
+// Atomic counters use atomic.Int64 so they stay 8-byte aligned on 32-bit
+// architectures (386, ARMv7, mips32) where a bare int64 struct field is
+// only 4-byte aligned and panics under atomic.AddInt64.
 type slowStream struct {
+	sends      atomic.Int64 // number of stream.Send() calls
+	eventsSent atomic.Int64 // total events (1 + len(Events) per Send)
 	sendDelay  time.Duration
-	sends      int64 // number of stream.Send() calls
-	eventsSent int64 // total events (1 + len(Events) per Send)
 }
 
 func (s *slowStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 	time.Sleep(s.sendDelay)
-	atomic.AddInt64(&s.sends, 1)
-	atomic.AddInt64(&s.eventsSent, 1+int64(len(msg.Events)))
+	s.sends.Add(1)
+	s.eventsSent.Add(1 + int64(len(msg.Events)))
 	return nil
 }
 
@@ -114,9 +117,9 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 		}
 		elapsed := time.Since(start)
 
-		directRate = float64(stream.eventsSent) / elapsed.Seconds()
+		directRate = float64(stream.eventsSent.Load()) / elapsed.Seconds()
 		t.Logf("direct:          %d events  %4d sends  %v  %6.0f events/sec",
-			stream.eventsSent, stream.sends, elapsed.Round(time.Millisecond), directRate)
+			stream.eventsSent.Load(), stream.sends.Load(), elapsed.Round(time.Millisecond), directRate)
 	})
 
 	// --- Pipelined + batched (new behavior): file reads overlap with batched sends ---
@@ -139,9 +142,9 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 		}
 		elapsed := time.Since(start)
 
-		batchedRate = float64(stream.eventsSent) / elapsed.Seconds()
+		batchedRate = float64(stream.eventsSent.Load()) / elapsed.Seconds()
 		t.Logf("pipelined+batch: %d events  %4d sends  %v  %6.0f events/sec",
-			stream.eventsSent, stream.sends, elapsed.Round(time.Millisecond), batchedRate)
+			stream.eventsSent.Load(), stream.sends.Load(), elapsed.Round(time.Millisecond), batchedRate)
 	})
 
 	if directRate > 0 {
@@ -216,11 +219,13 @@ func TestBatchingAdaptive(t *testing.T) {
 		}
 		sender.Close()
 
+		sends := stream.sends.Load()
+		events := stream.eventsSent.Load()
 		t.Logf("old events: %d events in %d sends (avg batch size: %.1f)",
-			stream.eventsSent, stream.sends, float64(stream.eventsSent)/float64(stream.sends))
+			events, sends, float64(events)/float64(sends))
 
-		if stream.sends >= int64(numEvents) {
-			t.Errorf("expected batching to reduce sends below %d, got %d", numEvents, stream.sends)
+		if sends >= int64(numEvents) {
+			t.Errorf("expected batching to reduce sends below %d, got %d", numEvents, sends)
 		}
 	})
 
@@ -233,24 +238,29 @@ func TestBatchingAdaptive(t *testing.T) {
 		}
 		sender.Close()
 
+		sends := stream.sends.Load()
+		events := stream.eventsSent.Load()
 		t.Logf("recent events: %d events in %d sends (avg batch size: %.1f)",
-			stream.eventsSent, stream.sends, float64(stream.eventsSent)/float64(stream.sends))
+			events, sends, float64(events)/float64(sends))
 
-		if stream.sends != int64(numEvents) {
-			t.Errorf("expected 1:1 sends for recent events, got %d sends for %d events", stream.sends, numEvents)
+		if sends != int64(numEvents) {
+			t.Errorf("expected 1:1 sends for recent events, got %d sends for %d events", sends, numEvents)
 		}
 	})
 }
 
 // errorStreamImpl is a metadataStreamSender that returns an error after N sends.
+// count uses atomic.Int64 so it stays 8-byte aligned on 32-bit architectures
+// (386, ARMv7, mips32) where a bare int64 struct field after smaller fields
+// is only 4-byte aligned and panics under atomic.AddInt64.
 type errorStreamImpl struct {
+	count     atomic.Int64
 	failAfter int
 	err       error
-	count     int64
 }
 
 func (s *errorStreamImpl) Send(msg *filer_pb.SubscribeMetadataResponse) error {
-	n := atomic.AddInt64(&s.count, 1)
+	n := s.count.Add(1)
 	if int(n) > s.failAfter {
 		return s.err
 	}
@@ -352,8 +362,8 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 			err = closeErr
 		}
 		elapsed = time.Since(start)
-		eventsSent = atomic.LoadInt64(&stream.eventsSent)
-		sends = atomic.LoadInt64(&stream.sends)
+		eventsSent = stream.eventsSent.Load()
+		sends = stream.sends.Load()
 		return
 	}
 
@@ -370,7 +380,10 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 
 	var parallelRate float64
 	t.Run("10_pipelined_streams", func(t *testing.T) {
-		var totalEventsSent, totalSends int64
+		// atomic.Int64 guarantees 8-byte alignment on 32-bit architectures where
+		// a local int64 variable's address is only 4-byte aligned and atomic
+		// 64-bit operations panic with "unaligned 64-bit atomic operation".
+		var totalEventsSent, totalSends atomic.Int64
 		var wg sync.WaitGroup
 
 		start := time.Now()
@@ -379,16 +392,17 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 			go func(files []logFile) {
 				defer wg.Done()
 				eventsSent, sends, _, _ := simulatePipeline(files)
-				atomic.AddInt64(&totalEventsSent, eventsSent)
-				atomic.AddInt64(&totalSends, sends)
+				totalEventsSent.Add(eventsSent)
+				totalSends.Add(sends)
 			}(partitions[d])
 		}
 		wg.Wait()
 		elapsed := time.Since(start)
 
-		parallelRate = float64(totalEventsSent) / elapsed.Seconds()
+		totalEvents := totalEventsSent.Load()
+		parallelRate = float64(totalEvents) / elapsed.Seconds()
 		t.Logf("%d streams:  %5d events  %4d sends  %v  %7.0f events/sec",
-			numDirs, totalEventsSent, totalSends, elapsed.Round(time.Millisecond), parallelRate)
+			numDirs, totalEvents, totalSends.Load(), elapsed.Round(time.Millisecond), parallelRate)
 	})
 
 	if singleRate > 0 && parallelRate > 0 {

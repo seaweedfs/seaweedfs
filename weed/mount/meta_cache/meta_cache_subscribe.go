@@ -42,7 +42,7 @@ func mergeProcessors(mainProcessor func(resp *filer_pb.SubscribeMetadataResponse
 	}
 }
 
-func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64, onRetry func(lastTsNs int64, err error), followers ...*MetadataFollower) error {
+func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64, skipSelfEvents bool, onRetry func(lastTsNs int64, err error), followers ...*MetadataFollower) error {
 
 	var prefixes []string
 	for _, follower := range followers {
@@ -50,11 +50,14 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 	}
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		// Let all events (including self-originated ones) flow through the
-		// applier so that the directory-build buffering and dedup logic
-		// can handle them consistently. The dedupRing in
-		// applyMetadataResponseNow catches duplicates that were already
-		// applied locally via applyLocalMetadataEvent.
+		if skipSelfEvents && resp.EventNotification != nil {
+			for _, sig := range resp.EventNotification.Signatures {
+				if sig == selfSignature {
+					glog.V(4).Infof("skip self-originated event %s", resp.Directory)
+					return nil
+				}
+			}
+		}
 		return mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions)
 	}
 

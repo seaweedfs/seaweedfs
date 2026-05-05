@@ -68,7 +68,7 @@ spec:
       {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
       - name: post-install-job
-        image: {{ template "master.image" . }}
+        image: {{ template "seaweedfs.master.image" . }}
         imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
           - name: WEED_CLUSTER_DEFAULT

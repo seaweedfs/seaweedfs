@@ -9,17 +9,96 @@ permissions:
 
 jobs:
 
+  # ── Pre-build Rust volume server binaries natively ──────────────────
+  build-rust-binaries:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: amd64
+          - target: aarch64-unknown-linux-musl
+            arch: arm64
+            cross: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (amd64)
+        if: ${{ !matrix.cross }}
+        run: sudo apt-get install -y musl-tools
+
+      - name: Install cross-compilation tools (arm64)
+        if: matrix.cross
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          # Disable glibc fortify source — its __memcpy_chk etc. symbols don't exist in musl
+          echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-docker-dev-${{ matrix.target }}-
+
+      - name: Build normal variant
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }} --no-default-features
+          cp target/${{ matrix.target }}/release/weed-volume ../weed-volume-normal-${{ matrix.arch }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-volume-${{ matrix.arch }}
+          path: weed-volume-normal-${{ matrix.arch }}
+
   build-dev-containers:
+    needs: [build-rust-binaries]
     runs-on: [ubuntu-latest]
 
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v2
-      -
-        name: Docker meta
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download pre-built Rust binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: rust-volume-*
+          merge-multiple: true
+          path: ./rust-bins
+
+      - name: Place Rust binaries in Docker context
+        run: |
+          mkdir -p docker/weed-volume-prebuilt
+          for arch in amd64 arm64; do
+            src="./rust-bins/weed-volume-normal-${arch}"
+            if [ -f "$src" ]; then
+              cp "$src" "docker/weed-volume-prebuilt/weed-volume-${arch}"
+              echo "Placed pre-built Rust binary for ${arch}"
+            fi
+          done
+          ls -la docker/weed-volume-prebuilt/
+
+      - name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v3
+        uses: docker/metadata-action@v6
         with:
           images: |
             chrislusf/seaweedfs
@@ -30,40 +109,40 @@ jobs:
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
-      -
-        name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v1
-      -
-        name: Create BuildKit config
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Create BuildKit config
         run: |
           cat > /tmp/buildkitd.toml <<EOF
           [registry."docker.io"]
             mirrors = ["https://mirror.gcr.io"]
           EOF
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
         with:
           buildkitd-flags: "--debug"
           buildkitd-config: /tmp/buildkitd.toml
-      -
-        name: Login to Docker Hub
+
+      - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v1
+        uses: docker/login-action@v4.1.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      -
-        name: Login to GHCR
+
+      - name: Login to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v1
+        uses: docker/login-action@v4.1.0
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
-      -
-        name: Build
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v2
+
+      - name: Build
+        uses: docker/build-push-action@v7
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}

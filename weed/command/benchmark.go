@@ -123,6 +123,8 @@ func runBenchmark(cmd *Command, args []string) bool {
 		*b.maxCpu = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(*b.maxCpu)
+	*b.cpuprofile = util.ResolvePath(*b.cpuprofile)
+	*b.idListFile = util.ResolvePath(*b.idListFile)
 	if *b.cpuprofile != "" {
 		f, err := os.Create(*b.cpuprofile)
 		if err != nil {
@@ -256,10 +258,11 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Fsync:    *b.fsync,
 		}
 		ar := &operation.VolumeAssignRequest{
-			Count:       1,
-			Collection:  *b.collection,
-			Replication: *b.replication,
-			DiskType:    *b.diskType,
+			Count:            1,
+			Collection:       *b.collection,
+			Replication:      *b.replication,
+			DiskType:         *b.diskType,
+			ExpectedDataSize: uint64(fileSize),
 		}
 		if assignResult, err := operation.Assign(context.Background(), b.masterClient.GetMaster, b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Pref.Collection = assignResult.Url, assignResult.Fid, *b.collection

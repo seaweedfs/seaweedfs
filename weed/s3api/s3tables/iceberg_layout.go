@@ -1,14 +1,9 @@
 package s3tables
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	pathpkg "path"
 	"regexp"
 	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // Iceberg file layout validation
@@ -306,131 +301,4 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 	}
 
 	return v.layoutValidator.ValidateFilePath(tableRelativePath)
-}
-
-// IsTableBucketPath checks if a path is under the table buckets directory
-func IsTableBucketPath(fullPath string) bool {
-	return strings.HasPrefix(fullPath, TablesPath+"/")
-}
-
-// GetTableInfoFromPath extracts bucket, namespace, and table names from a table bucket path
-// Returns empty strings if the path doesn't contain enough components
-func GetTableInfoFromPath(fullPath string) (bucket, namespace, table string) {
-	if !strings.HasPrefix(fullPath, TablesPath+"/") {
-		return "", "", ""
-	}
-
-	relativePath := strings.TrimPrefix(fullPath, TablesPath+"/")
-	parts := strings.SplitN(relativePath, "/", 4)
-
-	if len(parts) >= 1 {
-		bucket = parts[0]
-	}
-	if len(parts) >= 2 {
-		namespace = parts[1]
-	}
-	if len(parts) >= 3 {
-		table = parts[2]
-	}
-
-	return
-}
-
-// ValidateTableBucketUploadWithClient validates upload and checks that the table exists and is ICEBERG format
-func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
-	ctx context.Context,
-	client filer_pb.SeaweedFilerClient,
-	fullPath string,
-) error {
-	// If not a table bucket path, nothing more to check
-	if !IsTableBucketPath(fullPath) {
-		return nil
-	}
-
-	// Get table info and verify it exists
-	bucket, namespace, table := GetTableInfoFromPath(fullPath)
-	if bucket == "" || namespace == "" || table == "" {
-		return nil // Not deep enough to need validation
-	}
-
-	if strings.HasPrefix(bucket, ".") {
-		return nil
-	}
-
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: TablesPath,
-		Name:      bucket,
-	})
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return nil
-		}
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "failed to verify table bucket: " + err.Error(),
-		}
-	}
-	if resp == nil || !IsTableBucketEntry(resp.Entry) {
-		return nil
-	}
-
-	// Now check basic layout once we know this is a table bucket path.
-	if err := v.ValidateTableBucketUpload(fullPath); err != nil {
-		return err
-	}
-
-	// Verify the table exists and has ICEBERG format by checking its metadata
-	tablePath := GetTablePath(bucket, namespace, table)
-	dir, name := splitPath(tablePath)
-
-	resp, err = filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		// Distinguish between "not found" and other errors
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return &IcebergLayoutError{
-				Code:    ErrCodeInvalidIcebergLayout,
-				Message: "table does not exist",
-			}
-		}
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "failed to verify table existence: " + err.Error(),
-		}
-	}
-
-	// Check if table has metadata indicating ICEBERG format
-	if resp.Entry == nil || resp.Entry.Extended == nil {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not a valid ICEBERG table (missing metadata)",
-		}
-	}
-
-	metadataBytes, ok := resp.Entry.Extended[ExtendedKeyMetadata]
-	if !ok {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not in ICEBERG format (missing format metadata)",
-		}
-	}
-
-	var metadata tableMetadataInternal
-	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "failed to parse table metadata: " + err.Error(),
-		}
-	}
-	const TableFormatIceberg = "ICEBERG"
-	if metadata.Format != TableFormatIceberg {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not in " + TableFormatIceberg + " format",
-		}
-	}
-
-	return nil
 }

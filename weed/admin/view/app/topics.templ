@@ -273,7 +273,7 @@ templ Topics(data dash.TopicsData) {
             };
             
             // Create the topic
-            fetch('/api/mq/topics/create', {
+            fetch(basePath('/api/mq/topics/create'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -354,7 +354,7 @@ templ Topics(data dash.TopicsData) {
             var detailsRow = document.getElementById('details-' + topicName.replace(/\./g, '_'));
             var contentDiv = detailsRow.querySelector('.topic-details-content');
             
-            fetch('/admin/topics/' + encodeURIComponent(topicName) + '/details')
+            fetch(basePath('/admin/topics/' + encodeURIComponent(topicName) + '/details'))
                 .then(response => response.json())
                 .then(data => {
                     var html = '<div class="row">';

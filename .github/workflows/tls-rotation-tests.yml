@@ -1,0 +1,56 @@
+name: "TLS Rotation Integration Tests"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  tls-rotation-tests:
+    name: TLS Rotation Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ^1.25
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+
+    - name: Build weed binary
+      run: |
+        cd weed && go build -o weed .
+
+    - name: Run TLS Rotation Integration Tests
+      working-directory: test/tls_rotation
+      run: |
+        go test -v -count=1 -timeout 5m
+
+    - name: Collect server logs on failure
+      if: failure()
+      run: |
+        echo "Collecting master logs from temp directories..."
+        mkdir -p /tmp/tls-rotation-test-logs
+        find /tmp -maxdepth 1 -type d -name "TestMasterHTTPS*" 2>/dev/null | while read dir; do
+          if [ -d "$dir" ]; then
+            echo "Found test directory: $dir"
+            cp -r "$dir" /tmp/tls-rotation-test-logs/ 2>/dev/null || true
+          fi
+        done
+        echo "Collected logs:"
+        find /tmp/tls-rotation-test-logs -type f -name "*.log" 2>/dev/null || echo "No logs found"
+
+    - name: Archive logs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: tls-rotation-test-logs
+        path: /tmp/tls-rotation-test-logs/
+        retention-days: 14

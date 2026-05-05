@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -22,7 +23,7 @@ func TestVolumeBalanceExecutionIntegration(t *testing.T) {
 	volumeID := uint32(303)
 
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	handler := pluginworker.NewVolumeBalanceHandler(dialOption)
+	handler := balance.NewVolumeBalanceHandler(dialOption)
 	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
 		WorkerOptions: pluginworker.WorkerOptions{
 			GrpcDialOption: dialOption,
@@ -72,7 +73,7 @@ func TestVolumeBalanceExecutionIntegration(t *testing.T) {
 
 func TestVolumeBalanceBatchExecutionIntegration(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	handler := pluginworker.NewVolumeBalanceHandler(dialOption)
+	handler := balance.NewVolumeBalanceHandler(dialOption)
 	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
 		WorkerOptions: pluginworker.WorkerOptions{
 			GrpcDialOption: dialOption,

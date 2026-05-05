@@ -879,21 +879,6 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpir
 	return duration
 }
 
-// extractSessionIdFromToken extracts session ID from JWT session token
-func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
-	// Validate JWT and extract session claims
-	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
-	if err != nil {
-		// For test compatibility, also handle direct session IDs
-		if len(sessionToken) == 32 { // Typical session ID length
-			return sessionToken
-		}
-		return ""
-	}
-
-	return claims.SessionId
-}
-
 // validateAssumeRoleWithCredentialsRequest validates the credentials request parameters
 func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRoleWithCredentialsRequest) error {
 	if request.RoleArn == "" {

@@ -74,6 +74,10 @@ type MasterOptions struct {
 	telemetryEnabled   *bool
 	debug              *bool
 	debugPort          *int
+	// shutdownCtx, when non-nil, tells startMaster to shut down once the ctx
+	// is cancelled. Used by integration tests and by weed mini; nil for
+	// standalone weed master.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -96,7 +100,7 @@ func init() {
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	m.metricsHttpPort = cmdMaster.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	m.metricsHttpIp = cmdMaster.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
-	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
+	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", true, "resume previous state on start master server")
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
@@ -140,13 +144,18 @@ func runMaster(cmd *Command, args []string) bool {
 		*m.metaFolder = v
 	}
 
+	*m.metaFolder = util.ResolvePath(*m.metaFolder)
+	*masterCpuProfile = util.ResolvePath(*masterCpuProfile)
+	*masterMemProfile = util.ResolvePath(*masterMemProfile)
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
 	parent, _ := util.FullPath(*m.metaFolder).DirAndName()
 	if util.FileExists(string(parent)) && !util.FileExists(*m.metaFolder) {
-		os.MkdirAll(*m.metaFolder, 0755)
+		if err := os.MkdirAll(*m.metaFolder, 0755); err != nil {
+			glog.Fatalf("Could not create Meta Folder %s: %v", *m.metaFolder, err)
+		}
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*m.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
@@ -208,6 +217,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		DataDir:           util.ResolvePath(metaDir),
 		Topo:              ms.Topo,
 		RaftResumeState:   *masterOption.raftResumeState,
+		SingleMaster:      isSingleMaster,
 		HeartbeatInterval: *masterOption.heartbeatInterval,
 		ElectionTimeout:   *masterOption.electionTimeout,
 		RaftBootstrap:     *masterOption.raftBootstrap,
@@ -223,8 +233,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		if raftServer == nil {
 			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
-		// For single-master mode, initialize cluster immediately without waiting
-		if isSingleMaster {
+		// For single-master mode with a fresh log, initialize cluster immediately.
+		// When resuming with existing state, the server is already a member and
+		// will self-elect via fastResume — sending another JoinCommand would block
+		// because goraft's setCommitIndex returns early on JoinCommand entries,
+		// preventing the new entry's event from being notified when old uncommitted
+		// JoinCommands exist in the log.
+		if isSingleMaster && !raftServer.HasExistingState() {
 			glog.V(0).Infof("Single-master mode: initializing cluster immediately")
 			raftServer.DoJoinCommand()
 		}
@@ -314,11 +329,26 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	var tlsConfig *tls.Config
 	if useMTLS {
 		tlsConfig = security.LoadClientTLSHTTP(clientCertFile)
-		security.FixTlsConfig(util.GetViper(), tlsConfig)
+		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
+			glog.Fatalf("failed to fix TLS config: %v", err)
+		}
 	}
 
 	if useTLS {
-		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, certFile, keyFile)
+		getCert, certProvider, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("failed to load master HTTPS certificate: %v", err)
+		}
+		// Master runs ServeTLS in a goroutine and this function then blocks
+		// on shutdownCtx / select{}; tie the pem refresh goroutine to the
+		// existing interrupt hook instead of a local defer that would fire
+		// while the server is still running.
+		grace.OnInterrupt(certProvider.Close)
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{}
+		}
+		tlsConfig.GetCertificate = getCert
+		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, "", "")
 	} else {
 		go newHttpServer(r, nil).Serve(masterListener)
 	}
@@ -330,9 +360,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
 		}
 	})
-	ctx := MiniClusterCtx
-	if ctx != nil {
-		<-ctx.Done()
+	if masterOption.shutdownCtx != nil {
+		<-masterOption.shutdownCtx.Done()
 		ms.Shutdown()
 		grpcS.Stop()
 	} else {

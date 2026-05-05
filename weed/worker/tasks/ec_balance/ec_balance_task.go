@@ -3,6 +3,8 @@ package ec_balance
 import (
 	"context"
 	"fmt"
+	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -22,7 +24,8 @@ type ECBalanceTask struct {
 	volumeID       uint32
 	collection     string
 	grpcDialOption grpc.DialOption
-	progress       float64
+	progress       uint64 // atomic; stores float64 bits via math.Float64bits
+	reporting      int32  // atomic; re-entry guard to prevent recursive reportProgress calls
 }
 
 // NewECBalanceTask creates a new EC balance task instance
@@ -206,13 +209,18 @@ func (t *ECBalanceTask) EstimateTime(params *worker_pb.TaskParams) time.Duration
 
 // GetProgress returns current progress
 func (t *ECBalanceTask) GetProgress() float64 {
-	return t.progress
+	return math.Float64frombits(atomic.LoadUint64(&t.progress))
 }
 
 // reportProgress updates the stored progress and reports it via the callback
 func (t *ECBalanceTask) reportProgress(progress float64, stage string) {
-	t.progress = progress
-	t.reportProgress(progress, stage)
+	if !atomic.CompareAndSwapInt32(&t.reporting, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&t.reporting, 0)
+	atomic.StoreUint64(&t.progress, math.Float64bits(progress))
+	t.ReportProgressWithStage(progress, stage)
+	glog.Infof("EC balance volume %d: [%.2f] %s", t.volumeID, progress, stage)
 }
 
 // isDedupPhase checks if this is a dedup-phase task (source and target are the same node)

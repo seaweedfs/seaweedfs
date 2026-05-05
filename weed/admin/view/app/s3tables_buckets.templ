@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -20,7 +21,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 			</div>
 			if data.IcebergPort > 0 {
 				<div class="btn-group me-2">
-					<a id="s3tables-iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
+					<a id="s3tables-iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("//localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
 						<i class="fas fa-snowflake me-1"></i>Iceberg REST API
 					</a>
 				</div>
@@ -36,16 +37,21 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 						<strong>Iceberg REST Catalog</strong>
 						<p id="s3tables-iceberg-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
 							Each table bucket is an Iceberg catalog. Connect clients to:
-							<code>http://<span id="s3tables-iceberg-host">localhost</span>:{ fmt.Sprintf("%d", data.IcebergPort) }/v1</code>
+							<code><span id="s3tables-iceberg-protocol">http</span>://<span id="s3tables-iceberg-host">localhost</span>:{ fmt.Sprintf("%d", data.IcebergPort) }/v1</code>
 						</p>
 						<script>
 							const s3tablesInfo = document.getElementById('s3tables-iceberg-info');
 							const s3tablesIcebergHost = window.location.hostname;
+							const s3tablesIcebergProtocol = window.location.protocol.slice(0, -1);
 							const s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';
 							document.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;
+							const s3tablesIcebergProtocolEl = document.getElementById('s3tables-iceberg-protocol');
+							if (s3tablesIcebergProtocolEl) {
+								s3tablesIcebergProtocolEl.innerText = s3tablesIcebergProtocol;
+							}
 							const s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');
 							if (s3tablesRestLink && s3tablesIcebergPort) {
-								s3tablesRestLink.href = `http://${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
+								s3tablesRestLink.href = `//${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
 							}
 						</script>
 					</div>
@@ -152,7 +158,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(bucket.ARN) }}
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) }>
+														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))) }>
 															<i class="fas fa-folder-open"></i>
 														</a>
 													} else {

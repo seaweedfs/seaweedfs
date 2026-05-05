@@ -52,16 +52,23 @@ type GetMasterFn func(ctx context.Context) pb.ServerAddress
 
 func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*FilePart, pref StoragePreference, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
+	var totalBytes int64
 	for index, file := range files {
 		results[index].FileName = file.FileName
+		totalBytes += file.FileSize
+	}
+	var avgBytes uint64
+	if n := len(files); n > 0 {
+		avgBytes = uint64((totalBytes + int64(n) - 1) / int64(n))
 	}
 	ar := &VolumeAssignRequest{
-		Count:       uint64(len(files)),
-		Replication: pref.Replication,
-		Collection:  pref.Collection,
-		DataCenter:  pref.DataCenter,
-		Ttl:         pref.Ttl,
-		DiskType:    pref.DiskType,
+		Count:            uint64(len(files)),
+		Replication:      pref.Replication,
+		Collection:       pref.Collection,
+		DataCenter:       pref.DataCenter,
+		Ttl:              pref.Ttl,
+		DiskType:         pref.DiskType,
+		ExpectedDataSize: avgBytes,
 	}
 	ret, err := Assign(context.Background(), masterFn, grpcDialOption, ar)
 	if err != nil {
@@ -150,11 +157,12 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 		var id string
 		if fi.Pref.DataCenter != "" {
 			ar := &VolumeAssignRequest{
-				Count:       uint64(chunks),
-				Replication: fi.Pref.Replication,
-				Collection:  fi.Pref.Collection,
-				Ttl:         fi.Pref.Ttl,
-				DiskType:    fi.Pref.DiskType,
+				Count:            uint64(chunks),
+				Replication:      fi.Pref.Replication,
+				Collection:       fi.Pref.Collection,
+				Ttl:              fi.Pref.Ttl,
+				DiskType:         fi.Pref.DiskType,
+				ExpectedDataSize: uint64(chunkSize),
 			}
 			ret, err = Assign(context.Background(), masterFn, grpcDialOption, ar)
 			if err != nil {
@@ -163,12 +171,18 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 		}
 		for i := int64(0); i < chunks; i++ {
 			if fi.Pref.DataCenter == "" {
+				remaining := fi.FileSize - i*chunkSize
+				thisChunk := chunkSize
+				if remaining < thisChunk {
+					thisChunk = remaining
+				}
 				ar := &VolumeAssignRequest{
-					Count:       1,
-					Replication: fi.Pref.Replication,
-					Collection:  fi.Pref.Collection,
-					Ttl:         fi.Pref.Ttl,
-					DiskType:    fi.Pref.DiskType,
+					Count:            1,
+					Replication:      fi.Pref.Replication,
+					Collection:       fi.Pref.Collection,
+					Ttl:              fi.Pref.Ttl,
+					DiskType:         fi.Pref.DiskType,
+					ExpectedDataSize: uint64(thisChunk),
 				}
 				ret, err = Assign(context.Background(), masterFn, grpcDialOption, ar)
 				if err != nil {

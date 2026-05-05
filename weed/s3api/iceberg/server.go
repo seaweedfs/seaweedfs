@@ -21,12 +21,26 @@ type S3Authenticator interface {
 	DefaultAllow() bool
 }
 
+// CredentialValidator validates S3 access key / secret key pairs
+// and provides credential lookup for OAuth token verification.
+type CredentialValidator interface {
+	// ValidateS3Credential checks if the access key and secret key are valid.
+	// Returns the identity name and identity object on success.
+	ValidateS3Credential(accessKey, secretKey string) (identityName string, identity interface{}, err error)
+	// GetCredentialByAccessKey looks up a credential by access key.
+	// Returns the identity name, identity object, and secret key.
+	// Used for verifying Bearer tokens signed with a specific credential.
+	GetCredentialByAccessKey(accessKey string) (identityName string, identity interface{}, secretKey string, err error)
+}
+
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
-	filerClient   FilerClient
-	tablesManager *s3tables.Manager
-	prefix        string // optional prefix for routes
-	authenticator S3Authenticator
+	filerClient         FilerClient
+	tablesManager       *s3tables.Manager
+	prefix              string // optional prefix for routes
+	authenticator       S3Authenticator
+	credentialValidator CredentialValidator
+	s3Endpoint          string // http(s):// URL advertised in LoadTable FileIO config
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
@@ -40,6 +54,18 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	}
 }
 
+// SetCredentialValidator sets the credential validator for OAuth token support.
+func (s *Server) SetCredentialValidator(cv CredentialValidator) {
+	s.credentialValidator = cv
+}
+
+// SetS3Endpoint configures the S3 endpoint URL to vend to clients as part of
+// the LoadTable FileIO config, so they can read table data files directly
+// without separately discovering the S3 API address. See issue #9103.
+func (s *Server) SetS3Endpoint(endpoint string) {
+	s.s3Endpoint = endpoint
+}
+
 // RegisterRoutes registers Iceberg REST API routes on the provided router.
 func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Add middleware to log all requests/responses
@@ -47,6 +73,9 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
+
+	// OAuth2 token endpoint - no auth needed (this IS the auth endpoint)
+	router.HandleFunc("/v1/oauth/tokens", s.handleOAuthTokens).Methods(http.MethodPost)
 
 	// Namespace endpoints - wrapped with Auth middleware
 	router.HandleFunc("/v1/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
@@ -122,6 +151,18 @@ func (w *responseWriter) WriteHeader(code int) {
 
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Try Bearer token authentication first (from OAuth2 flow)
+		if identityName, identity, ok := s.authenticateBearer(r); ok {
+			ctx := r.Context()
+			ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+			if identity != nil {
+				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			}
+			r = r.WithContext(ctx)
+			handler(w, r)
+			return
+		}
+
 		if s.authenticator == nil {
 			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
 			return

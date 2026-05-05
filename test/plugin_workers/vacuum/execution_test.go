@@ -9,6 +9,7 @@ import (
 	pluginworkers "github.com/seaweedfs/seaweedfs/test/plugin_workers"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -18,7 +19,7 @@ func TestVacuumExecutionIntegration(t *testing.T) {
 	volumeID := uint32(202)
 
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-	handler := pluginworker.NewVacuumHandler(dialOption, 1)
+	handler := vacuum.NewVacuumHandler(dialOption, 1)
 	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
 		WorkerOptions: pluginworker.WorkerOptions{
 			GrpcDialOption: dialOption,

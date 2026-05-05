@@ -639,6 +639,8 @@ type VolumeEcShardInformationMessage struct {
 	ExpireAtSec   uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
 	DiskId        uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	ShardSizes    []int64                `protobuf:"varint,7,rep,packed,name=shard_sizes,json=shardSizes,proto3" json:"shard_sizes,omitempty"` // optimized: sizes for shards in order of set bits in ec_index_bits
+	FileCount     uint64                 `protobuf:"varint,8,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`           // total needles in the .ecx index (live + tombstoned)
+	DeleteCount   uint64                 `protobuf:"varint,9,opt,name=delete_count,json=deleteCount,proto3" json:"delete_count,omitempty"`     // node-local tombstones in the .ecj deletion journal
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -720,6 +722,20 @@ func (x *VolumeEcShardInformationMessage) GetShardSizes() []int64 {
 		return x.ShardSizes
 	}
 	return nil
+}
+
+func (x *VolumeEcShardInformationMessage) GetFileCount() uint64 {
+	if x != nil {
+		return x.FileCount
+	}
+	return 0
+}
+
+func (x *VolumeEcShardInformationMessage) GetDeleteCount() uint64 {
+	if x != nil {
+		return x.DeleteCount
+	}
+	return 0
 }
 
 type StorageBackend struct {
@@ -1430,6 +1446,7 @@ type AssignRequest struct {
 	MemoryMapMaxSizeMb  uint32                 `protobuf:"varint,8,opt,name=memory_map_max_size_mb,json=memoryMapMaxSizeMb,proto3" json:"memory_map_max_size_mb,omitempty"`
 	WritableVolumeCount uint32                 `protobuf:"varint,9,opt,name=writable_volume_count,json=writableVolumeCount,proto3" json:"writable_volume_count,omitempty"`
 	DiskType            string                 `protobuf:"bytes,10,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	ExpectedDataSize    uint64                 `protobuf:"varint,11,opt,name=expected_data_size,json=expectedDataSize,proto3" json:"expected_data_size,omitempty"` // hint for size-aware volume selection
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1532,6 +1549,13 @@ func (x *AssignRequest) GetDiskType() string {
 		return x.DiskType
 	}
 	return ""
+}
+
+func (x *AssignRequest) GetExpectedDataSize() uint64 {
+	if x != nil {
+		return x.ExpectedDataSize
+	}
+	return 0
 }
 
 type VolumeGrowRequest struct {
@@ -4415,7 +4439,7 @@ const file_master_proto_rawDesc = "" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xf0\x01\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xb2\x02\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -4426,7 +4450,10 @@ const file_master_proto_rawDesc = "" +
 	"\rexpire_at_sec\x18\x05 \x01(\x04R\vexpireAtSec\x12\x17\n" +
 	"\adisk_id\x18\x06 \x01(\rR\x06diskId\x12\x1f\n" +
 	"\vshard_sizes\x18\a \x03(\x03R\n" +
-	"shardSizes\"\xbe\x01\n" +
+	"shardSizes\x12\x1d\n" +
+	"\n" +
+	"file_count\x18\b \x01(\x04R\tfileCount\x12!\n" +
+	"\fdelete_count\x18\t \x01(\x04R\vdeleteCount\"\xbe\x01\n" +
 	"\x0eStorageBackend\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12I\n" +
@@ -4500,7 +4527,7 @@ const file_master_proto_rawDesc = "" +
 	"public_url\x18\x02 \x01(\tR\tpublicUrl\x12\x1b\n" +
 	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x12\x1f\n" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
-	"dataCenter\"\xd0\x02\n" +
+	"dataCenter\"\xfe\x02\n" +
 	"\rAssignRequest\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x04R\x05count\x12 \n" +
 	"\vreplication\x18\x02 \x01(\tR\vreplication\x12\x1e\n" +
@@ -4515,7 +4542,8 @@ const file_master_proto_rawDesc = "" +
 	"\x16memory_map_max_size_mb\x18\b \x01(\rR\x12memoryMapMaxSizeMb\x122\n" +
 	"\x15writable_volume_count\x18\t \x01(\rR\x13writableVolumeCount\x12\x1b\n" +
 	"\tdisk_type\x18\n" +
-	" \x01(\tR\bdiskType\"\xbe\x02\n" +
+	" \x01(\tR\bdiskType\x12,\n" +
+	"\x12expected_data_size\x18\v \x01(\x04R\x10expectedDataSize\"\xbe\x02\n" +
 	"\x11VolumeGrowRequest\x122\n" +
 	"\x15writable_volume_count\x18\x01 \x01(\rR\x13writableVolumeCount\x12 \n" +
 	"\vreplication\x18\x02 \x01(\tR\vreplication\x12\x1e\n" +

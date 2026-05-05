@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 
+	"google.golang.org/grpc/credentials/tls/certprovider"
+
+	"github.com/seaweedfs/seaweedfs/weed/security/certreload"
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
@@ -23,6 +26,25 @@ type HTTPClient struct {
 	Client            *http.Client
 	Transport         *http.Transport
 	expectHttpsScheme bool
+	// certProvider, when non-nil, owns a background refresh goroutine for
+	// the client mTLS cert/key pair. Close() must be called to stop it.
+	certProvider certprovider.Provider
+}
+
+// Close stops any background cert refresh goroutine. Safe to call on a
+// client that was constructed without mTLS. Existing pooled connections
+// are also closed via CloseIdleConnections.
+func (httpClient *HTTPClient) Close() {
+	if httpClient == nil {
+		return
+	}
+	if httpClient.certProvider != nil {
+		httpClient.certProvider.Close()
+		httpClient.certProvider = nil
+	}
+	if httpClient.Client != nil {
+		httpClient.Client.CloseIdleConnections()
+	}
 }
 
 func (httpClient *HTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -100,7 +122,7 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	var tlsConfig *tls.Config = nil
 
 	if httpClient.expectHttpsScheme {
-		clientCertPair, err := getClientCertPair(clientName)
+		certFileName, keyFileName, hasClientCert, err := clientCertPaths(clientName)
 		if err != nil {
 			return nil, err
 		}
@@ -110,20 +132,24 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 			return nil, err
 		}
 
-		if clientCertPair != nil || len(clientCaCert) != 0 {
+		if hasClientCert || len(clientCaCert) != 0 {
 			caCertPool, err := createHTTPClientCertPool(clientCaCert, clientCaCertName)
 			if err != nil {
 				return nil, err
 			}
 
 			tlsConfig = &tls.Config{
-				Certificates:       []tls.Certificate{},
 				RootCAs:            caCertPool,
 				InsecureSkipVerify: false,
 			}
 
-			if clientCertPair != nil {
-				tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCertPair)
+			if hasClientCert {
+				getClientCert, provider, err := certreload.NewClientGetCertificate(certFileName, keyFileName)
+				if err != nil {
+					return nil, fmt.Errorf("error loading client certificate and key: %s", err)
+				}
+				tlsConfig.GetClientCertificate = getClientCert
+				httpClient.certProvider = provider
 			}
 		}
 
@@ -175,24 +201,93 @@ func getFileContentFromSecurityConfiguration(clientName ClientName, fileType str
 	return nil, "", nil
 }
 
-func getClientCertPair(clientName ClientName) (*tls.Certificate, error) {
-	certFileName := getStringOptionFromSecurityConfiguration(clientName, "cert")
-	keyFileName := getStringOptionFromSecurityConfiguration(clientName, "key")
-	if certFileName == "" && keyFileName == "" {
-		return nil, nil
+// clientCertPaths reads the https.<clientName>.{cert,key} paths from the
+// security config, validates they're either both set or both empty, and
+// returns them along with a hasClientCert flag. Loading is deferred to
+// certreload so the cert/key pair is picked up from disk on rotation.
+func clientCertPaths(clientName ClientName) (certFile, keyFile string, hasClientCert bool, err error) {
+	certFile = getStringOptionFromSecurityConfiguration(clientName, "cert")
+	keyFile = getStringOptionFromSecurityConfiguration(clientName, "key")
+	if certFile == "" && keyFile == "" {
+		return "", "", false, nil
 	}
-	if certFileName != "" && keyFileName != "" {
-		clientCert, err := tls.LoadX509KeyPair(certFileName, keyFileName)
-		if err != nil {
-			return nil, fmt.Errorf("error loading client certificate and key: %s", err)
-		}
-		return &clientCert, nil
+	if certFile == "" || keyFile == "" {
+		return "", "", false, fmt.Errorf("https.%s: both cert and key must be set (got cert=%q key=%q)", clientName.LowerCaseString(), certFile, keyFile)
 	}
-	return nil, fmt.Errorf("error loading key pair: key `%s` and certificate `%s`", keyFileName, certFileName)
+	return certFile, keyFile, true, nil
 }
 
 func getClientCaCert(clientName ClientName) ([]byte, string, error) {
 	return getFileContentFromSecurityConfiguration(clientName, "ca")
+}
+
+// NewHttpClientWithTLS creates an HTTPClient with explicit TLS certificate
+// parameters instead of reading from the global security configuration.
+// This is used by filer.sync to create per-cluster HTTP clients when clusters
+// use different certificates.
+func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify bool, opts ...HttpClientOpt) (*HTTPClient, error) {
+	httpClient := HTTPClient{}
+	httpClient.expectHttpsScheme = true
+	var tlsConfig *tls.Config
+
+	if (certFile == "") != (keyFile == "") {
+		return nil, fmt.Errorf("both cert and key are required for mTLS, got cert=%q key=%q", certFile, keyFile)
+	}
+
+	var getClientCert func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
+	if certFile != "" && keyFile != "" {
+		cb, provider, err := certreload.NewClientGetCertificate(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("error loading client certificate and key: %s", err)
+		}
+		getClientCert = cb
+		httpClient.certProvider = provider
+	}
+	// closeProviderOnError ensures the cert reloader's background refresh
+	// goroutine is shut down if any subsequent step fails before we hand
+	// the client back to the caller.
+	closeProviderOnError := func() {
+		if httpClient.certProvider != nil {
+			httpClient.certProvider.Close()
+			httpClient.certProvider = nil
+		}
+	}
+
+	var caCertPool *x509.CertPool
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			closeProviderOnError()
+			return nil, fmt.Errorf("error reading CA cert %s: %s", caFile, err)
+		}
+		caCertPool, err = createHTTPClientCertPool(caCert, caFile)
+		if err != nil {
+			closeProviderOnError()
+			return nil, err
+		}
+	}
+
+	if getClientCert != nil || caCertPool != nil || insecureSkipVerify {
+		tlsConfig = &tls.Config{
+			GetClientCertificate: getClientCert,
+			RootCAs:              caCertPool,
+			InsecureSkipVerify:   insecureSkipVerify,
+		}
+	}
+
+	httpClient.Transport = &http.Transport{
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: 1024,
+		TLSClientConfig:     tlsConfig,
+	}
+	httpClient.Client = &http.Client{
+		Transport: httpClient.Transport,
+	}
+
+	for _, opt := range opts {
+		opt(&httpClient)
+	}
+	return &httpClient, nil
 }
 
 func createHTTPClientCertPool(certContent []byte, fileName string) (*x509.CertPool, error) {

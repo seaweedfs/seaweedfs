@@ -169,10 +169,20 @@ pub async fn run_heartbeat_with_state(
     }
 }
 
-/// Convert a master address "host:port" to a gRPC host:port target.
-/// The Go master uses port + 10000 for gRPC by default.
+/// Convert a master address to a gRPC `host:port` target.
+///
+/// Mirrors Go's `pb.ServerToGrpcAddress()`:
+/// - `host:port.grpcPort` returns `host:grpcPort` (explicit gRPC port).
+/// - `host:port` returns `host:(port+10000)` (Go's default offset).
+/// - Anything that fails to parse is returned unchanged.
 pub fn to_grpc_address(master_addr: &str) -> String {
     if let Some((host, port_str)) = master_addr.rsplit_once(':') {
+        // "host:port.grpcPort" — the part after the last '.' is the gRPC port.
+        if let Some((_, grpc_port)) = port_str.rsplit_once('.') {
+            if grpc_port.parse::<u16>().is_ok() {
+                return format!("{}:{}", host, grpc_port);
+            }
+        }
         if let Ok(port) = port_str.parse::<u16>() {
             let grpc_port = port + 10000;
             return format!("{}:{}", host, grpc_port);
@@ -1039,6 +1049,26 @@ mod tests {
     }
 
     #[test]
+    fn test_to_grpc_address_default_offset() {
+        assert_eq!(to_grpc_address("10.0.0.1:9333"), "10.0.0.1:19333");
+        assert_eq!(to_grpc_address("localhost:9333"), "localhost:19333");
+    }
+
+    #[test]
+    fn test_to_grpc_address_explicit_grpc_port() {
+        // host:port.grpcPort form — gRPC port is what's after the dot.
+        assert_eq!(to_grpc_address("10.85.183.6:5300.6300"), "10.85.183.6:6300");
+        assert_eq!(to_grpc_address("master.local:9333.19333"), "master.local:19333");
+    }
+
+    #[test]
+    fn test_to_grpc_address_returns_input_when_unparseable() {
+        assert_eq!(to_grpc_address(""), "");
+        assert_eq!(to_grpc_address("no-port"), "no-port");
+        assert_eq!(to_grpc_address("host:not-a-port"), "host:not-a-port");
+    }
+
+    #[test]
     fn test_build_heartbeat_includes_store_identity_and_disk_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir = temp_dir.path().to_str().unwrap();
@@ -1408,10 +1438,8 @@ mod tests {
     #[test]
     fn test_apply_storage_backends_registers_s3_default_aliases() {
         let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .clear();
+        // Do not call clear() on the global registry — other tests may be
+        // running concurrently.  Just register our entries and verify them.
 
         apply_storage_backends(
             &state,
@@ -1443,10 +1471,8 @@ mod tests {
     #[test]
     fn test_apply_storage_backends_ignores_unsupported_types() {
         let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .clear();
+        // Do not call clear() on the global registry — other tests may be
+        // running concurrently.
 
         apply_storage_backends(
             &state,
@@ -1457,12 +1483,17 @@ mod tests {
             }],
         );
 
+        // The per-state registry is freshly created and should have no entries
+        // since "rclone" is unsupported.
         let registry = state.s3_tier_registry.read().unwrap();
         assert!(registry.names().is_empty());
+        // Only check that the unsupported type was not added to the global
+        // registry.  Other tests may have their own entries present.
         let global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
             .read()
             .unwrap();
-        assert!(global_registry.names().is_empty());
+        assert!(global_registry.get("rclone.default").is_none());
+        assert!(global_registry.get("rclone").is_none());
     }
 
     #[test]

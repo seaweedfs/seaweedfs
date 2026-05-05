@@ -583,21 +583,23 @@ function exportBucketList() {
 
         return {
             name: cells[0].textContent.trim(),
-            created: cells[1].textContent.trim(),
-            objects: cells[2].textContent.trim(),
-            size: cells[3].textContent.trim(),
-            quota: cells[4].textContent.trim()
+            owner: cells[1].textContent.trim(),
+            created: cells[2].textContent.trim(),
+            logicalSize: cells[3].textContent.trim(),
+            physicalSize: cells[4].textContent.trim(),
+            quota: cells[5].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Quota'].join(','),
+        ['Name', 'Owner', 'Created', 'Logical Size', 'Physical Size', 'Quota'].join(','),
         ...data.map(row => [
             row.name,
+            row.owner,
             row.created,
-            row.objects,
-            row.size,
+            row.logicalSize,
+            row.physicalSize,
             row.quota
         ].join(','))
     ].join('\n');
@@ -1267,7 +1269,7 @@ async function submitUploadFile() {
         });
 
         // Send request
-        xhr.open('POST', '/api/files/upload');
+        xhr.open('POST', basePath('/api/files/upload'));
         xhr.send(formData);
 
     } catch (error) {
@@ -1320,7 +1322,7 @@ function exportFileList() {
 // Download file
 function downloadFile(filePath) {
     // Create download link using admin API
-    const downloadUrl = `/api/files/download?path=${encodeURIComponent(filePath)}`;
+    const downloadUrl = basePath(`/api/files/download?path=${encodeURIComponent(filePath)}`);
     window.open(downloadUrl, '_blank');
 }
 
@@ -1786,7 +1788,7 @@ function createFileViewerContent(file, content) {
     if (file.mime.startsWith('image/')) {
         return `
             <div class="text-center">
-                <img src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
+                <img src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path))}"
                      class="img-fluid" alt="${file.name}" style="max-height: 500px;">
             </div>
         `;
@@ -1804,7 +1806,7 @@ function createFileViewerContent(file, content) {
     } else if (file.mime === 'application/pdf') {
         return `
             <div class="text-center">
-                <embed src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
+                <embed src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path))}"
                        type="application/pdf" width="100%" height="500px">
             </div>
         `;

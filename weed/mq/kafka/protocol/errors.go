@@ -272,10 +272,10 @@ func BuildErrorResponse(correlationID uint32, errorCode int16) []byte {
 func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
 	ec := make([]byte, 2)
 	binary.BigEndian.PutUint16(ec, uint16(errorCode))
-	throttle := []byte{0, 0, 0, 0}      // throttle_time_ms = 0
-	emptyArr := []byte{0, 0, 0, 0}      // regular array length = 0
-	nullStr := []byte{0xFF, 0xFF}        // nullable string = null
-	emptyStr := []byte{0, 0}             // string length = 0
+	throttle := []byte{0, 0, 0, 0} // throttle_time_ms = 0
+	emptyArr := []byte{0, 0, 0, 0} // regular array length = 0
+	nullStr := []byte{0xFF, 0xFF}  // nullable string = null
+	emptyStr := []byte{0, 0}       // string length = 0
 
 	switch APIKey(apiKey) {
 
@@ -306,10 +306,10 @@ func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
 			buf = append(buf, throttle...)
 		}
 		buf = append(buf, ec...)
-		buf = append(buf, nullStr...)                        // error_message
-		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF)           // node_id = -1
-		buf = append(buf, emptyStr...)                       // host
-		buf = append(buf, 0, 0, 0, 0)                       // port = 0
+		buf = append(buf, nullStr...)             // error_message
+		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF) // node_id = -1
+		buf = append(buf, emptyStr...)            // host
+		buf = append(buf, 0, 0, 0, 0)             // port = 0
 		return buf
 
 	case APIKeyJoinGroup:
@@ -320,10 +320,10 @@ func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
 		}
 		buf = append(buf, ec...)
 		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF) // generation_id = -1
-		buf = append(buf, nullStr...)              // protocol_name
-		buf = append(buf, emptyStr...)             // leader
-		buf = append(buf, emptyStr...)             // member_id
-		buf = append(buf, emptyArr...)             // members = []
+		buf = append(buf, nullStr...)             // protocol_name
+		buf = append(buf, emptyStr...)            // leader
+		buf = append(buf, emptyStr...)            // member_id
+		buf = append(buf, emptyArr...)            // members = []
 		return buf
 
 	case APIKeySyncGroup:
@@ -363,7 +363,7 @@ func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
 		buf = append(buf, throttle...)
 		buf = append(buf, ec...)
 		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) // producer_id = -1
-		buf = append(buf, 0xFF, 0xFF)                                       // producer_epoch = -1
+		buf = append(buf, 0xFF, 0xFF)                                     // producer_epoch = -1
 		return buf
 
 	case APIKeyListGroups:
@@ -381,11 +381,11 @@ func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
 		buf := make([]byte, 0, 24)
 		buf = append(buf, throttle...)
 		buf = append(buf, ec...)
-		buf = append(buf, nullStr...)                        // error_message
-		buf = append(buf, emptyStr...)                       // cluster_id
-		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF)           // controller_id = -1
-		buf = append(buf, emptyArr...)                       // brokers = []
-		buf = append(buf, 0, 0, 0, 0)                       // cluster_authorized_operations
+		buf = append(buf, nullStr...)             // error_message
+		buf = append(buf, emptyStr...)            // cluster_id
+		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF) // controller_id = -1
+		buf = append(buf, emptyArr...)            // brokers = []
+		buf = append(buf, 0, 0, 0, 0)             // cluster_authorized_operations
 		return buf
 
 	// --- array-based responses (no top-level error_code) ----------------------
@@ -405,8 +405,8 @@ func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
 			buf = append(buf, throttle...)
 		}
 		if apiVersion >= 7 {
-			buf = append(buf, ec...)           // error_code
-			buf = append(buf, 0, 0, 0, 0)     // session_id = 0
+			buf = append(buf, ec...)      // error_code
+			buf = append(buf, 0, 0, 0, 0) // session_id = 0
 		}
 		buf = append(buf, emptyArr...) // topics = []
 		return buf

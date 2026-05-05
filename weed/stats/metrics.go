@@ -54,6 +54,14 @@ var (
 			Help:      "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built.",
 		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
 
+	MasterStartTimeSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "start_time_seconds",
+			Help:      "Start time of the master, as seconds since UNIX epoch.",
+		})
+
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -216,6 +224,14 @@ var (
 			Help:      "The offset of the filer synchronization service.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
+	VolumeServerStartTimeSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "start_time_seconds",
+			Help:      "Start time of the volume server, as seconds since UNIX epoch.",
+		})
+
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -346,6 +362,62 @@ var (
 			Help:      "In flight total upload size.",
 		})
 
+	VolumeServerMasterDisconnections = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "master_disconnections",
+			Help:      "Number of master server disconnections.",
+		}, []string{"address"})
+
+	VolumeServerFileReadFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_read_failures",
+			Help:      "Counter of overall failed file read requests from clients.",
+		})
+
+	VolumeServerFileReadInvalidNeedles = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_read_invalid_needles",
+			Help:      "Counter of failed file read requests due to invalid needle IDs from clients.",
+		})
+
+	VolumeServerFileWriteFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_write_failures",
+			Help:      "Counter of overall failed file write requests from clients.",
+		})
+
+	VolumeServerScrubLastTimeSeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "scrub_last_time_seconds",
+			Help:      "Last scrub execution time, as seconds since UNIX epoch.",
+		}, []string{"mode"})
+
+	VolumeServerScrubVolumeFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "scrub_volume_failures",
+			Help:      "Counter of overall volumes with issues detected during scrubbing.",
+		}, []string{"mode"})
+
+	VolumeServerScrubShardFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "scrub_shard_failures",
+			Help:      "Counter of overall EC shards with issues detected during scrubbing.",
+		}, []string{"mode"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -470,6 +542,7 @@ var (
 func init() {
 	Gather.MustRegister(BuildInfo)
 
+	Gather.MustRegister(MasterStartTimeSeconds)
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
@@ -494,6 +567,7 @@ func init() {
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
+	Gather.MustRegister(VolumeServerStartTimeSeconds)
 	Gather.MustRegister(VolumeServerRequestCounter)
 	Gather.MustRegister(VolumeServerHandlerCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
@@ -510,6 +584,13 @@ func init() {
 	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)
 	Gather.MustRegister(VolumeServerInFlightUploadSize)
+	Gather.MustRegister(VolumeServerMasterDisconnections)
+	Gather.MustRegister(VolumeServerFileReadFailures)
+	Gather.MustRegister(VolumeServerFileReadInvalidNeedles)
+	Gather.MustRegister(VolumeServerFileWriteFailures)
+	Gather.MustRegister(VolumeServerScrubLastTimeSeconds)
+	Gather.MustRegister(VolumeServerScrubVolumeFailures)
+	Gather.MustRegister(VolumeServerScrubShardFailures)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)

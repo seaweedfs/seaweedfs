@@ -13,6 +13,9 @@
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
 #max_file_name_length = 255
+# for S3: how long to wait before deleting an empty folder.
+# increase this if using tools like Spark that create temporary directories.
+#s3.empty_folder_cleanup_delay = "2m"
 
 ####################################################
 # The following are filer store options
@@ -55,9 +58,11 @@ enabled = false
 # [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
 dsn = "root@tcp(localhost:3306)/seaweedfs?collation=utf8mb4_bin"
 enable_tls = false
-ca_crt = ""                # ca.crt dir when enable_tls set true
-client_crt = ""            # mysql client.crt dir when enable_tls set true
-client_key = ""            # mysql client.key dir when enable_tls set true
+ca_crt = ""                       # path to CA cert (PEM) — optional; if empty, the system trust store is used
+client_crt = ""                   # path to client cert (PEM) — only when server requires mTLS; must be set together with client_key
+client_key = ""                   # path to client key (PEM)  — only when server requires mTLS; must be set together with client_crt
+tls_insecure_skip_verify = false  # skip server cert verification (use only for testing or with self-signed certs)
+tls_server_name = ""              # override SNI / cert hostname; leave empty to use `hostname` above
 hostname = "localhost"
 port = 3306
 username = "root"
@@ -69,6 +74,11 @@ connection_max_lifetime_seconds = 300
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
+# Default uses the row-alias form (`AS new`) added in MySQL 8.0.19 and is the
+# preferred syntax there. For MariaDB (any version) and MySQL 5.7, override
+# with the form below — MariaDB does not support row aliases in
+# INSERT ... ON DUPLICATE KEY UPDATE:
+# upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE `meta` = VALUES(`meta`)"""
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [mysql2]  # or memsql, tidb

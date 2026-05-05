@@ -62,6 +62,46 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 	return
 }
 
+// NewBlockingLongLivedLock blocks until the lock is acquired, then starts a
+// background renewal goroutine that keeps the lock alive. This combines the
+// synchronous acquisition of NewShortLivedLock with the auto-renewal of
+// StartLongLivedLock. Release with Stop().
+func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.Duration) *LiveLock {
+	if lockTTL == 0 {
+		lockTTL = lock_manager.LiveLockTTL
+	}
+	lock := &LiveLock{
+		key:            key,
+		hostFiler:      lc.seedFiler,
+		cancelCh:       make(chan struct{}),
+		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
+		grpcDialOption: lc.grpcDialOption,
+		self:           owner,
+		lc:             lc,
+		lockTTL:        lockTTL,
+	}
+	// Block until acquired
+	lock.retryUntilLocked(lockTTL)
+	// Start renewal goroutine using a ticker for interruptible sleep
+	go func() {
+		renewInterval := lockTTL / 2
+		ticker := time.NewTicker(renewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-lock.cancelCh:
+				return
+			case <-ticker.C:
+				if err := lock.AttemptToLock(lockTTL); err != nil {
+					glog.V(0).Infof("lock renewal failed for %s: %v", key, err)
+					atomic.StoreInt32(&lock.isLocked, 0)
+				}
+			}
+		}
+	}()
+	return lock
+}
+
 // StartLongLivedLock starts a goroutine to lock the key and returns immediately.
 // lockTTL specifies how long the lock should be held. The renewal interval is
 // automatically derived as lockTTL / 2 to ensure timely renewals.
@@ -227,7 +267,7 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		}
 		if resp != nil {
 			errorMessage = resp.Error
-			if resp.LockHostMovedTo != "" && resp.LockHostMovedTo != string(previousHostFiler) {
+			if resp.LockHostMovedTo != "" && !pb.ServerAddress(resp.LockHostMovedTo).Equals(previousHostFiler) {
 				// Only log if the host actually changed
 				glog.V(2).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
 				lock.hostFiler = pb.ServerAddress(resp.LockHostMovedTo)
@@ -249,7 +289,7 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		return err
 	})
 
-	if err != nil && lock.hostFiler != lock.lc.seedFiler {
+	if err != nil && !lock.hostFiler.Equals(lock.lc.seedFiler) {
 		lock.consecutiveFailures++
 		// Fall back to seed filer after 3 consecutive connection failures
 		if lock.consecutiveFailures >= 3 {

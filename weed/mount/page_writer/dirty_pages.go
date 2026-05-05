@@ -7,6 +7,8 @@ type DirtyPages interface {
 	Destroy()
 	LockForRead(startOffset, stopOffset int64)
 	UnlockForRead(startOffset, stopOffset int64)
+	EvictOneWritableChunk() bool
+	ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio int64, frontierLag int, isSequential bool) bool
 }
 
 func max(x, y int64) int64 {
@@ -16,12 +18,6 @@ func max(x, y int64) int64 {
 	return y
 }
 func min(x, y int64) int64 {
-	if x < y {
-		return x
-	}
-	return y
-}
-func minInt(x, y int) int {
 	if x < y {
 		return x
 	}

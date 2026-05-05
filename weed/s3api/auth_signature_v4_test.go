@@ -139,6 +139,12 @@ func TestBuildPathWithForwardedPrefix(t *testing.T) {
 			urlPath:         "bucket/obj",
 			expected:        "/storage/bucket/obj",
 		},
+		{
+			name:            "empty urlPath with prefix",
+			forwardedPrefix: "/s3",
+			urlPath:         "",
+			expected:        "/s3",
+		},
 	}
 
 	for _, tt := range tests {

@@ -90,17 +90,6 @@ type PolicyContext struct {
 	DefaultAllow    bool
 }
 
-// CheckPermissionWithResource checks if a principal has permission to perform an operation on a specific resource
-func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, resourceARN string) bool {
-	return CheckPermissionWithContext(operation, principal, owner, resourcePolicy, resourceARN, nil)
-}
-
-// CheckPermission checks if a principal has permission to perform an operation
-// (without resource-specific validation - for backward compatibility)
-func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
-	return CheckPermissionWithContext(operation, principal, owner, resourcePolicy, "", nil)
-}
-
 // CheckPermissionWithContext checks permission with optional resource and condition context.
 func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 	// Deny access if identities are empty
@@ -413,113 +402,6 @@ func matchesResourcePattern(pattern, resourceARN string) bool {
 
 	// Wildcard match using policy engine's wildcard matcher
 	return wildcard.MatchesWildcard(pattern, resourceARN)
-}
-
-// Helper functions for specific permissions
-
-// CanCreateTableBucket checks if principal can create table buckets
-func CanCreateTableBucket(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("CreateTableBucket", principal, owner, resourcePolicy)
-}
-
-// CanGetTableBucket checks if principal can get table bucket details
-func CanGetTableBucket(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTableBucket", principal, owner, resourcePolicy)
-}
-
-// CanListTableBuckets checks if principal can list table buckets
-func CanListTableBuckets(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ListTableBuckets", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTableBucket checks if principal can delete table buckets
-func CanDeleteTableBucket(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTableBucket", principal, owner, resourcePolicy)
-}
-
-// CanPutTableBucketPolicy checks if principal can put table bucket policies
-func CanPutTableBucketPolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("PutTableBucketPolicy", principal, owner, resourcePolicy)
-}
-
-// CanGetTableBucketPolicy checks if principal can get table bucket policies
-func CanGetTableBucketPolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTableBucketPolicy", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTableBucketPolicy checks if principal can delete table bucket policies
-func CanDeleteTableBucketPolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTableBucketPolicy", principal, owner, resourcePolicy)
-}
-
-// CanCreateNamespace checks if principal can create namespaces
-func CanCreateNamespace(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("CreateNamespace", principal, owner, resourcePolicy)
-}
-
-// CanGetNamespace checks if principal can get namespace details
-func CanGetNamespace(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetNamespace", principal, owner, resourcePolicy)
-}
-
-// CanListNamespaces checks if principal can list namespaces
-func CanListNamespaces(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ListNamespaces", principal, owner, resourcePolicy)
-}
-
-// CanDeleteNamespace checks if principal can delete namespaces
-func CanDeleteNamespace(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteNamespace", principal, owner, resourcePolicy)
-}
-
-// CanCreateTable checks if principal can create tables
-func CanCreateTable(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("CreateTable", principal, owner, resourcePolicy)
-}
-
-// CanGetTable checks if principal can get table details
-func CanGetTable(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTable", principal, owner, resourcePolicy)
-}
-
-// CanListTables checks if principal can list tables
-func CanListTables(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ListTables", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTable checks if principal can delete tables
-func CanDeleteTable(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTable", principal, owner, resourcePolicy)
-}
-
-// CanPutTablePolicy checks if principal can put table policies
-func CanPutTablePolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("PutTablePolicy", principal, owner, resourcePolicy)
-}
-
-// CanGetTablePolicy checks if principal can get table policies
-func CanGetTablePolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTablePolicy", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTablePolicy checks if principal can delete table policies
-func CanDeleteTablePolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTablePolicy", principal, owner, resourcePolicy)
-}
-
-// CanTagResource checks if principal can tag a resource
-func CanTagResource(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("TagResource", principal, owner, resourcePolicy)
-}
-
-// CanUntagResource checks if principal can untag a resource
-func CanUntagResource(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("UntagResource", principal, owner, resourcePolicy)
-}
-
-// CanManageTags checks if principal can manage tags (tag or untag)
-func CanManageTags(principal, owner, resourcePolicy string) bool {
-	return CanTagResource(principal, owner, resourcePolicy) || CanUntagResource(principal, owner, resourcePolicy)
 }
 
 // AuthError represents an authorization error

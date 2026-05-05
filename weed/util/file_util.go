@@ -82,25 +82,74 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 	return
 }
 
+// ResolvePath expands a leading "~", "~/", or "~username/" in path to the
+// corresponding home directory, mirroring shell tilde expansion. A path
+// without a leading "~" or whose tilde cannot be resolved is returned
+// unchanged so callers can pass any user-supplied path through this helper
+// without worrying about non-tilde inputs or lookup failures.
+//
+// Forward slashes are always recognised as separators after the tilde;
+// the platform-native separator is also accepted so "~\\data" works on
+// Windows. Backslashes are deliberately not treated as separators on
+// other platforms because they are legal characters in usernames and
+// path segments there.
 func ResolvePath(path string) string {
 
-	if !strings.Contains(path, "~") {
+	if !strings.HasPrefix(path, "~") {
 		return path
 	}
 
-	usr, _ := user.Current()
-	dir := usr.HomeDir
-
 	if path == "~" {
-		// In case of "~", which won't be caught by the "else if"
-		path = dir
-	} else if strings.HasPrefix(path, "~/") {
-		// Use strings.HasPrefix so we don't match paths like
-		// "/something/~/something/"
-		path = filepath.Join(dir, path[2:])
+		if usr, err := user.Current(); err == nil {
+			return usr.HomeDir
+		}
+		return path
 	}
 
-	return path
+	isSep := func(b byte) bool {
+		return b == '/' || b == byte(filepath.Separator)
+	}
+
+	if isSep(path[1]) {
+		if usr, err := user.Current(); err == nil {
+			return filepath.Join(usr.HomeDir, path[2:])
+		}
+		return path
+	}
+
+	// "~username" or "~username<sep>rest"
+	name := path[1:]
+	rest := ""
+	for i := 0; i < len(name); i++ {
+		if isSep(name[i]) {
+			rest = name[i+1:]
+			name = name[:i]
+			break
+		}
+	}
+	usr, err := user.Lookup(name)
+	if err != nil {
+		return path
+	}
+	if rest == "" {
+		return usr.HomeDir
+	}
+	return filepath.Join(usr.HomeDir, rest)
+}
+
+// ResolveCommaSeparatedPaths splits paths on "," and runs each entry through
+// ResolvePath, then rejoins them. This lets flags like `weed mini -dir` or
+// `weed volume -dir` accept tilde-prefixed entries (e.g. "~/d1,~/d2") even
+// in the comma-separated form the help text advertises.
+func ResolveCommaSeparatedPaths(paths string) string {
+	if !strings.Contains(paths, "~") {
+		return paths
+	}
+	parts := strings.Split(paths, ",")
+	for i, p := range parts {
+		parts[i] = ResolvePath(p)
+	}
+	return strings.Join(parts, ",")
 }
 
 func FileNameBase(filename string) string {

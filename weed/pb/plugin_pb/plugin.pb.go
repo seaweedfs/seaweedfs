@@ -2493,8 +2493,12 @@ type AdminRuntimeDefaults struct {
 	RetryLimit                    int32                  `protobuf:"varint,7,opt,name=retry_limit,json=retryLimit,proto3" json:"retry_limit,omitempty"`
 	RetryBackoffSeconds           int32                  `protobuf:"varint,8,opt,name=retry_backoff_seconds,json=retryBackoffSeconds,proto3" json:"retry_backoff_seconds,omitempty"`
 	JobTypeMaxRuntimeSeconds      int32                  `protobuf:"varint,9,opt,name=job_type_max_runtime_seconds,json=jobTypeMaxRuntimeSeconds,proto3" json:"job_type_max_runtime_seconds,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// Per-attempt execution deadline for one job. Distinct from
+	// detection_timeout (which bounds the detection scan) and
+	// job_type_max_runtime (a lane-wide budget across all attempts).
+	ExecutionTimeoutSeconds int32 `protobuf:"varint,10,opt,name=execution_timeout_seconds,json=executionTimeoutSeconds,proto3" json:"execution_timeout_seconds,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *AdminRuntimeDefaults) Reset() {
@@ -2590,6 +2594,13 @@ func (x *AdminRuntimeDefaults) GetJobTypeMaxRuntimeSeconds() int32 {
 	return 0
 }
 
+func (x *AdminRuntimeDefaults) GetExecutionTimeoutSeconds() int32 {
+	if x != nil {
+		return x.ExecutionTimeoutSeconds
+	}
+	return 0
+}
+
 type AdminRuntimeConfig struct {
 	state                         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled                       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
@@ -2601,6 +2612,7 @@ type AdminRuntimeConfig struct {
 	RetryLimit                    int32                  `protobuf:"varint,7,opt,name=retry_limit,json=retryLimit,proto3" json:"retry_limit,omitempty"`
 	RetryBackoffSeconds           int32                  `protobuf:"varint,8,opt,name=retry_backoff_seconds,json=retryBackoffSeconds,proto3" json:"retry_backoff_seconds,omitempty"`
 	JobTypeMaxRuntimeSeconds      int32                  `protobuf:"varint,9,opt,name=job_type_max_runtime_seconds,json=jobTypeMaxRuntimeSeconds,proto3" json:"job_type_max_runtime_seconds,omitempty"`
+	ExecutionTimeoutSeconds       int32                  `protobuf:"varint,10,opt,name=execution_timeout_seconds,json=executionTimeoutSeconds,proto3" json:"execution_timeout_seconds,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -2694,6 +2706,13 @@ func (x *AdminRuntimeConfig) GetRetryBackoffSeconds() int32 {
 func (x *AdminRuntimeConfig) GetJobTypeMaxRuntimeSeconds() int32 {
 	if x != nil {
 		return x.JobTypeMaxRuntimeSeconds
+	}
+	return 0
+}
+
+func (x *AdminRuntimeConfig) GetExecutionTimeoutSeconds() int32 {
+	if x != nil {
+		return x.ExecutionTimeoutSeconds
 	}
 	return 0
 }
@@ -4091,7 +4110,7 @@ const file_plugin_proto_rawDesc = "" +
 	"\x06fields\x18\x01 \x03(\v2\x1c.plugin.ValueMap.FieldsEntryR\x06fields\x1aN\n" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xff\x03\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xbb\x04\n" +
 	"\x14AdminRuntimeDefaults\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12<\n" +
 	"\x1adetection_interval_seconds\x18\x02 \x01(\x05R\x18detectionIntervalSeconds\x12:\n" +
@@ -4102,7 +4121,9 @@ const file_plugin_proto_rawDesc = "" +
 	"\vretry_limit\x18\a \x01(\x05R\n" +
 	"retryLimit\x122\n" +
 	"\x15retry_backoff_seconds\x18\b \x01(\x05R\x13retryBackoffSeconds\x12>\n" +
-	"\x1cjob_type_max_runtime_seconds\x18\t \x01(\x05R\x18jobTypeMaxRuntimeSeconds\"\xfd\x03\n" +
+	"\x1cjob_type_max_runtime_seconds\x18\t \x01(\x05R\x18jobTypeMaxRuntimeSeconds\x12:\n" +
+	"\x19execution_timeout_seconds\x18\n" +
+	" \x01(\x05R\x17executionTimeoutSeconds\"\xb9\x04\n" +
 	"\x12AdminRuntimeConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12<\n" +
 	"\x1adetection_interval_seconds\x18\x02 \x01(\x05R\x18detectionIntervalSeconds\x12:\n" +
@@ -4113,7 +4134,9 @@ const file_plugin_proto_rawDesc = "" +
 	"\vretry_limit\x18\a \x01(\x05R\n" +
 	"retryLimit\x122\n" +
 	"\x15retry_backoff_seconds\x18\b \x01(\x05R\x13retryBackoffSeconds\x12>\n" +
-	"\x1cjob_type_max_runtime_seconds\x18\t \x01(\x05R\x18jobTypeMaxRuntimeSeconds\"\xef\x05\n" +
+	"\x1cjob_type_max_runtime_seconds\x18\t \x01(\x05R\x18jobTypeMaxRuntimeSeconds\x12:\n" +
+	"\x19execution_timeout_seconds\x18\n" +
+	" \x01(\x05R\x17executionTimeoutSeconds\"\xef\x05\n" +
 	"\x13RunDetectionRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +

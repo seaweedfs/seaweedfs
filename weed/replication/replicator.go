@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -24,6 +25,10 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 
 	source := &source.FilerSource{}
 	source.Initialize(sourceConfig, configPrefix)
+
+	if err := repl_util.InitializeSSEForReplication(source); err != nil {
+		glog.Warningf("SSE initialization failed: %v (encrypted objects may fail to replicate)", err)
+	}
 
 	dataSink.SetSourceFiler(source)
 

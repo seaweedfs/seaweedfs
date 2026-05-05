@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 
@@ -17,6 +18,7 @@ import (
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -67,6 +69,17 @@ func (p *Policies) getOrCreateUserPolicies(userName string) map[string]policy_en
 		p.InlinePolicies[userName] = make(map[string]policy_engine.PolicyDocument)
 	}
 	return p.InlinePolicies[userName]
+}
+
+// getOrCreateGroupPolicies returns the policy map for a group, creating it if needed.
+func (p *Policies) getOrCreateGroupPolicies(groupName string) map[string]policy_engine.PolicyDocument {
+	if p.GroupInlinePolicies == nil {
+		p.GroupInlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+	}
+	if p.GroupInlinePolicies[groupName] == nil {
+		p.GroupInlinePolicies[groupName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	return p.GroupInlinePolicies[groupName]
 }
 
 // computeAggregatedActionsForUser computes the union of actions across all inline policies for a user.
@@ -138,6 +151,10 @@ type Policies struct {
 	// Structure: [userName][policyName] -> PolicyDocument
 	// Enables fast access without iterating all policies
 	InlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"inlinePolicies"`
+
+	// GroupInlinePolicies: group-indexed inline policies for O(1) lookup
+	// Structure: [groupName][policyName] -> PolicyDocument
+	GroupInlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"groupInlinePolicies,omitempty"`
 }
 
 func Hash(s *string) string {
@@ -393,7 +410,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	}
 
 	// Recompute aggregated actions (inline + managed)
-	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
+	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent, s3cfg)
 	if computeErr != nil {
 		glog.Warningf("Failed to compute aggregated actions for user %s: %v; keeping existing actions", userName, computeErr)
 	} else {
@@ -442,17 +459,33 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 
 		policyDocument := policy_engine.PolicyDocument{Version: policyDocumentVersion}
 		statements := make(map[string][]string)
+		seenAction := make(map[string]map[string]bool)
 		for _, action := range ident.Actions {
-			// parse "Read:EXAMPLE-BUCKET"
-			act := strings.Split(action, ":")
+			// parse "Read:EXAMPLE-BUCKET" or "Read:EXAMPLE-BUCKET/prefix/*"
+			// Use SplitN so the path component (which may contain ':') is preserved intact.
+			act := strings.SplitN(action, ":", 2)
 
 			resource := "*"
 			if len(act) == 2 {
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+				// Preserve the stored path verbatim so bucket-level and
+				// object-level resources remain distinguishable. GetActions
+				// stores the path exactly as parsed from the original ARN
+				// (e.g. "b-le*" for the bucket, "b-le*/*" for objects), and
+				// reconstruction should not rewrite one into the other.
+				resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
 			}
-			statements[resource] = append(statements[resource],
-				fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0])),
-			)
+			s3Action := fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0]))
+			// Dedupe actions per resource: the Read/Write/List internal verbs map to
+			// coarse wildcards (s3:Get*, s3:Put*, s3:List*), so multiple distinct
+			// original actions can collapse to the same reconstructed verb.
+			if seenAction[resource] == nil {
+				seenAction[resource] = make(map[string]bool)
+			}
+			if seenAction[resource][s3Action] {
+				continue
+			}
+			seenAction[resource][s3Action] = true
+			statements[resource] = append(statements[resource], s3Action)
 		}
 		for resource, actions := range statements {
 			isEqAction := false
@@ -520,12 +553,49 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	}
 
 	// Recompute aggregated actions from remaining inline + managed policies
-	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
+	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent, s3cfg)
 	if computeErr != nil {
 		glog.Warningf("Failed to recompute aggregated actions for user %s: %v; keeping existing actions", userName, computeErr)
 	} else {
 		targetIdent.Actions = aggregatedActions
 	}
+	return resp, nil
+}
+
+// ListUserPolicies lists the names of inline policies attached to a user.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUserPolicies.html
+func (iama *IamApiServer) ListUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *ListUserPoliciesResponse, iamError *IamError) {
+	resp = &ListUserPoliciesResponse{}
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	// Verify the user exists
+	found := false
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	}
+
+	// List inline policy names from persistent storage
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	if userPolicies := policies.InlinePolicies[userName]; userPolicies != nil {
+		for policyName := range userPolicies {
+			resp.ListUserPoliciesResult.PolicyNames = append(resp.ListUserPoliciesResult.PolicyNames, policyName)
+		}
+		sort.Strings(resp.ListUserPoliciesResult.PolicyNames)
+	}
+	resp.ListUserPoliciesResult.IsTruncated = false
 	return resp, nil
 }
 
@@ -655,8 +725,8 @@ func (iama *IamApiServer) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		prevPolicyNames := ident.PolicyNames
 		ident.PolicyNames = append(ident.PolicyNames, policyName)
 
-		// Recompute aggregated actions (inline + managed)
-		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident)
+		// Recompute aggregated actions (inline + managed + group)
+		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident, s3cfg)
 		if err != nil {
 			// Roll back PolicyNames to keep identity consistent
 			ident.PolicyNames = prevPolicyNames
@@ -705,7 +775,7 @@ func (iama *IamApiServer) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 			ident.PolicyNames = prevPolicyNames
 			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 		}
-		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident)
+		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident, s3cfg)
 		if err != nil {
 			// Roll back PolicyNames to keep identity consistent
 			ident.PolicyNames = prevPolicyNames
@@ -738,8 +808,10 @@ func (iama *IamApiServer) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfigurat
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 }
 
-// computeAllActionsForUser computes the union of actions from both inline and managed policies.
-func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Policies, ident *iam_pb.Identity) ([]string, error) {
+// computeAllActionsForUser computes the union of actions from user inline policies,
+// user managed policies, group inline policies, and group managed policies.
+// If s3cfg is provided, group memberships are resolved to include group policies.
+func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Policies, ident *iam_pb.Identity, s3cfgs ...*iam_pb.S3ApiConfiguration) ([]string, error) {
 	actionSet := make(map[string]bool)
 	var aggregatedActions []string
 
@@ -752,14 +824,14 @@ func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Pol
 		}
 	}
 
-	// Include inline policy actions
+	// Include user inline policy actions
 	inlineActions, err := computeAggregatedActionsForUser(iama, userName, policies)
 	if err != nil {
 		return nil, err
 	}
 	addUniqueActions(inlineActions)
 
-	// Include managed policy actions
+	// Include user managed policy actions
 	for _, policyName := range ident.PolicyNames {
 		if policyDoc, exists := policies.Policies[policyName]; exists {
 			actions, err := GetActions(&policyDoc)
@@ -768,6 +840,48 @@ func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Pol
 				continue
 			}
 			addUniqueActions(actions)
+		}
+	}
+
+	// Include group policies (both inline and managed) if s3cfg is available
+	if len(s3cfgs) > 0 && s3cfgs[0] != nil {
+		s3cfg := s3cfgs[0]
+		for _, g := range s3cfg.Groups {
+			if g.Disabled {
+				continue
+			}
+			isMember := false
+			for _, m := range g.Members {
+				if m == userName {
+					isMember = true
+					break
+				}
+			}
+			if !isMember {
+				continue
+			}
+			// Group managed policies
+			for _, policyName := range g.PolicyNames {
+				if policyDoc, exists := policies.Policies[policyName]; exists {
+					actions, err := GetActions(&policyDoc)
+					if err != nil {
+						glog.Warningf("Failed to get actions from group managed policy '%s' (group %s) for user %s: %v", policyName, g.Name, userName, err)
+						continue
+					}
+					addUniqueActions(actions)
+				}
+			}
+			// Group inline policies
+			if groupPolicies := policies.GroupInlinePolicies[g.Name]; groupPolicies != nil {
+				for policyName, policyDoc := range groupPolicies {
+					actions, err := GetActions(&policyDoc)
+					if err != nil {
+						glog.Warningf("Failed to get actions from group inline policy '%s' (group %s) for user %s: %v", policyName, g.Name, userName, err)
+						continue
+					}
+					addUniqueActions(actions)
+				}
+			}
 		}
 	}
 
@@ -816,13 +930,38 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
 
-	accessKeyId, err := StringWithCharset(21, charsetUpper)
-	if err != nil {
-		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	accessKeyId := values.Get("AccessKeyId")
+	secretAccessKey := values.Get("SecretAccessKey")
+	if accessKeyId != "" {
+		if err := iamlib.ValidateCallerSuppliedAccessKeyId(accessKeyId); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+		}
 	}
-	secretAccessKey, err := StringWithCharset(42, charset)
-	if err != nil {
-		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	if secretAccessKey != "" {
+		if err := iamlib.ValidateCallerSuppliedSecretAccessKey(secretAccessKey); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+		}
+	}
+	if (accessKeyId != "") != (secretAccessKey != "") {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
+	}
+	if owner := iamlib.FindAccessKeyOwner(s3cfg, accessKeyId); owner != nil {
+		glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by %s %s", owner.Type, owner.Name)
+		return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+	}
+	if accessKeyId == "" {
+		var err error
+		accessKeyId, err = StringWithCharset(21, charsetUpper)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+		}
+	}
+	if secretAccessKey == "" {
+		var err error
+		secretAccessKey, err = StringWithCharset(42, charset)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+		}
 	}
 
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
@@ -972,7 +1111,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	glog.V(4).Infof("DoActions: %+v", values)
+	glog.V(4).Infof("DoActions: %+v", iamlib.RedactSensitiveFormValues(values))
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch r.Form.Get("Action") {
@@ -985,6 +1124,18 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		changed = false
 	case "CreateUser":
 		response = iama.CreateUser(s3cfg, values)
+		// Use targeted create to avoid rewriting all existing user files via SaveConfiguration.
+		// credentialManager.CreateUser writes only the new user's file.
+		if iama.iam != nil {
+			if cm := iama.iam.GetCredentialManager(); cm != nil {
+				userName := values.Get("UserName")
+				if err := cm.CreateUser(r.Context(), &iam_pb.Identity{Name: userName}); err != nil {
+					writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+					return
+				}
+				changed = false
+			}
+		}
 	case "GetUser":
 		userName := values.Get("UserName")
 		var err *IamError
@@ -1062,6 +1213,15 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+	case "ListUserPolicies":
+		iama.handleImplicitUsername(r, values)
+		var err *IamError
+		response, err = iama.ListUserPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
 	case "GetPolicy":
 		var err *IamError
 		response, err = iama.GetPolicy(s3cfg, values)
@@ -1172,6 +1332,38 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "ListAttachedGroupPolicies":
 		var err *IamError
 		response, err = iama.ListAttachedGroupPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "PutGroupPolicy":
+		var err *IamError
+		response, err = iama.PutGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		// changed = true: PutGroupPolicy recomputes member Identity.Actions
+	case "GetGroupPolicy":
+		var err *IamError
+		response, err = iama.GetGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "DeleteGroupPolicy":
+		var err *IamError
+		response, err = iama.DeleteGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		// changed = true: DeleteGroupPolicy recomputes member Identity.Actions
+	case "ListGroupPolicies":
+		var err *IamError
+		response, err = iama.ListGroupPolicies(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return

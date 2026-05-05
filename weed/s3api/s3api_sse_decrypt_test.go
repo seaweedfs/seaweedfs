@@ -161,6 +161,27 @@ func TestSSEKMSDecryptChunkView_RequiresOffsetAdjustment(t *testing.T) {
 		t.Logf("✓ SSE-KMS decryption with offset adjustment successful")
 	}
 
+	// ANTI-TEST: Decrypt after applying the offset twice (incorrect range path behavior)
+	doubleAdjustedIV, doubleSkip := calculateIVWithOffset(adjustedIV, chunkOffset)
+	blockDoubleWrong, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("Failed to create cipher for double-adjusted decryption: %v", err)
+	}
+
+	decryptedDoubleWrong := make([]byte, len(ciphertext))
+	streamDoubleWrong := cipher.NewCTR(blockDoubleWrong, doubleAdjustedIV)
+	if doubleSkip > 0 {
+		dummy := make([]byte, doubleSkip)
+		streamDoubleWrong.XORKeyStream(dummy, dummy)
+	}
+	streamDoubleWrong.XORKeyStream(decryptedDoubleWrong, ciphertext)
+
+	if bytes.Equal(decryptedDoubleWrong, plaintext) {
+		t.Errorf("CRITICAL: Double-adjusted IV produced correct plaintext! SSE-KMS chunk offset must be applied exactly once.")
+	} else {
+		t.Logf("✓ Verified: double-adjusted IV produces corrupted data (range path must not pre-adjust)")
+	}
+
 	// ANTI-TEST: Decrypt using base IV directly (incorrect for SSE-KMS)
 	blockWrong, err := aes.NewCipher(key)
 	if err != nil {

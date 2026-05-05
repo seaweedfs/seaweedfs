@@ -8,7 +8,7 @@ import (
 )
 
 // setupTrinoTest is a helper function that sets up the common test environment for all Trino CRUD tests
-func setupTrinoTest(t *testing.T) *TestEnvironment {
+func setupTrinoTest(t *testing.T, configOpts ...func(*trinoConfigOptions)) *TestEnvironment {
 	t.Helper()
 
 	if testing.Short() {
@@ -28,7 +28,7 @@ func setupTrinoTest(t *testing.T) *TestEnvironment {
 	catalogBucket := tableBucket
 	createTableBucket(t, env, tableBucket)
 
-	configDir := env.writeTrinoConfig(t, catalogBucket)
+	configDir := env.writeTrinoConfig(t, catalogBucket, configOpts...)
 	env.startTrinoContainer(t, configDir)
 	waitForTrino(t, env.trinoContainer, 60*time.Second)
 

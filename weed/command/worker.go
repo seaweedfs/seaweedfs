@@ -3,6 +3,7 @@ package command
 import (
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
@@ -62,6 +63,7 @@ func runWorker(cmd *Command, args []string) bool {
 		grace.StartDebugServer(*workerDebugPort)
 	}
 
+	*workerWorkingDir = util.ResolvePath(*workerWorkingDir)
 	return runPluginWorkerWithOptions(pluginWorkerRunOptions{
 		AdminServer: *workerAdminServer,
 		WorkerID:    *workerID,

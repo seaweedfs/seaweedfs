@@ -27,6 +27,7 @@ var Commands = []*Command{
 	cmdFilerRemoteSynchronize,
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
+	cmdFilerSyncVerify,
 	cmdFix,
 	cmdFuse,
 	cmdIam,
@@ -47,6 +48,7 @@ var Commands = []*Command{
 	cmdVolume,
 	cmdWebDav,
 	cmdSftp,
+	cmdNfs,
 	cmdWorker,
 }
 

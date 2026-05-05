@@ -13,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -40,28 +41,30 @@ var (
 )
 
 type Filer struct {
-	UniqueFilerId       int32
-	UniqueFilerEpoch    int32
-	Store               VirtualFilerStore
-	MasterClient        *wdclient.MasterClient
-	fileIdDeletionQueue *util.UnboundedQueue
-	GrpcDialOption      grpc.DialOption
-	DirBucketsPath      string
-	Cipher              bool
-	LocalMetaLogBuffer  *log_buffer.LogBuffer
-	metaLogCollection   string
-	metaLogReplication  string
-	MetaAggregator      *MetaAggregator
-	Signature           int32
-	FilerConf           *FilerConf
-	RemoteStorage       *FilerRemoteStorage
-	lazyFetchGroup      singleflight.Group
-	lazyListGroup       singleflight.Group
-	Dlm                 *lock_manager.DistributedLockManager
-	MaxFilenameLength   uint32
-	deletionQuit        chan struct{}
-	DeletionRetryQueue  *DeletionRetryQueue
-	EmptyFolderCleaner  *empty_folder_cleanup.EmptyFolderCleaner
+	UniqueFilerId           int32
+	UniqueFilerEpoch        int32
+	Store                   VirtualFilerStore
+	MasterClient            *wdclient.MasterClient
+	fileIdDeletionQueue     *util.UnboundedQueue
+	GrpcDialOption          grpc.DialOption
+	DirBucketsPath          string
+	Cipher                  bool
+	LocalMetaLogBuffer      *log_buffer.LogBuffer
+	metaLogCollection       string
+	metaLogReplication      string
+	MetaAggregator          *MetaAggregator
+	Signature               int32
+	FilerConf               *FilerConf
+	RemoteStorage           *FilerRemoteStorage
+	lazyFetchGroup          singleflight.Group
+	lazyListGroup           singleflight.Group
+	Dlm                     *lock_manager.DistributedLockManager
+	MaxFilenameLength       uint32
+	deletionQuit            chan struct{}
+	DeletionRetryQueue      *DeletionRetryQueue
+	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
+	EmptyFolderCleanupDelay time.Duration
+	inodeSequencer          sequence.Sequencer
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -76,12 +79,19 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
+		inodeSequencer:      newInodeSequencer(filerHost),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
 	}
 
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, f.readPersistedLogBufferPosition, notifyFn)
+	// ReadFromDiskFn is intentionally nil here.  SubscribeLocalMetadata already
+	// manages disk reads explicitly with shouldReadFromDisk / lastCheckedFlushTsNs
+	// tracking.  Setting ReadFromDiskFn would cause LoopProcessLogData to issue a
+	// redundant ReadPersistedLogBuffer call (ListDirectoryEntries + readahead
+	// goroutine) on every 250ms health-check tick when a subscriber encounters
+	// ResumeFromDiskError, adding significant CPU and GC pressure even when idle.
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
@@ -98,7 +108,7 @@ func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes [
 		return existingNodes[i].CreatedAtNs < existingNodes[j].CreatedAtNs
 	})
 	earliestNode := existingNodes[0]
-	if earliestNode.Address == string(self) {
+	if pb.ServerAddress(earliestNode.Address).Equals(self) {
 		return
 	}
 
@@ -123,7 +133,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
 
 	// Initialize the empty folder cleaner using the same LockRing as Dlm for consistent hashing
-	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath)
+	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath, f.EmptyFolderCleanupDelay)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
@@ -224,6 +234,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	*/
 
 	if oldEntry == nil {
+		f.ensureEntryInode(entry)
 
 		if !skipCreateParentDir {
 			dirParts := strings.Split(string(entry.FullPath), "/")
@@ -308,6 +319,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
+		f.ensureEntryInode(dirEntry)
 		if isUnderBuckets && level > 3 {
 			// Parent directories under buckets are created automatically; no additional logging.
 		}
@@ -344,6 +356,12 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
+		if oldEntry.Attr.Inode != 0 {
+			// Object identity must not change on in-place updates.
+			entry.Attr.Inode = oldEntry.Attr.Inode
+		} else {
+			f.ensureEntryInode(entry)
+		}
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			glog.ErrorfCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsDirectory)

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path"
-	"strconv"
 	"strings"
 
 	"github.com/apache/iceberg-go/table"
@@ -23,10 +21,6 @@ type icebergRequestError struct {
 	status  int
 	errType string
 	message string
-}
-
-func (e *icebergRequestError) Error() string {
-	return e.message
 }
 
 type createOnCommitInput struct {
@@ -86,19 +80,6 @@ func isS3TablesAlreadyExists(err error) bool {
 	var tableErr *s3tables.S3TablesError
 	return errors.As(err, &tableErr) &&
 		(tableErr.Type == s3tables.ErrCodeTableAlreadyExists || tableErr.Type == s3tables.ErrCodeNamespaceAlreadyExists || strings.Contains(strings.ToLower(tableErr.Message), "already exists"))
-}
-
-func parseMetadataVersionFromLocation(metadataLocation string) int {
-	base := path.Base(metadataLocation)
-	if !strings.HasPrefix(base, "v") || !strings.HasSuffix(base, ".metadata.json") {
-		return 0
-	}
-	rawVersion := strings.TrimPrefix(strings.TrimSuffix(base, ".metadata.json"), "v")
-	version, err := strconv.Atoi(rawVersion)
-	if err != nil || version <= 0 {
-		return 0
-	}
-	return version
 }
 
 func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommitInput) (*CommitTableResponse, *icebergRequestError) {
@@ -219,7 +200,7 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		markerBucket = metadataBucket
 	}
 	if markerErr := s.deleteStageCreateMarkers(ctx, markerBucket, input.namespace, input.tableName); markerErr != nil {
-		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after finalize: %v", encodeNamespace(input.namespace), input.tableName, markerErr)
+		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after finalize: %v", flattenNamespacePath(input.namespace), input.tableName, markerErr)
 	}
 
 	return &CommitTableResponse{

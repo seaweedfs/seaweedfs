@@ -1,0 +1,69 @@
+name: "FUSE P2P Peer Chunk Sharing Integration Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/command/mount*.go'
+      - 'weed/mount/**'
+      - 'weed/filer/mount_peer_registry*.go'
+      - 'weed/server/filer_grpc_server_mount_peer.go'
+      - 'weed/pb/mount_peer.proto'
+      - 'weed/pb/filer.proto'
+      - 'test/fuse_p2p/**'
+      - '.github/workflows/fuse-p2p-integration.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'weed/command/mount*.go'
+      - 'weed/mount/**'
+      - 'weed/filer/mount_peer_registry*.go'
+      - 'weed/server/filer_grpc_server_mount_peer.go'
+      - 'weed/pb/mount_peer.proto'
+      - 'weed/pb/filer.proto'
+      - 'test/fuse_p2p/**'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/fuse-p2p-integration
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuse-p2p-integration:
+    name: FUSE P2P Peer Chunk Sharing
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install FUSE dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev
+          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+          sudo chmod 644 /etc/fuse.conf
+
+      - name: Build SeaweedFS
+        run: go build -o weed/weed -buildvcs=false ./weed
+
+      - name: Run P2P integration tests
+        timeout-minutes: 15
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+        run: go test -v -count=1 -timeout=12m ./test/fuse_p2p/...
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuse-p2p-test-logs
+          path: /tmp/seaweedfs-fuse-p2p-logs/
+          retention-days: 3

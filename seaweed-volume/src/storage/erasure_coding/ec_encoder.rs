@@ -6,7 +6,7 @@
 use std::fs::File;
 use std::io;
 #[cfg(not(unix))]
-use std::io::{Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 

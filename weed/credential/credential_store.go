@@ -137,5 +137,28 @@ type PolicyManager interface {
 	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
 }
 
+// InlinePolicyStore is an optional interface for credential stores that support
+// per-user inline policy storage. Stores that implement this interface preserve
+// the exact policy document submitted via PutUserPolicy, enabling lossless
+// round-trips through GetUserPolicy.
+type InlinePolicyStore interface {
+	PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error
+	GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error)
+	DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error
+	ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error)
+}
+
+// UserRenamer is an optional interface for credential stores that can
+// atomically rename a user along with all rows that reference the old
+// username (credentials, inline policies, etc). Backends with referential
+// integrity (e.g. PostgreSQL with ON DELETE CASCADE foreign keys on
+// user_inline_policies) MUST implement this so the IAM rename path can
+// move the dependents within a single transaction; copying them via
+// per-row Put / Get / Delete calls would violate the FK at statement
+// time because the new user row does not yet exist.
+type UserRenamer interface {
+	RenameUser(ctx context.Context, oldName, newName string) error
+}
+
 // Stores holds all available credential store implementations
 var Stores []CredentialStore

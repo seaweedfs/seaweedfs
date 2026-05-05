@@ -3,13 +3,13 @@ package dash
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -175,7 +175,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 
 	ctx := context.Background()
 
-	// Get user using credential manager
+	// Get user using credential manager (resolves static users via filer gRPC)
 	identity, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
@@ -247,21 +247,29 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 		req = &CreateAccessKeyRequest{}
 	}
 
-	// Validate provided keys
-	if req.AccessKey != "" && (len(req.AccessKey) < 4 || len(req.AccessKey) > 128) {
-		return nil, fmt.Errorf("access key must be between 4 and 128 characters: %w", ErrInvalidInput)
+	// Validate provided keys (shared with the IAM API and embedded IAM paths).
+	if req.AccessKey != "" {
+		if err := iam.ValidateCallerSuppliedAccessKeyId(req.AccessKey); err != nil {
+			return nil, fmt.Errorf("%s: %w", err.Error(), ErrInvalidInput)
+		}
 	}
-	if req.SecretKey != "" && (len(req.SecretKey) < 8 || len(req.SecretKey) > 128) {
-		return nil, fmt.Errorf("secret key must be between 8 and 128 characters: %w", ErrInvalidInput)
+	if req.SecretKey != "" {
+		if err := iam.ValidateCallerSuppliedSecretAccessKey(req.SecretKey); err != nil {
+			return nil, fmt.Errorf("%s: %w", err.Error(), ErrInvalidInput)
+		}
+	}
+	// Enforce the both-or-none rule to match the IAM API and embedded IAM
+	// paths — silently generating the missing half lets a caller end up
+	// with a credential they did not fully choose.
+	if (req.AccessKey != "") != (req.SecretKey != "") {
+		return nil, fmt.Errorf("access key and secret key must be supplied together: %w", ErrInvalidInput)
 	}
 
 	// Use provided keys or generate new ones
 	accessKey := req.AccessKey
+	secretKey := req.SecretKey
 	if accessKey == "" {
 		accessKey = generateAccessKey()
-	}
-	secretKey := req.SecretKey
-	if secretKey == "" {
 		secretKey = generateSecretKey()
 	}
 
@@ -435,10 +443,13 @@ func generateAccessKey() string {
 }
 
 func generateSecretKey() string {
-	// Generate 40-character secret key (AWS standard)
-	b := make([]byte, 30) // 30 bytes = 40 characters in base64
-	rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
+	// Use the IAM helper to generate URL-safe secret keys (no +, / characters)
+	// that won't break S3 signature authentication
+	key, err := iam.GenerateSecretAccessKey()
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate secret key: %v", err))
+	}
+	return key
 }
 
 func generateAccountId() string {

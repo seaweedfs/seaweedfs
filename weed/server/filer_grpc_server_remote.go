@@ -21,30 +21,44 @@ import (
 )
 
 func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
-	// Use singleflight to deduplicate concurrent caching requests for the same object
+	// Use singleflight to deduplicate concurrent caching requests for the same object.
 	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
 	cacheKey := req.Directory + "/" + req.Name
 
-	result, err, shared := fs.remoteCacheGroup.Do(cacheKey, func() (interface{}, error) {
-		return fs.doCacheRemoteObjectToLocalCluster(ctx, req)
+	// Detach from caller ctx: on failure the error path deletes every chunk
+	// already written, so cancelling mid-download loses all progress. For
+	// blobs large enough that the download outlasts the caller's timeout
+	// the retry loop never converges.
+	bgCtx := context.WithoutCancel(ctx)
+
+	// DoChan (vs Do) so the caller can bail out on ctx.Done() while the
+	// singleflight goroutine keeps caching on bgCtx; otherwise this handler
+	// goroutine stays blocked for the full download after the client is gone.
+	ch := fs.remoteCacheGroup.DoChan(cacheKey, func() (interface{}, error) {
+		return fs.doCacheRemoteObjectToLocalCluster(bgCtx, req)
 	})
 
-	if shared {
-		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
+	select {
+	case <-ctx.Done():
+		// Caller gave up; the detached cache keeps running and a later
+		// request will find the entry cached (or join the same singleflight).
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Shared {
+			glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
+		}
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		if res.Val == nil {
+			return nil, fmt.Errorf("unexpected nil result from singleflight")
+		}
+		resp, ok := res.Val.(*filer_pb.CacheRemoteObjectToLocalClusterResponse)
+		if !ok {
+			return nil, fmt.Errorf("unexpected result type from singleflight")
+		}
+		return resp, nil
 	}
-
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return nil, fmt.Errorf("unexpected nil result from singleflight")
-	}
-
-	resp, ok := result.(*filer_pb.CacheRemoteObjectToLocalClusterResponse)
-	if !ok {
-		return nil, fmt.Errorf("unexpected result type from singleflight")
-	}
-	return resp, nil
 }
 
 // doCacheRemoteObjectToLocalCluster performs the actual caching operation.
@@ -133,6 +147,14 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		chunkSize = (entry.Remote.RemoteSize + 999) / 1000
 	}
 
+	// Now that chunkSize is known, hint it to the master so per-chunk
+	// assigns don't fall back to the 1 MB default estimate. Slightly over-
+	// estimates for the final partial chunk (< chunkSize) by design.
+	assignRequest.ExpectedDataSize = uint64(chunkSize)
+	if altRequest != nil {
+		altRequest.ExpectedDataSize = uint64(chunkSize)
+	}
+
 	dest := util.FullPath(remoteStorageMountedLocation.Path).Child(string(util.FullPath(req.Directory).Child(req.Name))[len(localMountedDir):])
 
 	var chunks []*filer_pb.FileChunk
@@ -207,15 +229,15 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				resp, fetchErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
-					VolumeId:             uint32(fileId.VolumeId),
-					NeedleId:             uint64(fileId.Key),
-					Cookie:               uint32(fileId.Cookie),
-					Offset:               localOffset,
-					Size:                 size,
-					Replicas:             replicas,
-					Auth:                 string(assignResult.Auth),
-					DownloadConcurrency:  downloadConcurrency,
-					RemoteConf:           storageConf,
+					VolumeId:            uint32(fileId.VolumeId),
+					NeedleId:            uint64(fileId.Key),
+					Cookie:              uint32(fileId.Cookie),
+					Offset:              localOffset,
+					Size:                size,
+					Replicas:            replicas,
+					Auth:                string(assignResult.Auth),
+					DownloadConcurrency: downloadConcurrency,
+					RemoteConf:          storageConf,
 					RemoteLocation: &remote_pb.RemoteStorageLocation{
 						Name:   remoteStorageMountedLocation.Name,
 						Bucket: remoteStorageMountedLocation.Bucket,

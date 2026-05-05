@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"reflect"
 	"regexp"
@@ -26,14 +27,15 @@ import (
 )
 
 const (
-	defaultBlockSize   = 4 * 1024 * 1024
-	defaultConcurrency = 16
+	defaultBlockSize       = 4 * 1024 * 1024
+	defaultConcurrency     = 16
+	defaultReadConcurrency = 16
 
-	// DefaultAzureOpTimeout is the timeout for individual Azure blob operations.
-	// This should be larger than the maximum time the Azure SDK client will spend
-	// retrying. With MaxRetries=3 (4 total attempts) and TryTimeout=10s, the maximum
-	// time is roughly 4*10s + delays(~7s) = 47s. We use 60s to provide a reasonable
-	// buffer while still failing faster than indefinite hangs.
+	// DefaultAzureOpTimeout is the timeout for short metadata operations
+	// (GetProperties, Delete, conditional updates, etc.). Blob body transfers
+	// (ReadFile / WriteFile) are NOT bounded by this timeout: they use
+	// parallel 4 MiB block transfers and rely on the SDK's per-try TryTimeout
+	// to bound each individual block.
 	DefaultAzureOpTimeout = 60 * time.Second
 )
 
@@ -41,12 +43,21 @@ const (
 // with consistent retry configuration across the application.
 // This centralizes the retry policy to ensure uniform behavior between
 // remote storage and replication sink implementations.
+//
+// TryTimeout bounds a single HTTP attempt (headers + body) in the Azure SDK.
+// With parallel 4 MiB block transfers (DownloadBuffer / UploadStream) a 60s
+// TryTimeout is comfortable. A previous regression set this to 10s "to fail
+// faster on auth issues" — that silently broke large-blob reads: a single
+// non-parallelized Download of more than ~40 MiB over a typical WAN link
+// cannot finish in 10s, so re-caching a large remote object (e.g. a 2 GB
+// blob mounted via `remote.mount` and fetched through the S3 gateway) failed
+// every attempt with a generic context-deadline error.
 func DefaultAzBlobClientOptions() *azblob.ClientOptions {
 	return &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Retry: policy.RetryOptions{
-				MaxRetries:    3,                // Reasonable retry count - aggressive retries mask configuration errors
-				TryTimeout:    10 * time.Second, // Reduced from 1 minute to fail faster on auth issues
+				MaxRetries:    3,
+				TryTimeout:    60 * time.Second,
 				RetryDelay:    1 * time.Second,
 				MaxRetryDelay: 10 * time.Second,
 			},
@@ -126,6 +137,7 @@ type azureRemoteStorageClient struct {
 }
 
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
+var _ = remote_storage.RemoteStorageConcurrentReader(&azureRemoteStorageClient{})
 
 func (az *azureRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 	pathKey := loc.Path[1:]
@@ -264,31 +276,67 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 }
 
 func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
+	return az.ReadFileWithConcurrency(loc, offset, size, defaultReadConcurrency)
+}
+
+// ReadFileWithConcurrency fetches a byte range of a blob using the Azure SDK's
+// parallel block downloader. The blob is split into `defaultBlockSize` (4 MiB)
+// blocks that are fetched in parallel up to `concurrency` at a time. This
+// keeps each individual HTTP GET small enough to complete well within the
+// SDK's per-try TryTimeout, so large-blob reads remain reliable even on
+// slower WAN links.
+func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error) {
+
+	if offset < 0 {
+		return nil, fmt.Errorf("invalid offset %d for %s%s", offset, loc.Bucket, loc.Path)
+	}
+	if size < 0 {
+		return nil, fmt.Errorf("invalid size %d for %s%s", size, loc.Bucket, loc.Path)
+	}
+
+	if concurrency <= 0 {
+		concurrency = defaultReadConcurrency
+	} else if concurrency > math.MaxUint16 {
+		// DownloadBufferOptions.Concurrency is uint16; clamp to avoid wraparound.
+		concurrency = math.MaxUint16
+	}
 
 	key := loc.Path[1:]
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
 
-	count := size
-	if count == 0 {
-		count = blob.CountToEnd
+	// DownloadBuffer requires a pre-sized destination. If the caller asked for
+	// "read to end" (size == 0), discover the blob length via GetProperties
+	// first so we can allocate accurately.
+	if size == 0 {
+		propsCtx, cancelProps := context.WithTimeout(context.Background(), DefaultAzureOpTimeout)
+		props, propsErr := blobClient.GetProperties(propsCtx, nil)
+		cancelProps()
+		if propsErr != nil {
+			return nil, fmt.Errorf("get properties %s%s: %w", loc.Bucket, loc.Path, propsErr)
+		}
+		if props.ContentLength == nil {
+			return nil, fmt.Errorf("azure %s%s: missing ContentLength", loc.Bucket, loc.Path)
+		}
+		size = *props.ContentLength - offset
+		if size <= 0 {
+			return []byte{}, nil
+		}
 	}
-	downloadResp, err := blobClient.DownloadStream(context.Background(), &blob.DownloadStreamOptions{
+
+	data = make([]byte, size)
+	_, err = blobClient.DownloadBuffer(context.Background(), data, &blob.DownloadBufferOptions{
 		Range: blob.HTTPRange{
 			Offset: offset,
-			Count:  count,
+			Count:  size,
 		},
+		BlockSize:   defaultBlockSize,
+		Concurrency: uint16(concurrency),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s%s: %w", loc.Bucket, loc.Path, err)
 	}
-	defer downloadResp.Body.Close()
 
-	data, err = io.ReadAll(downloadResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read download stream %s%s: %w", loc.Bucket, loc.Path, err)
-	}
-
-	return
+	return data, nil
 }
 
 func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {

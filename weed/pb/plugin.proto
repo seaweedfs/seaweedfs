@@ -233,6 +233,10 @@ message AdminRuntimeDefaults {
   int32 retry_limit = 7;
   int32 retry_backoff_seconds = 8;
   int32 job_type_max_runtime_seconds = 9;
+  // Per-attempt execution deadline for one job. Distinct from
+  // detection_timeout (which bounds the detection scan) and
+  // job_type_max_runtime (a lane-wide budget across all attempts).
+  int32 execution_timeout_seconds = 10;
 }
 
 message AdminRuntimeConfig {
@@ -245,6 +249,7 @@ message AdminRuntimeConfig {
   int32 retry_limit = 7;
   int32 retry_backoff_seconds = 8;
   int32 job_type_max_runtime_seconds = 9;
+  int32 execution_timeout_seconds = 10;
 }
 
 message RunDetectionRequest {

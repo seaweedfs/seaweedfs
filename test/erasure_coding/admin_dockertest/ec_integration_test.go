@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -22,10 +23,16 @@ const (
 	FilerUrl  = "http://localhost:8888"
 )
 
-// Helper to run commands in background and track PIDs for cleanup
-var runningCmds []*exec.Cmd
+// Helper to run commands in background and track PIDs for cleanup. Guarded
+// by runningCmdsLock so parallel subprocess startup can append safely.
+var (
+	runningCmds     []*exec.Cmd
+	runningCmdsLock sync.Mutex
+)
 
 func cleanup() {
+	runningCmdsLock.Lock()
+	defer runningCmdsLock.Unlock()
 	for _, cmd := range runningCmds {
 		if cmd.Process != nil {
 			cmd.Process.Kill()
@@ -59,7 +66,9 @@ func startWeed(t *testing.T, name string, args ...string) *exec.Cmd {
 	if err != nil {
 		t.Fatalf("Failed to start weed %v: %v", args, err)
 	}
+	runningCmdsLock.Lock()
 	runningCmds = append(runningCmds, cmd)
+	runningCmdsLock.Unlock()
 	return cmd
 }
 
@@ -107,14 +116,23 @@ func ensureEnvironment(t *testing.T) {
 	waitForUrl(t, MasterUrl+"/cluster/status", 10)
 
 	// 3. Start Volume Server (Worker)
-	// Start 14 volume servers to verify RS(10,4) default EC
+	// Start 14 volume servers to verify RS(10,4) default EC. Fork/exec in
+	// parallel because startWeed is non-blocking and the per-process fork +
+	// mkdir + log-file-open overhead stacks up sequentially on cold CI
+	// disks, eating most of the admin /health wait budget further down.
+	var volWg sync.WaitGroup
 	for i := 1; i <= 14; i++ {
-		volName := fmt.Sprintf("volume%d", i)
-		port := 8080 + i - 1
-		dir := filepath.Join("tmp", volName)
-		os.MkdirAll(dir, 0755)
-		startWeed(t, volName, "volume", "-dir="+dir, "-mserver=localhost:9333", fmt.Sprintf("-port=%d", port), "-ip=localhost")
+		volWg.Add(1)
+		go func(i int) {
+			defer volWg.Done()
+			volName := fmt.Sprintf("volume%d", i)
+			port := 8080 + i - 1
+			dir := filepath.Join("tmp", volName)
+			os.MkdirAll(dir, 0755)
+			startWeed(t, volName, "volume", "-dir="+dir, "-mserver=localhost:9333", fmt.Sprintf("-port=%d", port), "-ip=localhost")
+		}(i)
 	}
+	volWg.Wait()
 
 	// 4. Start Filer
 	os.MkdirAll(filepath.Join("tmp", "filer"), 0755)
@@ -136,7 +154,12 @@ func ensureEnvironment(t *testing.T) {
 	os.RemoveAll(filepath.Join("tmp", "admin"))
 	os.MkdirAll(filepath.Join("tmp", "admin"), 0755)
 	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=23646", "-dataDir=./tmp/admin")
-	waitForUrl(t, AdminUrl+"/health", 60)
+	// Admin is started after master, 14 volume servers, filer and 2 workers,
+	// so under cold CI conditions the wait here has to absorb the tail of
+	// every earlier subprocess coming up. 60s is too tight and has flaked;
+	// 180s gives comfortable headroom without meaningfully extending the
+	// fast path (the first successful /health usually hits well under 30s).
+	waitForUrl(t, AdminUrl+"/health", 180)
 
 	t.Log("Environment started successfully")
 }

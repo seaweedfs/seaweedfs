@@ -26,7 +26,7 @@ func TestRunDetectionSendsCancelOnContextDone(t *testing.T) {
 			{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1},
 		},
 	})
-	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 4)}
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 4), done: make(chan struct{})}
 	pluginSvc.putSession(session)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -77,7 +77,7 @@ func TestExecuteJobSendsCancelOnContextDone(t *testing.T) {
 			{JobType: jobType, CanExecute: true, MaxExecutionConcurrency: 1},
 		},
 	})
-	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 4)}
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 4), done: make(chan struct{})}
 	pluginSvc.putSession(session)
 
 	job := &plugin_pb.JobSpec{JobId: "job-1", JobType: jobType}
@@ -135,8 +135,8 @@ func TestAdminScriptExecutionBlocksOtherDetection(t *testing.T) {
 			{JobType: "vacuum", CanDetect: true, MaxDetectionConcurrency: 1},
 		},
 	})
-	adminSession := &streamSession{workerID: adminWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8)}
-	otherSession := &streamSession{workerID: otherWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8)}
+	adminSession := &streamSession{workerID: adminWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	otherSession := &streamSession{workerID: otherWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
 	pluginSvc.putSession(adminSession)
 	pluginSvc.putSession(otherSession)
 
@@ -214,8 +214,8 @@ func TestAdminScriptExecutionBlocksOtherExecution(t *testing.T) {
 			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 1},
 		},
 	})
-	adminSession := &streamSession{workerID: adminWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8)}
-	otherSession := &streamSession{workerID: otherWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8)}
+	adminSession := &streamSession{workerID: adminWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	otherSession := &streamSession{workerID: otherWorkerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
 	pluginSvc.putSession(adminSession)
 	pluginSvc.putSession(otherSession)
 

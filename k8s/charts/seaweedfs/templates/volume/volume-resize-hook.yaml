@@ -35,8 +35,8 @@
 {{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
 {{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
 {{-             if and $currentPVC }}
-{{-             $oldSize := include "common.resource-quantity" $currentPVC.spec.resources.requests.storage }}
-{{-             $newSize := include "common.resource-quantity" $desiredSize }}
+{{-             $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage }}
+{{-             $newSize := include "seaweedfs.resource-quantity" $desiredSize }}
 {{-               if gt $newSize $oldSize }}
 {{-               $commands = append $commands (printf "kubectl patch pvc %s-%s-%s-%d -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%s\"}}}}'" $dir.name $seaweedfsName $volumeName $e $desiredSize) }}
 {{-               end }}

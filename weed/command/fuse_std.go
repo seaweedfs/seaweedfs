@@ -189,6 +189,12 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "cacheDirWrite":
 			mountOptions.cacheDirForWrite = &parameter.value
+		case "writeBufferSizeMB":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err == nil {
+				mountOptions.writeBufferSizeMB = &parsed
+			} else {
+				panic(fmt.Errorf("writeBufferSizeMB: %s", err))
+			}
 		case "dataCenter":
 			mountOptions.dataCenter = &parameter.value
 		case "allowOthers":
@@ -237,7 +243,9 @@ func runFuse(cmd *Command, args []string) bool {
 		case "fusermount.path":
 			fusermountPath = parameter.value
 		case "config_dir":
-			util.ConfigurationFileDirectory.Set(parameter.value)
+			if err := util.ConfigurationFileDirectory.Set(parameter.value); err != nil {
+				panic(fmt.Errorf("config_dir %s: %w", parameter.value, err))
+			}
 		// FUSE performance options
 		case "writebackCache":
 			if parsed, err := strconv.ParseBool(parameter.value); err == nil {

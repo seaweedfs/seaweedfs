@@ -1,0 +1,77 @@
+name: "Multi-Master Tests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/server/master_*.go'
+      - 'weed/server/raft_*.go'
+      - 'weed/topology/**'
+      - 'test/multi_master/**'
+      - 'test/testutil/**'
+      - '.github/workflows/multi-master-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/server/master_*.go'
+      - 'weed/server/raft_*.go'
+      - 'weed/topology/**'
+      - 'test/multi_master/**'
+      - 'test/testutil/**'
+      - '.github/workflows/multi-master-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/multi-master-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  multi-master-failover-tests:
+    name: Multi-Master Failover Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install SeaweedFS
+        run: |
+          cd weed && go install -buildvcs=false
+
+      - name: Run multi-master failover tests
+        # The tests in test/multi_master spin up their own 3-node master raft
+        # cluster (using the freshly-installed `weed` binary) and exercise
+        # leader-election, failover and recovery scenarios. The shared
+        # test/testutil port-allocator regression test runs alongside since it
+        # is a prerequisite for the cluster fixtures.
+        run: |
+          go test -v -timeout=8m ./test/multi_master/... ./test/testutil/...
+
+      - name: Collect server logs on failure
+        if: failure()
+        run: |
+          # test/multi_master/cluster.go creates per-test dirs via
+          # os.MkdirTemp("", "seaweedfs_multi_master_it_") and writes each
+          # node's log into <baseDir>/logs/master*.log.
+          echo "Collecting per-node master logs from temp directories..."
+          mkdir -p /tmp/multi-master-logs
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_multi_master_it_*" 2>/dev/null | while read dir; do
+            echo "Found test directory: $dir"
+            cp -r "$dir" /tmp/multi-master-logs/ 2>/dev/null || true
+          done
+          find /tmp/multi-master-logs -type f -name "*.log" -print -exec tail -n 100 {} \; 2>/dev/null || echo "No logs found"
+
+      - name: Archive logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: multi-master-test-logs
+          path: /tmp/multi-master-logs/
+          retention-days: 7

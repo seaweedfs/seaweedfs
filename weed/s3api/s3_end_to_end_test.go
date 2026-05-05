@@ -214,6 +214,153 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 	}
 }
 
+// TestS3ListObjectsV2PrefixCondition tests that ListObjectsV2 requests with a prefix
+// query parameter correctly populate s3:prefix in the policy evaluation context and
+// use bucket-level resource ARNs, so that policies with s3:prefix conditions work.
+// This reproduces the bug reported in https://github.com/seaweedfs/seaweedfs/issues/8969
+func TestS3ListObjectsV2PrefixCondition(t *testing.T) {
+	// Set up IAM system
+	iamManager := integration.NewIAMManager()
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
+	}
+
+	err := iamManager.Initialize(config, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+
+	setupTestProviders(t, iamManager)
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	require.NotNil(t, s3IAMIntegration)
+
+	ctx := context.Background()
+
+	// Create a role with a policy that allows ListBucket only with a specific s3:prefix condition.
+	// This is the pattern used by Lakekeeper-vended STS credentials (issue #8969).
+	prefixPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:    "AllowListUnderWarehouse",
+				Effect: "Allow",
+				Action: []string{"s3:ListBucket"},
+				Resource: []string{
+					"arn:aws:s3:::examples",
+				},
+				Condition: map[string]map[string]interface{}{
+					"StringLike": {
+						"s3:prefix": []string{"warehouse/*"},
+					},
+				},
+			},
+			{
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
+		},
+	}
+
+	iamManager.CreatePolicy(ctx, "", "PrefixRestrictedPolicy", prefixPolicy)
+	iamManager.CreateRole(ctx, "", "PrefixRestrictedRole", &integration.RoleDefinition{
+		RoleName: "PrefixRestrictedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect:    "Allow",
+					Principal: map[string]interface{}{"Federated": "test-oidc"},
+					Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"PrefixRestrictedPolicy"},
+	})
+
+	// Assume role to get a session token
+	validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/PrefixRestrictedRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "prefix-test-session",
+	})
+	require.NoError(t, err)
+
+	sessionToken := response.Credentials.SessionToken
+	require.NotEmpty(t, sessionToken)
+
+	// Authenticate to get IAM identity
+	authReq := httptest.NewRequest("GET", "/examples", http.NoBody)
+	authReq.Header.Set("Authorization", "Bearer "+sessionToken)
+	identity, errCode := s3IAMIntegration.AuthenticateJWT(ctx, authReq)
+	require.Equal(t, s3err.ErrNone, errCode, "Authentication should succeed")
+
+	tests := []struct {
+		name     string
+		url      string
+		bucket   string
+		objKey   string
+		expected s3err.ErrorCode
+	}{
+		{
+			name:     "ListObjectsV2 with matching prefix query param and empty objectKey",
+			url:      "/examples?list-type=2&prefix=warehouse/data",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "ListObjectsV2 with matching prefix propagated as objectKey",
+			url:      "/examples?list-type=2&prefix=warehouse/data",
+			bucket:   "examples",
+			objKey:   "warehouse/data",
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "ListObjectsV1 with matching prefix query param",
+			url:      "/examples?prefix=warehouse/files",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "ListObjectsV2 with non-matching prefix should be denied",
+			url:      "/examples?list-type=2&prefix=other/path",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrAccessDenied,
+		},
+		{
+			name:     "ListObjectsV2 with no prefix should be denied",
+			url:      "/examples?list-type=2",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrAccessDenied,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.url, http.NoBody)
+			result := s3IAMIntegration.AuthorizeAction(ctx, identity, Action("List"), tt.bucket, tt.objKey, req)
+			assert.Equal(t, tt.expected, result, "unexpected authorization result for %s", tt.name)
+		})
+	}
+}
+
 // TestS3CORSWithJWT tests CORS preflight requests with IAM
 func TestS3CORSWithJWT(t *testing.T) {
 	s3Server, iamManager := setupCompleteS3IAMSystem(t)

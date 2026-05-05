@@ -16,11 +16,28 @@ use crate::storage::volume::volume_file_name;
 /// Calculate .dat file size from the max offset entry in .ecx.
 /// Reads the volume version from the first EC shard (.ec00) superblock,
 /// then scans .ecx entries to find the largest (offset + needle_actual_size).
+///
+/// `dir` is used both for reading `.ec00` and `.ecx`. For split-disk
+/// reconciled volumes call [`find_dat_file_size_with_dirs`] instead.
 pub fn find_dat_file_size(dir: &str, collection: &str, volume_id: VolumeId) -> io::Result<i64> {
-    let base = volume_file_name(dir, collection, volume_id);
+    find_dat_file_size_with_dirs(dir, dir, collection, volume_id)
+}
+
+/// Like [`find_dat_file_size`] but lets the caller pass separate dirs
+/// for `.ec00` (the data shard) and `.ecx` (the sealed index). This
+/// is the form needed when shards are split across data dirs and the
+/// `.ecx` lives on a sibling disk's idx dir (#9252).
+pub fn find_dat_file_size_with_dirs(
+    ec00_dir: &str,
+    ecx_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<i64> {
+    let ec00_base = volume_file_name(ec00_dir, collection, volume_id);
+    let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
 
     // Read volume version from .ec00 superblock
-    let ec00_path = format!("{}.ec00", base);
+    let ec00_path = format!("{}.ec00", ec00_base);
     let mut ec00 = File::open(&ec00_path)?;
     let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
     ec00.read_exact(&mut sb_buf)?;
@@ -30,7 +47,7 @@ pub fn find_dat_file_size(dir: &str, collection: &str, volume_id: VolumeId) -> i
     let mut dat_size: i64 = SUPER_BLOCK_SIZE as i64;
 
     // Scan .ecx entries
-    let ecx_path = format!("{}.ecx", base);
+    let ecx_path = format!("{}.ecx", ecx_base);
     let ecx_data = std::fs::read(&ecx_path)?;
     let entry_count = ecx_data.len() / NEEDLE_MAP_ENTRY_SIZE;
 
@@ -52,7 +69,10 @@ pub fn find_dat_file_size(dir: &str, collection: &str, volume_id: VolumeId) -> i
 
 /// Reconstruct a .dat file from EC data shards.
 ///
-/// Reads from .ec00-.ec09 and writes a new .dat file.
+/// Reads from .ec00-.ec09 and writes a new .dat file. All data shards
+/// must live in `dir`. For the cross-disk reconciled layout where
+/// shards are split across multiple data dirs of the same node, use
+/// [`write_dat_file_from_shards_with_dirs`] instead.
 pub fn write_dat_file_from_shards(
     dir: &str,
     collection: &str,
@@ -60,12 +80,53 @@ pub fn write_dat_file_from_shards(
     dat_file_size: i64,
     data_shards: usize,
 ) -> io::Result<()> {
-    let base = volume_file_name(dir, collection, volume_id);
+    let dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
+    write_dat_file_from_shards_with_dirs(
+        dir,
+        collection,
+        volume_id,
+        dat_file_size,
+        data_shards,
+        &dirs,
+    )
+}
+
+/// Reconstruct a .dat file from EC data shards, taking the source
+/// directory for each shard separately.
+///
+/// `dat_dir` is where the produced `.dat` is written. `shard_dirs[i]`
+/// is the directory holding shard `i`. For the simple "all shards in
+/// one dir" case both can be the same value.
+///
+/// Mirrors Go's `WriteDatFile(baseFileName, datFileSize,
+/// shardFileNames)` shape — Go passes per-shard paths so a
+/// reconciled volume with shards split across disks of the same
+/// volume server can still be decoded back to a regular .dat
+/// (seaweedfs/seaweedfs#9252).
+pub fn write_dat_file_from_shards_with_dirs(
+    dat_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    dat_file_size: i64,
+    data_shards: usize,
+    shard_dirs: &[String],
+) -> io::Result<()> {
+    if shard_dirs.len() < data_shards {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "shard_dirs len {} < data_shards {}",
+                shard_dirs.len(),
+                data_shards
+            ),
+        ));
+    }
+    let base = volume_file_name(dat_dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
 
-    // Open data shards
+    // Open data shards from their individual home dirs.
     let mut shards: Vec<EcVolumeShard> = (0..data_shards as u8)
-        .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
+        .map(|i| EcVolumeShard::new(&shard_dirs[i as usize], collection, volume_id, i))
         .collect();
 
     for shard in &mut shards {

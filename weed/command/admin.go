@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -30,6 +30,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
 var (
@@ -48,6 +49,10 @@ type AdminOptions struct {
 	dataDir          *string
 	icebergPort      *int
 	urlPrefix        *string
+	debug            *bool
+	debugPort        *int
+	cpuProfile       *string
+	memProfile       *string
 }
 
 func init() {
@@ -64,6 +69,10 @@ func init() {
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
+	a.debug = cmdAdmin.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	a.debugPort = cmdAdmin.Flag.Int("debug.port", 6060, "http port for debugging")
+	a.cpuProfile = cmdAdmin.Flag.String("cpuprofile", "", "cpu profile output file")
+	a.memProfile = cmdAdmin.Flag.String("memprofile", "", "memory profile output file")
 }
 
 var cmdAdmin = &Command{
@@ -140,6 +149,16 @@ var cmdAdmin = &Command{
     - All static assets, API endpoints, and navigation links will use the prefix
     - Session cookies are scoped to the prefix path
 
+  Debugging and Profiling:
+    - Use -debug to start a pprof HTTP server for live profiling (localhost only)
+    - Set -debug.port to choose the pprof port (default 6060)
+    - Profiles are accessible at http://127.0.0.1:<debug.port>/debug/pprof/
+    - Use -cpuprofile and -memprofile to write profiles to files on shutdown
+    - WARNING: -debug exposes runtime internals; use only in trusted environments
+    - Examples:
+      weed admin -debug -debug.port=6060 -master="localhost:9333"
+      weed admin -cpuprofile=cpu.prof -memprofile=mem.prof -master="localhost:9333"
+
   Configuration File:
     - The security.toml file is read from ".", "$HOME/.seaweedfs/",
       "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order
@@ -149,6 +168,14 @@ var cmdAdmin = &Command{
 }
 
 func runAdmin(cmd *Command, args []string) bool {
+	if *a.debug {
+		grace.StartDebugServer(*a.debugPort)
+	}
+
+	*a.cpuProfile = util.ResolvePath(*a.cpuProfile)
+	*a.memProfile = util.ResolvePath(*a.memProfile)
+	grace.SetupProfiling(*a.cpuProfile, *a.memProfile)
+
 	// Load security configuration
 	util.LoadSecurityConfiguration()
 
@@ -283,18 +310,10 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
 	if *options.dataDir != "" {
-		// Expand tilde (~) to home directory
-		expandedDir, err := expandHomeDir(*options.dataDir)
-		if err != nil {
-			return fmt.Errorf("failed to expand dataDir path %s: %v", *options.dataDir, err)
-		}
-		dataDir = expandedDir
-
-		// Show path expansion if it occurred
+		dataDir = util.ResolvePath(*options.dataDir)
 		if dataDir != *options.dataDir {
 			fmt.Printf("Expanded dataDir: %s -> %s\n", *options.dataDir, dataDir)
 		}
-
 		if err := os.MkdirAll(dataDir, 0755); err != nil {
 			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
 		}
@@ -367,50 +386,76 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	addr := fmt.Sprintf(":%d", *options.port)
 	var handler http.Handler = r
 	if urlPrefix != "" {
-		handler = http.StripPrefix(urlPrefix, r)
+		stripped := http.StripPrefix(urlPrefix, r)
+		handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// Redirect /prefix (no trailing slash) to /prefix/
+			if req.URL.Path == urlPrefix {
+				target := urlPrefix + "/"
+				if req.URL.RawQuery != "" {
+					target += "?" + req.URL.RawQuery
+				}
+				http.Redirect(w, req, target, http.StatusFound)
+				return
+			}
+			stripped.ServeHTTP(w, req)
+		})
 	}
 	server := &http.Server{
 		Addr:    addr,
 		Handler: handler,
 	}
 
+	// Decide TLS configuration BEFORE launching the server goroutine, so a
+	// bad cert or a missing key surfaces as a startup error instead of a
+	// silently returned goroutine that leaves startAdminServer blocked on
+	// ctx.Done() with no listener.
+	var (
+		clientCertFile,
+		certFile,
+		keyFile string
+	)
+	useTLS := false
+	useMTLS := false
+
+	if viper.GetString("https.admin.key") != "" {
+		useTLS = true
+		certFile = viper.GetString("https.admin.cert")
+		keyFile = viper.GetString("https.admin.key")
+	}
+
+	if viper.GetString("https.admin.ca") != "" {
+		useMTLS = true
+		clientCertFile = viper.GetString("https.admin.ca")
+	}
+
+	if useMTLS {
+		server.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+	}
+
+	if useTLS {
+		getCert, certProvider, certErr := security.NewReloadingServerCertificate(certFile, keyFile)
+		if certErr != nil {
+			return fmt.Errorf("load admin HTTPS certificate: %w", certErr)
+		}
+		defer certProvider.Close()
+		if server.TLSConfig == nil {
+			server.TLSConfig = &tls.Config{}
+		}
+		server.TLSConfig.GetCertificate = getCert
+	}
+
 	// Start server
 	go func() {
 		log.Printf("Starting SeaweedFS Admin Server on port %d", *options.port)
-
-		// start http or https server with security.toml
-		var (
-			clientCertFile,
-			certFile,
-			keyFile string
-		)
-		useTLS := false
-		useMTLS := false
-
-		if viper.GetString("https.admin.key") != "" {
-			useTLS = true
-			certFile = viper.GetString("https.admin.cert")
-			keyFile = viper.GetString("https.admin.key")
-		}
-
-		if viper.GetString("https.admin.ca") != "" {
-			useMTLS = true
-			clientCertFile = viper.GetString("https.admin.ca")
-		}
-
-		if useMTLS {
-			server.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
-		}
-
+		var serveErr error
 		if useTLS {
 			log.Printf("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
-			err = server.ListenAndServeTLS(certFile, keyFile)
+			serveErr = server.ListenAndServeTLS("", "")
 		} else {
-			err = server.ListenAndServe()
+			serveErr = server.ListenAndServe()
 		}
-
-		if err != nil && err != http.ErrServerClosed {
-			log.Printf("Failed to start server: %v", err)
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			log.Printf("Failed to start server: %v", serveErr)
 		}
 	}()
 
@@ -511,11 +556,6 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// GetAdminOptions returns the admin command options for testing
-func GetAdminOptions() *AdminOptions {
-	return &AdminOptions{}
-}
-
 // loadOrGenerateSessionKeys loads or creates authentication/encryption keys for session cookies.
 func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 	const keyLen = 32
@@ -597,44 +637,4 @@ func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string
 			*flagPtr = v
 		}
 	}
-}
-
-// expandHomeDir expands the tilde (~) in a path to the user's home directory
-func expandHomeDir(path string) (string, error) {
-	if path == "" {
-		return path, nil
-	}
-
-	if !strings.HasPrefix(path, "~") {
-		return path, nil
-	}
-
-	// Get current user
-	currentUser, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("failed to get current user: %w", err)
-	}
-
-	// Handle different tilde patterns
-	if path == "~" {
-		return currentUser.HomeDir, nil
-	}
-
-	if strings.HasPrefix(path, "~/") {
-		return filepath.Join(currentUser.HomeDir, path[2:]), nil
-	}
-
-	// Handle ~username/ patterns
-	parts := strings.SplitN(path[1:], "/", 2)
-	username := parts[0]
-
-	targetUser, err := user.Lookup(username)
-	if err != nil {
-		return "", fmt.Errorf("user %s not found: %v", username, err)
-	}
-
-	if len(parts) == 1 {
-		return targetUser.HomeDir, nil
-	}
-	return filepath.Join(targetUser.HomeDir, parts[1]), nil
 }

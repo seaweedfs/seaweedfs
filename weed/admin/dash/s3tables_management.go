@@ -1061,7 +1061,7 @@ func s3TablesErrorStatus(err error) int {
 			return http.StatusNotFound
 		case s3tables.ErrCodeAccessDenied:
 			return http.StatusForbidden
-		case s3tables.ErrCodeBucketAlreadyExists, s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeConflict:
+		case s3tables.ErrCodeBucketAlreadyExists, s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeBucketNotEmpty, s3tables.ErrCodeNamespaceNotEmpty, s3tables.ErrCodeConflict:
 			return http.StatusConflict
 		}
 	}

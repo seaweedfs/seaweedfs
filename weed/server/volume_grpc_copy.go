@@ -560,18 +560,38 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 			glog.V(1).Infof("ReceiveFile: volume %d, ext %s, collection %s, shard %d, size %d",
 				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize)
 
-			// Create file path based on file info
 			if fileInfo.IsEcVolume {
-				// Find storage location for EC shard
-				var targetLocation *storage.DiskLocation
-				for _, location := range vs.store.Locations {
-					if location.DiskType == types.HardDriveType {
-						targetLocation = location
-						break
-					}
+				// os.Create below truncates in place; a mounted EcVolume
+				// holds fds on the same inodes, so overwriting corrupts
+				// live readers.
+				if _, mounted := vs.store.FindEcVolume(needle.VolumeId(fileInfo.VolumeId)); mounted {
+					glog.Errorf("ReceiveFile: ec volume %d is mounted; refusing overwrite for %s", fileInfo.VolumeId, fileInfo.Ext)
+					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+						Error: fmt.Sprintf("ec volume %d is mounted; unmount before ReceiveFile", fileInfo.VolumeId),
+					})
 				}
-				if targetLocation == nil && len(vs.store.Locations) > 0 {
-					targetLocation = vs.store.Locations[0] // Fall back to first available location
+
+				// disk_id=0 means "unset" (protobuf default), so auto-select
+				// using the same primitive as VolumeEcShardsCopy: prefer a
+				// disk that has the EC volume mounted, then a disk that owns
+				// the .ecx on disk (the volume hasn't been mounted yet —
+				// relevant when shards stream in mid-rebuild before any
+				// mount has happened; see #9212), then any HDD, then any
+				// disk.
+				var targetLocation *storage.DiskLocation
+				if fileInfo.DiskId > 0 {
+					if fileInfo.DiskId >= uint32(len(vs.store.Locations)) {
+						glog.Errorf("ReceiveFile: invalid disk_id %d: only have %d disks", fileInfo.DiskId, len(vs.store.Locations))
+						return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+							Error: fmt.Sprintf("invalid disk_id %d: only have %d disks", fileInfo.DiskId, len(vs.store.Locations)),
+						})
+					}
+					targetLocation = vs.store.Locations[fileInfo.DiskId]
+				} else {
+					// Pass the build's default data-shard count for the helper's
+					// free-slot maths; it's a parameter so custom-ratio builds
+					// (e.g. enterprise) can swap it without touching this file.
+					targetLocation = vs.store.FindEcShardTargetLocation(fileInfo.Collection, needle.VolumeId(fileInfo.VolumeId), erasure_coding.DataShardsCount)
 				}
 				if targetLocation == nil {
 					glog.Errorf("ReceiveFile: no storage location available")

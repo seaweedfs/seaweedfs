@@ -119,8 +119,8 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 	sum := md5.Sum(keyBytes)
 	expectedMD5 := base64.StdEncoding.EncodeToString(sum[:])
 
-	// Debug logging for MD5 validation
-	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s', keyBytes=%x", keyMD5, expectedMD5, keyBytes)
+	// Debug logging for MD5 validation (never log key material)
+	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s'", keyMD5, expectedMD5)
 
 	if keyMD5 != expectedMD5 {
 		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s'", keyMD5, expectedMD5)
@@ -132,16 +132,6 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 		Key:       keyBytes,
 		KeyMD5:    keyMD5,
 	}, nil
-}
-
-// ValidateSSECHeaders validates SSE-C headers in the request
-func ValidateSSECHeaders(r *http.Request) error {
-	algorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
-	key := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKey)
-	keyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
-
-	_, err := validateAndParseSSECHeaders(algorithm, key, keyMD5)
-	return err
 }
 
 // ParseSSECHeaders parses and validates SSE-C headers from the request

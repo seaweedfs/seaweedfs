@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -70,6 +71,7 @@ type Topology struct {
 	topologyIdLock sync.RWMutex
 
 	lastLeaderChangeTime     time.Time
+	hadVolumesAtLeaderChange bool
 	lastLeaderChangeTimeLock sync.RWMutex
 }
 
@@ -120,10 +122,17 @@ func (t *Topology) IsChildLocked() (bool, error) {
 }
 
 // SetLastLeaderChangeTime records the time of the most recent leader transition.
+// It also snapshots whether the topology already had known volumes at that
+// moment. IsWarmingUp uses the snapshot instead of the live MaxVolumeId so a
+// fresh cluster that happens to grow its first volume inside the warmup window
+// does not retroactively flip into "warming up" state — there is no prior
+// topology to wait for on a bootstrap.
 func (t *Topology) SetLastLeaderChangeTime(ts time.Time) {
+	hadVolumes := t.GetMaxVolumeId() > 0
 	t.lastLeaderChangeTimeLock.Lock()
 	defer t.lastLeaderChangeTimeLock.Unlock()
 	t.lastLeaderChangeTime = ts
+	t.hadVolumesAtLeaderChange = hadVolumes
 }
 
 // GetLastLeaderChangeTime returns the time of the most recent leader transition.
@@ -136,15 +145,21 @@ func (t *Topology) GetLastLeaderChangeTime() time.Time {
 // IsWarmingUp returns true if the master recently became leader and may not yet
 // have a complete topology. After a leader change or restart, volume servers need
 // up to WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
-// Returns false on a fresh cluster start (MaxVolumeId == 0) since there are no
-// existing volumes to wait for.
+// Returns false on a fresh cluster start — i.e. when no volumes existed at the
+// time of the leader change — since there is no prior topology state to wait for.
+// Checking the *live* MaxVolumeId here would make a bootstrapping cluster flip
+// into warming-up the moment its first volume is grown, which manifested as a
+// 15-second window of spurious Unavailable errors on AssignVolume for workloads
+// that start writing immediately (see #8777).
 func (t *Topology) IsWarmingUp() bool {
-	if t.GetMaxVolumeId() == 0 {
+	t.lastLeaderChangeTimeLock.RLock()
+	lastChange := t.lastLeaderChangeTime
+	hadVolumes := t.hadVolumesAtLeaderChange
+	t.lastLeaderChangeTimeLock.RUnlock()
+	if !hadVolumes || lastChange.IsZero() {
 		return false
 	}
-	warmupDuration := time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
-	lastChange := t.GetLastLeaderChangeTime()
-	return !lastChange.IsZero() && time.Since(lastChange) < warmupDuration
+	return time.Since(lastChange) < t.WarmupDuration()
 }
 
 // WarmupDuration returns the configured warmup duration based on pulse interval.
@@ -319,7 +334,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	return next, nil
 }
 
-func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption, volumeLayout *VolumeLayout) (fileId string, count uint64, volumeLocationList *VolumeLocationList, shouldGrow bool, err error) {
+// DefaultNeedleSizeEstimate is the fallback per-file-ID size estimate when
+// the client does not provide an expected data size.
+const DefaultNeedleSizeEstimate uint64 = 1024 * 1024 // 1 MB
+
+func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption, volumeLayout *VolumeLayout, expectedDataSize uint64) (fileId string, count uint64, volumeLocationList *VolumeLocationList, shouldGrow bool, err error) {
 	var vid needle.VolumeId
 	vid, count, volumeLocationList, shouldGrow, err = volumeLayout.PickForWrite(requestedCount, option)
 	if err != nil {
@@ -327,6 +346,16 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	}
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
+	}
+	// Track estimated assigned bytes to spread load between heartbeats.
+	// Use the client hint if provided, otherwise fall back to 1MB estimate.
+	sizePerFile := DefaultNeedleSizeEstimate
+	if expectedDataSize > 0 {
+		sizePerFile = expectedDataSize
+	}
+	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
+	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
+		volumeLayout.AdjustActiveVolumeCountForFull(vid)
 	}
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
@@ -484,6 +513,19 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
+	}
+	// Update effective sizes for all reported volumes (decay pending estimates).
+	// If decay brings a volume eagerly removed by RecordAssign back under the
+	// writable threshold, restore the matching activeVolumeCount.
+	for _, v := range volumeInfos {
+		if v.ReplicaPlacement == nil {
+			continue
+		}
+		diskType := types.ToDiskType(v.DiskType)
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
+			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
+		}
 	}
 	return
 }

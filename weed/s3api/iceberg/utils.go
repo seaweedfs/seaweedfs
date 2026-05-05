@@ -32,9 +32,17 @@ func parseNamespace(encoded string) []string {
 	return result
 }
 
-// encodeNamespace encodes namespace parts for response.
+// encodeNamespace encodes namespace parts using the Iceberg REST protocol's
+// unit separator (0x1F) convention. This is only appropriate for protocol-level
+// encoding (e.g. URL path parameters), NOT for filesystem/S3 paths.
 func encodeNamespace(parts []string) string {
 	return strings.Join(parts, "\x1F")
+}
+
+// flattenNamespacePath joins namespace parts with "." for use in S3 location
+// and filer paths, matching the S3 Tables storage layer convention.
+func flattenNamespacePath(parts []string) string {
+	return strings.Join(parts, ".")
 }
 
 func parseS3Location(location string) (bucketName, tablePath string, err error) {
@@ -93,10 +101,22 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 
 // getBucketFromPrefix extracts table bucket name from prefix parameter.
 // For now, we use the prefix as the table bucket name.
+//
+// The Iceberg REST spec lets clients identify a catalog either by embedding
+// its prefix in the URL (/v1/{prefix}/...) or by passing ?warehouse=s3://
+// <bucket>/ as a query parameter. Clients that skip the /v1/config handshake
+// (or ignore its overrides) still routinely send the warehouse parameter on
+// every request, so honor it as a fallback before the env-var default.
+// See issue #9103.
 func getBucketFromPrefix(r *http.Request) string {
 	vars := mux.Vars(r)
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
+	}
+	if warehouse := strings.TrimSpace(r.URL.Query().Get("warehouse")); warehouse != "" {
+		if bucket, _, err := parseS3Location(warehouse); err == nil && bucket != "" {
+			return bucket
+		}
 	}
 	if bucket := os.Getenv("S3TABLES_DEFAULT_BUCKET"); bucket != "" {
 		return bucket
@@ -146,6 +166,41 @@ func parsePagination(r *http.Request) (pageToken string, pageSize int, err error
 func normalizeNamespaceProperties(properties map[string]string) map[string]string {
 	if properties == nil {
 		return map[string]string{}
+	}
+	return properties
+}
+
+// namespaceLocationProperty is the well-known Iceberg key used to advertise a
+// default base path for tables created in a namespace.
+const namespaceLocationProperty = "location"
+
+// defaultNamespaceLocation returns the s3 path under which tables in the
+// namespace should be stored when the namespace itself does not carry an
+// explicit "location" property. The flattened namespace path mirrors the on-
+// disk layout used by handleCreateTable so a deferred client-side commit ends
+// up at the same place a server-computed one would.
+func defaultNamespaceLocation(bucket string, namespace []string) string {
+	if bucket == "" || len(namespace) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("s3://%s/%s", bucket, flattenNamespacePath(namespace))
+}
+
+// withDefaultNamespaceLocation populates the Iceberg "location" property on a
+// namespace response when the storage layer does not carry one. Trino's REST
+// catalog falls back to an eager createTable code path when the namespace
+// has no location, which races our metadata write against Trino's emptiness
+// check and surfaces as a "Cannot create a table on a non-empty location"
+// error on the very first CREATE TABLE. Advertising a default location lets
+// Trino take the deferred-transaction path and pick a unique per-table path.
+// See issue #9074.
+func withDefaultNamespaceLocation(properties map[string]string, bucket string, namespace []string) map[string]string {
+	properties = normalizeNamespaceProperties(properties)
+	if _, ok := properties[namespaceLocationProperty]; ok {
+		return properties
+	}
+	if def := defaultNamespaceLocation(bucket, namespace); def != "" {
+		properties[namespaceLocationProperty] = def
 	}
 	return properties
 }

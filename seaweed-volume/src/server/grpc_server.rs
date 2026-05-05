@@ -16,6 +16,7 @@ use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
+use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 
@@ -26,6 +27,42 @@ type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'stati
 
 fn volume_is_remote_only(dat_path: &str, has_remote_file: bool) -> bool {
     has_remote_file && !std::path::Path::new(dat_path).exists()
+}
+
+/// Map a numeric `VolumeScrubMode` to its proto enum name, matching Go's
+/// `req.GetMode().String()` used for the Prometheus `mode` label.
+fn scrub_mode_label(mode: i32) -> &'static str {
+    match mode {
+        0 => "UNKNOWN",
+        1 => "INDEX",
+        2 => "FULL",
+        3 => "LOCAL",
+        _ => "UNKNOWN",
+    }
+}
+
+fn unix_now_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as f64)
+        .unwrap_or(0.0)
+}
+
+/// Record scrub metrics. `broken_shards` is `Some` only for EC scrubs so the
+/// shard-failures family stays untouched on regular volume scrubs (matching Go).
+fn emit_scrub_metrics(mode: i32, broken_volumes: usize, broken_shards: Option<usize>) {
+    let mode_label = scrub_mode_label(mode);
+    crate::metrics::SCRUB_LAST_TIME_SECONDS
+        .with_label_values(&[mode_label])
+        .set(unix_now_seconds());
+    crate::metrics::SCRUB_VOLUME_FAILURES
+        .with_label_values(&[mode_label])
+        .inc_by(broken_volumes as u64);
+    if let Some(n) = broken_shards {
+        crate::metrics::SCRUB_SHARD_FAILURES
+            .with_label_values(&[mode_label])
+            .inc_by(n as u64);
+    }
 }
 
 /// Persist VolumeServerState to a state.pb file (matches Go's State.save).
@@ -1425,13 +1462,45 @@ impl VolumeServer for VolumeGrpcService {
                         // Determine file path
                         let path = if info.is_ec_volume {
                             let store = self.state.store.read().unwrap();
-                            // Go prefers a HardDriveType location, then falls back to first
-                            let dir = store
-                                .locations
-                                .iter()
-                                .find(|loc| loc.disk_type == DiskType::HardDrive)
-                                .or_else(|| store.locations.first())
-                                .map(|loc| loc.directory.clone());
+                            // std::fs::File::create truncates in place; a mounted
+                            // EcVolume holds fds on the same inodes, so overwriting
+                            // corrupts live readers.
+                            if store.has_ec_volume(VolumeId(info.volume_id)) {
+                                resp_error = Some(format!(
+                                    "ec volume {} is mounted; unmount before ReceiveFile",
+                                    info.volume_id
+                                ));
+                                break;
+                            }
+                            // disk_id=0 means "unset" (protobuf default), so auto-select
+                            // using the same primitive as volume_ec_shards_copy: prefer
+                            // a disk that has the EC volume mounted, then a disk that
+                            // owns the .ecx on disk (volume not yet mounted — relevant
+                            // when shards stream in mid-rebuild before any
+                            // VolumeEcShardsMount has happened; see #9212), then any
+                            // HDD, then any disk. Pass the build's default data-shard
+                            // count for free-slot maths; the helper takes it as a
+                            // parameter so custom-ratio builds can swap it.
+                            let vid = VolumeId(info.volume_id);
+                            let dir = if info.disk_id > 0 {
+                                let count = store.locations.len();
+                                if (info.disk_id as usize) >= count {
+                                    resp_error = Some(format!(
+                                        "invalid disk_id {}: only have {} disks",
+                                        info.disk_id, count
+                                    ));
+                                    break;
+                                }
+                                Some(store.locations[info.disk_id as usize].directory.clone())
+                            } else {
+                                store
+                                    .find_ec_shard_target_location(
+                                        &info.collection,
+                                        vid,
+                                        DATA_SHARDS_COUNT as u32,
+                                    )
+                                    .map(|i| store.locations[i].directory.clone())
+                            };
                             drop(store);
                             let dir = match dir {
                                 Some(d) => d,
@@ -1867,6 +1936,7 @@ impl VolumeServer for VolumeGrpcService {
         {
             let needle_header = resp.needle_header;
             let mut needle_body = resp.needle_body;
+            let resp_version = resp.version;
 
             if needle_header.is_empty() {
                 continue;
@@ -1891,8 +1961,36 @@ impl VolumeServer for VolumeGrpcService {
             // Parse needle from header + body
             let mut n = Needle::default();
             n.read_header(&needle_header);
-            n.read_body_v2(&needle_body)
-                .map_err(|e| Status::internal(format!("parse needle body: {}", e)))?;
+
+            if n.size.0 < 0 {
+                return Err(Status::invalid_argument(format!(
+                    "unexpected negative needle size {} for needle {}",
+                    n.size.0, n.id.0
+                )));
+            } else if n.size.0 > 0 {
+                // Normal needle: parse the body fields (DataSize, Data, flags, etc.)
+                n.read_body_v2(&needle_body)
+                    .map_err(|e| Status::internal(format!("parse needle body: {}", e)))?;
+            } else {
+                // Delete tombstone (size == 0): body is checksum + timestamp
+                // (V3) or checksum only (V2) + padding. Validate minimum
+                // footer length for the protocol version.
+                use crate::storage::types::{
+                    NEEDLE_CHECKSUM_SIZE, TIMESTAMP_SIZE, VERSION_3, Version,
+                };
+                let version = Version(resp_version as u8);
+                let min_footer = if version >= VERSION_3 {
+                    NEEDLE_CHECKSUM_SIZE + TIMESTAMP_SIZE
+                } else {
+                    NEEDLE_CHECKSUM_SIZE
+                };
+                if needle_body.len() < min_footer {
+                    return Err(Status::invalid_argument(format!(
+                        "tombstone needle {} body too short: got {} bytes, need >= {} for version {}",
+                        n.id.0, needle_body.len(), min_footer, resp_version
+                    )));
+                }
+            }
 
             // Write needle to local volume
             let mut store = state.store.write().unwrap();
@@ -1954,7 +2052,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo)
         let (data_shards, parity_shards) =
-            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, collection, vid);
+            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                &dir, &idx_dir, collection, vid,
+            );
 
         if let Err(e) = crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
@@ -2108,6 +2208,7 @@ impl VolumeServer for VolumeGrpcService {
         let (data_shards, parity_shards) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &rebuild_dir,
+                &rebuild_idx_dir,
                 collection,
                 vid,
             );
@@ -2191,9 +2292,17 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        // Select target location matching Go's 3-tier fallback:
-        // When disk_id > 0: use that specific location
-        // When disk_id == 0 (unset): (1) location with existing EC shards, (2) any HDD, (3) any
+        // Select target location:
+        //   When disk_id > 0: use that specific location.
+        //   When disk_id == 0 (unset): auto-select via
+        //   find_ec_shard_target_location, which prefers a disk that
+        //   already has the EC volume mounted, then a disk that owns the
+        //   .ecx on disk (volume not yet mounted — relevant for
+        //   ec.rebuild, where only the first shard carries .ecx and
+        //   subsequent shards must land on the same disk; see #9212),
+        //   then any HDD, then any disk. Pass the build's default
+        //   data-shard count; the helper takes it as a parameter so
+        //   custom-ratio builds can swap it.
         let (dest_dir, dest_idx_dir) = {
             let store = self.state.store.read().unwrap();
             let count = store.locations.len();
@@ -2209,20 +2318,11 @@ impl VolumeServer for VolumeGrpcService {
                 let loc = &store.locations[req.disk_id as usize];
                 (loc.directory.clone(), loc.idx_directory.clone())
             } else {
-                // Auto-select: prefer location with existing EC shards for this volume
-                let loc_idx = store
-                    .find_free_location_predicate(|loc| loc.has_ec_volume(vid))
-                    .or_else(|| {
-                        // Fall back to any HDD location
-                        store.find_free_location_predicate(|loc| {
-                            loc.disk_type == DiskType::HardDrive
-                        })
-                    })
-                    .or_else(|| {
-                        // Fall back to any location
-                        store.find_free_location_predicate(|_| true)
-                    });
-                match loc_idx {
+                match store.find_ec_shard_target_location(
+                    &req.collection,
+                    vid,
+                    DATA_SHARDS_COUNT as u32,
+                ) {
                     Some(i) => {
                         let loc = &store.locations[i];
                         (loc.directory.clone(), loc.idx_directory.clone())
@@ -2510,12 +2610,19 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         let store = self.state.store.read().unwrap();
-        let ec_vol = store.find_ec_volume(vid).ok_or_else(|| {
-            Status::not_found(format!(
-                "ec volume {} shard {} not found",
-                req.volume_id, req.shard_id
-            ))
-        })?;
+        // Reconciled EC volumes can have their shards split across
+        // disks (e.g. shards 0/12 on disk 0, shard 1 on disk 1), so
+        // resolve the EcVolume from the *shard*'s home location
+        // rather than first-match `find_ec_volume(vid)` which would
+        // miss shards that live on a sibling. Mirrors Go's findEcShard.
+        let ec_vol = store
+            .find_ec_volume_with_shard(vid, req.shard_id)
+            .ok_or_else(|| {
+                Status::not_found(format!(
+                    "ec volume {} shard {} not found",
+                    req.volume_id, req.shard_id
+                ))
+            })?;
 
         // Check if the requested needle is deleted (via .ecx index, matching Go)
         if req.file_key > 0 {
@@ -2534,7 +2641,8 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // Read from the shard
+        // Read from the shard. Guaranteed to be present because
+        // find_ec_volume_with_shard already verified it.
         let shard = ec_vol
             .shards
             .get(req.shard_id as usize)
@@ -2624,8 +2732,13 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         let store = self.state.store.read().unwrap();
-        let ec_vol = store
-            .find_ec_volume(vid)
+        // Aggregate per-shard data dirs across all locations so the
+        // shard-presence check + decoder both see the union for
+        // cross-disk reconciled volumes (#9252). Mirrors Go's
+        // CollectEcShards.
+        let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
+        let (ec_vol, shard_dirs) = store
+            .collect_ec_shard_dirs(vid, max_shard_count)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
         if ec_vol.collection != req.collection {
@@ -2639,7 +2752,6 @@ impl VolumeServer for VolumeGrpcService {
         let data_shards = ec_vol.data_shards as usize;
 
         // Validate data shard count range (matches Go's VolumeEcShardsToVolume)
-        let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
         if data_shards == 0 || data_shards > max_shard_count {
             return Err(Status::invalid_argument(format!(
                 "invalid data shard count {} for volume {} (must be 1..{})",
@@ -2647,14 +2759,9 @@ impl VolumeServer for VolumeGrpcService {
             )));
         }
 
-        // Check that all data shards are present
+        // Check that all data shards are present somewhere on this server.
         for shard_id in 0..data_shards {
-            if ec_vol
-                .shards
-                .get(shard_id)
-                .map(|s| s.is_none())
-                .unwrap_or(true)
-            {
+            if shard_dirs[shard_id].is_none() {
                 return Err(Status::internal(format!(
                     "ec volume {} missing shard {}",
                     req.volume_id, shard_id
@@ -2686,29 +2793,46 @@ impl VolumeServer for VolumeGrpcService {
             )));
         }
 
-        // Reconstruct the volume from EC shards
-        let dir = ec_vol.dir.clone();
+        // Reconstruct the volume from EC shards. Use the EcVolume's
+        // own dir for the produced .dat (matches the volume's home
+        // disk) and its `ecx_actual_dir` for the .ecx lookup, while
+        // reading each shard from its real on-disk location.
+        let dat_dir = ec_vol.dir.clone();
+        let ecx_dir = ec_vol.ecx_actual_dir().to_string();
         let collection = ec_vol.collection.clone();
+        // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
+        // the check above; collect concrete dirs for the decoder.
+        let per_shard_dirs: Vec<String> = shard_dirs[..data_shards]
+            .iter()
+            .map(|d| d.clone().unwrap())
+            .collect();
         drop(store);
 
-        // Calculate .dat file size from .ecx entries
+        // Calculate .dat file size from .ecx entries (.ec00 lives on
+        // its own disk, .ecx on the index disk).
         let dat_file_size =
-            crate::storage::erasure_coding::ec_decoder::find_dat_file_size(&dir, &collection, vid)
-                .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
+            crate::storage::erasure_coding::ec_decoder::find_dat_file_size_with_dirs(
+                &per_shard_dirs[0],
+                &ecx_dir,
+                &collection,
+                vid,
+            )
+            .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
 
-        // Write .dat file using block-interleaved reading from shards
-        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards(
-            &dir,
+        // Write .dat file using block-interleaved reading from shards.
+        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards_with_dirs(
+            &dat_dir,
             &collection,
             vid,
             dat_file_size,
             data_shards,
+            &per_shard_dirs,
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 
-        // Write .idx file from .ecx and .ecj files
+        // Write .idx file from .ecx and .ecj files (lives on idx dir).
         crate::storage::erasure_coding::ec_decoder::write_idx_file_from_ec_index(
-            &dir,
+            &dat_dir,
             &collection,
             vid,
         )
@@ -3331,8 +3455,8 @@ impl VolumeServer for VolumeGrpcService {
 
         // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
         // Collect errors via errors.Join semantics (return joined error if any fail).
+        let mut errs: Vec<String> = Vec::new();
         if req.mark_broken_volumes_readonly {
-            let mut errs: Vec<String> = Vec::new();
             for vid in &broken_vids {
                 match self.make_volume_readonly(*vid, true).await {
                     Ok(()) => {
@@ -3344,9 +3468,14 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
             }
-            if !errs.is_empty() {
-                return Err(Status::internal(errs.join("\n")));
-            }
+        }
+
+        // Record metrics before the post-scrub error check so scrub failures are
+        // persisted even when a follow-up admin action (mark-readonly) fails.
+        emit_scrub_metrics(mode, broken_vids.len(), None);
+
+        if !errs.is_empty() {
+            return Err(Status::internal(errs.join("\n")));
         }
 
         Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
@@ -3416,9 +3545,15 @@ impl VolumeServer for VolumeGrpcService {
                     // LOCAL (2) / FULL (3): verify EC shard data
                     let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
 
-                    let dir = store
-                        .find_ec_dir(*vid, &collection)
-                        .unwrap_or_else(|| String::from(""));
+                    // After cross-disk reconciliation, an EcVolume can
+                    // legitimately have ecv.dir != ecv.dir_idx (shards
+                    // on one disk, .ecx / .ecj / .vif on a sibling).
+                    // Use the EcVolume's own dirs rather than collapsing
+                    // both args to find_ec_dir's single answer, otherwise
+                    // read_ec_shard_config falls back to the wrong .vif
+                    // location for split-disk volumes (#9252).
+                    let dir = ecv.dir.clone();
+                    let idx_dir = ecv.dir_idx.clone();
                     if dir.is_empty() {
                         continue;
                     }
@@ -3428,6 +3563,7 @@ impl VolumeServer for VolumeGrpcService {
                     let (data_shards, parity_shards) =
                         crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                             &dir,
+                            &idx_dir,
                             &collection,
                             *vid,
                         );
@@ -3464,6 +3600,12 @@ impl VolumeServer for VolumeGrpcService {
                 _ => unreachable!(), // validated above
             }
         }
+
+        emit_scrub_metrics(
+            mode,
+            broken_volume_ids.len(),
+            Some(broken_shard_infos.len()),
+        );
 
         Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
             total_volumes,
@@ -4047,11 +4189,12 @@ fn find_last_append_at_ns(idx_path: &str, dat_path: &str, version: u32) -> Optio
     let mut header = [0u8; 16];
     dat_file.read_exact(&mut header).ok()?;
     let needle_size = i32::from_be_bytes([header[12], header[13], header[14], header[15]]);
-    if needle_size <= 0 {
+    if needle_size < 0 {
         return None;
     }
 
     // Seek to tail: offset + 16 (header) + size -> checksum (4) + timestamp (8)
+    // For delete needles (size == 0), the tail is right after the header.
     let tail_offset = actual_offset as u64 + 16 + needle_size as u64;
     dat_file.seek(SeekFrom::Start(tail_offset)).ok()?;
 
@@ -4162,6 +4305,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
 
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -4223,6 +4367,7 @@ mod tests {
                 }));
 
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let _ = ready_tx.send(());
                 axum::serve(listener, app)
                     .with_graceful_shutdown(async move {
                         let _ = shutdown_rx.await;
@@ -4232,6 +4377,8 @@ mod tests {
             });
         });
 
+        // Wait for the server thread to be ready before returning.
+        ready_rx.recv().unwrap();
         (format!("http://{}", addr), shutdown_tx)
     }
 
@@ -4277,7 +4424,9 @@ mod tests {
         std::fs::remove_file(&dat_path).unwrap();
 
         let (endpoint, shutdown_tx) = spawn_fake_s3_server(dat_bytes.clone());
-        global_s3_tier_registry().write().unwrap().clear();
+        // Use a test-specific backend_id to avoid racing with other tests
+        // that share the global registry.  Never call clear() — only
+        // register/remove our own entries.
         let tier_config = S3TierConfig {
             access_key: "access".to_string(),
             secret_key: "secret".to_string(),
@@ -4289,14 +4438,16 @@ mod tests {
         };
         {
             let mut registry = global_s3_tier_registry().write().unwrap();
-            registry.register("s3.default".to_string(), S3TierBackend::new(&tier_config));
-            registry.register("s3".to_string(), S3TierBackend::new(&tier_config));
+            registry.register(
+                "s3.incr_copy_test".to_string(),
+                S3TierBackend::new(&tier_config),
+            );
         }
 
         let vif = crate::storage::volume::VifVolumeInfo {
             files: vec![crate::storage::volume::VifRemoteFile {
                 backend_type: "s3".to_string(),
-                backend_id: "default".to_string(),
+                backend_id: "incr_copy_test".to_string(),
                 key: "remote-key".to_string(),
                 offset: 0,
                 file_size: dat_bytes.len() as u64,
@@ -4505,7 +4656,10 @@ mod tests {
         assert_eq!(copied, dat_bytes[super_block_size as usize..]);
 
         let _ = shutdown_tx.send(());
-        global_s3_tier_registry().write().unwrap().clear();
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.incr_copy_test");
     }
 
     #[tokio::test]

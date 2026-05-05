@@ -35,7 +35,7 @@ type FilerPostResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.StorageOption, expectedDataSize uint64) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
@@ -44,6 +44,10 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 	}()
 
 	ar, altRequest := so.ToAssignRequests(1)
+	ar.ExpectedDataSize = expectedDataSize
+	if altRequest != nil {
+		altRequest.ExpectedDataSize = expectedDataSize
+	}
 
 	// Use a context that ignores cancellation from the request context
 	assignCtx := context.WithoutCancel(ctx)

@@ -1,9 +1,6 @@
 package tasks
 
 import (
-	"reflect"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -78,107 +75,5 @@ func (ui *BaseUIProvider) ApplyTaskConfig(config types.TaskConfig) error {
 	return ui.applyTaskConfigFunc(config)
 }
 
-// CommonConfigGetter provides a common pattern for getting current configuration
-type CommonConfigGetter[T any] struct {
-	defaultConfig T
-	detectorFunc  func() T
-	schedulerFunc func() T
-}
-
-// NewCommonConfigGetter creates a new common config getter
-func NewCommonConfigGetter[T any](
-	defaultConfig T,
-	detectorFunc func() T,
-	schedulerFunc func() T,
-) *CommonConfigGetter[T] {
-	return &CommonConfigGetter[T]{
-		defaultConfig: defaultConfig,
-		detectorFunc:  detectorFunc,
-		schedulerFunc: schedulerFunc,
-	}
-}
-
-// GetConfig returns the merged configuration
-func (cg *CommonConfigGetter[T]) GetConfig() T {
-	config := cg.defaultConfig
-
-	// Apply detector values if available
-	if cg.detectorFunc != nil {
-		detectorConfig := cg.detectorFunc()
-		mergeConfigs(&config, detectorConfig)
-	}
-
-	// Apply scheduler values if available
-	if cg.schedulerFunc != nil {
-		schedulerConfig := cg.schedulerFunc()
-		mergeConfigs(&config, schedulerConfig)
-	}
-
-	return config
-}
-
-// mergeConfigs merges non-zero values from source into dest
-func mergeConfigs[T any](dest *T, source T) {
-	destValue := reflect.ValueOf(dest).Elem()
-	sourceValue := reflect.ValueOf(source)
-
-	if destValue.Kind() != reflect.Struct || sourceValue.Kind() != reflect.Struct {
-		return
-	}
-
-	for i := 0; i < destValue.NumField(); i++ {
-		destField := destValue.Field(i)
-		sourceField := sourceValue.Field(i)
-
-		if !destField.CanSet() {
-			continue
-		}
-
-		// Only copy non-zero values
-		if !sourceField.IsZero() {
-			if destField.Type() == sourceField.Type() {
-				destField.Set(sourceField)
-			}
-		}
-	}
-}
-
 // RegisterUIFunc provides a common registration function signature
 type RegisterUIFunc[D, S any] func(uiRegistry *types.UIRegistry, detector D, scheduler S)
-
-// CommonRegisterUI provides a common registration implementation
-func CommonRegisterUI[D, S any](
-	taskType types.TaskType,
-	displayName string,
-	uiRegistry *types.UIRegistry,
-	detector D,
-	scheduler S,
-	schemaFunc func() *TaskConfigSchema,
-	configFunc func() types.TaskConfig,
-	applyTaskPolicyFunc func(policy *worker_pb.TaskPolicy) error,
-	applyTaskConfigFunc func(config types.TaskConfig) error,
-) {
-	// Get metadata from schema
-	schema := schemaFunc()
-	description := "Task configuration"
-	icon := "fas fa-cog"
-
-	if schema != nil {
-		description = schema.Description
-		icon = schema.Icon
-	}
-
-	uiProvider := NewBaseUIProvider(
-		taskType,
-		displayName,
-		description,
-		icon,
-		schemaFunc,
-		configFunc,
-		applyTaskPolicyFunc,
-		applyTaskConfigFunc,
-	)
-
-	uiRegistry.RegisterUI(uiProvider)
-	glog.V(1).Infof("Registered %s task UI provider", taskType)
-}

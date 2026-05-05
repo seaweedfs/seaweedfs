@@ -80,8 +80,12 @@ templ PluginLane(page string, lane string) {
         const lane = page.dataset.pluginLane || '';
         if (!lane) return;
 
+        function basePath(path) {
+            return (window.__BASE_PATH__ || '') + path;
+        }
+
         function fetchAndRender(url, containerId, renderFn) {
-            fetch(url)
+            fetch(basePath(url))
                 .then(r => r.json())
                 .then(data => {
                     const el = document.getElementById(containerId);
@@ -125,7 +129,7 @@ templ PluginLane(page string, lane string) {
             let html = '<table class="table table-sm table-hover mb-0"><thead><tr><th>Job Type</th><th>Enabled</th><th>Concurrency</th><th>Detection Interval</th><th>Status</th></tr></thead><tbody>';
             filtered.forEach(s => {
                 html += '<tr>';
-                html += '<td><a href="/plugin/configuration?job=' + s.job_type + '">' + s.job_type + '</a></td>';
+                html += '<td><a href="' + basePath('/plugin/configuration?job=' + s.job_type) + '">' + s.job_type + '</a></td>';
                 html += '<td>' + (s.enabled ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-secondary">No</span>') + '</td>';
                 html += '<td>' + (s.global_execution_concurrency || 1) + '</td>';
                 html += '<td>' + (s.detection_interval_seconds || '-') + 's</td>';

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
@@ -19,6 +21,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// ChunkTransferStatus tracks the progress of a single chunk being replicated.
+// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
+// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
+// read by ActiveTransfers.
+type ChunkTransferStatus struct {
+	mu            sync.RWMutex
+	ChunkFileId   string
+	Path          string
+	BytesReceived int64
+	Status        string // "downloading", "uploading", or "waiting 10s" etc.
+	LastErr       string
+}
 
 type FilerSink struct {
 	filerSource       *source.FilerSource
@@ -35,6 +50,8 @@ type FilerSink struct {
 	isIncremental     bool
 	executor          *util.LimitedConcurrentExecutor
 	signature         int32
+	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
+	uploader          *operation.Uploader
 }
 
 func init() {
@@ -73,6 +90,21 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 	fs.filerSource = s
 }
 
+// SetUploader sets a custom uploader for this sink, used when the target
+// cluster requires different TLS certificates than the global config.
+// Must be called during initialization, before any replication goroutines
+// start, since it writes fs.uploader without synchronization.
+func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
+	fs.uploader = uploader
+}
+
+func (fs *FilerSink) getUploader() (*operation.Uploader, error) {
+	if fs.uploader != nil {
+		return fs.uploader, nil
+	}
+	return operation.NewUploader()
+}
+
 func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
 	replication string, collection string, ttlSec int, diskType string, grpcDialOption grpc.DialOption, writeChunkByFiler bool) (err error) {
 	fs.address = address
@@ -99,6 +131,25 @@ func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
 	if concurrency > 0 {
 		fs.executor = util.NewLimitedConcurrentExecutor(concurrency)
 	}
+}
+
+// ActiveTransfers returns an immutable snapshot of all in-progress chunk transfers.
+func (fs *FilerSink) ActiveTransfers() []ChunkTransferStatus {
+	var transfers []ChunkTransferStatus
+	fs.activeTransfers.Range(func(key, value any) bool {
+		t := value.(*ChunkTransferStatus)
+		t.mu.RLock()
+		transfers = append(transfers, ChunkTransferStatus{
+			ChunkFileId:   t.ChunkFileId,
+			Path:          t.Path,
+			BytesReceived: t.BytesReceived,
+			Status:        t.Status,
+			LastErr:       t.LastErr,
+		})
+		t.mu.RUnlock()
+		return true
+	})
+	return transfers
 }
 
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {

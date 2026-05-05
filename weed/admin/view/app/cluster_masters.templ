@@ -110,7 +110,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 								for _, master := range data.Masters {
 									<tr>
 										<td>
-											<a href={ templ.SafeURL(fmt.Sprintf("http://%s", master.Address)) } target="_blank" class="text-decoration-none">
+											<a href={ templ.SafeURL(fmt.Sprintf("//%s", master.Address)) } target="_blank" class="text-decoration-none">
 												{ master.Address }
 												<i class="fas fa-external-link-alt ms-1 text-muted"></i>
 											</a>
@@ -219,7 +219,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 			'<div class="col-md-6">' +
 			'<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
 			'<div class="d-grid gap-2">' +
-			'<a href="http://' + address + '" target="_blank" class="btn btn-outline-primary">' +
+			'<a href="//' + address + '" target="_blank" class="btn btn-outline-primary">' +
 			'<i class="fas fa-external-link-alt me-1"></i>Open Master UI' +
 			'</a>' +
 			'</div>' +

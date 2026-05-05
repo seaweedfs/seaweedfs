@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/bits"
 	"net"
@@ -9,11 +10,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -21,12 +26,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
 	// Import task packages to trigger their auto-registration
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 type MiniOptions struct {
@@ -66,6 +71,123 @@ var (
 	MiniClusterCtx context.Context
 )
 
+// miniClientsState orchestrates graceful shutdown of admin/s3/webdav/worker on
+// weed mini Ctrl+C, BEFORE filer/volume/master tear down. It is rebuilt on
+// each runMini invocation so in-process test reruns see fresh state.
+//
+// The ctx chains from MiniClusterCtx so cancelling MiniClusterCtx (how tests
+// tear down the cluster) also triggers the client-shutdown path.
+//
+// Shutdown has two phases:
+//  1. preCancelFns run synchronously in registration order (worker disconnect,
+//     etc.) so downstream servers don't block on handlers that are about to
+//     close anyway.
+//  2. ctx is cancelled and the shutdown hook waits on wg for admin/s3/webdav
+//     goroutines (registered via onMiniClientsShutdown / trackMiniClient) to
+//     drain.
+type miniClientsState struct {
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	preCancelMu  sync.Mutex
+	preCancelFns []func()
+}
+
+var miniClients *miniClientsState
+
+// resetMiniClients installs a fresh client-shutdown state chained from
+// MiniClusterCtx. Called once at the top of runMini; any goroutines from a
+// prior invocation keep their old state via closure and are unaffected.
+func resetMiniClients() {
+	parent := context.Background()
+	if MiniClusterCtx != nil {
+		parent = MiniClusterCtx
+	}
+	s := &miniClientsState{}
+	s.ctx, s.cancel = context.WithCancel(parent)
+	miniClients = s
+}
+
+// onMiniClientsShutdown runs fn when mini shutdown is triggered, and tracks
+// it so the interrupt hook can wait for it to drain. No-op outside mini.
+func onMiniClientsShutdown(fn func()) {
+	s := miniClients
+	if s == nil {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		<-s.ctx.Done()
+		fn()
+	}()
+}
+
+// trackMiniClient registers an externally-managed goroutine (one that
+// observes miniClientsCtx() itself) so the interrupt hook waits for it.
+// The caller invokes the returned done func when the goroutine exits.
+func trackMiniClient() (done func()) {
+	s := miniClients
+	if s == nil {
+		return func() {}
+	}
+	s.wg.Add(1)
+	return s.wg.Done
+}
+
+// beforeMiniClientsShutdown registers fn to run synchronously BEFORE the
+// clients ctx is cancelled. Use for cleanup that must complete before
+// downstream servers (e.g., the admin worker-gRPC) start waiting on clients.
+func beforeMiniClientsShutdown(fn func()) {
+	s := miniClients
+	if s == nil {
+		return
+	}
+	s.preCancelMu.Lock()
+	defer s.preCancelMu.Unlock()
+	s.preCancelFns = append(s.preCancelFns, fn)
+}
+
+// miniClientsCtx returns the shutdown context for mini clients, or
+// context.Background() if not running inside weed mini.
+func miniClientsCtx() context.Context {
+	s := miniClients
+	if s == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
+// triggerMiniClientsShutdown runs preCancel fns synchronously, cancels the
+// clients ctx, and waits up to timeout for tracked goroutines to finish.
+// Called from the OnInterrupt hook.
+func triggerMiniClientsShutdown(timeout time.Duration) {
+	s := miniClients
+	if s == nil {
+		return
+	}
+	glog.V(0).Infof("Shutting down admin/s3/webdav ...")
+	s.preCancelMu.Lock()
+	fns := s.preCancelFns
+	s.preCancelFns = nil
+	s.preCancelMu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+	s.cancel()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		glog.V(0).Infof("admin/s3/webdav shut down")
+	case <-time.After(timeout):
+		glog.V(0).Infof("timed out waiting for admin/s3/webdav to shut down")
+	}
+}
+
 func init() {
 	cmdMini.Run = runMini // break init cycle
 }
@@ -94,6 +216,9 @@ Example Usage:
 	weed mini                   # Use current directory
 	weed mini -dir=/data        # Custom data directory
 	weed mini -dir=/data -master.port=9444  # Custom master port
+	weed mini -dir=/data -bucket=my-bucket             # Pre-create an S3 bucket on startup
+	weed mini -dir=/data -bucket=bucket1,bucket2       # Pre-create multiple S3 buckets
+	weed mini -dir=/data -tableBucket=iceberg-tables   # Pre-create an S3 Tables bucket
 
 After starting, you can access:
 - Master UI:       http://localhost:9333
@@ -126,6 +251,8 @@ var (
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
+	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -162,7 +289,7 @@ func initMiniMasterFlags() {
 	miniMasterOptions.garbageThreshold = cmdMini.Flag.Float64("master.garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	miniMasterOptions.metricsAddress = cmdMini.Flag.String("master.metrics.address", "", "Prometheus gateway address")
 	miniMasterOptions.metricsIntervalSec = cmdMini.Flag.Int("master.metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
-	miniMasterOptions.raftResumeState = cmdMini.Flag.Bool("master.resumeState", false, "resume previous state on start master server")
+	miniMasterOptions.raftResumeState = cmdMini.Flag.Bool("master.resumeState", true, "resume previous state on start master server")
 	miniMasterOptions.heartbeatInterval = cmdMini.Flag.Duration("master.heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	miniMasterOptions.electionTimeout = cmdMini.Flag.Duration("master.electionTimeout", 10*time.Second, "election timeout of master servers")
 	miniMasterOptions.raftHashicorp = cmdMini.Flag.Bool("master.raftHashicorp", false, "use hashicorp raft")
@@ -250,6 +377,8 @@ func initMiniS3Flags() {
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
 	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	miniS3Options.defaultFileMode = cmdMini.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
+	miniS3Options.cacheSizeMB = cmdMini.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
 	miniS3Options.debug = new(bool) // explicitly false
 	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
@@ -687,8 +816,11 @@ func applyConfigFileOptions(options map[string]string) {
 		if flag != nil {
 			// Only set if not already set (by command line)
 			if flag.Value.String() == flag.DefValue {
-				flag.Value.Set(value)
-				glog.V(2).Infof("Applied config file option: %s=%s", key, value)
+				if err := flag.Value.Set(value); err != nil {
+					glog.Warningf("Failed to apply config file option: %s=%s: %v", key, value, err)
+				} else {
+					glog.V(2).Infof("Applied config file option: %s=%s", key, value)
+				}
 			}
 		}
 	}
@@ -743,7 +875,7 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
-	*miniDataFolders = util.ResolvePath(*miniDataFolders)
+	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
@@ -768,6 +900,17 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
+	// applyConfigFileOptions above may have overwritten -dir from the
+	// mini.options file, so re-resolve it here alongside the other paths.
+	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
+	*miniOptions.cpuprofile = util.ResolvePath(*miniOptions.cpuprofile)
+	*miniOptions.memprofile = util.ResolvePath(*miniOptions.memprofile)
+	*miniS3Config = util.ResolvePath(*miniS3Config)
+	*miniIamConfig = util.ResolvePath(*miniIamConfig)
+	*miniMasterOptions.metaFolder = util.ResolvePath(*miniMasterOptions.metaFolder)
+	*miniAdminOptions.dataDir = util.ResolvePath(*miniAdminOptions.dataDir)
+	miniS3Options.resolvePaths()
+	miniWebDavOptions.resolvePaths()
 	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
 
 	// Determine bind IP
@@ -819,19 +962,23 @@ func runMini(cmd *Command, args []string) bool {
 	miniFilerOptions.disableHttp = miniDisableHttp
 	miniMasterOptions.disableHttp = miniDisableHttp
 
+	// Share the S3 static identity config file with the filer so its
+	// credential manager can also serve static users.
+	miniFilerOptions.s3ConfigFile = miniS3Config
+
 	filerAddress := string(pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc))
 	miniS3Options.filer = &filerAddress
 	miniWebDavOptions.filer = &filerAddress
 
 	// Register Unix socket paths for gRPC services so local inter-service
 	// communication goes through Unix sockets instead of TCP.
-	pb.RegisterLocalGrpcSocket(*miniMasterOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-master-grpc-%d.sock", *miniMasterOptions.portGrpc))
-	pb.RegisterLocalGrpcSocket(*miniOptions.v.portGrpc, fmt.Sprintf("/tmp/seaweedfs-volume-grpc-%d.sock", *miniOptions.v.portGrpc))
-	pb.RegisterLocalGrpcSocket(*miniFilerOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-filer-grpc-%d.sock", *miniFilerOptions.portGrpc))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniMasterOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-master-grpc-%d.sock", *miniMasterOptions.portGrpc))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniOptions.v.portGrpc, fmt.Sprintf("/tmp/seaweedfs-volume-grpc-%d.sock", *miniOptions.v.portGrpc))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniFilerOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-filer-grpc-%d.sock", *miniFilerOptions.portGrpc))
 	if *miniS3Options.portGrpc > 0 {
-		pb.RegisterLocalGrpcSocket(*miniS3Options.portGrpc, fmt.Sprintf("/tmp/seaweedfs-s3-grpc-%d.sock", *miniS3Options.portGrpc))
+		pb.RegisterLocalGrpcSocket(*miniIp, *miniS3Options.portGrpc, fmt.Sprintf("/tmp/seaweedfs-s3-grpc-%d.sock", *miniS3Options.portGrpc))
 	}
-	pb.RegisterLocalGrpcSocket(*miniAdminOptions.grpcPort, fmt.Sprintf("/tmp/seaweedfs-admin-grpc-%d.sock", *miniAdminOptions.grpcPort))
+	pb.RegisterLocalGrpcSocket(*miniIp, *miniAdminOptions.grpcPort, fmt.Sprintf("/tmp/seaweedfs-admin-grpc-%d.sock", *miniAdminOptions.grpcPort))
 
 	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
 
@@ -840,9 +987,13 @@ func runMini(cmd *Command, args []string) bool {
 	}
 
 	if *miniMasterOptions.metaFolder == "" {
-		*miniMasterOptions.metaFolder = *miniDataFolders
+		// -dir may be comma-separated (dir[,dir]...); the master expects a
+		// single directory, so default to the first entry. Both miniDataFolders
+		// and miniMasterOptions.metaFolder were already tilde-resolved at the
+		// top of runMini.
+		*miniMasterOptions.metaFolder = util.StringSplit(*miniDataFolders, ",")[0]
 	}
-	if err := util.TestFolderWritable(util.ResolvePath(*miniMasterOptions.metaFolder)); err != nil {
+	if err := util.TestFolderWritable(*miniMasterOptions.metaFolder); err != nil {
 		glog.Fatalf("Check Meta Folder (-dir=\"%s\") Writable: %s", *miniMasterOptions.metaFolder, err)
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
@@ -851,9 +1002,9 @@ func runMini(cmd *Command, args []string) bool {
 	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
 	if !isFlagPassed("master.volumeSizeLimitMB") {
 		// User didn't override, use auto-calculated value
-		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation
-		resolvedDataFolder := util.ResolvePath(util.StringSplit(*miniDataFolders, ",")[0])
-		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
+		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation.
+		// miniDataFolders was already tilde-resolved at the top of runMini.
+		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(util.StringSplit(*miniDataFolders, ",")[0])
 		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
 		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
 	} else {
@@ -863,6 +1014,21 @@ func runMini(cmd *Command, args []string) bool {
 
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
+	// Install a fresh clients-shutdown context (chained from MiniClusterCtx)
+	// before any service starts.
+	resetMiniClients()
+
+	// Master/volume/filer observe MiniClusterCtx so tests that cancel it
+	// tear those services down too. On Ctrl+C they rely on their own
+	// OnInterrupt hooks (see grace's LIFO ordering).
+	miniMasterOptions.shutdownCtx = MiniClusterCtx
+	miniOptions.v.shutdownCtx = MiniClusterCtx
+	miniFilerOptions.shutdownCtx = MiniClusterCtx
+	// Mini is a small/dev setup with short-lived RPCs; cap the filer's
+	// gRPC graceful-stop at 1s so Ctrl+C returns quickly instead of sitting
+	// on the default 10s waiting for background subscription streams.
+	miniFilerOptions.gracefulStopTimeout = 1 * time.Second
+
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready
 	allServicesReady := make(chan struct{})
@@ -871,11 +1037,36 @@ func runMini(cmd *Command, args []string) bool {
 	// Wait for all services to be fully running before printing welcome message
 	<-allServicesReady
 
+	// Register the clients-shutdown interrupt hook AFTER all services have
+	// registered theirs. Under grace's LIFO firing, this hook runs FIRST on
+	// Ctrl+C so admin/s3/webdav drain before filer/volume/master tear down.
+	grace.OnInterrupt(func() {
+		triggerMiniClientsShutdown(10 * time.Second)
+	})
+
+	// Create the requested bucket(s) (if any) before announcing readiness.
+	bucketSpec := *miniBucket
+	if bucketSpec == "" {
+		bucketSpec = os.Getenv("S3_BUCKET")
+	}
+	if err := ensureMiniBuckets(bucketSpec); err != nil {
+		glog.Warningf("failed to ensure buckets %q: %v", bucketSpec, err)
+	}
+	tableBucketSpec := *miniTableBucket
+	if tableBucketSpec == "" {
+		tableBucketSpec = os.Getenv("S3_TABLE_BUCKET")
+	}
+	if err := ensureMiniTableBuckets(tableBucketSpec); err != nil {
+		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
+	}
+
 	// Print welcome message after all services are running
 	printWelcomeMessage()
 
 	// Save configuration to file for persistence and documentation
-	saveMiniConfiguration(*miniDataFolders)
+	if err := saveMiniConfiguration(*miniDataFolders); err != nil {
+		glog.Warningf("failed to save mini configuration in %s: %v", *miniDataFolders, err)
+	}
 
 	if MiniClusterCtx != nil {
 		<-MiniClusterCtx.Done()
@@ -915,17 +1106,27 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	// Wait for filer to be ready
 	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
 
-	// Start S3 and WebDAV in parallel (both depend on filer)
+	// Start S3 and WebDAV in parallel (both depend on filer). Each observes
+	// miniClientsCtx so it shuts down first on Ctrl+C, tracked via
+	// trackMiniClient so runMini's interrupt hook can wait for them.
 	if *miniEnableS3 {
-		go startMiniService("S3", func() {
-			startS3Service()
-		}, *miniS3Options.port)
+		miniS3Options.shutdownCtx = miniClientsCtx()
+		done := trackMiniClient()
+		go func() {
+			defer done()
+			startMiniService("S3", startS3Service, *miniS3Options.port)
+		}()
 	}
 
 	if *miniEnableWebDAV {
-		go startMiniService("WebDAV", func() {
-			miniWebDavOptions.startWebDav()
-		}, *miniWebDavOptions.port)
+		miniWebDavOptions.shutdownCtx = miniClientsCtx()
+		done := trackMiniClient()
+		go func() {
+			defer done()
+			startMiniService("WebDAV", func() {
+				miniWebDavOptions.startWebDav()
+			}, *miniWebDavOptions.port)
+		}()
 	}
 
 	// Wait for services to be ready
@@ -993,12 +1194,8 @@ func startS3Service() {
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
-	var ctx context.Context
-	if MiniClusterCtx != nil {
-		ctx = MiniClusterCtx
-	} else {
-		ctx = context.Background()
-	}
+	// Admin shuts down when mini clients shutdown is triggered.
+	ctx := miniClientsCtx()
 
 	// Determine bind IP for health checks
 	bindIp := getBindIp()
@@ -1038,8 +1235,12 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		*miniAdminOptions.dataDir = filepath.Join(*miniDataFolders, "admin")
 	}
 
-	// Start admin server in background
+	// Start admin server in background. trackMiniClient lets the Ctrl+C
+	// handler wait for startAdminServer's graceful shutdown before filer/
+	// volume/master tear down.
+	done := trackMiniClient()
 	go func() {
+		defer done()
 		var icebergPort int
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
@@ -1183,13 +1384,13 @@ func startMiniWorker(workerDir string) {
 
 	// Metrics server is already started in the main init function above, so no need to start it again here
 
-	// Start the worker
-	if MiniClusterCtx != nil {
-		go func() {
-			<-MiniClusterCtx.Done()
-			workerInstance.Stop()
-		}()
-	}
+	// Stop the worker BEFORE the clients ctx is cancelled. Otherwise admin's
+	// internal worker gRPC GracefulStop (called during admin.Shutdown) would
+	// wait for the worker stream to close, blocking the whole mini shutdown
+	// by ~10s and cascading into filer's own gRPC graceful stop timeout.
+	beforeMiniClientsShutdown(func() {
+		workerInstance.Stop()
+	})
 	err = workerInstance.Start()
 	if err != nil {
 		glog.Fatalf("Failed to start worker: %v", err)
@@ -1212,7 +1413,7 @@ func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
-	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency), workerDir)
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(vacuum.DefaultMaxExecutionConcurrency), workerDir)
 	if err != nil {
 		glog.Fatalf("Failed to build mini plugin worker handlers: %v", err)
 	}
@@ -1230,7 +1431,7 @@ func startMiniPluginWorker(ctx context.Context, workerDir string) {
 		HeartbeatInterval:       15 * time.Second,
 		ReconnectDelay:          5 * time.Second,
 		MaxDetectionConcurrency: 1,
-		MaxExecutionConcurrency: int(pluginworker.DefaultMaxExecutionConcurrency),
+		MaxExecutionConcurrency: int(vacuum.DefaultMaxExecutionConcurrency),
 		GrpcDialOption:          grpcDialOption,
 		Handlers:                handlers,
 	})
@@ -1322,4 +1523,112 @@ func printWelcomeMessage() {
 
 	fmt.Print(sb.String())
 	fmt.Println("")
+}
+
+// ensureMiniBuckets creates each named bucket on the embedded filer if it does
+// not already exist. bucketSpec is a comma-separated list (whitespace around
+// each name is trimmed); empty entries and an empty spec are no-ops so callers
+// who do not pass -bucket pay nothing. Per-bucket failures are logged and the
+// loop continues so a single bad name does not block creating the rest.
+func ensureMiniBuckets(bucketSpec string) error {
+	names := parseBucketList(bucketSpec)
+	if len(names) == 0 {
+		return nil
+	}
+
+	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	const bucketsPath = "/buckets"
+	// Derive from miniClientsCtx so Ctrl+C cancels the bucket RPCs, and bound
+	// with a short timeout (per bucket) so a stalled filer cannot block the
+	// welcome message indefinitely.
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		for _, name := range names {
+			if err := s3bucket.VerifyS3BucketName(name); err != nil {
+				glog.Warningf("invalid bucket name %q: %v", name, err)
+				continue
+			}
+			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+			_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: bucketsPath,
+				Name:      name,
+			})
+			if err == nil {
+				glog.V(0).Infof("bucket %s already exists", name)
+				cancel()
+				continue
+			}
+			if !errors.Is(err, filer_pb.ErrNotFound) {
+				glog.Warningf("lookup bucket %s: %v", name, err)
+				cancel()
+				continue
+			}
+			if err := filer_pb.DoMkdir(ctx, client, bucketsPath, name, nil); err != nil {
+				glog.Warningf("create bucket %s: %v", name, err)
+				cancel()
+				continue
+			}
+			cancel()
+			glog.V(0).Infof("created bucket %s", name)
+		}
+		return nil
+	})
+}
+
+// ensureMiniTableBuckets creates each named S3 Tables bucket on the embedded
+// filer if it does not already exist. bucketSpec is comma-separated; whitespace
+// is trimmed and duplicates are dropped. Per-bucket failures are logged so one
+// bad name does not block the rest. Buckets are owned by s3tables.DefaultAccountID
+// since mini does not yet model multi-account ownership.
+func ensureMiniTableBuckets(bucketSpec string) error {
+	names := parseBucketList(bucketSpec)
+	if len(names) == 0 {
+		return nil
+	}
+
+	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		manager := s3tables.NewManager()
+		mgrClient := s3tables.NewManagerClient(client)
+		for _, name := range names {
+			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+			req := &s3tables.CreateTableBucketRequest{Name: name}
+			var resp s3tables.CreateTableBucketResponse
+			err := manager.Execute(ctx, mgrClient, "CreateTableBucket", req, &resp, s3tables.DefaultAccountID)
+			cancel()
+			if err == nil {
+				glog.V(0).Infof("created table bucket %s", name)
+				continue
+			}
+			var s3Err *s3tables.S3TablesError
+			if errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeBucketAlreadyExists {
+				glog.V(0).Infof("table bucket %s already exists", name)
+				continue
+			}
+			glog.Warningf("create table bucket %s: %v", name, err)
+		}
+		return nil
+	})
+}
+
+// parseBucketList splits a comma-separated bucket spec into a deduplicated list
+// of trimmed, non-empty names, preserving the order they were given.
+func parseBucketList(spec string) []string {
+	if spec == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var names []string
+	for _, raw := range strings.Split(spec, ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
 }

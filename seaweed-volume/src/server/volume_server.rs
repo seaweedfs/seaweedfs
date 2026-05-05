@@ -134,6 +134,38 @@ pub fn normalize_outgoing_http_url(scheme: &str, raw_target: &str) -> Result<Str
     Ok(format!("{}://{}", scheme, raw_target))
 }
 
+/// Convert a SeaweedFS server address to its HTTP `host:port` form.
+///
+/// Mirrors Go's `pb.ServerAddress.ToHttpAddress()`: SeaweedFS encodes a
+/// server's gRPC port by appending `.grpcPort` to the HTTP port (e.g.
+/// `host:9333.19333`). For HTTP requests we want only the HTTP `host:port`.
+/// - `host:port.grpcPort` -> `host:port`
+/// - `host:port` -> `host:port` (unchanged)
+/// - Anything that does not look like `host:port[.grpcPort]` is returned unchanged.
+///
+/// Returns a `Cow<str>` so the common (no-suffix) case borrows from `addr`
+/// without allocating; only the rewrite branch produces a new `String`.
+pub fn to_http_address(addr: &str) -> std::borrow::Cow<'_, str> {
+    let Some(ports_sep_index) = addr.rfind(':') else {
+        return std::borrow::Cow::Borrowed(addr);
+    };
+    let ports = &addr[ports_sep_index + 1..];
+    if let Some(dot_idx) = ports.rfind('.') {
+        let http_port = &ports[..dot_idx];
+        let grpc_port = &ports[dot_idx + 1..];
+        // Only strip the suffix when both parts parse as real ports — leave
+        // anything else (e.g. "host:abc.def") untouched so bad config surfaces
+        // rather than being silently rewritten. Mirrors the validation already
+        // done in `to_grpc_address` for the inverse direction.
+        if let (Ok(_), Ok(_)) = (http_port.parse::<u16>(), grpc_port.parse::<u16>()) {
+            return std::borrow::Cow::Owned(
+                addr[..ports_sep_index + 1 + dot_idx].to_string(),
+            );
+        }
+    }
+    std::borrow::Cow::Borrowed(addr)
+}
+
 fn request_remote_addr(request: &Request) -> Option<SocketAddr> {
     request
         .extensions()
@@ -391,4 +423,79 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
         .fallback(public_store_handler)
         .layer(middleware::from_fn(common_headers_middleware))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_http_address_strips_grpc_port_suffix() {
+        assert_eq!(to_http_address("10.0.0.1:9333.19333"), "10.0.0.1:9333");
+        assert_eq!(
+            to_http_address("master.local:9333.19333"),
+            "master.local:9333"
+        );
+        assert_eq!(to_http_address("10.85.183.6:5300.6300"), "10.85.183.6:5300");
+    }
+
+    #[test]
+    fn test_to_http_address_passthrough_without_grpc_suffix() {
+        assert_eq!(to_http_address("10.0.0.1:9333"), "10.0.0.1:9333");
+        assert_eq!(to_http_address("master.local:9333"), "master.local:9333");
+    }
+
+    #[test]
+    fn test_to_http_address_returns_input_when_unparseable() {
+        assert_eq!(to_http_address(""), "");
+        assert_eq!(to_http_address("no-port"), "no-port");
+        // Trailing colon: nothing after the separator, treat as unparseable.
+        assert_eq!(to_http_address("host:"), "host:");
+    }
+
+    #[test]
+    fn test_to_http_address_borrows_when_unchanged_and_owns_when_stripped() {
+        // The common case (no suffix) must not allocate.
+        let result = to_http_address("10.0.0.1:9333");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+        // Stripping requires a new string.
+        let result = to_http_address("10.0.0.1:9333.19333");
+        assert!(matches!(result, std::borrow::Cow::Owned(_)));
+        assert_eq!(result, "10.0.0.1:9333");
+        // Unparseable / passthrough also borrows.
+        let result = to_http_address("host:abc.def");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_to_http_address_keeps_non_numeric_dotted_suffix() {
+        // The dotted form is only valid when both sides are real port numbers.
+        // Otherwise the address is malformed config (e.g. a hostname like
+        // "host:abc.def"), and silently rewriting it would just hide the bug.
+        assert_eq!(to_http_address("host:abc.def"), "host:abc.def");
+        assert_eq!(to_http_address("host:9333.notaport"), "host:9333.notaport");
+        assert_eq!(to_http_address("host:notaport.19333"), "host:notaport.19333");
+        // Out-of-range ports must not be silently truncated either.
+        assert_eq!(to_http_address("host:99999.19333"), "host:99999.19333");
+    }
+
+    #[test]
+    fn test_to_http_address_handles_bracketed_ipv6_literals() {
+        // The function uses `rfind(':')`, so for bracketed IPv6 the port
+        // separator is correctly identified as the colon AFTER the closing
+        // bracket — making IPv4 and IPv6 behave the same.
+        assert_eq!(to_http_address("[::1]:9333.19333"), "[::1]:9333");
+        assert_eq!(
+            to_http_address("[2001:db8::10]:5300.6300"),
+            "[2001:db8::10]:5300"
+        );
+        // Plain bracketed IPv6 without a dotted suffix is borrowed unchanged.
+        let result = to_http_address("[2001:db8::1]:9333");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(result, "[2001:db8::1]:9333");
+        // Non-numeric / out-of-range / missing suffix all preserve the input.
+        assert_eq!(to_http_address("[::1]:"), "[::1]:");
+        assert_eq!(to_http_address("[::1]:abc.def"), "[::1]:abc.def");
+        assert_eq!(to_http_address("[::1]:99999.19333"), "[::1]:99999.19333");
+    }
 }

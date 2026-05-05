@@ -3,6 +3,7 @@ package iamapi
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -184,6 +185,77 @@ func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
 		}
 	}
 	assert.True(t, deleteObjectFound, "s3:DeleteObject action was lost")
+}
+
+// TestPutGetUserPolicyIssue9008 is a regression test for
+// https://github.com/seaweedfs/seaweedfs/issues/9008: put-user-policy followed
+// by get-user-policy must return the same policy document that was submitted,
+// with Action and Resource lists intact (no duplication, no collapsing).
+func TestPutGetUserPolicyIssue9008(t *testing.T) {
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	policyJSON := `{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"]
+    }]
+  }`
+
+	mockCfg := &mockIamS3ApiConfig{}
+	iama := &IamApiServer{s3ApiConfig: mockCfg}
+	_, iamErr := iama.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"steward_policy"},
+		"PolicyDocument": []string{policyJSON},
+	})
+	assert.Nil(t, iamErr)
+
+	// Part 1: verbatim round-trip. GetUserPolicy returns the exact document
+	// that was persisted, with Action and Resource lists intact.
+	resp, iamErr := iama.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	assert.Equal(t, "2012-10-17", got.Version)
+	assert.Equal(t, 1, len(got.Statement))
+	stmt := got.Statement[0]
+	assert.Equal(t, policy_engine.PolicyEffectAllow, stmt.Effect)
+	assert.ElementsMatch(t, []string{"s3:GetObject", "s3:PutObject", "s3:ListBucket"}, stmt.Action.Strings())
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+
+	// Part 2: fallback reconstruction. Clear the persisted inline policy so
+	// GetUserPolicy must rebuild the document from ident.Actions. The fallback
+	// is lossy (distinct S3 verbs collapse to wildcards like s3:Get*), but it
+	// must not duplicate actions nor conflate bucket-level and object-level
+	// resources.
+	mockCfg.policies = Policies{}
+
+	resp, iamErr = iama.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var fallback policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &fallback))
+	assert.Equal(t, 1, len(fallback.Statement), "fallback should merge equal-action statements")
+	fstmt := fallback.Statement[0]
+
+	// Each coarse verb appears exactly once (no duplication from the
+	// Read/Write/List -> s3:Get*/s3:Put*/s3:List* expansion).
+	assert.ElementsMatch(t, []string{"s3:Get*", "s3:Put*", "s3:List*"}, fstmt.Action.Strings())
+
+	// Bucket-level and object-level resources stay distinct — the bare bucket
+	// pattern must not be rewritten to an object ARN.
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, fstmt.Resource.Strings())
 }
 
 func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
@@ -557,4 +629,267 @@ func TestListAttachedUserPolicies(t *testing.T) {
 	_, iamErr = iama.ListAttachedUserPolicies(s3cfg, values)
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+func TestCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	values := url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"myappkey"},
+		"SecretAccessKey": []string{"mysecret1234"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "myappkey", *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.Equal(t, "mysecret1234", *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Equal(t, "alice", *resp.CreateAccessKeyResult.AccessKey.UserName)
+	assert.Equal(t, "myappkey", s3cfg.Identities[0].Credentials[0].AccessKey)
+	assert.Equal(t, "mysecret1234", s3cfg.Identities[0].Credentials[0].SecretKey)
+}
+
+func TestCreateAccessKeyRandomGeneration(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	values := url.Values{
+		"UserName": []string{"alice"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.NotEmpty(t, *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.NotEmpty(t, *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Len(t, s3cfg.Identities[0].Credentials, 1)
+}
+
+func TestCreateAccessKeyRejectsWeakKeys(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	// Too short
+	values := url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"ab"},
+		"SecretAccessKey": []string{"validsecret1"},
+	}
+	_, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// Short secret
+	values = url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"validkey"},
+		"SecretAccessKey": []string{"short"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// SigV4 delimiters
+	values = url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"foo/bar=baz"},
+		"SecretAccessKey": []string{"validsecret1"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+}
+
+func TestCreateAccessKeyRejectsCollision(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	// Use a distinctive owner name ("ownerAlpha") that shares no substring
+	// with the expected error message so the leak assertion is meaningful.
+	const ownerName = "ownerAlpha"
+
+	t.Run("identity credential", func(t *testing.T) {
+		s3cfg := &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{
+					Name: ownerName,
+					Credentials: []*iam_pb.Credential{
+						{AccessKey: "takenkey", SecretKey: "existingsecret"},
+					},
+				},
+				{Name: "newuser"},
+			},
+		}
+		values := url.Values{
+			"UserName":        []string{"newuser"},
+			"AccessKeyId":     []string{"takenkey"},
+			"SecretAccessKey": []string{"newsecret123"},
+		}
+		_, iamErr := iama.CreateAccessKey(s3cfg, values)
+		assert.NotNil(t, iamErr)
+		assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
+		assert.NotContains(t, iamErr.Error.Error(), ownerName, "should not leak owner name")
+		assert.Len(t, s3cfg.Identities[1].Credentials, 0)
+	})
+
+	t.Run("service account credential", func(t *testing.T) {
+		const saId = "svcAlpha"
+		s3cfg := &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{Name: "newuser"},
+			},
+			ServiceAccounts: []*iam_pb.ServiceAccount{
+				{
+					Id:         saId,
+					Credential: &iam_pb.Credential{AccessKey: "takenkey", SecretKey: "existingsecret"},
+				},
+			},
+		}
+		values := url.Values{
+			"UserName":        []string{"newuser"},
+			"AccessKeyId":     []string{"takenkey"},
+			"SecretAccessKey": []string{"newsecret123"},
+		}
+		_, iamErr := iama.CreateAccessKey(s3cfg, values)
+		assert.NotNil(t, iamErr)
+		assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
+		assert.NotContains(t, iamErr.Error.Error(), saId, "should not leak owner id")
+		// The service account's existing credential must be untouched, and
+		// no new credential should be attached to the identity.
+		assert.Equal(t, "takenkey", s3cfg.ServiceAccounts[0].Credential.AccessKey)
+		assert.Equal(t, "existingsecret", s3cfg.ServiceAccounts[0].Credential.SecretKey)
+		assert.Len(t, s3cfg.Identities[0].Credentials, 0)
+	})
+}
+
+func TestCreateAccessKeyBoundary(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	// Exactly 4 chars - should pass
+	values := url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"abcd"},
+		"SecretAccessKey": []string{"secretkey123"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "abcd", *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+
+	// Exactly 3 chars - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"abc"},
+		"SecretAccessKey": []string{"secretkey123"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// Exactly 128 chars - should pass
+	s3cfg.Identities[0].Credentials = nil
+	ak128 := strings.Repeat("a", 128)
+	sk128 := strings.Repeat("s", 128)
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{ak128},
+		"SecretAccessKey": []string{sk128},
+	}
+	resp, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, ak128, *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.Equal(t, sk128, *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+
+	// 129 chars AccessKeyId - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{strings.Repeat("a", 129)},
+		"SecretAccessKey": []string{sk128},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// 7-char SecretAccessKey - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
+		"SecretAccessKey": []string{"1234567"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// Exactly 8-char SecretAccessKey - should pass (lower boundary)
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
+		"SecretAccessKey": []string{"12345678"},
+	}
+	resp, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "12345678", *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+
+	// 129-char SecretAccessKey - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
+		"SecretAccessKey": []string{strings.Repeat("s", 129)},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+}
+
+func TestCreateAccessKeyRejectsPartialSupply(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	// AccessKeyId supplied, SecretAccessKey omitted
+	values := url.Values{
+		"UserName":    []string{"alice"},
+		"AccessKeyId": []string{"myappkey"},
+	}
+	_, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+	assert.Len(t, s3cfg.Identities[0].Credentials, 0)
+
+	// SecretAccessKey supplied, AccessKeyId omitted
+	values = url.Values{
+		"UserName":        []string{"alice"},
+		"SecretAccessKey": []string{"secretkey123"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+	assert.Len(t, s3cfg.Identities[0].Credentials, 0)
+
+	// Partial supply wins over collision: only AccessKeyId supplied, and
+	// it matches an existing credential. We must see InvalidInput, not
+	// EntityAlreadyExists — the both-or-none rule is more fundamental.
+	s3cfg = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "ownerAlpha",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "takenkey", SecretKey: "s"},
+				},
+			},
+			{Name: "alice"},
+		},
+	}
+	values = url.Values{
+		"UserName":    []string{"alice"},
+		"AccessKeyId": []string{"takenkey"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
 }

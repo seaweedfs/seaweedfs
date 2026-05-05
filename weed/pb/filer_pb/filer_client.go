@@ -93,11 +93,6 @@ func List(ctx context.Context, filerClient FilerClient, parentDirectoryPath, pre
 	})
 }
 
-func doList(ctx context.Context, filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction, startFrom string, inclusive bool, limit uint32) (err error) {
-	_, err = doListWithSnapshot(ctx, filerClient, fullDirPath, prefix, fn, startFrom, inclusive, limit, 0)
-	return err
-}
-
 func doListWithSnapshot(ctx context.Context, filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction, startFrom string, inclusive bool, limit uint32, snapshotTsNs int64) (actualSnapshotTsNs int64, err error) {
 	err = filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
 		actualSnapshotTsNs, err = DoSeaweedListWithSnapshot(ctx, client, fullDirPath, prefix, fn, startFrom, inclusive, limit, snapshotTsNs)
@@ -210,26 +205,6 @@ func Exists(ctx context.Context, filerClient FilerClient, parentDirectoryPath st
 	})
 
 	return
-}
-
-func Touch(ctx context.Context, filerClient FilerClient, parentDirectoryPath string, entryName string, entry *Entry) (err error) {
-
-	return filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
-
-		request := &UpdateEntryRequest{
-			Directory: parentDirectoryPath,
-			Entry:     entry,
-		}
-
-		glog.V(4).InfofCtx(ctx, "touch entry %v/%v: %v", parentDirectoryPath, entryName, request)
-		if err := UpdateEntry(ctx, client, request); err != nil {
-			glog.V(0).InfofCtx(ctx, "touch exists entry %v: %v", request, err)
-			return fmt.Errorf("touch exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
-		}
-
-		return nil
-	})
-
 }
 
 func Mkdir(ctx context.Context, filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
@@ -347,61 +322,5 @@ func DoRemoveWithResponse(ctx context.Context, client SeaweedFilerClient, parent
 			return nil, errors.New(resp.Error)
 		}
 		return resp, nil
-	}
-}
-
-// DoDeleteEmptyParentDirectories recursively deletes empty parent directories.
-// It stops at root "/" or at stopAtPath.
-// For safety, dirPath must be under stopAtPath (when stopAtPath is provided).
-// The checked map tracks already-processed directories to avoid redundant work in batch operations.
-func DoDeleteEmptyParentDirectories(ctx context.Context, client SeaweedFilerClient, dirPath util.FullPath, stopAtPath util.FullPath, checked map[string]bool) {
-	if dirPath == "/" || dirPath == stopAtPath {
-		return
-	}
-
-	// Skip if already checked (for batch delete optimization)
-	dirPathStr := string(dirPath)
-	if checked != nil {
-		if checked[dirPathStr] {
-			return
-		}
-		checked[dirPathStr] = true
-	}
-
-	// Safety check: if stopAtPath is provided, dirPath must be under it (root "/" allows everything)
-	stopStr := string(stopAtPath)
-	if stopAtPath != "" && stopStr != "/" && !strings.HasPrefix(dirPathStr+"/", stopStr+"/") {
-		glog.V(1).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: %s is not under %s, skipping", dirPath, stopAtPath)
-		return
-	}
-
-	// Check if directory is empty by listing with limit 1
-	isEmpty := true
-	err := SeaweedList(ctx, client, dirPathStr, "", func(entry *Entry, isLast bool) error {
-		isEmpty = false
-		return io.EOF // Use sentinel error to explicitly stop iteration
-	}, "", false, 1)
-
-	if err != nil && err != io.EOF {
-		glog.V(3).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: error checking %s: %v", dirPath, err)
-		return
-	}
-
-	if !isEmpty {
-		// Directory is not empty, stop checking upward
-		glog.V(3).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: directory %s is not empty, stopping cleanup", dirPath)
-		return
-	}
-
-	// Directory is empty, try to delete it
-	glog.V(2).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
-	parentDir, dirName := dirPath.DirAndName()
-
-	if err := DoRemove(ctx, client, parentDir, dirName, false, false, false, false, nil); err == nil {
-		// Successfully deleted, continue checking upwards
-		DoDeleteEmptyParentDirectories(ctx, client, util.FullPath(parentDir), stopAtPath, checked)
-	} else {
-		// Failed to delete, stop cleanup
-		glog.V(3).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: failed to delete %s: %v", dirPath, err)
 	}
 }

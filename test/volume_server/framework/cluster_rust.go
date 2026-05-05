@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 )
 
@@ -79,15 +80,12 @@ func StartRustVolumeCluster(t testing.TB, profile matrix.Profile) *RustCluster {
 		t.Fatalf("write security config: %v", err)
 	}
 
-	masterPort, masterGrpcPort, err := allocateMasterPortPair()
-	if err != nil {
-		t.Fatalf("allocate master port pair: %v", err)
-	}
-
-	ports, err := allocatePorts(3)
+	miniPorts, ports, err := testutil.AllocatePortSet(1, 3)
 	if err != nil {
 		t.Fatalf("allocate ports: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	rc := &RustCluster{
 		testingTB:        t,

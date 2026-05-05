@@ -122,6 +122,7 @@ type Plugin struct {
 type streamSession struct {
 	workerID  string
 	outgoing  chan *plugin_pb.AdminToWorkerMessage
+	done      chan struct{}
 	closeOnce sync.Once
 }
 
@@ -274,6 +275,7 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 	session := &streamSession{
 		workerID: workerID,
 		outgoing: make(chan *plugin_pb.AdminToWorkerMessage, r.outgoingBuffer),
+		done:     make(chan struct{}),
 	}
 	r.putSession(session)
 	defer r.cleanupSession(workerID)
@@ -908,8 +910,10 @@ func (r *Plugin) sendLoop(
 			return nil
 		case <-r.shutdownCh:
 			return nil
-		case msg, ok := <-session.outgoing:
-			if !ok {
+		case <-session.done:
+			return nil
+		case msg := <-session.outgoing:
+			if msg == nil {
 				return nil
 			}
 			if err := stream.Send(msg); err != nil {
@@ -930,6 +934,8 @@ func (r *Plugin) sendToWorker(workerID string, message *plugin_pb.AdminToWorkerM
 	select {
 	case <-r.shutdownCh:
 		return fmt.Errorf("plugin is shutting down")
+	case <-session.done:
+		return fmt.Errorf("worker %s session is closed", workerID)
 	case session.outgoing <- message:
 		return nil
 	case <-time.After(r.sendTimeout):
@@ -1038,6 +1044,7 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 			RetryLimit:                    defaults.RetryLimit,
 			RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
 			JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
+			ExecutionTimeoutSeconds:       defaults.ExecutionTimeoutSeconds,
 		}
 	}
 
@@ -1425,7 +1432,7 @@ func CloneConfigValueMap(in map[string]*plugin_pb.ConfigValue) map[string]*plugi
 
 func (s *streamSession) close() {
 	s.closeOnce.Do(func() {
-		close(s.outgoing)
+		close(s.done)
 	})
 }
 

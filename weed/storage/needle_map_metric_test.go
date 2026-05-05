@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -21,7 +22,7 @@ func TestFastLoadingNeedleMapMetrics(t *testing.T) {
 		}
 	}
 
-	mm, _ := newNeedleMapMetricFromIndexFile(idxFile)
+	mm, _ := newNeedleMapMetricFromIndexFile(idxFile, needle.GetCurrentVersion())
 
 	glog.V(0).Infof("FileCount expected %d actual %d", nm.FileCount(), mm.FileCount())
 	glog.V(0).Infof("DeletedSize expected %d actual %d", nm.DeletedSize(), mm.DeletedSize())

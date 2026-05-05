@@ -26,21 +26,12 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
-	newEntry := &filer_pb.Entry{
-		Name:        name,
-		IsDirectory: true,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    time.Now().Unix(),
-			Crtime:   time.Now().Unix(),
-			FileMode: uint32(os.ModeDir) | in.Mode&^uint32(wfs.option.Umask),
-			Uid:      in.Uid,
-			Gid:      in.Gid,
-		},
-	}
+	now := time.Now().Unix()
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
 	if code != fuse.OK {
@@ -49,14 +40,38 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 	entryFullPath := dirFullPath.Child(name)
 
+	// Pre-allocate the mount's local inode and stamp it into the create
+	// request so both the mount and the filer agree on object identity from
+	// the start. Without this, the filer assigns its own inode in CreateEntry
+	// and the cached entry then reports a different value than the one we
+	// return to the kernel here.
+	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
+	newEntry := &filer_pb.Entry{
+		Name:        name,
+		IsDirectory: true,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now,
+			Crtime:   now,
+			Ctime:    now,
+			FileMode: uint32(os.ModeDir) | in.Mode,
+			Uid:      in.Uid,
+			Gid:      in.Gid,
+			Inode:    inode,
+		},
+	}
+
 	wfs.mapPbIdFromLocalToFiler(newEntry)
 	// Defer restoring to local uid/gid AFTER the entry is sent to the filer
 	// but BEFORE outputPbEntry writes attributes to the kernel.  We restore
 	// explicitly below instead of using defer so the kernel gets local values.
 
-
 	request := &filer_pb.CreateEntryRequest{
-		Directory:                string(dirFullPath),
+		// Defensive: dirFullPath is clean by construction for mount-originated
+		// mutations, but could carry invalid-UTF-8 bytes if metaCache was
+		// populated from a non-gRPC source (direct store write, legacy import).
+		// Sanitizing here keeps the marshal strictly per-request on the off
+		// chance invalid bytes do reach us.
+		Directory:                dirFullPath.Sanitized(),
 		Entry:                    newEntry,
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
@@ -76,6 +91,8 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtimeBest(dirFullPath)
+		wfs.inodeToPath.AdjustSubdirCount(dirFullPath, 1)
 	}
 
 	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
@@ -90,7 +107,12 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	// for subsequent permission checks on children.
 	wfs.mapPbIdFromFilerToLocal(newEntry)
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
+	inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, inode, true)
+
+	// The newly created directory is guaranteed to be empty, so mark it as
+	// cached immediately to avoid a needless filer round-trip on the first
+	// Lookup or ReadDir inside this directory.
+	wfs.inodeToPath.MarkChildrenCached(entryFullPath)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 
@@ -108,11 +130,25 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		return fuse.Status(syscall.ENOTEMPTY)
 	}
 
+	// Sanitize before it reaches DeleteEntryRequest.Name; see sanitizeFuseName.
+	name = sanitizeFuseName(name)
+
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
 		return
 	}
 	entryFullPath := dirFullPath.Child(name)
+
+	// POSIX: enforce sticky bit on the parent directory.
+	if dirEntry, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if targetEntry, targetCode := wfs.maybeLoadEntry(entryFullPath); targetCode == fuse.OK && targetEntry != nil && targetEntry.Attributes != nil {
+			targetUid = targetEntry.Attributes.Uid
+		}
+		if code := checkStickyBit(dirEntry.Attributes.FileMode, dirEntry.Attributes.Uid, targetUid, header.Uid); code != fuse.OK {
+			return code
+		}
+	}
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
 	deleteReq := &filer_pb.DeleteEntryRequest{
@@ -141,6 +177,8 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
+	wfs.touchDirMtimeCtimeBest(dirFullPath)
+	wfs.inodeToPath.AdjustSubdirCount(dirFullPath, -1)
 
 	return fuse.OK
 

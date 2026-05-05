@@ -11,7 +11,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -38,13 +37,6 @@ func newCapacityReservations() *CapacityReservations {
 		reservations:   make(map[string]*CapacityReservation),
 		reservedCounts: make(map[types.DiskType]int64),
 	}
-}
-
-func (cr *CapacityReservations) addReservation(diskType types.DiskType, count int64) string {
-	cr.Lock()
-	defer cr.Unlock()
-
-	return cr.doAddReservation(diskType, count)
 }
 
 func (cr *CapacityReservations) removeReservation(reservationId string) bool {
@@ -152,12 +144,16 @@ type Node interface {
 }
 
 type NodeImpl struct {
-	diskUsages   *DiskUsages
-	id           NodeId
-	parent       Node
+	diskUsages *DiskUsages
+	id         NodeId
+	parent     Node
 	sync.RWMutex // lock children
-	children     map[NodeId]Node
-	maxVolumeId  needle.VolumeId
+	children    map[NodeId]Node
+	// maxVolumeId uses atomic ops so UpAdjustMaxVolumeId (called from the
+	// volume server heartbeat path) and GetMaxVolumeId (called from the
+	// master's assign / warmup checks) can run concurrently without a
+	// data race on NodeImpl.
+	maxVolumeId atomic.Uint32
 
 	//for rack, data center, topology
 	nodeType string
@@ -275,10 +271,7 @@ func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	t := n.getOrCreateDisk(option.DiskType)
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
-	ecShardCount := atomic.LoadInt64(&t.ecShardCount)
-	if ecShardCount > 0 {
-		freeVolumeSlotCount = freeVolumeSlotCount - ecShardCount/erasure_coding.DataShardsCount - 1
-	}
+	freeVolumeSlotCount -= ecShardSlots(atomic.LoadInt64(&t.ecShardCount))
 	return freeVolumeSlotCount
 }
 
@@ -398,16 +391,23 @@ func (n *NodeImpl) UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *Di
 		n.parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
 	}
 }
-func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) { //can be negative
-	if n.maxVolumeId < vid {
-		n.maxVolumeId = vid
-		if n.parent != nil {
-			n.parent.UpAdjustMaxVolumeId(vid)
+func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) {
+	target := uint32(vid)
+	for {
+		current := n.maxVolumeId.Load()
+		if current >= target {
+			return
 		}
+		if n.maxVolumeId.CompareAndSwap(current, target) {
+			break
+		}
+	}
+	if n.parent != nil {
+		n.parent.UpAdjustMaxVolumeId(vid)
 	}
 }
 func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {
-	return n.maxVolumeId
+	return needle.VolumeId(n.maxVolumeId.Load())
 }
 
 func (n *NodeImpl) LinkChildNode(node Node) {

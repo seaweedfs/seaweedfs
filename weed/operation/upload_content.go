@@ -135,6 +135,15 @@ func newUploader(httpClient HTTPClient) *Uploader {
 	}
 }
 
+// NewUploaderWithHttpClient creates an Uploader that uses the provided HTTP
+// client instead of the global one. This is used by filer.sync to upload to
+// remote clusters that use different TLS certificates.
+func NewUploaderWithHttpClient(httpClient HTTPClient) *Uploader {
+	return &Uploader{
+		httpClient: httpClient,
+	}
+}
+
 func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, err error), uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, data []byte) (fileId string, uploadResult *UploadResult, err error) {
 	doUploadFunc := func() error {
 		var host string
@@ -177,6 +186,12 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 			return
 		}
 		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
+	}
+
+	// Tell the master the real chunk size so its effectiveSize accounting
+	// doesn't fall back to the 1 MB DefaultNeedleSizeEstimate per fid.
+	if assignRequest.ExpectedDataSize == 0 {
+		assignRequest.ExpectedDataSize = uint64(len(data))
 	}
 
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
@@ -424,10 +439,28 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
-			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, postErr)
+			glog.V(1).InfofCtx(ctx, "repeat error upload request %s: %v", option.UploadUrl, post_err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
-			resp, post_err = uploader.httpClient.Do(req)
-			defer util_http.CloseResponse(resp)
+			// The first attempt already consumed (or partially consumed) the
+			// body, so retrying with the same *http.Request would send 0 bytes
+			// and Go's transport would surface "ContentLength=N with Body
+			// length 0". http.NewRequestWithContext sets GetBody for
+			// *bytes.Reader bodies; use it to attach a fresh body for retry.
+			// If we can't rewind, skip the inner retry and let the outer
+			// retriedUploadData loop reissue the request with a fresh body —
+			// retrying here with a consumed body would mask the original
+			// "connection reset" error with a misleading "Body length 0".
+			if req.GetBody != nil {
+				if newBody, gbErr := req.GetBody(); gbErr == nil {
+					req.Body = newBody
+					resp, post_err = uploader.httpClient.Do(req)
+					defer util_http.CloseResponse(resp)
+				} else {
+					glog.V(1).InfofCtx(ctx, "skip inner retry for %s: GetBody returned %v", option.UploadUrl, gbErr)
+				}
+			} else {
+				glog.V(1).InfofCtx(ctx, "skip inner retry for %s: req.GetBody is nil", option.UploadUrl)
+			}
 		}
 	}
 	if post_err != nil {
@@ -440,6 +473,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	etag := getEtag(resp)
 	if resp.StatusCode == http.StatusNoContent {
 		ret.ETag = etag
+		ret.ContentMd5 = resp.Header.Get("Content-MD5")
 		return &ret, nil
 	}
 

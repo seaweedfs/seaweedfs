@@ -13,9 +13,11 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
@@ -48,6 +50,7 @@ type Option struct {
 	CacheDirForRead             string
 	CacheSizeMBForRead          int64
 	CacheDirForWrite            string
+	WriteBufferSizeMB           int64
 	CacheMetaTTlSec             int
 	DataCenter                  string
 	Umask                       os.FileMode
@@ -62,9 +65,9 @@ type Option struct {
 	MountMtime       time.Time
 	MountParentInode uint64
 
-	VolumeServerAccess string // how to access volume servers
-	Cipher             bool   // whether encrypt data on volume server
-	UidGidMapper       *meta_cache.UidGidMapper
+	VolumeServerAccess   string // how to access volume servers
+	Cipher               bool   // whether encrypt data on volume server
+	UidGidMapper         *meta_cache.UidGidMapper
 	IncludeSystemEntries bool
 
 	// Periodic metadata flush interval in seconds (0 to disable)
@@ -79,12 +82,34 @@ type Option struct {
 	RdmaMaxConcurrent int
 	RdmaTimeoutMs     int
 
+	// Peer chunk sharing options (design-weed-mount-peer-chunk-sharing.md).
+	// When PeerEnabled is false (default), the mount runs exactly as today.
+	// One gRPC port carries everything: directory RPCs (ChunkAnnounce /
+	// ChunkLookup) and streaming FetchChunk byte transfers.
+	PeerEnabled    bool
+	PeerListen     string // host:port to bind the peer gRPC server
+	PeerAdvertise  string // externally reachable host:port (optional; defaults to auto-detected host + PeerListen port)
+	PeerDataCenter string // optional data-center label advertised to peers
+	PeerRack       string // optional rack label advertised to peers (finer than DC)
+
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
+
+	// EnableDistributedLock enables DLM-based write coordination across mounts.
+	// When true, opening a file for write acquires a distributed lock that is
+	// held (with auto-renewal) until the file is closed. Only one mount can
+	// have a file open for writing at a time.
+	EnableDistributedLock bool
 
 	// WritebackCache enables async flush on close for improved small file write performance.
 	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
 	WritebackCache bool
+
+	// PosixDirNlink enables POSIX-compliant directory nlink counting
+	// (nlink = 2 + number_of_subdirectories). This requires listing
+	// cached directory entries on every stat, which has a performance cost.
+	// When false (default), directories report nlink=2.
+	PosixDirNlink bool
 
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
@@ -100,6 +125,7 @@ type WFS struct {
 	metaCache            *meta_cache.MetaCache
 	stats                statsCache
 	chunkCache           *chunk_cache.TieredChunkCache
+	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature            int32
 	concurrentWriters    *util.LimitedConcurrentExecutor
 	copyBufferPool       sync.Pool
@@ -110,15 +136,36 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
+	peerRegistrar        *PeerRegistrar
+	peerDirectory        *PeerDirectory
+	peerGrpcServer       *PeerGrpcServer
+	peerAnnouncer        *PeerAnnouncer
+	peerConnPool         *PeerConnPool
+	peerDirectoryStop    chan struct{} // closed on unmount to stop the sweeper goroutine
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
 	refreshMu            sync.Mutex
 	refreshingDirs       map[util.FullPath]struct{}
+	atimeMu              sync.Mutex
+	atimeMap             map[uint64]time.Time // inode -> atime, in-memory only, bounded
+	dirMtimeMu           sync.Mutex
+	dirMtimeMap          map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
+	entryValidSec        uint64 // kernel FUSE entry cache TTL in seconds
+	attrValidSec         uint64 // kernel FUSE attr cache TTL in seconds
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+
+	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
+	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
+	// Bounded to openMtimeCacheMaxSize entries; when full a random entry is
+	// evicted. This trades a small amount of cache-miss overhead for
+	// predictable memory usage on mounts that touch many files.
+	openMtimeMu    sync.Mutex
+	openMtimeCache map[uint64][2]int64
 
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
@@ -139,6 +186,10 @@ type WFS struct {
 	// mutations (create, update, delete, rename). All mutations go through one
 	// ordered stream to prevent cross-operation reordering.
 	streamMutate *streamMutateMux
+
+	// lockClient is the DLM client for cross-mount write coordination.
+	// Non-nil only when EnableDistributedLock is true.
+	lockClient *cluster.LockClient
 }
 
 const (
@@ -189,17 +240,42 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
 		pendingAsyncFlush: make(map[uint64]chan struct{}),
 		fhLockTable:       util.NewLockTable[FileHandleId](),
+		hardLinkLockTable: util.NewLockTable[string](),
 		posixLocks:        NewPosixLockTable(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
+		atimeMap:          make(map[uint64]time.Time, 8192),
+		openMtimeCache:    make(map[uint64][2]int64, 8192),
+		dirMtimeMap:       make(map[uint64]time.Time, 1024),
+		entryValidSec:    1,
+		attrValidSec:     1,
 		dirHotWindow:      dirHotWindow,
 		dirHotThreshold:   dirHotThreshold,
 		dirIdleEvict:      dirIdleEvict,
+	}
+
+	// With writeback caching, this mount is the single writer. Increase kernel
+	// FUSE cache TTLs so the kernel doesn't re-issue Lookup/GetAttr for every
+	// path component and stat — the local meta cache is authoritative.
+	if option.WritebackCache {
+		wfs.entryValidSec = 10
+		wfs.attrValidSec = 10
+	}
+
+	if option.EnableDistributedLock && !option.WritebackCache && len(option.FilerAddresses) > 0 {
+		wfs.lockClient = cluster.NewLockClient(option.GrpcDialOption, option.FilerAddresses[0])
+		glog.V(0).Infof("distributed lock manager enabled for mount")
+	} else if option.EnableDistributedLock && option.WritebackCache {
+		glog.V(0).Infof("distributed lock manager disabled: writeback cache implies single-writer mode")
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)
+	}
+	if option.WriteBufferSizeMB > 0 {
+		wfs.writeBufferAccountant = page_writer.NewWriteBufferAccountant(option.WriteBufferSizeMB * 1024 * 1024)
+		wfs.writeBufferAccountant.SetEvictor(wfs.evictOneWritableChunk)
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
@@ -266,6 +342,26 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.peerAnnouncer != nil {
+			wfs.peerAnnouncer.Stop()
+		}
+		if wfs.peerConnPool != nil {
+			wfs.peerConnPool.Close()
+		}
+		if wfs.peerGrpcServer != nil {
+			wfs.peerGrpcServer.Stop()
+		}
+		if wfs.peerDirectoryStop != nil {
+			select {
+			case <-wfs.peerDirectoryStop:
+				// already closed
+			default:
+				close(wfs.peerDirectoryStop)
+			}
+		}
+		if wfs.peerRegistrar != nil {
+			wfs.peerRegistrar.Stop()
+		}
 	})
 
 	// Initialize RDMA client if enabled
@@ -282,6 +378,90 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.rdmaClient = rdmaClient
 			glog.Infof("RDMA acceleration enabled: sidecar=%s, maxConcurrent=%d, timeout=%dms",
 				option.RdmaSidecarAddr, option.RdmaMaxConcurrent, option.RdmaTimeoutMs)
+		}
+	}
+
+	// Peer chunk sharing: register with every configured filer's mount
+	// registry + start the single gRPC server that handles ChunkAnnounce /
+	// ChunkLookup / FetchChunk. Broadcasting registration to the full
+	// filer set is what lets mounts pointing at different filers see
+	// each other — each filer's registry is in-memory with no
+	// filer-to-filer sync, so the registrar reconstructs the union
+	// client-side. One port, one identity — the advertise address
+	// resolved in PR #3 is used for everything.
+	if option.PeerEnabled {
+		selfAddr, err := ResolvePeerAdvertiseAddr(option.PeerListen, option.PeerAdvertise)
+		if err != nil {
+			// Downstream code treats PeerEnabled as "peer infrastructure
+			// is ready": later PRs wire the gRPC server, fetcher hook,
+			// and announcer from this flag. If we can't resolve a
+			// reachable self-address those components would nil-deref
+			// or advertise garbage, so disable the feature instead of
+			// limping along half-initialized.
+			glog.Warningf("peer: cannot resolve advertise addr, disabling peer sharing: %v", err)
+			option.PeerEnabled = false
+		} else {
+			dial := func(ctx context.Context, addr pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
+				return pb.WithGrpcFilerClient(false, 0, addr, option.GrpcDialOption, fn)
+			}
+			wfs.peerRegistrar = NewPeerRegistrar(option.FilerAddresses, dial, selfAddr, option.PeerDataCenter, option.PeerRack)
+			if err := wfs.peerRegistrar.Start(context.Background()); err != nil {
+				glog.Warningf("peer registrar start: %v", err)
+			}
+
+			wfs.peerDirectory = NewPeerDirectory()
+			// Wire TLS/mTLS from security.toml's grpc.mount section so
+			// cross-host peer RPCs are authenticated + encrypted. When
+			// the section is empty both options come back nil and the
+			// server runs plaintext — intentional for dev/test.
+			peerTLSCreds, peerTLSVerify := security.LoadServerTLS(util.GetViper(), "grpc.mount")
+			var peerServerOpts []grpc.ServerOption
+			if peerTLSCreds != nil {
+				peerServerOpts = append(peerServerOpts, peerTLSCreds)
+			}
+			if peerTLSVerify != nil {
+				peerServerOpts = append(peerServerOpts, peerTLSVerify)
+			}
+			wfs.peerGrpcServer = NewPeerGrpcServer(
+				wfs.chunkCache,
+				wfs.peerDirectory,
+				wfs.peerRegistrar.OwnerFor,
+				selfAddr,
+				peerServerOpts...,
+			)
+			if err := wfs.peerGrpcServer.Start(option.PeerListen); err != nil {
+				glog.Warningf("peer grpc start: %v", err)
+				wfs.peerGrpcServer = nil
+			} else {
+				wfs.peerDirectoryStop = make(chan struct{})
+				go wfs.runPeerDirectorySweeper(wfs.peerDirectoryStop)
+
+				// Shared connection pool + announcer. Pool reuses one
+				// grpc.ClientConn per owner mount across both the
+				// announcer flush and the fetcher's ChunkLookup +
+				// FetchChunk calls. Transport credentials come from
+				// option.GrpcDialOption (security.LoadClientTLS), so
+				// peer dials match the TLS posture the server wants.
+				wfs.peerConnPool = NewPeerConnPool(option.GrpcDialOption)
+				wfs.peerAnnouncer = NewPeerAnnouncer(
+					selfAddr,
+					option.PeerDataCenter,
+					option.PeerRack,
+					wfs.peerRegistrar.OwnerFor,
+					wfs.peerConnPool.Dialer(),
+					wfs.peerDirectory,
+				)
+				// Close the write→announce race: between SetChunk and
+				// the flush tick (up to 15 s) the cache can LRU-evict
+				// the chunk. Skip announcing fids we no longer hold.
+				if wfs.chunkCache != nil {
+					cache := wfs.chunkCache
+					wfs.peerAnnouncer.SetCachePresence(func(fid string) bool {
+						return cache.IsInCache(fid, true)
+					})
+				}
+				wfs.peerAnnouncer.Start()
+			}
 		}
 	}
 
@@ -314,7 +494,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	}
 
 	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), func(lastTsNs int64, err error) {
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), wfs.option.WritebackCache, func(lastTsNs int64, err error) {
 		glog.Warningf("meta events follow retry from %v: %v", time.Unix(0, lastTsNs), err)
 		if deleteErr := wfs.metaCache.DeleteFolderChildren(context.Background(), util.FullPath(wfs.option.FilerMountRootPath)); deleteErr != nil {
 			glog.Warningf("meta cache cleanup failed: %v", deleteErr)
@@ -324,6 +504,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
+	go wfs.loopProactiveFlush()
 
 	return nil
 }
@@ -402,7 +583,15 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 		// our IsDirectoryCached check and FindEntry (e.g. markDirectoryReadThrough).
 		// If it's no longer cached, fall through to the filer lookup below.
 		if wfs.metaCache.IsDirectoryCached(dirPath) {
-			glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
+			// If the kernel is still tracking this path's inode, the entry
+			// was known to exist recently; a cached-dir miss here suggests
+			// metaCache/parent-cache coherence drift. Log visibly so the
+			// next occurrence shows up in mount.log without -v=4.
+			if _, inodeFound := wfs.inodeToPath.GetInode(fullpath); inodeFound {
+				glog.Warningf("lookupEntry: %s missing from cache while parent %s is cached; inode still tracked (possible coherence bug)", fullpath, dirPath)
+			} else {
+				glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
+			}
 			return nil, fuse.ENOENT
 		}
 	}
@@ -417,13 +606,15 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 			// the local store when an open file handle or pending async flush
 			// confirms the entry is genuinely local-only; otherwise a stale
 			// cache hit could resurrect a deleted/renamed entry.
-			if inode, inodeFound := wfs.inodeToPath.GetInode(fullpath); inodeFound {
-				hasDirtyHandle := false
+			inode, inodeFound := wfs.inodeToPath.GetInode(fullpath)
+			hasDirtyHandle := false
+			hasPendingFlush := false
+			if inodeFound {
 				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
 					hasDirtyHandle = true
 				}
 				wfs.pendingAsyncFlushMu.Lock()
-				_, hasPendingFlush := wfs.pendingAsyncFlush[inode]
+				_, hasPendingFlush = wfs.pendingAsyncFlush[inode]
 				wfs.pendingAsyncFlushMu.Unlock()
 
 				if hasDirtyHandle || hasPendingFlush {
@@ -433,7 +624,21 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 					}
 				}
 			}
-			glog.V(4).Infof("lookupEntry not found %s", fullpath)
+			if inodeFound {
+				// Filer reports ErrNotFound for a path the kernel/local map
+				// still tracks, with no in-flight create or flush to excuse
+				// it. Log loudly (Warningf, not V(4)) so flake captures show
+				// up without -v=4 — and include layer-by-layer state so the
+				// next failed run pinpoints which layer dropped the entry.
+				localPresent := false
+				if localEntry, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+					localPresent = true
+				}
+				glog.Warningf("lookupEntry: filer ErrNotFound for tracked path %s (inode=%d dirtyHandle=%v pendingFlush=%v localCache=%v dirCached=%v) — possible coherence bug",
+					fullpath, inode, hasDirtyHandle, hasPendingFlush, localPresent, wfs.metaCache.IsDirectoryCached(dirPath))
+			} else {
+				glog.V(4).Infof("lookupEntry not found %s", fullpath)
+			}
 			return nil, fuse.ENOENT
 		}
 		glog.Warningf("lookupEntry GetEntry %s: %v", fullpath, err)

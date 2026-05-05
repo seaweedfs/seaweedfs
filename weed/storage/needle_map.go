@@ -31,6 +31,7 @@ type NeedleMapper interface {
 	FileCount() int
 	DeletedCount() int
 	MaxFileKey() NeedleId
+	MaxNeedleEnd() int64
 	IndexFileSize() uint64
 	Sync() error
 	ReadIndexEntry(n int64) (key NeedleId, offset Offset, size Size, err error)

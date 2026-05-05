@@ -92,7 +92,38 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 	return nil, false
 }
 
+// HasEcxFileOnDisk reports whether this disk has a sealed .ecx index file
+// for the given (collection, vid). Unlike FindEcVolume this does not
+// require the EC volume to be mounted in memory, which makes it the right
+// primitive for placement decisions during ec.balance / ec.rebuild flows
+// where shards may arrive before any mount has happened on the receiving
+// disk. Without checking the on-disk state, auto-select can split shards
+// from the .ecx that travels with the first shard, which is the source of
+// the orphan-shard layout reported in #9212.
+func (l *DiskLocation) HasEcxFileOnDisk(collection string, vid needle.VolumeId) bool {
+	idxBase := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
+	if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() {
+		return true
+	}
+	if l.IdxDirectory != l.Directory {
+		dataBase := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
+		if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, error) {
+	return l.loadEcShardWithIdxDir(collection, vid, shardId, l.IdxDirectory)
+}
+
+// loadEcShardWithIdxDir is like LoadEcShard but uses the supplied idxDir as
+// the source of .ecx / .ecj rather than this disk's own IdxDirectory. The
+// orphan-shard reconciliation calls this with a sibling disk's idx folder
+// when shards live on a disk that does not own the index files itself
+// (issue #9212).
+func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, idxDir string) (*erasure_coding.EcVolume, error) {
 
 	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
 	if err != nil {
@@ -105,7 +136,7 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}
@@ -239,6 +270,38 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 	return nil
 }
 
+// loadEcShardsWithIdxDir loads each shard file in shards into l.ecVolumes,
+// using idxDir as the source of .ecx / .ecj / .vif (NewEcVolume falls back
+// to dirIdx for .vif when the data dir does not have one). Used by the
+// store-level orphan-shard reconciliation in #9212; stops on the first
+// failure so the caller can log and continue with other volumes.
+func (l *DiskLocation) loadEcShardsWithIdxDir(shards []string, collection string, vid needle.VolumeId, idxDir string, onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) error {
+
+	for _, shard := range shards {
+		ext := path.Ext(shard)
+		if len(ext) < 4 {
+			return fmt.Errorf("unexpected ec shard name %v", shard)
+		}
+		shardId, err := strconv.ParseInt(ext[3:], 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse ec shard name %v: %w", shard, err)
+		}
+		if shardId < 0 || shardId > 255 {
+			return fmt.Errorf("shard ID out of range: %d", shardId)
+		}
+
+		ecVolume, err := l.loadEcShardWithIdxDir(collection, vid, erasure_coding.ShardId(shardId), idxDir)
+		if err != nil {
+			return fmt.Errorf("failed to load ec shard %v: %w", shard, err)
+		}
+		if onShardLoad != nil {
+			onShardLoad(collection, vid, erasure_coding.ShardId(shardId), ecVolume)
+		}
+	}
+
+	return nil
+}
+
 func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
 	// Add write lock since we're modifying the ecVolumes map
 	l.ecVolumesLock.Lock()
@@ -354,21 +417,29 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 
 // calculateExpectedShardSize computes the exact expected shard size based on .dat file size
 // The EC encoding process is deterministic:
-// 1. Data is processed in batches of (LargeBlockSize * DataShardsCount) for large blocks
-// 2. Remaining data is processed in batches of (SmallBlockSize * DataShardsCount) for small blocks
+// 1. Data is processed in batches of (LargeBlockSize * dataShardCount) for large blocks
+// 2. Remaining data is processed in batches of (SmallBlockSize * dataShardCount) for small blocks
 // 3. Each shard gets exactly its portion, with zero-padding applied to incomplete blocks
-func calculateExpectedShardSize(datFileSize int64) int64 {
+//
+// dataShardCount is taken as a parameter rather than read from
+// erasure_coding.DataShardsCount so that tests writing a custom layout
+// to .vif compute the matching shard size, and so custom-ratio builds
+// (e.g. enterprise) can swap the default without touching this helper.
+func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
+	if dataShardCount <= 0 {
+		return 0
+	}
 	var shardSize int64
 
-	// Process large blocks (1GB * 10 = 10GB batches)
-	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(erasure_coding.DataShardsCount)
+	// Process large blocks (1GB * dataShardCount per batch)
+	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(dataShardCount)
 	numLargeBatches := datFileSize / largeBatchSize
 	shardSize = numLargeBatches * int64(erasure_coding.ErasureCodingLargeBlockSize)
 	remainingSize := datFileSize - (numLargeBatches * largeBatchSize)
 
-	// Process remaining data in small blocks (1MB * 10 = 10MB batches)
+	// Process remaining data in small blocks (1MB * dataShardCount per batch)
 	if remainingSize > 0 {
-		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(erasure_coding.DataShardsCount)
+		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(dataShardCount)
 		numSmallBatches := (remainingSize + smallBatchSize - 1) / smallBatchSize // Ceiling division
 		shardSize += numSmallBatches * int64(erasure_coding.ErasureCodingSmallBlockSize)
 	}
@@ -388,10 +459,13 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	var expectedShardSize int64 = -1
 	datExists := false
 
-	// If .dat file exists, compute exact expected shard size from it
+	// If .dat file exists, compute exact expected shard size from it.
+	// Pass the build's default data-shard count; calculateExpectedShardSize
+	// takes it as a parameter so tests / enterprise builds can supply
+	// their own.
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
 		datExists = true
-		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size())
+		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), erasure_coding.DataShardsCount)
 	} else if !os.IsNotExist(err) {
 		// If stat fails with unexpected error (permission, I/O), fail validation
 		// Don't treat this as "distributed EC" - it could be a temporary error
