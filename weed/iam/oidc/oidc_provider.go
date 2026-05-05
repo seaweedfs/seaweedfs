@@ -132,9 +132,15 @@ func extractClaimPolicies(claims map[string]interface{}, claimName string) []str
 	case []interface{}:
 		out := make([]string, 0, len(v))
 		for _, e := range v {
-			if s, ok := e.(string); ok && s != "" {
-				out = append(out, s)
+			s, ok := e.(string)
+			if !ok {
+				continue
 			}
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			out = append(out, s)
 		}
 		if len(out) == 0 {
 			return nil

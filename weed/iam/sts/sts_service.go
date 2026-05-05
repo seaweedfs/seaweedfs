@@ -527,9 +527,10 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	claimMode := IsClaimBasedPolicyRoleArn(request.RoleArn) && len(externalIdentity.ClaimPolicies) > 0
 	effectiveRoleArn := request.RoleArn
 	if claimMode {
-		// Replace the sentinel/empty ARN with a deterministic synthetic ARN
-		// keyed on the session name so policy evaluation has a stable
-		// principal to log and rate-limit on.
+		// Replace an empty RoleArn with the constant sentinel so the assumed-
+		// role ARN GenerateAssumedRoleArn produces below carries a stable,
+		// session-name-keyed principal that policy evaluation can log and
+		// rate-limit on.
 		effectiveRoleArn = ClaimBasedPolicyRoleArn
 	} else if request.RoleArn == "" {
 		return nil, fmt.Errorf("RoleArn is required when claim-based policy mode is not configured")
@@ -770,15 +771,13 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 
 // Helper methods for AssumeRoleWithWebIdentity
 
-// validateAssumeRoleWithWebIdentityRequest validates the request parameters
+// validateAssumeRoleWithWebIdentityRequest validates the request parameters.
+//
+// RoleArn validation lives in AssumeRoleWithWebIdentity itself rather than
+// here: once we've parsed the JWT we know whether the caller has
+// ClaimPolicies and can decide between concrete-role mode and claim-mode,
+// which in turn determines whether an empty/sentinel RoleArn is acceptable.
 func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRoleWithWebIdentityRequest) error {
-	// RoleArn may be empty (or the sentinel) when the caller is opting into
-	// claim-based policy mode; the OIDC provider configuration determines
-	// whether that is actually permitted.
-	if request.RoleArn != "" && !IsClaimBasedPolicyRoleArn(request.RoleArn) {
-		// nothing to enforce here — sentinel and concrete role are both fine
-	}
-
 	if request.WebIdentityToken == "" {
 		return fmt.Errorf("WebIdentityToken is required")
 	}
