@@ -704,11 +704,18 @@ func uniqueName(prefix string) string {
 // --- Test setup helpers ---
 
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
-	ports := testutil.MustAllocatePorts(t, 8)
+	// Allocate two extra ports for admin HTTP + gRPC. Without explicit
+	// values mini falls back to 23646/33646, which collide across the
+	// sequential subtests in this package: each subtest spins up a fresh
+	// mini in a goroutine, but the previous mini's admin goroutine is
+	// still binding 23646 — so the next test's admin can never become
+	// ready and mini.go fatals on its readiness check.
+	ports := testutil.MustAllocatePorts(t, 10)
 	masterPort, masterGrpcPort := ports[0], ports[1]
 	volumePort, volumeGrpcPort := ports[2], ports[3]
 	filerPort, filerGrpcPort := ports[4], ports[5]
 	s3Port, s3GrpcPort := ports[6], ports[7]
+	adminPort, adminGrpcPort := ports[8], ports[9]
 
 	// Manually-managed temp dir (not t.TempDir()) so we control removal order:
 	// the dir is removed inside Stop() AFTER the mini goroutine has fully
@@ -779,6 +786,8 @@ enabled = true
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
+			"-admin.port=" + strconv.Itoa(adminPort),
+			"-admin.port.grpc=" + strconv.Itoa(adminGrpcPort),
 			"-webdav.port=0",
 			"-admin.ui=false",
 			"-master.volumeSizeLimitMB=32",
