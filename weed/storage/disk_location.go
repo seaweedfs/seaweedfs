@@ -30,6 +30,7 @@ type DiskLocation struct {
 	Directory              string
 	DirectoryUuid          string
 	IdxDirectory           string
+	DatDirectory           string
 	DiskType               types.DiskType
 	Tags                   []string
 	MaxVolumeCount         int32
@@ -77,13 +78,18 @@ func writeNewUuid(fileName string) (string, error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, datDir string, diskType types.DiskType, tags []string) *DiskLocation {
 	glog.V(4).Infof("Added new Disk %s: maxVolumes=%d", dir, maxVolumeCount)
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
 	} else {
 		idxDir = util.ResolvePath(idxDir)
+	}
+	if datDir == "" {
+		datDir = dir
+	} else {
+		datDir = util.ResolvePath(datDir)
 	}
 	dirUuid, err := GenerateDirUuid(dir)
 	if err != nil {
@@ -99,6 +105,7 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		Directory:              dir,
 		DirectoryUuid:          dirUuid,
 		IdxDirectory:           idxDir,
+		DatDirectory:           datDir,
 		DiskType:               diskType,
 		Tags:                   copiedTags,
 		MaxVolumeCount:         maxVolumeCount,
@@ -196,6 +203,9 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
 		removeVolumeFiles(l.Directory + "/" + volumeName)
 		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
+		if l.DatDirectory != l.Directory {
+			removeVolumeFiles(filepath.Join(l.DatDirectory, strconv.Itoa(int(vid))))
+		}
 		return false
 	}
 
@@ -209,7 +219,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	}
 
 	// load the volume
-	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, needle.GetCurrentVersion(), 0, ldbTimeout)
+	v, e := NewVolume(l.Directory, l.IdxDirectory, l.DatDirectory, collection, vid, needleMapKind, nil, nil, 0, needle.GetCurrentVersion(), 0, ldbTimeout)
 	if e != nil {
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
@@ -220,7 +230,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 
 	size, _, _ := v.FileStat()
 	glog.V(2).Infof("data file %s, replication=%s v=%d size=%d ttl=%s disk_id=%d",
-		l.Directory+"/"+volumeName+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String(), diskId)
+		v.FileName(".dat"), v.ReplicaPlacement, v.Version(), size, v.Ttl.String(), diskId)
 	return true
 }
 

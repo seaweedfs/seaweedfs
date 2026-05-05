@@ -130,7 +130,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	ver := needle.Version(stats.Version)
 
 	// Create or load the volume
-	v, err := storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
+	v, err := storage.NewVolume(*s.dir, *s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 	if err != nil {
 		return fmt.Errorf("creating or reading volume: %w", err), false
 	}
@@ -162,7 +162,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 		}
 		v.Close() // Close the destroyed volume
 		// recreate an empty volume
-		v, err = storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
+		v, err = storage.NewVolume(*s.dir, *s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 		if err != nil {
 			return fmt.Errorf("recreating volume: %w", err), false
 		}

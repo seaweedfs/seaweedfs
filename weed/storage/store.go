@@ -90,6 +90,7 @@ func NewStore(
 	ip string, port int, grpcPort int, publicUrl string, id string,
 	dirnames []string, maxVolumeCounts []int32, minFreeSpaces []util.MinFreeSpace,
 	idxFolder string,
+	datFolder string,
 	needleMapKind NeedleMapKind,
 	diskTypes []DiskType,
 	diskTags [][]string,
@@ -118,7 +119,7 @@ func NewStore(
 		if i < len(diskTags) {
 			tags = diskTags[i]
 		}
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags)
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, datFolder, diskTypes[i], tags)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
@@ -286,7 +287,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	if location != nil {
 		glog.V(0).Infof("In dir %s (disk ID %d) adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, diskId, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, ver, memoryMapMaxSizeMb, ldbTimeout); err == nil {
+		if volume, err := NewVolume(location.Directory, location.IdxDirectory, location.DatDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, ver, memoryMapMaxSizeMb, ldbTimeout); err == nil {
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
