@@ -634,13 +634,20 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 	var baseResult *policy.EvaluationResult
 	var err error
-	subjectPolicyCount := 0
+	// hasManagedSubject is true once we've resolved the principal to a registered
+	// IAM user or role (or the caller has supplied PolicyNames directly). For a
+	// managed subject, "no matching statement" must deny — the DefaultEffect=Allow
+	// fallback is only meant for the unmanaged zero-config startup case.
+	hasManagedSubject := false
 
 	if isAdmin {
 		// Admin always has base access allowed
 		baseResult = &policy.EvaluationResult{Effect: policy.EffectAllow}
 	} else {
 		policies := request.PolicyNames
+		if len(policies) > 0 {
+			hasManagedSubject = true
+		}
 		if len(policies) == 0 {
 			// Extract role name from principal ARN
 			roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
@@ -656,6 +663,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				if err != nil || user == nil {
 					return false, fmt.Errorf("user not found for principal: %s (user=%s)", request.Principal, userName)
 				}
+				hasManagedSubject = true
 				policies = user.GetPolicyNames()
 			} else {
 				// Get role definition
@@ -664,11 +672,10 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 					return false, fmt.Errorf("role not found: %s", roleName)
 				}
 
+				hasManagedSubject = true
 				policies = roleDef.AttachedPolicies
 			}
 		}
-		subjectPolicyCount = len(policies)
-
 		if bucketPolicyName != "" {
 			// Enforce an upper bound on the number of policies to avoid excessive allocations
 			if len(policies) >= maxPoliciesForEvaluation {
@@ -692,10 +699,11 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Zero-config IAM uses DefaultEffect=Allow to preserve open-by-default behavior
-	// for requests without any subject policies. Once a user or role has attached
-	// policies, "no matching statement" must fall back to deny so the attachment
-	// actually scopes access.
-	if subjectPolicyCount > 0 && len(baseResult.MatchingStatements) == 0 {
+	// for requests without any subject policies. Once we resolve the principal to
+	// a registered IAM user or role (or the caller hands us policy names),
+	// "no matching statement" must fall back to deny — otherwise a freshly
+	// created user with zero policies would inherit full access.
+	if hasManagedSubject && len(baseResult.MatchingStatements) == 0 {
 		return false, nil
 	}
 

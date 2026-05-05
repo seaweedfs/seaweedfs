@@ -34,6 +34,9 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 }
 
 func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCompactRequest, stream volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
+	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
+		return err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return err
 	}
@@ -80,6 +83,9 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 }
 
 func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_server_pb.VacuumVolumeCommitRequest) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
@@ -106,6 +112,9 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 }
 
 func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_server_pb.VacuumVolumeCleanupRequest) (*volume_server_pb.VacuumVolumeCleanupResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}

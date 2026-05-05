@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
+
+// errShardNotLocal indicates that the requested EC shard is simply not
+// stored on this volume server. It is expected during normal reads when
+// shards are spread across multiple servers, so callers should not log
+// it as an error.
+var errShardNotLocal = errors.New("ec shard not on this server")
 
 // FindEcShardTargetLocation returns the disk that should receive a new
 // shard / index file for (collection, vid). The selection order is:
@@ -317,7 +324,12 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	if err == nil {
 		return
 	}
-	glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
+	if errors.Is(err, errShardNotLocal) {
+		// expected when shards are spread across servers; fall through to remote read
+		glog.V(4).Infof("ec shard %d.%d not local, will try remote", ecVolume.VolumeId, shardId)
+	} else {
+		glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
+	}
 
 	ecVolume.ShardLocationsLock.RLock()
 	sourceDataNodes, hasShardIdLocation := ecVolume.ShardLocations[shardId]
@@ -395,7 +407,7 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
 	shard, found := ecVolume.FindEcVolumeShard(shardId)
 	if !found {
-		return fmt.Errorf("shard %d not found for volume %d", shardId, ecVolume.VolumeId)
+		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
 	}
 
 	readBytes, err := shard.ReadAt(buf, offset)

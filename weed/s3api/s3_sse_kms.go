@@ -38,6 +38,7 @@ type SSEKMSKey struct {
 	BucketKeyEnabled  bool              // Whether S3 Bucket Keys are enabled
 	IV                []byte            // The initialization vector for encryption
 	ChunkOffset       int64             // Offset of this chunk within the original part (for IV calculation)
+	KeyCommitment     []byte            // HMAC-SHA256 commitment binding key to IV+algorithm
 }
 
 // SSEKMSMetadata represents the metadata stored with SSE-KMS objects
@@ -49,6 +50,7 @@ type SSEKMSMetadata struct {
 	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`  // S3 Bucket Key optimization
 	IV                string            `json:"iv"`                // Base64-encoded initialization vector
 	PartOffset        int64             `json:"partOffset"`        // Offset within original multipart part (for IV calculation)
+	KeyCommitment     string            `json:"keyCommitment,omitempty"`     // Base64-encoded HMAC key commitment
 }
 
 const (
@@ -93,15 +95,14 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata using utility function
+	// Create the SSE-KMS metadata using utility function. createSSEKMSKey
+	// computes the key commitment too, so all encryption paths produce
+	// commitment-bound metadata uniformly.
 	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Store IV in the SSE key for metadata storage
-	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
 }
@@ -122,15 +123,20 @@ func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, e
 	// Ensure we clear the plaintext data key from memory when done
 	defer clearKMSDataKey(dataKeyResult)
 
-	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads
-	// Skip is not used here because we're encrypting from the start (not reading a range)
+	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads.
+	// Skip is not used here because we're encrypting from the start (not reading a range).
 	iv, _ := calculateIVWithOffset(baseIV, offset)
 
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata using utility function
-	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, offset)
+	// Store the BASE IV (not the offset-derived IV) in metadata. The decrypt
+	// path applies calculateIVWithOffset to sseKey.IV when ChunkOffset > 0;
+	// storing the derived IV here would cause it to offset twice and produce
+	// the wrong CTR keystream. The key commitment, computed inside
+	// createSSEKMSKey, therefore binds the base IV — exactly the value the
+	// verify call at decrypt time hashes.
+	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, baseIV, offset)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
@@ -274,13 +280,19 @@ func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucket
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(block, iv)
 
-	// Create the encrypting reader
+	// Create the encrypting reader. Compute the HMAC commitment alongside
+	// every other field so this bucket-scoped path is on the same downgrade-
+	// resistant footing as the helper-driven paths above. Store the KMS
+	// response's KeyID rather than the request's; CreateSSEKMSDecryptedReader
+	// compares against decryptResp.KeyID, and a request alias would mismatch
+	// the resolved ARN the response carries.
 	sseKey := &SSEKMSKey{
-		KeyID:             keyID,
+		KeyID:             dataKeyResp.KeyID,
 		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
 		EncryptionContext: encryptionContext,
 		BucketKeyEnabled:  bucketKeyEnabled,
 		IV:                iv,
+		KeyCommitment:     ComputeKeyCommitment(dataKeyResp.Plaintext, iv, s3_constants.SSEAlgorithmKMS),
 	}
 
 	return &cipher.StreamReader{S: stream, R: r}, sseKey, nil
@@ -374,6 +386,11 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 		return nil, fmt.Errorf("KMS key ID mismatch: expected %s, got %s", sseKey.KeyID, decryptResp.KeyID)
 	}
 
+	// Verify key commitment before decryption if one exists in metadata
+	if err := VerifyKeyCommitment(decryptResp.Plaintext, sseKey.IV, s3_constants.SSEAlgorithmKMS, sseKey.KeyCommitment); err != nil {
+		return nil, err
+	}
+
 	// Use the IV from the SSE key metadata, calculating offset if this is a chunked part
 	if err := ValidateIV(sseKey.IV, "SSE key IV"); err != nil {
 		return nil, fmt.Errorf("invalid IV in SSE key: %w", err)
@@ -465,6 +482,11 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 		PartOffset:        sseKey.ChunkOffset,                           // Store within-part offset
 	}
 
+	// Include key commitment if present
+	if len(sseKey.KeyCommitment) > 0 {
+		metadata.KeyCommitment = base64.StdEncoding.EncodeToString(sseKey.KeyCommitment)
+	}
+
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal SSE-KMS metadata: %w", err)
@@ -510,6 +532,15 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		}
 	}
 
+	// Decode key commitment if present
+	var keyCommitment []byte
+	if metadata.KeyCommitment != "" {
+		keyCommitment, err = base64.StdEncoding.DecodeString(metadata.KeyCommitment)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode key commitment: %w", err)
+		}
+	}
+
 	sseKey := &SSEKMSKey{
 		KeyID:             metadata.KeyID,
 		EncryptedDataKey:  encryptedDataKey,
@@ -517,6 +548,7 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		BucketKeyEnabled:  metadata.BucketKeyEnabled,
 		IV:                iv,                  // Restore IV for decryption
 		ChunkOffset:       metadata.PartOffset, // Use stored within-part offset
+		KeyCommitment:     keyCommitment,
 	}
 
 	glog.V(4).Infof("Deserialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)
