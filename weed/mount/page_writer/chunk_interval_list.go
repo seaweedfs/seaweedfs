@@ -86,6 +86,28 @@ func (list *ChunkWrittenIntervalList) WrittenSize() (writtenByteCount int64) {
 	return
 }
 
+// IsContiguouslyWritten reports whether every written interval is adjacent
+// to the next, i.e. the chunk's covered bytes form one unbroken run from
+// the first interval's StartOffset to the last interval's stopOffset.
+// An empty list is reported as contiguous.
+//
+// SaveContent emits one volume chunk per maximal adjacent run, so a list
+// with internal gaps produces multiple volume chunks with no chunk
+// covering the gap; reads then silently zero-fill the gap range
+// (filer/stream.go:177-186). This is correct for genuinely sparse writes
+// finalized at flush, but incorrect when an in-progress chunk is sealed
+// by buffer-pressure eviction while FUSE writeback still has writes in
+// flight for the gap range. The eviction policy checks this so that
+// only gap-free chunks are sealed under pressure (issue #9330).
+func (list *ChunkWrittenIntervalList) IsContiguouslyWritten() bool {
+	for t := list.head.next; t != list.tail && t.next != list.tail; t = t.next {
+		if t.stopOffset != t.next.StartOffset {
+			return false
+		}
+	}
+	return true
+}
+
 func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval) {
 
 	//t := list.head

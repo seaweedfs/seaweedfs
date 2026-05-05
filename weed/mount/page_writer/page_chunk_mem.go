@@ -81,6 +81,13 @@ func (mc *MemChunk) IsComplete() bool {
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
+func (mc *MemChunk) IsContiguouslyWritten() bool {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	return mc.usage.IsContiguouslyWritten()
+}
+
 func (mc *MemChunk) ActivityScore() int64 {
 	return mc.activityScore.ActivityScore()
 }

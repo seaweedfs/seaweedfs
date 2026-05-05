@@ -172,6 +172,12 @@ func (sc *SwapFileChunk) IsComplete() bool {
 	return sc.usage.IsComplete(sc.swapfile.chunkSize)
 }
 
+func (sc *SwapFileChunk) IsContiguouslyWritten() bool {
+	sc.RLock()
+	defer sc.RUnlock()
+	return sc.usage.IsContiguouslyWritten()
+}
+
 func (sc *SwapFileChunk) ActivityScore() int64 {
 	return sc.activityScore.ActivityScore()
 }

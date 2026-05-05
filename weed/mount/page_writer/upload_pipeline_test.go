@@ -46,3 +46,58 @@ func confirmRange(t *testing.T, uploadPipeline *UploadPipeline, startOff, stopOf
 		}
 	}
 }
+
+// TestEvictOneWritableChunk_SkipsGappyChunks pins the issue #9330 fix:
+// pressure-driven eviction must not seal a chunk whose written intervals
+// have an internal hole, because SaveContent would emit multiple volume
+// chunks with no coverage for the hole and reads would silently zero-fill
+// it (filer/stream.go writeZero on gap).
+func TestEvictOneWritableChunk_SkipsGappyChunks(t *testing.T) {
+	const cs int64 = 2 * 1024 * 1024
+	// saveToStorage = nil so that the async upload triggered by
+	// moveToSealed is a no-op (SaveContent short-circuits on nil saveFn).
+	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
+
+	block := make([]byte, cs/4) // 512 KiB
+
+	// Chunk 0: gappy — first quarter and last quarter written, middle hole.
+	// Mirrors FUSE writeback mid-flight on sequential cp.
+	if _, err := up.SaveDataAt(block, 0, true, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 3*cs/4, true, 2); err != nil {
+		t.Fatal(err)
+	}
+	// Chunk 1: contiguous — first half written, no hole.
+	if _, err := up.SaveDataAt(block, cs, true, 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs+cs/4, true, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	// Eviction must pick chunk 1 (contiguous), never chunk 0 (gappy),
+	// even though both have the same WrittenSize.
+	if !up.EvictOneWritableChunk() {
+		t.Fatalf("EvictOneWritableChunk returned false; expected contiguous chunk 1 to be evictable")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
+		t.Errorf("chunk 1 should have moved to sealed")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; !stillWritable {
+		t.Errorf("chunk 0 (gappy) must remain writable so its hole can still be filled")
+	}
+
+	// Fill chunk 0's middle. The chunk now covers [0, cs) and SaveDataAt's
+	// maybeMoveToSealed auto-seals on completion, so it leaves writableChunks
+	// without our needing to call EvictOneWritableChunk.
+	if _, err := up.SaveDataAt(block, cs/4, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs/2, true, 6); err != nil {
+		t.Fatal(err)
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; stillWritable {
+		t.Errorf("chunk 0 should have left writableChunks after gap was filled (auto-seal on IsComplete)")
+	}
+}

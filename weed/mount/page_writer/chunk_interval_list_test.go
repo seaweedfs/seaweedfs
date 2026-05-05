@@ -81,6 +81,36 @@ func hasData(usage *ChunkWrittenIntervalList, chunkStartOffset, x int64) bool {
 	return false
 }
 
+func TestIsContiguouslyWritten(t *testing.T) {
+	const chunkSize int64 = 2 * 1024 * 1024
+	cases := []struct {
+		name     string
+		writes   [][2]int64
+		expected bool
+	}{
+		{name: "empty", writes: nil, expected: true},
+		{name: "single full", writes: [][2]int64{{0, chunkSize}}, expected: true},
+		{name: "single partial at start", writes: [][2]int64{{0, chunkSize / 4}}, expected: true},
+		{name: "single partial in middle", writes: [][2]int64{{chunkSize / 4, chunkSize / 2}}, expected: true},
+		{name: "two adjacent halves in order", writes: [][2]int64{{0, chunkSize / 2}, {chunkSize / 2, chunkSize}}, expected: true},
+		{name: "two adjacent halves out of order", writes: [][2]int64{{chunkSize / 2, chunkSize}, {0, chunkSize / 2}}, expected: true},
+		{name: "gap in middle", writes: [][2]int64{{0, chunkSize / 4}, {chunkSize / 2, chunkSize}}, expected: false},
+		{name: "two intervals with 1-byte gap", writes: [][2]int64{{0, 100}, {101, 200}}, expected: false},
+		{name: "overlapping covers everything", writes: [][2]int64{{0, chunkSize*3/4 + 1}, {chunkSize / 2, chunkSize}}, expected: true},
+		{name: "three adjacent thirds", writes: [][2]int64{{0, chunkSize / 3}, {chunkSize / 3, 2 * chunkSize / 3}, {2 * chunkSize / 3, chunkSize}}, expected: true},
+		{name: "three intervals with middle gap", writes: [][2]int64{{0, chunkSize / 4}, {chunkSize / 3, chunkSize / 2}, {chunkSize / 2, chunkSize}}, expected: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			list := newChunkWrittenIntervalList()
+			for i, w := range tc.writes {
+				list.MarkWritten(w[0], w[1], int64(i+1))
+			}
+			assert.Equal(t, tc.expected, list.IsContiguouslyWritten(), "IsContiguouslyWritten mismatch")
+		})
+	}
+}
+
 func TestIsComplete_AdjacentIntervals(t *testing.T) {
 	// Linux FUSE delivers writes up to FUSE_MAX_PAGES_PER_REQ
 	// (typically 1 MiB) per op, so a 2 MiB chunk filled by sequential

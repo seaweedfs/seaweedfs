@@ -11,6 +11,7 @@ type PageChunk interface {
 	WriteDataAt(src []byte, offset int64, tsNs int64) (n int)
 	ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64)
 	IsComplete() bool
+	IsContiguouslyWritten() bool
 	ActivityScore() int64
 	WrittenSize() int64
 	LastWriteTsNs() int64
