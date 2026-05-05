@@ -229,11 +229,13 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		return
 	}
 
-	if roleArn == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleArn is required"))
-		return
-	}
+	// RoleArn is intentionally optional here: claim-based policy mode
+	// (Phase 3b) advertises that callers MAY omit RoleArn so the STS
+	// service derives the assumed-role ARN from the configured policy
+	// claim. The bare-STS path validates this — when the IDP isn't
+	// configured for claim-based mode (or fails to emit policies) it
+	// returns a precise error that this handler maps to the right STS
+	// error code below.
 
 	if errCode, err := validateRoleSessionName(roleSessionName); err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
