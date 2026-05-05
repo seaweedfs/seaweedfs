@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -142,7 +144,14 @@ func (f *FilerAuditSink) Emit(ctx context.Context, event *OIDCProviderAuditEvent
 	if err != nil {
 		return fmt.Errorf("marshal audit event: %v", err)
 	}
-	name := fmt.Sprintf("%d-%s.json", event.OccurredAt.UnixNano(), event.Type)
+	// Filename: <unixnano>-<type>-<arnhash>.json. Two events at the same
+	// nano against the same ARN+type are vanishingly rare, but two events
+	// at the same nano against different ARNs are perfectly plausible
+	// (audit-via-batch script). The ARN hash gives us an effectively-
+	// collision-free name without leaking the ARN into the filer path.
+	arnSum := sha1.Sum([]byte(event.ARN))
+	name := fmt.Sprintf("%d-%s-%s.json", event.OccurredAt.UnixNano(), event.Type, hex.EncodeToString(arnSum[:8]))
+	occurredAt := event.OccurredAt.Unix()
 	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(addr), f.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 			Directory: f.basePath,
@@ -150,8 +159,10 @@ func (f *FilerAuditSink) Emit(ctx context.Context, event *OIDCProviderAuditEvent
 				Name:        name,
 				IsDirectory: false,
 				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
+					// Reflect the event's occurrence time so file metadata
+					// matches the audit record itself, not the filer write.
+					Mtime:    occurredAt,
+					Crtime:   occurredAt,
 					FileMode: uint32(0o600),
 				},
 				Content: data,
