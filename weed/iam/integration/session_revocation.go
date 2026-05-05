@@ -2,8 +2,12 @@ package integration
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -117,8 +121,15 @@ func (f *FilerSessionRevocationStore) resolveFilerAddress(filerAddress string) s
 	return ""
 }
 
+// fileName hashes the JTI before using it as a filename. RevokeSession is
+// an exported API that accepts an arbitrary string; even though every
+// SeaweedFS-issued session id is a safe random token, an external caller
+// could pass "../../etc/passwd" or similar. Hashing produces a fixed-width
+// hex name that's both filesystem-safe and stable, so the lookup-on-revoke
+// path still finds the right entry.
 func (f *FilerSessionRevocationStore) fileName(jti string) string {
-	return jti + ".json"
+	sum := sha1.Sum([]byte(jti))
+	return hex.EncodeToString(sum[:]) + ".json"
 }
 
 func (f *FilerSessionRevocationStore) Revoke(ctx context.Context, filerAddress string, entry *RevocationEntry) error {
@@ -187,37 +198,56 @@ func (f *FilerSessionRevocationStore) Purge(ctx context.Context, filerAddress st
 	}
 	count := 0
 	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory: f.basePath,
-			Limit:     10000,
-		})
-		if err != nil {
-			return err
-		}
+		// Stream-paginate the directory: ListEntriesRequest has no built-in
+		// "page until done" semantics, so we use StartFromFileName to walk
+		// the directory in chunks and avoid the previous hardcoded 10k cap.
+		const pageSize = 1000
+		startFrom := ""
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+				Directory:          f.basePath,
+				Limit:              pageSize,
+				StartFromFileName:  startFrom,
+				InclusiveStartFrom: false,
+			})
 			if err != nil {
-				break
+				return fmt.Errorf("list revocation entries: %w", err)
 			}
-			if resp.Entry == nil || resp.Entry.IsDirectory {
-				continue
+			lastName := ""
+			pageCount := 0
+			for {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					if errors.Is(recvErr, io.EOF) {
+						break
+					}
+					return fmt.Errorf("recv revocation entry: %w", recvErr)
+				}
+				if resp.Entry == nil || resp.Entry.IsDirectory {
+					continue
+				}
+				lastName = resp.Entry.Name
+				pageCount++
+				var entry RevocationEntry
+				if err := json.Unmarshal(resp.Entry.Content, &entry); err != nil {
+					continue
+				}
+				if entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(before) {
+					continue
+				}
+				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+					Directory:    f.basePath,
+					Name:         resp.Entry.Name,
+					IsDeleteData: true,
+				}); err == nil {
+					count++
+				}
 			}
-			var entry RevocationEntry
-			if err := json.Unmarshal(resp.Entry.Content, &entry); err != nil {
-				continue
+			if pageCount < pageSize {
+				return nil
 			}
-			if entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(before) {
-				continue
-			}
-			if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-				Directory:    f.basePath,
-				Name:         resp.Entry.Name,
-				IsDeleteData: true,
-			}); err == nil {
-				count++
-			}
+			startFrom = lastName
 		}
-		return nil
 	})
 	return count, err
 }
