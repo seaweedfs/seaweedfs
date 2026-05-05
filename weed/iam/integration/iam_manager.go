@@ -802,14 +802,22 @@ func (m *IAMManager) enforceProviderAccountScope(ctx context.Context, request *s
 	if err != nil {
 		return nil // signature validation will reject, no need to fail twice
 	}
-	rec, err := m.oidcProviderStore.GetProviderByIssuer(ctx, m.getFilerAddress(), issuer)
-	if err != nil {
-		return nil // unknown issuer; STS layer will reject
-	}
-	if rec.AccountID == "" || rec.AccountID == roleAccount {
+	// Look for a provider that is either global or scoped to the role's
+	// account. Multiple providers may share an issuer (e.g. one global plus
+	// one per tenant), and GetProviderByIssuer returns the first match
+	// arbitrarily — using it here would falsely reject a valid request
+	// whenever the wrong record happens to come back first.
+	if _, err := m.oidcProviderStore.GetProviderByIssuerAndAccount(ctx, m.getFilerAddress(), issuer, roleAccount); err == nil {
 		return nil
 	}
-	return fmt.Errorf("OIDC provider for issuer %s is registered in account %s; cannot be used to assume a role in account %s", issuer, rec.AccountID, roleAccount)
+	// No allowed match. Distinguish "issuer entirely unknown" (let the STS
+	// layer reject with the existing not-registered error) from "issuer is
+	// registered but only in a different account" (surface a precise error
+	// so the operator knows the call was cross-account).
+	if other, err := m.oidcProviderStore.GetProviderByIssuer(ctx, m.getFilerAddress(), issuer); err == nil {
+		return fmt.Errorf("OIDC provider for issuer %s is registered in account %s; cannot be used to assume a role in account %s", issuer, other.AccountID, roleAccount)
+	}
+	return nil
 }
 
 // extractIssuerFromJWT returns the iss claim of a JWT without verifying its
