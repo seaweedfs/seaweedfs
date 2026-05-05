@@ -275,8 +275,9 @@ const (
 	// s3.sse.key: any secret string; a 256-bit key is derived via HKDF-SHA256.
 	//   Cannot be used while /etc/s3/sse_kek exists — the filer file must be
 	//   deleted first (to avoid silently orphaning old data).
-	sseS3KEKConfigKey = "s3.sse.kek"
-	sseS3KeyConfigKey = "s3.sse.key"
+	sseS3KEKConfigKey           = "s3.sse.kek"
+	sseS3KeyConfigKey           = "s3.sse.key"
+	sseS3KEKPassphraseConfigKey = "s3.sse.kek.passphrase"
 )
 
 // legacyKEKWrappingSalt is the fixed salt the original implementation used
@@ -774,11 +775,12 @@ func (km *SSES3KeyManager) GetMasterKey() []byte {
 	return derived
 }
 
-// SSES3KEKPassphraseEnv is the environment variable from which the global
-// SSE-S3 key manager picks up its KEK-wrapping passphrase. When set, the
-// global KEK is stored on the filer wrapped under a key derived from this
-// passphrase; when unset, the KEK is stored in plaintext (with a warning at
-// startup) for backward compatibility with deployments that haven't migrated.
+// SSES3KEKPassphraseEnv is the legacy environment variable from which the
+// global SSE-S3 key manager picks up its KEK-wrapping passphrase. The Viper
+// config key sseS3KEKPassphraseConfigKey ("s3.sse.kek.passphrase") is the
+// preferred way to set it — same precedence as s3.sse.kek and s3.sse.key —
+// but the env var is honoured as a fallback so deployments that wired only
+// the env keep working.
 const SSES3KEKPassphraseEnv = "WEED_S3_SSE_KEK_PASSPHRASE"
 
 // Global SSE-S3 key manager instance
@@ -817,16 +819,22 @@ func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(file
 }
 
 // InitializeGlobalSSES3KeyManager initializes the global key manager with
-// filer access. The KEK-wrapping passphrase is read from the environment
-// variable named by SSES3KEKPassphraseEnv before the load path runs; if
-// unset, the KEK falls back to plaintext at-rest storage (with a startup
-// warning) so operators upgrading from earlier builds keep working until
-// they explicitly set the passphrase.
+// filer access. The KEK-wrapping passphrase is sourced from the Viper
+// config key s3.sse.kek.passphrase (matching the s3.sse.kek and
+// s3.sse.key conventions, settable via security.toml or
+// WEED_S3_SSE_KEK_PASSPHRASE env), with a fallback to the bare
+// SSES3KEKPassphraseEnv lookup for deployments wired before the Viper key
+// existed. If neither is set the KEK falls back to plaintext at-rest
+// storage (with a startup warning).
 func InitializeGlobalSSES3KeyManager(filerClient *wdclient.FilerClient, grpcDialOption grpc.DialOption) error {
-	if passphrase := os.Getenv(SSES3KEKPassphraseEnv); passphrase != "" {
+	passphrase := util.GetViper().GetString(sseS3KEKPassphraseConfigKey)
+	if passphrase == "" {
+		passphrase = os.Getenv(SSES3KEKPassphraseEnv)
+	}
+	if passphrase != "" {
 		globalSSES3KeyManager.SetKEKPassphrase(passphrase)
 	} else {
-		glog.Warningf("SSE-S3 KeyManager: %s is not set; the KEK will be stored on the filer in plaintext. Set this environment variable to enable encrypted-at-rest KEK storage.", SSES3KEKPassphraseEnv)
+		glog.Warningf("SSE-S3 KeyManager: neither %s nor %s is set; the KEK will be stored on the filer in plaintext. Set one to enable encrypted-at-rest KEK storage.", sseS3KEKPassphraseConfigKey, SSES3KEKPassphraseEnv)
 	}
 
 	wrapper := &KeyManagerFilerClient{
