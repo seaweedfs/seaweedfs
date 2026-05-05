@@ -1253,7 +1253,15 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Wait for admin server's HTTP port to be ready before launching worker
 	adminAddr := fmt.Sprintf("http://%s:%d", bindIp, *miniAdminOptions.port)
 	glog.V(1).Infof("Waiting for admin server to be ready at %s...", adminAddr)
-	if err := waitForAdminServerReady(adminAddr); err != nil {
+	if err := waitForAdminServerReady(ctx, adminAddr); err != nil {
+		// If the parent context was cancelled (e.g. a previous in-process
+		// mini run is being torn down), bail out gracefully instead of
+		// fataling — the test harness uses `cmd.Run` directly so a Fatalf
+		// would terminate the entire test binary.
+		if ctx.Err() != nil {
+			glog.Warningf("Admin server readiness wait aborted: %v", err)
+			return
+		}
 		glog.Fatalf("Admin server readiness check failed: %v", err)
 	}
 
@@ -1272,8 +1280,12 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	waitForWorkerReady(workerGrpcAddr)
 }
 
-// waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
-func waitForAdminServerReady(adminAddr string) error {
+// waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready.
+// Returns ctx.Err() (typically context.Canceled) if the parent context is
+// cancelled mid-poll so a torn-down mini doesn't keep spinning for the full
+// timeout — relevant when tests embed mini in-process and reuse the same
+// goroutine pool across subtests.
+func waitForAdminServerReady(ctx context.Context, adminAddr string) error {
 	healthAddr := getHealthCheckAddr(fmt.Sprintf("%s/health", adminAddr))
 	// 240 * 500ms = 120 seconds max wait. The previous 30-second ceiling was
 	// too tight on busy CI runners where master + filer + volume + admin all
@@ -1287,6 +1299,9 @@ func waitForAdminServerReady(adminAddr string) error {
 	}
 
 	for attempt < maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
@@ -1294,7 +1309,11 @@ func waitForAdminServerReady(adminAddr string) error {
 			return nil
 		}
 		attempt++
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 
 	return fmt.Errorf("admin server did not become ready at %s after %d attempts", adminAddr, maxAttempts)
