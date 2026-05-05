@@ -323,9 +323,12 @@ func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucket
 
 	// Create the encrypting reader. Compute the HMAC commitment alongside
 	// every other field so this bucket-scoped path is on the same downgrade-
-	// resistant footing as the helper-driven paths above.
+	// resistant footing as the helper-driven paths above. Store the KMS
+	// response's KeyID rather than the request's; CreateSSEKMSDecryptedReader
+	// compares against decryptResp.KeyID, and a request alias would mismatch
+	// the resolved ARN the response carries.
 	sseKey := &SSEKMSKey{
-		KeyID:             keyID,
+		KeyID:             dataKeyResp.KeyID,
 		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
 		EncryptionContext: encryptionContext,
 		BucketKeyEnabled:  bucketKeyEnabled,
