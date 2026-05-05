@@ -49,6 +49,44 @@ func TestVerifyKeyCommitment_StrictAcceptsValidCommitment(t *testing.T) {
 	}
 }
 
+func TestVerifyKeyCommitment_RejectsTamperedKey(t *testing.T) {
+	// Real attack shape: an attacker who can mutate object metadata cannot
+	// craft a valid commitment without the original key. The verify path
+	// must catch it whether they tamper with the key, the IV, or the
+	// algorithm — all three are bound by the HMAC.
+	prev := requireKeyCommitment.Load()
+	t.Cleanup(func() { requireKeyCommitment.Store(prev) })
+	requireKeyCommitment.Store(false)
+
+	originalKey := []byte("legit-key-for-commitment")
+	iv := []byte("commitment-iv-16")
+	algo := "AES256"
+	commit := ComputeKeyCommitment(originalKey, iv, algo)
+
+	t.Run("tampered key", func(t *testing.T) {
+		if err := VerifyKeyCommitment([]byte("attacker-substituted-key"), iv, algo, commit); err == nil {
+			t.Fatal("verify must reject when the key changed but commitment did not")
+		}
+	})
+	t.Run("tampered IV", func(t *testing.T) {
+		if err := VerifyKeyCommitment(originalKey, []byte("attacker-iv-16!!"), algo, commit); err == nil {
+			t.Fatal("verify must reject when the IV changed but commitment did not")
+		}
+	})
+	t.Run("tampered algorithm", func(t *testing.T) {
+		if err := VerifyKeyCommitment(originalKey, iv, "AES128", commit); err == nil {
+			t.Fatal("verify must reject when the algorithm changed but commitment did not")
+		}
+	})
+	t.Run("tampered commitment", func(t *testing.T) {
+		bad := append([]byte{}, commit...)
+		bad[0] ^= 0x01
+		if err := VerifyKeyCommitment(originalKey, iv, algo, bad); err == nil {
+			t.Fatal("verify must reject when the commitment itself was flipped")
+		}
+	})
+}
+
 func TestSetRequireKeyCommitment(t *testing.T) {
 	prev := requireKeyCommitment.Load()
 	t.Cleanup(func() { requireKeyCommitment.Store(prev) })
