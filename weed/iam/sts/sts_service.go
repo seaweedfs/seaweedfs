@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -79,6 +80,16 @@ type STSService struct {
 	issuerToProvider     map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
 	tokenGenerator       *TokenGenerator
 	trustPolicyValidator TrustPolicyValidator // Interface for trust policy validation
+
+	// iamManagedOIDCMu guards iamManagedOIDCByIssuer. The map is the live view
+	// of providers persisted in the IAM-managed OIDCProviderStore; it is
+	// atomically replaced by SetIAMManagedOIDCProvidersByIssuer whenever the
+	// store changes (either via a local IAM API call or a metadata-subscribe
+	// event from a peer). Lookups consult this map first and fall back to the
+	// static-config issuerToProvider so admin-managed entries always take
+	// precedence over the bootstrap config.
+	iamManagedOIDCMu        sync.RWMutex
+	iamManagedOIDCByIssuer  map[string]providers.IdentityProvider
 }
 
 // GetTokenGenerator returns the token generator used by the STS service.
@@ -424,6 +435,40 @@ func (s *STSService) GetProviders() map[string]providers.IdentityProvider {
 	return s.providers
 }
 
+// SetIAMManagedOIDCProvidersByIssuer atomically replaces the IAM-managed
+// OIDC provider map. Pass nil or an empty map to clear all managed entries.
+// The caller passes a fully-built map keyed by issuer URL; the STS service
+// copies the reference and serves AssumeRoleWithWebIdentity lookups from it
+// in preference to the static-config issuerToProvider map.
+func (s *STSService) SetIAMManagedOIDCProvidersByIssuer(byIssuer map[string]providers.IdentityProvider) {
+	// Defensively copy so callers can keep mutating their map without affecting
+	// in-flight lookups. A nil input becomes an empty map for cheap reads.
+	cp := make(map[string]providers.IdentityProvider, len(byIssuer))
+	for k, v := range byIssuer {
+		if k == "" || v == nil {
+			continue
+		}
+		cp[k] = v
+	}
+	s.iamManagedOIDCMu.Lock()
+	s.iamManagedOIDCByIssuer = cp
+	s.iamManagedOIDCMu.Unlock()
+}
+
+// lookupOIDCProviderByIssuer returns the provider that should validate tokens
+// from `issuer`, consulting the IAM-managed map first and falling back to the
+// static-config map. Returns ok=false when no provider is registered.
+func (s *STSService) lookupOIDCProviderByIssuer(issuer string) (providers.IdentityProvider, bool) {
+	s.iamManagedOIDCMu.RLock()
+	if p, ok := s.iamManagedOIDCByIssuer[issuer]; ok {
+		s.iamManagedOIDCMu.RUnlock()
+		return p, true
+	}
+	s.iamManagedOIDCMu.RUnlock()
+	p, ok := s.issuerToProvider[issuer]
+	return p, ok
+}
+
 // SetTrustPolicyValidator sets the trust policy validator for role assumption validation
 func (s *STSService) SetTrustPolicyValidator(validator TrustPolicyValidator) {
 	s.trustPolicyValidator = validator
@@ -715,8 +760,11 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 		return nil, nil, fmt.Errorf("web identity token must be a valid JWT token: %w", err)
 	}
 
-	// Look up the specific provider for this issuer
-	provider, exists := s.issuerToProvider[issuer]
+	// Look up the specific provider for this issuer. IAM-managed records
+	// (admin-controlled, mutable at runtime) take precedence over the
+	// static-config map so an operator's CreateOpenIDConnectProvider call
+	// can shadow a bootstrap entry without requiring a restart.
+	provider, exists := s.lookupOIDCProviderByIssuer(issuer)
 	if !exists {
 		// SECURITY: If no provider is registered for this issuer, fail immediately
 		// This prevents JWT tokens from being validated by unintended providers
