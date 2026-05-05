@@ -1275,7 +1275,12 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
 func waitForAdminServerReady(adminAddr string) error {
 	healthAddr := getHealthCheckAddr(fmt.Sprintf("%s/health", adminAddr))
-	maxAttempts := 60 // 60 * 500ms = 30 seconds max wait
+	// 240 * 500ms = 120 seconds max wait. The previous 30-second ceiling was
+	// too tight on busy CI runners where master + filer + volume + admin all
+	// initialise on a shared worker — the S3 Policy Shell Integration Tests
+	// flaked regularly even though the admin server still came up within a
+	// minute or two. Two minutes leaves headroom without being absurd locally.
+	maxAttempts := 240
 	attempt := 0
 	client := &http.Client{
 		Timeout: 1 * time.Second,
