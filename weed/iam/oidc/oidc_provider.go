@@ -683,12 +683,16 @@ func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL s
 		return "", fmt.Errorf("discovery document missing jwks_uri")
 	}
 
-	// Issuer must match: a discovery doc that points to a different issuer is
-	// either a misconfiguration or an attack against issuer-confusion. Compare
-	// after trimming a single trailing slash on each side; OIDC Discovery
-	// 1.0 is silent on slash equivalence and real IdPs disagree on whether
-	// the configured issuer has one.
-	if doc.Issuer != "" && strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
+	// Issuer must be present and match: a discovery doc that points to a
+	// different issuer is either a misconfiguration or an attack against
+	// issuer-confusion, and a doc that omits the issuer field entirely
+	// would have bypassed the previous check (doc.Issuer != "" guard) and
+	// silently accepted whatever JWKS URI the document supplied. OIDC
+	// Discovery 1.0 §3 mandates the issuer field, so treat missing as a
+	// hard failure. Compare after trimming a single trailing slash on each
+	// side because real IdPs disagree on whether the configured issuer
+	// has one.
+	if strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
 		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
 	}
 

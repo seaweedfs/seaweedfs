@@ -19,6 +19,7 @@ type fakeIDP struct {
 	disableDiscovery     bool
 	discoveryStatusCode  int
 	discoveryIssuer      string
+	omitDiscoveryIssuer  bool   // when true, the discovery doc omits the "issuer" field entirely
 	customJWKSPathSuffix string // optional suffix that fakeIDP serves at /custom/<suffix>
 	jwks                 JWKS
 }
@@ -46,10 +47,11 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 		if idp.customJWKSPathSuffix != "" {
 			jwksURI = idp.server.URL + "/custom/" + idp.customJWKSPathSuffix
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"issuer":   issuer,
-			"jwks_uri": jwksURI,
-		})
+		body := map[string]string{"jwks_uri": jwksURI}
+		if !idp.omitDiscoveryIssuer {
+			body["issuer"] = issuer
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 	mux.HandleFunc("/discovered/jwks", func(w http.ResponseWriter, r *http.Request) {
 		idp.jwksHits.Add(1)
@@ -160,6 +162,34 @@ func TestDiscoveryRejectsIssuerMismatch(t *testing.T) {
 	// Discovery probe was tried once, rejected, then fell through to fallback path.
 	if got := idp.discoveryHits.Load(); got != 1 {
 		t.Fatalf("expected 1 discovery probe, got %d", got)
+	}
+	if got := idp.jwksHits.Load(); got != 1 {
+		t.Fatalf("expected 1 fallback JWKS hit, got %d", got)
+	}
+}
+
+// TestDiscoveryRejectsMissingIssuer: a discovery document that omits the
+// issuer field entirely must be treated the same as one that supplies a
+// mismatched issuer. Otherwise an attacker who can intercept the discovery
+// response can strip the issuer field and the comparison silently passes,
+// letting the document point fetchJWKS at any URL it pleases.
+func TestDiscoveryRejectsMissingIssuer(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.omitDiscoveryIssuer = true
+	p := newProviderForIDP(t, idp, "")
+
+	if err := p.fetchJWKS(context.Background()); err != nil {
+		t.Fatalf("fetchJWKS should fall back to /.well-known/jwks.json on issuer-missing discovery: %v", err)
+	}
+	if got := idp.discoveryHits.Load(); got != 1 {
+		t.Fatalf("expected 1 discovery probe, got %d", got)
+	}
+	// The discovery document was rejected; the JWKS that ultimately served
+	// us must be the fallback one, not the discovered URI. The fakeIDP
+	// counts both hits under jwksHits since they share a counter; what
+	// matters is that customJWKSHits stayed zero.
+	if got := idp.customJWKSHits.Load(); got != 0 {
+		t.Fatalf("custom JWKS endpoint must not have been used, got %d hits", got)
 	}
 	if got := idp.jwksHits.Load(); got != 1 {
 		t.Fatalf("expected 1 fallback JWKS hit, got %d", got)
