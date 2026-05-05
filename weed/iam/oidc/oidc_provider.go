@@ -684,8 +684,11 @@ func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL s
 	}
 
 	// Issuer must match: a discovery doc that points to a different issuer is
-	// either a misconfiguration or an attack against issuer-confusion.
-	if doc.Issuer != "" && doc.Issuer != p.config.Issuer {
+	// either a misconfiguration or an attack against issuer-confusion. Compare
+	// after trimming a single trailing slash on each side; OIDC Discovery
+	// 1.0 is silent on slash equivalence and real IdPs disagree on whether
+	// the configured issuer has one.
+	if doc.Issuer != "" && strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
 		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
 	}
 
@@ -704,7 +707,15 @@ func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
 // fetchJWKSLocked fetches the JWKS from the provider. The caller must hold
 // p.mu (write lock); the function writes p.jwksCache and p.jwksFetchedAt
 // without taking the lock itself.
+//
+// Each fetch reattempts discovery if the previous attempt failed: a
+// transient 5xx that flipped discoveryFailed at startup shouldn't lock the
+// provider into the fallback path forever. The retry rate is bounded by
+// the JWKS TTL (typically 1h), so the discovery RTT cost is amortized.
 func (p *OIDCProvider) fetchJWKSLocked(ctx context.Context) error {
+	if p.config.JWKSUri == "" && p.resolvedJWKSUri == "" {
+		p.discoveryFailed = false
+	}
 	jwksURL, err := p.resolveJWKSUriLocked(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve JWKS URI: %v", err)

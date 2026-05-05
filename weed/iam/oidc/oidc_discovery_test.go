@@ -120,12 +120,15 @@ func TestDiscoveryFallback404(t *testing.T) {
 		t.Fatalf("expected 1 JWKS hit at fallback uri, got %d", got)
 	}
 
-	// Subsequent fetches skip discovery — discoveryFailed is sticky.
+	// Subsequent fetches retry discovery — discoveryFailed resets at the top
+	// of fetchJWKSLocked when no URI was cached, so a transient 5xx at
+	// startup doesn't lock the provider into the fallback path forever.
+	// Retry rate is bounded by the JWKS TTL (one retry per refresh cycle).
 	if err := p.fetchJWKS(context.Background()); err != nil {
 		t.Fatalf("fetchJWKS second: %v", err)
 	}
-	if got := idp.discoveryHits.Load(); got != 1 {
-		t.Fatalf("discovery probe should not retry after failure, got %d hits", got)
+	if got := idp.discoveryHits.Load(); got != 2 {
+		t.Fatalf("discovery probe should retry while no URI is cached, got %d hits", got)
 	}
 }
 
