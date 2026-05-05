@@ -5,7 +5,9 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"sort"
 	"strings"
@@ -281,30 +283,49 @@ func (f *FilerOIDCProviderStore) ListProviders(ctx context.Context, filerAddress
 
 	var out []*OIDCProviderRecord
 	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory: f.basePath,
-			Limit:     1000,
-		})
-		if err != nil {
-			return fmt.Errorf("list OIDC providers: %v", err)
-		}
+		// Stream-paginate via StartFromFileName so deployments with more
+		// than 1000 providers don't get a silently truncated list.
+		const pageSize = 1000
+		startFrom := ""
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+				Directory:          f.basePath,
+				Limit:              pageSize,
+				StartFromFileName:  startFrom,
+				InclusiveStartFrom: false,
+			})
 			if err != nil {
+				return fmt.Errorf("list OIDC providers: %v", err)
+			}
+			lastName := ""
+			pageCount := 0
+			for {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					if errors.Is(recvErr, io.EOF) {
+						break
+					}
+					return fmt.Errorf("recv OIDC provider entry: %w", recvErr)
+				}
+				if resp.Entry == nil || resp.Entry.IsDirectory {
+					continue
+				}
+				lastName = resp.Entry.Name
+				pageCount++
+				if !strings.HasSuffix(resp.Entry.Name, ".json") {
+					continue
+				}
+				var rec OIDCProviderRecord
+				if err := json.Unmarshal(resp.Entry.Content, &rec); err != nil {
+					glog.Warningf("skipping malformed OIDC provider record %s: %v", resp.Entry.Name, err)
+					continue
+				}
+				out = append(out, &rec)
+			}
+			if pageCount < pageSize {
 				break
 			}
-			if resp.Entry == nil || resp.Entry.IsDirectory {
-				continue
-			}
-			if !strings.HasSuffix(resp.Entry.Name, ".json") {
-				continue
-			}
-			var rec OIDCProviderRecord
-			if err := json.Unmarshal(resp.Entry.Content, &rec); err != nil {
-				glog.Warningf("skipping malformed OIDC provider record %s: %v", resp.Entry.Name, err)
-				continue
-			}
-			out = append(out, &rec)
+			startFrom = lastName
 		}
 		return nil
 	})

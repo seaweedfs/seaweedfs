@@ -286,16 +286,24 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 			continue
 		}
 		clientIDs := extractClientIDs(pc.Config)
-		now := time.Now()
+		ctx := context.Background()
+		// Preserve CreatedAt across reboots when a persistent store already
+		// has this provider — IAM's GetOpenIDConnectProvider response
+		// shouldn't shift its CreateDate every time the server restarts.
+		now := time.Now().UTC()
+		createdAt := now
+		if existing, err := store.GetProviderByARN(ctx, m.getFilerAddress(), arn); err == nil && existing != nil && !existing.CreatedAt.IsZero() {
+			createdAt = existing.CreatedAt
+		}
 		rec := &OIDCProviderRecord{
 			AccountID: accountID,
 			ARN:       arn,
 			URL:       issuer,
 			ClientIDs: clientIDs,
-			CreatedAt: now,
+			CreatedAt: createdAt,
 			UpdatedAt: now,
 		}
-		if err := store.StoreProvider(context.Background(), m.getFilerAddress(), rec); err != nil {
+		if err := store.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
 			glog.Warningf("mirror static OIDC provider %s into store: %v", pc.Name, err)
 		}
 	}
