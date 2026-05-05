@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -79,8 +80,12 @@ func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRe
 	if err := validateOIDCProviderRecord(rec); err != nil {
 		return err
 	}
-	if existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN); err == nil && existing != nil {
+	existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN)
+	if err == nil && existing != nil {
 		return fmt.Errorf("%w: %s", ErrOIDCProviderAlreadyExists, rec.ARN)
+	}
+	if err != nil && !errors.Is(err, ErrOIDCProviderNotFound) {
+		return fmt.Errorf("lookup existing OIDC provider %q: %w", rec.ARN, err)
 	}
 	now := time.Now().UTC()
 	rec.CreatedAt = now
