@@ -98,13 +98,28 @@ type STSService struct {
 
 	// iamManagedOIDCMu guards iamManagedOIDCByIssuer. The map is the live view
 	// of providers persisted in the IAM-managed OIDCProviderStore; it is
-	// atomically replaced by SetIAMManagedOIDCProvidersByIssuer whenever the
-	// store changes (either via a local IAM API call or a metadata-subscribe
-	// event from a peer). Lookups consult this map first and fall back to the
+	// atomically replaced by SetIAMManagedOIDCProviders whenever the store
+	// changes (either via a local IAM API call or a metadata-subscribe event
+	// from a peer). Lookups consult this map first and fall back to the
 	// static-config issuerToProvider so admin-managed entries always take
 	// precedence over the bootstrap config.
-	iamManagedOIDCMu        sync.RWMutex
-	iamManagedOIDCByIssuer  map[string]providers.IdentityProvider
+	//
+	// The slice value lets multiple records share an issuer when each is
+	// scoped to a different account; lookup picks the entry whose AccountID
+	// matches the role being assumed (or the global, AccountID="" entry as a
+	// fallback). Without this, two accounts' records for the same issuer
+	// would race for one map slot and a token could be validated by a
+	// provider that wasn't scoped to the role's account.
+	iamManagedOIDCMu       sync.RWMutex
+	iamManagedOIDCByIssuer map[string][]ScopedOIDCProvider
+}
+
+// ScopedOIDCProvider pairs an OIDC IdentityProvider with the account it is
+// scoped to. AccountID="" means the provider is global (usable from any
+// account).
+type ScopedOIDCProvider struct {
+	AccountID string
+	Provider  providers.IdentityProvider
 }
 
 // GetTokenGenerator returns the token generator used by the STS service.
@@ -450,36 +465,65 @@ func (s *STSService) GetProviders() map[string]providers.IdentityProvider {
 	return s.providers
 }
 
-// SetIAMManagedOIDCProvidersByIssuer atomically replaces the IAM-managed
-// OIDC provider map. Pass nil or an empty map to clear all managed entries.
-// The caller passes a fully-built map keyed by issuer URL; the STS service
-// copies the reference and serves AssumeRoleWithWebIdentity lookups from it
-// in preference to the static-config issuerToProvider map.
-func (s *STSService) SetIAMManagedOIDCProvidersByIssuer(byIssuer map[string]providers.IdentityProvider) {
+// SetIAMManagedOIDCProviders atomically replaces the IAM-managed OIDC
+// provider map. Pass nil or an empty map to clear all managed entries. The
+// caller passes a fully-built map keyed by issuer URL; the slice value lets
+// per-account records coexist under the same issuer.
+func (s *STSService) SetIAMManagedOIDCProviders(byIssuer map[string][]ScopedOIDCProvider) {
 	// Defensively copy so callers can keep mutating their map without affecting
 	// in-flight lookups. A nil input becomes an empty map for cheap reads.
-	cp := make(map[string]providers.IdentityProvider, len(byIssuer))
-	for k, v := range byIssuer {
-		if k == "" || v == nil {
+	cp := make(map[string][]ScopedOIDCProvider, len(byIssuer))
+	for issuer, scoped := range byIssuer {
+		if issuer == "" {
 			continue
 		}
-		cp[k] = v
+		entries := make([]ScopedOIDCProvider, 0, len(scoped))
+		for _, sp := range scoped {
+			if sp.Provider == nil {
+				continue
+			}
+			entries = append(entries, sp)
+		}
+		if len(entries) > 0 {
+			cp[issuer] = entries
+		}
 	}
 	s.iamManagedOIDCMu.Lock()
 	s.iamManagedOIDCByIssuer = cp
 	s.iamManagedOIDCMu.Unlock()
 }
 
-// lookupOIDCProviderByIssuer returns the provider that should validate tokens
-// from `issuer`, consulting the IAM-managed map first and falling back to the
-// static-config map. Returns ok=false when no provider is registered.
-func (s *STSService) lookupOIDCProviderByIssuer(issuer string) (providers.IdentityProvider, bool) {
+// lookupOIDCProviderForAccount returns the provider that should validate
+// tokens from `issuer` when the caller is assuming a role in `accountID`.
+// Selection order:
+//  1. IAM-managed record exactly scoped to accountID (when accountID != "");
+//  2. IAM-managed record with empty AccountID (global);
+//  3. static-config issuerToProvider (legacy path; account-agnostic).
+//
+// Without the (issuer, account) key, two records for the same issuer (e.g.
+// account A with clientIDs=[a] and account B with clientIDs=[b]) would race
+// for one map slot, and a token destined for account B could be validated by
+// account A's record. The role-account check in
+// IAMManager.enforceProviderAccountScope blocks the cross-account assumption
+// itself, but the validation must use the right record's clientIDs and
+// thumbprints in the first place.
+func (s *STSService) lookupOIDCProviderForAccount(issuer, accountID string) (providers.IdentityProvider, bool) {
 	s.iamManagedOIDCMu.RLock()
-	if p, ok := s.iamManagedOIDCByIssuer[issuer]; ok {
-		s.iamManagedOIDCMu.RUnlock()
-		return p, true
+	scoped := s.iamManagedOIDCByIssuer[issuer]
+	var globalMatch providers.IdentityProvider
+	for _, sp := range scoped {
+		if accountID != "" && sp.AccountID == accountID {
+			s.iamManagedOIDCMu.RUnlock()
+			return sp.Provider, true
+		}
+		if sp.AccountID == "" && globalMatch == nil {
+			globalMatch = sp.Provider
+		}
 	}
 	s.iamManagedOIDCMu.RUnlock()
+	if globalMatch != nil {
+		return globalMatch, true
+	}
 	p, ok := s.issuerToProvider[issuer]
 	return p, ok
 }
@@ -514,8 +558,13 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		sessionPolicy = normalized
 	}
 
-	// 1. Validate the web identity token with appropriate provider
-	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken)
+	// 1. Validate the web identity token with appropriate provider. The role
+	// ARN's account scopes which IAM-managed record may validate the token —
+	// see lookupOIDCProviderForAccount. ParseRoleARN returns "" when the
+	// caller passed a legacy or claim-based ARN, in which case lookup falls
+	// back to a global (account-less) record only.
+	roleAccountID := utils.ParseRoleARN(request.RoleArn).AccountID
+	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken, roleAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate web identity token: %w", err)
 	}
@@ -799,7 +848,7 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 // validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
 // SECURITY: JWT tokens with a specific issuer claim MUST only be validated by the provider for that issuer
 // SECURITY: This method only accepts JWT tokens. Non-JWT authentication must use AssumeRoleWithCredentials with explicit ProviderName.
-func (s *STSService) validateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+func (s *STSService) validateWebIdentityToken(ctx context.Context, token, roleAccountID string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
 	// Try to extract issuer from JWT token for strict validation
 	issuer, err := s.extractIssuerFromJWT(token)
 	if err != nil {
@@ -810,11 +859,12 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 		return nil, nil, fmt.Errorf("web identity token must be a valid JWT token: %w", err)
 	}
 
-	// Look up the specific provider for this issuer. IAM-managed records
-	// (admin-controlled, mutable at runtime) take precedence over the
-	// static-config map so an operator's CreateOpenIDConnectProvider call
-	// can shadow a bootstrap entry without requiring a restart.
-	provider, exists := s.lookupOIDCProviderByIssuer(issuer)
+	// Look up the specific provider for this issuer, scoped to the role's
+	// account when known. IAM-managed records (admin-controlled, mutable at
+	// runtime) take precedence over the static-config map so an operator's
+	// CreateOpenIDConnectProvider call can shadow a bootstrap entry without
+	// requiring a restart.
+	provider, exists := s.lookupOIDCProviderForAccount(issuer, roleAccountID)
 	if !exists {
 		// SECURITY: If no provider is registered for this issuer, fail immediately
 		// This prevents JWT tokens from being validated by unintended providers
@@ -849,9 +899,19 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 }
 
 // ValidateWebIdentityToken is a public method that exposes secure token validation for external use
-// This method uses issuer-based lookup to select the correct provider, ensuring security and efficiency
+// This method uses issuer-based lookup to select the correct provider, ensuring security and efficiency.
+// External callers without role context get the account-agnostic lookup (global IAM-managed records
+// only, then static-config); call ValidateWebIdentityTokenForAccount when the assumed-role account
+// is known.
 func (s *STSService) ValidateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	return s.validateWebIdentityToken(ctx, token)
+	return s.validateWebIdentityToken(ctx, token, "")
+}
+
+// ValidateWebIdentityTokenForAccount mirrors ValidateWebIdentityToken but
+// scopes the IAM-managed provider lookup to roleAccountID. Pass "" for
+// callers that don't yet know the account (e.g. claim-based mode).
+func (s *STSService) ValidateWebIdentityTokenForAccount(ctx context.Context, token, roleAccountID string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+	return s.validateWebIdentityToken(ctx, token, roleAccountID)
 }
 
 // extractIssuerFromJWT extracts the issuer (iss) claim from a JWT token without verification

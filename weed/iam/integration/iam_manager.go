@@ -625,7 +625,7 @@ func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list OIDC providers: %w", err)
 	}
-	byIssuer := make(map[string]providers.IdentityProvider, len(records))
+	byIssuer := make(map[string][]sts.ScopedOIDCProvider, len(records))
 	for _, rec := range records {
 		if rec == nil || rec.URL == "" {
 			continue
@@ -635,12 +635,15 @@ func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
 			glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
 			continue
 		}
-		// Last write wins on issuer collision; the store is the source of
-		// truth, and an operator who has two records with the same issuer
-		// has already accepted one will shadow the other.
-		byIssuer[rec.URL] = provider
+		// Multiple records may share an issuer when each is scoped to a
+		// different account; STS picks the right one at validation time
+		// based on the role being assumed. See lookupOIDCProviderForAccount.
+		byIssuer[rec.URL] = append(byIssuer[rec.URL], sts.ScopedOIDCProvider{
+			AccountID: rec.AccountID,
+			Provider:  provider,
+		})
 	}
-	m.stsService.SetIAMManagedOIDCProvidersByIssuer(byIssuer)
+	m.stsService.SetIAMManagedOIDCProviders(byIssuer)
 	return nil
 }
 
