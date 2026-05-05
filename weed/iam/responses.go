@@ -13,6 +13,39 @@ type CommonResponse struct {
 	} `xml:"ResponseMetadata"`
 }
 
+// IAMTag mirrors AWS IAM's Tag list element with the Key/Value pair shape.
+type IAMTag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
+// OpenIDConnectProviderListEntry is one element of ListOpenIDConnectProviders.
+type OpenIDConnectProviderListEntry struct {
+	Arn string `xml:"Arn"`
+}
+
+// ListOpenIDConnectProvidersResponse is the response for ListOpenIDConnectProviders.
+type ListOpenIDConnectProvidersResponse struct {
+	XMLName                          xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListOpenIDConnectProvidersResponse"`
+	ListOpenIDConnectProvidersResult struct {
+		OpenIDConnectProviderList []*OpenIDConnectProviderListEntry `xml:"OpenIDConnectProviderList>member"`
+	} `xml:"ListOpenIDConnectProvidersResult"`
+	CommonResponse
+}
+
+// GetOpenIDConnectProviderResponse is the response for GetOpenIDConnectProvider.
+type GetOpenIDConnectProviderResponse struct {
+	XMLName                        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetOpenIDConnectProviderResponse"`
+	GetOpenIDConnectProviderResult struct {
+		Url            string    `xml:"Url"`
+		ClientIDList   []string  `xml:"ClientIDList>member,omitempty"`
+		ThumbprintList []string  `xml:"ThumbprintList>member,omitempty"`
+		Tags           []*IAMTag `xml:"Tags>member,omitempty"`
+		CreateDate     string    `xml:"CreateDate,omitempty"`
+	} `xml:"GetOpenIDConnectProviderResult"`
+	CommonResponse
+}
+
 // SetRequestId stores the request ID generated for the current HTTP request.
 func (r *CommonResponse) SetRequestId(requestID string) {
 	r.ResponseMetadata.RequestId = requestID
