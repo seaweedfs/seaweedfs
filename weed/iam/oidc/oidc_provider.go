@@ -92,6 +92,14 @@ type OIDCConfig struct {
 	// allowlist (e.g. ["team", "env"]) to opt specific keys in.
 	AllowedPrincipalTagKeys []string `json:"allowedPrincipalTagKeys,omitempty"`
 
+	// PolicyClaim names a JWT claim whose value carries the effective policy
+	// list for the session. When non-empty and the assume request opts into
+	// claim-based policy mode via the ClaimBasedPolicyRoleArn sentinel, the
+	// policies are pulled from this claim rather than from a server-side
+	// role mapping. Accepted shapes: string (single policy), comma-separated
+	// string, or string array.
+	PolicyClaim string `json:"policyClaim,omitempty"`
+
 	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
 	TLSCACert string `json:"tlsCaCert,omitempty"`
 
@@ -105,6 +113,61 @@ type OIDCConfig struct {
 // an object whose top-level keys are tag names. AWS uses the same string;
 // see https://docs.aws.amazon.com/IAM/latest/UserGuide/id_session-tags.html.
 const PrincipalTagsClaim = "https://aws.amazon.com/tags/principal_tags"
+
+// extractClaimPolicies reads policy names from the configured JWT claim.
+// Accepts three shapes: a single string ("readonly"), a comma-separated
+// string ("readonly,billing"), or a string array. Returns nil when the
+// provider isn't in claim-based mode or the claim is absent/empty.
+func extractClaimPolicies(claims map[string]interface{}, claimName string) []string {
+	if claimName == "" {
+		return nil
+	}
+	raw, ok := claims[claimName]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		return splitPolicyClaimString(v)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				continue
+			}
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			out = append(out, s)
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return nil
+}
+
+func splitPolicyClaimString(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 
 // filterPrincipalTags drops keys that are not on `allowed`. An empty
 // allowlist means "deny all" — security-conservative default that forces
@@ -475,6 +538,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		Provider:      p.name,
 		Issuer:        claims.Issuer,
 		PrincipalTags: filterPrincipalTags(extractPrincipalTags(claims.Claims), p.config.AllowedPrincipalTagKeys),
+		ClaimPolicies: extractClaimPolicies(claims.Claims, p.config.PolicyClaim),
 	}
 
 	// Pass the token expiration to limit session duration
