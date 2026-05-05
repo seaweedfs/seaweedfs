@@ -161,6 +161,22 @@ func (h *STSHandlers) getAccountID() string {
 	return defaultAccountID
 }
 
+// assumeRoleWithWebIdentity dispatches the request through the IAMManager
+// wrapper when one is wired so its cross-account provider scope check and
+// per-role MaxSessionDuration clamp run for the public AWS-SDK path. Without
+// this dispatch, both checks are silently skipped because they live on the
+// IAMManager, not on the bare STS service.
+func (h *STSHandlers) assumeRoleWithWebIdentity(ctx context.Context, request *sts.AssumeRoleWithWebIdentityRequest) (*sts.AssumeRoleResponse, error) {
+	if h.iam != nil && h.iam.iamIntegration != nil {
+		if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
+			if mgr := provider.GetIAMManager(); mgr != nil {
+				return mgr.AssumeRoleWithWebIdentity(ctx, request)
+			}
+		}
+	}
+	return h.stsService.AssumeRoleWithWebIdentity(ctx, request)
+}
+
 // HandleSTSRequest is the main entry point for STS requests
 // It routes requests based on the Action parameter
 func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
@@ -259,8 +275,11 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		Policy:           sessionPolicyPtr,
 	}
 
-	// Call STS service
-	response, err := h.stsService.AssumeRoleWithWebIdentity(ctx, request)
+	// Prefer the IAMManager wrapper so the cross-account provider scope
+	// (enforceProviderAccountScope) and per-role MaxSessionDuration clamp
+	// run for SDK callers too. Falling back to the bare STS service keeps
+	// embedded test setups (no IAM integration wired) working.
+	response, err := h.assumeRoleWithWebIdentity(ctx, request)
 	if err != nil {
 		glog.V(2).Infof("AssumeRoleWithWebIdentity failed: %v", err)
 
