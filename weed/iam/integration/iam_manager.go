@@ -119,6 +119,9 @@ func (m *IAMManager) AddClientIDToOIDCProvider(ctx context.Context, arn, clientI
 			return nil // idempotent
 		}
 	}
+	if len(rec.ClientIDs) >= 100 {
+		return fmt.Errorf("ClientIDList must contain at most 100 entries")
+	}
 	rec.ClientIDs = append(rec.ClientIDs, clientID)
 	rec.UpdatedAt = time.Now().UTC()
 	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
