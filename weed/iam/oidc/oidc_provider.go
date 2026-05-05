@@ -109,6 +109,12 @@ const PrincipalTagsClaim = "https://aws.amazon.com/tags/principal_tags"
 // filterPrincipalTags drops keys that are not on `allowed`. An empty
 // allowlist means "deny all" — security-conservative default that forces
 // operators to explicitly opt tags in. Returns nil when the result is empty.
+//
+// Comparison is case-insensitive on the key, matching AWS IAM's session-tag
+// rules (the AWS docs explicitly state tag keys are case-insensitive even
+// though the original casing is preserved on the value side). Without this
+// an IDP whose claim casing drifts from the operator's allowlist string
+// would fail in surprising ways.
 func filterPrincipalTags(tags map[string]string, allowed []string) map[string]string {
 	if len(tags) == 0 {
 		return nil
@@ -118,11 +124,11 @@ func filterPrincipalTags(tags map[string]string, allowed []string) map[string]st
 	}
 	allowSet := make(map[string]struct{}, len(allowed))
 	for _, k := range allowed {
-		allowSet[k] = struct{}{}
+		allowSet[strings.ToLower(k)] = struct{}{}
 	}
 	out := make(map[string]string, len(tags))
 	for k, v := range tags {
-		if _, ok := allowSet[k]; ok {
+		if _, ok := allowSet[strings.ToLower(k)]; ok {
 			out[k] = v
 		}
 	}

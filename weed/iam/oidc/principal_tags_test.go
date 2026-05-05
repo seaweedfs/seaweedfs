@@ -69,4 +69,15 @@ func TestFilterPrincipalTagsAllowlist(t *testing.T) {
 			t.Fatalf("expected nil, got %v", got)
 		}
 	})
+
+	t.Run("case-insensitive on key", func(t *testing.T) {
+		// AWS session tag keys are case-insensitive. An IDP whose claim
+		// uses different casing than the operator's allowlist string
+		// must still match.
+		got := filterPrincipalTags(map[string]string{"Team": "infra"}, []string{"TEAM"})
+		want := map[string]string{"Team": "infra"} // original casing preserved on output
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got=%v want=%v", got, want)
+		}
+	})
 }

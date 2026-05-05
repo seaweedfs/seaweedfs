@@ -564,10 +564,11 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		requestContext["aws:userid"] = parentUser
 	}
 
-	// Surface principal session tags as aws:PrincipalTag/<key>. Filtering
-	// against any per-provider allowlist happens upstream in the provider
-	// (or here once Phase 2b records flow through). For now, anything the
-	// IDP signs is acceptable: the IDP is trusted to police its own claims.
+	// Surface principal session tags as aws:PrincipalTag/<key>. The OIDC
+	// provider has already filtered the claim namespace through its
+	// AllowedPrincipalTagKeys list (see filterPrincipalTags), so anything
+	// reaching us here is on the operator's opt-in list. The full claim
+	// is dropped if the allowlist is empty, which is the secure default.
 	for k, v := range externalIdentity.PrincipalTags {
 		requestContext["aws:PrincipalTag/"+k] = v
 	}
