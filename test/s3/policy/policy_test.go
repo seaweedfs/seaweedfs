@@ -710,7 +710,14 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	filerPort, filerGrpcPort := ports[4], ports[5]
 	s3Port, s3GrpcPort := ports[6], ports[7]
 
-	testDir := t.TempDir()
+	// Manually-managed temp dir (not t.TempDir()) so we control removal order:
+	// the dir is removed inside Stop() AFTER the mini goroutine has fully
+	// exited. Otherwise t.TempDir()'s RemoveAll cleanup races the admin
+	// plugin worker, which keeps creating files under admin/plugin/job_types/
+	// for ~1s after subtests finish, producing flaky "directory not empty"
+	// failures (see seaweedfs CI run 25352039081).
+	testDir, err := os.MkdirTemp("", "seaweed-policy-mini-")
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s3Endpoint := fmt.Sprintf("http://127.0.0.1:%d", s3Port)
@@ -729,7 +736,7 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	// Disable authentication for tests
 	securityToml := filepath.Join(testDir, "security.toml")
-	err := os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
+	err = os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
 	require.NoError(t, err)
 
 	// Configure credential store for IAM tests.
@@ -783,7 +790,12 @@ enabled = true
 		for _, cmd := range command.Commands {
 			if cmd.Name() == "mini" && cmd.Run != nil {
 				cmd.Flag.Parse(os.Args[1:])
+				// MiniClusterCtx makes runMini observe our cancel: master/
+				// volume/filer get this as their shutdownCtx, and the clients
+				// state (admin/s3/webdav/plugin worker) chains from it.
+				command.MiniClusterCtx = ctx
 				cmd.Run(cmd, cmd.Flag.Args())
+				command.MiniClusterCtx = nil
 				return
 			}
 		}
@@ -792,6 +804,8 @@ enabled = true
 	// Wait for S3
 	if !testutil.WaitForService(cluster.s3Endpoint, 60*time.Second) {
 		cancel()
+		cluster.wg.Wait()
+		os.RemoveAll(testDir)
 		return nil, fmt.Errorf("timeout waiting for S3 at %s", cluster.s3Endpoint)
 	}
 
@@ -799,6 +813,8 @@ enabled = true
 	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
 		if err := cluster.startRustVolumeServer(t); err != nil {
 			cancel()
+			cluster.wg.Wait()
+			os.RemoveAll(testDir)
 			return nil, fmt.Errorf("failed to start Rust volume server: %v", err)
 		}
 	}
@@ -882,10 +898,25 @@ func (c *TestCluster) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.isRunning {
-		time.Sleep(500 * time.Millisecond)
+
+	// Wait for the mini goroutine to fully return before removing the data
+	// dir. runMini observes MiniClusterCtx and returns once cancel fires; the
+	// admin/s3/webdav/plugin-worker shutdown is gated by the same ctx via
+	// resetMiniClients. The deadline is generous because admin shutdown can
+	// take several seconds when graceful-stops are draining.
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		fmt.Println("Warning: TestCluster.Stop timed out waiting for mini goroutine")
 	}
-	// Simplified stop
+
+	// Reset all mini flags so a subsequent in-process startMiniCluster sees
+	// fresh state.
 	for _, cmd := range command.Commands {
 		if cmd.Name() == "mini" {
 			cmd.Flag.VisitAll(func(f *flag.Flag) {
@@ -893,6 +924,10 @@ func (c *TestCluster) Stop() {
 			})
 			break
 		}
+	}
+
+	if c.dataDir != "" {
+		os.RemoveAll(c.dataDir)
 	}
 }
 
