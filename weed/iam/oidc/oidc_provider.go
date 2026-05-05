@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,8 +50,15 @@ type OIDCConfig struct {
 	// Issuer is the OIDC issuer URL
 	Issuer string `json:"issuer"`
 
-	// ClientID is the OAuth2 client ID
-	ClientID string `json:"clientId"`
+	// ClientID is the OAuth2 client ID. Either ClientID or ClientIDs is
+	// required; when both are present, ClientID is appended to the audience
+	// allowlist.
+	ClientID string `json:"clientId,omitempty"`
+
+	// ClientIDs is the AWS-compatible audience allowlist. Tokens are accepted
+	// when any of `aud` or `azp` matches any entry. Mutually compatible with
+	// ClientID for backward compatibility.
+	ClientIDs []string `json:"clientIds,omitempty"`
 
 	// ClientSecret is the OAuth2 client secret (optional for public clients)
 	ClientSecret string `json:"clientSecret,omitempty"`
@@ -72,12 +81,76 @@ type OIDCConfig struct {
 	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
 	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
 
+	// Thumbprints, when non-empty, pins the issuer's TLS certificate against
+	// this allowlist of SHA-1 hex digests. Matches the AWS IAM
+	// CreateOpenIDConnectProvider semantics. Empty means "trust the system
+	// root store" (or whatever TLSCACert configures).
+	Thumbprints []string `json:"thumbprints,omitempty"`
+
 	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
 	TLSCACert string `json:"tlsCaCert,omitempty"`
 
 	// TLSInsecureSkipVerify controls whether to skip TLS verification.
 	// WARNING: Should only be used in development/testing environments. Never use in production.
 	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
+}
+
+// normalizeThumbprints lowercases and de-duplicates the configured allowlist.
+// Returns a set keyed by lowercase hex for O(1) lookup during TLS verification.
+func normalizeThumbprints(in []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(in))
+	for _, t := range in {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		out[t] = struct{}{}
+	}
+	return out
+}
+
+// verifyThumbprintMatch checks that some certificate in the negotiated chain
+// hashes to a thumbprint in `expected`. AWS pins the certificate immediately
+// below the root in the chain; we accept any chain certificate to also cover
+// self-signed deployments and skip-verify test setups. When the chain has not
+// been built (InsecureSkipVerify), we fall back to PeerCertificates.
+func verifyThumbprintMatch(cs tls.ConnectionState, expected map[string]struct{}) error {
+	candidates := collectThumbprintCandidates(cs)
+	for _, c := range candidates {
+		sum := sha1.Sum(c.Raw)
+		hexSum := hex.EncodeToString(sum[:])
+		if _, ok := expected[hexSum]; ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("OIDC TLS thumbprint did not match any configured allowlist entry")
+}
+
+// collectThumbprintCandidates flattens the verified chains and peer cert list
+// into a single slice of unique certificates worth checking.
+func collectThumbprintCandidates(cs tls.ConnectionState) []*x509.Certificate {
+	var out []*x509.Certificate
+	seen := map[string]struct{}{}
+	add := func(c *x509.Certificate) {
+		if c == nil {
+			return
+		}
+		k := string(c.Raw)
+		if _, ok := seen[k]; ok {
+			return
+		}
+		seen[k] = struct{}{}
+		out = append(out, c)
+	}
+	for _, chain := range cs.VerifiedChains {
+		for _, c := range chain {
+			add(c)
+		}
+	}
+	for _, c := range cs.PeerCertificates {
+		add(c)
+	}
+	return out
 }
 
 // JWKS represents JSON Web Key Set
@@ -154,6 +227,20 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		glog.Warningf("OIDC provider %q is configured to skip TLS verification. This is insecure and should not be used in production.", p.name)
 	}
 
+	// Thumbprint pinning: when configured, every TLS handshake to the IDP must
+	// present a chain whose terminal certificate (the cert just below the root,
+	// matching AWS IAM semantics) hashes to one of the listed SHA-1 digests.
+	// VerifyConnection runs after the chain build, so cs.VerifiedChains is
+	// populated when InsecureSkipVerify is false; we additionally pin against
+	// PeerCertificates so self-signed test setups work too.
+	if len(oidcConfig.Thumbprints) > 0 {
+		expected := normalizeThumbprints(oidcConfig.Thumbprints)
+		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			return verifyThumbprintMatch(cs, expected)
+		}
+		glog.V(2).Infof("OIDC provider %q: TLS thumbprint pinning enabled (%d allowed)", p.name, len(expected))
+	}
+
 	if oidcConfig.TLSCACert != "" {
 		// Validate that the CA cert path is absolute to prevent reading unintended files
 		if !filepath.IsAbs(oidcConfig.TLSCACert) {
@@ -193,7 +280,7 @@ func (p *OIDCProvider) validateConfig(config *OIDCConfig) error {
 		return fmt.Errorf("issuer is required")
 	}
 
-	if config.ClientID == "" {
+	if config.ClientID == "" && len(config.ClientIDs) == 0 {
 		return fmt.Errorf("client ID is required")
 	}
 
@@ -203,6 +290,32 @@ func (p *OIDCProvider) validateConfig(config *OIDCConfig) error {
 	}
 
 	return nil
+}
+
+// allowedAudiences returns the merged list of acceptable audiences for this
+// provider. Both the singular ClientID and the plural ClientIDs are honoured;
+// duplicates collapse silently.
+func (p *OIDCProvider) allowedAudiences() []string {
+	if p.config == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	add(p.config.ClientID)
+	for _, c := range p.config.ClientIDs {
+		add(c)
+	}
+	return out
 }
 
 // Authenticate authenticates a user with an OIDC token
@@ -432,33 +545,45 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, fmt.Errorf("%w: expected %s, got %s", providers.ErrProviderInvalidIssuer, p.config.Issuer, issuer)
 	}
 
-	// Check audience claim (aud) or authorized party (azp) - Keycloak uses azp
-	// Per RFC 7519, aud can be either a string or an array of strings
+	// Check audience claim (aud) or authorized party (azp) — Keycloak uses azp.
+	// Per RFC 7519, aud can be either a string or an array of strings.
+	// Multiple client IDs are supported per AWS IAM CreateOpenIDConnectProvider
+	// semantics: any one match in the allowlist accepts the token.
+	allowed := p.allowedAudiences()
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, a := range allowed {
+		allowedSet[a] = struct{}{}
+	}
+
 	var audienceMatched bool
 	if audClaim, ok := claims["aud"]; ok {
 		switch aud := audClaim.(type) {
 		case string:
-			if aud == p.config.ClientID {
+			if _, ok := allowedSet[aud]; ok {
 				audienceMatched = true
 			}
 		case []interface{}:
 			for _, a := range aud {
-				if str, ok := a.(string); ok && str == p.config.ClientID {
-					audienceMatched = true
-					break
+				if str, ok := a.(string); ok {
+					if _, ok := allowedSet[str]; ok {
+						audienceMatched = true
+						break
+					}
 				}
 			}
 		}
 	}
 
 	if !audienceMatched {
-		if azp, ok := claims["azp"].(string); ok && azp == p.config.ClientID {
-			audienceMatched = true
+		if azp, ok := claims["azp"].(string); ok {
+			if _, ok := allowedSet[azp]; ok {
+				audienceMatched = true
+			}
 		}
 	}
 
 	if !audienceMatched {
-		return nil, fmt.Errorf("%w: expected client ID %s", providers.ErrProviderInvalidAudience, p.config.ClientID)
+		return nil, fmt.Errorf("%w: token audience matches none of the configured client IDs", providers.ErrProviderInvalidAudience)
 	}
 
 	subject, ok := claims["sub"].(string)

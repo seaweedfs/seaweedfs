@@ -46,6 +46,8 @@ const (
 	ConfigFieldBasePath              = "basePath"
 	ConfigFieldIssuer                = "issuer"
 	ConfigFieldClientID              = "clientId"
+	ConfigFieldClientIDs             = "clientIds"
+	ConfigFieldThumbprints           = "thumbprints"
 	ConfigFieldClientSecret          = "clientSecret"
 	ConfigFieldJWKSUri               = "jwksUri"
 	ConfigFieldScopes                = "scopes"

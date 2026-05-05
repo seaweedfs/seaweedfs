@@ -46,6 +46,52 @@ type GetOpenIDConnectProviderResponse struct {
 	CommonResponse
 }
 
+// CreateOpenIDConnectProviderResponse is the response for CreateOpenIDConnectProvider.
+type CreateOpenIDConnectProviderResponse struct {
+	XMLName                           xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateOpenIDConnectProviderResponse"`
+	CreateOpenIDConnectProviderResult struct {
+		OpenIDConnectProviderArn string    `xml:"OpenIDConnectProviderArn"`
+		Tags                     []*IAMTag `xml:"Tags>member,omitempty"`
+	} `xml:"CreateOpenIDConnectProviderResult"`
+	CommonResponse
+}
+
+// DeleteOpenIDConnectProviderResponse is the response for DeleteOpenIDConnectProvider.
+type DeleteOpenIDConnectProviderResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteOpenIDConnectProviderResponse"`
+	CommonResponse
+}
+
+// AddClientIDToOpenIDConnectProviderResponse is the response for AddClientIDToOpenIDConnectProvider.
+type AddClientIDToOpenIDConnectProviderResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AddClientIDToOpenIDConnectProviderResponse"`
+	CommonResponse
+}
+
+// RemoveClientIDFromOpenIDConnectProviderResponse is the response for RemoveClientIDFromOpenIDConnectProvider.
+type RemoveClientIDFromOpenIDConnectProviderResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ RemoveClientIDFromOpenIDConnectProviderResponse"`
+	CommonResponse
+}
+
+// UpdateOpenIDConnectProviderThumbprintResponse is the response for UpdateOpenIDConnectProviderThumbprint.
+type UpdateOpenIDConnectProviderThumbprintResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateOpenIDConnectProviderThumbprintResponse"`
+	CommonResponse
+}
+
+// TagOpenIDConnectProviderResponse is the response for TagOpenIDConnectProvider.
+type TagOpenIDConnectProviderResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ TagOpenIDConnectProviderResponse"`
+	CommonResponse
+}
+
+// UntagOpenIDConnectProviderResponse is the response for UntagOpenIDConnectProvider.
+type UntagOpenIDConnectProviderResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UntagOpenIDConnectProviderResponse"`
+	CommonResponse
+}
+
 // SetRequestId stores the request ID generated for the current HTTP request.
 func (r *CommonResponse) SetRequestId(requestID string) {
 	r.ResponseMetadata.RequestId = requestID

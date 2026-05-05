@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -65,6 +67,211 @@ func (m *IAMManager) ListOIDCProviders(ctx context.Context) ([]*OIDCProviderReco
 		return nil, fmt.Errorf("OIDC provider store not configured")
 	}
 	return m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+}
+
+// CreateOIDCProvider persists a new IAM-managed OIDC provider record. Refuses
+// to overwrite an existing record so callers see EntityAlreadyExists semantics.
+func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRecord) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if rec == nil {
+		return fmt.Errorf("record cannot be nil")
+	}
+	if err := validateOIDCProviderRecord(rec); err != nil {
+		return err
+	}
+	existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN)
+	if err == nil && existing != nil {
+		return fmt.Errorf("%w: %s", ErrOIDCProviderAlreadyExists, rec.ARN)
+	}
+	if err != nil && !errors.Is(err, ErrOIDCProviderNotFound) {
+		return fmt.Errorf("lookup existing OIDC provider %q: %w", rec.ARN, err)
+	}
+	now := time.Now().UTC()
+	rec.CreatedAt = now
+	rec.UpdatedAt = now
+	if err := m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
+		return err
+	}
+	m.refreshOIDCProvidersBestEffort(ctx, "CreateOIDCProvider", rec.ARN)
+	return nil
+}
+
+// DeleteOIDCProvider removes the IAM-managed record. Idempotent.
+func (m *IAMManager) DeleteOIDCProvider(ctx context.Context, arn string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if err := m.oidcProviderStore.DeleteProvider(ctx, m.getFilerAddress(), arn); err != nil {
+		return err
+	}
+	m.refreshOIDCProvidersBestEffort(ctx, "DeleteOIDCProvider", arn)
+	return nil
+}
+
+// AddClientIDToOIDCProvider appends `clientID` to the provider's allowed
+// audience list. Adding an existing client ID is a no-op (AWS-compat).
+func (m *IAMManager) AddClientIDToOIDCProvider(ctx context.Context, arn, clientID string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if clientID == "" {
+		return fmt.Errorf("ClientID cannot be empty")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	for _, existing := range rec.ClientIDs {
+		if existing == clientID {
+			return nil // idempotent
+		}
+	}
+	if len(rec.ClientIDs) >= 100 {
+		return fmt.Errorf("ClientIDList must contain at most 100 entries")
+	}
+	rec.ClientIDs = append(rec.ClientIDs, clientID)
+	rec.UpdatedAt = time.Now().UTC()
+	if err := m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
+		return err
+	}
+	m.refreshOIDCProvidersBestEffort(ctx, "AddClientIDToOIDCProvider", arn)
+	return nil
+}
+
+// RemoveClientIDFromOIDCProvider drops `clientID` from the allowed audience
+// list. Removing a missing client ID is a no-op.
+func (m *IAMManager) RemoveClientIDFromOIDCProvider(ctx context.Context, arn, clientID string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	pruned := make([]string, 0, len(rec.ClientIDs))
+	for _, existing := range rec.ClientIDs {
+		if existing != clientID {
+			pruned = append(pruned, existing)
+		}
+	}
+	if len(pruned) == len(rec.ClientIDs) {
+		return nil // not present; no-op
+	}
+	rec.ClientIDs = pruned
+	rec.UpdatedAt = time.Now().UTC()
+	if err := m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
+		return err
+	}
+	m.refreshOIDCProvidersBestEffort(ctx, "RemoveClientIDFromOIDCProvider", arn)
+	return nil
+}
+
+// UpdateOIDCProviderThumbprints replaces the entire thumbprint list. AWS
+// constrains the list to 1..5 entries when non-empty; we mirror that bound.
+func (m *IAMManager) UpdateOIDCProviderThumbprints(ctx context.Context, arn string, thumbprints []string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	if len(thumbprints) > 5 {
+		return fmt.Errorf("ThumbprintList must contain at most 5 entries, got %d", len(thumbprints))
+	}
+	for _, tp := range thumbprints {
+		if !isValidSHA1Thumbprint(tp) {
+			return fmt.Errorf("invalid thumbprint %q: must be 40-character SHA-1 hex", tp)
+		}
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	rec.Thumbprints = append([]string(nil), thumbprints...)
+	rec.UpdatedAt = time.Now().UTC()
+	if err := m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
+		return err
+	}
+	m.refreshOIDCProvidersBestEffort(ctx, "UpdateOIDCProviderThumbprints", arn)
+	return nil
+}
+
+// TagOIDCProvider merges the supplied tags into the provider's tag set.
+func (m *IAMManager) TagOIDCProvider(ctx context.Context, arn string, tags map[string]string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	if rec.Tags == nil {
+		rec.Tags = make(map[string]string, len(tags))
+	}
+	for k, v := range tags {
+		rec.Tags[k] = v
+	}
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// UntagOIDCProvider removes the named tags from the provider's tag set.
+func (m *IAMManager) UntagOIDCProvider(ctx context.Context, arn string, keys []string) error {
+	if m.oidcProviderStore == nil {
+		return fmt.Errorf("OIDC provider store not configured")
+	}
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		delete(rec.Tags, k)
+	}
+	rec.UpdatedAt = time.Now().UTC()
+	return m.oidcProviderStore.StoreProvider(ctx, m.getFilerAddress(), rec)
+}
+
+// validateOIDCProviderRecord enforces the invariants AWS imposes on the
+// underlying CreateOpenIDConnectProvider call.
+func validateOIDCProviderRecord(rec *OIDCProviderRecord) error {
+	if rec.URL == "" {
+		return fmt.Errorf("Url is required")
+	}
+	if rec.ARN == "" {
+		return fmt.Errorf("ARN is required")
+	}
+	if len(rec.ClientIDs) == 0 {
+		return fmt.Errorf("ClientIDList must contain at least one entry")
+	}
+	if len(rec.ClientIDs) > 100 {
+		return fmt.Errorf("ClientIDList must contain at most 100 entries")
+	}
+	if len(rec.Thumbprints) > 5 {
+		return fmt.Errorf("ThumbprintList must contain at most 5 entries")
+	}
+	for _, tp := range rec.Thumbprints {
+		if !isValidSHA1Thumbprint(tp) {
+			return fmt.Errorf("invalid thumbprint %q: must be 40-character SHA-1 hex", tp)
+		}
+	}
+	return nil
+}
+
+// isValidSHA1Thumbprint returns true iff `s` is exactly 40 hex characters,
+// matching the SHA-1 digest format AWS expects.
+func isValidSHA1Thumbprint(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // IAMConfig holds configuration for all IAM components
@@ -308,6 +515,70 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 		}
 	}
 	return nil
+}
+
+// refreshOIDCProvidersBestEffort calls RefreshOIDCProvidersFromStore and
+// logs a warning on failure. The IAM API call has already succeeded by the
+// time we get here, so a refresh failure must not surface to the caller —
+// the worst case is that the local instance keeps the stale runtime view
+// until a peer's metadata-subscribe event triggers another refresh.
+func (m *IAMManager) refreshOIDCProvidersBestEffort(ctx context.Context, op, arn string) {
+	if err := m.RefreshOIDCProvidersFromStore(ctx); err != nil {
+		glog.Warningf("refresh OIDC providers after %s on %s: %v", op, arn, err)
+	}
+}
+
+// RefreshOIDCProvidersFromStore reloads every OIDCProviderRecord from the
+// configured store and pushes the resulting runtime providers into the STS
+// service so AssumeRoleWithWebIdentity sees the latest set without a
+// restart. Safe to call when no store is configured (returns nil) and when
+// the store is empty (clears the IAM-managed map). Records with empty URLs
+// or invalid configuration are logged and skipped so a single bad entry
+// does not stop the rest from refreshing.
+func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
+	if m.oidcProviderStore == nil || m.stsService == nil {
+		return nil
+	}
+	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	if err != nil {
+		return fmt.Errorf("list OIDC providers: %w", err)
+	}
+	byIssuer := make(map[string]providers.IdentityProvider, len(records))
+	for _, rec := range records {
+		if rec == nil || rec.URL == "" {
+			continue
+		}
+		provider, err := buildOIDCProviderFromRecord(rec)
+		if err != nil {
+			glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
+			continue
+		}
+		// Last write wins on issuer collision; the store is the source of
+		// truth, and an operator who has two records with the same issuer
+		// has already accepted one will shadow the other.
+		byIssuer[rec.URL] = provider
+	}
+	m.stsService.SetIAMManagedOIDCProvidersByIssuer(byIssuer)
+	return nil
+}
+
+// buildOIDCProviderFromRecord turns a stored record into a runtime
+// OIDCProvider. The provider name is the ARN so re-registration is
+// idempotent and never collides with static-config entries.
+func buildOIDCProviderFromRecord(rec *OIDCProviderRecord) (*oidc.OIDCProvider, error) {
+	if rec == nil {
+		return nil, fmt.Errorf("record cannot be nil")
+	}
+	cfg := &oidc.OIDCConfig{
+		Issuer:      rec.URL,
+		ClientIDs:   append([]string(nil), rec.ClientIDs...),
+		Thumbprints: append([]string(nil), rec.Thumbprints...),
+	}
+	provider := oidc.NewOIDCProvider(rec.ARN)
+	if err := provider.Initialize(cfg); err != nil {
+		return nil, err
+	}
+	return provider, nil
 }
 
 // createOIDCProviderStore selects an OIDCProviderStore implementation. Defaults
