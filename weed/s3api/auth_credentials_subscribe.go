@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+const oidcProvidersDir = filer.IamConfigDirectory + "/oidc-providers"
 
 func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, prefix string, directoriesToWatch []string) {
 
@@ -30,12 +33,14 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		// These handlers check for nil entries internally
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
+		_ = s3a.onOIDCProviderChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
 		// For moves across directories, replay a delete event for the source directory
 		if message.NewParentPath != "" && resp.Directory != message.NewParentPath {
 			_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, nil)
+			_ = s3a.onOIDCProviderChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, nil)
 		}
 
@@ -120,6 +125,33 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 		}
 	}
 
+	return nil
+}
+
+// onOIDCProviderChange refreshes the IAM-managed OIDC provider runtime view
+// whenever the persisted store under /etc/iam/oidc-providers changes — both
+// for mutations originated on this S3 server (the local IAM API also calls
+// RefreshOIDCProvidersFromStore inline, but the subscribe path costs nothing
+// extra) and for mutations originated on peer S3 servers, which this is the
+// only mechanism to learn about. A single refresh covers create, update,
+// delete, and rename because the store is small and a full reload is the
+// safest way to reach a consistent view.
+func (s3a *S3ApiServer) onOIDCProviderChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
+	if dir != oidcProvidersDir && !strings.HasPrefix(dir, oidcProvidersDir+"/") {
+		return nil
+	}
+	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+		return nil
+	}
+	s3iam, ok := s3a.iam.iamIntegration.(*S3IAMIntegration)
+	if !ok || s3iam.iamManager == nil {
+		return nil
+	}
+	if err := s3iam.iamManager.RefreshOIDCProvidersFromStore(context.Background()); err != nil {
+		glog.Warningf("OIDC provider refresh after %s change failed: %v", dir, err)
+		return err
+	}
+	glog.V(2).Infof("Refreshed IAM-managed OIDC providers after %s change", dir)
 	return nil
 }
 
