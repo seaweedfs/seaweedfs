@@ -47,36 +47,28 @@ func confirmRange(t *testing.T, uploadPipeline *UploadPipeline, startOff, stopOf
 	}
 }
 
-// TestEvictOneWritableChunk_SkipsGappyChunks pins the issue #9330 fix:
-// pressure-driven eviction must not seal a chunk whose written intervals
-// have a hole (leading or internal), because SaveContent would emit
-// multiple volume chunks with no coverage for the hole and reads would
-// silently zero-fill it (filer/stream.go writeZero on gap).
+// Pressure-driven eviction must not seal a chunk with a leading or
+// internal gap (issue #9330).
 func TestEvictOneWritableChunk_SkipsGappyChunks(t *testing.T) {
 	const cs int64 = 2 * 1024 * 1024
-	// saveToStorage = nil so that the async upload triggered by
-	// moveToSealed is a no-op (SaveContent short-circuits on nil saveFn).
+	// nil saveToStorage so the async upload SaveContent is a no-op.
 	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
 
-	block := make([]byte, cs/4) // 512 KiB
+	block := make([]byte, cs/4)
 
-	// Chunk 0: internal gap — first quarter and last quarter written.
-	// Mirrors FUSE writeback mid-flight on sequential cp.
+	// chunk 0: internal gap; chunk 1: leading gap; chunk 2: contiguous from 0.
 	if _, err := up.SaveDataAt(block, 0, true, 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := up.SaveDataAt(block, 3*cs/4, true, 2); err != nil {
 		t.Fatal(err)
 	}
-	// Chunk 1: leading gap — second and third quarters written, no byte 0.
-	// Mirrors FUSE writeback dispatching middle pages first.
 	if _, err := up.SaveDataAt(block, cs+cs/4, true, 3); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := up.SaveDataAt(block, cs+cs/2, true, 4); err != nil {
 		t.Fatal(err)
 	}
-	// Chunk 2: contiguous from offset 0 — first half written, no hole.
 	if _, err := up.SaveDataAt(block, 2*cs, true, 5); err != nil {
 		t.Fatal(err)
 	}
@@ -84,9 +76,6 @@ func TestEvictOneWritableChunk_SkipsGappyChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Eviction must pick chunk 2 (contiguous from 0). Never chunks 0
-	// (internal gap) or 1 (leading gap), even though all three have
-	// the same WrittenSize.
 	if !up.EvictOneWritableChunk() {
 		t.Fatalf("EvictOneWritableChunk returned false; expected contiguous chunk 2 to be evictable")
 	}
@@ -94,67 +83,54 @@ func TestEvictOneWritableChunk_SkipsGappyChunks(t *testing.T) {
 		t.Errorf("chunk 2 should have moved to sealed")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; !stillWritable {
-		t.Errorf("chunk 0 (internal gap) must remain writable so its hole can still be filled")
+		t.Errorf("chunk 0 (internal gap) must remain writable")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; !stillWritable {
-		t.Errorf("chunk 1 (leading gap) must remain writable so its leading range can still be filled")
+		t.Errorf("chunk 1 (leading gap) must remain writable")
 	}
 
-	// Fill chunk 0's middle and chunk 1's leading + trailing ranges.
-	// Both now cover [0, full) within their logicChunkIndex;
-	// SaveDataAt's maybeMoveToSealed auto-seals on IsComplete, so they
-	// leave writableChunks on their own.
-	if _, err := up.SaveDataAt(block, cs/4, true, 7); err != nil { // chunk 0 middle a
+	// Filling holes makes IsComplete true; maybeMoveToSealed auto-seals.
+	if _, err := up.SaveDataAt(block, cs/4, true, 7); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := up.SaveDataAt(block, cs/2, true, 8); err != nil { // chunk 0 middle b
+	if _, err := up.SaveDataAt(block, cs/2, true, 8); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := up.SaveDataAt(block, cs, true, 9); err != nil { // chunk 1 leading
+	if _, err := up.SaveDataAt(block, cs, true, 9); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := up.SaveDataAt(block, cs+3*cs/4, true, 10); err != nil { // chunk 1 trailing
+	if _, err := up.SaveDataAt(block, cs+3*cs/4, true, 10); err != nil {
 		t.Fatal(err)
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; stillWritable {
-		t.Errorf("chunk 0 should have auto-sealed on IsComplete after gap was filled")
+		t.Errorf("chunk 0 should have auto-sealed after gap was filled")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
-		t.Errorf("chunk 1 should have auto-sealed on IsComplete after leading range was filled")
+		t.Errorf("chunk 1 should have auto-sealed after leading range was filled")
 	}
 }
 
-// TestEvictOneWritableChunk_FallbackPicksOldestGappy pins the cap-pressure
-// liveness path: when every dirty chunk is gappy (genuinely sparse
-// workload, or a sequential cp where every chunk is mid-flight), the
-// strict pass finds nothing but the fallback must still seal one chunk
-// so accountant.Reserve can wake. Picking the oldest LastWriteTsNs
-// minimizes the chance of racing FUSE writeback for the gap range.
+// When every chunk is gappy, the fallback must still seal one so
+// accountant.Reserve can wake; oldest-LastWriteTsNs wins.
 func TestEvictOneWritableChunk_FallbackPicksOldestGappy(t *testing.T) {
 	const cs int64 = 2 * 1024 * 1024
 	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
 
-	block := make([]byte, cs/4) // 512 KiB
+	block := make([]byte, cs/4)
 
-	// Three chunks, all gappy, with strictly increasing tsNs so chunk 0
-	// is the oldest. Each chunk has WrittenSize == 1 MiB; oldest-first
-	// is the only differentiator.
-	//
-	// chunk 0 (oldest): internal gap.
+	// Strictly increasing tsNs so chunk 0 is oldest; equal WrittenSize.
 	if _, err := up.SaveDataAt(block, 0, true, 100); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := up.SaveDataAt(block, 3*cs/4, true, 101); err != nil {
 		t.Fatal(err)
 	}
-	// chunk 1: leading gap.
 	if _, err := up.SaveDataAt(block, cs+cs/4, true, 200); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := up.SaveDataAt(block, cs+cs/2, true, 201); err != nil {
 		t.Fatal(err)
 	}
-	// chunk 2 (most recent): internal gap.
 	if _, err := up.SaveDataAt(block, 2*cs, true, 300); err != nil {
 		t.Fatal(err)
 	}
@@ -169,33 +145,27 @@ func TestEvictOneWritableChunk_FallbackPicksOldestGappy(t *testing.T) {
 		t.Errorf("oldest gappy chunk (0) should have been picked by the fallback")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; !stillWritable {
-		t.Errorf("chunk 1 should remain writable; oldest-first must prefer chunk 0")
+		t.Errorf("chunk 1 should remain writable")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(2)]; !stillWritable {
-		t.Errorf("chunk 2 should remain writable; oldest-first must prefer chunk 0")
+		t.Errorf("chunk 2 should remain writable")
 	}
 }
 
-// TestEvictOneWritableChunk_PrefersStrictOverFallback verifies that the
-// strict pass takes precedence even when an older gappy chunk exists.
-// A sequential cp under cap pressure typically has both: a gappy chunk
-// at the head (older, mid-flight) and a contiguous chunk at the tail
-// (newer, freshly written). Strict picks the latter so the head's gap
-// has more time to be filled by in-flight writes.
+// Strict pass preempts the fallback even when a gappy chunk is older.
 func TestEvictOneWritableChunk_PrefersStrictOverFallback(t *testing.T) {
 	const cs int64 = 2 * 1024 * 1024
 	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
 
 	block := make([]byte, cs/4)
 
-	// chunk 0 (oldest): gappy.
+	// chunk 0 (older, gappy), chunk 1 (newer, contiguous from 0).
 	if _, err := up.SaveDataAt(block, 0, true, 100); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := up.SaveDataAt(block, 3*cs/4, true, 101); err != nil {
 		t.Fatal(err)
 	}
-	// chunk 1 (newer): contiguous from 0.
 	if _, err := up.SaveDataAt(block, cs, true, 200); err != nil {
 		t.Fatal(err)
 	}
@@ -207,31 +177,23 @@ func TestEvictOneWritableChunk_PrefersStrictOverFallback(t *testing.T) {
 		t.Fatalf("EvictOneWritableChunk returned false")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
-		t.Errorf("contiguous chunk 1 must be picked by the strict pass over older gappy chunk 0")
+		t.Errorf("contiguous chunk 1 must be picked over older gappy chunk 0")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; !stillWritable {
-		t.Errorf("gappy chunk 0 must remain writable; strict pass should not invoke fallback")
+		t.Errorf("gappy chunk 0 must remain writable")
 	}
 }
 
-// TestProactiveFlush_SkipsGappyChunks pins the issue #9330 fix in the
-// proactive-flush path: the chunk-flusher must not seal a chunk whose
-// written intervals have a hole, even if the chunk has been idle long
-// enough to satisfy the staleness/idle thresholds. The same reasoning
-// applies as for EvictOneWritableChunk's strict pass — sealing a gappy
-// chunk uploads it as multiple volume chunks with no coverage for the
-// hole, and reads silently zero-fill the hole. ProactiveFlush has no
-// liveness fallback because returning false is just a missed
-// optimization (the chunk-flusher will try again later, FlushAll runs
-// at close).
+// ProactiveFlush also skips gappy chunks (issue #9330). No liveness
+// fallback here — unlike EvictOneWritableChunk, returning false is just
+// a missed optimization.
 func TestProactiveFlush_SkipsGappyChunks(t *testing.T) {
 	const cs int64 = 2 * 1024 * 1024
 	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
 
-	block := make([]byte, cs/4) // 512 KiB
+	block := make([]byte, cs/4)
 
-	// Same 3-chunk setup as TestEvictOneWritableChunk_SkipsGappyChunks:
-	// chunk 0 internal gap, chunk 1 leading gap, chunk 2 contiguous.
+	// chunk 0: internal gap; chunk 1: leading gap; chunk 2: contiguous from 0.
 	if _, err := up.SaveDataAt(block, 0, true, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -251,15 +213,14 @@ func TestProactiveFlush_SkipsGappyChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// nowNs >> any chunk's LastWriteTsNs so age clears idleThresholdNs and
-	// maxHoldNs, and fillRatio <= WrittenSize so nearlyFull is true. With
-	// these all chunks are eligible by the staleness criteria, leaving
+	// nowNs >> chunk timestamps so age clears the idle/maxHold gates;
+	// fillRatio < WrittenSize so nearlyFull is true. Leaves
 	// IsContiguouslyWritten as the only differentiator.
 	const (
 		nowNs           int64 = 1_000_000_000
 		idleThresholdNs int64 = 100
 		maxHoldNs       int64 = 200
-		fillRatio       int64 = cs / 8 // 256 KiB; all three chunks have 1 MiB
+		fillRatio       int64 = cs / 8
 	)
 	if !up.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, 0, false) {
 		t.Fatalf("ProactiveFlush returned false; expected contiguous chunk 2 to be sealed")
@@ -268,36 +229,32 @@ func TestProactiveFlush_SkipsGappyChunks(t *testing.T) {
 		t.Errorf("chunk 2 should have moved to sealed")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; !stillWritable {
-		t.Errorf("chunk 0 (internal gap) must remain writable; ProactiveFlush must not race FUSE writeback")
+		t.Errorf("chunk 0 (internal gap) must remain writable")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; !stillWritable {
-		t.Errorf("chunk 1 (leading gap) must remain writable; ProactiveFlush must not race FUSE writeback")
+		t.Errorf("chunk 1 (leading gap) must remain writable")
 	}
 
-	// With only gappy chunks left, ProactiveFlush has no liveness
-	// fallback (unlike EvictOneWritableChunk) and must return false.
 	if up.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, 0, false) {
-		t.Errorf("ProactiveFlush returned true with only gappy chunks left; should have skipped them")
+		t.Errorf("ProactiveFlush returned true with only gappy chunks left")
 	}
 
-	// Fill the holes; SaveDataAt's maybeMoveToSealed auto-seals on
-	// IsComplete, so chunks 0 and 1 leave writableChunks on their own.
-	if _, err := up.SaveDataAt(block, cs/4, true, 7); err != nil { // chunk 0 middle a
+	if _, err := up.SaveDataAt(block, cs/4, true, 7); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := up.SaveDataAt(block, cs/2, true, 8); err != nil { // chunk 0 middle b
+	if _, err := up.SaveDataAt(block, cs/2, true, 8); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := up.SaveDataAt(block, cs, true, 9); err != nil { // chunk 1 leading
+	if _, err := up.SaveDataAt(block, cs, true, 9); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := up.SaveDataAt(block, cs+3*cs/4, true, 10); err != nil { // chunk 1 trailing
+	if _, err := up.SaveDataAt(block, cs+3*cs/4, true, 10); err != nil {
 		t.Fatal(err)
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; stillWritable {
-		t.Errorf("chunk 0 should have auto-sealed on IsComplete after gap was filled")
+		t.Errorf("chunk 0 should have auto-sealed after gap was filled")
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
-		t.Errorf("chunk 1 should have auto-sealed on IsComplete after leading range was filled")
+		t.Errorf("chunk 1 should have auto-sealed after leading range was filled")
 	}
 }

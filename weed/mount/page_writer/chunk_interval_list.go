@@ -86,35 +86,19 @@ func (list *ChunkWrittenIntervalList) WrittenSize() (writtenByteCount int64) {
 	return
 }
 
-// IsContiguouslyWritten reports whether the chunk's written bytes form
-// one unbroken run starting at offset 0. Returns false for an empty list
-// (nothing to seal yet) and for any list whose first interval does not
-// start at 0 or whose intervals have an internal gap.
-//
-// SaveContent emits one volume chunk per maximal adjacent run, so a list
-// with a gap (leading or internal) produces multiple volume chunks with
-// no chunk covering the gap; reads then silently zero-fill the gap range
-// (filer/stream.go:177-186). This is correct for genuinely sparse writes
-// finalized at flush, but incorrect when an in-progress chunk is sealed
-// by buffer-pressure eviction while FUSE writeback still has writes in
-// flight for the gap range. The eviction policy checks this so that
-// only gap-free chunks are sealed under pressure (issue #9330).
-//
-// The "starts at 0" check applies the same logic to a leading hole that
-// the adjacency check applies to an internal hole — pressure-driven
-// sealing should not race FUSE writeback on either, and at flush both
-// are sealed unconditionally via FlushAll for sparse-file semantics.
+// IsContiguouslyWritten reports whether the written bytes form one
+// unbroken run starting at offset 0. Pressure-driven sealing uses this
+// to avoid racing in-flight FUSE writeback on a gap range — sealing a
+// gappy chunk would emit volume chunks with no coverage for the gap and
+// reads would silently zero-fill it (issue #9330).
 func (list *ChunkWrittenIntervalList) IsContiguouslyWritten() bool {
 	first := list.head.next
-	if first == list.tail {
-		return false // empty: nothing to seal
-	}
-	if first.StartOffset != 0 {
-		return false // leading gap before offset 0
+	if first == list.tail || first.StartOffset != 0 {
+		return false
 	}
 	for t := first; t.next != list.tail; t = t.next {
 		if t.stopOffset != t.next.StartOffset {
-			return false // internal gap
+			return false
 		}
 	}
 	return true

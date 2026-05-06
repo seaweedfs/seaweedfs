@@ -119,35 +119,18 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	}
 	if !found {
 		if len(up.writableChunks) > up.writableChunkLimit {
-			// Pressure-driven eviction: pick the fullest writable chunk
-			// whose written intervals form one unbroken run, and seal it.
-			//
-			// Skipping chunks with internal gaps prevents issue #9330: a
-			// chunk with gaps would be uploaded as multiple volume chunks
-			// with no chunk covering the gap range, and reads
-			// (filer/stream.go:177-186) silently zero-fill that range.
-			// Under FUSE writeback caching, partially-arrived writes for
-			// a single page chunk routinely look like a gappy interval
-			// list mid-flight, and pressure-evicting one of those bakes
-			// the in-flight gap into volume storage permanently.
-			//
-			// Genuinely sparse writes that never get filled are still
-			// sealed at flush via FlushAll; only pressure-driven
-			// eviction is restricted here. If no writable chunk is
-			// gap-free, fall through without evicting — the new chunk
-			// is still added (the per-pipeline limit is a soft cap; the
-			// memChunkCounter ceiling below redirects to swap if memory
-			// is tight) and natural completion via maybeMoveToSealed
-			// drains the pipeline.
+			// Per-pipeline soft cap. Seal the fullest gap-free chunk;
+			// gappy chunks must wait so in-flight FUSE writeback can fill
+			// the gap (issue #9330). If none qualifies, fall through —
+			// the memChunkCounter ceiling below redirects to swap.
 			candidateChunkIndex, fullness := LogicChunkIndex(-1), int64(0)
 			for lci, mc := range up.writableChunks {
 				if !mc.IsContiguouslyWritten() {
 					continue
 				}
-				chunkFullness := mc.WrittenSize()
-				if fullness < chunkFullness {
+				if b := mc.WrittenSize(); b > fullness {
 					candidateChunkIndex = lci
-					fullness = chunkFullness
+					fullness = b
 				}
 			}
 			if candidateChunkIndex >= 0 {
@@ -277,35 +260,12 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 	up.chunksLock.Lock()
 }
 
-// EvictOneWritableChunk force-seals one writable chunk in this pipeline
-// and submits it for async upload, so the accountant's Reserve loop can
-// make progress. Returns true if a chunk was sealed. Callers must not
+// EvictOneWritableChunk force-seals one writable chunk so the accountant's
+// Reserve loop can make progress. Strict pass picks the fullest gap-free
+// chunk (issue #9330). Fallback picks the oldest non-empty writer when
+// nothing is gap-free; without it Reserve deadlocks (cond.Wait only wakes
+// on Release, Release only fires on upload completion). Callers must not
 // hold up.chunksLock.
-//
-// Two-pass selection:
-//
-//  1. Strict pass: prefer the fullest chunk whose written intervals form
-//     one unbroken run starting at offset 0. This is the safe candidate
-//     for sequential cp through FUSE writeback — no in-flight pages get
-//     baked into split volume chunks (issue #9330).
-//
-//  2. Fallback: if every dirty chunk is gappy (genuinely sparse workload,
-//     or a sequential cp where every chunk is mid-flight), pick the
-//     oldest writer instead. Returning false here would deadlock the
-//     accountant's Reserve loop — `cond.Wait` only wakes on Release, and
-//     Release only fires when an upload completes, so refusing every
-//     gappy chunk means no upload starts, no Release fires, and the
-//     blocked writer never reaches FlushAll. The oldest-LastWriteTsNs
-//     heuristic narrows the FUSE-race window: a chunk untouched the
-//     longest is the most likely to have received its final pages
-//     already.
-//
-// SaveContent emits one volume chunk per maximal adjacent run, so a
-// gappy chunk sealed by the fallback uploads only the bytes it has;
-// any pages that arrive later land in a fresh MemChunk for the same
-// logicChunkIndex and are sealed in turn (auto on IsComplete, by a
-// later evict, or by FlushAll on close). The full coverage is
-// reconstructed at read time by readResolvedChunks.
 func (up *UploadPipeline) EvictOneWritableChunk() bool {
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()
@@ -313,7 +273,6 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 		return false
 	}
 
-	// Strict pass: fullest contiguous-from-0 chunk.
 	bestIndex := LogicChunkIndex(-1)
 	var bestBytes int64
 	for lci, wc := range up.writableChunks {
@@ -326,8 +285,6 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 		}
 	}
 
-	// Fallback: oldest non-empty chunk. Tie-break on WrittenSize so we
-	// pick the most upload-worthy among equally-old candidates.
 	if bestIndex < 0 {
 		oldestTsNs := int64(math.MaxInt64)
 		var fallbackBytes int64
@@ -338,7 +295,7 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 			}
 			ts := wc.LastWriteTsNs()
 			if ts == 0 {
-				continue // chunk is freshly created; nothing meaningful to seal
+				continue
 			}
 			if ts < oldestTsNs || (ts == oldestTsNs && b > fallbackBytes) {
 				bestIndex = lci
@@ -387,13 +344,10 @@ func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, max
 		if age < idleThresholdNs {
 			continue
 		}
-		// Same gap-free guard as SaveDataAt's pressure path: never seal a
-		// chunk whose written intervals have an internal hole, because
-		// SaveContent would split it into multiple volume chunks with no
-		// chunk covering the hole and reads would silently zero-fill it
-		// (issue #9330). Idle chunks past idleThresholdNs are usually
-		// done, but FUSE writeback can dispatch out of order, and the
-		// proactive flusher should not race FUSE on partial chunks.
+		// Skip gappy chunks; FUSE writeback may still be in flight for the
+		// hole and SaveContent would bake it into split volume chunks
+		// (issue #9330). Failing here is just a missed flush — FlushAll
+		// at close still seals everything.
 		if !chunk.IsContiguouslyWritten() {
 			continue
 		}
