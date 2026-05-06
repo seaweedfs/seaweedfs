@@ -86,7 +86,10 @@ service VolumeServer {
     }
 
     // erasure coding
+    // TODO: deprecate in favor of VolumeEcShardsGenerateStreaming()
     rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
+    }
+    rpc VolumeEcShardsGenerateStreaming (VolumeEcShardsGenerateRequest) returns (stream VolumeEcShardsGenerateStreamingResponse) {
     }
     rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {
     }
@@ -420,6 +423,10 @@ message VolumeEcShardsGenerateRequest {
     string collection = 2;
 }
 message VolumeEcShardsGenerateResponse {
+}
+message VolumeEcShardsGenerateStreamingResponse {
+    uint64 volume_size = 1;
+    uint64 processed_bytes = 2;
 }
 
 message VolumeEcShardsRebuildRequest {

@@ -48,7 +48,7 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 	})
 
 	// Phase 2: EC encode — generates .ec00-.ec13 from current .dat
-	err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx)
+	err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx, nil)
 	require.NoError(t, err, "EC encoding")
 
 	// Phase 3: SIMULATE a write between EC encoding and .ecx generation
@@ -145,7 +145,7 @@ func TestEcConsistency_ExactLargeRowEncoding(t *testing.T) {
 	require.NoError(t, err)
 
 	// EC encode
-	err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx)
+	err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx, nil)
 	require.NoError(t, err)
 
 	// Check shard sizes — each shard should be exactly largeBlockSize
