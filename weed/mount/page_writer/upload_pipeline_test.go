@@ -100,13 +100,6 @@ func TestEvictOneWritableChunk_SkipsGappyChunks(t *testing.T) {
 		t.Errorf("chunk 1 (leading gap) must remain writable so its leading range can still be filled")
 	}
 
-	// With chunk 2 sealed, EvictOneWritableChunk has nothing else to seal —
-	// the remaining chunks are both gappy and must wait for FUSE writeback
-	// to fill them or for FlushAll at file close.
-	if up.EvictOneWritableChunk() {
-		t.Errorf("EvictOneWritableChunk returned true with only gappy chunks left")
-	}
-
 	// Fill chunk 0's middle and chunk 1's leading + trailing ranges.
 	// Both now cover [0, full) within their logicChunkIndex;
 	// SaveDataAt's maybeMoveToSealed auto-seals on IsComplete, so they
@@ -128,5 +121,95 @@ func TestEvictOneWritableChunk_SkipsGappyChunks(t *testing.T) {
 	}
 	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
 		t.Errorf("chunk 1 should have auto-sealed on IsComplete after leading range was filled")
+	}
+}
+
+// TestEvictOneWritableChunk_FallbackPicksOldestGappy pins the cap-pressure
+// liveness path: when every dirty chunk is gappy (genuinely sparse
+// workload, or a sequential cp where every chunk is mid-flight), the
+// strict pass finds nothing but the fallback must still seal one chunk
+// so accountant.Reserve can wake. Picking the oldest LastWriteTsNs
+// minimizes the chance of racing FUSE writeback for the gap range.
+func TestEvictOneWritableChunk_FallbackPicksOldestGappy(t *testing.T) {
+	const cs int64 = 2 * 1024 * 1024
+	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
+
+	block := make([]byte, cs/4) // 512 KiB
+
+	// Three chunks, all gappy, with strictly increasing tsNs so chunk 0
+	// is the oldest. Each chunk has WrittenSize == 1 MiB; oldest-first
+	// is the only differentiator.
+	//
+	// chunk 0 (oldest): internal gap.
+	if _, err := up.SaveDataAt(block, 0, true, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 3*cs/4, true, 101); err != nil {
+		t.Fatal(err)
+	}
+	// chunk 1: leading gap.
+	if _, err := up.SaveDataAt(block, cs+cs/4, true, 200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs+cs/2, true, 201); err != nil {
+		t.Fatal(err)
+	}
+	// chunk 2 (most recent): internal gap.
+	if _, err := up.SaveDataAt(block, 2*cs, true, 300); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 2*cs+3*cs/4, true, 301); err != nil {
+		t.Fatal(err)
+	}
+
+	if !up.EvictOneWritableChunk() {
+		t.Fatalf("fallback must seal a gappy chunk to free a Reserve slot")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; stillWritable {
+		t.Errorf("oldest gappy chunk (0) should have been picked by the fallback")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; !stillWritable {
+		t.Errorf("chunk 1 should remain writable; oldest-first must prefer chunk 0")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(2)]; !stillWritable {
+		t.Errorf("chunk 2 should remain writable; oldest-first must prefer chunk 0")
+	}
+}
+
+// TestEvictOneWritableChunk_PrefersStrictOverFallback verifies that the
+// strict pass takes precedence even when an older gappy chunk exists.
+// A sequential cp under cap pressure typically has both: a gappy chunk
+// at the head (older, mid-flight) and a contiguous chunk at the tail
+// (newer, freshly written). Strict picks the latter so the head's gap
+// has more time to be filled by in-flight writes.
+func TestEvictOneWritableChunk_PrefersStrictOverFallback(t *testing.T) {
+	const cs int64 = 2 * 1024 * 1024
+	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
+
+	block := make([]byte, cs/4)
+
+	// chunk 0 (oldest): gappy.
+	if _, err := up.SaveDataAt(block, 0, true, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 3*cs/4, true, 101); err != nil {
+		t.Fatal(err)
+	}
+	// chunk 1 (newer): contiguous from 0.
+	if _, err := up.SaveDataAt(block, cs, true, 200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs+cs/4, true, 201); err != nil {
+		t.Fatal(err)
+	}
+
+	if !up.EvictOneWritableChunk() {
+		t.Fatalf("EvictOneWritableChunk returned false")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
+		t.Errorf("contiguous chunk 1 must be picked by the strict pass over older gappy chunk 0")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; !stillWritable {
+		t.Errorf("gappy chunk 0 must remain writable; strict pass should not invoke fallback")
 	}
 }
