@@ -22,6 +22,13 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
+	// v.nm can be nil after a failed CommitCompact reload, so don't panic
+	// the http handler — surface a server error and let the client retry
+	// another replica (#9339).
+	if v.nm == nil {
+		return -1, fmt.Errorf("volume %d index not loaded", v.Id)
+	}
+
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || nv.Offset.IsZero() {
 		return -1, ErrorNotFound
@@ -108,6 +115,12 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	if readOption.HasSlowRead {
 		v.dataFileAccessLock.RLock()
 	}
+	if v.nm == nil {
+		if readOption.HasSlowRead {
+			v.dataFileAccessLock.RUnlock()
+		}
+		return fmt.Errorf("volume %d index not loaded", v.Id)
+	}
 	nv, ok := v.nm.Get(n.Id)
 	if readOption.HasSlowRead {
 		v.dataFileAccessLock.RUnlock()
@@ -146,6 +159,14 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		}
 		// possibly re-read needle offset if volume is compacted
 		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
+			// slow-read releases the lock between iterations; a failed
+			// CommitCompact reload mid-loop can leave v.nm nil (#9339).
+			if v.nm == nil {
+				if readOption.HasSlowRead {
+					v.dataFileAccessLock.RUnlock()
+				}
+				return fmt.Errorf("volume %d index not loaded", v.Id)
+			}
 			// the volume is compacted
 			nv, ok = v.nm.Get(n.Id)
 			if !ok || nv.Offset.IsZero() {

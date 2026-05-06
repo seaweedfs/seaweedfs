@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -8,6 +9,39 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
 )
+
+// A failed CommitCompact reload (or stray-.vif remote-tier load) leaves
+// v.nm == nil; readNeedle and readNeedleDataInto used to panic on the next
+// request. See #9339.
+func TestReadNeedleNilNeedleMap(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	// simulate the post-failure state: needle map closed, pointer nil-ed
+	v.dataFileAccessLock.Lock()
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	v.dataFileAccessLock.Unlock()
+
+	n := new(needle.Needle)
+	n.Id = types.Uint64ToNeedleId(1)
+
+	if _, err := v.readNeedle(n, &ReadOption{}, nil); err == nil {
+		t.Fatalf("readNeedle: expected error, got nil")
+	}
+
+	err = v.readNeedleDataInto(n, &ReadOption{ReadBufferSize: 1024}, &bytes.Buffer{}, 0, 0)
+	if err == nil {
+		t.Fatalf("readNeedleDataInto: expected error, got nil")
+	}
+}
 
 func TestReadNeedMetaWithWritesAndUpdates(t *testing.T) {
 	dir := t.TempDir()
