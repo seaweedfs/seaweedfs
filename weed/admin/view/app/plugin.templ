@@ -758,7 +758,7 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function updateURL(replace) {
-                var url = buildPluginURL(state.activeTopTab, state.activeSubTab, state.selectedJobType);
+                var url = basePath(buildPluginURL(state.activeTopTab, state.activeSubTab, state.selectedJobType));
                 if (replace) {
                     history.replaceState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
                 } else {
