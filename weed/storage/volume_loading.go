@@ -163,6 +163,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 		// check volume idx files
 		if err := v.checkIdxFile(); err != nil {
+			// A remote-tiered volume with a stray .vif but no .idx must not
+			// take the whole server down; skip just this volume.
+			if v.HasRemoteFile() {
+				glog.Errorf("skip remote volume %d: %v", v.Id, err)
+				return err
+			}
 			glog.Fatalf("check volume idx file %s: %v", v.FileName(".idx"), err)
 		}
 		var indexFile *os.File
