@@ -48,6 +48,11 @@ type Volume struct {
 
 	isCompactionInProgress atomic.Bool
 
+	// nmNilLogged is set the first time a read sees v.nm == nil (e.g. after a
+	// failed CommitCompact reload) so operators get a clear signal in the log
+	// instead of silent ErrorNotFound responses. Reset on successful load.
+	nmNilLogged atomic.Bool
+
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
 	location         *DiskLocation

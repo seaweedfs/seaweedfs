@@ -17,12 +17,22 @@ import (
 
 const PagedReadLimit = 1024 * 1024
 
+// logNeedleMapNil emits one error per volume when reads land on a nil
+// needle map (#9339). Without this, a half-loaded volume just returns
+// ErrorNotFound silently and the operator has nothing to grep for.
+func (v *Volume) logNeedleMapNil() {
+	if !v.nmNilLogged.Swap(true) {
+		glog.Errorf("volume %d: needle map not loaded; reads return not-found until reload succeeds", v.Id)
+	}
+}
+
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (count int, err error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
 	if v.nm == nil {
+		v.logNeedleMapNil()
 		return -1, ErrorNotFound
 	}
 
@@ -116,6 +126,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		if readOption.HasSlowRead {
 			v.dataFileAccessLock.RUnlock()
 		}
+		v.logNeedleMapNil()
 		return ErrorNotFound
 	}
 	nv, ok := v.nm.Get(n.Id)
@@ -160,6 +171,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}
+				v.logNeedleMapNil()
 				return ErrorNotFound
 			}
 			// the volume is compacted

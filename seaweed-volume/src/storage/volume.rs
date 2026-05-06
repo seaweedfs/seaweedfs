@@ -515,6 +515,12 @@ pub struct Volume {
 
     /// Whether this volume has a remote file reference.
     pub has_remote_file: bool,
+
+    /// Set the first time a read sees `self.nm == None` (e.g. after a failed
+    /// CommitCompact reload) so operators get a clear signal in the log
+    /// instead of silent NotFound responses. Reset on successful load. See
+    /// Go's `Volume.nmNilLogged` (#9339).
+    nm_nil_logged: AtomicBool,
 }
 
 /// Windows helper: loop seek_read until buffer is fully filled.
@@ -576,6 +582,7 @@ impl Volume {
             last_io_error: Mutex::new(None),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
+            nm_nil_logged: AtomicBool::new(false),
         };
 
         v.load(true, true, preallocate, version)?;
@@ -770,7 +777,26 @@ impl Volume {
             }
         }
 
+        self.nm_nil_logged.store(false, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Helper that mirrors Go's `Volume.logNeedleMapNil`. Returns the needle
+    /// map or `NotFound`, logging once per volume on the nil path so a
+    /// half-loaded volume is visible to operators (#9339).
+    fn nm_or_not_found(&self) -> Result<&NeedleMap, VolumeError> {
+        match self.nm.as_ref() {
+            Some(nm) => Ok(nm),
+            None => {
+                if !self.nm_nil_logged.swap(true, Ordering::Relaxed) {
+                    tracing::error!(
+                        volume_id = self.id.0,
+                        "needle map not loaded; reads return not-found until reload succeeds"
+                    );
+                }
+                Err(VolumeError::NotFound)
+            }
+        }
     }
 
     fn load_index(&mut self) -> Result<(), VolumeError> {
@@ -1058,7 +1084,7 @@ impl Volume {
         read_option: &mut ReadOption,
     ) -> Result<i32, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm_or_not_found()?;
         let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
 
         if nv.offset.is_zero() {
@@ -1300,7 +1326,7 @@ impl Volume {
         read_deleted: bool,
     ) -> Result<NeedleStreamInfo, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm_or_not_found()?;
         let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
 
         if nv.offset.is_zero() {
@@ -1402,7 +1428,7 @@ impl Volume {
         &self,
         needle_id: NeedleId,
     ) -> Result<(u64, u16), VolumeError> {
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm_or_not_found()?;
         let nv = nm.get(needle_id).ok_or(VolumeError::NotFound)?;
         if nv.offset.is_zero() {
             return Err(VolumeError::NotFound);
@@ -1719,7 +1745,7 @@ impl Volume {
     /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
     pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm_or_not_found()?;
         let version = self.version();
         let dat_size = self.current_dat_file_size()? as i64;
         let mut needles = Vec::new();
@@ -1908,7 +1934,7 @@ impl Volume {
         if self.dat_file.is_none() && self.remote_dat_file.is_none() {
             return Err(VolumeError::NotFound);
         }
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm_or_not_found()?;
         let dat_size = self.dat_file_size().map_err(VolumeError::Io)?;
 
         let mut files_checked: u64 = 0;
@@ -1968,7 +1994,7 @@ impl Volume {
         if self.dat_file.is_none() && self.remote_dat_file.is_none() {
             return Err(VolumeError::NotFound);
         }
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm_or_not_found()?;
 
         let dat_size = self.dat_file_size().map_err(|e| VolumeError::Io(e))?;
         let version = self.version();
