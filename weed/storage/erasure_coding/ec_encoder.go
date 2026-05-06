@@ -26,6 +26,8 @@ const (
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
 )
 
+type ProgressCallback func(done, total int64)
+
 // WriteSortedFileFromIdx generates .ecx file from existing .idx file
 // all keys are sorted in ascending order
 func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
@@ -58,14 +60,14 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 }
 
 // WriteEcFiles generates .ec00 ~ .ec13 files using default EC context
-func WriteEcFiles(baseFileName string) error {
+func WriteEcFiles(baseFileName string, progressCallback ProgressCallback) error {
 	ctx := NewDefaultECContext("", 0)
-	return WriteEcFilesWithContext(baseFileName, ctx)
+	return WriteEcFilesWithContext(baseFileName, ctx, progressCallback)
 }
 
 // WriteEcFilesWithContext generates EC files using the provided context
-func WriteEcFilesWithContext(baseFileName string, ctx *ECContext) error {
-	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
+func WriteEcFilesWithContext(baseFileName string, ctx *ECContext, progressCallback ProgressCallback) error {
+	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, progressCallback)
 }
 
 // RebuildEcFiles rebuilds missing EC shard files.
@@ -107,7 +109,7 @@ func ToExt(ecIndex int) string {
 	return fmt.Sprintf(".ec%02d", ecIndex)
 }
 
-func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext) error {
+func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, progressCallback ProgressCallback) error {
 	file, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
 	if err != nil {
 		return fmt.Errorf("failed to open dat file: %w", err)
@@ -120,7 +122,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 	}
 
 	glog.V(0).Infof("encodeDatFile %s.dat size:%d with EC context %s", baseFileName, fi.Size(), ctx.String())
-	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize, ctx)
+	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize, ctx, progressCallback)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %w", err)
 	}
@@ -277,8 +279,8 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 	return nil
 }
 
-func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64, ctx *ECContext) error {
-
+func encodeDatFile(totalSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64, ctx *ECContext, progressCallback ProgressCallback) error {
+	var remainingSize int64 = totalSize
 	var processedSize int64
 
 	enc, err := ctx.CreateEncoder()
@@ -302,21 +304,33 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	smallRowSize := smallBlockSize * int64(ctx.DataShards)
 
 	for remainingSize >= largeRowSize {
-		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs, ctx)
-		if err != nil {
+		if err := encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs, ctx); err != nil {
 			return fmt.Errorf("failed to encode large chunk data: %w", err)
 		}
+
 		remainingSize -= largeRowSize
 		processedSize += largeRowSize
+		if progressCallback != nil {
+			(progressCallback)(processedSize, totalSize)
+		}
 	}
 	for remainingSize > 0 {
-		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs, ctx)
-		if err != nil {
+		if err := encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs, ctx); err != nil {
 			return fmt.Errorf("failed to encode small chunk data: %w", err)
 		}
-		remainingSize -= smallRowSize
-		processedSize += smallRowSize
+
+		if smallBlockSize >= remainingSize {
+			remainingSize -= smallRowSize
+			processedSize += smallRowSize
+		} else {
+			processedSize += remainingSize
+			remainingSize = 0
+		}
+		if progressCallback != nil {
+			(progressCallback)(processedSize, totalSize)
+		}
 	}
+
 	return nil
 }
 
