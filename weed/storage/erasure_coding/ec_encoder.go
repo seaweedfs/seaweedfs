@@ -13,7 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -128,19 +127,31 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 }
 
 // findShardFile looks for a shard file at baseFileName+ext, then in additionalDirs.
-func findShardFile(baseFileName string, ext string, additionalDirs []string) string {
-	primary := baseFileName + ext
-	if util.FileExists(primary) {
-		return primary
-	}
+// Returns the first non-empty shard file path found. Any 0-byte residue files
+// (typically left behind by a previously aborted rebuild) are returned in ghosts
+// so the caller can remove them — otherwise they shadow real shards on the next
+// rebuild attempt and the volume gets silently mounted with empty stripes.
+func findShardFile(baseFileName string, ext string, additionalDirs []string) (shardPath string, ghosts []string) {
+	candidates := make([]string, 0, 1+len(additionalDirs))
+	candidates = append(candidates, baseFileName+ext)
 	baseName := filepath.Base(baseFileName)
 	for _, dir := range additionalDirs {
-		candidate := filepath.Join(dir, baseName+ext)
-		if util.FileExists(candidate) {
-			return candidate
+		candidates = append(candidates, filepath.Join(dir, baseName+ext))
+	}
+	for _, c := range candidates {
+		fi, statErr := os.Stat(c)
+		if statErr != nil {
+			continue
+		}
+		if fi.Size() == 0 {
+			ghosts = append(ghosts, c)
+			continue
+		}
+		if shardPath == "" {
+			shardPath = c
 		}
 	}
-	return ""
+	return
 }
 
 func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, additionalDirs []string) (generatedShardIds []uint32, err error) {
@@ -150,22 +161,35 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	shardHasData := make([]bool, ctx.Total())
 	shardPaths := make([]string, ctx.Total()) // non-empty for present shards
 	inputFiles := make([]*os.File, ctx.Total())
+	var ghostPaths []string
+	expectedShardSize := int64(-1)
 	presentCount := 0
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		ext := ctx.ToExt(shardId)
-		shardPath := findShardFile(baseFileName, ext, additionalDirs)
-		if shardPath != "" {
-			shardHasData[shardId] = true
-			shardPaths[shardId] = shardPath
-			inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
-			if err != nil {
-				return nil, err
-			}
-			defer inputFiles[shardId].Close()
-			presentCount++
-		} else {
+		shardPath, ghosts := findShardFile(baseFileName, ext, additionalDirs)
+		ghostPaths = append(ghostPaths, ghosts...)
+		if shardPath == "" {
 			generatedShardIds = append(generatedShardIds, uint32(shardId))
+			continue
 		}
+		fi, statErr := os.Stat(shardPath)
+		if statErr != nil {
+			return nil, fmt.Errorf("stat shard %s: %w", shardPath, statErr)
+		}
+		if expectedShardSize < 0 {
+			expectedShardSize = fi.Size()
+		} else if fi.Size() != expectedShardSize {
+			return nil, fmt.Errorf("ec shard size mismatch: %s is %d bytes, expected %d (refusing to rebuild from inconsistent shards)",
+				shardPath, fi.Size(), expectedShardSize)
+		}
+		shardHasData[shardId] = true
+		shardPaths[shardId] = shardPath
+		inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer inputFiles[shardId].Close()
+		presentCount++
 	}
 
 	// Pre-check: bail out before creating any output files.
@@ -174,8 +198,8 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 			baseFileName, presentCount, ctx.DataShards, generatedShardIds)
 	}
 
-	glog.V(0).Infof("rebuilding %s: %d shards present, %d missing %v, config %s",
-		baseFileName, presentCount, len(generatedShardIds), generatedShardIds, ctx.String())
+	glog.V(0).Infof("rebuilding %s: %d shards present (size %d), %d missing %v, %d ghost residue %v, config %s",
+		baseFileName, presentCount, expectedShardSize, len(generatedShardIds), generatedShardIds, len(ghostPaths), ghostPaths, ctx.String())
 
 	// Pass 2: create output files for missing shards now that we know
 	// reconstruction is possible.
@@ -192,9 +216,31 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 		defer outputFiles[shardId].Close()
 	}
 
-	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx)
+	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx, expectedShardSize)
 	if err != nil {
 		return nil, fmt.Errorf("rebuildEcFiles: %w", err)
+	}
+
+	// Reconstruction succeeded — remove any 0-byte residue from prior aborted
+	// rebuilds so they don't shadow real shards on the next pass and don't get
+	// mounted as empty stripes. Skip residue paths that the output-file step
+	// has already overwritten with real data, since those entries in
+	// ghostPaths refer to the just-rebuilt shard's location.
+	freshOutputs := make(map[string]struct{}, len(outputFiles))
+	for _, f := range outputFiles {
+		if f != nil {
+			freshOutputs[f.Name()] = struct{}{}
+		}
+	}
+	for _, ghost := range ghostPaths {
+		if _, overwritten := freshOutputs[ghost]; overwritten {
+			continue
+		}
+		if removeErr := os.Remove(ghost); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.Warningf("failed to remove 0-byte ec shard residue %s: %v", ghost, removeErr)
+		} else {
+			glog.V(0).Infof("removed 0-byte ec shard residue %s", ghost)
+		}
 	}
 	return
 }
@@ -320,7 +366,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	return nil
 }
 
-func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*os.File, ctx *ECContext) error {
+func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*os.File, ctx *ECContext, expectedShardSize int64) error {
 
 	enc, err := ctx.CreateEncoder()
 	if err != nil {
@@ -334,23 +380,22 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		}
 	}
 
-	var startOffset int64
-	var inputBufferDataSize int
-	for {
+	for startOffset := int64(0); startOffset < expectedShardSize; {
+		chunkSize := int64(ErasureCodingSmallBlockSize)
+		if remaining := expectedShardSize - startOffset; remaining < chunkSize {
+			chunkSize = remaining
+		}
 
 		// read the input data from files
 		for i := 0; i < ctx.Total(); i++ {
 			if shardHasData[i] {
-				n, _ := inputFiles[i].ReadAt(buffers[i], startOffset)
-				if n == 0 {
-					return nil
+				buf := buffers[i][:chunkSize]
+				n, readErr := inputFiles[i].ReadAt(buf, startOffset)
+				if int64(n) != chunkSize {
+					return fmt.Errorf("short read on shard %s at offset %d: got %d, want %d (err=%v)",
+						inputFiles[i].Name(), startOffset, n, chunkSize, readErr)
 				}
-				if inputBufferDataSize == 0 {
-					inputBufferDataSize = n
-				}
-				if inputBufferDataSize != n {
-					return fmt.Errorf("ec shard size expected %d actual %d", inputBufferDataSize, n)
-				}
+				buffers[i] = buf
 			} else {
 				buffers[i] = nil
 			}
@@ -365,15 +410,16 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		// write the data to output files
 		for i := 0; i < ctx.Total(); i++ {
 			if !shardHasData[i] {
-				n, _ := outputFiles[i].WriteAt(buffers[i][:inputBufferDataSize], startOffset)
-				if inputBufferDataSize != n {
-					return fmt.Errorf("fail to write to %s", outputFiles[i].Name())
+				n, writeErr := outputFiles[i].WriteAt(buffers[i][:chunkSize], startOffset)
+				if int64(n) != chunkSize {
+					return fmt.Errorf("short write to %s at offset %d: got %d, want %d (err=%v)",
+						outputFiles[i].Name(), startOffset, n, chunkSize, writeErr)
 				}
 			}
 		}
-		startOffset += int64(inputBufferDataSize)
+		startOffset += chunkSize
 	}
-
+	return nil
 }
 
 func readNeedleMap(baseFileName string) (*needle_map.MemDb, error) {
