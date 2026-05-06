@@ -10,9 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A failed CommitCompact reload (or stray-.vif remote-tier load) leaves
-// v.nm == nil; readNeedle and readNeedleDataInto used to panic on the next
-// request. See #9339.
+// #9339: readNeedle / readNeedleDataInto used to panic when v.nm is nil
+// (failed CommitCompact reload, stray-.vif remote-tier load).
 func TestReadNeedleNilNeedleMap(t *testing.T) {
 	dir := t.TempDir()
 
@@ -22,7 +21,6 @@ func TestReadNeedleNilNeedleMap(t *testing.T) {
 	}
 	defer v.Close()
 
-	// simulate the post-failure state: needle map closed, pointer nil-ed
 	v.dataFileAccessLock.Lock()
 	if v.nm != nil {
 		v.nm.Close()
@@ -33,13 +31,13 @@ func TestReadNeedleNilNeedleMap(t *testing.T) {
 	n := new(needle.Needle)
 	n.Id = types.Uint64ToNeedleId(1)
 
-	if _, err := v.readNeedle(n, &ReadOption{}, nil); err == nil {
-		t.Fatalf("readNeedle: expected error, got nil")
+	if _, err := v.readNeedle(n, &ReadOption{}, nil); err != ErrorNotFound {
+		t.Fatalf("readNeedle: want ErrorNotFound, got %v", err)
 	}
 
 	err = v.readNeedleDataInto(n, &ReadOption{ReadBufferSize: 1024}, &bytes.Buffer{}, 0, 0)
-	if err == nil {
-		t.Fatalf("readNeedleDataInto: expected error, got nil")
+	if err != ErrorNotFound {
+		t.Fatalf("readNeedleDataInto: want ErrorNotFound, got %v", err)
 	}
 }
 
