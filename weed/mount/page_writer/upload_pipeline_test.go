@@ -213,3 +213,91 @@ func TestEvictOneWritableChunk_PrefersStrictOverFallback(t *testing.T) {
 		t.Errorf("gappy chunk 0 must remain writable; strict pass should not invoke fallback")
 	}
 }
+
+// TestProactiveFlush_SkipsGappyChunks pins the issue #9330 fix in the
+// proactive-flush path: the chunk-flusher must not seal a chunk whose
+// written intervals have a hole, even if the chunk has been idle long
+// enough to satisfy the staleness/idle thresholds. The same reasoning
+// applies as for EvictOneWritableChunk's strict pass — sealing a gappy
+// chunk uploads it as multiple volume chunks with no coverage for the
+// hole, and reads silently zero-fill the hole. ProactiveFlush has no
+// liveness fallback because returning false is just a missed
+// optimization (the chunk-flusher will try again later, FlushAll runs
+// at close).
+func TestProactiveFlush_SkipsGappyChunks(t *testing.T) {
+	const cs int64 = 2 * 1024 * 1024
+	up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(2), cs, nil, 16, "", nil)
+
+	block := make([]byte, cs/4) // 512 KiB
+
+	// Same 3-chunk setup as TestEvictOneWritableChunk_SkipsGappyChunks:
+	// chunk 0 internal gap, chunk 1 leading gap, chunk 2 contiguous.
+	if _, err := up.SaveDataAt(block, 0, true, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 3*cs/4, true, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs+cs/4, true, 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs+cs/2, true, 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 2*cs, true, 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, 2*cs+cs/4, true, 6); err != nil {
+		t.Fatal(err)
+	}
+
+	// nowNs >> any chunk's LastWriteTsNs so age clears idleThresholdNs and
+	// maxHoldNs, and fillRatio <= WrittenSize so nearlyFull is true. With
+	// these all chunks are eligible by the staleness criteria, leaving
+	// IsContiguouslyWritten as the only differentiator.
+	const (
+		nowNs           int64 = 1_000_000_000
+		idleThresholdNs int64 = 100
+		maxHoldNs       int64 = 200
+		fillRatio       int64 = cs / 8 // 256 KiB; all three chunks have 1 MiB
+	)
+	if !up.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, 0, false) {
+		t.Fatalf("ProactiveFlush returned false; expected contiguous chunk 2 to be sealed")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(2)]; stillWritable {
+		t.Errorf("chunk 2 should have moved to sealed")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; !stillWritable {
+		t.Errorf("chunk 0 (internal gap) must remain writable; ProactiveFlush must not race FUSE writeback")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; !stillWritable {
+		t.Errorf("chunk 1 (leading gap) must remain writable; ProactiveFlush must not race FUSE writeback")
+	}
+
+	// With only gappy chunks left, ProactiveFlush has no liveness
+	// fallback (unlike EvictOneWritableChunk) and must return false.
+	if up.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, 0, false) {
+		t.Errorf("ProactiveFlush returned true with only gappy chunks left; should have skipped them")
+	}
+
+	// Fill the holes; SaveDataAt's maybeMoveToSealed auto-seals on
+	// IsComplete, so chunks 0 and 1 leave writableChunks on their own.
+	if _, err := up.SaveDataAt(block, cs/4, true, 7); err != nil { // chunk 0 middle a
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs/2, true, 8); err != nil { // chunk 0 middle b
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs, true, 9); err != nil { // chunk 1 leading
+		t.Fatal(err)
+	}
+	if _, err := up.SaveDataAt(block, cs+3*cs/4, true, 10); err != nil { // chunk 1 trailing
+		t.Fatal(err)
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(0)]; stillWritable {
+		t.Errorf("chunk 0 should have auto-sealed on IsComplete after gap was filled")
+	}
+	if _, stillWritable := up.writableChunks[LogicChunkIndex(1)]; stillWritable {
+		t.Errorf("chunk 1 should have auto-sealed on IsComplete after leading range was filled")
+	}
+}
