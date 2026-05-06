@@ -288,8 +288,13 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 	if len(up.writableChunks) == 0 {
 		return false
 	}
+	// bestBytes starts at 0 (not -1) so that an empty chunk — which is
+	// trivially "contiguous" by the previous interval-list semantics
+	// but is now reported false by IsContiguouslyWritten — is still
+	// not picked here even if that semantic ever loosens. Matches the
+	// fullness initialization in SaveDataAt's pressure path.
 	bestIndex := LogicChunkIndex(-1)
-	var bestBytes int64 = -1
+	var bestBytes int64
 	for lci, wc := range up.writableChunks {
 		if !wc.IsContiguouslyWritten() {
 			continue

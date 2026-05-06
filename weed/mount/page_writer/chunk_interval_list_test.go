@@ -88,16 +88,22 @@ func TestIsContiguouslyWritten(t *testing.T) {
 		writes   [][2]int64
 		expected bool
 	}{
-		{name: "empty", writes: nil, expected: true},
+		// nothing written yet: not eligible — still waiting for first byte.
+		{name: "empty", writes: nil, expected: false},
+		// one unbroken run starting at 0 — the only eviction-eligible shapes.
 		{name: "single full", writes: [][2]int64{{0, chunkSize}}, expected: true},
 		{name: "single partial at start", writes: [][2]int64{{0, chunkSize / 4}}, expected: true},
-		{name: "single partial in middle", writes: [][2]int64{{chunkSize / 4, chunkSize / 2}}, expected: true},
 		{name: "two adjacent halves in order", writes: [][2]int64{{0, chunkSize / 2}, {chunkSize / 2, chunkSize}}, expected: true},
 		{name: "two adjacent halves out of order", writes: [][2]int64{{chunkSize / 2, chunkSize}, {0, chunkSize / 2}}, expected: true},
-		{name: "gap in middle", writes: [][2]int64{{0, chunkSize / 4}, {chunkSize / 2, chunkSize}}, expected: false},
-		{name: "two intervals with 1-byte gap", writes: [][2]int64{{0, 100}, {101, 200}}, expected: false},
 		{name: "overlapping covers everything", writes: [][2]int64{{0, chunkSize*3/4 + 1}, {chunkSize / 2, chunkSize}}, expected: true},
 		{name: "three adjacent thirds", writes: [][2]int64{{0, chunkSize / 3}, {chunkSize / 3, 2 * chunkSize / 3}, {2 * chunkSize / 3, chunkSize}}, expected: true},
+		// leading gap (no byte 0..start) — sealing now would race in-flight
+		// FUSE writeback for the leading range.
+		{name: "single partial in middle", writes: [][2]int64{{chunkSize / 4, chunkSize / 2}}, expected: false},
+		{name: "first byte missing", writes: [][2]int64{{1, chunkSize}}, expected: false},
+		// internal gap — same race for the gap range.
+		{name: "gap in middle", writes: [][2]int64{{0, chunkSize / 4}, {chunkSize / 2, chunkSize}}, expected: false},
+		{name: "two intervals with 1-byte gap", writes: [][2]int64{{0, 100}, {101, 200}}, expected: false},
 		{name: "three intervals with middle gap", writes: [][2]int64{{0, chunkSize / 4}, {chunkSize / 3, chunkSize / 2}, {chunkSize / 2, chunkSize}}, expected: false},
 	}
 	for _, tc := range cases {
