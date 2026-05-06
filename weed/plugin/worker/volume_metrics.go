@@ -153,6 +153,7 @@ func buildVolumeMetrics(
 							ReplicaCount:     1,
 							ExpectedReplicas: int(volume.ReplicaPlacement),
 							IsReadOnly:       volume.ReadOnly,
+							HasRemoteCopy:    volume.RemoteStorageName != "",
 						}
 						if metric.Size > 0 {
 							metric.GarbageRatio = float64(metric.DeletedBytes) / float64(metric.Size)

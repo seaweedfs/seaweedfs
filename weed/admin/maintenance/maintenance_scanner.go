@@ -123,6 +123,7 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*types.VolumeHealthMet
 								DeletedBytes:     volInfo.DeletedByteCount,
 								LastModified:     time.Unix(int64(volInfo.ModifiedAtSecond), 0),
 								IsReadOnly:       volInfo.ReadOnly,
+								HasRemoteCopy:    volInfo.RemoteStorageName != "",
 								IsECVolume:       false, // Will be determined from volume structure
 								ReplicaCount:     1,     // Will be counted
 								ExpectedReplicas: int(volInfo.ReplicaPlacement),

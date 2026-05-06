@@ -401,6 +401,48 @@ func TestDetection_ImbalancedDiskType(t *testing.T) {
 	}
 }
 
+func TestDetection_SkipsRemoteTieredVolumes(t *testing.T) {
+	metrics := []*types.VolumeHealthMetrics{}
+
+	for i := 0; i < 100; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(i + 1),
+			Server:        "ssd-server-1",
+			ServerAddress: "ssd-server-1:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+			HasRemoteCopy: true,
+		})
+	}
+	for i := 0; i < 10; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(100 + i + 1),
+			Server:        "ssd-server-2",
+			ServerAddress: "ssd-server-2:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+			HasRemoteCopy: true,
+		})
+	}
+
+	at := createMockTopology(metrics...)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks for remote-tiered volumes, got %d", len(tasks))
+	}
+}
+
 func TestDetection_RespectsMaxResults(t *testing.T) {
 	// Setup: 2 SSD servers with big imbalance (100 vs 10)
 	metrics := []*types.VolumeHealthMetrics{}
