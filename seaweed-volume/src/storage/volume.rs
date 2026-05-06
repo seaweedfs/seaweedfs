@@ -3081,7 +3081,10 @@ impl Volume {
     }
 
     /// Remove all volume files from disk.
-    pub fn destroy(&mut self, only_empty: bool) -> Result<(), VolumeError> {
+    /// Destroy removes everything related to this volume. When keep_remote_data
+    /// is true the cloud-tier object backing the volume is left intact — used
+    /// by moves where another server is taking over the same .vif.
+    pub fn destroy(&mut self, only_empty: bool, keep_remote_data: bool) -> Result<(), VolumeError> {
         if only_empty && self.file_count() > 0 {
             return Err(VolumeError::NotEmpty);
         }
@@ -3093,7 +3096,11 @@ impl Volume {
         }
 
         let (storage_name, storage_key) = self.remote_storage_name_key();
-        if self.has_remote_file && !storage_name.is_empty() && !storage_key.is_empty() {
+        if !keep_remote_data
+            && self.has_remote_file
+            && !storage_name.is_empty()
+            && !storage_key.is_empty()
+        {
             let backend = crate::remote_storage::s3_tier::global_s3_tier_registry()
                 .read()
                 .unwrap()
@@ -3659,7 +3666,7 @@ mod tests {
             dat_path = v.file_name(".dat");
             idx_path = v.file_name(".idx");
             assert!(Path::new(&dat_path).exists());
-            v.destroy(false).unwrap();
+            v.destroy(false, false).unwrap();
         }
 
         assert!(!Path::new(&dat_path).exists());
@@ -4424,7 +4431,7 @@ mod tests {
         assert!(std::path::Path::new(&idx_path).exists());
 
         // Destroy the volume
-        v.destroy(false).unwrap();
+        v.destroy(false, false).unwrap();
 
         // .dat and .idx should be gone
         assert!(
@@ -4481,7 +4488,7 @@ mod tests {
         assert!(std::path::Path::new(&dat_path).exists());
         assert!(std::path::Path::new(&idx_path).exists());
 
-        v.destroy(false).unwrap();
+        v.destroy(false, false).unwrap();
 
         assert!(
             !std::path::Path::new(&dat_path).exists(),

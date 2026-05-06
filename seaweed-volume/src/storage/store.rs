@@ -307,11 +307,18 @@ impl Store {
         )
     }
 
-    /// Delete a volume from any location.
-    pub fn delete_volume(&mut self, vid: VolumeId, only_empty: bool) -> Result<(), VolumeError> {
+    /// Delete a volume from any location. When keep_remote_data is true the
+    /// cloud-tier object backing the volume is left intact — used by moves
+    /// where another server is taking over the same .vif.
+    pub fn delete_volume(
+        &mut self,
+        vid: VolumeId,
+        only_empty: bool,
+        keep_remote_data: bool,
+    ) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
             if loc.find_volume(vid).is_some() {
-                return loc.delete_volume(vid, only_empty);
+                return loc.delete_volume(vid, only_empty, keep_remote_data);
             }
         }
         Err(VolumeError::NotFound)

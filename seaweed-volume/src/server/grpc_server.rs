@@ -809,7 +809,7 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
         store
-            .delete_volume(vid, req.only_empty)
+            .delete_volume(vid, req.only_empty, req.keep_remote_data)
             .map_err(|e| Status::internal(e.to_string()))?;
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
@@ -1043,7 +1043,10 @@ impl VolumeServer for VolumeGrpcService {
             if store.find_volume(vid).is_some() {
                 drop(store);
                 let mut store = self.state.store.write().unwrap();
-                store.delete_volume(vid, false).map_err(|e| {
+                // keep remote data: the inbound copy carries a .vif that may
+                // point at the same cloud-tier object the existing volume
+                // references.
+                store.delete_volume(vid, false, true).map_err(|e| {
                     Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
                 })?;
                 self.state.volume_state_notify.notify_one();

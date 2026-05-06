@@ -386,13 +386,20 @@ impl DiskLocation {
         }
     }
 
-    /// Remove, close, and delete all files for a volume.
-    pub fn delete_volume(&mut self, vid: VolumeId, only_empty: bool) -> Result<(), VolumeError> {
+    /// Remove, close, and delete all files for a volume. When keep_remote_data
+    /// is true the cloud-tier object backing the volume is left intact — used
+    /// by moves where another server is taking over the same .vif.
+    pub fn delete_volume(
+        &mut self,
+        vid: VolumeId,
+        only_empty: bool,
+        keep_remote_data: bool,
+    ) -> Result<(), VolumeError> {
         if let Some(mut v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
-            v.destroy(only_empty)?;
+            v.destroy(only_empty, keep_remote_data)?;
             Ok(())
         } else {
             Err(VolumeError::NotFound)
@@ -413,7 +420,7 @@ impl DiskLocation {
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&v.collection, "volume"])
                     .dec();
-                if let Err(e) = v.destroy(false) {
+                if let Err(e) = v.destroy(false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
                 }
             }
@@ -1157,7 +1164,7 @@ mod tests {
         .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
-        loc.delete_volume(VolumeId(1), false).unwrap();
+        loc.delete_volume(VolumeId(1), false, false).unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_none());
     }
