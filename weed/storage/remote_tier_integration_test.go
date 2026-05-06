@@ -329,16 +329,18 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 		require.NoError(t, statErr, "shard %d missing after encode", i)
 	}
 
-	for i := 0; i < erasure_coding.ParityShardsCount; i++ {
+	// Drop the parity-range shards (indices DataShardsCount..TotalShardsCount-1)
+	// and rebuild — exercises the recover-from-missing-parity path.
+	for i := erasure_coding.DataShardsCount; i < erasure_coding.TotalShardsCount; i++ {
 		shardPath := fmt.Sprintf("%s.ec%02d", baseFileName, i)
 		require.NoError(t, os.Remove(shardPath))
 	}
 	rebuilt, err := erasure_coding.RebuildEcFiles(baseFileName)
 	require.NoError(t, err)
-	require.NotEmpty(t, rebuilt, "rebuild should report which shards were regenerated")
-	for i := 0; i < erasure_coding.ParityShardsCount; i++ {
+	require.NotEmpty(t, rebuilt, "rebuild should report which parity shards were regenerated")
+	for i := erasure_coding.DataShardsCount; i < erasure_coding.TotalShardsCount; i++ {
 		shardPath := fmt.Sprintf("%s.ec%02d", baseFileName, i)
 		_, statErr := os.Stat(shardPath)
-		require.NoError(t, statErr, "shard %d missing after rebuild", i)
+		require.NoError(t, statErr, "parity shard %d missing after rebuild", i)
 	}
 }
