@@ -368,16 +368,36 @@ func doDeleteVolumesWithLocations(commandEnv *CommandEnv, volumeIds []needle.Vol
 }
 
 func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
-
-	fmt.Printf("generateEcShards %d (collection %q) on %s ...\n", volumeId, collection, sourceVolumeServer)
-
 	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
+		stream, genErr := volumeServerClient.VolumeEcShardsGenerateStreaming(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
 		})
-		return genErr
+		if genErr != nil {
+			return genErr
+		}
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				} else {
+					return recvErr
+				}
+			}
+
+			var progress uint64 = 0
+			if resp.VolumeSize > 0 {
+				progress = 100 * resp.ProcessedBytes / resp.VolumeSize
+			}
+
+			fmt.Printf("generateEcShards %d (collection %q) on %s, %d%% ...       \r", volumeId, collection, sourceVolumeServer, progress)
+		}
+
+		return nil
 	})
+	fmt.Printf("\n")
 
 	return err
 

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -39,22 +40,22 @@ Steps to apply erasure coding to .dat .idx files
 
 */
 
-// VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
-func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
+// volumeEcShardsGenerate implements the logic to generate thee .ecx and .ec00 ~ .ec13 files, shared between VolumeEcShardsGenerate() and VolumeEcShardsGenerateStreaming().
+func (vs *VolumeServer) volumeEcShardsGenerate(_ context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest, progressCallback erasure_coding.ProgressCallback) error {
 	if err := vs.CheckMaintenanceMode(); err != nil {
-		return nil, err
+		return err
 	}
 
 	glog.V(0).Infof("VolumeEcShardsGenerate: %v", req)
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
-		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
+		return fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 	baseFileName := v.DataFileName()
 
 	if v.Collection != req.Collection {
-		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
+		return fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
 	// Create EC context - prefer existing .vif config if present (for regeneration scenarios)
@@ -99,15 +100,15 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	// write .ecx file from the current .idx
 	if err := erasure_coding.WriteSortedFileFromIdx(v.IndexFileName(), ".ecx"); err != nil {
-		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
+		return fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
 	}
 
 	// snapshot .dat file size before encoding — must match what .ecx references
 	datSize, _, _ := v.FileStat()
 
 	// write .ec00 ~ .ec[TotalShards-1] files using context
-	if err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx); err != nil {
-		return nil, fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
+	if err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx, progressCallback); err != nil {
+		return fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
 	}
 
 	// write .vif files
@@ -124,7 +125,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	// Validate EC configuration before saving to .vif
 	if ecCtx.DataShards <= 0 || ecCtx.ParityShards <= 0 || ecCtx.Total() > erasure_coding.MaxShardCount {
-		return nil, fmt.Errorf("invalid EC config before saving: data=%d, parity=%d, total=%d (max=%d)",
+		return fmt.Errorf("invalid EC config before saving: data=%d, parity=%d, total=%d (max=%d)",
 			ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total(), erasure_coding.MaxShardCount)
 	}
 
@@ -137,12 +138,43 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
 
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
-		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		return fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
 	shouldCleanup = false
+	return nil
+}
 
+// VolumeEcShardsGenerate is the non-streaming version of VolumeEcShardsGenerateStreaming.
+func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
+	if err := vs.volumeEcShardsGenerate(ctx, req, nil); err != nil {
+		return nil, err
+	}
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
+}
+
+// VolumeEcShardsGenerateStreaming generates the .ecx and .ec00 ~ .ec13 files, reporting on progress via streaming updates.
+func (vs *VolumeServer) VolumeEcShardsGenerateStreaming(req *volume_server_pb.VolumeEcShardsGenerateRequest, stream volume_server_pb.VolumeServer_VolumeEcShardsGenerateStreamingServer) error {
+	var cberr error
+	var cb = erasure_coding.ProgressCallback(func(done, total int64) {
+		select {
+		case <-stream.Context().Done():
+			cberr = stream.Context().Err()
+		default:
+			if cberr == nil {
+				cberr = stream.Send(&volume_server_pb.VolumeEcShardsGenerateStreamingResponse{
+					VolumeSize:     uint64(total),
+					ProcessedBytes: uint64(done),
+				})
+			}
+		}
+	})
+
+	if err := vs.volumeEcShardsGenerate(stream.Context(), req, cb); err != nil || cberr != nil {
+		return errors.Join(err, cberr)
+	}
+
+	return nil
 }
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
