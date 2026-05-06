@@ -171,7 +171,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 		return resp, err
 	}
 
-	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty)
+	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty, req.KeepRemoteData)
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)

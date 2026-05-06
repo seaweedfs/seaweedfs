@@ -247,6 +247,9 @@ message VolumeUnmountResponse {
 message VolumeDeleteRequest {
     uint32 volume_id = 1;
     bool only_empty = 2;
+    // when true, do not remove the cloud-tier object backing the volume.
+    // used for moves where another server is taking over the same .vif.
+    bool keep_remote_data = 3;
 }
 message VolumeDeleteResponse {
 }

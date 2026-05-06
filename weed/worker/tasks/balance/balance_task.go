@@ -289,13 +289,16 @@ func (t *BalanceTask) readVolumeFileStatus(ctx context.Context, server pb.Server
 	return resp, err
 }
 
-// deleteVolume deletes the volume from the server.
+// deleteVolume deletes the volume from the source server after a successful
+// move. KeepRemoteData=true prevents the source from removing the cloud-tier
+// object that the destination's freshly-copied .vif now points at.
 func (t *BalanceTask) deleteVolume(ctx context.Context, server pb.ServerAddress, volumeId needle.VolumeId) error {
 	return operation.WithVolumeServerClient(false, server, t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
-				VolumeId:  uint32(volumeId),
-				OnlyEmpty: false,
+				VolumeId:       uint32(volumeId),
+				OnlyEmpty:      false,
+				KeepRemoteData: true,
 			})
 			return err
 		})

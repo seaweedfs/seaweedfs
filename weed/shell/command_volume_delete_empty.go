@@ -71,7 +71,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 					if *applyBalancing {
 						log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
 						if deleteErr := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id),
-							pb.NewServerAddressFromDataNode(dn), true); deleteErr != nil {
+							pb.NewServerAddressFromDataNode(dn), true, false); deleteErr != nil {
 							err = deleteErr
 						}
 						continue

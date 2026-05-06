@@ -156,7 +156,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 
 	// If local volume is larger than remote, recreate it
 	if datSize > stats.TailOffset {
-		if err := v.Destroy(false); err != nil {
+		if err := v.Destroy(false, false); err != nil {
 			v.Close()
 			return fmt.Errorf("destroying volume: %w", err), false
 		}

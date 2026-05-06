@@ -105,7 +105,7 @@ func LiveMoveVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId n
 	}
 
 	log.Printf("deleting volume %d from %s", volumeId, sourceVolumeServer)
-	if err = deleteVolume(grpcDialOption, volumeId, sourceVolumeServer, false); err != nil {
+	if err = deleteVolume(grpcDialOption, volumeId, sourceVolumeServer, false, true); err != nil {
 		return fmt.Errorf("delete volume %d from %s: %v", volumeId, sourceVolumeServer, err)
 	}
 
@@ -202,11 +202,15 @@ func tailVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, source
 
 }
 
-func deleteVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, onlyEmpty bool) (err error) {
+// deleteVolume removes the volume from sourceVolumeServer. When keepRemoteData
+// is true, the cloud-tier object backing the volume is left intact — used on
+// the source side of a move where another server is taking over the same .vif.
+func deleteVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, onlyEmpty bool, keepRemoteData bool) (err error) {
 	return operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, deleteErr := volumeServerClient.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
-			VolumeId:  uint32(volumeId),
-			OnlyEmpty: onlyEmpty,
+			VolumeId:       uint32(volumeId),
+			OnlyEmpty:      onlyEmpty,
+			KeepRemoteData: keepRemoteData,
 		})
 		return deleteErr
 	})

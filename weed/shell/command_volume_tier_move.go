@@ -312,7 +312,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		if preserveServers[loc.Url] {
 			continue
 		}
-		if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false); err != nil {
+		if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, false); err != nil {
 			fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 		}
 	}

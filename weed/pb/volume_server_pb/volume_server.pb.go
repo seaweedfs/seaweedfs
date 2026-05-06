@@ -1322,11 +1322,14 @@ func (*VolumeUnmountResponse) Descriptor() ([]byte, []int) {
 }
 
 type VolumeDeleteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	OnlyEmpty     bool                   `protobuf:"varint,2,opt,name=only_empty,json=onlyEmpty,proto3" json:"only_empty,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId  uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	OnlyEmpty bool                   `protobuf:"varint,2,opt,name=only_empty,json=onlyEmpty,proto3" json:"only_empty,omitempty"`
+	// when true, do not remove the cloud-tier object backing the volume.
+	// used for moves where another server is taking over the same .vif.
+	KeepRemoteData bool `protobuf:"varint,3,opt,name=keep_remote_data,json=keepRemoteData,proto3" json:"keep_remote_data,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *VolumeDeleteRequest) Reset() {
@@ -1369,6 +1372,13 @@ func (x *VolumeDeleteRequest) GetVolumeId() uint32 {
 func (x *VolumeDeleteRequest) GetOnlyEmpty() bool {
 	if x != nil {
 		return x.OnlyEmpty
+	}
+	return false
+}
+
+func (x *VolumeDeleteRequest) GetKeepRemoteData() bool {
+	if x != nil {
+		return x.KeepRemoteData
 	}
 	return false
 }
@@ -6824,11 +6834,12 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x13VolumeMountResponse\"3\n" +
 	"\x14VolumeUnmountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\x17\n" +
-	"\x15VolumeUnmountResponse\"Q\n" +
+	"\x15VolumeUnmountResponse\"{\n" +
 	"\x13VolumeDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1d\n" +
 	"\n" +
-	"only_empty\x18\x02 \x01(\bR\tonlyEmpty\"\x16\n" +
+	"only_empty\x18\x02 \x01(\bR\tonlyEmpty\x12(\n" +
+	"\x10keep_remote_data\x18\x03 \x01(\bR\x0ekeepRemoteData\"\x16\n" +
 	"\x14VolumeDeleteResponse\"R\n" +
 	"\x19VolumeMarkReadonlyRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x18\n" +

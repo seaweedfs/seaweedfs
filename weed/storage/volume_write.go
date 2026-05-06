@@ -54,8 +54,10 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 
 var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 
-// Destroy removes everything related to this volume
-func (v *Volume) Destroy(onlyEmpty bool) (err error) {
+// Destroy removes everything related to this volume. When keepRemoteData is
+// true the cloud-tier object backing the volume is left intact — used by
+// moves where another server is taking over the same .vif.
+func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -75,10 +77,12 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 		return
 	}
 	close(v.asyncRequestsChan)
-	storageName, storageKey := v.RemoteStorageNameKey()
-	if v.HasRemoteFile() && storageName != "" && storageKey != "" {
-		if backendStorage, found := backend.BackendStorages[storageName]; found {
-			backendStorage.DeleteFile(storageKey)
+	if !keepRemoteData {
+		storageName, storageKey := v.RemoteStorageNameKey()
+		if v.HasRemoteFile() && storageName != "" && storageKey != "" {
+			if backendStorage, found := backend.BackendStorages[storageName]; found {
+				backendStorage.DeleteFile(storageKey)
+			}
 		}
 	}
 	v.doClose()

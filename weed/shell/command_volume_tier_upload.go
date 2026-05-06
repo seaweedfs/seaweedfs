@@ -164,7 +164,10 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 			continue
 		}
 		fmt.Printf("delete volume %d from Url:%s\n", vid, location.Url)
-		err = deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false)
+		// Other replicas were never tier-uploaded; their .vif (if any) points
+		// to the same cloud key just written for this volume. Keep the remote
+		// object so the tier-uploaded replica still references valid data.
+		err = deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false, true)
 		if err != nil {
 			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, vid, err)
 		}

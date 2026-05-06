@@ -352,7 +352,7 @@ func doDeleteVolumesWithLocations(commandEnv *CommandEnv, volumeIds []needle.Vol
 
 		for _, l := range locations {
 			ewg.Add(func() error {
-				if err := deleteVolume(commandEnv.option.GrpcDialOption, vid, l.ServerAddress(), false); err != nil {
+				if err := deleteVolume(commandEnv.option.GrpcDialOption, vid, l.ServerAddress(), false, false); err != nil {
 					return fmt.Errorf("deleteVolume %s volume %d: %v", l.Url, vid, err)
 				}
 				fmt.Printf("deleted volume %d from %s\n", vid, l.Url)

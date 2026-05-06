@@ -477,7 +477,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			// delete expired volumes.
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false)
+				found, err := location.deleteVolumeById(vid, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -725,7 +725,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	return fmt.Errorf("volume %d not found on disk", i)
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
 	v := s.findVolume(i)
 	if v == nil {
 		return fmt.Errorf("delete volume %d not found on disk", i)
@@ -740,7 +740,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 		DiskId:           v.diskId,
 	}
 	for _, location := range s.Locations {
-		err := location.DeleteVolume(i, onlyEmpty)
+		err := location.DeleteVolume(i, onlyEmpty, keepRemoteData)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
