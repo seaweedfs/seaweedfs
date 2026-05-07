@@ -99,11 +99,10 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 	}
 	cp := Checkpoint{LastScannedPath: opts.Resume}
 
+	// ListFunc's contract is to skip entries with Path <= opts.Resume; the
+	// callback here trusts that — no defensive re-filter.
 	err := list(ctx, bucket, opts.Resume, func(entry *Entry) error {
 		if entry == nil || entry.Path == "" {
-			return nil
-		}
-		if opts.Resume != "" && entry.Path <= opts.Resume {
 			return nil
 		}
 		if err := walkEntry(ctx, snap, bucket, entry, dispatch, now); err != nil {
@@ -126,6 +125,23 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 	// pass nil for the Event since the bootstrap walker has full live
 	// state per entry already.
 	keys := snap.MatchPath(bucket, entry.Path, nil)
+	if len(keys) == 0 {
+		return nil
+	}
+	// Build ObjectInfo once per entry; reused across every matching action
+	// for this entry. Avoids per-action allocation for multi-action rules.
+	info := &s3lifecycle.ObjectInfo{
+		Key:              entry.Path,
+		ModTime:          entry.ModTime,
+		Size:             entry.Size,
+		IsLatest:         entry.IsLatest,
+		IsDeleteMarker:   entry.IsDeleteMarker,
+		IsMPUInit:        entry.IsMPUInit,
+		NumVersions:      entry.NumVersions,
+		SuccessorModTime: entry.SuccessorModTime,
+		NoncurrentIndex:  entry.NoncurrentIndex,
+		Tags:             entry.Tags,
+	}
 	for _, key := range keys {
 		action := snap.Action(key)
 		if action == nil {
@@ -135,21 +151,6 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 		// date-triggered bootstrap is scheduled separately.
 		if action.Mode == engine.ModeScanAtDate {
 			continue
-		}
-		// Bootstrap evaluates with EvaluateAction on the live entry's
-		// ObjectInfo shape. We construct the ObjectInfo from the walker
-		// Entry so callers don't have to.
-		info := &s3lifecycle.ObjectInfo{
-			Key:              entry.Path,
-			ModTime:          entry.ModTime,
-			Size:             entry.Size,
-			IsLatest:         entry.IsLatest,
-			IsDeleteMarker:   entry.IsDeleteMarker,
-			IsMPUInit:        entry.IsMPUInit,
-			NumVersions:      entry.NumVersions,
-			SuccessorModTime: entry.SuccessorModTime,
-			NoncurrentIndex:  entry.NoncurrentIndex,
-			Tags:             entry.Tags,
 		}
 		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, now)
 		if res.Action == s3lifecycle.ActionNone {
