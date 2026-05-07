@@ -17,12 +17,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 )
 
-// Entry is the minimal slice of a filer entry the walker needs.
-// IsDirectory marks SeaweedFS directory entries; the walker never
-// dispatches against directories. SuccessorModTime and NoncurrentIndex are
-// populated only for versioned-bucket walks (Phase 5); non-versioned walks
-// leave them at zero / nil and the count-based retention path bails out
-// conservatively.
+// Entry is the routing-relevant slice of a filer entry. SuccessorModTime
+// and NoncurrentIndex are populated only on versioned-bucket walks; the
+// retention path bails out conservatively when they're zero / nil.
 type Entry struct {
 	Path           string
 	ModTime        time.Time
@@ -71,18 +68,15 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 	}
 	cp := Checkpoint{LastScannedPath: opts.Resume}
 
-	// Single ObjectInfo reused across the walk; EvaluateAction reads the
-	// fields synchronously and doesn't retain references, so per-entry
-	// field assignments are safe and avoid one heap allocation per entry
-	// for buckets with millions of objects.
+	// Reuse one ObjectInfo across the walk; EvaluateAction reads it
+	// synchronously without retaining.
 	var info s3lifecycle.ObjectInfo
 
 	err := list(ctx, bucket, opts.Resume, func(entry *Entry) error {
 		if entry == nil || entry.Path == "" {
 			return nil
 		}
-		// Lifecycle rules only apply to objects; SeaweedFS directory
-		// entries can co-exist in the listing and must not be deleted.
+		// Lifecycle never applies to directory entries.
 		if entry.IsDirectory {
 			cp.LastScannedPath = entry.Path
 			return nil
@@ -105,8 +99,6 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 	if len(keys) == 0 {
 		return nil
 	}
-	// Reuse the caller-provided ObjectInfo (one allocation per Walk, not
-	// per entry); EvaluateAction reads synchronously without retaining.
 	*info = s3lifecycle.ObjectInfo{
 		Key:              entry.Path,
 		ModTime:          entry.ModTime,
@@ -124,10 +116,9 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 		if action == nil {
 			continue
 		}
-		// SCAN_AT_DATE has its own date-triggered bootstrap; DISABLED can be
-		// flipped at runtime by the operator independent of XML rule status,
-		// so explicitly skip it here even though EvaluateAction also gates
-		// on the rule's Status.
+		// SCAN_AT_DATE runs its own date-triggered bootstrap. DISABLED can
+		// be flipped at runtime independent of XML Status, so skip it even
+		// though EvaluateAction would also reject.
 		if action.Mode == engine.ModeScanAtDate || action.Mode == engine.ModeDisabled {
 			continue
 		}
