@@ -166,6 +166,38 @@ func TestEvaluateAction_NoncurrentDaysFallsBackToModTime(t *testing.T) {
 	}
 }
 
+func TestEvaluateAction_NoncurrentDays_WithKeepN_NilIndexIsNoOp(t *testing.T) {
+	// Pointer-migration safety: a nil NoncurrentIndex paired with a
+	// keep-N retention threshold must short-circuit to ActionNone rather
+	// than guess at the version's position in the keep window.
+	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 30, NewerNoncurrentVersions: 2}
+	successor := mustTime(t, "2024-01-01T00:00:00Z")
+	info := &ObjectInfo{
+		Key:              "a",
+		IsLatest:         false,
+		ModTime:          successor,
+		SuccessorModTime: successor,
+		NoncurrentIndex:  nil,
+	}
+	now := successor.AddDate(0, 0, 30)
+	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, now); got.Action != ActionNone {
+		t.Fatalf("nil index with keep-N must be no-op, got %v", got)
+	}
+}
+
+func TestEvaluateAction_NewerNoncurrent_NilIndexIsNoOp(t *testing.T) {
+	rule := &Rule{Status: StatusEnabled, NewerNoncurrentVersions: 3}
+	info := &ObjectInfo{
+		Key:             "a",
+		IsLatest:        false,
+		ModTime:         mustTime(t, "2024-01-01T00:00:00Z"),
+		NoncurrentIndex: nil,
+	}
+	if got := EvaluateAction(rule, ActionKindNewerNoncurrent, info, mustTime(t, "2025-01-01T00:00:00Z")); got.Action != ActionNone {
+		t.Fatalf("nil index pure-count must be no-op, got %v", got)
+	}
+}
+
 func TestEvaluateAction_NewerNoncurrentCountOnly(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, NewerNoncurrentVersions: 3}
 	now := mustTime(t, "2025-01-01T00:00:00Z")
