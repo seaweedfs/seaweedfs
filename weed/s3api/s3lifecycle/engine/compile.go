@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"bytes"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -130,6 +132,24 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 			}
 		}
 	}
+
+	// Build the pre-sorted AllActions view once. Snapshot is immutable
+	// post-Compile (engineState transitions don't affect membership), so
+	// the sorted slice can be shared by every AllActions() call.
+	snap.allActionsSorted = make([]*CompiledAction, 0, len(snap.actions))
+	for _, a := range snap.actions {
+		snap.allActionsSorted = append(snap.allActionsSorted, a)
+	}
+	sort.Slice(snap.allActionsSorted, func(i, j int) bool {
+		a, b := snap.allActionsSorted[i], snap.allActionsSorted[j]
+		if a.Bucket != b.Bucket {
+			return a.Bucket < b.Bucket
+		}
+		if c := bytes.Compare(a.Key.RuleHash[:], b.Key.RuleHash[:]); c != 0 {
+			return c < 0
+		}
+		return a.Key.ActionKind < b.Key.ActionKind
+	})
 
 	e.current.Store(snap)
 	return snap

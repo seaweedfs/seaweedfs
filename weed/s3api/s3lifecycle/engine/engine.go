@@ -11,8 +11,6 @@
 package engine
 
 import (
-	"bytes"
-	"sort"
 	"sync/atomic"
 	"time"
 
@@ -46,6 +44,11 @@ type Snapshot struct {
 	id      uint64
 	buckets map[string]*BucketIndex
 	actions map[s3lifecycle.ActionKey]*CompiledAction
+
+	// Pre-sorted view of `actions` in (bucket, rule_hash, action_kind)
+	// order. Built once during Compile so AllActions() doesn't re-sort
+	// on every call. The slice is immutable; callers must not mutate.
+	allActionsSorted []*CompiledAction
 
 	// Routing indexes (subset of `actions`). Only ActionKeys whose
 	// engineState == EngineStateActive may be added here at compile time;
@@ -124,22 +127,10 @@ func (s *Snapshot) Action(key s3lifecycle.ActionKey) *CompiledAction {
 
 // AllActions returns every CompiledAction in deterministic order (by bucket,
 // rule_hash, action_kind). Used by the bootstrap walker, which evaluates
-// every applicable action per object.
+// every applicable action per object. The returned slice is the snapshot's
+// pre-sorted view; callers must not mutate it.
 func (s *Snapshot) AllActions() []*CompiledAction {
-	out := make([]*CompiledAction, 0, len(s.actions))
-	for _, a := range s.actions {
-		out = append(out, a)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Bucket != out[j].Bucket {
-			return out[i].Bucket < out[j].Bucket
-		}
-		if c := bytes.Compare(out[i].Key.RuleHash[:], out[j].Key.RuleHash[:]); c != 0 {
-			return c < 0
-		}
-		return out[i].Key.ActionKind < out[j].Key.ActionKind
-	})
-	return out
+	return s.allActionsSorted
 }
 
 // OriginalDelayGroups returns the delay -> ActionKey mapping the reader
