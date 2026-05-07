@@ -59,8 +59,17 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 			ruleHash := s3lifecycle.RuleHash(rule)
 			for _, kind := range s3lifecycle.RuleActionKinds(rule) {
 				key := s3lifecycle.ActionKey{Bucket: in.Bucket, RuleHash: ruleHash, ActionKind: kind}
-				mode := decideMode(rule, kind, opts.MetaLogRetention, opts.BootstrapLookbackMin)
-				prior := opts.PriorStates[key]
+				// Durable PriorState.Mode wins when set: lag-fallback,
+				// operator pause, or persisted SCAN_ONLY must survive an
+				// engine rebuild rather than being silently re-promoted by
+				// decideMode. Fall through to decideMode for new actions
+				// (no prior) and for legacy entries that were persisted
+				// before Mode was a field (zero value).
+				prior, hasPrior := opts.PriorStates[key]
+				mode := prior.Mode
+				if !hasPrior || mode == ModeUnspecified {
+					mode = decideMode(rule, kind, opts.MetaLogRetention, opts.BootstrapLookbackMin)
+				}
 				active := prior.BootstrapComplete && mode == ModeEventDriven
 
 				ca := &CompiledAction{

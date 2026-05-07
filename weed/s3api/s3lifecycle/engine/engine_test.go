@@ -177,6 +177,36 @@ func TestCompile_SiblingsDegradeIndependently(t *testing.T) {
 	}
 }
 
+func TestCompile_PriorModePreservedOverDecideMode(t *testing.T) {
+	// A durably-persisted SCAN_ONLY (or DISABLED, or any degraded mode)
+	// must not be re-promoted to EVENT_DRIVEN by decideMode on every
+	// Compile. Otherwise lag-fallback / operator pause / manual scan-only
+	// don't survive an engine rebuild.
+	rule := ruleExpDays("r", "x/", 30)
+	rh := s3lifecycle.RuleHash(rule)
+	key := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
+
+	e := New()
+	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{
+		PriorStates: map[s3lifecycle.ActionKey]PriorState{
+			key: {BootstrapComplete: true, Mode: ModeScanOnly},
+		},
+	})
+	if snap.actions[key].Mode != ModeScanOnly {
+		t.Fatalf("durable Mode=ScanOnly should win over decideMode, got %v", snap.actions[key].Mode)
+	}
+	if snap.actions[key].IsActive() {
+		t.Fatalf("ScanOnly action must not be active")
+	}
+	// And: a missing PriorState falls through to decideMode as before.
+	rule2 := ruleExpDays("fresh", "x/", 30)
+	key2 := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(rule2), ActionKind: s3lifecycle.ActionKindExpirationDays}
+	snap2 := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule2}}}, CompileOptions{})
+	if snap2.actions[key2].Mode != ModeEventDriven {
+		t.Fatalf("missing prior should fall through to decideMode (EventDriven), got %v", snap2.actions[key2].Mode)
+	}
+}
+
 func TestCompile_ExpirationDateScansAtDate(t *testing.T) {
 	date := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
 	rule := &s3lifecycle.Rule{
