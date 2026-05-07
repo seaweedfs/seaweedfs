@@ -62,6 +62,9 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 		// as RETRY_LATER; the worker's budget promotes to BLOCKED.
 		state, vErr := s3a.getVersioningState(req.Bucket)
 		if vErr != nil {
+			if errors.Is(vErr, filer_pb.ErrNotFound) {
+				return noopResolved("BUCKET_NOT_FOUND"), nil
+			}
 			return retryLater("TRANSPORT_ERROR: versioning lookup: " + vErr.Error()), nil
 		}
 		switch state {
@@ -86,7 +89,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath)
 			})
 			if err != nil {
-				if errors.Is(err, filer_pb.ErrNotFound) {
+				if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) {
 					return noopResolved("NOT_FOUND_AT_DELETE"), nil
 				}
 				return retryLater("TRANSPORT_ERROR: deleteUnversioned: " + err.Error()), nil
@@ -102,7 +105,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return blocked("FATAL_EVENT_ERROR: version_id required for noncurrent / delete-marker delete"), nil
 		}
 		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId); err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) {
+			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
 			}
 			return retryLater("TRANSPORT_ERROR: deleteSpecificVersion: " + err.Error()), nil
