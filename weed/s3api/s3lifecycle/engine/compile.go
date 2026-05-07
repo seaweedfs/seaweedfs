@@ -17,16 +17,15 @@ type CompileInput struct {
 	Versioned bool
 }
 
-// PriorState carries durable per-action state into Compile. Missing keys are
-// treated as bootstrap_complete=false (new action, must run bootstrap).
+// PriorState carries durable per-action state into Compile. Missing keys
+// are treated as bootstrap_complete=false.
 type PriorState struct {
 	BootstrapComplete bool
 	Mode              RuleMode
 }
 
+// MetaLogRetention=0 means unbounded; the retention gate doesn't trip.
 type CompileOptions struct {
-	// MetaLogRetention=0 means unbounded (the SeaweedFS default; meta-log
-	// files are written without TTL). The retention gate doesn't trip then.
 	MetaLogRetention     time.Duration
 	BootstrapLookbackMin time.Duration
 	PriorStates          map[s3lifecycle.ActionKey]PriorState
@@ -34,10 +33,6 @@ type CompileOptions struct {
 
 const defaultBootstrapLookbackMin = 5 * s3lifecycle.SmallDelay
 
-// Compile builds a fresh Snapshot, atomically swaps it onto the engine, and
-// returns it. Each input rule expands into N CompiledActions via
-// RuleActionKinds; activation requires bootstrap_complete from PriorStates
-// and mode==EVENT_DRIVEN.
 func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 	if opts.BootstrapLookbackMin == 0 {
 		opts.BootstrapLookbackMin = defaultBootstrapLookbackMin
@@ -59,12 +54,9 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 			ruleHash := s3lifecycle.RuleHash(rule)
 			for _, kind := range s3lifecycle.RuleActionKinds(rule) {
 				key := s3lifecycle.ActionKey{Bucket: in.Bucket, RuleHash: ruleHash, ActionKind: kind}
-				// Durable PriorState.Mode wins when set: lag-fallback,
-				// operator pause, or persisted SCAN_ONLY must survive an
-				// engine rebuild rather than being silently re-promoted by
-				// decideMode. Fall through to decideMode for new actions
-				// (no prior) and for legacy entries that were persisted
-				// before Mode was a field (zero value).
+				// Durable Mode wins; decideMode is only the seed for new
+				// or legacy-zero actions. Otherwise lag-fallback / operator
+				// SCAN_ONLY would re-promote on every rebuild.
 				prior, hasPrior := opts.PriorStates[key]
 				mode := prior.Mode
 				if !hasPrior || mode == ModeUnspecified {
@@ -86,12 +78,9 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 				snap.actions[key] = ca
 				bi.actionKeys = append(bi.actionKeys, key)
 
-				// Index every action by mode regardless of `active`. The
-				// reader's MatchOriginalWrite / MatchPredicateChange filter
-				// on IsActive() at routing time, so a key indexed here that
-				// is currently inactive simply doesn't fire. This lets a
-				// later MarkActive flip become routable without forcing a
-				// recompile (matches the documented two-phase activation).
+				// Index every action regardless of `active`; routing
+				// re-filters on IsActive() so MarkActive flips are visible
+				// without a recompile.
 				if mode == ModeScanAtDate {
 					snap.dateActions[key] = rule.ExpirationDate
 				}

@@ -23,22 +23,17 @@ func New() *Engine {
 
 func (e *Engine) Snapshot() *Snapshot { return e.current.Load() }
 
-// Snapshot fields are append-only after construction except for
-// CompiledAction.engineState, which transitions inactive -> active on
-// markActive. The transition is atomic per action and visible to subsequent
-// reader passes; in-flight passes see the value as of their initial load.
+// Snapshot fields are append-only after Compile except CompiledAction.engineState,
+// which transitions inactive -> active atomically via markActive.
 type Snapshot struct {
 	id      uint64
 	buckets map[string]*BucketIndex
 	actions map[s3lifecycle.ActionKey]*CompiledAction
 
-	// Pre-sorted view of `actions` so AllActions doesn't re-sort per call.
 	allActionsSorted []*CompiledAction
 
-	// Routing indexes hold every ActionKey by mode (EVENT_DRIVEN /
-	// SCAN_AT_DATE) regardless of its current activation. The reader
-	// filters on IsActive() at dispatch time, so a MarkActive flip
-	// becomes routable without a recompile.
+	// Routing indexes hold every ActionKey by mode regardless of activation;
+	// dispatch filters on IsActive().
 	originalDelayGroups map[time.Duration][]s3lifecycle.ActionKey
 	predicateActions    []s3lifecycle.ActionKey
 	dateActions         map[s3lifecycle.ActionKey]time.Time
@@ -76,7 +71,7 @@ func (a *CompiledAction) markActive() {
 }
 
 // MarkActive mirrors the in-memory hint after a durable bootstrap_complete
-// + mode write commits. No-op if the key isn't in the snapshot.
+// write. No-op if the key isn't in the snapshot.
 func (s *Snapshot) MarkActive(key s3lifecycle.ActionKey) {
 	if a, ok := s.actions[key]; ok {
 		a.markActive()
@@ -87,13 +82,12 @@ func (s *Snapshot) Action(key s3lifecycle.ActionKey) *CompiledAction {
 	return s.actions[key]
 }
 
-// AllActions returns the snapshot's pre-sorted view; callers must not mutate.
+// AllActions: caller must not mutate.
 func (s *Snapshot) AllActions() []*CompiledAction {
 	return s.allActionsSorted
 }
 
-// OriginalDelayGroups / PredicateActions / DateActions return defensive copies
-// so external callers can't corrupt routing state.
+// OriginalDelayGroups / PredicateActions / DateActions return defensive copies.
 func (s *Snapshot) OriginalDelayGroups() map[time.Duration][]s3lifecycle.ActionKey {
 	out := make(map[time.Duration][]s3lifecycle.ActionKey, len(s.originalDelayGroups))
 	for d, keys := range s.originalDelayGroups {

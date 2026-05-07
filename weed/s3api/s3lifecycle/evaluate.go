@@ -5,15 +5,10 @@ import (
 	"time"
 )
 
-// EvaluateAction decides whether the (rule, kind) action fires for info at
-// now. Returns ActionNone when the rule is disabled, the filter rejects, the
-// object shape doesn't match this kind, or the action isn't yet due.
-//
-// One XML rule may declare multiple actions; callers iterate
-// RuleActionKinds(rule) and call this helper per kind. A non-current delete
-// marker is treated as a regular non-current version under NONCURRENT_DAYS /
-// NEWER_NONCURRENT; only a *current* sole-survivor delete marker routes to
-// EXPIRED_DELETE_MARKER.
+// EvaluateAction returns whether the (rule, kind) action fires for info at
+// now. A non-current delete marker is just another non-current version under
+// NONCURRENT_DAYS / NEWER_NONCURRENT; only a current sole-survivor marker
+// routes to EXPIRED_DELETE_MARKER.
 func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time) EvalResult {
 	none := EvalResult{Action: ActionNone}
 	if rule == nil || info == nil || rule.Status != StatusEnabled {
@@ -74,7 +69,7 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if now.Before(due) {
 			return none
 		}
-		// Missing index = can't evaluate retention; safety-scan will revisit.
+		// nil index = can't evaluate retention; safety-scan revisits.
 		if rule.NewerNoncurrentVersions > 0 {
 			if info.NoncurrentIndex == nil || *info.NoncurrentIndex < rule.NewerNoncurrentVersions {
 				return none
@@ -83,8 +78,8 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
 
 	case ActionKindNewerNoncurrent:
-		// Count-only path; when NoncurrentDays is also set the rule expands
-		// to NONCURRENT_DAYS instead (see RuleActionKinds).
+		// Count-only; when paired with NoncurrentDays the rule expands to
+		// NONCURRENT_DAYS instead (RuleActionKinds).
 		if info.IsLatest || rule.NoncurrentVersionExpirationDays > 0 || rule.NewerNoncurrentVersions <= 0 {
 			return none
 		}
