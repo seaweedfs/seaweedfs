@@ -157,7 +157,7 @@ Per-bucket bootstrap progress (used by bucket-level bootstrap tasks):
 
 Why `/etc/...` rather than inside the bucket: keeps system state out of bucket listings without needing list-time filters; matches existing convention (`/etc/seaweedfs/`, `/etc/...`).
 
-`rule_hash` is `sha256(canonicalize(rule))[:8]` over a normalized form (sorted tag map, normalized prefix, action, days/date, filter fields). Stable across reorder and resilient to empty or duplicate `Rule.ID`.
+`rule_hash` is `sha256(canonicalize(rule))[:8]` over a length-prefixed canonical form (sorted tag map, prefix verbatim, every action's parameters — days/date/count/flags, filter fields). Length prefixing prevents delimiter forgery between adjacent fields. Stable across reorder and resilient to empty or duplicate `Rule.ID`. Prefix `"logs"` and `"logs/"` hash differently because they match different objects under literal `strings.HasPrefix` semantics.
 
 **Policy CAS is per-rule via the `rule_hash` directory layout.** Pending items live under `<rule_hash>/pending`; the drain pass and the `LifecycleDelete` server check whether `rule_hash` is still in the current policy's hash set. Edits to other rules don't affect this rule's pending. See "Policy-version CAS" section below for full mechanics.
 
@@ -250,7 +250,7 @@ for each entry under /buckets/<bucket>/ starting from last_scanned_path:
         if !ruleAppliesToEntryShape(rule, entry): continue
         if now() < computeDueAt(rule, info):
             continue   // not-yet-due: reader's original-write sweep will pick this up later
-        action := s3lifecycle.Evaluate(rule, info, now())
+        action := s3lifecycle.EvaluateAction(rule, action_kind, info, now())
         // Use the same deleteAndResolve contract as the reader/drain paths.
         // Outcomes: DONE/NOOP_RESOLVED → walker advances; RETRY_LATER → walker
         // halts at this entry, last_scanned_path stays at the previous successful
@@ -294,74 +294,74 @@ for each entry under /buckets/<bucket>/ starting from last_scanned_path:
         }
     checkpoint last_scanned_path = entry.path     // only after DONE/NOOP_RESOLVED for every rule
 
-// Walk completed for this snapshot. Commit cursor seed/rewind FIRST, then per-rule
-// completion. Order matters: engine.compile(rule) keys activation off
-// state[rule_hash].bootstrap_complete && state[rule_hash].mode == EVENT_DRIVEN;
-// if either flips before the cursor seed commits, the engine could mark the rule
+// Walk completed for this snapshot. Commit cursor seed/rewind FIRST, then per-action
+// completion. Order matters: engine.compile(action) keys activation off
+// state[ActionKey].bootstrap_complete && state[ActionKey].mode == EVENT_DRIVEN;
+// if either flips before the cursor seed commits, the engine could mark an action
 // active while its cursor is still uninitialized.
 
-// Compute target modes UPFRONT so the seeder can filter on them. The seeder
-// looks at target_mode to decide whether to rewind a delay group's cursor for
-// this rule (only EVENT_DRIVEN rules participate in reader sweeps and need
-// the cursor floor). Computing modes after seeding would leave the seeder
-// reading whatever default value the state field has — wrong.
+// Compute target modes UPFRONT, per ActionKey, so the seeder can filter on them.
+// The seeder looks at target_mode to decide whether to rewind a delay group's
+// cursor for this action (only EVENT_DRIVEN actions participate in reader sweeps
+// and need the cursor floor). Computing modes after seeding would leave the
+// seeder reading whatever default value the state field has — wrong.
 target_modes := {}
-for each rule_hash in snapshot.rules_for_bucket(bucket):
-    target_modes[rule_hash] = decideMode(snapshot.rules[rule_hash])
+for each ActionKey k in snapshot.action_keys_for_bucket(bucket):       // expanded per-action
+    target_modes[k] = decideMode(snapshot.actions[k])
 
-newly_completed := { rule_hash for rule_hash in snapshot.rules_for_bucket(bucket)
-                                where state[rule_hash].bootstrap_complete == false }
+newly_completed := { k for k in snapshot.action_keys_for_bucket(bucket)
+                       where state[k].bootstrap_complete == false }
 
 seedReaderCursorsForNewDelayGroups(snapshot, newly_completed, target_modes, T_start)
                                                                           // (1) durable cluster write
 
-// (2) durable per-rule write — bootstrap_complete=true AND mode are committed
-// atomically (single proto write per rule), using the SAME target_modes computed
-// upfront. Activation needs both: engine.compile activates iff bootstrap_complete
-// && mode == EVENT_DRIVEN.
-for each rule_hash in snapshot.rules_for_bucket(bucket):
-    state[rule_hash].mode                       = target_modes[rule_hash]
-    state[rule_hash].bootstrap_started_at_ns    = T_start
-    state[rule_hash].bootstrap_completed_at_ns  = now()
-    state[rule_hash].bootstrap_complete         = true                    // committed AFTER (1)
+// (2) durable per-action writes — bootstrap_complete=true AND mode are committed
+// atomically per ActionKey (single proto write per action), using the SAME
+// target_modes computed upfront. Activation needs both: engine.compile activates
+// an action iff bootstrap_complete && mode == EVENT_DRIVEN.
+for each ActionKey k in snapshot.action_keys_for_bucket(bucket):
+    state[k].mode                       = target_modes[k]
+    state[k].bootstrap_started_at_ns    = T_start
+    state[k].bootstrap_completed_at_ns  = now()
+    state[k].bootstrap_complete         = true                            // committed AFTER (1)
 
-engine.markActive(snapshot, rules_for_bucket)                             // (3) in-memory hint
+engine.markActive(snapshot, action_keys_for_bucket)                       // (3) in-memory hint
 remove _bootstrap (last_scanned_path) for this bucket
 ```
 
-`decideMode(rule)` is the same predicate used by the tick-time mode decision (date rule → `SCAN_AT_DATE`; reader-driven kind with `metaLogRetention < eventLogHorizon(rule) + bootstrapLookbackMin` → `SCAN_ONLY`; rule explicitly disabled by operator → `DISABLED`; otherwise `EVENT_DRIVEN`). Computing it once at bootstrap completion and persisting it durably means subsequent engine refreshes don't have to recompute or guess. Computing it **before** seeding (rather than inside the per-rule loop) lets the seeder see consistent target modes for every rule it must consider.
+`decideMode(action)` is the same predicate used by the tick-time mode decision (date kind → `SCAN_AT_DATE`; reader-driven kind with `metaLogRetention < eventLogHorizon(rule, kind) + bootstrapLookbackMin` → `SCAN_ONLY`; rule explicitly disabled by operator → `DISABLED`; otherwise `EVENT_DRIVEN`). Computing it once at bootstrap completion and persisting it durably means subsequent engine refreshes don't have to recompute or guess. Computing it **before** seeding (rather than inside the per-action loop) lets the seeder see consistent target modes for every `ActionKey` it must consider.
 
-Note the `newly_completed` filter passed to `seedReaderCursorsForNewDelayGroups`: rewind only applies to rules transitioning `bootstrap_complete=false → true`. Routine safety-scan re-bootstraps for already-active rules do **not** rewind shared cursors. See "Cursor seeding/rewind" below for the rationale.
+Note the `newly_completed` filter passed to `seedReaderCursorsForNewDelayGroups`: rewind only applies to actions transitioning `bootstrap_complete=false → true`. Routine safety-scan re-bootstraps for already-active actions do **not** rewind shared cursors. See "Cursor seeding/rewind" below for the rationale.
 
-**State transitions, explicit.** Bootstrap is bucket-level execution; completion is per-rule:
+**State transitions, explicit.** Bootstrap is bucket-level execution; completion is per-action:
 - `_bootstrap` (per bucket): only the run cursor (`last_scanned_path`, `bootstrap_started_at_ns`, `snapshot_id`). Removed on completion.
-- `state[rule_hash].bootstrap_complete` (per rule): set to true for every rule_hash in the snapshot when the bucket walk finishes. Rules added after the walk started keep `bootstrap_complete=false` and trigger a new bucket walk on the next detector tick.
-- `engine.markActive(rule_hash)` (in-memory): the rule becomes a candidate in reader sweeps only after both (1) and (2) durable writes have committed.
+- `state[ActionKey].bootstrap_complete` (per action): set to true for every `ActionKey` in the snapshot when the bucket walk finishes. Actions added after the walk started keep `bootstrap_complete=false` and trigger a new bucket walk on the next detector tick.
+- `engine.markActive(ActionKey)` (in-memory): the action becomes a candidate in reader sweeps only after both (1) and (2) durable writes have committed for that key.
 
-Bootstrap **never writes to per-rule pending** in the normal path. Pending exists only for late-predicate-change exceptions, which are observed by the reader, not by bootstrap.
+Bootstrap **never writes to per-action pending** in the normal path. Pending exists only for late-predicate-change exceptions, which are observed by the reader, not by bootstrap.
 
 **Policy change during bootstrap.** Bootstrap binds to a `snapshot_id`. If lifecycle XML changes mid-walk:
 - The current walk finishes (it's evaluating against the old snapshot, which is consistent with what the reader's cursor floors expect).
-- The engine compiles a new snapshot. New rule_hashes start `pending_bootstrap`; unchanged rule_hashes carry their `bootstrap_complete=true`.
+- The engine compiles a new snapshot. New `ActionKey`s start `pending_bootstrap`; unchanged `ActionKey`s carry their `bootstrap_complete=true`. (An XML edit that adds a new action sub-element to an existing rule introduces a new `ActionKey` for that kind only; the rule's other actions stay `active`.)
 - Detector emits a new bucket bootstrap task on the next tick for the new snapshot. It walks again from the beginning (idempotent — inline deletes are CAS-protected).
-- Removed rule_hashes' directories enter grace cleanup.
+- Removed `ActionKey`s' directories enter grace cleanup. Removing an action sub-element from an XML rule removes only that `ActionKey`; siblings under the same `rule_hash` survive.
 
-**Cursor seeding/rewind on bootstrap completion.** Bootstrap must touch the shared cursors for the rules that **just transitioned** `bootstrap_complete=false → true` — not all rules in the snapshot, and not on every safety-scan re-bootstrap. Scoping by `newly_completed` rule hashes is critical: a rule joining an existing shared delay group needs the shared cursor pulled back to its safe floor (the cursor reflects work done for sibling rules and has advanced past the new rule's floor), but routine safety scans for already-active rules must not rewind that same cursor — doing so would force every safety-scan tick to replay big shared windows.
+**Cursor seeding/rewind on bootstrap completion.** Bootstrap must touch the shared cursors for the **actions** that just transitioned `bootstrap_complete=false → true` — not every action in the snapshot, and not on every safety-scan re-bootstrap. Scoping by `newly_completed` `ActionKey`s is critical: an action joining an existing shared delay group needs the shared cursor pulled back to its safe floor (the cursor reflects work done for sibling actions and has advanced past the new action's floor), but routine safety scans for already-active actions must not rewind that same cursor — doing so would force every safety-scan tick to replay big shared windows.
 
 Rewind rule (Option B):
 
-- For each newly-completing rule whose `targetOriginalDelayGroup(rule)` is non-nil (computed from rule kind/delay, *not* from `engine.originalDelayGroups` membership — that collection only contains rules already activated, which excludes the rule we're now completing): set `reader_state.last_processed_original[D.seconds][filer_id] = min(existing_cursor, MessagePosition{T_start - max(D, bootstrapLookbackMin), BEFORE_FIRST_OFFSET})` for every shard. The `targetOriginalDelayGroup` filter covers `EXPIRATION_DAYS`, `NONCURRENT_DAYS`, `ABORT_MPU`, `NEWER_NONCURRENT`, `EXPIRED_DELETE_MARKER`, and any future event-driven kind. `EXPIRATION_DATE` returns nil and is skipped. Comparison is the lex `(ts, offset)` order — same shape as the strict-`<=` skip predicate — not bare ts; otherwise an existing cursor at `(T, k)` with `k > BEFORE_FIRST_OFFSET` and `T == new_floor.ts_ns` would be left in place even though the new rule's floor sits at `(T, BEFORE_FIRST_OFFSET)` and an event at `(T, 0)` should be delivered.
-- For event-driven rules with effectively-zero delay (`NEWER_NONCURRENT`, `EXPIRED_DELETE_MARKER`): the delay group is `0` (or `smallDelay`); the cursor floor is `T_start - bootstrapLookbackMin`. Same min-comparison and rewind logic apply.
-- For predicate-sensitive rules (those with tag/size filters): also `min(existing_cursor, MessagePosition{T_start - bootstrapLookbackMin, BEFORE_FIRST_OFFSET})` on `last_processed_predicate[filer_id]`.
+- For each newly-completing `ActionKey` whose `targetOriginalDelayGroup(action)` is non-nil (computed from `action_kind`/delay, *not* from `engine.originalDelayGroups` membership — that collection only contains actions already activated, which excludes the action we're now completing): set `reader_state.last_processed_original[D.seconds][filer_id] = min(existing_cursor, MessagePosition{T_start - max(D, bootstrapLookbackMin), BEFORE_FIRST_OFFSET})` for every shard. The `targetOriginalDelayGroup` filter covers `EXPIRATION_DAYS`, `NONCURRENT_DAYS`, `ABORT_MPU`, `NEWER_NONCURRENT`, `EXPIRED_DELETE_MARKER`, and any future event-driven kind. `EXPIRATION_DATE` returns nil and is skipped. Comparison is the lex `(ts, offset)` order — same shape as the strict-`<=` skip predicate — not bare ts; otherwise an existing cursor at `(T, k)` with `k > BEFORE_FIRST_OFFSET` and `T == new_floor.ts_ns` would be left in place even though the new action's floor sits at `(T, BEFORE_FIRST_OFFSET)` and an event at `(T, 0)` should be delivered.
+- For event-driven actions with effectively-zero delay (`NEWER_NONCURRENT`, `EXPIRED_DELETE_MARKER`): the delay group is `0` (or `smallDelay`); the cursor floor is `T_start - bootstrapLookbackMin`. Same min-comparison and rewind logic apply.
+- For predicate-sensitive actions (those whose rule has tag/size filters): also `min(existing_cursor, MessagePosition{T_start - bootstrapLookbackMin, BEFORE_FIRST_OFFSET})` on `last_processed_predicate[filer_id]`.
 
-Sibling rules already in the same delay group will replay the rewind window. That replay is idempotent — pending upserts collapse on `(path, version_id)`, CAS on identity rejects redundant deletes — but operators should know it costs them work proportional to events in the rewind window. The reseed shell command and the bootstrap completion path both surface this in the status output.
+Sibling actions already in the same delay group will replay the rewind window. That replay is idempotent — pending upserts collapse on `(path, version_id)`, CAS on identity rejects redundant deletes — but operators should know it costs them work proportional to events in the rewind window. The reseed shell command and the bootstrap completion path both surface this in the status output.
 
-When a bucket bootstrap completes, it calls `seedReaderCursorsForNewDelayGroups(snapshot, newly_completed, target_modes, T_start, force_reseed_delays={}, force_reseed_predicate=false)`. The `newly_completed` argument restricts rewind scope to rules transitioning `bootstrap_complete=false → true`. Routine safety-scan re-bootstraps for already-active rules pass empty `newly_completed`, empty `force_reseed_delays`, and `force_reseed_predicate=false`, so they don't rewind cursors.
+When a bucket bootstrap completes, it calls `seedReaderCursorsForNewDelayGroups(snapshot, newly_completed, target_modes, T_start, force_reseed_delays={}, force_reseed_predicate=false)`. The `newly_completed` argument is a set of `ActionKey`s, restricting rewind scope to actions transitioning `bootstrap_complete=false → true`. Routine safety-scan re-bootstraps for already-active actions pass empty `newly_completed`, empty `force_reseed_delays`, and `force_reseed_predicate=false`, so they don't rewind cursors.
 
-The optional **`force_reseed_delays`** and **`force_reseed_predicate`** parameters together form the **operator-driven scan_only re-enable path**. When `s3.lifecycle.reseed` flips a rule from `scan_only` back to `event_driven`, the rule already has `bootstrap_complete=true`, so it does not enter `newly_completed`. Without explicit force arguments, the seeder would skip it and the previously-deleted/stale cursors would never get re-seeded. The reseed shell command:
+The optional **`force_reseed_delays`** and **`force_reseed_predicate`** parameters together form the **operator-driven scan_only re-enable path**. When `s3.lifecycle.reseed` flips an action from `scan_only` back to `event_driven`, the action already has `bootstrap_complete=true`, so it does not enter `newly_completed`. Without explicit force arguments, the seeder would skip it and the previously-deleted/stale cursors would never get re-seeded. The reseed shell command:
 
-1. Computes `force_reseed_delays = { D : D = targetOriginalDelayGroup(rule), for rule in affected_rules where target_mode == EVENT_DRIVEN }`.
-2. Sets `force_reseed_predicate = any rule in affected_rules where rule.predicateSensitive`. The predicate cursor is **shared across the whole engine** (one `map<filer_id, MessagePosition>`), so the seeder operates on it whenever any predicate-sensitive rule is being re-enabled — independent of which delay group the rule belongs to. While the rule was in `scan_only`, predicate-change events for matching tags/sizes were not fed to the engine; without rewind, the rule would silently miss any tag/metadata change that happened during the `scan_only` window.
+1. Computes `force_reseed_delays = { D : D = targetOriginalDelayGroup(action), for action in affected_actions where target_mode == EVENT_DRIVEN }`.
+2. Sets `force_reseed_predicate = any action in affected_actions where action.predicateSensitive`. The predicate cursor is **shared across the whole engine** (one `map<filer_id, MessagePosition>`), so the seeder operates on it whenever any predicate-sensitive action is being re-enabled — independent of which delay group the action belongs to. While the action was in `scan_only`, predicate-change events for matching tags/sizes were not fed to the engine; without rewind, the action would silently miss any tag/metadata change that happened during the `scan_only` window.
 3. Deletes `reader_state.last_processed_original[D.seconds]` for each `D` in `force_reseed_delays`. If `force_reseed_predicate` is true and the operator wants a hard reseed of the predicate cursor, also deletes `reader_state.last_processed_predicate` (otherwise the seeder will pull it back via `min(existing, new_floor)`, which is sufficient).
 4. Runs a fresh bucket bootstrap that calls the seeder with the populated force arguments. The seeder treats them as needing seeding/rewind even when `newly_completed` is empty.
 5. After the seeder commits, flips affected rules' `mode` from `scan_only` back to `event_driven` durably.
@@ -469,88 +469,99 @@ A naive design — per-rule reader tasks, each scanning the meta log filtered to
 
 The right shape: **one shared cluster-level reader, one compiled policy engine, one event read = one router lookup**. All rules across all buckets are evaluated by routing each event through the engine; rules with the same trigger delay share their cutoff sweep.
 
+**ActionKey is the engine's primary identity.** Every per-action data structure — engine indexes, target modes, newly-completed sets, bootstrap completion, drain/locks/metrics, status — is keyed by `ActionKey{rule_hash, action_kind}`, not by `rule_hash` alone. A single XML rule with two action sub-elements appears as **two** `ActionKey`s through the entire pipeline: separate delay group memberships, separate cursors, separate pending files, separate locks, separate completion bits. Sibling actions can complete bootstrap on different schedules and degrade independently.
+
+```go
+type ActionKey struct {
+    RuleHash   [8]byte
+    ActionKind ActionKind
+}
+```
+
 **Engine shape** (rebuilt periodically and on lifecycle PUT/DELETE):
 
 ```
 type Engine struct {
     snapshot_id   uint64                                 // monotonic; bumps on every rebuild
 
-    // Per-bucket prefix trie → candidate rule hashes.
+    // Per-bucket prefix trie -> candidate ActionKeys.
     buckets       map[bucket]*BucketIndex
 
-    // Trigger-delay groups. Original-write events for these rules become
-    // eligible at the same cutoff; the reader sweeps each group in one pass.
-    // Only rules with mode = EVENT_DRIVEN AND bootstrap_complete are included
-    // here — engine.compile filters before adding to these collections so the
-    // reader cannot route events to scan_only / scan_at_date / disabled / pending
-    // rules.
-    originalDelayGroups map[time.Duration][]ruleHash    // e.g. 1d → [rA], 30d → [rB,rC], 60d → [rD,rE]
+    // Trigger-delay groups. Original-write events for these (rule, action)
+    // pairs become eligible at the same cutoff; the reader sweeps each group
+    // in one pass. Only ActionKeys with mode = EVENT_DRIVEN AND
+    // bootstrap_complete are included here — engine.compile filters before
+    // adding to these collections so the reader cannot route events to
+    // scan_only / scan_at_date / disabled / pending actions.
+    originalDelayGroups map[time.Duration][]ActionKey   // e.g. 7d -> [{rA, ABORT_MPU}], 90d -> [{rA, EXPIRATION_DAYS}, {rB, NONCURRENT_DAYS}]
 
-    // Predicate-change rules — single near-now sweep, no group needed.
-    // Same EVENT_DRIVEN + bootstrap_complete filter as originalDelayGroups.
-    predicateRules      []ruleHash
+    // Predicate-change actions — single near-now sweep, no group needed.
+    // Same EVENT_DRIVEN + bootstrap_complete filter.
+    predicateActions    []ActionKey
 
-    // Date-driven rules — handled by SCAN_AT_DATE bootstrap, not the reader.
-    dateRules           map[ruleHash]time.Time
+    // Date-driven actions — handled by SCAN_AT_DATE bootstrap, not the reader.
+    dateActions         map[ActionKey]time.Time
 
     // Definitions (for evaluation).
-    rules         map[ruleHash]*CompiledRule
+    actions       map[ActionKey]*CompiledAction
 }
 
 type BucketIndex struct {
-    prefixTrie  *PrefixTrie     // path prefix → []ruleHash
-    tagIndex    map[tagKey]map[tagValue][]ruleHash  // optional: speeds up tag-filter rules
+    prefixTrie  *PrefixTrie                              // path prefix -> []ActionKey
+    tagIndex    map[tagKey]map[tagValue][]ActionKey      // optional: speeds up tag-filter actions
     versioned   bool
 }
 
-type CompiledRule struct {
-    raw         *s3lifecycle.Rule
-    hash        ruleHash
+type CompiledAction struct {
+    raw         *s3lifecycle.Rule    // shared with sibling actions of the same XML rule
+    key         ActionKey            // (rule_hash, action_kind)
     bucket      string
-    kind        RuleKind
-    delay       time.Duration   // MinTriggerAge for age rules; zero for date/count
-    predicateSensitive bool      // true if rule has tag/size filters that can change post-PUT
-    mode        RuleMode         // EVENT_DRIVEN | SCAN_AT_DATE | SCAN_ONLY | DISABLED
-                                  // Mirrored from durable state[rule_hash].mode at compile time;
-                                  // engine.compile uses it to decide whether to register the
-                                  // rule in originalDelayGroups / predicateRules.
+    delay       time.Duration        // MinTriggerAge(rule, kind) for age kinds; zero for date/count
+    predicateSensitive bool           // true if the rule's filter has tag/size predicates
+    mode        RuleMode              // EVENT_DRIVEN | SCAN_AT_DATE | SCAN_ONLY | DISABLED
+                                       // Mirrored from durable state[ActionKey].mode at compile time;
+                                       // engine.compile uses it to decide whether to register the
+                                       // action in originalDelayGroups / predicateActions.
 }
 ```
 
-The engine is built once per worker process from all bucket lifecycle xml; rebuilt on policy change events observed in the meta log itself. The `snapshot_id` stamps each evaluation; pending items recorded under one snapshot are still valid as long as their `rule_hash` survives in the next snapshot.
+The engine is built once per worker process from all bucket lifecycle xml; rebuilt on policy change events observed in the meta log itself. The `snapshot_id` stamps each evaluation; pending items recorded under one snapshot are still valid as long as their `ActionKey` survives in the next snapshot.
 
-**Two-phase rule activation.** When the engine compiles a new rule_hash from a freshly-PUT lifecycle XML, the rule starts in state `pending_bootstrap` and is **excluded from reader sweeps**. Only after the bucket's bootstrap task runs and seeds the cluster cursors for that rule's delay group does the rule transition to `active`. Concretely:
+**Two-phase action activation.** When the engine compiles a new `ActionKey` from a freshly-PUT lifecycle XML, the action starts in state `pending_bootstrap` and is **excluded from reader sweeps**. Only after the bucket's bootstrap task runs and seeds the cluster cursors for that action's delay group does the action transition to `active`. Activation is per `ActionKey`, not per rule — a rule's 7d `ABORT_MPU` action can become active before its 90d `EXPIRATION_DAYS` sibling finishes bootstrap. Concretely:
 
 ```
-engine.compile(bucket, rule):
+engine.compile(bucket, rule, kind):                    // called once per (rule, kind) pair
+    key := ActionKey{rule.hash, kind}
     // Activation requires BOTH:
     //   (a) bootstrap_complete (durable; cursor seed already committed before this).
     //   (b) mode allows event-driven processing.
-    // The reader only routes events to rules with mode = EVENT_DRIVEN. SCAN_AT_DATE
-    // rules are handled by their date-triggered bootstrap; SCAN_ONLY rules are
-    // handled by periodic safety-scan bootstraps; DISABLED rules do nothing.
-    // Each rule's CompiledRule carries its mode so reader matching can filter.
-    if state[rule_hash].bootstrap_complete && state[rule_hash].mode == EVENT_DRIVEN:
-        rule.engine_state = active
+    // The reader only routes events to actions with mode = EVENT_DRIVEN. SCAN_AT_DATE
+    // actions are handled by their date-triggered bootstrap; SCAN_ONLY actions are
+    // handled by periodic safety-scan bootstraps; DISABLED actions do nothing.
+    // Each CompiledAction carries its mode so reader matching can filter.
+    if state[key].bootstrap_complete && state[key].mode == EVENT_DRIVEN:
+        action.engine_state = active
     else:
-        rule.engine_state = inactive   // pending_bootstrap, scan_only, scan_at_date, or disabled
+        action.engine_state = inactive   // pending_bootstrap, scan_only, scan_at_date, or disabled
 
 reader.MatchOriginalWrite/MatchPredicateChange/MatchPath:
-    return only rules with engine_state == active
+    return only ActionKeys with engine_state == active
 
 bootstrap.complete (REQUIRED ORDER — same as the main bootstrap pseudocode above):
-    target_modes := { rh: decideMode(snapshot.rules[rh]) for rh in snapshot.rules_for_bucket }
+    target_modes := { key: decideMode(snapshot.actions[key])
+                      for key in snapshot.action_keys_for_bucket }
     seedReaderCursorsForNewDelayGroups(snapshot, newly_completed, target_modes, T_start)
-                                                                             // (1) durable cluster
-    // (2) per-rule durable write — mode AND bootstrap_complete committed atomically.
-    state[rule_hash].mode               = target_modes[rule_hash]
-    state[rule_hash].bootstrap_complete = true                               // AFTER (1)
-    engine.markActive(rule_hash)                                             // (3) in-memory hint
+                                                                                // (1) durable cluster
+    // (2) per-action durable writes — mode AND bootstrap_complete committed atomically per ActionKey.
+    for key in newly_completed:
+        state[key].mode               = target_modes[key]
+        state[key].bootstrap_complete = true                                    // AFTER (1)
+        engine.markActive(key)                                                  // (3) in-memory hint
 ```
 
-The transition order matters: cursor seed must commit **before** the per-rule durable write that sets both `mode` and `bootstrap_complete=true`. If the engine refreshes between (1) and (2), it sees `bootstrap_complete=false` and keeps the rule `pending_bootstrap` — correct. If the engine refreshes between (2) and (3), it sees `bootstrap_complete=true && mode == EVENT_DRIVEN` and activates the rule — also correct, because (1) already committed. The in-memory `markActive` step is only an optimization to avoid waiting for the next engine refresh; it does not gate correctness. Writing `mode` and `bootstrap_complete` in a single proto write per rule (atomic at the file level) avoids any window where one is set and the other isn't.
+The transition order matters: cursor seed must commit **before** the per-action durable write that sets both `mode` and `bootstrap_complete=true`. If the engine refreshes between (1) and (2) for some key, it sees `bootstrap_complete=false` and keeps that action `pending_bootstrap` — correct. If the engine refreshes between (2) and (3), it sees `bootstrap_complete=true && mode == EVENT_DRIVEN` and activates the action — also correct, because (1) already committed. The in-memory `markActive` step is only an optimization to avoid waiting for the next engine refresh; it does not gate correctness. Writing `mode` and `bootstrap_complete` in a single proto write per action (atomic at the file level) avoids any window where one is set and the other isn't.
 
-Policy changes during a bucket bootstrap: the bootstrap is bound to a specific `snapshot_id` (recorded in `_bootstrap`). If the policy changes mid-walk, the in-progress bootstrap finishes for its snapshot; the new policy compiles a fresh engine snapshot; new/changed rules start in `pending_bootstrap`; the next detector tick emits a fresh bucket bootstrap for the new snapshot. Rules whose hash is unchanged carry over their `bootstrap_complete=true` and stay `active`.
+Policy changes during a bucket bootstrap: the bootstrap is bound to a specific `snapshot_id` (recorded in `_bootstrap`). If the policy changes mid-walk, the in-progress bootstrap finishes for its snapshot; the new policy compiles a fresh engine snapshot; new/changed `ActionKey`s start in `pending_bootstrap`; the next detector tick emits a fresh bucket bootstrap for the new snapshot. `ActionKey`s whose `(rule_hash, action_kind)` is unchanged carry over their `bootstrap_complete=true` and stay `active`. An XML edit that adds a new action sub-element to an existing rule produces a new `ActionKey` (same rule_hash, new action_kind) that goes through `pending_bootstrap` while the rule's other actions stay active.
 
 ### Reader — single subscription, client-side merge
 
@@ -881,7 +892,7 @@ handleEvent(event, candidates, stream_kind, shard, delay_seconds, position):
     aggregate := NOOP_RESOLVED                    // start from "nothing required"
     for each rule in candidates:
         if !ruleAppliesToEntryShape(rule, live):  continue
-        action := s3lifecycle.Evaluate(rule, info, now)
+        action := s3lifecycle.EvaluateAction(rule, action_kind, info, now)
         if action == ActionNone:                  continue
         dueAt := computeDueAt(rule, info)
 
@@ -1121,7 +1132,7 @@ if now < dueAt:
     item.due_at_ns = dueAt.UnixNano()      // mtime advanced (rare but possible via metadata update)
     pending.upsert(item); return
 
-action := s3lifecycle.Evaluate(rule, info, now)
+action := s3lifecycle.EvaluateAction(rule, action_kind, info, now)
 if action == ActionNone:                   pending.delete(item); return
 
 // Same deleteAndResolve contract as reader and bootstrap.
@@ -1177,20 +1188,21 @@ type entryIdentity struct {
 
 Mtime alone is fooled by snapshot-restore. Head fid resolves it: a re-uploaded object lands on a fresh fid.
 
-### Policy-version CAS — per rule, not per bucket
+### Policy-version CAS — per ActionKey, not per bucket
 
-A single bucket-wide etag would invalidate this rule's pending whenever any *other* rule on the same bucket is edited. Wrong: an unrelated edit shouldn't dump pending work that's still valid under this rule. Worse, because pending wouldn't be re-enqueued unless the object's events fire again (and many objects' relevant events are already in the past), the work would simply be lost.
+A single bucket-wide etag would invalidate this action's pending whenever any *other* rule (or sibling action) on the same bucket is edited. Wrong: an unrelated edit shouldn't dump pending work that's still valid under this action. Worse, because pending wouldn't be re-enqueued unless the object's events fire again (and many objects' relevant events are already in the past), the work would simply be lost.
 
-Use the **rule_hash itself** as the CAS token. Pending items live under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/pending`, which already binds them to a specific rule version (the hash changes when the rule changes). On drain and on `LifecycleDelete`:
+Use the **`ActionKey{rule_hash, action_kind}`** as the CAS token. Pending items live under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/pending`, which already binds them to a specific (rule version, action kind) pair (the rule_hash changes when the rule's filter or any action's parameters change; the action_kind selects the sibling under that rule). On drain and on `LifecycleDelete`:
 
-- Server reads current `lifecycle.xml`, computes the rule_hash set, and checks whether `request.rule_hash` is a member.
+- Server reads current `lifecycle.xml`, computes the `ActionKey` set (one per populated action sub-element), and checks whether `request.ActionKey` is a member.
 - Member → proceed.
-- Not a member → `STALE_POLICY`. The rule was removed or its definition changed (so a new hash now exists for it). The pending item is genuinely orphaned; drop it. The new rule's directory will go through bootstrap and pick up still-relevant work.
+- Not a member → `STALE_POLICY`. Either the rule was removed / had its definition changed (so a new `rule_hash` now exists), or the specific action sub-element was removed from an otherwise-unchanged rule. The pending item is genuinely orphaned; drop it. The new `ActionKey` (if any) will go through bootstrap and pick up still-relevant work.
 
-Per-rule-hash CAS:
-- An edit to rule A leaves rule B's pending untouched.
-- An edit to rule A creates a new directory `<new_hash_A>/`; the old `<old_hash_A>/` is orphaned. The orphan is cleaned up after a grace period (so an edit-and-revert preserves progress).
-- A removal of rule A: the `<hash_A>/` directory becomes orphaned, cleaned up after grace.
+Per-`ActionKey` CAS:
+- An edit to rule A leaves rule B's actions untouched.
+- An edit to rule A's filter or any action parameter creates a new `rule_hash`; the old `<old_hash_A>/` directory tree (with all its action sub-directories) is orphaned. The orphan is cleaned up after a grace period (so an edit-and-revert preserves progress).
+- Removing one action sub-element from rule A while keeping others: only the corresponding `<rule_hash_A>/<removed_kind>/` directory becomes orphaned; siblings stay live. (`rule_hash` is computed over the full action set, so removing or adding an action sub-element produces a new `rule_hash` for the rule. Both the new and old rule_hash directory trees coexist during the grace period; the new one is bootstrapped from scratch.)
+- A removal of rule A entirely: the `<hash_A>/` tree becomes orphaned, cleaned up after grace.
 
 ### Versioned buckets — corrected model
 
@@ -1333,23 +1345,26 @@ Existing maintenance scheduler in `weed/admin/maintenance/` and `weed/worker/`. 
 
 Concrete plumbing:
 
-- **Lane: `LaneLifecycle`, not `LaneDefault`.** Job-type string `s3_lifecycle` with **three subtypes** carried in params: `READ` (cluster singleton), `BOOTSTRAP` (per bucket), `DRAIN` (per `(bucket, rule_hash)`). The default lane is serialised under one admin lock and is reserved for vacuum/balance/EC/admin scripts; lifecycle must not enter it.
+- **Lane: `LaneLifecycle`, not `LaneDefault`.** Job-type string `s3_lifecycle` with **three subtypes** carried in params: `READ` (cluster singleton), `BOOTSTRAP` (per bucket), `DRAIN` (per `(bucket, ActionKey)`). The default lane is serialised under one admin lock and is reserved for vacuum/balance/EC/admin scripts; lifecycle must not enter it.
 - Task type constants in `weed/worker/types/task_types.go`: `S3LifecycleReadTaskType`, `S3LifecycleBootstrapTaskType`, `S3LifecycleDrainTaskType`. All bound to lane `LaneLifecycle` via `jobTypeLaneMap`.
 - Cluster-lock keys per subtype:
   - `READ` → `s3.lifecycle.read` (cluster singleton).
-  - `BOOTSTRAP` → `s3.lifecycle.bootstrap:<bucket>` (per bucket).
-  - `DRAIN` → `s3.lifecycle.drain:<bucket>:<rule_hash_hex>` (per rule).
+  - `BOOTSTRAP` → `s3.lifecycle.bootstrap:<bucket>` (per bucket; bootstrap walks all `ActionKey`s for the bucket in one pass).
+  - `DRAIN` → `s3.lifecycle.drain:<bucket>:<rule_hash_hex>:<action_kind>` (per `ActionKey` — sibling actions of one rule have separate drain locks so their pending streams advance independently).
 - Task params proto (extend `weed/pb/worker_pb/worker.proto`):
   ```
   message S3LifecycleParams {
-    enum Subtype { READ = 0; BOOTSTRAP = 1; DRAIN = 2; }
+    enum Subtype { SUBTYPE_UNSPECIFIED = 0; READ = 1; BOOTSTRAP = 2; DRAIN = 3; }
     Subtype subtype = 1;
 
-    // bucket and rule_hash are required for BOOTSTRAP (rule_hash optional —
-    // omitting it means walk-all-rules-for-this-bucket) and DRAIN.
-    // READ ignores both (it's cluster-wide).
-    string bucket = 2;
-    bytes  rule_hash = 3;            // 8 bytes when present
+    // bucket is required for BOOTSTRAP and DRAIN. rule_hash is optional for
+    // BOOTSTRAP (omitting it means walk-all-actions-for-this-bucket) and
+    // required for DRAIN. action_kind is required for DRAIN; ignored by
+    // BOOTSTRAP (the walk evaluates every ActionKey per object). READ
+    // ignores all three.
+    string     bucket      = 2;
+    bytes      rule_hash   = 3;       // 8 bytes when present
+    ActionKind action_kind = 7;       // DRAIN only
 
     bool   force = 4;
     int64  batch_time_budget_ns = 5;
@@ -1364,10 +1379,10 @@ Concrete plumbing:
     string prefer_worker_id = 3;      // cache-locality hint
   }
   ```
-  Lane scheduler honours `next_run_after_ns` as a per-`(bucket, rule_hash)` re-arm timer; biases routing by `prefer_worker_id`. Other lanes ignore the field.
+  Lane scheduler honours `next_run_after_ns` as a per-`(bucket, ActionKey)` re-arm timer for DRAIN, per-`bucket` for BOOTSTRAP; biases routing by `prefer_worker_id`. Other lanes ignore the field.
 - Handler registration in `weed/worker/tasks/s3lifecycle/`. `Register()` wired from `weed/worker/worker.go`.
-- Detector in `weed/admin/maintenance/`: per `LaneLifecycle` tick, list buckets, read each rule's per-rule `state` file under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/state`, emit `read` / `bootstrap` / `drain` tasks, respecting `next_run_after_ns` and the optional off-peak window (config knob `lifecycle.run_hours`, e.g. `"01-06"`).
-- Per-`(bucket, rule_hash)` singleton via cluster lock `s3.lifecycle:<bucket>:<rule_hash_hex>`. Detector skips emitting while a lock is held.
+- Detector in `weed/admin/maintenance/`: per `LaneLifecycle` tick, list buckets, walk each per-action `state` file at `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/state`, emit `read` / `bootstrap` / `drain` tasks, respecting `next_run_after_ns` and the optional off-peak window (config knob `lifecycle.run_hours`, e.g. `"01-06"`). DRAIN scheduling is per `ActionKey`; sibling actions' next-run timers are independent.
+- Per-`(bucket, ActionKey)` DRAIN singleton via cluster lock `s3.lifecycle.drain:<bucket>:<rule_hash_hex>:<action_kind>`. Detector skips emitting while a lock is held.
 - Manual triggers via new shell commands:
   - `weed/shell/command_s3_lifecycle_run.go` → enqueue with `force=true`.
   - `weed/shell/command_s3_lifecycle_status.go` → print state.
@@ -1824,42 +1839,42 @@ Phasing changed: **the back-stamp cannot be removed until the worker can take ov
 
 ## Phase 1 — `s3lifecycle.Evaluate` (no callers)
 
-- Add `Evaluate(rule *Rule, info *ObjectInfo, now time.Time) EvalResult`, `MinTriggerAge(rule *Rule) time.Duration` (used by safety-scan cadence), and `EventLogHorizon(rule *Rule) time.Duration` (used by the retention mode gate) in `weed/s3api/s3lifecycle/`. `EventLogHorizon` returns `rule.Days` / `rule.NoncurrentDays` / `rule.DaysAfterInitiation` for age-based kinds, and `smallDelay` for `NEWER_NONCURRENT` and `EXPIRED_DELETE_MARKER`. `EXPIRATION_DATE` is not a reader-driven kind and the gate doesn't call this helper for it.
+- Add `EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time) EvalResult`, `ComputeDueAt(rule *Rule, kind ActionKind, info *ObjectInfo) time.Time`, `MinTriggerAge(rule *Rule, kind ActionKind) time.Duration`, `EventLogHorizon(rule *Rule, kind ActionKind) time.Duration`, and `RuleActionKinds(rule *Rule) []ActionKind` in `weed/s3api/s3lifecycle/`. All kind-aware: a single XML rule expands into N compiled actions and each helper operates on one (rule, kind) pair so sibling actions are scheduled, gated, and evaluated independently. `EventLogHorizon` returns `rule.Days` / `rule.NoncurrentDays` / `rule.DaysAfterInitiation` for age-based kinds, and `smallDelay` for `NEWER_NONCURRENT` and `EXPIRED_DELETE_MARKER`. `EXPIRATION_DATE` is not a reader-driven kind and the gate skips it.
 - Cover: `ExpirationDays`, `ExpirationDate`, `ExpiredObjectDeleteMarker`, `NoncurrentVersionExpirationDays`, `NewerNoncurrentVersions`, `AbortMPUDaysAfterInitiation`, prefix + tag + size filters, And-combinations.
-- Add `RuleHash(rule *Rule) [8]byte` over canonical form (sorted tags, normalized prefix, action, days/date).
+- Add `RuleHash(rule *Rule) [8]byte` over a length-prefixed canonical form (sorted tags, prefix verbatim, every action's parameters, days/date). Stable across XML reordering, ID renames, and Status flips; resistant to delimiter forgery.
 - Unit tests in `evaluate_test.go` per rule shape, including AWS edge cases (date in future, zero days, empty prefix, And).
 - No callers yet. **Independently mergeable.**
 
 ## Phase 2 — LifecyclePolicyEngine + bucket-level bootstrap + LifecycleDelete RPC + scan_only gate (non-versioned)
 
-- Define protos under `weed/pb/s3_pb/lifecycle.proto`: per-rule `LifecycleState` (no watermarks), `PendingItem` (late-predicate exceptions only — no `BlockedItem`, no compliance ledger), `EntryIdentity`. Cluster-level `ReaderState` (watermark maps).
-- Define `S3LifecycleParams` (subtype `READ` | `BOOTSTRAP` | `DRAIN`) and `ContinuationHint` in `weed/pb/worker_pb/worker.proto`.
+- Define protos in `weed/pb/s3_lifecycle.proto`: per-action `LifecycleState` keyed by `(rule_hash, action_kind)` (no watermarks), `PendingItem` (late-predicate exceptions only — no `BlockedItem`, no compliance ledger), `EntryIdentity`. Cluster-level `ReaderState` (watermark maps + `tail_drained_streams`). Top-level `ActionKind` enum referenced by `LifecycleState`, `BootstrapKey`, `PendingKey`, `BlockerRecord`, `RetryTarget`.
+- Define `S3LifecycleParams` (subtype `READ` | `BOOTSTRAP` | `DRAIN`) and `ContinuationHint` in `weed/pb/worker_pb/worker.proto`. `S3LifecycleParams.action_kind` is required for DRAIN, ignored by BOOTSTRAP.
 - Storage:
-  - Per-rule: `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/{state, pending}`.
+  - Per-action: `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/{state, pending}`. Each XML rule expands into N action subdirectories under one rule_hash dir.
   - Per-bucket bootstrap progress: `/etc/s3/lifecycle/<bucket>/_bootstrap`.
   - Cluster reader: `/etc/s3/lifecycle/_reader/{reader_state, blockers, retry_budget}`. Single reader task; `reader_state` holds per-filer-shard cursors (`map<delay_seconds, map<filer_id, MessagePosition>>` for originals and `map<filer_id, MessagePosition>` for predicate) — required for resume correctness across the client-side merge. `blockers` is the durable record of paused stream entries (operator-resolvable). `retry_budget` tracks consecutive `RETRY_LATER` per stream key for promotion to BLOCKED at threshold. No reader-group partitioning, no assignment epochs.
 - New package `weed/s3api/s3lifecycle/engine/` — `LifecyclePolicyEngine`. Compiles all bucket lifecycle xml into:
-  - `bucket → BucketIndex { prefixTrie, tagIndex, versioned }`.
-  - `originalDelayGroups: map[duration][]ruleHash` for original-write sweeps.
-  - `predicateRules: []ruleHash`, `dateRules: map[ruleHash]time.Time`.
+  - `bucket → BucketIndex { prefixTrie, tagIndex, versioned }` keyed by `ActionKey`.
+  - `originalDelayGroups: map[duration][]ActionKey` for original-write sweeps.
+  - `predicateActions: []ActionKey`, `dateActions: map[ActionKey]time.Time`.
   - Snapshot ID; rebuild on observed lifecycle xattr change events.
-- Per-rule policy CAS via rule-hash membership — no per-bucket etag scheme.
+- Per-`ActionKey` policy CAS via `(rule_hash, action_kind)` membership — no per-bucket etag scheme.
 - New package `weed/s3api/s3lifecycle/worker/`:
-  - **Bucket-level** bootstrap walker: walks each bucket once per run, evaluates every applicable rule per object via the engine. Inline delete for currently-due age rules; skip not-yet-due (log replay handles); skip date rules (SCAN_AT_DATE handles). `last_scanned_path` checkpointed in `_bootstrap`.
+  - **Bucket-level** bootstrap walker: walks each bucket once per run, evaluates every applicable `ActionKey` per object via the engine (`EvaluateAction(rule, kind, info, now)` for each compiled action). Inline delete for currently-due age actions; skip not-yet-due (log replay handles); skip date actions (SCAN_AT_DATE handles). `last_scanned_path` checkpointed in `_bootstrap`. Per-action completion writes commit *after* the walk.
   - On `TRANSPORT_ERROR` the walker stops; resume from `last_scanned_path` next task.
   - Skip versioned buckets with a logged warning. Implementation lands in Phase 5.
-- **Mode gate (lands here):** at engine compile time, compute `eventLogHorizon(rule)` per the table in §"Per-rule mode decision"; if `metaLogRetention < eventLogHorizon(rule) + bootstrapLookbackMin`, mark the rule `scan_only` with `degraded_reason = RETENTION_BELOW_HORIZON`. Applies to all reader-driven kinds (`EXPIRATION_DAYS`, `NONCURRENT_DAYS`, `ABORT_MPU`, `NEWER_NONCURRENT`, `EXPIRED_DELETE_MARKER`); date rules bypass this gate. Same bootstrap code path; detector emits at the per-kind cadence.
-- `SCAN_AT_DATE` mode: detector schedules a single bootstrap at `rule.date`.
+- **Mode gate (lands here):** at engine compile time, for each `ActionKey`, compute `eventLogHorizon(rule, action_kind)` per the table in §"Per-rule mode decision"; if `metaLogRetention < eventLogHorizon(rule, action_kind) + bootstrapLookbackMin`, mark *that action* `scan_only` with `degraded_reason = RETENTION_BELOW_HORIZON`. Applies to all reader-driven kinds (`EXPIRATION_DAYS`, `NONCURRENT_DAYS`, `ABORT_MPU`, `NEWER_NONCURRENT`, `EXPIRED_DELETE_MARKER`); date kind bypasses this gate. Sibling actions of the same rule are evaluated independently — a 90d `EXPIRATION_DAYS` may degrade while a 7d `ABORT_MPU` stays event-driven. Same bootstrap code path; detector emits at the per-kind cadence.
+- `SCAN_AT_DATE` mode: detector schedules a single bootstrap at the action's `rule.date`.
 - Worker-to-S3 discovery via admin's `ListS3Endpoints` RPC; cache 30s; rotate on RPC failure.
-- New gRPC `LifecycleDelete` (`weed/s3api/s3api_internal_lifecycle.go`). Server handler steps 1–7 above.
+- New gRPC `LifecycleDelete` (`weed/s3api/s3api_internal_lifecycle.go`). Server handler steps 1–7 above; the request carries `(rule_hash, action_kind)` for ActionKey CAS.
 - Object lock: `LifecycleDelete` server explicitly calls `s3a.enforceObjectLockProtections` (in `weed/s3api/s3api_object_retention.go`) with `governanceBypassAllowed=false` BEFORE dispatching low-level helpers. If the check refuses, returns `SKIPPED_OBJECT_LOCK`. Worker logs, increments counter, advances. No retain-until rescheduling, no blocked file.
 - Admin server: register S3 endpoints; serve `ListS3Endpoints`.
 - Wire task types in `weed/worker/tasks/s3lifecycle/`:
-  - `s3.lifecycle.bootstrap` per-bucket (not per-rule).
+  - `s3.lifecycle.bootstrap` per-bucket (not per-action).
   - `s3.lifecycle.read` cluster-singleton (Phase 3 fills in).
-  - `s3.lifecycle.drain` per-rule for exception drains.
+  - `s3.lifecycle.drain` per-`ActionKey` for exception drains.
   All bound to `LaneLifecycle`.
-- Cluster locks: `s3.lifecycle.read` (singleton), `s3.lifecycle.bootstrap:<bucket>`, `s3.lifecycle.drain:<bucket>:<rule_hash_hex>`, `s3.lifecycle._reader.seeding` (global, serializes seed writes across bucket bootstraps).
+- Cluster locks: `s3.lifecycle.read` (singleton), `s3.lifecycle.bootstrap:<bucket>`, `s3.lifecycle.drain:<bucket>:<rule_hash_hex>:<action_kind>`, `s3.lifecycle._reader.seeding` (global, serializes seed writes across bucket bootstraps).
 - Detector in `weed/admin/maintenance/`.
 - Shell commands `s3.lifecycle.run`, `s3.lifecycle.status`.
 - Worker runs alongside the back-stamp.
@@ -1980,7 +1995,7 @@ Location: `weed/s3api/s3lifecycle/*_test.go` next to source. Standard table-driv
 
 | File | Coverage |
 |---|---|
-| `evaluate_test.go` | `Evaluate(rule, info, now) → action`: every rule kind × (eligible, not-eligible) × every filter shape (prefix, tag, size, And-combinations). AWS edge cases: zero days, future date, empty prefix, empty/duplicate Rule.ID. |
+| `evaluate_test.go` | `EvaluateAction(rule, kind, info, now) → action`: every action kind × (eligible, not-eligible) × every filter shape (prefix, tag, size, And-combinations). AWS edge cases: zero days, future date, empty prefix, empty/duplicate Rule.ID. Multi-action rule: each kind independently. |
 | `rule_hash_test.go` | Semantically-equivalent rules hash equal. Reordered tags hash equal. Different rules hash different. ID changes don't affect hash. |
 | `due_at_test.go` | `computeDueAt(rule, info)` per kind. Boundary: mtime exactly at threshold, date in past, NewerNoncurrent at exactly N versions. |
 | `min_trigger_age_test.go` | `MinTriggerAge` per kind. `EXPIRATION_DATE` returns sentinel; `NEWER_NONCURRENT` returns small. |
