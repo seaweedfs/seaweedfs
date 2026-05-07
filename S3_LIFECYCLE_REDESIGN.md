@@ -29,7 +29,29 @@ Verified in the codebase:
 - Multipart uploads live under `<bucket>/.uploads/<uploadId>/` (`s3a.genUploadsFolder` in `weed/s3api/s3api_object_handlers_multipart.go:475`).
 - Existing internal delete helpers we will reuse: `s3a.createDeleteMarker(bucket, object)` (`weed/s3api/s3api_object_versioning.go:162`), `s3a.deleteSpecificObjectVersion(bucket, object, versionId)` (`:968`), `s3a.deleteUnversionedObjectWithClient(client, bucket, object)` (`weed/s3api/s3api_object_handlers_delete.go:169`).
 
-Open assumption (Phase 0 to verify): retention policy of `/topics/.system/log/`. If it is unbounded by default, the event-driven path covers any TTL; if pruned, rules whose TTL exceeds retention fall back to `scan_only` mode.
+### Phase 0 — Verified assumptions
+
+Each open assumption resolved against the codebase at `sulfuric-podium`:
+
+**1. Persisted log payload includes `Extended`.** `Filer.logMetaEvent` (`weed/filer/filer_notify.go:110-119`) marshals `*filer_pb.SubscribeMetadataResponse{EventNotification:{OldEntry, NewEntry, …}}` into `LogEntry.data` via `entry.ToProtoEntry()`, and `Entry.extended` (`weed/pb/filer.proto:135`) is a `map<string,bytes>` serialized as part of the proto. `ReadPersistedLogBuffer` (`weed/filer/filer_notify.go:203`) hands back the same `*filer_pb.LogEntry` whose `data` deserializes back to the full event with `Extended` intact. Lifecycle's predicate evaluation against tags/`Extended` keys is therefore directly available from the meta log without any side fetch.
+
+**2. Meta-log retention is unbounded by default.** Persisted log files at `<SystemLogDir>/YYYY-MM-DD/HH-MM.<filerId>` are written via `Filer.appendToFile` (`weed/filer/filer_notify_append.go:14-49`). The created `Entry` has no `TtlSec` field set, only `Crtime`/`Mtime`/`Mode`/`Uid`/`Gid`. There is no built-in cleaner: nothing under `weed/filer/` or `weed/server/` deletes `topics/.system/log/` files. The volume-level TTL only kicks in if an operator configures a `filer.conf` rule whose `LocationPrefix` matches `/topics/.system/log/` and whose `Ttl` is set, in which case `Filer.appendToFile` → `assignAndUpload` (`weed/filer/filer_notify_append.go:51-94`) routes through `MatchStorageRule` and the assigned volume carries the rule's `Ttl`. Without that explicit configuration, retention is operator-bounded only (manual deletion of old day directories).
+
+This means:
+- For default deployments, `metaLogRetention = ∞` and the retention mode gate (`metaLogRetention < eventLogHorizon(rule) + bootstrapLookbackMin`) never trips — every reader-driven kind runs `event_driven`.
+- For deployments that opt into volume-TTL pruning of the meta log, operators must configure `metaLogRetention` to match the configured TTL; the gate then promotes long-horizon rules to `scan_only` automatically.
+- Phase 2 will read `metaLogRetention` from a cluster-config knob (default: a sentinel meaning "unbounded"). When the operator sets a TTL on `topics/.system/log/`, they must also set `metaLogRetention` to the same value; the design doc surfaces this as a required-coupled configuration in Phase 8 docs.
+
+**3. `.versions/` filename scheme.** Inside `<object>.versions/`, version files are named `v_<32-hex>` where the 32-hex string is `<16-hex-timestamp><16-hex-random>` (`weed/s3api/s3api_version_id.go:30-55`, `:148-150`). Two formats coexist, distinguished by the timestamp portion's value relative to threshold `0x4000000000000000` (`weed/s3api/s3api_version_id.go:24`):
+- **New (inverted) format**: timestamp portion = `MaxInt64 - now_ns`, value > threshold (~0x68… in 2025). Newer versions sort **earlier** lexicographically. Used for new `.versions/` directories.
+- **Old (raw) format**: timestamp portion = `now_ns`, value < threshold. Older versions sort earlier lexicographically. Detected by reading `Extended[ExtLatestVersionIdKey]` on the `.versions/` directory entry and applying `isNewFormatVersionId` (`weed/s3api/s3api_version_id.go:58-70`).
+
+For the design's "successor" version computation (the version that replaced this one to make it non-current):
+- New format: the lex-immediate-predecessor in `.versions/` (sorts earlier = newer).
+- Old format: the lex-immediate-successor (sorts later = newer).
+- Universal fallback: `getVersionTimestamp(versionId)` (`weed/s3api/s3api_version_id.go:74-92`) returns the actual ns timestamp regardless of format; `compareVersionIds(a, b)` (`:97-140`) gives a format-agnostic newest-first comparator. Phase 5 will use these helpers when discovering successor non-current time.
+
+The `.versions/` directory entry's `Extended` carries the current-version pointer (`ExtLatestVersionIdKey`, `ExtLatestVersionFileNameKey`, `ExtLatestVersionMtimeKey`, `ExtLatestVersionIsDeleteMarker`) — already documented above as repo facts.
 
 ### Storage
 
