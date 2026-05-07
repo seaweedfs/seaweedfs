@@ -62,13 +62,18 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 	switch req.ActionKind {
 	case s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, s3_lifecycle_pb.ActionKind_EXPIRATION_DATE:
 		// Versioned bucket -> create delete marker; non-versioned -> remove.
+		// Filer round-trips (versioning lookup, create-marker, delete) are
+		// classified RETRY_LATER by default — most failures are transient
+		// (filer unavailable, slow); the worker's retry budget promotes
+		// sustained transients to BLOCKED. Reserve BLOCKED for clearly
+		// deterministic errors (here: only the request-shape check).
 		versioned, vErr := s3a.isVersioningEnabled(req.Bucket)
 		if vErr != nil {
-			return blocked("FATAL_EVENT_ERROR: versioning lookup: " + vErr.Error()), nil
+			return retryLater("TRANSPORT_ERROR: versioning lookup: " + vErr.Error()), nil
 		}
 		if versioned {
 			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
-				return blocked("FATAL_EVENT_ERROR: createDeleteMarker: " + err.Error()), nil
+				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}
 			return done(), nil
 		}
@@ -79,7 +84,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			if errors.Is(err, filer_pb.ErrNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
 			}
-			return blocked("FATAL_EVENT_ERROR: deleteUnversioned: " + err.Error()), nil
+			return retryLater("TRANSPORT_ERROR: deleteUnversioned: " + err.Error()), nil
 		}
 		return done(), nil
 
@@ -95,7 +100,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
 			}
-			return blocked("FATAL_EVENT_ERROR: deleteSpecificVersion: " + err.Error()), nil
+			return retryLater("TRANSPORT_ERROR: deleteSpecificVersion: " + err.Error()), nil
 		}
 		return done(), nil
 
