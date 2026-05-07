@@ -17,14 +17,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 )
 
-// Entry is the minimal slice of a filer entry the walker needs. SuccessorModTime
-// and NoncurrentIndex are populated only for versioned-bucket walks (Phase 5);
-// non-versioned walks leave them at zero / nil and the count-based retention
-// path bails out conservatively.
+// Entry is the minimal slice of a filer entry the walker needs.
+// IsDirectory marks SeaweedFS directory entries; the walker never
+// dispatches against directories. SuccessorModTime and NoncurrentIndex are
+// populated only for versioned-bucket walks (Phase 5); non-versioned walks
+// leave them at zero / nil and the count-based retention path bails out
+// conservatively.
 type Entry struct {
 	Path           string
 	ModTime        time.Time
 	Size           int64
+	IsDirectory    bool
 	IsLatest       bool
 	IsDeleteMarker bool
 	IsMPUInit      bool
@@ -72,6 +75,12 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 		if entry == nil || entry.Path == "" {
 			return nil
 		}
+		// Lifecycle rules only apply to objects; SeaweedFS directory
+		// entries can co-exist in the listing and must not be deleted.
+		if entry.IsDirectory {
+			cp.LastScannedPath = entry.Path
+			return nil
+		}
 		if err := walkEntry(ctx, snap, bucket, entry, dispatch, now); err != nil {
 			return err
 		}
@@ -108,7 +117,11 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 		if action == nil {
 			continue
 		}
-		if action.Mode == engine.ModeScanAtDate {
+		// SCAN_AT_DATE has its own date-triggered bootstrap; DISABLED can be
+		// flipped at runtime by the operator independent of XML rule status,
+		// so explicitly skip it here even though EvaluateAction also gates
+		// on the rule's Status.
+		if action.Mode == engine.ModeScanAtDate || action.Mode == engine.ModeDisabled {
 			continue
 		}
 		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, now)

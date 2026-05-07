@@ -177,6 +177,51 @@ func TestWalk_DateActionsSkipped(t *testing.T) {
 	}
 }
 
+func TestWalk_DirectoryEntriesSkipped(t *testing.T) {
+	// SeaweedFS directory entries can co-exist in the listing; the walker
+	// must not dispatch deletes against them even when their path matches.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileEvDriven(t, "bk", rule)
+	mod := mustTime(t, "2024-01-01T00:00:00Z")
+	now := mod.AddDate(0, 0, 10)
+	rec := &recorder{}
+	if _, err := Walk(context.Background(), snap, "bk", EntryCallback([]*Entry{
+		{Path: "x", IsDirectory: true, ModTime: mod}, // directory; must skip
+		{Path: "x/file", IsLatest: true, ModTime: mod},
+	}), rec, WalkOptions{Now: now}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(rec.calls) != 1 || rec.calls[0].path != "x/file" {
+		t.Fatalf("only the file should dispatch, got %v", rec.calls)
+	}
+}
+
+func TestWalk_DisabledModeSkipped(t *testing.T) {
+	// An operator-flipped ModeDisabled must short-circuit the walker even
+	// when the XML rule status is "Enabled" and EvaluateAction would
+	// otherwise fire.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	rh := s3lifecycle.RuleHash(rule)
+	prior := map[s3lifecycle.ActionKey]engine.PriorState{
+		{Bucket: "bk", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}: {
+			BootstrapComplete: true, Mode: engine.ModeDisabled,
+		},
+	}
+	e := engine.New()
+	snap := e.Compile([]engine.CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, engine.CompileOptions{PriorStates: prior})
+	mod := mustTime(t, "2024-01-01T00:00:00Z")
+	now := mod.AddDate(0, 0, 10)
+	rec := &recorder{}
+	if _, err := Walk(context.Background(), snap, "bk", EntryCallback([]*Entry{
+		{Path: "x/a", IsLatest: true, ModTime: mod},
+	}), rec, WalkOptions{Now: now}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Fatalf("disabled action must not dispatch, got %v", rec.calls)
+	}
+}
+
 func TestWalk_PendingBootstrapNotDispatched(t *testing.T) {
 	// Without bootstrap_complete=true in PriorStates, the engine compiles
 	// the action as inactive. MatchPath filters on IsActive, so the
