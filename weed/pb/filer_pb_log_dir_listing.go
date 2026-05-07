@@ -44,7 +44,7 @@ type FilerShardRange struct {
 // entries at exactly the floor's TsNs with Offset>0 are not skipped.
 func EarliestRetainedPositionPerShard(ctx context.Context, lister LogDirLister) (map[string]MessagePosition, error) {
 	out := make(map[string]MessagePosition)
-	err := walkLogChunks(ctx, lister, false, func(filerId string, ts time.Time) bool {
+	err := walkLogChunks(ctx, lister, func(filerId string, ts time.Time) bool {
 		if _, seen := out[filerId]; !seen {
 			out[filerId] = MessagePosition{TsNs: ts.UnixNano(), Offset: 0}
 		}
@@ -64,18 +64,17 @@ func EarliestRetainedPositionPerShard(ctx context.Context, lister LogDirLister) 
 // when the cursor is at or past the chunk's last entry — matches the
 // design's tail-drain criterion.
 func RetainedLogRangePerShard(ctx context.Context, lister LogDirLister) (map[string]FilerShardRange, error) {
+	// Single pass: track min and max per filer in the same callback. Two
+	// passes would (a) double the RPC cost and (b) introduce a TOCTOU
+	// window where a filer could appear in the first walk and disappear
+	// before the second — leaving its `latest` zero and yielding a
+	// nonsense MessagePosition.
 	earliest := make(map[string]time.Time)
 	latest := make(map[string]time.Time)
-
-	if err := walkLogChunks(ctx, lister, false, func(filerId string, ts time.Time) bool {
+	if err := walkLogChunks(ctx, lister, func(filerId string, ts time.Time) bool {
 		if e, ok := earliest[filerId]; !ok || ts.Before(e) {
 			earliest[filerId] = ts
 		}
-		return true
-	}); err != nil {
-		return nil, err
-	}
-	if err := walkLogChunks(ctx, lister, true, func(filerId string, ts time.Time) bool {
 		if l, ok := latest[filerId]; !ok || ts.After(l) {
 			latest[filerId] = ts
 		}
@@ -97,9 +96,9 @@ func RetainedLogRangePerShard(ctx context.Context, lister LogDirLister) (map[str
 }
 
 // walkLogChunks iterates every (filerId, chunk-time) tuple under
-// SystemLogDir. cb returns false to stop the walk early.
-func walkLogChunks(ctx context.Context, lister LogDirLister, newestFirst bool, cb func(filerId string, ts time.Time) bool) error {
-	dayEntries, err := listAll(ctx, lister, SystemLogDir, newestFirst)
+// SystemLogDir in lex order. cb returns false to stop the walk early.
+func walkLogChunks(ctx context.Context, lister LogDirLister, cb func(filerId string, ts time.Time) bool) error {
+	dayEntries, err := listAll(ctx, lister, SystemLogDir)
 	if err != nil {
 		return err
 	}
@@ -107,7 +106,7 @@ func walkLogChunks(ctx context.Context, lister LogDirLister, newestFirst bool, c
 		if !day.IsDirectory {
 			continue
 		}
-		hourMinuteEntries, err := listAll(ctx, lister, SystemLogDir+"/"+day.Name, newestFirst)
+		hourMinuteEntries, err := listAll(ctx, lister, SystemLogDir+"/"+day.Name)
 		if err != nil {
 			return fmt.Errorf("list %s/%s: %w", SystemLogDir, day.Name, err)
 		}
@@ -133,7 +132,7 @@ func walkLogChunks(ctx context.Context, lister LogDirLister, newestFirst bool, c
 // per-day-dir typically holds at most ~1440 entries.
 const listingLimit = 4096
 
-func listAll(ctx context.Context, lister LogDirLister, dir string, newestFirst bool) ([]*filer_pb.Entry, error) {
+func listAll(ctx context.Context, lister LogDirLister, dir string) ([]*filer_pb.Entry, error) {
 	var out []*filer_pb.Entry
 	startFrom := ""
 	for {
@@ -149,12 +148,6 @@ func listAll(ctx context.Context, lister LogDirLister, dir string, newestFirst b
 			break
 		}
 		startFrom = entries[len(entries)-1].Name
-	}
-	if newestFirst {
-		// reverse in place
-		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-			out[i], out[j] = out[j], out[i]
-		}
 	}
 	return out, nil
 }
