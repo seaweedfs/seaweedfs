@@ -35,9 +35,10 @@ type Snapshot struct {
 	// Pre-sorted view of `actions` so AllActions doesn't re-sort per call.
 	allActionsSorted []*CompiledAction
 
-	// Routing indexes: only ACTIVE ActionKeys are added at compile time.
-	// The reader filters again on engineState before dispatching, so
-	// markActive flips become visible without a recompile.
+	// Routing indexes hold every ActionKey by mode (EVENT_DRIVEN /
+	// SCAN_AT_DATE) regardless of its current activation. The reader
+	// filters on IsActive() at dispatch time, so a MarkActive flip
+	// becomes routable without a recompile.
 	originalDelayGroups map[time.Duration][]s3lifecycle.ActionKey
 	predicateActions    []s3lifecycle.ActionKey
 	dateActions         map[s3lifecycle.ActionKey]time.Time

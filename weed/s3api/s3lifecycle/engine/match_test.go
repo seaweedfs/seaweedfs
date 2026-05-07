@@ -61,10 +61,10 @@ func TestMatchOriginalWrite_PrefixFilter(t *testing.T) {
 	}
 }
 
-func TestMatchOriginalWrite_OnlyActiveActions(t *testing.T) {
-	// pending_bootstrap actions must not be matched (they're not in
-	// originalDelayGroups), but the active filter is also enforced inside
-	// filterMatching to make markActive flips visible without recompile.
+func TestMatchOriginalWrite_MarkActiveBecomesRoutable(t *testing.T) {
+	// pending_bootstrap actions are indexed but inactive: MatchOriginalWrite
+	// returns nothing. After MarkActive flips engineState, the same key is
+	// routable in subsequent matches without a recompile.
 	r := ruleExpDays("a", "x/", 30)
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{})
@@ -73,12 +73,8 @@ func TestMatchOriginalWrite_OnlyActiveActions(t *testing.T) {
 		t.Fatalf("inactive action should not match, got %v", got)
 	}
 	snap.MarkActive(s3lifecycle.ActionKey{Bucket: "bk", RuleHash: s3lifecycle.RuleHash(r), ActionKind: s3lifecycle.ActionKindExpirationDays})
-	// The action wasn't added to the delay-group index at compile time
-	// (it was inactive). markActive doesn't retroactively add it; that's
-	// the design — recompile populates indexes when prior state activates
-	// the action. Verify this expectation explicitly.
-	if got := snap.MatchOriginalWrite(ev, 30*24*time.Hour); len(got) != 0 {
-		t.Fatalf("post-markActive without recompile: still no delay-group entry, got %v", got)
+	if got := snap.MatchOriginalWrite(ev, 30*24*time.Hour); len(got) != 1 {
+		t.Fatalf("post-markActive should be routable, got %v", got)
 	}
 }
 

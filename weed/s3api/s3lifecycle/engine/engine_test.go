@@ -82,10 +82,11 @@ func TestCompile_MultiAction_SiblingsHaveOwnEntries(t *testing.T) {
 	}
 }
 
-func TestCompile_BootstrapPendingExcludedFromIndexes(t *testing.T) {
-	// Without prior bootstrap_complete=true, the action is pending_bootstrap;
-	// it must NOT appear in originalDelayGroups / predicateActions /
-	// dateActions, and IsActive() must be false.
+func TestCompile_BootstrapPendingIndexedButInactive(t *testing.T) {
+	// Without prior bootstrap_complete=true the action is pending_bootstrap.
+	// It IS indexed in originalDelayGroups (so a later MarkActive flip is
+	// routable without recompile), but IsActive() reads false so the
+	// reader's IsActive-filter skips dispatch.
 	rule := ruleExpDays("r1", "logs/", 30)
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{})
@@ -95,8 +96,8 @@ func TestCompile_BootstrapPendingExcludedFromIndexes(t *testing.T) {
 			t.Fatalf("pending_bootstrap action should not be active")
 		}
 	}
-	if len(snap.originalDelayGroups) != 0 {
-		t.Fatalf("delay groups should be empty pre-bootstrap, got %v", snap.originalDelayGroups)
+	if len(snap.originalDelayGroups) != 1 {
+		t.Fatalf("EVENT_DRIVEN action should be indexed even when inactive, got %v", snap.originalDelayGroups)
 	}
 }
 

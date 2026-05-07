@@ -86,13 +86,16 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 				snap.actions[key] = ca
 				bi.actionKeys = append(bi.actionKeys, key)
 
-				// SCAN_AT_DATE actions index regardless of activation; the
-				// detector schedules them at rule.date. Other modes are
-				// only indexed for routing once active.
+				// Index every action by mode regardless of `active`. The
+				// reader's MatchOriginalWrite / MatchPredicateChange filter
+				// on IsActive() at routing time, so a key indexed here that
+				// is currently inactive simply doesn't fire. This lets a
+				// later MarkActive flip become routable without forcing a
+				// recompile (matches the documented two-phase activation).
 				if mode == ModeScanAtDate {
 					snap.dateActions[key] = rule.ExpirationDate
 				}
-				if active && mode == ModeEventDriven {
+				if mode == ModeEventDriven {
 					snap.originalDelayGroups[ca.Delay] = append(snap.originalDelayGroups[ca.Delay], key)
 					if ca.PredicateSensitive {
 						snap.predicateActions = append(snap.predicateActions, key)
