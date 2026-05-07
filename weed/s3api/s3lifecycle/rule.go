@@ -68,7 +68,25 @@ type ObjectInfo struct {
 	// Tags are the object's user-defined tags, extracted from the entry's
 	// Extended metadata (keys prefixed with "X-Amz-Tagging-").
 	Tags map[string]string
+
+	// IsMPUInit is true when this entry represents an in-flight multipart
+	// upload init under <bucket>/.uploads/<uploadId>/. The evaluator routes
+	// these entries to the AbortIncompleteMultipartUpload action shape.
+	// ModTime carries the upload's initiation time when this is set.
+	IsMPUInit bool
 }
+
+// Status values for Rule.Status.
+const (
+	StatusEnabled  = "Enabled"
+	StatusDisabled = "Disabled"
+)
+
+// SmallDelay is the lookback used for predicate-change events and as the
+// event-log horizon for count-based / immediate rule kinds (NewerNoncurrent,
+// ExpiredObjectDeleteMarker). A small fixed value avoids races with in-flight
+// writes without forcing the reader to keep deep history.
+const SmallDelay = time.Minute
 
 // Action represents the lifecycle action to take on an object.
 type Action int
