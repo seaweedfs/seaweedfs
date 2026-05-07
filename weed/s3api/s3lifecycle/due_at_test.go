@@ -32,6 +32,22 @@ func TestComputeDueAt_DeleteMarker_NotSoleSurvivor(t *testing.T) {
 	}
 }
 
+func TestComputeDueAt_NoncurrentDeleteMarkerHonorsNoncurrentDays(t *testing.T) {
+	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 7}
+	successor := mustTime(t, "2024-01-01T00:00:00Z")
+	info := &ObjectInfo{
+		Key:              "a",
+		IsLatest:         false,
+		IsDeleteMarker:   true,
+		NumVersions:      3,
+		SuccessorModTime: successor,
+	}
+	want := successor.AddDate(0, 0, 7)
+	if got := ComputeDueAt(rule, info); !got.Equal(want) {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
 func TestComputeDueAt_NoMatchingAction(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, ExpirationDays: 1}
 	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mustTime(t, "2024-01-01T00:00:00Z")}

@@ -24,7 +24,7 @@ func ComputeDueAt(rule *Rule, info *ObjectInfo) time.Time {
 		}
 		return time.Time{}
 
-	case info.IsDeleteMarker:
+	case info.IsLatest && info.IsDeleteMarker:
 		if rule.ExpiredObjectDeleteMarker && info.NumVersions == 1 {
 			return info.ModTime
 		}

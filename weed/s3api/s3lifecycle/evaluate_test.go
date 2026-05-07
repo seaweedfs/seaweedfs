@@ -86,6 +86,25 @@ func TestEvaluate_ExpiredObjectDeleteMarker(t *testing.T) {
 	}
 }
 
+func TestEvaluate_NoncurrentDeleteMarkerExpiresViaNoncurrentDays(t *testing.T) {
+	// A non-current delete marker is just a version. NoncurrentVersionExpirationDays
+	// must apply to it; the IsDeleteMarker special case is only for the *current*
+	// delete marker (sole survivor).
+	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 7}
+	successor := mustTime(t, "2024-01-01T00:00:00Z")
+	info := &ObjectInfo{
+		Key:              "a",
+		IsLatest:         false,
+		IsDeleteMarker:   true,
+		NumVersions:      3,
+		SuccessorModTime: successor,
+		ModTime:          successor.AddDate(0, 0, -1),
+	}
+	if got := Evaluate(rule, info, successor.AddDate(0, 0, 7)); got.Action != ActionDeleteVersion {
+		t.Fatalf("noncurrent delete marker should be eligible under NoncurrentDays, got %v", got)
+	}
+}
+
 func TestEvaluate_NoncurrentVersionDays(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 30}
 	successor := mustTime(t, "2024-01-01T00:00:00Z")

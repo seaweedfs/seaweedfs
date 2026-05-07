@@ -12,10 +12,16 @@ import (
 //
 // Action selection is by object shape (in priority order):
 //
-//	IsMPUInit       -> AbortIncompleteMultipartUpload
-//	IsDeleteMarker  -> ExpiredObjectDeleteMarker (only when sole survivor)
-//	IsLatest        -> Expiration (Days or Date)
-//	non-current     -> NoncurrentVersionExpiration (Days + NewerNoncurrentVersions)
+//	IsMPUInit                   -> AbortIncompleteMultipartUpload
+//	IsLatest && IsDeleteMarker  -> ExpiredObjectDeleteMarker (only when sole survivor)
+//	IsLatest                    -> Expiration (Days or Date)
+//	non-current (regular OR     -> NoncurrentVersionExpiration
+//	  non-current delete marker)   (Days + NewerNoncurrentVersions)
+//
+// Per AWS S3 semantics, a non-current delete marker is just another version
+// and is eligible under NoncurrentVersionExpirationDays. Only the *current*
+// delete marker (and only as sole survivor) is the special-cased
+// ExpiredObjectDeleteMarker action.
 func Evaluate(rule *Rule, info *ObjectInfo, now time.Time) EvalResult {
 	none := EvalResult{Action: ActionNone}
 	if rule == nil || info == nil || rule.Status != StatusEnabled {
@@ -35,7 +41,7 @@ func Evaluate(rule *Rule, info *ObjectInfo, now time.Time) EvalResult {
 		}
 		return none
 
-	case info.IsDeleteMarker:
+	case info.IsLatest && info.IsDeleteMarker:
 		if rule.ExpiredObjectDeleteMarker && info.NumVersions == 1 {
 			return EvalResult{Action: ActionExpireDeleteMarker, RuleID: rule.ID}
 		}
@@ -54,7 +60,8 @@ func Evaluate(rule *Rule, info *ObjectInfo, now time.Time) EvalResult {
 		return none
 
 	default:
-		// Non-current version path.
+		// Non-current path. Includes non-current delete markers: per AWS,
+		// NoncurrentVersionExpirationDays applies to them too.
 		if rule.NoncurrentVersionExpirationDays > 0 {
 			base := info.SuccessorModTime
 			if base.IsZero() {
