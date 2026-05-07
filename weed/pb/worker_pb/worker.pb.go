@@ -21,25 +21,31 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Zero is an UNSPECIFIED sentinel: a TaskParams payload whose subtype is
+// unset must not silently route into the cluster-singleton READ task.
+// Callers always populate one of READ / BOOTSTRAP / DRAIN.
 type S3LifecycleParams_Subtype int32
 
 const (
-	S3LifecycleParams_READ      S3LifecycleParams_Subtype = 0
-	S3LifecycleParams_BOOTSTRAP S3LifecycleParams_Subtype = 1
-	S3LifecycleParams_DRAIN     S3LifecycleParams_Subtype = 2
+	S3LifecycleParams_SUBTYPE_UNSPECIFIED S3LifecycleParams_Subtype = 0
+	S3LifecycleParams_READ                S3LifecycleParams_Subtype = 1
+	S3LifecycleParams_BOOTSTRAP           S3LifecycleParams_Subtype = 2
+	S3LifecycleParams_DRAIN               S3LifecycleParams_Subtype = 3
 )
 
 // Enum value maps for S3LifecycleParams_Subtype.
 var (
 	S3LifecycleParams_Subtype_name = map[int32]string{
-		0: "READ",
-		1: "BOOTSTRAP",
-		2: "DRAIN",
+		0: "SUBTYPE_UNSPECIFIED",
+		1: "READ",
+		2: "BOOTSTRAP",
+		3: "DRAIN",
 	}
 	S3LifecycleParams_Subtype_value = map[string]int32{
-		"READ":      0,
-		"BOOTSTRAP": 1,
-		"DRAIN":     2,
+		"SUBTYPE_UNSPECIFIED": 0,
+		"READ":                1,
+		"BOOTSTRAP":           2,
+		"DRAIN":               3,
 	}
 )
 
@@ -1117,7 +1123,7 @@ func (x *S3LifecycleParams) GetSubtype() S3LifecycleParams_Subtype {
 	if x != nil {
 		return x.Subtype
 	}
-	return S3LifecycleParams_READ
+	return S3LifecycleParams_SUBTYPE_UNSPECIFIED
 }
 
 func (x *S3LifecycleParams) GetBucket() string {
@@ -3989,7 +3995,7 @@ const file_worker_proto_rawDesc = "" +
 	"\x12replication_params\x18\f \x01(\v2 .worker_pb.ReplicationTaskParamsH\x00R\x11replicationParams\x12L\n" +
 	"\x11ec_balance_params\x18\r \x01(\v2\x1e.worker_pb.EcBalanceTaskParamsH\x00R\x0fecBalanceParams\x12N\n" +
 	"\x13s3_lifecycle_params\x18\x0e \x01(\v2\x1c.worker_pb.S3LifecycleParamsH\x00R\x11s3LifecycleParamsB\r\n" +
-	"\vtask_params\"\xed\x02\n" +
+	"\vtask_params\"\x86\x03\n" +
 	"\x11S3LifecycleParams\x12>\n" +
 	"\asubtype\x18\x01 \x01(\x0e2$.worker_pb.S3LifecycleParams.SubtypeR\asubtype\x12\x16\n" +
 	"\x06bucket\x18\x02 \x01(\tR\x06bucket\x12\x1b\n" +
@@ -3997,11 +4003,12 @@ const file_worker_proto_rawDesc = "" +
 	"\x05force\x18\x04 \x01(\bR\x05force\x12/\n" +
 	"\x14batch_time_budget_ns\x18\x05 \x01(\x03R\x11batchTimeBudgetNs\x12,\n" +
 	"\x12batch_event_budget\x18\x06 \x01(\x05R\x10batchEventBudget\x12?\n" +
-	"\fcontinuation\x18\a \x01(\v2\x1b.worker_pb.ContinuationHintR\fcontinuation\"-\n" +
-	"\aSubtype\x12\b\n" +
-	"\x04READ\x10\x00\x12\r\n" +
-	"\tBOOTSTRAP\x10\x01\x12\t\n" +
-	"\x05DRAIN\x10\x02\"h\n" +
+	"\fcontinuation\x18\a \x01(\v2\x1b.worker_pb.ContinuationHintR\fcontinuation\"F\n" +
+	"\aSubtype\x12\x17\n" +
+	"\x13SUBTYPE_UNSPECIFIED\x10\x00\x12\b\n" +
+	"\x04READ\x10\x01\x12\r\n" +
+	"\tBOOTSTRAP\x10\x02\x12\t\n" +
+	"\x05DRAIN\x10\x03\"h\n" +
 	"\x10ContinuationHint\x12*\n" +
 	"\x11last_scanned_path\x18\x01 \x01(\tR\x0flastScannedPath\x12(\n" +
 	"\x10last_position_ns\x18\x02 \x01(\x03R\x0elastPositionNs\"\xcb\x01\n" +

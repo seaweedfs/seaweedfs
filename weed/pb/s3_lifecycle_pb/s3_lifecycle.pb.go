@@ -23,29 +23,33 @@ const (
 
 // StreamKind classifies the four blockable streams. ORIGINAL/PREDICATE pause
 // reader cursors; BOOTSTRAP pauses a bucket walker; PENDING pauses a rule's
-// drain task.
+// drain task. Zero is an UNSPECIFIED sentinel — a BlockerRecord whose
+// stream_kind reads as UNSPECIFIED is a corruption signal, not a default.
 type StreamKind int32
 
 const (
-	StreamKind_ORIGINAL  StreamKind = 0
-	StreamKind_PREDICATE StreamKind = 1
-	StreamKind_BOOTSTRAP StreamKind = 2
-	StreamKind_PENDING   StreamKind = 3
+	StreamKind_STREAM_KIND_UNSPECIFIED StreamKind = 0
+	StreamKind_ORIGINAL                StreamKind = 1
+	StreamKind_PREDICATE               StreamKind = 2
+	StreamKind_BOOTSTRAP               StreamKind = 3
+	StreamKind_PENDING                 StreamKind = 4
 )
 
 // Enum value maps for StreamKind.
 var (
 	StreamKind_name = map[int32]string{
-		0: "ORIGINAL",
-		1: "PREDICATE",
-		2: "BOOTSTRAP",
-		3: "PENDING",
+		0: "STREAM_KIND_UNSPECIFIED",
+		1: "ORIGINAL",
+		2: "PREDICATE",
+		3: "BOOTSTRAP",
+		4: "PENDING",
 	}
 	StreamKind_value = map[string]int32{
-		"ORIGINAL":  0,
-		"PREDICATE": 1,
-		"BOOTSTRAP": 2,
-		"PENDING":   3,
+		"STREAM_KIND_UNSPECIFIED": 0,
+		"ORIGINAL":                1,
+		"PREDICATE":               2,
+		"BOOTSTRAP":               3,
+		"PENDING":                 4,
 	}
 )
 
@@ -76,34 +80,42 @@ func (StreamKind) EnumDescriptor() ([]byte, []int) {
 	return file_s3_lifecycle_proto_rawDescGZIP(), []int{0}
 }
 
+// Proto3 best practice: zero value is an UNSPECIFIED sentinel so that
+// legacy / partially-populated payloads don't silently default to a
+// semantically active value. Persisted state files always set explicit
+// non-zero values; reading UNSPECIFIED indicates corruption or a missing
+// field.
 type LifecycleState_RuleKind int32
 
 const (
-	LifecycleState_EXPIRATION_DAYS       LifecycleState_RuleKind = 0
-	LifecycleState_EXPIRATION_DATE       LifecycleState_RuleKind = 1
-	LifecycleState_NONCURRENT_DAYS       LifecycleState_RuleKind = 2
-	LifecycleState_NEWER_NONCURRENT      LifecycleState_RuleKind = 3
-	LifecycleState_ABORT_MPU             LifecycleState_RuleKind = 4
-	LifecycleState_EXPIRED_DELETE_MARKER LifecycleState_RuleKind = 5
+	LifecycleState_RULE_KIND_UNSPECIFIED LifecycleState_RuleKind = 0
+	LifecycleState_EXPIRATION_DAYS       LifecycleState_RuleKind = 1
+	LifecycleState_EXPIRATION_DATE       LifecycleState_RuleKind = 2
+	LifecycleState_NONCURRENT_DAYS       LifecycleState_RuleKind = 3
+	LifecycleState_NEWER_NONCURRENT      LifecycleState_RuleKind = 4
+	LifecycleState_ABORT_MPU             LifecycleState_RuleKind = 5
+	LifecycleState_EXPIRED_DELETE_MARKER LifecycleState_RuleKind = 6
 )
 
 // Enum value maps for LifecycleState_RuleKind.
 var (
 	LifecycleState_RuleKind_name = map[int32]string{
-		0: "EXPIRATION_DAYS",
-		1: "EXPIRATION_DATE",
-		2: "NONCURRENT_DAYS",
-		3: "NEWER_NONCURRENT",
-		4: "ABORT_MPU",
-		5: "EXPIRED_DELETE_MARKER",
+		0: "RULE_KIND_UNSPECIFIED",
+		1: "EXPIRATION_DAYS",
+		2: "EXPIRATION_DATE",
+		3: "NONCURRENT_DAYS",
+		4: "NEWER_NONCURRENT",
+		5: "ABORT_MPU",
+		6: "EXPIRED_DELETE_MARKER",
 	}
 	LifecycleState_RuleKind_value = map[string]int32{
-		"EXPIRATION_DAYS":       0,
-		"EXPIRATION_DATE":       1,
-		"NONCURRENT_DAYS":       2,
-		"NEWER_NONCURRENT":      3,
-		"ABORT_MPU":             4,
-		"EXPIRED_DELETE_MARKER": 5,
+		"RULE_KIND_UNSPECIFIED": 0,
+		"EXPIRATION_DAYS":       1,
+		"EXPIRATION_DATE":       2,
+		"NONCURRENT_DAYS":       3,
+		"NEWER_NONCURRENT":      4,
+		"ABORT_MPU":             5,
+		"EXPIRED_DELETE_MARKER": 6,
 	}
 )
 
@@ -137,28 +149,31 @@ func (LifecycleState_RuleKind) EnumDescriptor() ([]byte, []int) {
 type LifecycleState_RuleMode int32
 
 const (
-	LifecycleState_EVENT_DRIVEN      LifecycleState_RuleMode = 0
-	LifecycleState_SCAN_AT_DATE      LifecycleState_RuleMode = 1
-	LifecycleState_SCAN_ONLY         LifecycleState_RuleMode = 2
-	LifecycleState_DISABLED          LifecycleState_RuleMode = 3
-	LifecycleState_PENDING_BOOTSTRAP LifecycleState_RuleMode = 4
+	LifecycleState_RULE_MODE_UNSPECIFIED LifecycleState_RuleMode = 0
+	LifecycleState_EVENT_DRIVEN          LifecycleState_RuleMode = 1
+	LifecycleState_SCAN_AT_DATE          LifecycleState_RuleMode = 2
+	LifecycleState_SCAN_ONLY             LifecycleState_RuleMode = 3
+	LifecycleState_DISABLED              LifecycleState_RuleMode = 4
+	LifecycleState_PENDING_BOOTSTRAP     LifecycleState_RuleMode = 5
 )
 
 // Enum value maps for LifecycleState_RuleMode.
 var (
 	LifecycleState_RuleMode_name = map[int32]string{
-		0: "EVENT_DRIVEN",
-		1: "SCAN_AT_DATE",
-		2: "SCAN_ONLY",
-		3: "DISABLED",
-		4: "PENDING_BOOTSTRAP",
+		0: "RULE_MODE_UNSPECIFIED",
+		1: "EVENT_DRIVEN",
+		2: "SCAN_AT_DATE",
+		3: "SCAN_ONLY",
+		4: "DISABLED",
+		5: "PENDING_BOOTSTRAP",
 	}
 	LifecycleState_RuleMode_value = map[string]int32{
-		"EVENT_DRIVEN":      0,
-		"SCAN_AT_DATE":      1,
-		"SCAN_ONLY":         2,
-		"DISABLED":          3,
-		"PENDING_BOOTSTRAP": 4,
+		"RULE_MODE_UNSPECIFIED": 0,
+		"EVENT_DRIVEN":          1,
+		"SCAN_AT_DATE":          2,
+		"SCAN_ONLY":             3,
+		"DISABLED":              4,
+		"PENDING_BOOTSTRAP":     5,
 	}
 )
 
@@ -189,22 +204,25 @@ func (LifecycleState_RuleMode) EnumDescriptor() ([]byte, []int) {
 	return file_s3_lifecycle_proto_rawDescGZIP(), []int{3, 1}
 }
 
+// DEGRADED_REASON_UNSPECIFIED replaces the old NONE sentinel: an unset
+// / zero degraded_reason means "no active degradation" — operators
+// treat UNSPECIFIED as healthy.
 type LifecycleState_DegradedReason int32
 
 const (
-	LifecycleState_NONE                    LifecycleState_DegradedReason = 0
-	LifecycleState_LAG_HIGH                LifecycleState_DegradedReason = 1
-	LifecycleState_PENDING_FULL            LifecycleState_DegradedReason = 2
-	LifecycleState_DELETE_FAILURES         LifecycleState_DegradedReason = 3
-	LifecycleState_OPERATOR_PAUSED         LifecycleState_DegradedReason = 4
-	LifecycleState_RETENTION_BELOW_HORIZON LifecycleState_DegradedReason = 5
-	LifecycleState_LOST_LOG                LifecycleState_DegradedReason = 6
+	LifecycleState_DEGRADED_REASON_UNSPECIFIED LifecycleState_DegradedReason = 0
+	LifecycleState_LAG_HIGH                    LifecycleState_DegradedReason = 1
+	LifecycleState_PENDING_FULL                LifecycleState_DegradedReason = 2
+	LifecycleState_DELETE_FAILURES             LifecycleState_DegradedReason = 3
+	LifecycleState_OPERATOR_PAUSED             LifecycleState_DegradedReason = 4
+	LifecycleState_RETENTION_BELOW_HORIZON     LifecycleState_DegradedReason = 5
+	LifecycleState_LOST_LOG                    LifecycleState_DegradedReason = 6
 )
 
 // Enum value maps for LifecycleState_DegradedReason.
 var (
 	LifecycleState_DegradedReason_name = map[int32]string{
-		0: "NONE",
+		0: "DEGRADED_REASON_UNSPECIFIED",
 		1: "LAG_HIGH",
 		2: "PENDING_FULL",
 		3: "DELETE_FAILURES",
@@ -213,13 +231,13 @@ var (
 		6: "LOST_LOG",
 	}
 	LifecycleState_DegradedReason_value = map[string]int32{
-		"NONE":                    0,
-		"LAG_HIGH":                1,
-		"PENDING_FULL":            2,
-		"DELETE_FAILURES":         3,
-		"OPERATOR_PAUSED":         4,
-		"RETENTION_BELOW_HORIZON": 5,
-		"LOST_LOG":                6,
+		"DEGRADED_REASON_UNSPECIFIED": 0,
+		"LAG_HIGH":                    1,
+		"PENDING_FULL":                2,
+		"DELETE_FAILURES":             3,
+		"OPERATOR_PAUSED":             4,
+		"RETENTION_BELOW_HORIZON":     5,
+		"LOST_LOG":                    6,
 	}
 )
 
@@ -501,21 +519,21 @@ func (x *LifecycleState) GetRuleKind() LifecycleState_RuleKind {
 	if x != nil {
 		return x.RuleKind
 	}
-	return LifecycleState_EXPIRATION_DAYS
+	return LifecycleState_RULE_KIND_UNSPECIFIED
 }
 
 func (x *LifecycleState) GetMode() LifecycleState_RuleMode {
 	if x != nil {
 		return x.Mode
 	}
-	return LifecycleState_EVENT_DRIVEN
+	return LifecycleState_RULE_MODE_UNSPECIFIED
 }
 
 func (x *LifecycleState) GetDegradedReason() LifecycleState_DegradedReason {
 	if x != nil {
 		return x.DegradedReason
 	}
-	return LifecycleState_NONE
+	return LifecycleState_DEGRADED_REASON_UNSPECIFIED
 }
 
 func (x *LifecycleState) GetDegradedSinceNs() int64 {
@@ -883,7 +901,7 @@ func (x *TailDrainedKey) GetStreamKind() StreamKind {
 	if x != nil {
 		return x.StreamKind
 	}
-	return StreamKind_ORIGINAL
+	return StreamKind_STREAM_KIND_UNSPECIFIED
 }
 
 func (x *TailDrainedKey) GetFilerId() string {
@@ -962,7 +980,7 @@ func (x *BlockerRecord) GetStreamKind() StreamKind {
 	if x != nil {
 		return x.StreamKind
 	}
-	return StreamKind_ORIGINAL
+	return StreamKind_STREAM_KIND_UNSPECIFIED
 }
 
 func (x *BlockerRecord) GetShard() string {
@@ -1579,7 +1597,7 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"\bmtime_ns\x18\x01 \x01(\x03R\amtimeNs\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x19\n" +
 	"\bhead_fid\x18\x03 \x01(\tR\aheadFid\x12#\n" +
-	"\rextended_hash\x18\x04 \x01(\fR\fextendedHash\"\xa2\b\n" +
+	"\rextended_hash\x18\x04 \x01(\fR\fextendedHash\"\xef\b\n" +
 	"\x0eLifecycleState\x12\x1b\n" +
 	"\trule_hash\x18\x01 \x01(\fR\bruleHash\x12\x17\n" +
 	"\arule_id\x18\x02 \x01(\tR\x06ruleId\x12E\n" +
@@ -1594,22 +1612,24 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	" \x01(\x03R\x0flastEvaluatedNs\x12#\n" +
 	"\rdeleted_total\x18\v \x01(\x03R\fdeletedTotal\x129\n" +
 	"\x19skipped_object_lock_total\x18\f \x01(\x03R\x16skippedObjectLockTotal\x12!\n" +
-	"\fpending_size\x18\r \x01(\x03R\vpendingSize\"\x89\x01\n" +
-	"\bRuleKind\x12\x13\n" +
-	"\x0fEXPIRATION_DAYS\x10\x00\x12\x13\n" +
-	"\x0fEXPIRATION_DATE\x10\x01\x12\x13\n" +
-	"\x0fNONCURRENT_DAYS\x10\x02\x12\x14\n" +
-	"\x10NEWER_NONCURRENT\x10\x03\x12\r\n" +
-	"\tABORT_MPU\x10\x04\x12\x19\n" +
-	"\x15EXPIRED_DELETE_MARKER\x10\x05\"b\n" +
-	"\bRuleMode\x12\x10\n" +
-	"\fEVENT_DRIVEN\x10\x00\x12\x10\n" +
-	"\fSCAN_AT_DATE\x10\x01\x12\r\n" +
-	"\tSCAN_ONLY\x10\x02\x12\f\n" +
-	"\bDISABLED\x10\x03\x12\x15\n" +
-	"\x11PENDING_BOOTSTRAP\x10\x04\"\x8f\x01\n" +
-	"\x0eDegradedReason\x12\b\n" +
-	"\x04NONE\x10\x00\x12\f\n" +
+	"\fpending_size\x18\r \x01(\x03R\vpendingSize\"\xa4\x01\n" +
+	"\bRuleKind\x12\x19\n" +
+	"\x15RULE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fEXPIRATION_DAYS\x10\x01\x12\x13\n" +
+	"\x0fEXPIRATION_DATE\x10\x02\x12\x13\n" +
+	"\x0fNONCURRENT_DAYS\x10\x03\x12\x14\n" +
+	"\x10NEWER_NONCURRENT\x10\x04\x12\r\n" +
+	"\tABORT_MPU\x10\x05\x12\x19\n" +
+	"\x15EXPIRED_DELETE_MARKER\x10\x06\"}\n" +
+	"\bRuleMode\x12\x19\n" +
+	"\x15RULE_MODE_UNSPECIFIED\x10\x00\x12\x10\n" +
+	"\fEVENT_DRIVEN\x10\x01\x12\x10\n" +
+	"\fSCAN_AT_DATE\x10\x02\x12\r\n" +
+	"\tSCAN_ONLY\x10\x03\x12\f\n" +
+	"\bDISABLED\x10\x04\x12\x15\n" +
+	"\x11PENDING_BOOTSTRAP\x10\x05\"\xa6\x01\n" +
+	"\x0eDegradedReason\x12\x1f\n" +
+	"\x1bDEGRADED_REASON_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bLAG_HIGH\x10\x01\x12\x10\n" +
 	"\fPENDING_FULL\x10\x02\x12\x13\n" +
 	"\x0fDELETE_FAILURES\x10\x03\x12\x13\n" +
@@ -1703,13 +1723,14 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"objectPath\x12\x1d\n" +
 	"\n" +
 	"version_id\x18\x04 \x01(\tR\tversionId\x12\x1b\n" +
-	"\trule_hash\x18\x05 \x01(\fR\bruleHash*E\n" +
+	"\trule_hash\x18\x05 \x01(\fR\bruleHash*b\n" +
 	"\n" +
-	"StreamKind\x12\f\n" +
-	"\bORIGINAL\x10\x00\x12\r\n" +
-	"\tPREDICATE\x10\x01\x12\r\n" +
-	"\tBOOTSTRAP\x10\x02\x12\v\n" +
-	"\aPENDING\x10\x03B\\\n" +
+	"StreamKind\x12\x1b\n" +
+	"\x17STREAM_KIND_UNSPECIFIED\x10\x00\x12\f\n" +
+	"\bORIGINAL\x10\x01\x12\r\n" +
+	"\tPREDICATE\x10\x02\x12\r\n" +
+	"\tBOOTSTRAP\x10\x03\x12\v\n" +
+	"\aPENDING\x10\x04B\\\n" +
 	"\x10seaweedfs.clientB\x10S3LifecycleProtoZ6github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pbb\x06proto3"
 
 var (

@@ -121,10 +121,14 @@ message TaskParams {
 // a time); BOOTSTRAP walks a single bucket; DRAIN drains pending exceptions
 // for a single rule.
 message S3LifecycleParams {
+  // Zero is an UNSPECIFIED sentinel: a TaskParams payload whose subtype is
+  // unset must not silently route into the cluster-singleton READ task.
+  // Callers always populate one of READ / BOOTSTRAP / DRAIN.
   enum Subtype {
-    READ      = 0;
-    BOOTSTRAP = 1;
-    DRAIN     = 2;
+    SUBTYPE_UNSPECIFIED = 0;
+    READ                = 1;
+    BOOTSTRAP           = 2;
+    DRAIN               = 3;
   }
   Subtype subtype = 1;
 

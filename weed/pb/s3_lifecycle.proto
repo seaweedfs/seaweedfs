@@ -44,29 +44,39 @@ message EntryIdentity {
 
 // LifecycleState captures the durable per-rule scheduling state.
 message LifecycleState {
+  // Proto3 best practice: zero value is an UNSPECIFIED sentinel so that
+  // legacy / partially-populated payloads don't silently default to a
+  // semantically active value. Persisted state files always set explicit
+  // non-zero values; reading UNSPECIFIED indicates corruption or a missing
+  // field.
   enum RuleKind {
-    EXPIRATION_DAYS         = 0;
-    EXPIRATION_DATE         = 1;
-    NONCURRENT_DAYS         = 2;
-    NEWER_NONCURRENT        = 3;
-    ABORT_MPU               = 4;
-    EXPIRED_DELETE_MARKER   = 5;
+    RULE_KIND_UNSPECIFIED   = 0;
+    EXPIRATION_DAYS         = 1;
+    EXPIRATION_DATE         = 2;
+    NONCURRENT_DAYS         = 3;
+    NEWER_NONCURRENT        = 4;
+    ABORT_MPU               = 5;
+    EXPIRED_DELETE_MARKER   = 6;
   }
   enum RuleMode {
-    EVENT_DRIVEN  = 0;
-    SCAN_AT_DATE  = 1;
-    SCAN_ONLY     = 2;
-    DISABLED      = 3;
-    PENDING_BOOTSTRAP = 4;
+    RULE_MODE_UNSPECIFIED = 0;
+    EVENT_DRIVEN          = 1;
+    SCAN_AT_DATE          = 2;
+    SCAN_ONLY             = 3;
+    DISABLED              = 4;
+    PENDING_BOOTSTRAP     = 5;
   }
+  // DEGRADED_REASON_UNSPECIFIED replaces the old NONE sentinel: an unset
+  // / zero degraded_reason means "no active degradation" — operators
+  // treat UNSPECIFIED as healthy.
   enum DegradedReason {
-    NONE                       = 0;
-    LAG_HIGH                   = 1;
-    PENDING_FULL               = 2;
-    DELETE_FAILURES            = 3;
-    OPERATOR_PAUSED            = 4;
-    RETENTION_BELOW_HORIZON    = 5;
-    LOST_LOG                   = 6;
+    DEGRADED_REASON_UNSPECIFIED = 0;
+    LAG_HIGH                    = 1;
+    PENDING_FULL                = 2;
+    DELETE_FAILURES             = 3;
+    OPERATOR_PAUSED             = 4;
+    RETENTION_BELOW_HORIZON     = 5;
+    LOST_LOG                    = 6;
   }
 
   bytes    rule_hash               = 1; // 8 bytes; key matches the parent dir name
@@ -140,12 +150,14 @@ message TailDrainedKey {
 
 // StreamKind classifies the four blockable streams. ORIGINAL/PREDICATE pause
 // reader cursors; BOOTSTRAP pauses a bucket walker; PENDING pauses a rule's
-// drain task.
+// drain task. Zero is an UNSPECIFIED sentinel — a BlockerRecord whose
+// stream_kind reads as UNSPECIFIED is a corruption signal, not a default.
 enum StreamKind {
-  ORIGINAL  = 0;
-  PREDICATE = 1;
-  BOOTSTRAP = 2;
-  PENDING   = 3;
+  STREAM_KIND_UNSPECIFIED = 0;
+  ORIGINAL                = 1;
+  PREDICATE               = 2;
+  BOOTSTRAP               = 3;
+  PENDING                 = 4;
 }
 
 // BlockerRecord is the durable record of a paused stream. The cursor stays
