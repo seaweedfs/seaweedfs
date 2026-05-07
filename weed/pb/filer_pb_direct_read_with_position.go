@@ -12,25 +12,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// MessagePosition is the per-shard cursor (ts_ns, offset). LogEntry.Offset
-// is per-buffer per-filer, so a single global cursor can't safely resume from
-// a multi-filer merged stream. Local to pb to avoid pulling log_buffer.
+// MessagePosition is the per-shard cursor. LogEntry.Offset is per-filer, so
+// a single global cursor can't resume safely from a merged stream.
 type MessagePosition struct {
 	TsNs   int64
 	Offset int64
 }
 
-// MaxMessagePosition returns the sentinel that pauses a shard's emission
-// entirely; used when the shard has an active blocker. Returned as a value
-// rather than an exported var so an importer can't accidentally mutate it
-// (e.g. `pb.MaxMessagePosition.TsNs = 0` would silently break every
-// `startPos == MaxMessagePosition()` check).
+// MaxMessagePosition pauses a shard's emission. Function-not-var so an
+// importer can't mutate the sentinel.
 func MaxMessagePosition() MessagePosition {
 	return MessagePosition{TsNs: 1<<63 - 1, Offset: 1<<63 - 1}
 }
 
-// LessOrEqual is the strict-`<=` skip predicate so the last resolved event
-// isn't replayed.
+// LessOrEqual: strict `<=` so the last resolved event isn't replayed.
 func (p MessagePosition) LessOrEqual(other MessagePosition) bool {
 	if p.TsNs != other.TsNs {
 		return p.TsNs < other.TsNs
@@ -38,17 +33,12 @@ func (p MessagePosition) LessOrEqual(other MessagePosition) bool {
 	return p.Offset <= other.Offset
 }
 
-// EventCallback receives one delivered event with its shard context. A
-// non-nil error halts the read.
+// EventCallback halts the read on a non-nil error.
 type EventCallback func(event *filer_pb.SubscribeMetadataResponse, filerId string, position MessagePosition) error
 
-// ReadLogFileRefsWithPosition is the per-shard variant of ReadLogFileRefs.
-// Events with (ts, offset) <= startPositions[filer_id] are skipped per
-// shard. Cross-filer ordering is (ts, filerId, offset) — the filerId
-// tiebreak makes retries from the same starting cursor see the same event
-// sequence.
-//
-// Returns lastByFiler so checkpoint writes are atomic.
+// ReadLogFileRefsWithPosition skips events with (ts, offset) <=
+// startPositions[filer_id]. Cross-filer ordering is (ts, filerId, offset)
+// so retries from the same cursor see the same event sequence.
 // startPositions[filer_id] = MaxMessagePosition() pauses that shard.
 func ReadLogFileRefsWithPosition(
 	refs []*filer_pb.LogFileChunkRef,
@@ -162,10 +152,10 @@ func streamEntriesWithPosition(
 	stopTsNs int64,
 	out chan<- *filer_pb.LogEntry,
 ) error {
+	// No file-level fast-skip: FileTsNs is flush-start; the file's last
+	// entry can be later. Without FileMaxTsNs on the ref the per-entry
+	// predicate is the only safe gate.
 	for _, ref := range refs {
-		// No file-level fast-skip: FileTsNs is the flush start, but the
-		// last entry can be later. Without a FileMaxTsNs we can't safely
-		// prune whole files.
 		entries, err := readLogFileEntries(newReader, ref.Chunks, 0, stopTsNs)
 		if err != nil {
 			if isChunkNotFound(err) {
