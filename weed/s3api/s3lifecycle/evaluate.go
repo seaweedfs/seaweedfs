@@ -5,24 +5,31 @@ import (
 	"time"
 )
 
-// Evaluate decides which lifecycle action applies to info under rule at the
-// given wall-clock time. Returns ActionNone when the rule is disabled, the
-// filter rejects, the object shape doesn't match any action this rule defines,
-// or no action is yet due.
+// EvaluateAction decides whether the (rule, kind) compiled action fires for
+// info at the given wall-clock time. Returns ActionNone when the rule is
+// disabled, the filter rejects, the object shape doesn't match this kind, or
+// the kind isn't yet due.
 //
-// Action selection is by object shape (in priority order):
+// One XML rule may declare multiple actions in parallel. The engine compiles
+// each into its own ActionKey and calls EvaluateAction once per (rule, kind,
+// entry); sibling actions are independent and may produce different verdicts
+// for the same entry. Callers that need to evaluate every action of a rule
+// iterate `RuleActionKinds(rule)` and call this helper per kind.
 //
-//	IsMPUInit                   -> AbortIncompleteMultipartUpload
-//	IsLatest && IsDeleteMarker  -> ExpiredObjectDeleteMarker (only when sole survivor)
-//	IsLatest                    -> Expiration (Days or Date)
-//	non-current (regular OR     -> NoncurrentVersionExpiration
-//	  non-current delete marker)   (Days + NewerNoncurrentVersions)
+// Action selection by object shape per kind:
 //
-// Per AWS S3 semantics, a non-current delete marker is just another version
-// and is eligible under NoncurrentVersionExpirationDays. Only the *current*
-// delete marker (and only as sole survivor) is the special-cased
-// ExpiredObjectDeleteMarker action.
-func Evaluate(rule *Rule, info *ObjectInfo, now time.Time) EvalResult {
+//	IsMPUInit                   + ActionKindAbortMPU             -> AbortIncompleteMultipartUpload
+//	IsLatest && IsDeleteMarker  + ActionKindExpiredDeleteMarker  -> ExpiredObjectDeleteMarker (sole survivor)
+//	IsLatest                    + ActionKindExpirationDays       -> DeleteObject (Days threshold)
+//	IsLatest                    + ActionKindExpirationDate       -> DeleteObject (date threshold)
+//	non-current                 + ActionKindNoncurrentDays       -> DeleteVersion (Days + NewerNoncurrent retention)
+//	non-current                 + ActionKindNewerNoncurrent      -> DeleteVersion (count-only)
+//
+// Per AWS S3 semantics, a non-current delete marker is treated as a regular
+// non-current version under NONCURRENT_DAYS / NEWER_NONCURRENT. Only the
+// *current* delete marker (and only as sole survivor) routes to
+// EXPIRED_DELETE_MARKER.
+func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time) EvalResult {
 	none := EvalResult{Action: ActionNone}
 	if rule == nil || info == nil || rule.Status != StatusEnabled {
 		return none
@@ -31,56 +38,74 @@ func Evaluate(rule *Rule, info *ObjectInfo, now time.Time) EvalResult {
 		return none
 	}
 
-	switch {
-	case info.IsMPUInit:
-		if rule.AbortMPUDaysAfterInitiation > 0 {
-			due := info.ModTime.AddDate(0, 0, rule.AbortMPUDaysAfterInitiation)
-			if !now.Before(due) {
-				return EvalResult{Action: ActionAbortMultipartUpload, RuleID: rule.ID}
-			}
-		}
-		return none
-
-	case info.IsLatest && info.IsDeleteMarker:
-		if rule.ExpiredObjectDeleteMarker && info.NumVersions == 1 {
-			return EvalResult{Action: ActionExpireDeleteMarker, RuleID: rule.ID}
-		}
-		return none
-
-	case info.IsLatest:
-		if rule.ExpirationDays > 0 {
-			due := info.ModTime.AddDate(0, 0, rule.ExpirationDays)
-			if !now.Before(due) {
-				return EvalResult{Action: ActionDeleteObject, RuleID: rule.ID}
-			}
-		}
-		if !rule.ExpirationDate.IsZero() && !now.Before(rule.ExpirationDate) {
-			return EvalResult{Action: ActionDeleteObject, RuleID: rule.ID}
-		}
-		return none
-
-	default:
-		// Non-current path. Includes non-current delete markers: per AWS,
-		// NoncurrentVersionExpirationDays applies to them too.
-		if rule.NoncurrentVersionExpirationDays > 0 {
-			base := info.SuccessorModTime
-			if base.IsZero() {
-				base = info.ModTime
-			}
-			due := base.AddDate(0, 0, rule.NoncurrentVersionExpirationDays)
-			if !now.Before(due) {
-				if rule.NewerNoncurrentVersions <= 0 || info.NoncurrentIndex >= rule.NewerNoncurrentVersions {
-					return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
-				}
-			}
+	switch kind {
+	case ActionKindAbortMPU:
+		if !info.IsMPUInit || rule.AbortMPUDaysAfterInitiation <= 0 {
 			return none
 		}
-		// NewerNoncurrentVersions without a day threshold: count-only retention.
-		if rule.NewerNoncurrentVersions > 0 && info.NoncurrentIndex >= rule.NewerNoncurrentVersions {
-			return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
+		due := info.ModTime.AddDate(0, 0, rule.AbortMPUDaysAfterInitiation)
+		if now.Before(due) {
+			return none
 		}
-		return none
+		return EvalResult{Action: ActionAbortMultipartUpload, RuleID: rule.ID}
+
+	case ActionKindExpiredDeleteMarker:
+		if !info.IsLatest || !info.IsDeleteMarker || !rule.ExpiredObjectDeleteMarker {
+			return none
+		}
+		if info.NumVersions != 1 {
+			return none
+		}
+		return EvalResult{Action: ActionExpireDeleteMarker, RuleID: rule.ID}
+
+	case ActionKindExpirationDays:
+		if !info.IsLatest || info.IsDeleteMarker || rule.ExpirationDays <= 0 {
+			return none
+		}
+		due := info.ModTime.AddDate(0, 0, rule.ExpirationDays)
+		if now.Before(due) {
+			return none
+		}
+		return EvalResult{Action: ActionDeleteObject, RuleID: rule.ID}
+
+	case ActionKindExpirationDate:
+		if !info.IsLatest || info.IsDeleteMarker || rule.ExpirationDate.IsZero() {
+			return none
+		}
+		if now.Before(rule.ExpirationDate) {
+			return none
+		}
+		return EvalResult{Action: ActionDeleteObject, RuleID: rule.ID}
+
+	case ActionKindNoncurrentDays:
+		if info.IsLatest || rule.NoncurrentVersionExpirationDays <= 0 {
+			return none
+		}
+		base := info.SuccessorModTime
+		if base.IsZero() {
+			base = info.ModTime
+		}
+		due := base.AddDate(0, 0, rule.NoncurrentVersionExpirationDays)
+		if now.Before(due) {
+			return none
+		}
+		if rule.NewerNoncurrentVersions > 0 && info.NoncurrentIndex < rule.NewerNoncurrentVersions {
+			return none
+		}
+		return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
+
+	case ActionKindNewerNoncurrent:
+		// Pure count-based: only when NoncurrentDays is unset (when paired,
+		// the rule expands to NONCURRENT_DAYS instead — see RuleActionKinds).
+		if info.IsLatest || rule.NoncurrentVersionExpirationDays > 0 || rule.NewerNoncurrentVersions <= 0 {
+			return none
+		}
+		if info.NoncurrentIndex < rule.NewerNoncurrentVersions {
+			return none
+		}
+		return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
 	}
+	return none
 }
 
 func filterMatches(rule *Rule, info *ObjectInfo) bool {
