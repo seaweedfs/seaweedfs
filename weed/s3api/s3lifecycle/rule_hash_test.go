@@ -21,11 +21,15 @@ func TestRuleHash_TagOrderInvariant(t *testing.T) {
 	}
 }
 
-func TestRuleHash_PrefixTrailingSlashInvariant(t *testing.T) {
+func TestRuleHash_PrefixTrailingSlashMattersToHash(t *testing.T) {
+	// "logs" matches "logs", "logsmore/x", "logs/x" (literal HasPrefix);
+	// "logs/" matches only "logs/x". Different match sets -> different rules
+	// -> different hashes. Collapsing would let an edit silently reuse
+	// state for a rule that no longer matches the same objects.
 	r1 := &Rule{ExpirationDays: 30, Prefix: "logs"}
 	r2 := &Rule{ExpirationDays: 30, Prefix: "logs/"}
-	if RuleHash(r1) != RuleHash(r2) {
-		t.Fatalf("trailing slash should not affect hash")
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatalf("trailing slash MUST affect hash; rules match different objects")
 	}
 }
 

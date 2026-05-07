@@ -12,10 +12,14 @@ import (
 // representation. The hash is stable across:
 //
 //   - tag-key reorder (FilterTags is sorted before hashing)
-//   - prefix trailing-slash variation
 //   - rule.ID changes (ID is excluded — it's display-only)
 //   - rule.Status flips (Enabled <-> Disabled — state continuity preserved
 //     across operator toggles)
+//
+// Prefix is hashed verbatim: "logs" and "logs/" produce different hashes
+// because they match different objects under literal prefix semantics
+// (strings.HasPrefix). Collapsing them would let an edit silently reuse
+// per-rule durable state for a rule that no longer matches the same set.
 //
 // Different action shapes (different days, different filter, different
 // action types) hash to different values.
@@ -26,7 +30,7 @@ func RuleHash(rule *Rule) [8]byte {
 	}
 	var b strings.Builder
 	// Filter.
-	fmt.Fprintf(&b, "prefix=%s\n", normalizePrefix(rule.Prefix))
+	fmt.Fprintf(&b, "prefix=%s\n", rule.Prefix)
 	tagKeys := make([]string, 0, len(rule.FilterTags))
 	for k := range rule.FilterTags {
 		tagKeys = append(tagKeys, k)
@@ -49,10 +53,6 @@ func RuleHash(rule *Rule) [8]byte {
 	var out [8]byte
 	copy(out[:], sum[:8])
 	return out
-}
-
-func normalizePrefix(p string) string {
-	return strings.TrimRight(p, "/")
 }
 
 func canonicalTime(t time.Time) string {
