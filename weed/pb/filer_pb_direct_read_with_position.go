@@ -180,13 +180,11 @@ func streamEntriesWithPosition(
 	out chan<- *filer_pb.LogEntry,
 ) error {
 	for _, ref := range refs {
-		// Optimization: skip entire file if its FileTsNs is provably before startPos.
-		// LogEntry.TsNs is monotonically >= FileTsNs within a file, but a file's
-		// last entry can be later; we conservatively only skip when FileTsNs is
-		// strictly less than startPos.TsNs (leave equal-ts files for per-entry check).
-		if ref.FileTsNs < startPos.TsNs {
-			// fall through; the per-entry predicate handles edge cases
-		}
+		// No file-level fast-skip: the chunk's FileTsNs is the start time
+		// of the flush, but its last entry can have a TsNs later than any
+		// other file in the sequence. Without a FileMaxTsNs on the ref we
+		// can't safely prune whole files; the per-entry predicate below
+		// handles every case correctly.
 		entries, err := readLogFileEntries(newReader, ref.Chunks, 0, stopTsNs)
 		if err != nil {
 			if isChunkNotFound(err) {
