@@ -11,6 +11,8 @@ import (
 
 var snapshotIDSeq atomic.Uint64
 
+// CompileInput: at most one entry per Bucket. Duplicates would overwrite
+// earlier entries' BucketIndex.
 type CompileInput struct {
 	Bucket    string
 	Rules     []*s3lifecycle.Rule
