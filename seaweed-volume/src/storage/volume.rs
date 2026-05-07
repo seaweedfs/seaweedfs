@@ -516,10 +516,7 @@ pub struct Volume {
     /// Whether this volume has a remote file reference.
     pub has_remote_file: bool,
 
-    /// Set the first time a read sees `self.nm == None` (e.g. after a failed
-    /// CommitCompact reload) so operators get a clear signal in the log
-    /// instead of silent NotFound responses. Reset on successful load. See
-    /// Go's `Volume.nmNilLogged` (#9339).
+    /// Logged once per nil-nm read; reset on successful load.
     nm_nil_logged: AtomicBool,
 }
 
@@ -781,9 +778,6 @@ impl Volume {
         Ok(())
     }
 
-    /// Helper that mirrors Go's `Volume.logNeedleMapNil`. Returns the needle
-    /// map or `NotFound`, logging once per volume on the nil path so a
-    /// half-loaded volume is visible to operators (#9339).
     fn nm_or_not_found(&self) -> Result<&NeedleMap, VolumeError> {
         match self.nm.as_ref() {
             Some(nm) => Ok(nm),

@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// #9339: readNeedle / readNeedleDataInto used to panic when v.nm is nil
-// (failed CommitCompact reload, stray-.vif remote-tier load).
 func TestReadNeedleNilNeedleMap(t *testing.T) {
 	dir := t.TempDir()
 

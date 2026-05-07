@@ -17,9 +17,6 @@ import (
 
 const PagedReadLimit = 1024 * 1024
 
-// logNeedleMapNil emits one error per volume when reads land on a nil
-// needle map (#9339). Without this, a half-loaded volume just returns
-// ErrorNotFound silently and the operator has nothing to grep for.
 func (v *Volume) logNeedleMapNil() {
 	if !v.nmNilLogged.Swap(true) {
 		glog.Errorf("volume %d: needle map not loaded; reads return not-found until reload succeeds", v.Id)
