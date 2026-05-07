@@ -112,7 +112,41 @@ message TaskParams {
     BalanceTaskParams balance_params = 11;
     ReplicationTaskParams replication_params = 12;
     EcBalanceTaskParams ec_balance_params = 13;
+    S3LifecycleParams s3_lifecycle_params = 14;
   }
+}
+
+// S3LifecycleParams routes a worker task to one of the three lifecycle
+// subroutines. READ is the cluster-singleton meta-log reader (one task at
+// a time); BOOTSTRAP walks a single bucket; DRAIN drains pending exceptions
+// for a single rule.
+message S3LifecycleParams {
+  enum Subtype {
+    READ      = 0;
+    BOOTSTRAP = 1;
+    DRAIN     = 2;
+  }
+  Subtype subtype = 1;
+
+  // Required for BOOTSTRAP and DRAIN; ignored for READ. rule_hash is
+  // optional for BOOTSTRAP (omitting walks all rules for the bucket).
+  string bucket    = 2;
+  bytes  rule_hash = 3; // 8 bytes when present
+
+  bool   force                 = 4; // operator override; bypasses scheduling guards
+  int64  batch_time_budget_ns  = 5; // 0 = use default
+  int32  batch_event_budget    = 6; // 0 = use default
+
+  ContinuationHint continuation = 7; // resume hint for kill-resume tasks
+}
+
+// ContinuationHint lets a long-running BOOTSTRAP or READ task hand its
+// resume point to the next scheduled invocation without going through
+// durable state. The durable state files are still authoritative; this
+// is just a scheduling hint to skip an unnecessary fresh start.
+message ContinuationHint {
+  string last_scanned_path = 1; // BOOTSTRAP only
+  int64  last_position_ns  = 2; // READ only (advisory)
 }
 
 // VacuumTaskParams for vacuum operations
