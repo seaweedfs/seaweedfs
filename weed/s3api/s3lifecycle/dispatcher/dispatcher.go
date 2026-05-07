@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -121,6 +122,14 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, m router.Match, now time.T
 	}
 	resp, err := d.Client.LifecycleDelete(ctx, req)
 	if err != nil {
+		// Context cancellation is shutdown, not a transport failure: put
+		// the Match back on the schedule untouched so the next worker
+		// run picks it up at its original DueTime, with no retry-budget
+		// burn.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			d.Schedule.Add(m)
+			return
+		}
 		// Transport error: classify as RETRY_LATER. The remote handler
 		// already classifies its own filer-side errors; the only path
 		// that hits this branch is the RPC itself failing.

@@ -173,6 +173,33 @@ func TestDispatchBlockedFreezesCursor(t *testing.T) {
 	}
 }
 
+func TestDispatchContextCancelDoesNotBurnBudget(t *testing.T) {
+	// Worker shutdown causes the in-flight RPC to return context.Canceled.
+	// The Match should go back on the schedule untouched; no retry-budget
+	// burn means a quick restart can't escalate it to BLOCKED.
+	client := &fakeClient{
+		respond: func(int) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+			return nil, context.Canceled
+		},
+	}
+	d, sched := newDispatcher(client)
+	d.RetryBudget = 1
+	t0 := time.Now()
+	m := mkMatch(t0, t0, "obj")
+	sched.Add(m)
+
+	d.Tick(context.Background(), t0)
+	if sched.Len() != 1 {
+		t.Fatalf("expected re-queue on ctx cancel, sched.Len=%d", sched.Len())
+	}
+	if d.Cursor.IsFrozen(m.Key) {
+		t.Fatal("ctx cancel must not freeze cursor")
+	}
+	if got := d.retries[keyOf(m)]; got != 0 {
+		t.Fatalf("ctx cancel must not burn retry budget, retries=%d", got)
+	}
+}
+
 func TestDispatchTransportErrorRetries(t *testing.T) {
 	// gRPC error: classified as RETRY_LATER. After the budget the cursor freezes.
 	client := &fakeClient{
