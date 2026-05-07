@@ -71,57 +71,72 @@ func RetainedLogRangePerShard(ctx context.Context, lister LogDirLister) (map[str
 
 // walkLogChunks iterates every (filerId, chunk-time) tuple under SystemLogDir.
 // cb returns false to stop early.
+//
+// Day directories are buffered (a handful of entries); per-day chunk
+// directories are streamed page-by-page so a single day's hundreds of
+// thousands of chunks never accumulate in a slice.
 func walkLogChunks(ctx context.Context, lister LogDirLister, cb func(filerId string, ts time.Time) bool) error {
-	dayEntries, err := listAll(ctx, lister, SystemLogDir)
-	if err != nil {
-		return err
-	}
-	for _, day := range dayEntries {
+	stop := errStopWalk
+	dayErr := streamEntries(ctx, lister, SystemLogDir, func(day *filer_pb.Entry) error {
 		if !day.IsDirectory {
-			continue
+			return nil
 		}
-		hourMinuteEntries, err := listAll(ctx, lister, SystemLogDir+"/"+day.Name)
-		if err != nil {
-			return fmt.Errorf("list %s/%s: %w", SystemLogDir, day.Name, err)
-		}
-		for _, hm := range hourMinuteEntries {
+		err := streamEntries(ctx, lister, SystemLogDir+"/"+day.Name, func(hm *filer_pb.Entry) error {
 			filerId := getFilerIdFromName(hm.Name)
 			if filerId == "" {
-				continue
+				return nil
 			}
 			ts, ok := parseChunkTime(day.Name, hm.Name)
 			if !ok {
-				continue
-			}
-			if !cb(filerId, ts) {
 				return nil
 			}
+			if !cb(filerId, ts) {
+				return stop
+			}
+			return nil
+		})
+		if err != nil && err != stop {
+			return fmt.Errorf("list %s/%s: %w", SystemLogDir, day.Name, err)
 		}
+		return err
+	})
+	if dayErr == stop {
+		return nil
 	}
-	return nil
+	return dayErr
 }
+
+// errStopWalk is the sentinel walkLogChunks uses to short-circuit nested
+// streamEntries calls when cb returns false.
+var errStopWalk = fmt.Errorf("stop walk")
 
 // listingLimit is intentionally large; per-day SystemLogDir holds ~1440 entries.
 const listingLimit = 4096
 
-func listAll(ctx context.Context, lister LogDirLister, dir string) ([]*filer_pb.Entry, error) {
-	var out []*filer_pb.Entry
+// streamEntries paginates ListLogDirEntries and invokes fn per entry without
+// buffering the whole directory. fn returning a non-nil error halts the walk
+// and bubbles back; the caller decides whether the error is a real failure
+// or a sentinel-driven early stop.
+func streamEntries(ctx context.Context, lister LogDirLister, dir string, fn func(*filer_pb.Entry) error) error {
 	startFrom := ""
 	for {
 		entries, err := lister.ListLogDirEntries(ctx, dir, startFrom, listingLimit)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(entries) == 0 {
-			break
+			return nil
 		}
-		out = append(out, entries...)
+		for _, e := range entries {
+			if err := fn(e); err != nil {
+				return err
+			}
+		}
 		if len(entries) < listingLimit {
-			break
+			return nil
 		}
 		startFrom = entries[len(entries)-1].Name
 	}
-	return out, nil
 }
 
 // getFilerIdFromName parses "HH-MM.<filerId>"; returns "" on mismatch.
