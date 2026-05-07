@@ -13,7 +13,7 @@ gen:
 	protoc mount_peer.proto --go_out=./mount_peer_pb --go-grpc_out=./mount_peer_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc s3.proto --go_out=./s3_pb --go-grpc_out=./s3_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	mkdir -p ./s3_lifecycle_pb
-	protoc s3_lifecycle.proto --go_out=./s3_lifecycle_pb --go_opt=paths=source_relative
+	protoc s3_lifecycle.proto --go_out=./s3_lifecycle_pb --go-grpc_out=./s3_lifecycle_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_broker.proto --go_out=./mq_pb --go-grpc_out=./mq_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_schema.proto --go_out=./schema_pb --go-grpc_out=./schema_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_agent.proto --go_out=./mq_agent_pb --go-grpc_out=./mq_agent_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative

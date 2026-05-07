@@ -33,6 +33,66 @@ enum ActionKind {
   EXPIRED_DELETE_MARKER   = 6; // Expiration.ExpiredObjectDeleteMarker
 }
 
+// SeaweedS3LifecycleInternal is the worker-to-S3 service that performs the
+// actual lifecycle deletion. The lifecycle worker computes the (rule, action)
+// verdict locally; the S3 server is the only component allowed to mutate the
+// filer state, so it gets the final word: it re-fetches the live entry,
+// verifies the EntryIdentity CAS, runs object-lock protections, and dispatches
+// to the appropriate internal helper.
+service SeaweedS3LifecycleInternal {
+  rpc LifecycleDelete(LifecycleDeleteRequest) returns (LifecycleDeleteResponse);
+}
+
+// LifecycleDeleteOutcome captures every per-event verdict the worker needs.
+// Cursor advance / pending mutation rules:
+//
+//   DONE                 -> advance cursor / drop pending
+//   NOOP_RESOLVED        -> advance cursor / drop pending (object already gone or stale identity)
+//   SKIPPED_OBJECT_LOCK  -> log + counter; advance cursor (per design: object lock is operator concern)
+//   RETRY_LATER          -> hold cursor; feed retry-budget; next batch retries from same position
+//   BLOCKED              -> hold cursor; durable BlockerRecord written; operator must intervene
+enum LifecycleDeleteOutcome {
+  LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED = 0;
+  DONE                                 = 1;
+  NOOP_RESOLVED                        = 2;
+  SKIPPED_OBJECT_LOCK                  = 3;
+  RETRY_LATER                          = 4;
+  BLOCKED                              = 5;
+}
+
+message LifecycleDeleteRequest {
+  // Routing.
+  string     bucket       = 1;
+  string     object_path  = 2; // bucket-relative; no leading slash
+  string     version_id   = 3; // empty for non-versioned
+  bytes      rule_hash    = 4; // 8 bytes; matches the rule's per-rule dir
+  ActionKind action_kind  = 5; // chooses dispatch within the rule
+
+  // Stream context (echoed in BlockerRecord on FATAL outcomes so operators
+  // can resolve the right (shard, delay) tuple).
+  string  stream_shard         = 10;
+  int64   stream_delay_seconds = 11;
+  int64   stream_position_ts_ns = 12;
+  int64   stream_position_offset = 13;
+
+  // CAS witness. The server re-fetches the live entry and aborts as
+  // NOOP_RESOLVED (STALE_IDENTITY) if any field doesn't match.
+  EntryIdentity expected_identity = 20;
+
+  // Snapshot id at the time the worker computed this verdict; the server
+  // verifies the (rule_hash, action_kind) is still in the current policy
+  // snapshot and aborts as NOOP_RESOLVED (STALE_POLICY) if not.
+  uint64 engine_snapshot_id = 21;
+}
+
+message LifecycleDeleteResponse {
+  LifecycleDeleteOutcome outcome = 1;
+  // Human-readable cause, e.g. "STALE_IDENTITY: mtime drift",
+  // "FATAL_EVENT_ERROR: malformed entry", or "TRANSPORT_ERROR: filer
+  // unavailable". Echoed into BlockerRecord.last_error on FATAL.
+  string reason = 2;
+}
+
 // MessagePosition mirrors weed/util/log_buffer.MessagePosition for durable
 // storage. ts_ns + offset uniquely identifies a position within a per-filer
 // log buffer; per-shard cursors (see ReaderState) use this shape to skip past
