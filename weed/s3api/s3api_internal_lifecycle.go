@@ -14,16 +14,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-// LifecycleDelete executes one (rule, action) verdict against one entry.
-// Steps: re-fetch live, identity CAS, object-lock check, dispatch by kind.
-// Errors surface as outcomes (NOOP / RETRY_LATER / BLOCKED); the handler
-// itself doesn't touch reader cursors or pending state.
+// LifecycleDelete executes one (rule, action) verdict: re-fetch, identity
+// CAS, object-lock check, dispatch by kind. Errors surface as outcomes;
+// reader cursors and pending state are the worker's concern.
 func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	if req == nil || req.Bucket == "" || req.ObjectPath == "" {
 		return blocked("FATAL_EVENT_ERROR: empty bucket or object_path"), nil
 	}
 
-	// MPU init lives at <bucket>/.uploads/<id>/; doesn't go through getObjectEntry.
+	// MPU init lives at .uploads/<id>/; not handled by getObjectEntry.
 	if req.ActionKind == s3_lifecycle_pb.ActionKind_ABORT_MPU {
 		return s3a.lifecycleAbortMPU(ctx, req)
 	}
@@ -33,8 +32,6 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
 			return noopResolved("NOT_FOUND"), nil
 		}
-		// Transient: worker retries; sustained failures eventually promote
-		// to BLOCKED via the retry budget.
 		glog.V(1).Infof("lifecycle: live fetch %s/%s@%s: %v", req.Bucket, req.ObjectPath, req.VersionId, err)
 		return retryLater("TRANSPORT_ERROR: " + err.Error()), nil
 	}
@@ -44,11 +41,9 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 		return noopResolved("STALE_IDENTITY"), nil
 	}
 
-	// Lifecycle never bypasses governance/compliance; *http.Request is only
-	// dereferenced when bypass is allowed, so passing nil is safe here.
+	// Lifecycle never bypasses governance/compliance; the http.Request is
+	// only read when bypass is allowed, so nil is safe here.
 	if err := s3a.enforceObjectLockProtections(nil, req.Bucket, req.ObjectPath, req.VersionId, false); err != nil {
-		// Lock-held / lookup error: skip and let the safety scan revisit
-		// once the hold lifts. Lifecycle doesn't track retain-until itself.
 		glog.V(2).Infof("lifecycle: SKIPPED_OBJECT_LOCK %s/%s@%s: %v", req.Bucket, req.ObjectPath, req.VersionId, err)
 		return &s3_lifecycle_pb.LifecycleDeleteResponse{
 			Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_SKIPPED_OBJECT_LOCK,
@@ -62,17 +57,9 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	switch req.ActionKind {
 	case s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, s3_lifecycle_pb.ActionKind_EXPIRATION_DATE:
-		// Current-version expiration. AWS S3 semantics depend on the bucket's
-		// versioning state:
-		//   - Enabled:    insert a delete marker; the prior current entry
-		//                 becomes a non-current version (retained).
-		//   - Suspended:  remove the existing null version and insert a new
-		//                 delete marker (mirrors a user DELETE on suspended
-		//                 versioning).
-		//   - Off:        remove the entry outright.
-		// Filer round-trips classify as RETRY_LATER by default; the worker's
-		// retry budget promotes sustained transients to BLOCKED. BLOCKED is
-		// reserved for clearly deterministic errors.
+		// Current-version expiration: Enabled -> delete marker; Suspended
+		// -> delete null + new marker; Off -> remove. Filer errors classify
+		// as RETRY_LATER; the worker's budget promotes to BLOCKED.
 		state, vErr := s3a.getVersioningState(req.Bucket)
 		if vErr != nil {
 			return retryLater("TRANSPORT_ERROR: versioning lookup: " + vErr.Error()), nil
@@ -84,7 +71,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			}
 			return done(), nil
 		case s3_constants.VersioningSuspended:
-			// Best-effort null-version removal; NotFound is benign here.
+			// Best-effort null delete; NotFound is benign.
 			if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, "null"); err != nil {
 				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
 					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
@@ -110,8 +97,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 	case s3_lifecycle_pb.ActionKind_NONCURRENT_DAYS,
 		s3_lifecycle_pb.ActionKind_NEWER_NONCURRENT,
 		s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER:
-		// EXPIRED_DELETE_MARKER targets the marker version itself; same code
-		// path as any other version-specific delete.
+		// EXPIRED_DELETE_MARKER targets the marker version itself.
 		if req.VersionId == "" {
 			return blocked("FATAL_EVENT_ERROR: version_id required for noncurrent / delete-marker delete"), nil
 		}
@@ -137,10 +123,9 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	return retryLater("ABORT_MPU not yet wired"), nil
 }
 
-// computeEntryIdentity captures mtime, size, head fid, and a sorted-Extended
-// hash. An overwrite changes mtime/size/fid; a metadata edit changes
-// Extended; a snapshot-restore that preserves mtime+size still differs in
-// head_fid.
+// computeEntryIdentity captures (mtime, size, head fid, sorted-Extended hash):
+// an overwrite changes mtime/size/fid; a metadata edit changes Extended; a
+// snapshot-restore that preserves mtime+size still differs in head_fid.
 func computeEntryIdentity(entry *filer_pb.Entry) *s3_lifecycle_pb.EntryIdentity {
 	if entry == nil {
 		return nil
@@ -157,8 +142,8 @@ func computeEntryIdentity(entry *filer_pb.Entry) *s3_lifecycle_pb.EntryIdentity 
 	return id
 }
 
-// hashExtended is length-prefixed so a forged tag value can't collide with
-// a legitimate two-tag map.
+// hashExtended is length-prefixed; a forged tag value can't collide with a
+// legitimate multi-tag map.
 func hashExtended(ext map[string][]byte) []byte {
 	if len(ext) == 0 {
 		return nil
@@ -183,7 +168,7 @@ func hashExtended(ext map[string][]byte) []byte {
 
 func identityMatches(live, want *s3_lifecycle_pb.EntryIdentity) bool {
 	if want == nil {
-		// No CAS witness supplied (early bootstrap path); skip the check.
+		// No CAS witness (early bootstrap); skip.
 		return true
 	}
 	if live == nil {
