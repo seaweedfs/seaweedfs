@@ -108,7 +108,7 @@ func buildObjectInfo(ev *reader.Event) *s3lifecycle.ObjectInfo {
 	}
 	info := &s3lifecycle.ObjectInfo{
 		Key:         ev.Key,
-		ModTime:     time.Unix(entry.Attributes.Mtime, 0),
+		ModTime:     time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),
 		Size:        int64(entry.Attributes.FileSize),
 		IsLatest:    true,
 		NumVersions: 1,
