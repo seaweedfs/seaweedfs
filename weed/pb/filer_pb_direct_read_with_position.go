@@ -20,9 +20,14 @@ type MessagePosition struct {
 	Offset int64
 }
 
-// MaxMessagePosition pauses a shard's emission entirely; used when the shard
-// has an active blocker.
-var MaxMessagePosition = MessagePosition{TsNs: 1<<63 - 1, Offset: 1<<63 - 1}
+// MaxMessagePosition returns the sentinel that pauses a shard's emission
+// entirely; used when the shard has an active blocker. Returned as a value
+// rather than an exported var so an importer can't accidentally mutate it
+// (e.g. `pb.MaxMessagePosition.TsNs = 0` would silently break every
+// `startPos == MaxMessagePosition()` check).
+func MaxMessagePosition() MessagePosition {
+	return MessagePosition{TsNs: 1<<63 - 1, Offset: 1<<63 - 1}
+}
 
 // LessOrEqual is the strict-`<=` skip predicate so the last resolved event
 // isn't replayed.
@@ -44,7 +49,7 @@ type EventCallback func(event *filer_pb.SubscribeMetadataResponse, filerId strin
 // sequence.
 //
 // Returns lastByFiler so checkpoint writes are atomic.
-// startPositions[filer_id] = MaxMessagePosition pauses that shard.
+// startPositions[filer_id] = MaxMessagePosition() pauses that shard.
 func ReadLogFileRefsWithPosition(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
@@ -80,7 +85,7 @@ func ReadLogFileRefsWithPosition(
 	var wg sync.WaitGroup
 	for _, fid := range filerOrder {
 		startPos := startPositions[fid]
-		paused := startPos == MaxMessagePosition
+		paused := startPos == MaxMessagePosition()
 		ch := make(chan *filer_pb.LogEntry, 256)
 		errCh := make(chan error, 1)
 		s := &filerStream{id: fid, ch: ch, errCh: errCh, startPos: startPos, paused: paused}

@@ -161,7 +161,7 @@ func TestReadLogFileRefsWithPosition_PerShardSkip(t *testing.T) {
 func TestReadLogFileRefsWithPosition_PausedShardEmitsNothing(t *testing.T) {
 	pt := newPositionedTest()
 	startPositions := map[string]MessagePosition{
-		"alpha": MaxMessagePosition, // paused (active blocker on shard alpha)
+		"alpha": MaxMessagePosition(), // paused (active blocker on shard alpha)
 		"beta":  {TsNs: 0, Offset: 0},
 	}
 	var alphaEmits, betaEmits int
