@@ -168,10 +168,14 @@ func (r *Reader) extractBucketKey(resp *filer_pb.SubscribeMetadataResponse) (str
 
 	// Pre-normalized prefix (BucketsPath with trailing slash) is computed
 	// once in Run; bucket-root events arrive as either "/buckets" or
-	// "/buckets/", so accept both.
+	// "/buckets/", so accept both. The fallback path mirrors Run's
+	// normalization for tests that call extractBucketKey directly.
 	prefix := r.bucketsPathSlash
 	if prefix == "" {
-		prefix = r.BucketsPath + "/"
+		prefix = r.BucketsPath
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
 	}
 	bare := strings.TrimSuffix(prefix, "/")
 	var rest string
