@@ -186,13 +186,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	}
 
-	// Resolve the filer subtree to walk. -collection wins; otherwise, when
-	// -volumeId is set and every requested volume shares one non-empty
-	// collection that maps to an existing bucket directory, scope the BFS to
-	// that bucket. This relies on the convention that a collection named like
-	// a bucket only holds chunks for entries under <bucketsPath>/<bucket>;
-	// any deviation (empty collection, no matching bucket, multi-collection
-	// selection) falls back to walking from "/".
 	c.scopedFilerPath = c.resolveScopedFilerPath(dataNodeVolumeIdToVInfo)
 	if *c.verbose && c.scopedFilerPath != "/" {
 		fmt.Fprintf(c.writer, "scoping filer walk to %s\n", c.scopedFilerPath)
@@ -876,9 +869,6 @@ func (c *commandVolumeFsck) getCollectFilerFilePath() string {
 	return "/"
 }
 
-// resolveScopedFilerPath narrows the BFS root to a bucket subtree when it's
-// safe to do so. Returns "/" (the original behavior) for any case the
-// optimization can't justify.
 func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
 	if *c.collection != "" {
 		return fmt.Sprintf("%s/%s", c.bucketsPath, *c.collection)
@@ -886,15 +876,13 @@ func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[s
 	if len(c.volumeIds) == 0 {
 		return "/"
 	}
-	// Gather collections of the requested volumes only.
 	collections := make(map[string]struct{})
 	for _, vidMap := range dataNodeVolumeIdToVInfo {
 		for vid, vinfo := range vidMap {
 			if _, ok := c.volumeIds[vid]; !ok {
 				continue
 			}
-			// Empty collection means the volume can be referenced from
-			// anywhere in the namespace; can't scope.
+			// empty collection: volume can be referenced from anywhere
 			if vinfo.collection == "" {
 				return "/"
 			}
@@ -911,8 +899,6 @@ func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[s
 	for c := range collections {
 		collection = c
 	}
-	// Confirm the collection name corresponds to an existing bucket directory.
-	// If it doesn't, fall back rather than walk a path that may not exist.
 	exists, err := c.bucketDirExists(collection)
 	if err != nil || !exists {
 		return "/"
