@@ -12,25 +12,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// MessagePosition is the (ts_ns, offset) tuple the lifecycle reader uses as
-// a per-shard cursor. LogEntry.Offset is per-buffer per-filer (not globally
-// unique), so a single global cursor can't safely resume from a multi-filer
-// merged stream — each filer's cursor must be tracked independently.
-//
-// Defined locally to avoid pulling weed/util/log_buffer as a dep of pb.
+// MessagePosition is the per-shard cursor (ts_ns, offset). LogEntry.Offset
+// is per-buffer per-filer, so a single global cursor can't safely resume from
+// a multi-filer merged stream. Local to pb to avoid pulling log_buffer.
 type MessagePosition struct {
 	TsNs   int64
 	Offset int64
 }
 
-// MaxMessagePosition is the sentinel "skip every event for this shard"
-// position. Use it in startPositions to pause a shard whose blocker is
-// active without removing it from the map.
+// MaxMessagePosition pauses a shard's emission entirely; used when the shard
+// has an active blocker.
 var MaxMessagePosition = MessagePosition{TsNs: 1<<63 - 1, Offset: 1<<63 - 1}
 
-// LessOrEqual reports whether p is at or before other in lex (ts, offset)
-// order. The reader's resume predicate is `entry-pos <= cursor`, strict
-// `<=` so the last resolved event isn't replayed.
+// LessOrEqual is the strict-`<=` skip predicate so the last resolved event
+// isn't replayed.
 func (p MessagePosition) LessOrEqual(other MessagePosition) bool {
 	if p.TsNs != other.TsNs {
 		return p.TsNs < other.TsNs
@@ -38,27 +33,18 @@ func (p MessagePosition) LessOrEqual(other MessagePosition) bool {
 	return p.Offset <= other.Offset
 }
 
-// EventCallback is the per-event callback for ReadLogFileRefsWithPosition.
-// filerId is the shard the event came from; position is the entry's
-// (ts, offset). The callback returning a non-nil error halts the read.
+// EventCallback receives one delivered event with its shard context. A
+// non-nil error halts the read.
 type EventCallback func(event *filer_pb.SubscribeMetadataResponse, filerId string, position MessagePosition) error
 
 // ReadLogFileRefsWithPosition is the per-shard variant of ReadLogFileRefs.
-// Each filer's events are skipped while (event.ts, event.offset) <=
-// startPositions[filer_id]. stopTsNs caps the upper bound (0 = no cap).
+// Events with (ts, offset) <= startPositions[filer_id] are skipped per
+// shard. Cross-filer ordering is (ts, filerId, offset) — the filerId
+// tiebreak makes retries from the same starting cursor see the same event
+// sequence.
 //
-// Cross-filer ordering is by event TsNs primarily, then by filerId (stable
-// tiebreak). The reader's per-event resolution-or-stop logic depends on a
-// deterministic order so retries from the same starting cursor see the
-// same event sequence.
-//
-// Returns lastByFiler: the highest position observed per filer. Callers
-// merge this into reader_state.last_processed_*[delay_seconds][filer_id]
-// at checkpoint time.
-//
-// startPositions[filer_id] = MaxMessagePosition pauses that shard's
-// emission entirely (used when the shard has an active blocker; the cursor
-// stays at the position recorded in the BlockerRecord).
+// Returns lastByFiler so checkpoint writes are atomic.
+// startPositions[filer_id] = MaxMessagePosition pauses that shard.
 func ReadLogFileRefsWithPosition(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
@@ -84,14 +70,12 @@ func ReadLogFileRefsWithPosition(
 		}
 		perFiler[ref.FilerId] = append(perFiler[ref.FilerId], ref)
 	}
-	sort.Strings(filerOrder) // deterministic tiebreak across runs
+	sort.Strings(filerOrder)
 
 	if len(filerOrder) == 0 {
 		return
 	}
 
-	// Per-filer reader: streams entries through a channel; the merge loop
-	// pops the smallest (ts, filerId, offset) tuple and dispatches.
 	streams := make([]*filerStream, 0, len(filerOrder))
 	var wg sync.WaitGroup
 	for _, fid := range filerOrder {
@@ -117,7 +101,6 @@ func ReadLogFileRefsWithPosition(
 		}(perFiler[fid], ch, errCh, startPos)
 	}
 
-	// Merge streams via min-heap on (ts, filerId, offset).
 	h := &filerStreamHeap{}
 	heap.Init(h)
 	for _, s := range streams {
@@ -140,7 +123,7 @@ func ReadLogFileRefsWithPosition(
 			heap.Push(h, &filerStreamHeapItem{stream: top.stream, entry: next})
 		}
 	}
-	// Drain remaining channels so producer goroutines don't leak.
+	// Drain so producer goroutines don't leak.
 	for h.Len() > 0 {
 		heap.Pop(h)
 	}
@@ -148,12 +131,11 @@ func ReadLogFileRefsWithPosition(
 		if s.paused {
 			continue
 		}
-		for range s.ch { // drain
+		for range s.ch {
 		}
 	}
 	wg.Wait()
 
-	// Surface the first producer error if no callback error already set.
 	if err == nil {
 		for _, s := range streams {
 			if s.paused {
@@ -168,10 +150,6 @@ func ReadLogFileRefsWithPosition(
 	return
 }
 
-// streamEntriesWithPosition reads chunk-file entries for one filer in
-// sequential file order, applies the per-shard skip predicate, and
-// emits entries on out. Returns once all chunks are read or an
-// unrecoverable error occurs.
 func streamEntriesWithPosition(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
@@ -180,11 +158,9 @@ func streamEntriesWithPosition(
 	out chan<- *filer_pb.LogEntry,
 ) error {
 	for _, ref := range refs {
-		// No file-level fast-skip: the chunk's FileTsNs is the start time
-		// of the flush, but its last entry can have a TsNs later than any
-		// other file in the sequence. Without a FileMaxTsNs on the ref we
-		// can't safely prune whole files; the per-entry predicate below
-		// handles every case correctly.
+		// No file-level fast-skip: FileTsNs is the flush start, but the
+		// last entry can be later. Without a FileMaxTsNs we can't safely
+		// prune whole files.
 		entries, err := readLogFileEntries(newReader, ref.Chunks, 0, stopTsNs)
 		if err != nil {
 			if isChunkNotFound(err) {
@@ -204,8 +180,6 @@ func streamEntriesWithPosition(
 	return nil
 }
 
-// dispatchOneEntryWithPosition unmarshals one log entry, applies the path
-// filter, and invokes the per-event callback with shard context.
 func dispatchOneEntryWithPosition(
 	logEntry *filer_pb.LogEntry,
 	filerId string,
@@ -216,15 +190,13 @@ func dispatchOneEntryWithPosition(
 	event := &filer_pb.SubscribeMetadataResponse{}
 	if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 		glog.Errorf("unmarshal log entry: %v", err)
-		return nil // skip corrupt entries
+		return nil
 	}
 	if !matchesFilter(event, filter) {
 		return nil
 	}
 	return cb(event, filerId, pos)
 }
-
-// --- merge heap on (ts, filerId, offset) ---
 
 type filerStream struct {
 	id       string
@@ -262,4 +234,3 @@ func (h *filerStreamHeap) Pop() any {
 	*h = old[:n-1]
 	return item
 }
-
