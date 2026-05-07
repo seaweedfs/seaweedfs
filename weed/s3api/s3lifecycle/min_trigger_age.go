@@ -2,14 +2,9 @@ package s3lifecycle
 
 import "time"
 
-// MinTriggerAge returns the day threshold defined by `kind` on `rule`. Used by
-// the safety-scan cadence as `max(MinTriggerAge(rule, kind), kindFloor)` —
-// see the per-kind cadence table in the design doc. Returns 0 when the kind
-// has no day-style threshold (date / count / immediate kinds), in which case
-// the caller's kind-floor is the cadence directly.
-//
-// One XML rule may declare multiple actions; this helper takes a kind so the
-// cadence is computed independently per compiled action.
+// MinTriggerAge returns the day threshold defined by kind on rule, or 0 if
+// the kind has no day-style threshold (date / count / immediate). Callers
+// use it as max(MinTriggerAge, kindFloor) when computing safety-scan cadence.
 func MinTriggerAge(rule *Rule, kind ActionKind) time.Duration {
 	if rule == nil {
 		return 0

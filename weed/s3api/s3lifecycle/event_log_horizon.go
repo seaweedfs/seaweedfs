@@ -2,24 +2,11 @@ package s3lifecycle
 
 import "time"
 
-// EventLogHorizon returns the maximum age of an event the reader needs to
-// observe to drive the (rule, kind) compiled action. Used by the retention
-// mode gate: if metaLogRetention < EventLogHorizon(rule, kind) +
-// bootstrapLookbackMin, this action is promoted to scan_only with
-// degraded_reason=RETENTION_BELOW_HORIZON.
-//
-// One XML rule may declare multiple actions with different horizons (a 90d
-// EXPIRATION_DAYS sibling alongside a 7d ABORT_MPU); the gate runs per
-// compiled action so each can degrade independently.
-//
-// Per-kind values:
-//
-//	EXPIRATION_DAYS         -> rule.ExpirationDays
-//	NONCURRENT_DAYS         -> rule.NoncurrentVersionExpirationDays
-//	ABORT_MPU               -> rule.AbortMPUDaysAfterInitiation
-//	NEWER_NONCURRENT        -> SmallDelay (count-only retention; immediate at flip)
-//	EXPIRED_DELETE_MARKER   -> SmallDelay (immediate when sole survivor)
-//	EXPIRATION_DATE         -> 0 (date kind bypasses the gate)
+// EventLogHorizon returns the max event age the reader needs to drive the
+// (rule, kind) action. Used by the retention mode gate: when
+// metaLogRetention < EventLogHorizon + bootstrapLookbackMin, the action is
+// promoted to scan_only. EXPIRATION_DATE returns 0 (date kind bypasses);
+// count / immediate kinds return SmallDelay.
 func EventLogHorizon(rule *Rule, kind ActionKind) time.Duration {
 	if rule == nil {
 		return 0

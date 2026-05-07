@@ -2,15 +2,9 @@ package s3lifecycle
 
 import "time"
 
-// ComputeDueAt returns the earliest wall-clock time the (rule, kind) compiled
-// action can fire for info given the object's current shape. Returns the
-// zero time when the action cannot fire for this entry (filter rejects, kind
-// not declared on the rule, wrong object shape, etc.).
-//
-// Used by the reader/bootstrap to decide pending-vs-inline-delete for one
-// specific action. Sibling actions of the same XML rule are computed
-// separately so a rule's 7d AbortMPU due time does not influence its 90d
-// ExpirationDays sibling.
+// ComputeDueAt returns the earliest wall-clock time the (rule, kind) action
+// can fire for info. Returns zero time when no action can fire for this
+// entry. Used by reader/bootstrap to decide pending vs. inline-delete.
 func ComputeDueAt(rule *Rule, kind ActionKind, info *ObjectInfo) time.Time {
 	if rule == nil || info == nil || rule.Status != StatusEnabled {
 		return time.Time{}
@@ -45,7 +39,6 @@ func ComputeDueAt(rule *Rule, kind ActionKind, info *ObjectInfo) time.Time {
 			return base.AddDate(0, 0, rule.NoncurrentVersionExpirationDays)
 		}
 	case ActionKindNewerNoncurrent:
-		// Pure count-based: only when NoncurrentDays is unset.
 		if !info.IsLatest && rule.NoncurrentVersionExpirationDays == 0 && rule.NewerNoncurrentVersions > 0 {
 			if !info.SuccessorModTime.IsZero() {
 				return info.SuccessorModTime

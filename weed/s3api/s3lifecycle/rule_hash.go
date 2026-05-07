@@ -7,33 +7,18 @@ import (
 	"time"
 )
 
-// RuleHash returns the first 8 bytes of sha256 over a canonicalized rule
-// representation. The hash is stable across:
-//
-//   - tag-key reorder (FilterTags is sorted before hashing)
-//   - rule.ID changes (ID is excluded — it's display-only)
-//   - rule.Status flips (Enabled <-> Disabled — state continuity preserved
-//     across operator toggles)
-//
-// Prefix is hashed verbatim: "logs" and "logs/" produce different hashes
-// because they match different objects under literal prefix semantics
-// (strings.HasPrefix). Collapsing them would let an edit silently reuse
-// per-rule durable state for a rule that no longer matches the same set.
-//
-// Different action shapes (different days, different filter, different
-// action types) hash to different values.
-//
-// Encoding is length-prefixed to avoid delimiter ambiguity: a tag value
-// containing "=" or "\n" or a prefix containing the field-tag separator
-// must not be able to forge a different tuple that hashes the same. Each
-// scalar is written as `<field-tag-byte> <uvarint-length> <bytes>`.
+// RuleHash returns the first 8 bytes of sha256 over a length-prefixed
+// canonical encoding. Stable across tag-key reorder, ID renames, and Status
+// flips. Prefix is hashed verbatim — "logs" and "logs/" match different
+// objects, so they must hash differently. Length prefixing prevents a
+// forged value (e.g. a tag containing "=") from colliding with a legitimate
+// tuple.
 func RuleHash(rule *Rule) [8]byte {
 	if rule == nil {
 		var zero [8]byte
 		return zero
 	}
 	h := sha256.New()
-	// Filter.
 	writeBytes(h, fieldPrefix, []byte(rule.Prefix))
 	tagKeys := make([]string, 0, len(rule.FilterTags))
 	for k := range rule.FilterTags {
@@ -47,7 +32,6 @@ func RuleHash(rule *Rule) [8]byte {
 	}
 	writeInt64(h, fieldSizeGT, rule.FilterSizeGreaterThan)
 	writeInt64(h, fieldSizeLT, rule.FilterSizeLessThan)
-	// Actions.
 	writeInt64(h, fieldExpDays, int64(rule.ExpirationDays))
 	writeBytes(h, fieldExpDate, []byte(canonicalTime(rule.ExpirationDate)))
 	writeBool(h, fieldExpDeleteMarker, rule.ExpiredObjectDeleteMarker)
@@ -61,8 +45,8 @@ func RuleHash(rule *Rule) [8]byte {
 	return out
 }
 
-// Field tags namespace each scalar so an attacker can't substitute one
-// string for another and re-collide. Values are arbitrary but stable.
+// Field tags namespace each scalar so a forged string can't substitute for
+// another in a way that hashes the same.
 const (
 	fieldPrefix          byte = 0x01
 	fieldTagCount        byte = 0x02

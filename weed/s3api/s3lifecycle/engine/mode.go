@@ -6,10 +6,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
-// RuleMode mirrors the durable s3_lifecycle_pb.LifecycleState.RuleMode enum.
-// Defined here as a separate Go type so engine code doesn't depend on the
-// generated proto package directly. Mappings to/from the proto value are
-// handled by the worker when it reads/writes the durable state file.
+// RuleMode mirrors the durable s3_lifecycle_pb.LifecycleState.RuleMode enum;
+// the worker maps between them when it reads/writes durable state.
 type RuleMode int
 
 const (
@@ -38,17 +36,10 @@ func (m RuleMode) String() string {
 	}
 }
 
-// decideMode picks the scheduling mode for one (rule, kind) compiled action.
-// The decision is the same predicate the tick-time mode decision uses (and
-// is also called by the safety-scan-tick code path):
-//
-//   - status disabled                                                         -> DISABLED
-//   - kind == EXPIRATION_DATE                                                 -> SCAN_AT_DATE
-//   - reader-driven kind, retention < eventLogHorizon + bootstrapLookbackMin  -> SCAN_ONLY
-//   - otherwise                                                               -> EVENT_DRIVEN
-//
-// MetaLogRetention=0 is treated as "unbounded" — the gate never trips at
-// the default SeaweedFS deployment, where the meta log isn't pruned.
+// decideMode: disabled rule -> DISABLED; EXPIRATION_DATE -> SCAN_AT_DATE;
+// reader-driven kind whose horizon exceeds retention -> SCAN_ONLY; else
+// EVENT_DRIVEN. metaLogRetention=0 means unbounded (default), gate doesn't
+// trip.
 func decideMode(rule *s3lifecycle.Rule, kind s3lifecycle.ActionKind, metaLogRetention, bootstrapLookbackMin time.Duration) RuleMode {
 	if rule == nil || rule.Status != s3lifecycle.StatusEnabled {
 		return ModeDisabled

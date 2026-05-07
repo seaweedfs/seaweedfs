@@ -5,29 +5,14 @@ import (
 	"time"
 )
 
-// EvaluateAction decides whether the (rule, kind) compiled action fires for
-// info at the given wall-clock time. Returns ActionNone when the rule is
-// disabled, the filter rejects, the object shape doesn't match this kind, or
-// the kind isn't yet due.
+// EvaluateAction decides whether the (rule, kind) action fires for info at
+// now. Returns ActionNone when the rule is disabled, the filter rejects, the
+// object shape doesn't match this kind, or the action isn't yet due.
 //
-// One XML rule may declare multiple actions in parallel. The engine compiles
-// each into its own ActionKey and calls EvaluateAction once per (rule, kind,
-// entry); sibling actions are independent and may produce different verdicts
-// for the same entry. Callers that need to evaluate every action of a rule
-// iterate `RuleActionKinds(rule)` and call this helper per kind.
-//
-// Action selection by object shape per kind:
-//
-//	IsMPUInit                   + ActionKindAbortMPU             -> AbortIncompleteMultipartUpload
-//	IsLatest && IsDeleteMarker  + ActionKindExpiredDeleteMarker  -> ExpiredObjectDeleteMarker (sole survivor)
-//	IsLatest                    + ActionKindExpirationDays       -> DeleteObject (Days threshold)
-//	IsLatest                    + ActionKindExpirationDate       -> DeleteObject (date threshold)
-//	non-current                 + ActionKindNoncurrentDays       -> DeleteVersion (Days + NewerNoncurrent retention)
-//	non-current                 + ActionKindNewerNoncurrent      -> DeleteVersion (count-only)
-//
-// Per AWS S3 semantics, a non-current delete marker is treated as a regular
-// non-current version under NONCURRENT_DAYS / NEWER_NONCURRENT. Only the
-// *current* delete marker (and only as sole survivor) routes to
+// One XML rule may declare multiple actions; callers iterate
+// RuleActionKinds(rule) and call this helper per kind. A non-current delete
+// marker is treated as a regular non-current version under NONCURRENT_DAYS /
+// NEWER_NONCURRENT; only a *current* sole-survivor delete marker routes to
 // EXPIRED_DELETE_MARKER.
 func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time) EvalResult {
 	none := EvalResult{Action: ActionNone}
@@ -89,12 +74,8 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if now.Before(due) {
 			return none
 		}
+		// Missing index = can't evaluate retention; safety-scan will revisit.
 		if rule.NewerNoncurrentVersions > 0 {
-			// NewerNoncurrent retention is consulted only when the caller
-			// has supplied an index. Missing index means "we can't safely
-			// say whether this version is within the keep-N window," so
-			// don't expire — the safety-scan will revisit once the index
-			// is computed.
 			if info.NoncurrentIndex == nil || *info.NoncurrentIndex < rule.NewerNoncurrentVersions {
 				return none
 			}
@@ -102,14 +83,11 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
 
 	case ActionKindNewerNoncurrent:
-		// Pure count-based: only when NoncurrentDays is unset (when paired,
-		// the rule expands to NONCURRENT_DAYS instead — see RuleActionKinds).
+		// Count-only path; when NoncurrentDays is also set the rule expands
+		// to NONCURRENT_DAYS instead (see RuleActionKinds).
 		if info.IsLatest || rule.NoncurrentVersionExpirationDays > 0 || rule.NewerNoncurrentVersions <= 0 {
 			return none
 		}
-		// Without a NoncurrentIndex we can't evaluate count-based retention;
-		// the conservative answer is ActionNone — safety-scan picks up the
-		// version once the index is supplied.
 		if info.NoncurrentIndex == nil || *info.NoncurrentIndex < rule.NewerNoncurrentVersions {
 			return none
 		}

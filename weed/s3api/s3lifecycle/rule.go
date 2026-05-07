@@ -2,123 +2,81 @@ package s3lifecycle
 
 import "time"
 
-// Rule is a flattened, evaluator-friendly representation of an S3 lifecycle rule.
-// Callers convert from the XML-parsed s3api.Rule (which has nested structs with
-// set-flags for conditional XML marshaling) to this type.
+// Rule is the flat, evaluator-friendly representation of an S3 lifecycle
+// rule. Callers convert from the XML-parsed s3api.Rule via
+// s3api.LifecycleToCanonical.
 type Rule struct {
 	ID     string
-	Status string // "Enabled" or "Disabled"
+	Status string // "Enabled" | "Disabled"
 
-	// Prefix filter (from Rule.Prefix or Rule.Filter.Prefix or Rule.Filter.And.Prefix).
 	Prefix string
 
-	// Expiration for current versions.
 	ExpirationDays            int
 	ExpirationDate            time.Time
 	ExpiredObjectDeleteMarker bool
 
-	// Expiration for non-current versions.
 	NoncurrentVersionExpirationDays int
 	NewerNoncurrentVersions         int
 
-	// Abort incomplete multipart uploads.
 	AbortMPUDaysAfterInitiation int
 
-	// Tag filter (from Rule.Filter.Tag or Rule.Filter.And.Tags).
 	FilterTags map[string]string
 
-	// Size filters. Zero is treated as "not set" by the evaluator. Per AWS
-	// S3, an explicit <ObjectSizeGreaterThan>0</ObjectSizeGreaterThan>
-	// (which excludes 0-byte objects) cannot be distinguished from omitted
-	// in this representation; if a future deployment needs that
-	// distinction, switch to *int64 (or a paired set-bool) and update
-	// filterMatches / filterAllows / RuleHash accordingly. The zero-as-unset
-	// shortcut matches the default in s3api.Filter and the canonicalizer.
+	// Zero is treated as "not set." Note that this can't represent an
+	// explicit <ObjectSizeGreaterThan>0</...> (excludes 0-byte objects);
+	// if a deployment ever needs that, switch to *int64.
 	FilterSizeGreaterThan int64
 	FilterSizeLessThan    int64
 }
 
-// ObjectInfo is the metadata about an object that the evaluator uses to
-// determine which lifecycle action applies. Callers build this from filer
-// entry attributes and extended metadata.
+// ObjectInfo is the live-entry shape the evaluator consults. Callers build
+// it from filer entry attributes and Extended metadata.
 type ObjectInfo struct {
-	// Key is the object key relative to the bucket root.
-	Key string
-
-	// ModTime is the object's modification time (entry.Attributes.Mtime).
-	ModTime time.Time
-
-	// Size is the object size in bytes (entry.Attributes.FileSize).
-	Size int64
-
-	// IsLatest is true if this is the current version of the object.
-	IsLatest bool
-
-	// IsDeleteMarker is true if this entry is an S3 delete marker.
+	Key            string
+	ModTime        time.Time
+	Size           int64
+	IsLatest       bool
 	IsDeleteMarker bool
+	NumVersions    int
 
-	// NumVersions is the total number of versions for this object key,
-	// including delete markers. Used for ExpiredObjectDeleteMarker evaluation.
-	NumVersions int
-
-	// SuccessorModTime is the creation time of the version that replaced
-	// this one (making it non-current). Derived from the successor's version
-	// ID timestamp. Zero value for the latest version.
+	// SuccessorModTime is when the version that replaced this one was
+	// created. Zero for IsLatest entries.
 	SuccessorModTime time.Time
 
-	// NoncurrentIndex is the 0-based position among non-current versions
-	// sorted newest-first (0 = newest non-current version). Used by
-	// NewerNoncurrentVersions evaluation. nil for current versions or for
-	// non-current entries whose index hasn't been computed yet — both cases
-	// short-circuit count-based retention checks (the action returns
-	// ActionNone rather than guessing). Pointer rather than int so the
-	// "0 means newest non-current" valid case can never collide with the
-	// zero-value "uninitialised" case.
+	// NoncurrentIndex: 0-based index among non-current versions, newest
+	// first. nil = current version or index not yet computed; the count-
+	// based retention path returns ActionNone in that case rather than
+	// guessing. Pointer-not-int so the valid index 0 can't collide with
+	// the zero-value uninitialised case.
 	NoncurrentIndex *int
 
-	// Tags are the object's user-defined tags, extracted from the entry's
-	// Extended metadata (keys prefixed with "X-Amz-Tagging-").
 	Tags map[string]string
 
-	// IsMPUInit is true when this entry represents an in-flight multipart
-	// upload init under <bucket>/.uploads/<uploadId>/. The evaluator routes
-	// these entries to the AbortIncompleteMultipartUpload action shape.
-	// ModTime carries the upload's initiation time when this is set.
+	// IsMPUInit signals an in-flight multipart-upload init under
+	// <bucket>/.uploads/<uploadId>/. ModTime then carries the init time.
 	IsMPUInit bool
 }
 
-// Status values for Rule.Status.
 const (
 	StatusEnabled  = "Enabled"
 	StatusDisabled = "Disabled"
 )
 
-// SmallDelay is the lookback used for predicate-change events and as the
-// event-log horizon for count-based / immediate rule kinds (NewerNoncurrent,
-// ExpiredObjectDeleteMarker). A small fixed value avoids races with in-flight
-// writes without forcing the reader to keep deep history.
+// SmallDelay is the lookback for predicate-change events and the event-log
+// horizon for count / immediate kinds (NewerNoncurrent, ExpiredDeleteMarker).
 const SmallDelay = time.Minute
 
-// Action represents the lifecycle action to take on an object.
 type Action int
 
 const (
-	// ActionNone means no lifecycle rule applies.
 	ActionNone Action = iota
-	// ActionDeleteObject deletes the current version of the object.
 	ActionDeleteObject
-	// ActionDeleteVersion deletes a specific non-current version.
 	ActionDeleteVersion
-	// ActionExpireDeleteMarker removes a delete marker that is the sole remaining version.
 	ActionExpireDeleteMarker
-	// ActionAbortMultipartUpload aborts an incomplete multipart upload.
 	ActionAbortMultipartUpload
 )
 
-// EvalResult is the output of lifecycle rule evaluation.
 type EvalResult struct {
-	// Action is the lifecycle action to take.
 	Action Action
-	// RuleID is the ID of the rule that triggered this action.
 	RuleID string
 }
