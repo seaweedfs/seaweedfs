@@ -104,10 +104,16 @@ func TestReadLogFileRefsWithPosition_OrderAndCursor(t *testing.T) {
 		t.Fatalf("want 8 emits, got %d", len(emits))
 	}
 	// Verify monotonic non-decreasing TsNs. Tied ts -> alpha before beta
-	// (deterministic filerId sort).
+	// (deterministic filerId sort) — pinning the tiebreak is the central
+	// guarantee of this API; without it, retries from the same starting
+	// cursor could see a different event order.
 	for i := 1; i < len(emits); i++ {
 		if emits[i].pos.TsNs < emits[i-1].pos.TsNs {
 			t.Fatalf("emit %d: ts went backwards: %d -> %d", i, emits[i-1].pos.TsNs, emits[i].pos.TsNs)
+		}
+		if emits[i].pos.TsNs == emits[i-1].pos.TsNs && emits[i-1].filer > emits[i].filer {
+			t.Fatalf("emit %d: tied ts %d but filer order %s -> %s violates (ts, filerId) tiebreak",
+				i, emits[i].pos.TsNs, emits[i-1].filer, emits[i].filer)
 		}
 	}
 	if last["alpha"].Offset != 3 || last["beta"].Offset != 3 {
@@ -117,17 +123,14 @@ func TestReadLogFileRefsWithPosition_OrderAndCursor(t *testing.T) {
 
 func TestReadLogFileRefsWithPosition_PerShardSkip(t *testing.T) {
 	pt := newPositionedTest()
-	// Tell alpha to skip its first two entries (offsets 0 and 1); beta starts fresh.
+	// Skip alpha's first two entries (offsets 0 and 1) by anchoring its
+	// cursor on the second entry's exact (ts, offset). Strict <= drops
+	// offsets 0 and 1; beta starts fresh and emits all four.
+	base := pt.refs[0].FileTsNs
 	startPositions := map[string]MessagePosition{
-		"alpha": {TsNs: 0, Offset: 1}, // strict <=, so offset 0 and 1 are skipped
+		"alpha": {TsNs: base + 1, Offset: 1},
 		"beta":  {TsNs: 0, Offset: 0},
 	}
-	// The startPositions reference TsNs=0 won't actually drop alpha's entries
-	// because their TsNs is base+offset (much larger than 0). To exercise the
-	// (ts, offset) compound predicate, we set startPositions to alpha's
-	// second entry's exact (ts, offset).
-	base := pt.refs[0].FileTsNs
-	startPositions["alpha"] = MessagePosition{TsNs: base + 1, Offset: 1}
 
 	var alphaEmits, betaEmits int
 	last, err := ReadLogFileRefsWithPosition(pt.refs, pt.reader(), startPositions, 0, PathFilter{PathPrefix: "/"},
