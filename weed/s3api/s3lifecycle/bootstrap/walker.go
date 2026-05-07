@@ -71,6 +71,12 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 	}
 	cp := Checkpoint{LastScannedPath: opts.Resume}
 
+	// Single ObjectInfo reused across the walk; EvaluateAction reads the
+	// fields synchronously and doesn't retain references, so per-entry
+	// field assignments are safe and avoid one heap allocation per entry
+	// for buckets with millions of objects.
+	var info s3lifecycle.ObjectInfo
+
 	err := list(ctx, bucket, opts.Resume, func(entry *Entry) error {
 		if entry == nil || entry.Path == "" {
 			return nil
@@ -81,7 +87,7 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 			cp.LastScannedPath = entry.Path
 			return nil
 		}
-		if err := walkEntry(ctx, snap, bucket, entry, dispatch, now); err != nil {
+		if err := walkEntry(ctx, snap, bucket, entry, dispatch, now, &info); err != nil {
 			return err
 		}
 		cp.LastScannedPath = entry.Path
@@ -94,13 +100,14 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 	return cp, nil
 }
 
-func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry *Entry, dispatch Dispatcher, now time.Time) error {
+func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry *Entry, dispatch Dispatcher, now time.Time, info *s3lifecycle.ObjectInfo) error {
 	keys := snap.MatchPath(bucket, entry.Path, nil)
 	if len(keys) == 0 {
 		return nil
 	}
-	// Build ObjectInfo once per entry; reused across every matching action.
-	info := &s3lifecycle.ObjectInfo{
+	// Reuse the caller-provided ObjectInfo (one allocation per Walk, not
+	// per entry); EvaluateAction reads synchronously without retaining.
+	*info = s3lifecycle.ObjectInfo{
 		Key:              entry.Path,
 		ModTime:          entry.ModTime,
 		Size:             entry.Size,
