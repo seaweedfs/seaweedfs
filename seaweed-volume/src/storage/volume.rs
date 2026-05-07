@@ -515,9 +515,6 @@ pub struct Volume {
 
     /// Whether this volume has a remote file reference.
     pub has_remote_file: bool,
-
-    /// Logged once per nil-nm read; reset on successful load.
-    nm_nil_logged: AtomicBool,
 }
 
 /// Windows helper: loop seek_read until buffer is fully filled.
@@ -579,7 +576,6 @@ impl Volume {
             last_io_error: Mutex::new(None),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
-            nm_nil_logged: AtomicBool::new(false),
         };
 
         v.load(true, true, preallocate, version)?;
@@ -774,23 +770,14 @@ impl Volume {
             }
         }
 
-        self.nm_nil_logged.store(false, Ordering::Relaxed);
         Ok(())
     }
 
     fn nm_or_not_found(&self) -> Result<&NeedleMap, VolumeError> {
-        match self.nm.as_ref() {
-            Some(nm) => Ok(nm),
-            None => {
-                if !self.nm_nil_logged.swap(true, Ordering::Relaxed) {
-                    tracing::error!(
-                        volume_id = self.id.0,
-                        "needle map not loaded; reads return not-found until reload succeeds"
-                    );
-                }
-                Err(VolumeError::NotFound)
-            }
-        }
+        self.nm.as_ref().ok_or_else(|| {
+            tracing::warn!(volume_id = self.id.0, "needle map not loaded");
+            VolumeError::NotFound
+        })
     }
 
     fn load_index(&mut self) -> Result<(), VolumeError> {

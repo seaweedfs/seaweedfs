@@ -17,19 +17,13 @@ import (
 
 const PagedReadLimit = 1024 * 1024
 
-func (v *Volume) logNeedleMapNil() {
-	if !v.nmNilLogged.Swap(true) {
-		glog.Errorf("volume %d: needle map not loaded; reads return not-found until reload succeeds", v.Id)
-	}
-}
-
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (count int, err error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
 	if v.nm == nil {
-		v.logNeedleMapNil()
+		glog.V(0).Infof("volume %d: needle map not loaded; read returns not-found", v.Id)
 		return -1, ErrorNotFound
 	}
 
@@ -123,7 +117,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		if readOption.HasSlowRead {
 			v.dataFileAccessLock.RUnlock()
 		}
-		v.logNeedleMapNil()
+		glog.V(0).Infof("volume %d: needle map not loaded; read returns not-found", v.Id)
 		return ErrorNotFound
 	}
 	nv, ok := v.nm.Get(n.Id)
@@ -168,7 +162,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}
-				v.logNeedleMapNil()
+				glog.V(0).Infof("volume %d: needle map not loaded mid-read", v.Id)
 				return ErrorNotFound
 			}
 			// the volume is compacted

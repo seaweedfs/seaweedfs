@@ -297,7 +297,6 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 	if err == nil {
 		hasLoadedVolume = true
-		v.nmNilLogged.Store(false)
 	}
 
 	return err

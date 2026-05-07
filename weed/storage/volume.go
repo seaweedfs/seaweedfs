@@ -47,7 +47,6 @@ type Volume struct {
 	ldbTimeout             int64
 
 	isCompactionInProgress atomic.Bool
-	nmNilLogged            atomic.Bool // logged once per nil-nm read; reset on successful load
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
