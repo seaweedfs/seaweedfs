@@ -1,5 +1,17 @@
 package s3lifecycle
 
+// ActionKey is the engine-wide identity of one compiled lifecycle action.
+// One XML <Rule> with N populated action sub-elements expands into N
+// ActionKeys sharing the same RuleHash but differing in ActionKind. Every
+// per-action data structure — engine indexes, target modes, newly-completed
+// sets, bootstrap completion, drain locks, metrics, blocker / retry-budget
+// records — is keyed by ActionKey, not RuleHash alone, so sibling actions
+// of the same rule are scheduled and degraded independently.
+type ActionKey struct {
+	RuleHash   [8]byte
+	ActionKind ActionKind
+}
+
 // ActionKind identifies a single compiled lifecycle action under one XML
 // rule. A single XML <Rule> may declare multiple action sub-elements in
 // parallel, each yielding a separate compiled action with its own delay
