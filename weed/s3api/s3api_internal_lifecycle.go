@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // LifecycleDelete executes one (rule, action) verdict against one entry.
@@ -61,32 +62,50 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	switch req.ActionKind {
 	case s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, s3_lifecycle_pb.ActionKind_EXPIRATION_DATE:
-		// Versioned bucket -> create delete marker; non-versioned -> remove.
-		// Filer round-trips (versioning lookup, create-marker, delete) are
-		// classified RETRY_LATER by default — most failures are transient
-		// (filer unavailable, slow); the worker's retry budget promotes
-		// sustained transients to BLOCKED. Reserve BLOCKED for clearly
-		// deterministic errors (here: only the request-shape check).
-		versioned, vErr := s3a.isVersioningEnabled(req.Bucket)
+		// Current-version expiration. AWS S3 semantics depend on the bucket's
+		// versioning state:
+		//   - Enabled:    insert a delete marker; the prior current entry
+		//                 becomes a non-current version (retained).
+		//   - Suspended:  remove the existing null version and insert a new
+		//                 delete marker (mirrors a user DELETE on suspended
+		//                 versioning).
+		//   - Off:        remove the entry outright.
+		// Filer round-trips classify as RETRY_LATER by default; the worker's
+		// retry budget promotes sustained transients to BLOCKED. BLOCKED is
+		// reserved for clearly deterministic errors.
+		state, vErr := s3a.getVersioningState(req.Bucket)
 		if vErr != nil {
 			return retryLater("TRANSPORT_ERROR: versioning lookup: " + vErr.Error()), nil
 		}
-		if versioned {
+		switch state {
+		case s3_constants.VersioningEnabled:
 			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
 				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}
 			return done(), nil
-		}
-		err := s3a.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
-			return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath)
-		})
-		if err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				return noopResolved("NOT_FOUND_AT_DELETE"), nil
+		case s3_constants.VersioningSuspended:
+			// Best-effort null-version removal; NotFound is benign here.
+			if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, "null"); err != nil {
+				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
+					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
+				}
 			}
-			return retryLater("TRANSPORT_ERROR: deleteUnversioned: " + err.Error()), nil
+			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
+				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
+			}
+			return done(), nil
+		default:
+			err := s3a.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
+				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath)
+			})
+			if err != nil {
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					return noopResolved("NOT_FOUND_AT_DELETE"), nil
+				}
+				return retryLater("TRANSPORT_ERROR: deleteUnversioned: " + err.Error()), nil
+			}
+			return done(), nil
 		}
-		return done(), nil
 
 	case s3_lifecycle_pb.ActionKind_NONCURRENT_DAYS,
 		s3_lifecycle_pb.ActionKind_NEWER_NONCURRENT,
