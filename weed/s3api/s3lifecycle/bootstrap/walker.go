@@ -39,11 +39,12 @@ type Entry struct {
 
 	// SuccessorModTime / NoncurrentIndex are populated for non-current
 	// versions during versioned-bucket walks. Phase 5 fills these in;
-	// Phase 2d non-versioned walks leave them at zero values, in which
-	// case ComputeDueAt falls back to ModTime per AWS-conservative
-	// semantics.
+	// Phase 2d non-versioned walks leave them at zero values (and
+	// NoncurrentIndex nil), in which case ComputeDueAt falls back to
+	// ModTime per AWS-conservative semantics and the count-based
+	// NewerNoncurrent retention path bails out (see the evaluator).
 	SuccessorModTime time.Time
-	NoncurrentIndex  int
+	NoncurrentIndex  *int
 }
 
 // ListFunc enumerates entries under a bucket in lexicographic order.
