@@ -140,7 +140,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var6 templ.SafeURL
-				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", crumb.Path)))
+				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL(crumb.Path)))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 62, Col: 73}
 				}
@@ -171,7 +171,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var8 templ.SafeURL
-				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", crumb.Path)))
+				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL(crumb.Path)))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 68, Col: 73}
 				}
@@ -214,7 +214,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var10 templ.SafeURL
-			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/files?path=/"))
+			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL("/")))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 86, Col: 45}
 			}
@@ -232,7 +232,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var11 templ.SafeURL
-			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/files?path=/buckets"))
+			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL("/buckets")))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 88, Col: 58}
 			}
@@ -263,7 +263,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var13 templ.SafeURL
-			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", data.CurrentPath)))
+			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL(data.CurrentPath)))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 93, Col: 77}
 			}
@@ -356,7 +356,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var16 templ.SafeURL
-			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)))
+			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPageURL(data.CurrentPath, data.LastFileName, data.PageSize)))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 110, Col: 138}
 			}
@@ -380,7 +380,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var17 templ.SafeURL
-			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", data.ParentPath)))
+			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL(data.ParentPath)))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 119, Col: 78}
 			}
@@ -426,7 +426,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var19 templ.SafeURL
-					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", entry.FullPath)))
+					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPathURL(entry.FullPath)))
 					if templ_7745c5c3_Err != nil {
 						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 153, Col: 83}
 					}
@@ -731,7 +731,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var35 templ.SafeURL
-			templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)))
+			templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fileBrowserPageURL(data.CurrentPath, data.LastFileName, data.PageSize)))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 241, Col: 138}
 			}
