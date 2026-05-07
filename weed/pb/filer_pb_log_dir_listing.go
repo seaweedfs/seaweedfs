@@ -12,8 +12,7 @@ import (
 // SystemLogDir mirrors weed/filer/topics.go to avoid pulling weed/filer.
 const SystemLogDir = "/topics/.system/log"
 
-// LogDirLister abstracts ListEntries so tests can fake it without spinning
-// up a filer gRPC server.
+// LogDirLister lets tests fake the listing without a filer gRPC server.
 type LogDirLister interface {
 	ListLogDirEntries(ctx context.Context, dir, startFrom string, limit int) ([]*filer_pb.Entry, error)
 }
@@ -23,9 +22,8 @@ type FilerShardRange struct {
 	Latest   MessagePosition
 }
 
-// EarliestRetainedPositionPerShard returns the earliest retained chunk
-// per filer_id, used by lazy-seeding to floor a newly-discovered shard's
-// cursor. Offset is 0; chunk filenames have minute resolution.
+// EarliestRetainedPositionPerShard floors a newly-discovered shard's cursor.
+// Offset is 0; chunk filenames have minute resolution.
 func EarliestRetainedPositionPerShard(ctx context.Context, lister LogDirLister) (map[string]MessagePosition, error) {
 	out := make(map[string]MessagePosition)
 	err := walkLogChunks(ctx, lister, func(filerId string, ts time.Time) bool {
@@ -37,13 +35,10 @@ func EarliestRetainedPositionPerShard(ctx context.Context, lister LogDirLister) 
 	return out, err
 }
 
-// RetainedLogRangePerShard returns {earliest, latest} per filer in a single
-// pass. Two passes would double RPCs and open a TOCTOU window where a filer
-// disappearing between walks would leave a zero-time `latest`.
-//
-// Latest's Offset = int64-max so a `cursor >= range.latest` lex comparison
-// (under the strict <= skip predicate) is satisfied only when the cursor is
-// at or past the chunk's last entry — the tail-drain criterion.
+// RetainedLogRangePerShard returns {earliest, latest} per filer in one pass
+// (a TOCTOU window between two passes could leave `latest` zero). Latest's
+// Offset is int64-max so cursor >= range.latest under the strict <= skip
+// predicate matches the tail-drain criterion.
 func RetainedLogRangePerShard(ctx context.Context, lister LogDirLister) (map[string]FilerShardRange, error) {
 	earliest := make(map[string]time.Time)
 	latest := make(map[string]time.Time)
@@ -69,12 +64,9 @@ func RetainedLogRangePerShard(ctx context.Context, lister LogDirLister) (map[str
 	return out, nil
 }
 
-// walkLogChunks iterates every (filerId, chunk-time) tuple under SystemLogDir.
-// cb returns false to stop early.
-//
-// Day directories are buffered (a handful of entries); per-day chunk
-// directories are streamed page-by-page so a single day's hundreds of
-// thousands of chunks never accumulate in a slice.
+// walkLogChunks iterates every (filerId, chunk-time) tuple. cb returns
+// false to stop early. Per-day chunks are streamed page-by-page (a busy
+// day can hold hundreds of thousands of entries).
 func walkLogChunks(ctx context.Context, lister LogDirLister, cb func(filerId string, ts time.Time) bool) error {
 	stop := errStopWalk
 	dayErr := streamEntries(ctx, lister, SystemLogDir, func(day *filer_pb.Entry) error {
@@ -106,17 +98,14 @@ func walkLogChunks(ctx context.Context, lister LogDirLister, cb func(filerId str
 	return dayErr
 }
 
-// errStopWalk is the sentinel walkLogChunks uses to short-circuit nested
-// streamEntries calls when cb returns false.
+// errStopWalk short-circuits nested streamEntries calls when cb stops.
 var errStopWalk = fmt.Errorf("stop walk")
 
-// listingLimit is intentionally large; per-day SystemLogDir holds ~1440 entries.
+// listingLimit: per-day SystemLogDir typically holds ~1440 entries.
 const listingLimit = 4096
 
-// streamEntries paginates ListLogDirEntries and invokes fn per entry without
-// buffering the whole directory. fn returning a non-nil error halts the walk
-// and bubbles back; the caller decides whether the error is a real failure
-// or a sentinel-driven early stop.
+// streamEntries paginates without buffering. fn returning a non-nil error
+// halts the walk; callers distinguish real errors from errStopWalk.
 func streamEntries(ctx context.Context, lister LogDirLister, dir string, fn func(*filer_pb.Entry) error) error {
 	startFrom := ""
 	for {
