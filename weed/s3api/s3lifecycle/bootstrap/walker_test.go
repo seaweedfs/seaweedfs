@@ -44,7 +44,7 @@ func compileEvDriven(t *testing.T, bucket string, rules ...*s3lifecycle.Rule) *e
 	for _, r := range rules {
 		rh := s3lifecycle.RuleHash(r)
 		for _, k := range s3lifecycle.RuleActionKinds(r) {
-			prior[s3lifecycle.ActionKey{RuleHash: rh, ActionKind: k}] = engine.PriorState{BootstrapComplete: true}
+			prior[s3lifecycle.ActionKey{Bucket: bucket, RuleHash: rh, ActionKind: k}] = engine.PriorState{BootstrapComplete: true}
 		}
 	}
 	e := engine.New()
