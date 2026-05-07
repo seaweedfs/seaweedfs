@@ -1,0 +1,232 @@
+syntax = "proto3";
+
+package s3_lifecycle_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb";
+option java_package = "seaweedfs.client";
+option java_outer_classname = "S3LifecycleProto";
+
+// Storage layout reference (see S3_LIFECYCLE_REDESIGN.md):
+//
+//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/state           -> LifecycleState
+//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/pending         -> repeated PendingItem
+//   /etc/s3/lifecycle/<bucket>/_bootstrap                      -> BootstrapState
+//   /etc/s3/lifecycle/_reader/reader_state                     -> ReaderState
+//   /etc/s3/lifecycle/_reader/blockers                         -> repeated BlockerRecord
+//   /etc/s3/lifecycle/_reader/retry_budget                     -> repeated RetryBudgetEntry
+
+// MessagePosition mirrors weed/util/log_buffer.MessagePosition for durable
+// storage. ts_ns + offset uniquely identifies a position within a per-filer
+// log buffer; per-shard cursors (see ReaderState) use this shape to skip past
+// already-processed events when replaying.
+message MessagePosition {
+  int64 ts_ns  = 1;
+  int64 offset = 2;
+}
+
+// Cursor map keyed by filer_id. Each delay group's cursor (ReaderState) and
+// the predicate cursor (ReaderState) are per-filer-shard maps because
+// LogEntry.Offset is per-filer and not globally unique.
+message FilerShardCursor {
+  string          filer_id = 1;
+  MessagePosition position = 2;
+}
+
+// EntryIdentity is the CAS witness used by LifecycleDelete to detect that
+// the live entry hasn't changed between worker decision and server execution.
+// Mismatch -> STALE_IDENTITY -> NOOP_RESOLVED.
+message EntryIdentity {
+  int64  mtime_ns         = 1;
+  int64  size             = 2;
+  string head_fid         = 3;
+  bytes  extended_hash    = 4; // sha256 over sorted Extended map; cheap and stable
+}
+
+// LifecycleState captures the durable per-rule scheduling state.
+message LifecycleState {
+  enum RuleKind {
+    EXPIRATION_DAYS         = 0;
+    EXPIRATION_DATE         = 1;
+    NONCURRENT_DAYS         = 2;
+    NEWER_NONCURRENT        = 3;
+    ABORT_MPU               = 4;
+    EXPIRED_DELETE_MARKER   = 5;
+  }
+  enum RuleMode {
+    EVENT_DRIVEN  = 0;
+    SCAN_AT_DATE  = 1;
+    SCAN_ONLY     = 2;
+    DISABLED      = 3;
+    PENDING_BOOTSTRAP = 4;
+  }
+  enum DegradedReason {
+    NONE                       = 0;
+    LAG_HIGH                   = 1;
+    PENDING_FULL               = 2;
+    DELETE_FAILURES            = 3;
+    OPERATOR_PAUSED            = 4;
+    RETENTION_BELOW_HORIZON    = 5;
+    LOST_LOG                   = 6;
+  }
+
+  bytes    rule_hash               = 1; // 8 bytes; key matches the parent dir name
+  string   rule_id                 = 2; // display only
+  RuleKind rule_kind               = 3;
+  RuleMode mode                    = 4;
+  DegradedReason degraded_reason   = 5;
+  int64    degraded_since_ns       = 6;
+  bool     bootstrap_complete      = 7;
+  int64    bootstrap_started_at_ns = 8;
+  int64    bootstrap_completed_at_ns = 9;
+  int64    last_evaluated_ns       = 10;
+  // counters for observability; no behavior depends on these
+  int64    deleted_total           = 11;
+  int64    skipped_object_lock_total = 12;
+  int64    pending_size            = 13;
+}
+
+// PendingItem records a not-yet-due eligibility for late-predicate exceptions
+// (e.g. tag added at age 30d on a 60d rule). Drained by s3.lifecycle.drain.
+// One use only — not the steady-state path.
+message PendingItem {
+  string         object_path       = 1;
+  string         version_id        = 2;
+  int64          due_at_ns         = 3;
+  EntryIdentity  expected_identity = 4;
+}
+
+// BootstrapState tracks the bucket walker's resume point. Operator-resolution
+// of a BOOTSTRAP-stream blocker does NOT mutate this field — the next
+// scheduled bootstrap task picks up from last_scanned_path and re-walks.
+message BootstrapState {
+  string last_scanned_path = 1;
+  int64  started_at_ns     = 2;
+  int64  completed_at_ns   = 3; // zero while in progress
+}
+
+// ReaderState is the cluster-singleton reader's durable cursors. One file at
+// /etc/s3/lifecycle/_reader/reader_state, written by the singleton task.
+message ReaderState {
+  string primary_filer_endpoint = 1;
+
+  // Per-delay-group, per-filer-shard cursors. Outer key is delay_seconds.
+  // Inner FilerShardCursor list maps filer_id -> MessagePosition.
+  map<int64, FilerShardCursorList> last_processed_original = 2;
+
+  // Predicate-change pass cursor, keyed by filer_id.
+  repeated FilerShardCursor last_processed_predicate = 3;
+
+  // Filer-shard keys whose cursor reached range.latest and were safely GC'd.
+  // Used by the lost-log gate at task entry to distinguish "F was tail-drained
+  // safely then pruned" from "F's logs vanished before catch-up". Encoded as
+  // stream-specific keys (same shape as RetryBudgetEntry.StreamKey).
+  repeated TailDrainedKey tail_drained_streams = 4;
+
+  int64 last_checkpoint_ns = 5;
+}
+
+message FilerShardCursorList {
+  repeated FilerShardCursor cursors = 1;
+}
+
+// TailDrainedKey identifies a (stream_kind, shard, [delay]) tuple whose
+// cursor previously caught up to range.latest. Persisted in ReaderState so
+// the lost-log gate can distinguish safe drain from data loss.
+message TailDrainedKey {
+  StreamKind stream_kind   = 1;
+  string     filer_id      = 2;
+  int64      delay_seconds = 3; // populated when stream_kind == ORIGINAL
+}
+
+// StreamKind classifies the four blockable streams. ORIGINAL/PREDICATE pause
+// reader cursors; BOOTSTRAP pauses a bucket walker; PENDING pauses a rule's
+// drain task.
+enum StreamKind {
+  ORIGINAL  = 0;
+  PREDICATE = 1;
+  BOOTSTRAP = 2;
+  PENDING   = 3;
+}
+
+// BlockerRecord is the durable record of a paused stream. The cursor stays
+// at the failing position until the operator clears it via
+// `s3.lifecycle.blockers retry|resume|quarantine`. There is no automatic
+// dead-letter — silently routing a failed delete decision aside is unsafe
+// for lifecycle.
+message BlockerRecord {
+  StreamKind stream_kind = 1;
+
+  // Stream-specific scoping; populated per stream_kind.
+  string          shard         = 2; // filer_id; ORIGINAL/PREDICATE only
+  int64           delay_seconds = 3; // ORIGINAL only
+  MessagePosition position      = 4; // ORIGINAL/PREDICATE only
+
+  // Common context. bucket/object_path/version_id always populated.
+  // rule_hash is OPTIONAL: empty bytes for pre-evaluation failures
+  // (e.g. handleEvent fetchLive FATAL where no rule has been evaluated).
+  bytes  rule_hash   = 5;
+  string bucket      = 6;
+  string object_path = 7;
+  string version_id  = 8;
+
+  string reason          = 9;  // "FATAL_EVENT_ERROR: malformed entry"
+  string last_error      = 10; // raw error string from the last attempt
+  int64  first_seen_at_ns = 11;
+  int64  last_retry_at_ns = 12;
+  int32  retry_count      = 13;
+}
+
+// StreamKey is the shape used by retry-budget tracking. One of four shapes
+// per stream_kind, since the identifying tuple differs.
+message StreamKey {
+  oneof key {
+    OriginalKey  original  = 1;
+    PredicateKey predicate = 2;
+    BootstrapKey bootstrap = 3;
+    PendingKey   pending   = 4;
+  }
+}
+
+message OriginalKey {
+  string          shard         = 1;
+  int64           delay_seconds = 2;
+  MessagePosition position      = 3;
+}
+message PredicateKey {
+  string          shard    = 1;
+  MessagePosition position = 2;
+}
+message BootstrapKey {
+  string bucket       = 1;
+  string object_path  = 2;
+  string version_id   = 3;
+  bytes  rule_hash    = 4;
+}
+message PendingKey {
+  string bucket      = 1;
+  bytes  rule_hash   = 2;
+  string object_path = 3;
+  string version_id  = 4;
+}
+
+// RetryBudgetEntry tracks consecutive RETRY_LATER outcomes for a stream key.
+// Promotes to BLOCKED when consecutive_retries >= retryBudgetMax (30) or age
+// >= retryBudgetMaxAge (4h). Compacts on success (clearRetryBudget).
+message RetryBudgetEntry {
+  StreamKey key                 = 1;
+  int32     consecutive_retries = 2;
+  int64     first_seen_at_ns    = 3;
+  int64     last_retry_at_ns    = 4;
+}
+
+// RetryTarget carries routing info needed to (a) write a BlockerRecord on
+// promotion and (b) re-invoke the right primitive on operator retry. We
+// deliberately do NOT carry expected_identity or action: the handler
+// re-fetches live state and re-evaluates from scratch.
+message RetryTarget {
+  StreamKey key         = 1;
+  string    bucket      = 2;
+  string    object_path = 3;
+  string    version_id  = 4;
+  bytes    rule_hash    = 5;
+}
