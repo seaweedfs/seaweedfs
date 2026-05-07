@@ -85,7 +85,7 @@ func TestToBreadcrumb(t *testing.T) {
 	}
 }
 
-func TestPrintPathEscapesURLSensitivePathChars(t *testing.T) {
+func TestPrintPathPreservesPathSafeTimestampChars(t *testing.T) {
 	got := printpath("/logs/run_id=backfill__2025-01-31T15:00:00+00:00/")
 	want := "/logs/run_id=backfill__2025-01-31T15:00:00+00:00/"
 
