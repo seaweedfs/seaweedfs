@@ -96,7 +96,7 @@ func ReadLogFileRefsWithPosition(
 	var wg sync.WaitGroup
 	for _, fid := range filerOrder {
 		startPos := startPositions[fid]
-		paused := startPos.TsNs == MaxMessagePosition.TsNs && startPos.Offset == MaxMessagePosition.Offset
+		paused := startPos == MaxMessagePosition
 		ch := make(chan *filer_pb.LogEntry, 256)
 		errCh := make(chan error, 1)
 		s := &filerStream{id: fid, ch: ch, errCh: errCh, startPos: startPos, paused: paused}
