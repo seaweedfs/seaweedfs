@@ -44,12 +44,18 @@ func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
 	if snap == nil || ev == nil {
 		return nil
 	}
+	// Hard deletes carry no schedule-relevant state: an Expiration would
+	// hit NOOP_RESOLVED at dispatch time anyway, ExpiredObjectDeleteMarker
+	// only fires on the latest-version delete-marker which is a Create
+	// from the server's perspective. Skip rather than burn a schedule slot.
+	if ev.NewEntry == nil {
+		return nil
+	}
 	keys := snap.BucketActionKeys(ev.Bucket)
 	if len(keys) == 0 {
 		return nil
 	}
-	versioned := snap.BucketVersioned(ev.Bucket)
-	info := buildObjectInfo(ev, versioned)
+	info := buildObjectInfo(ev)
 	if info == nil {
 		return nil
 	}
@@ -90,25 +96,22 @@ func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
 // buildObjectInfo derives a non-versioned ObjectInfo from a meta-log event.
 // Versioned-bucket semantics (IsLatest, NumVersions, NoncurrentIndex,
 // IsDeleteMarker for noncurrent versions) require listing siblings and land
-// in Phase 5; for now an event on a versioned bucket is treated as
-// IsLatest=true with the same caveat that the LifecycleDelete RPC's
-// identity-CAS catches stale schedules.
-func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
+// in Phase 5; for now any event is treated as IsLatest=true with the
+// LifecycleDelete RPC's identity-CAS catching stale schedules.
+//
+// Returns nil when Attributes are missing — without ModTime, EvaluateAction
+// would compute due against year-0001 and fire immediately.
+func buildObjectInfo(ev *reader.Event) *s3lifecycle.ObjectInfo {
 	entry := ev.NewEntry
-	if entry == nil {
-		entry = ev.OldEntry
-	}
-	if entry == nil {
+	if entry == nil || entry.Attributes == nil {
 		return nil
 	}
 	info := &s3lifecycle.ObjectInfo{
 		Key:         ev.Key,
+		ModTime:     time.Unix(entry.Attributes.Mtime, 0),
+		Size:        int64(entry.Attributes.FileSize),
 		IsLatest:    true,
 		NumVersions: 1,
-	}
-	if entry.Attributes != nil {
-		info.ModTime = time.Unix(entry.Attributes.Mtime, 0)
-		info.Size = int64(entry.Attributes.FileSize)
 	}
 	if tags := extractTags(entry.Extended); len(tags) > 0 {
 		info.Tags = tags
@@ -116,7 +119,6 @@ func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 	if isDeleteMarkerEntry(entry) {
 		info.IsDeleteMarker = true
 	}
-	_ = versioned
 	return info
 }
 
@@ -129,7 +131,10 @@ func buildIdentity(ev *reader.Event) *EntryIdentity {
 	}
 	id := &EntryIdentity{}
 	if entry.Attributes != nil {
-		id.MtimeNs = entry.Attributes.Mtime
+		// Mirror the server-side computeEntryIdentity encoding: Mtime
+		// (seconds) and MtimeNs (nanosecond component) combine into
+		// EntryIdentity.MtimeNs as nanoseconds-since-epoch.
+		id.MtimeNs = entry.Attributes.Mtime*int64(1e9) + int64(entry.Attributes.MtimeNs)
 		id.Size = int64(entry.Attributes.FileSize)
 	}
 	if len(entry.GetChunks()) > 0 {

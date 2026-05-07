@@ -137,6 +137,42 @@ func TestRouteRespectsPrefixFilter(t *testing.T) {
 	}
 }
 
+func TestRouteSkipsHardDelete(t *testing.T) {
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWith(rule, activatedPrior(rule))
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	// Hard delete: NewEntry is nil; OldEntry holds the gone object.
+	ev := &reader.Event{
+		TsNs:   old.UnixNano(),
+		Bucket: "bk",
+		Key:    "gone.txt",
+		OldEntry: &filer_pb.Entry{
+			Name: "gone.txt",
+			Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 1},
+		},
+	}
+	if got := Route(snap, ev, now); got != nil {
+		t.Fatalf("hard delete should not route, got %v", got)
+	}
+}
+
+func TestRouteSkipsMissingAttributes(t *testing.T) {
+	// Without Attributes there's no ModTime, and EvaluateAction would
+	// compute due against year-0001 and fire immediately. Skip the event.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWith(rule, activatedPrior(rule))
+	ev := &reader.Event{
+		TsNs:     time.Now().UnixNano(),
+		Bucket:   "bk",
+		Key:      "k",
+		NewEntry: &filer_pb.Entry{Name: "k"}, // no Attributes
+	}
+	if got := Route(snap, ev, time.Now()); got != nil {
+		t.Fatalf("missing-Attributes event should not route, got %v", got)
+	}
+}
+
 func TestRouteIdentityCapturedForNewEntry(t *testing.T) {
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
 	snap := compileWith(rule, activatedPrior(rule))
@@ -153,5 +189,9 @@ func TestRouteIdentityCapturedForNewEntry(t *testing.T) {
 	id := matches[0].Identity
 	if id == nil || id.Size != 42 || id.HeadFid != "1,abc" {
 		t.Fatalf("identity capture: %+v", id)
+	}
+	wantNs := old.Unix()*int64(1e9) + 0
+	if id.MtimeNs != wantNs {
+		t.Fatalf("MtimeNs=%d, want %d (Mtime*1e9)", id.MtimeNs, wantNs)
 	}
 }
