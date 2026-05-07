@@ -16,6 +16,12 @@ const (
 	TaskTypeBalance       TaskType = "balance"
 	TaskTypeReplication   TaskType = "replication"
 	TaskTypeECBalance     TaskType = "ec_balance"
+	// TaskTypeS3Lifecycle covers all three lifecycle subtypes (READ, BOOTSTRAP,
+	// DRAIN) — one job type, dispatched by S3LifecycleParams.Subtype inside
+	// the handler. The lane mapping in admin/plugin/scheduler_lane.go binds
+	// "s3_lifecycle" -> LaneLifecycle so lifecycle work runs in its own
+	// scheduling lane and never blocks the default-lane admin lock.
+	TaskTypeS3Lifecycle TaskType = "s3_lifecycle"
 )
 
 // TaskStatus represents the status of a maintenance task
