@@ -117,13 +117,13 @@ message TaskParams {
 }
 
 // S3LifecycleParams routes a worker task to one of the three lifecycle
-// subroutines. READ is the cluster-singleton meta-log reader (one task at
-// a time); BOOTSTRAP walks a single bucket; DRAIN drains pending exceptions
-// for a single rule.
+// subroutines. READ is the per-shard meta-log reader (one task per shard_id
+// at a time); BOOTSTRAP walks a single bucket; DRAIN drains pending
+// exceptions for a single rule.
 message S3LifecycleParams {
   // Zero is an UNSPECIFIED sentinel: a TaskParams payload whose subtype is
-  // unset must not silently route into the cluster-singleton READ task.
-  // Callers always populate one of READ / BOOTSTRAP / DRAIN.
+  // unset must not silently route into a READ task. Callers always populate
+  // one of READ / BOOTSTRAP / DRAIN.
   enum Subtype {
     SUBTYPE_UNSPECIFIED = 0;
     READ                = 1;
@@ -142,6 +142,12 @@ message S3LifecycleParams {
   int32  batch_event_budget    = 6; // 0 = use default
 
   ContinuationHint continuation = 7; // resume hint for kill-resume tasks
+
+  // READ only: which (bucket, key-prefix-hash) shard this task processes.
+  // Range 0..S3LifecycleShardCount-1 (16 shards). Required for READ; ignored
+  // for BOOTSTRAP and DRAIN. Workers receive one READ task per owned shard;
+  // shards distribute across workers via the existing scheduler.
+  int32 shard_id = 8;
 }
 
 // ContinuationHint lets a long-running BOOTSTRAP or READ task hand its

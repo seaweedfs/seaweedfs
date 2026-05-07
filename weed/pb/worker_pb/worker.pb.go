@@ -22,8 +22,8 @@ const (
 )
 
 // Zero is an UNSPECIFIED sentinel: a TaskParams payload whose subtype is
-// unset must not silently route into the cluster-singleton READ task.
-// Callers always populate one of READ / BOOTSTRAP / DRAIN.
+// unset must not silently route into a READ task. Callers always populate
+// one of READ / BOOTSTRAP / DRAIN.
 type S3LifecycleParams_Subtype int32
 
 const (
@@ -1071,9 +1071,9 @@ func (*TaskParams_EcBalanceParams) isTaskParams_TaskParams() {}
 func (*TaskParams_S3LifecycleParams) isTaskParams_TaskParams() {}
 
 // S3LifecycleParams routes a worker task to one of the three lifecycle
-// subroutines. READ is the cluster-singleton meta-log reader (one task at
-// a time); BOOTSTRAP walks a single bucket; DRAIN drains pending exceptions
-// for a single rule.
+// subroutines. READ is the per-shard meta-log reader (one task per shard_id
+// at a time); BOOTSTRAP walks a single bucket; DRAIN drains pending
+// exceptions for a single rule.
 type S3LifecycleParams struct {
 	state   protoimpl.MessageState    `protogen:"open.v1"`
 	Subtype S3LifecycleParams_Subtype `protobuf:"varint,1,opt,name=subtype,proto3,enum=worker_pb.S3LifecycleParams_Subtype" json:"subtype,omitempty"`
@@ -1085,8 +1085,13 @@ type S3LifecycleParams struct {
 	BatchTimeBudgetNs int64             `protobuf:"varint,5,opt,name=batch_time_budget_ns,json=batchTimeBudgetNs,proto3" json:"batch_time_budget_ns,omitempty"` // 0 = use default
 	BatchEventBudget  int32             `protobuf:"varint,6,opt,name=batch_event_budget,json=batchEventBudget,proto3" json:"batch_event_budget,omitempty"`      // 0 = use default
 	Continuation      *ContinuationHint `protobuf:"bytes,7,opt,name=continuation,proto3" json:"continuation,omitempty"`                                         // resume hint for kill-resume tasks
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// READ only: which (bucket, key-prefix-hash) shard this task processes.
+	// Range 0..S3LifecycleShardCount-1 (16 shards). Required for READ; ignored
+	// for BOOTSTRAP and DRAIN. Workers receive one READ task per owned shard;
+	// shards distribute across workers via the existing scheduler.
+	ShardId       int32 `protobuf:"varint,8,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *S3LifecycleParams) Reset() {
@@ -1166,6 +1171,13 @@ func (x *S3LifecycleParams) GetContinuation() *ContinuationHint {
 		return x.Continuation
 	}
 	return nil
+}
+
+func (x *S3LifecycleParams) GetShardId() int32 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
 }
 
 // ContinuationHint lets a long-running BOOTSTRAP or READ task hand its
@@ -3995,7 +4007,7 @@ const file_worker_proto_rawDesc = "" +
 	"\x12replication_params\x18\f \x01(\v2 .worker_pb.ReplicationTaskParamsH\x00R\x11replicationParams\x12L\n" +
 	"\x11ec_balance_params\x18\r \x01(\v2\x1e.worker_pb.EcBalanceTaskParamsH\x00R\x0fecBalanceParams\x12N\n" +
 	"\x13s3_lifecycle_params\x18\x0e \x01(\v2\x1c.worker_pb.S3LifecycleParamsH\x00R\x11s3LifecycleParamsB\r\n" +
-	"\vtask_params\"\x86\x03\n" +
+	"\vtask_params\"\xa1\x03\n" +
 	"\x11S3LifecycleParams\x12>\n" +
 	"\asubtype\x18\x01 \x01(\x0e2$.worker_pb.S3LifecycleParams.SubtypeR\asubtype\x12\x16\n" +
 	"\x06bucket\x18\x02 \x01(\tR\x06bucket\x12\x1b\n" +
@@ -4003,7 +4015,8 @@ const file_worker_proto_rawDesc = "" +
 	"\x05force\x18\x04 \x01(\bR\x05force\x12/\n" +
 	"\x14batch_time_budget_ns\x18\x05 \x01(\x03R\x11batchTimeBudgetNs\x12,\n" +
 	"\x12batch_event_budget\x18\x06 \x01(\x05R\x10batchEventBudget\x12?\n" +
-	"\fcontinuation\x18\a \x01(\v2\x1b.worker_pb.ContinuationHintR\fcontinuation\"F\n" +
+	"\fcontinuation\x18\a \x01(\v2\x1b.worker_pb.ContinuationHintR\fcontinuation\x12\x19\n" +
+	"\bshard_id\x18\b \x01(\x05R\ashardId\"F\n" +
 	"\aSubtype\x12\x17\n" +
 	"\x13SUBTYPE_UNSPECIFIED\x10\x00\x12\b\n" +
 	"\x04READ\x10\x01\x12\r\n" +
