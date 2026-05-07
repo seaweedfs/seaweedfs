@@ -118,3 +118,15 @@ func (s *Snapshot) BucketVersioned(bucket string) bool {
 	}
 	return false
 }
+
+// BucketActionKeys returns a defensive copy of the action keys for bucket,
+// or nil if the bucket has no compiled actions in this snapshot.
+func (s *Snapshot) BucketActionKeys(bucket string) []s3lifecycle.ActionKey {
+	bi, ok := s.buckets[bucket]
+	if !ok {
+		return nil
+	}
+	out := make([]s3lifecycle.ActionKey, len(bi.actionKeys))
+	copy(out, bi.actionKeys)
+	return out
+}
