@@ -35,10 +35,7 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 		// Transient: worker retries; sustained failures eventually promote
 		// to BLOCKED via the retry budget.
 		glog.V(1).Infof("lifecycle: live fetch %s/%s@%s: %v", req.Bucket, req.ObjectPath, req.VersionId, err)
-		return &s3_lifecycle_pb.LifecycleDeleteResponse{
-			Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER,
-			Reason:  "TRANSPORT_ERROR: " + err.Error(),
-		}, nil
+		return retryLater("TRANSPORT_ERROR: " + err.Error()), nil
 	}
 
 	live := computeEntryIdentity(entry)
@@ -113,10 +110,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	// TODO(phase-5): plumb to abortMultipartUpload (currently expects an
 	// *s3.AbortMultipartUploadInput; lifecycle has no HTTP request).
-	return &s3_lifecycle_pb.LifecycleDeleteResponse{
-		Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER,
-		Reason:  "ABORT_MPU not yet wired",
-	}, nil
+	return retryLater("ABORT_MPU not yet wired"), nil
 }
 
 // computeEntryIdentity captures mtime, size, head fid, and a sorted-Extended
@@ -188,4 +182,7 @@ func noopResolved(reason string) *s3_lifecycle_pb.LifecycleDeleteResponse {
 }
 func blocked(reason string) *s3_lifecycle_pb.LifecycleDeleteResponse {
 	return &s3_lifecycle_pb.LifecycleDeleteResponse{Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED, Reason: reason}
+}
+func retryLater(reason string) *s3_lifecycle_pb.LifecycleDeleteResponse {
+	return &s3_lifecycle_pb.LifecycleDeleteResponse{Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER, Reason: reason}
 }
