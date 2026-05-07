@@ -860,13 +860,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 }
 
 func (c *commandVolumeFsck) getCollectFilerFilePath() string {
-	if c.scopedFilerPath != "" {
-		return c.scopedFilerPath
-	}
-	if *c.collection != "" {
-		return fmt.Sprintf("%s/%s", c.bucketsPath, *c.collection)
-	}
-	return "/"
+	return c.scopedFilerPath
 }
 
 func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
@@ -896,8 +890,8 @@ func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[s
 		return "/"
 	}
 	var collection string
-	for c := range collections {
-		collection = c
+	for col := range collections {
+		collection = col
 	}
 	exists, err := c.bucketDirExists(collection)
 	if err != nil || !exists {
