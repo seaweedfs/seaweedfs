@@ -95,6 +95,23 @@ func TestExtractBucketKeyBucketCreateAtRoot(t *testing.T) {
 	}
 }
 
+func TestExtractBucketKeyBucketCreateBareRoot(t *testing.T) {
+	// Some delete and create events emit the parent without a trailing
+	// slash. /buckets (no trailing slash) must also resolve to a bucket-
+	// root event with the entry name as the bucket.
+	r := &Reader{BucketsPath: "/buckets"}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		EventNotification: &filer_pb.EventNotification{
+			NewParentPath: "/buckets",
+			NewEntry:      &filer_pb.Entry{Name: "newbucket"},
+		},
+	}
+	b, k, ok := r.extractBucketKey(resp)
+	if !ok || b != "newbucket" || k != "" {
+		t.Fatalf("bare /buckets parent: got (%q,%q,%v), want (newbucket,,true)", b, k, ok)
+	}
+}
+
 func TestDispatchOneFiltersByShard(t *testing.T) {
 	// Pick a bucket+key whose shard is known, set Reader to a different
 	// shard, expect skip; same shard, expect emit.

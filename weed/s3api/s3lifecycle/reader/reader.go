@@ -46,6 +46,11 @@ type Reader struct {
 	// Zero = unbounded; the run continues until ctx cancellation or stream
 	// error. Used by the worker scheduler to bound a single READ task.
 	EventBudget int
+
+	// bucketsPathSlash is BucketsPath with a guaranteed trailing slash,
+	// computed once on Run and reused per event to avoid recomputing the
+	// normalized prefix in extractBucketKey.
+	bucketsPathSlash string
 }
 
 // Run subscribes via SubscribeMetadata starting at Cursor.MinTsNs(), filters
@@ -63,6 +68,10 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	}
 	if r.BucketsPath == "" {
 		return errors.New("reader: empty BucketsPath")
+	}
+	r.bucketsPathSlash = r.BucketsPath
+	if !strings.HasSuffix(r.bucketsPathSlash, "/") {
+		r.bucketsPathSlash += "/"
 	}
 
 	stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
@@ -157,35 +166,38 @@ func (r *Reader) extractBucketKey(resp *filer_pb.SubscribeMetadataResponse) (str
 		return "", "", false
 	}
 
-	// dir starts with BucketsPath when it's an in-bucket event. The bucket
-	// is the first segment after BucketsPath; the key is the rest plus name.
-	prefix := r.BucketsPath
-	if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
+	// Pre-normalized prefix (BucketsPath with trailing slash) is computed
+	// once in Run; bucket-root events arrive as either "/buckets" or
+	// "/buckets/", so accept both.
+	prefix := r.bucketsPathSlash
+	if prefix == "" {
+		prefix = r.BucketsPath + "/"
 	}
-	if !strings.HasPrefix(dir, prefix) {
+	bare := strings.TrimSuffix(prefix, "/")
+	var rest string
+	switch {
+	case dir == bare || dir == prefix:
+		// Bucket create/delete at /buckets root: bucket name is the entry name.
+		if name == "" {
+			return "", "", false
+		}
+		return name, "", true
+	case strings.HasPrefix(dir, prefix):
+		rest = dir[len(prefix):]
+	default:
 		return "", "", false
 	}
-	rest := dir[len(prefix):]
 	// rest = "<bucket>" or "<bucket>/<sub>/<sub>..."
 	slash := strings.IndexByte(rest, '/')
 	var bucket, parentInBucket string
 	if slash < 0 {
 		bucket = rest
-		parentInBucket = ""
 	} else {
 		bucket = rest[:slash]
 		parentInBucket = rest[slash+1:]
 	}
 	if bucket == "" {
-		// rest was empty: event was at /buckets/ itself (bucket create/delete).
-		// Bucket name is the entry name.
-		bucket = name
-		key := ""
-		if bucket == "" {
-			return "", "", false
-		}
-		return bucket, key, true
+		return "", "", false
 	}
 	if parentInBucket != "" {
 		return bucket, parentInBucket + "/" + name, true
