@@ -135,7 +135,10 @@ func computeEntryIdentity(entry *filer_pb.Entry) *s3_lifecycle_pb.EntryIdentity 
 	}
 	id := &s3_lifecycle_pb.EntryIdentity{}
 	if entry.Attributes != nil {
-		id.MtimeNs = entry.Attributes.Mtime
+		// FuseAttributes splits the timestamp across Mtime (seconds) and
+		// MtimeNs (nanosecond component); EntryIdentity.MtimeNs is the
+		// combined nanoseconds-since-epoch value.
+		id.MtimeNs = entry.Attributes.Mtime*int64(1e9) + int64(entry.Attributes.MtimeNs)
 		id.Size = int64(entry.Attributes.FileSize)
 	}
 	if len(entry.GetChunks()) > 0 {

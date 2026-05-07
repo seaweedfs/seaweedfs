@@ -10,15 +10,16 @@ import (
 
 func TestComputeEntryIdentity_BasicFields(t *testing.T) {
 	entry := &filer_pb.Entry{
-		Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000, FileSize: 4096},
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000, MtimeNs: 123, FileSize: 4096},
 		Chunks: []*filer_pb.FileChunk{
 			{FileId: "1,abc"},
 			{FileId: "1,def"},
 		},
 	}
 	id := computeEntryIdentity(entry)
-	if id.MtimeNs != 1700000000 {
-		t.Fatalf("MtimeNs want 1700000000, got %d", id.MtimeNs)
+	want := int64(1700000000)*int64(1e9) + int64(123)
+	if id.MtimeNs != want {
+		t.Fatalf("MtimeNs want %d, got %d", want, id.MtimeNs)
 	}
 	if id.Size != 4096 {
 		t.Fatalf("Size want 4096, got %d", id.Size)
