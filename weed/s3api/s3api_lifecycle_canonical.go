@@ -4,17 +4,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
-// LifecycleToCanonical converts the XML-deserialized Lifecycle into the flat
-// s3lifecycle.Rule shape the engine compiles against. One XML <Rule> maps to
-// exactly one s3lifecycle.Rule (with potentially multiple action sub-fields
-// populated); the engine then expands each into its compiled actions via
-// s3lifecycle.RuleActionKinds.
-//
-// Filter resolution mirrors AWS semantics: the optional <Filter> element may
-// contain a single <Prefix> | <Tag> | <And>, or be absent (in which case the
-// older top-level <Prefix> applies). When <And> is used, its sub-elements
-// (Prefix + multiple Tags + size filters) are flattened into the canonical
-// Rule's individual fields.
+// LifecycleToCanonical flattens the XML-deserialized Lifecycle into the
+// engine's flat Rule shape. The optional <Filter> element may contain
+// <Prefix> | <Tag> | <And>, or be absent (in which case the older top-level
+// <Prefix> applies).
 func LifecycleToCanonical(lc *Lifecycle) []*s3lifecycle.Rule {
 	if lc == nil {
 		return nil
@@ -32,7 +25,6 @@ func ruleToCanonical(r *Rule) *s3lifecycle.Rule {
 		Status: string(r.Status),
 	}
 
-	// Prefix: <Filter><Prefix> or <Filter><And><Prefix> or top-level <Prefix>.
 	prefix, tags, sizeGT, sizeLT := flattenFilter(&r.Filter)
 	if prefix == "" && r.Prefix.set {
 		prefix = r.Prefix.val
@@ -44,7 +36,6 @@ func ruleToCanonical(r *Rule) *s3lifecycle.Rule {
 	out.FilterSizeGreaterThan = sizeGT
 	out.FilterSizeLessThan = sizeLT
 
-	// Expiration sub-fields.
 	if r.Expiration.set {
 		out.ExpirationDays = r.Expiration.Days
 		if !r.Expiration.Date.Time.IsZero() {
@@ -55,13 +46,11 @@ func ruleToCanonical(r *Rule) *s3lifecycle.Rule {
 		}
 	}
 
-	// Non-current version expiration.
 	if r.NoncurrentVersionExpiration.set {
 		out.NoncurrentVersionExpirationDays = r.NoncurrentVersionExpiration.NoncurrentDays
 		out.NewerNoncurrentVersions = r.NoncurrentVersionExpiration.NewerNoncurrentVersions
 	}
 
-	// Abort multipart.
 	if r.AbortIncompleteMultipartUpload.set {
 		out.AbortMPUDaysAfterInitiation = r.AbortIncompleteMultipartUpload.DaysAfterInitiation
 	}
@@ -69,9 +58,6 @@ func ruleToCanonical(r *Rule) *s3lifecycle.Rule {
 	return out
 }
 
-// flattenFilter pulls Prefix / Tags / Size constraints out of the XML Filter
-// element. Returns zero values when the field is unset; the caller falls back
-// to the rule's top-level Prefix when prefix is "".
 func flattenFilter(f *Filter) (prefix string, tags map[string]string, sizeGT, sizeLT int64) {
 	if !f.set {
 		return
