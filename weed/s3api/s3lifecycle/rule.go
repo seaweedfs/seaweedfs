@@ -27,7 +27,13 @@ type Rule struct {
 	// Tag filter (from Rule.Filter.Tag or Rule.Filter.And.Tags).
 	FilterTags map[string]string
 
-	// Size filters.
+	// Size filters. Zero is treated as "not set" by the evaluator. Per AWS
+	// S3, an explicit <ObjectSizeGreaterThan>0</ObjectSizeGreaterThan>
+	// (which excludes 0-byte objects) cannot be distinguished from omitted
+	// in this representation; if a future deployment needs that
+	// distinction, switch to *int64 (or a paired set-bool) and update
+	// filterMatches / filterAllows / RuleHash accordingly. The zero-as-unset
+	// shortcut matches the default in s3api.Filter and the canonicalizer.
 	FilterSizeGreaterThan int64
 	FilterSizeLessThan    int64
 }
