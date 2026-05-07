@@ -8,12 +8,30 @@ option java_outer_classname = "S3LifecycleProto";
 
 // Storage layout reference (see S3_LIFECYCLE_REDESIGN.md):
 //
-//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/state           -> LifecycleState
-//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/pending         -> repeated PendingItem
-//   /etc/s3/lifecycle/<bucket>/_bootstrap                      -> BootstrapState
-//   /etc/s3/lifecycle/_reader/reader_state                     -> ReaderState
-//   /etc/s3/lifecycle/_reader/blockers                         -> repeated BlockerRecord
-//   /etc/s3/lifecycle/_reader/retry_budget                     -> repeated RetryBudgetEntry
+//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/state    -> LifecycleState
+//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/pending  -> repeated PendingItem
+//   /etc/s3/lifecycle/<bucket>/_bootstrap                             -> BootstrapState
+//   /etc/s3/lifecycle/_reader/reader_state                            -> ReaderState
+//   /etc/s3/lifecycle/_reader/blockers                                -> repeated BlockerRecord
+//   /etc/s3/lifecycle/_reader/retry_budget                            -> repeated RetryBudgetEntry
+//
+// State is per-(rule_hash, action_kind), not per-rule: a single XML <Rule>
+// with N action sub-elements expands into N compiled actions, each with
+// its own state file and its own pending file. Sibling actions of the
+// same rule can degrade or activate independently.
+
+// ActionKind classifies the lifecycle action a single compiled entry
+// represents. A single XML rule may produce multiple compiled entries —
+// one per populated action.
+enum ActionKind {
+  ACTION_KIND_UNSPECIFIED = 0;
+  EXPIRATION_DAYS         = 1; // Expiration.Days
+  EXPIRATION_DATE         = 2; // Expiration.Date
+  NONCURRENT_DAYS         = 3; // NoncurrentVersionExpiration.NoncurrentDays (with optional NewerNoncurrent retention)
+  NEWER_NONCURRENT        = 4; // NoncurrentVersionExpiration.NewerNoncurrentVersions, count-only (no NoncurrentDays)
+  ABORT_MPU               = 5; // AbortIncompleteMultipartUpload.DaysAfterInitiation
+  EXPIRED_DELETE_MARKER   = 6; // Expiration.ExpiredObjectDeleteMarker
+}
 
 // MessagePosition mirrors weed/util/log_buffer.MessagePosition for durable
 // storage. ts_ns + offset uniquely identifies a position within a per-filer
@@ -42,22 +60,18 @@ message EntryIdentity {
   bytes  extended_hash    = 4; // sha256 over sorted Extended map; cheap and stable
 }
 
-// LifecycleState captures the durable per-rule scheduling state.
+// LifecycleState captures the durable per-action scheduling state. Keyed by
+// (rule_hash, action_kind); persisted at
+//   /etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/state
+//
+// A single XML <Rule> with N populated action sub-elements expands into N
+// LifecycleState records, one per sibling action.
 message LifecycleState {
   // Proto3 best practice: zero value is an UNSPECIFIED sentinel so that
   // legacy / partially-populated payloads don't silently default to a
   // semantically active value. Persisted state files always set explicit
   // non-zero values; reading UNSPECIFIED indicates corruption or a missing
   // field.
-  enum RuleKind {
-    RULE_KIND_UNSPECIFIED   = 0;
-    EXPIRATION_DAYS         = 1;
-    EXPIRATION_DATE         = 2;
-    NONCURRENT_DAYS         = 3;
-    NEWER_NONCURRENT        = 4;
-    ABORT_MPU               = 5;
-    EXPIRED_DELETE_MARKER   = 6;
-  }
   enum RuleMode {
     RULE_MODE_UNSPECIFIED = 0;
     EVENT_DRIVEN          = 1;
@@ -79,20 +93,36 @@ message LifecycleState {
     LOST_LOG                    = 6;
   }
 
-  bytes    rule_hash               = 1; // 8 bytes; key matches the parent dir name
-  string   rule_id                 = 2; // display only
-  RuleKind rule_kind               = 3;
-  RuleMode mode                    = 4;
-  DegradedReason degraded_reason   = 5;
-  int64    degraded_since_ns       = 6;
-  bool     bootstrap_complete      = 7;
-  int64    bootstrap_started_at_ns = 8;
-  int64    bootstrap_completed_at_ns = 9;
-  int64    last_evaluated_ns       = 10;
-  // counters for observability; no behavior depends on these
-  int64    deleted_total           = 11;
-  int64    skipped_object_lock_total = 12;
-  int64    pending_size            = 13;
+  bytes      rule_hash                = 1;  // 8 bytes; matches the parent rule dir
+  ActionKind action_kind              = 2;  // matches the leaf dir name
+  string     rule_id                  = 3;  // display only; identical across sibling actions
+  RuleMode   mode                     = 4;
+  DegradedReason degraded_reason      = 5;
+  int64      degraded_since_ns        = 6;
+  bool       bootstrap_complete       = 7;
+  int64      bootstrap_started_at_ns  = 8;
+  int64      bootstrap_completed_at_ns = 9;
+
+  // Safety-scan scheduling. Set by the safety-scan job when a SCAN_ONLY
+  // (or periodic safety-scan) bootstrap pass completes; consulted by the
+  // detector to decide whether to emit the next bootstrap task.
+  int64 last_safety_scan_ts_ns = 10;
+  int64 next_safety_scan_ts_ns = 11;
+
+  // Counters for observability; no behavior depends on these.
+  // - evaluated_total: live entries the worker considered for this action
+  //   (filter-matched + due-checked); includes objects that ended up not
+  //   yet eligible.
+  // - expired_total: successful DONE outcomes (object/version/marker/MPU
+  //   removed) under this action.
+  // - metadata_only_total: subset of expired_total where the worker
+  //   short-circuited via volume-TTL routing (chunks left to volume GC).
+  // - error_total: outcomes that did NOT advance the cursor under this
+  //   action (RETRY_LATER, BLOCKED, FATAL_EVENT_ERROR).
+  int64 evaluated_total      = 12;
+  int64 expired_total        = 13;
+  int64 metadata_only_total  = 14;
+  int64 error_total          = 15;
 }
 
 // PendingItem records a not-yet-due eligibility for late-predicate exceptions
@@ -174,12 +204,15 @@ message BlockerRecord {
   MessagePosition position      = 4; // ORIGINAL/PREDICATE only
 
   // Common context. bucket/object_path/version_id always populated.
-  // rule_hash is OPTIONAL: empty bytes for pre-evaluation failures
-  // (e.g. handleEvent fetchLive FATAL where no rule has been evaluated).
-  bytes  rule_hash   = 5;
-  string bucket      = 6;
-  string object_path = 7;
-  string version_id  = 8;
+  // rule_hash and action_kind are OPTIONAL: empty / UNSPECIFIED for
+  // pre-evaluation failures (e.g. handleEvent fetchLive FATAL where no
+  // action has been evaluated). When populated, both are set together —
+  // the failure is bound to a specific (rule, action) pair.
+  bytes      rule_hash    = 5;
+  string     bucket       = 6;
+  string     object_path  = 7;
+  string     version_id   = 8;
+  ActionKind action_kind  = 14; // optional; UNSPECIFIED for pre-evaluation failures
 
   string reason          = 9;  // "FATAL_EVENT_ERROR: malformed entry"
   string last_error      = 10; // raw error string from the last attempt
@@ -209,16 +242,18 @@ message PredicateKey {
   MessagePosition position = 2;
 }
 message BootstrapKey {
-  string bucket       = 1;
-  string object_path  = 2;
-  string version_id   = 3;
-  bytes  rule_hash    = 4;
+  string     bucket      = 1;
+  string     object_path = 2;
+  string     version_id  = 3;
+  bytes      rule_hash   = 4;
+  ActionKind action_kind = 5; // distinguishes per-action streams under one rule
 }
 message PendingKey {
-  string bucket      = 1;
-  bytes  rule_hash   = 2;
-  string object_path = 3;
-  string version_id  = 4;
+  string     bucket      = 1;
+  bytes      rule_hash   = 2;
+  string     object_path = 3;
+  string     version_id  = 4;
+  ActionKind action_kind = 5;
 }
 
 // RetryBudgetEntry tracks consecutive RETRY_LATER outcomes for a stream key.
@@ -236,9 +271,10 @@ message RetryBudgetEntry {
 // deliberately do NOT carry expected_identity or action: the handler
 // re-fetches live state and re-evaluates from scratch.
 message RetryTarget {
-  StreamKey key         = 1;
-  string    bucket      = 2;
-  string    object_path = 3;
-  string    version_id  = 4;
-  bytes    rule_hash    = 5;
+  StreamKey  key         = 1;
+  string     bucket      = 2;
+  string     object_path = 3;
+  string     version_id  = 4;
+  bytes      rule_hash   = 5;
+  ActionKind action_kind = 6;
 }

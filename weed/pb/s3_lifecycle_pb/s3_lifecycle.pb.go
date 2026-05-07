@@ -21,6 +21,70 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// ActionKind classifies the lifecycle action a single compiled entry
+// represents. A single XML rule may produce multiple compiled entries —
+// one per populated action.
+type ActionKind int32
+
+const (
+	ActionKind_ACTION_KIND_UNSPECIFIED ActionKind = 0
+	ActionKind_EXPIRATION_DAYS         ActionKind = 1 // Expiration.Days
+	ActionKind_EXPIRATION_DATE         ActionKind = 2 // Expiration.Date
+	ActionKind_NONCURRENT_DAYS         ActionKind = 3 // NoncurrentVersionExpiration.NoncurrentDays (with optional NewerNoncurrent retention)
+	ActionKind_NEWER_NONCURRENT        ActionKind = 4 // NoncurrentVersionExpiration.NewerNoncurrentVersions, count-only (no NoncurrentDays)
+	ActionKind_ABORT_MPU               ActionKind = 5 // AbortIncompleteMultipartUpload.DaysAfterInitiation
+	ActionKind_EXPIRED_DELETE_MARKER   ActionKind = 6 // Expiration.ExpiredObjectDeleteMarker
+)
+
+// Enum value maps for ActionKind.
+var (
+	ActionKind_name = map[int32]string{
+		0: "ACTION_KIND_UNSPECIFIED",
+		1: "EXPIRATION_DAYS",
+		2: "EXPIRATION_DATE",
+		3: "NONCURRENT_DAYS",
+		4: "NEWER_NONCURRENT",
+		5: "ABORT_MPU",
+		6: "EXPIRED_DELETE_MARKER",
+	}
+	ActionKind_value = map[string]int32{
+		"ACTION_KIND_UNSPECIFIED": 0,
+		"EXPIRATION_DAYS":         1,
+		"EXPIRATION_DATE":         2,
+		"NONCURRENT_DAYS":         3,
+		"NEWER_NONCURRENT":        4,
+		"ABORT_MPU":               5,
+		"EXPIRED_DELETE_MARKER":   6,
+	}
+)
+
+func (x ActionKind) Enum() *ActionKind {
+	p := new(ActionKind)
+	*p = x
+	return p
+}
+
+func (x ActionKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ActionKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_s3_lifecycle_proto_enumTypes[0].Descriptor()
+}
+
+func (ActionKind) Type() protoreflect.EnumType {
+	return &file_s3_lifecycle_proto_enumTypes[0]
+}
+
+func (x ActionKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ActionKind.Descriptor instead.
+func (ActionKind) EnumDescriptor() ([]byte, []int) {
+	return file_s3_lifecycle_proto_rawDescGZIP(), []int{0}
+}
+
 // StreamKind classifies the four blockable streams. ORIGINAL/PREDICATE pause
 // reader cursors; BOOTSTRAP pauses a bucket walker; PENDING pauses a rule's
 // drain task. Zero is an UNSPECIFIED sentinel — a BlockerRecord whose
@@ -64,11 +128,11 @@ func (x StreamKind) String() string {
 }
 
 func (StreamKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_s3_lifecycle_proto_enumTypes[0].Descriptor()
+	return file_s3_lifecycle_proto_enumTypes[1].Descriptor()
 }
 
 func (StreamKind) Type() protoreflect.EnumType {
-	return &file_s3_lifecycle_proto_enumTypes[0]
+	return &file_s3_lifecycle_proto_enumTypes[1]
 }
 
 func (x StreamKind) Number() protoreflect.EnumNumber {
@@ -77,7 +141,7 @@ func (x StreamKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use StreamKind.Descriptor instead.
 func (StreamKind) EnumDescriptor() ([]byte, []int) {
-	return file_s3_lifecycle_proto_rawDescGZIP(), []int{0}
+	return file_s3_lifecycle_proto_rawDescGZIP(), []int{1}
 }
 
 // Proto3 best practice: zero value is an UNSPECIFIED sentinel so that
@@ -85,67 +149,6 @@ func (StreamKind) EnumDescriptor() ([]byte, []int) {
 // semantically active value. Persisted state files always set explicit
 // non-zero values; reading UNSPECIFIED indicates corruption or a missing
 // field.
-type LifecycleState_RuleKind int32
-
-const (
-	LifecycleState_RULE_KIND_UNSPECIFIED LifecycleState_RuleKind = 0
-	LifecycleState_EXPIRATION_DAYS       LifecycleState_RuleKind = 1
-	LifecycleState_EXPIRATION_DATE       LifecycleState_RuleKind = 2
-	LifecycleState_NONCURRENT_DAYS       LifecycleState_RuleKind = 3
-	LifecycleState_NEWER_NONCURRENT      LifecycleState_RuleKind = 4
-	LifecycleState_ABORT_MPU             LifecycleState_RuleKind = 5
-	LifecycleState_EXPIRED_DELETE_MARKER LifecycleState_RuleKind = 6
-)
-
-// Enum value maps for LifecycleState_RuleKind.
-var (
-	LifecycleState_RuleKind_name = map[int32]string{
-		0: "RULE_KIND_UNSPECIFIED",
-		1: "EXPIRATION_DAYS",
-		2: "EXPIRATION_DATE",
-		3: "NONCURRENT_DAYS",
-		4: "NEWER_NONCURRENT",
-		5: "ABORT_MPU",
-		6: "EXPIRED_DELETE_MARKER",
-	}
-	LifecycleState_RuleKind_value = map[string]int32{
-		"RULE_KIND_UNSPECIFIED": 0,
-		"EXPIRATION_DAYS":       1,
-		"EXPIRATION_DATE":       2,
-		"NONCURRENT_DAYS":       3,
-		"NEWER_NONCURRENT":      4,
-		"ABORT_MPU":             5,
-		"EXPIRED_DELETE_MARKER": 6,
-	}
-)
-
-func (x LifecycleState_RuleKind) Enum() *LifecycleState_RuleKind {
-	p := new(LifecycleState_RuleKind)
-	*p = x
-	return p
-}
-
-func (x LifecycleState_RuleKind) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (LifecycleState_RuleKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_s3_lifecycle_proto_enumTypes[1].Descriptor()
-}
-
-func (LifecycleState_RuleKind) Type() protoreflect.EnumType {
-	return &file_s3_lifecycle_proto_enumTypes[1]
-}
-
-func (x LifecycleState_RuleKind) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use LifecycleState_RuleKind.Descriptor instead.
-func (LifecycleState_RuleKind) EnumDescriptor() ([]byte, []int) {
-	return file_s3_lifecycle_proto_rawDescGZIP(), []int{3, 0}
-}
-
 type LifecycleState_RuleMode int32
 
 const (
@@ -201,7 +204,7 @@ func (x LifecycleState_RuleMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LifecycleState_RuleMode.Descriptor instead.
 func (LifecycleState_RuleMode) EnumDescriptor() ([]byte, []int) {
-	return file_s3_lifecycle_proto_rawDescGZIP(), []int{3, 1}
+	return file_s3_lifecycle_proto_rawDescGZIP(), []int{3, 0}
 }
 
 // DEGRADED_REASON_UNSPECIFIED replaces the old NONE sentinel: an unset
@@ -265,7 +268,7 @@ func (x LifecycleState_DegradedReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LifecycleState_DegradedReason.Descriptor instead.
 func (LifecycleState_DegradedReason) EnumDescriptor() ([]byte, []int) {
-	return file_s3_lifecycle_proto_rawDescGZIP(), []int{3, 2}
+	return file_s3_lifecycle_proto_rawDescGZIP(), []int{3, 1}
 }
 
 // MessagePosition mirrors weed/util/log_buffer.MessagePosition for durable
@@ -450,25 +453,45 @@ func (x *EntryIdentity) GetExtendedHash() []byte {
 	return nil
 }
 
-// LifecycleState captures the durable per-rule scheduling state.
+// LifecycleState captures the durable per-action scheduling state. Keyed by
+// (rule_hash, action_kind); persisted at
+//
+//	/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/state
+//
+// A single XML <Rule> with N populated action sub-elements expands into N
+// LifecycleState records, one per sibling action.
 type LifecycleState struct {
 	state                  protoimpl.MessageState        `protogen:"open.v1"`
-	RuleHash               []byte                        `protobuf:"bytes,1,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"` // 8 bytes; key matches the parent dir name
-	RuleId                 string                        `protobuf:"bytes,2,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`       // display only
-	RuleKind               LifecycleState_RuleKind       `protobuf:"varint,3,opt,name=rule_kind,json=ruleKind,proto3,enum=s3_lifecycle_pb.LifecycleState_RuleKind" json:"rule_kind,omitempty"`
+	RuleHash               []byte                        `protobuf:"bytes,1,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"`                                        // 8 bytes; matches the parent rule dir
+	ActionKind             ActionKind                    `protobuf:"varint,2,opt,name=action_kind,json=actionKind,proto3,enum=s3_lifecycle_pb.ActionKind" json:"action_kind,omitempty"` // matches the leaf dir name
+	RuleId                 string                        `protobuf:"bytes,3,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`                                              // display only; identical across sibling actions
 	Mode                   LifecycleState_RuleMode       `protobuf:"varint,4,opt,name=mode,proto3,enum=s3_lifecycle_pb.LifecycleState_RuleMode" json:"mode,omitempty"`
 	DegradedReason         LifecycleState_DegradedReason `protobuf:"varint,5,opt,name=degraded_reason,json=degradedReason,proto3,enum=s3_lifecycle_pb.LifecycleState_DegradedReason" json:"degraded_reason,omitempty"`
 	DegradedSinceNs        int64                         `protobuf:"varint,6,opt,name=degraded_since_ns,json=degradedSinceNs,proto3" json:"degraded_since_ns,omitempty"`
 	BootstrapComplete      bool                          `protobuf:"varint,7,opt,name=bootstrap_complete,json=bootstrapComplete,proto3" json:"bootstrap_complete,omitempty"`
 	BootstrapStartedAtNs   int64                         `protobuf:"varint,8,opt,name=bootstrap_started_at_ns,json=bootstrapStartedAtNs,proto3" json:"bootstrap_started_at_ns,omitempty"`
 	BootstrapCompletedAtNs int64                         `protobuf:"varint,9,opt,name=bootstrap_completed_at_ns,json=bootstrapCompletedAtNs,proto3" json:"bootstrap_completed_at_ns,omitempty"`
-	LastEvaluatedNs        int64                         `protobuf:"varint,10,opt,name=last_evaluated_ns,json=lastEvaluatedNs,proto3" json:"last_evaluated_ns,omitempty"`
-	// counters for observability; no behavior depends on these
-	DeletedTotal           int64 `protobuf:"varint,11,opt,name=deleted_total,json=deletedTotal,proto3" json:"deleted_total,omitempty"`
-	SkippedObjectLockTotal int64 `protobuf:"varint,12,opt,name=skipped_object_lock_total,json=skippedObjectLockTotal,proto3" json:"skipped_object_lock_total,omitempty"`
-	PendingSize            int64 `protobuf:"varint,13,opt,name=pending_size,json=pendingSize,proto3" json:"pending_size,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Safety-scan scheduling. Set by the safety-scan job when a SCAN_ONLY
+	// (or periodic safety-scan) bootstrap pass completes; consulted by the
+	// detector to decide whether to emit the next bootstrap task.
+	LastSafetyScanTsNs int64 `protobuf:"varint,10,opt,name=last_safety_scan_ts_ns,json=lastSafetyScanTsNs,proto3" json:"last_safety_scan_ts_ns,omitempty"`
+	NextSafetyScanTsNs int64 `protobuf:"varint,11,opt,name=next_safety_scan_ts_ns,json=nextSafetyScanTsNs,proto3" json:"next_safety_scan_ts_ns,omitempty"`
+	// Counters for observability; no behavior depends on these.
+	//   - evaluated_total: live entries the worker considered for this action
+	//     (filter-matched + due-checked); includes objects that ended up not
+	//     yet eligible.
+	//   - expired_total: successful DONE outcomes (object/version/marker/MPU
+	//     removed) under this action.
+	//   - metadata_only_total: subset of expired_total where the worker
+	//     short-circuited via volume-TTL routing (chunks left to volume GC).
+	//   - error_total: outcomes that did NOT advance the cursor under this
+	//     action (RETRY_LATER, BLOCKED, FATAL_EVENT_ERROR).
+	EvaluatedTotal    int64 `protobuf:"varint,12,opt,name=evaluated_total,json=evaluatedTotal,proto3" json:"evaluated_total,omitempty"`
+	ExpiredTotal      int64 `protobuf:"varint,13,opt,name=expired_total,json=expiredTotal,proto3" json:"expired_total,omitempty"`
+	MetadataOnlyTotal int64 `protobuf:"varint,14,opt,name=metadata_only_total,json=metadataOnlyTotal,proto3" json:"metadata_only_total,omitempty"`
+	ErrorTotal        int64 `protobuf:"varint,15,opt,name=error_total,json=errorTotal,proto3" json:"error_total,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *LifecycleState) Reset() {
@@ -508,18 +531,18 @@ func (x *LifecycleState) GetRuleHash() []byte {
 	return nil
 }
 
+func (x *LifecycleState) GetActionKind() ActionKind {
+	if x != nil {
+		return x.ActionKind
+	}
+	return ActionKind_ACTION_KIND_UNSPECIFIED
+}
+
 func (x *LifecycleState) GetRuleId() string {
 	if x != nil {
 		return x.RuleId
 	}
 	return ""
-}
-
-func (x *LifecycleState) GetRuleKind() LifecycleState_RuleKind {
-	if x != nil {
-		return x.RuleKind
-	}
-	return LifecycleState_RULE_KIND_UNSPECIFIED
 }
 
 func (x *LifecycleState) GetMode() LifecycleState_RuleMode {
@@ -564,30 +587,44 @@ func (x *LifecycleState) GetBootstrapCompletedAtNs() int64 {
 	return 0
 }
 
-func (x *LifecycleState) GetLastEvaluatedNs() int64 {
+func (x *LifecycleState) GetLastSafetyScanTsNs() int64 {
 	if x != nil {
-		return x.LastEvaluatedNs
+		return x.LastSafetyScanTsNs
 	}
 	return 0
 }
 
-func (x *LifecycleState) GetDeletedTotal() int64 {
+func (x *LifecycleState) GetNextSafetyScanTsNs() int64 {
 	if x != nil {
-		return x.DeletedTotal
+		return x.NextSafetyScanTsNs
 	}
 	return 0
 }
 
-func (x *LifecycleState) GetSkippedObjectLockTotal() int64 {
+func (x *LifecycleState) GetEvaluatedTotal() int64 {
 	if x != nil {
-		return x.SkippedObjectLockTotal
+		return x.EvaluatedTotal
 	}
 	return 0
 }
 
-func (x *LifecycleState) GetPendingSize() int64 {
+func (x *LifecycleState) GetExpiredTotal() int64 {
 	if x != nil {
-		return x.PendingSize
+		return x.ExpiredTotal
+	}
+	return 0
+}
+
+func (x *LifecycleState) GetMetadataOnlyTotal() int64 {
+	if x != nil {
+		return x.MetadataOnlyTotal
+	}
+	return 0
+}
+
+func (x *LifecycleState) GetErrorTotal() int64 {
+	if x != nil {
+		return x.ErrorTotal
 	}
 	return 0
 }
@@ -931,17 +968,20 @@ type BlockerRecord struct {
 	DelaySeconds int64            `protobuf:"varint,3,opt,name=delay_seconds,json=delaySeconds,proto3" json:"delay_seconds,omitempty"` // ORIGINAL only
 	Position     *MessagePosition `protobuf:"bytes,4,opt,name=position,proto3" json:"position,omitempty"`                              // ORIGINAL/PREDICATE only
 	// Common context. bucket/object_path/version_id always populated.
-	// rule_hash is OPTIONAL: empty bytes for pre-evaluation failures
-	// (e.g. handleEvent fetchLive FATAL where no rule has been evaluated).
-	RuleHash      []byte `protobuf:"bytes,5,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"`
-	Bucket        string `protobuf:"bytes,6,opt,name=bucket,proto3" json:"bucket,omitempty"`
-	ObjectPath    string `protobuf:"bytes,7,opt,name=object_path,json=objectPath,proto3" json:"object_path,omitempty"`
-	VersionId     string `protobuf:"bytes,8,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
-	Reason        string `protobuf:"bytes,9,opt,name=reason,proto3" json:"reason,omitempty"`                         // "FATAL_EVENT_ERROR: malformed entry"
-	LastError     string `protobuf:"bytes,10,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"` // raw error string from the last attempt
-	FirstSeenAtNs int64  `protobuf:"varint,11,opt,name=first_seen_at_ns,json=firstSeenAtNs,proto3" json:"first_seen_at_ns,omitempty"`
-	LastRetryAtNs int64  `protobuf:"varint,12,opt,name=last_retry_at_ns,json=lastRetryAtNs,proto3" json:"last_retry_at_ns,omitempty"`
-	RetryCount    int32  `protobuf:"varint,13,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
+	// rule_hash and action_kind are OPTIONAL: empty / UNSPECIFIED for
+	// pre-evaluation failures (e.g. handleEvent fetchLive FATAL where no
+	// action has been evaluated). When populated, both are set together —
+	// the failure is bound to a specific (rule, action) pair.
+	RuleHash      []byte     `protobuf:"bytes,5,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"`
+	Bucket        string     `protobuf:"bytes,6,opt,name=bucket,proto3" json:"bucket,omitempty"`
+	ObjectPath    string     `protobuf:"bytes,7,opt,name=object_path,json=objectPath,proto3" json:"object_path,omitempty"`
+	VersionId     string     `protobuf:"bytes,8,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	ActionKind    ActionKind `protobuf:"varint,14,opt,name=action_kind,json=actionKind,proto3,enum=s3_lifecycle_pb.ActionKind" json:"action_kind,omitempty"` // optional; UNSPECIFIED for pre-evaluation failures
+	Reason        string     `protobuf:"bytes,9,opt,name=reason,proto3" json:"reason,omitempty"`                                                             // "FATAL_EVENT_ERROR: malformed entry"
+	LastError     string     `protobuf:"bytes,10,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`                                     // raw error string from the last attempt
+	FirstSeenAtNs int64      `protobuf:"varint,11,opt,name=first_seen_at_ns,json=firstSeenAtNs,proto3" json:"first_seen_at_ns,omitempty"`
+	LastRetryAtNs int64      `protobuf:"varint,12,opt,name=last_retry_at_ns,json=lastRetryAtNs,proto3" json:"last_retry_at_ns,omitempty"`
+	RetryCount    int32      `protobuf:"varint,13,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1030,6 +1070,13 @@ func (x *BlockerRecord) GetVersionId() string {
 		return x.VersionId
 	}
 	return ""
+}
+
+func (x *BlockerRecord) GetActionKind() ActionKind {
+	if x != nil {
+		return x.ActionKind
+	}
+	return ActionKind_ACTION_KIND_UNSPECIFIED
 }
 
 func (x *BlockerRecord) GetReason() string {
@@ -1301,6 +1348,7 @@ type BootstrapKey struct {
 	ObjectPath    string                 `protobuf:"bytes,2,opt,name=object_path,json=objectPath,proto3" json:"object_path,omitempty"`
 	VersionId     string                 `protobuf:"bytes,3,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	RuleHash      []byte                 `protobuf:"bytes,4,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"`
+	ActionKind    ActionKind             `protobuf:"varint,5,opt,name=action_kind,json=actionKind,proto3,enum=s3_lifecycle_pb.ActionKind" json:"action_kind,omitempty"` // distinguishes per-action streams under one rule
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1363,12 +1411,20 @@ func (x *BootstrapKey) GetRuleHash() []byte {
 	return nil
 }
 
+func (x *BootstrapKey) GetActionKind() ActionKind {
+	if x != nil {
+		return x.ActionKind
+	}
+	return ActionKind_ACTION_KIND_UNSPECIFIED
+}
+
 type PendingKey struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Bucket        string                 `protobuf:"bytes,1,opt,name=bucket,proto3" json:"bucket,omitempty"`
 	RuleHash      []byte                 `protobuf:"bytes,2,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"`
 	ObjectPath    string                 `protobuf:"bytes,3,opt,name=object_path,json=objectPath,proto3" json:"object_path,omitempty"`
 	VersionId     string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	ActionKind    ActionKind             `protobuf:"varint,5,opt,name=action_kind,json=actionKind,proto3,enum=s3_lifecycle_pb.ActionKind" json:"action_kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1429,6 +1485,13 @@ func (x *PendingKey) GetVersionId() string {
 		return x.VersionId
 	}
 	return ""
+}
+
+func (x *PendingKey) GetActionKind() ActionKind {
+	if x != nil {
+		return x.ActionKind
+	}
+	return ActionKind_ACTION_KIND_UNSPECIFIED
 }
 
 // RetryBudgetEntry tracks consecutive RETRY_LATER outcomes for a stream key.
@@ -1513,6 +1576,7 @@ type RetryTarget struct {
 	ObjectPath    string                 `protobuf:"bytes,3,opt,name=object_path,json=objectPath,proto3" json:"object_path,omitempty"`
 	VersionId     string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	RuleHash      []byte                 `protobuf:"bytes,5,opt,name=rule_hash,json=ruleHash,proto3" json:"rule_hash,omitempty"`
+	ActionKind    ActionKind             `protobuf:"varint,6,opt,name=action_kind,json=actionKind,proto3,enum=s3_lifecycle_pb.ActionKind" json:"action_kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1582,6 +1646,13 @@ func (x *RetryTarget) GetRuleHash() []byte {
 	return nil
 }
 
+func (x *RetryTarget) GetActionKind() ActionKind {
+	if x != nil {
+		return x.ActionKind
+	}
+	return ActionKind_ACTION_KIND_UNSPECIFIED
+}
+
 var File_s3_lifecycle_proto protoreflect.FileDescriptor
 
 const file_s3_lifecycle_proto_rawDesc = "" +
@@ -1597,30 +1668,26 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"\bmtime_ns\x18\x01 \x01(\x03R\amtimeNs\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x19\n" +
 	"\bhead_fid\x18\x03 \x01(\tR\aheadFid\x12#\n" +
-	"\rextended_hash\x18\x04 \x01(\fR\fextendedHash\"\xef\b\n" +
+	"\rextended_hash\x18\x04 \x01(\fR\fextendedHash\"\x97\b\n" +
 	"\x0eLifecycleState\x12\x1b\n" +
-	"\trule_hash\x18\x01 \x01(\fR\bruleHash\x12\x17\n" +
-	"\arule_id\x18\x02 \x01(\tR\x06ruleId\x12E\n" +
-	"\trule_kind\x18\x03 \x01(\x0e2(.s3_lifecycle_pb.LifecycleState.RuleKindR\bruleKind\x12<\n" +
+	"\trule_hash\x18\x01 \x01(\fR\bruleHash\x12<\n" +
+	"\vaction_kind\x18\x02 \x01(\x0e2\x1b.s3_lifecycle_pb.ActionKindR\n" +
+	"actionKind\x12\x17\n" +
+	"\arule_id\x18\x03 \x01(\tR\x06ruleId\x12<\n" +
 	"\x04mode\x18\x04 \x01(\x0e2(.s3_lifecycle_pb.LifecycleState.RuleModeR\x04mode\x12W\n" +
 	"\x0fdegraded_reason\x18\x05 \x01(\x0e2..s3_lifecycle_pb.LifecycleState.DegradedReasonR\x0edegradedReason\x12*\n" +
 	"\x11degraded_since_ns\x18\x06 \x01(\x03R\x0fdegradedSinceNs\x12-\n" +
 	"\x12bootstrap_complete\x18\a \x01(\bR\x11bootstrapComplete\x125\n" +
 	"\x17bootstrap_started_at_ns\x18\b \x01(\x03R\x14bootstrapStartedAtNs\x129\n" +
-	"\x19bootstrap_completed_at_ns\x18\t \x01(\x03R\x16bootstrapCompletedAtNs\x12*\n" +
-	"\x11last_evaluated_ns\x18\n" +
-	" \x01(\x03R\x0flastEvaluatedNs\x12#\n" +
-	"\rdeleted_total\x18\v \x01(\x03R\fdeletedTotal\x129\n" +
-	"\x19skipped_object_lock_total\x18\f \x01(\x03R\x16skippedObjectLockTotal\x12!\n" +
-	"\fpending_size\x18\r \x01(\x03R\vpendingSize\"\xa4\x01\n" +
-	"\bRuleKind\x12\x19\n" +
-	"\x15RULE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
-	"\x0fEXPIRATION_DAYS\x10\x01\x12\x13\n" +
-	"\x0fEXPIRATION_DATE\x10\x02\x12\x13\n" +
-	"\x0fNONCURRENT_DAYS\x10\x03\x12\x14\n" +
-	"\x10NEWER_NONCURRENT\x10\x04\x12\r\n" +
-	"\tABORT_MPU\x10\x05\x12\x19\n" +
-	"\x15EXPIRED_DELETE_MARKER\x10\x06\"}\n" +
+	"\x19bootstrap_completed_at_ns\x18\t \x01(\x03R\x16bootstrapCompletedAtNs\x122\n" +
+	"\x16last_safety_scan_ts_ns\x18\n" +
+	" \x01(\x03R\x12lastSafetyScanTsNs\x122\n" +
+	"\x16next_safety_scan_ts_ns\x18\v \x01(\x03R\x12nextSafetyScanTsNs\x12'\n" +
+	"\x0fevaluated_total\x18\f \x01(\x03R\x0eevaluatedTotal\x12#\n" +
+	"\rexpired_total\x18\r \x01(\x03R\fexpiredTotal\x12.\n" +
+	"\x13metadata_only_total\x18\x0e \x01(\x03R\x11metadataOnlyTotal\x12\x1f\n" +
+	"\verror_total\x18\x0f \x01(\x03R\n" +
+	"errorTotal\"}\n" +
 	"\bRuleMode\x12\x19\n" +
 	"\x15RULE_MODE_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fEVENT_DRIVEN\x10\x01\x12\x10\n" +
@@ -1662,7 +1729,7 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"\vstream_kind\x18\x01 \x01(\x0e2\x1b.s3_lifecycle_pb.StreamKindR\n" +
 	"streamKind\x12\x19\n" +
 	"\bfiler_id\x18\x02 \x01(\tR\afilerId\x12#\n" +
-	"\rdelay_seconds\x18\x03 \x01(\x03R\fdelaySeconds\"\xe5\x03\n" +
+	"\rdelay_seconds\x18\x03 \x01(\x03R\fdelaySeconds\"\xa3\x04\n" +
 	"\rBlockerRecord\x12<\n" +
 	"\vstream_kind\x18\x01 \x01(\x0e2\x1b.s3_lifecycle_pb.StreamKindR\n" +
 	"streamKind\x12\x14\n" +
@@ -1674,7 +1741,9 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"\vobject_path\x18\a \x01(\tR\n" +
 	"objectPath\x12\x1d\n" +
 	"\n" +
-	"version_id\x18\b \x01(\tR\tversionId\x12\x16\n" +
+	"version_id\x18\b \x01(\tR\tversionId\x12<\n" +
+	"\vaction_kind\x18\x0e \x01(\x0e2\x1b.s3_lifecycle_pb.ActionKindR\n" +
+	"actionKind\x12\x16\n" +
 	"\x06reason\x18\t \x01(\tR\x06reason\x12\x1d\n" +
 	"\n" +
 	"last_error\x18\n" +
@@ -1695,14 +1764,16 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"\bposition\x18\x03 \x01(\v2 .s3_lifecycle_pb.MessagePositionR\bposition\"b\n" +
 	"\fPredicateKey\x12\x14\n" +
 	"\x05shard\x18\x01 \x01(\tR\x05shard\x12<\n" +
-	"\bposition\x18\x02 \x01(\v2 .s3_lifecycle_pb.MessagePositionR\bposition\"\x83\x01\n" +
+	"\bposition\x18\x02 \x01(\v2 .s3_lifecycle_pb.MessagePositionR\bposition\"\xc1\x01\n" +
 	"\fBootstrapKey\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12\x1f\n" +
 	"\vobject_path\x18\x02 \x01(\tR\n" +
 	"objectPath\x12\x1d\n" +
 	"\n" +
 	"version_id\x18\x03 \x01(\tR\tversionId\x12\x1b\n" +
-	"\trule_hash\x18\x04 \x01(\fR\bruleHash\"\x81\x01\n" +
+	"\trule_hash\x18\x04 \x01(\fR\bruleHash\x12<\n" +
+	"\vaction_kind\x18\x05 \x01(\x0e2\x1b.s3_lifecycle_pb.ActionKindR\n" +
+	"actionKind\"\xbf\x01\n" +
 	"\n" +
 	"PendingKey\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12\x1b\n" +
@@ -1710,12 +1781,14 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"\vobject_path\x18\x03 \x01(\tR\n" +
 	"objectPath\x12\x1d\n" +
 	"\n" +
-	"version_id\x18\x04 \x01(\tR\tversionId\"\xc3\x01\n" +
+	"version_id\x18\x04 \x01(\tR\tversionId\x12<\n" +
+	"\vaction_kind\x18\x05 \x01(\x0e2\x1b.s3_lifecycle_pb.ActionKindR\n" +
+	"actionKind\"\xc3\x01\n" +
 	"\x10RetryBudgetEntry\x12,\n" +
 	"\x03key\x18\x01 \x01(\v2\x1a.s3_lifecycle_pb.StreamKeyR\x03key\x12/\n" +
 	"\x13consecutive_retries\x18\x02 \x01(\x05R\x12consecutiveRetries\x12'\n" +
 	"\x10first_seen_at_ns\x18\x03 \x01(\x03R\rfirstSeenAtNs\x12'\n" +
-	"\x10last_retry_at_ns\x18\x04 \x01(\x03R\rlastRetryAtNs\"\xb0\x01\n" +
+	"\x10last_retry_at_ns\x18\x04 \x01(\x03R\rlastRetryAtNs\"\xee\x01\n" +
 	"\vRetryTarget\x12,\n" +
 	"\x03key\x18\x01 \x01(\v2\x1a.s3_lifecycle_pb.StreamKeyR\x03key\x12\x16\n" +
 	"\x06bucket\x18\x02 \x01(\tR\x06bucket\x12\x1f\n" +
@@ -1723,7 +1796,18 @@ const file_s3_lifecycle_proto_rawDesc = "" +
 	"objectPath\x12\x1d\n" +
 	"\n" +
 	"version_id\x18\x04 \x01(\tR\tversionId\x12\x1b\n" +
-	"\trule_hash\x18\x05 \x01(\fR\bruleHash*b\n" +
+	"\trule_hash\x18\x05 \x01(\fR\bruleHash\x12<\n" +
+	"\vaction_kind\x18\x06 \x01(\x0e2\x1b.s3_lifecycle_pb.ActionKindR\n" +
+	"actionKind*\xa8\x01\n" +
+	"\n" +
+	"ActionKind\x12\x1b\n" +
+	"\x17ACTION_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fEXPIRATION_DAYS\x10\x01\x12\x13\n" +
+	"\x0fEXPIRATION_DATE\x10\x02\x12\x13\n" +
+	"\x0fNONCURRENT_DAYS\x10\x03\x12\x14\n" +
+	"\x10NEWER_NONCURRENT\x10\x04\x12\r\n" +
+	"\tABORT_MPU\x10\x05\x12\x19\n" +
+	"\x15EXPIRED_DELETE_MARKER\x10\x06*b\n" +
 	"\n" +
 	"StreamKind\x12\x1b\n" +
 	"\x17STREAM_KIND_UNSPECIFIED\x10\x00\x12\f\n" +
@@ -1748,8 +1832,8 @@ func file_s3_lifecycle_proto_rawDescGZIP() []byte {
 var file_s3_lifecycle_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
 var file_s3_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_s3_lifecycle_proto_goTypes = []any{
-	(StreamKind)(0),                    // 0: s3_lifecycle_pb.StreamKind
-	(LifecycleState_RuleKind)(0),       // 1: s3_lifecycle_pb.LifecycleState.RuleKind
+	(ActionKind)(0),                    // 0: s3_lifecycle_pb.ActionKind
+	(StreamKind)(0),                    // 1: s3_lifecycle_pb.StreamKind
 	(LifecycleState_RuleMode)(0),       // 2: s3_lifecycle_pb.LifecycleState.RuleMode
 	(LifecycleState_DegradedReason)(0), // 3: s3_lifecycle_pb.LifecycleState.DegradedReason
 	(*MessagePosition)(nil),            // 4: s3_lifecycle_pb.MessagePosition
@@ -1773,7 +1857,7 @@ var file_s3_lifecycle_proto_goTypes = []any{
 }
 var file_s3_lifecycle_proto_depIdxs = []int32{
 	4,  // 0: s3_lifecycle_pb.FilerShardCursor.position:type_name -> s3_lifecycle_pb.MessagePosition
-	1,  // 1: s3_lifecycle_pb.LifecycleState.rule_kind:type_name -> s3_lifecycle_pb.LifecycleState.RuleKind
+	0,  // 1: s3_lifecycle_pb.LifecycleState.action_kind:type_name -> s3_lifecycle_pb.ActionKind
 	2,  // 2: s3_lifecycle_pb.LifecycleState.mode:type_name -> s3_lifecycle_pb.LifecycleState.RuleMode
 	3,  // 3: s3_lifecycle_pb.LifecycleState.degraded_reason:type_name -> s3_lifecycle_pb.LifecycleState.DegradedReason
 	6,  // 4: s3_lifecycle_pb.PendingItem.expected_identity:type_name -> s3_lifecycle_pb.EntryIdentity
@@ -1781,23 +1865,27 @@ var file_s3_lifecycle_proto_depIdxs = []int32{
 	5,  // 6: s3_lifecycle_pb.ReaderState.last_processed_predicate:type_name -> s3_lifecycle_pb.FilerShardCursor
 	12, // 7: s3_lifecycle_pb.ReaderState.tail_drained_streams:type_name -> s3_lifecycle_pb.TailDrainedKey
 	5,  // 8: s3_lifecycle_pb.FilerShardCursorList.cursors:type_name -> s3_lifecycle_pb.FilerShardCursor
-	0,  // 9: s3_lifecycle_pb.TailDrainedKey.stream_kind:type_name -> s3_lifecycle_pb.StreamKind
-	0,  // 10: s3_lifecycle_pb.BlockerRecord.stream_kind:type_name -> s3_lifecycle_pb.StreamKind
+	1,  // 9: s3_lifecycle_pb.TailDrainedKey.stream_kind:type_name -> s3_lifecycle_pb.StreamKind
+	1,  // 10: s3_lifecycle_pb.BlockerRecord.stream_kind:type_name -> s3_lifecycle_pb.StreamKind
 	4,  // 11: s3_lifecycle_pb.BlockerRecord.position:type_name -> s3_lifecycle_pb.MessagePosition
-	15, // 12: s3_lifecycle_pb.StreamKey.original:type_name -> s3_lifecycle_pb.OriginalKey
-	16, // 13: s3_lifecycle_pb.StreamKey.predicate:type_name -> s3_lifecycle_pb.PredicateKey
-	17, // 14: s3_lifecycle_pb.StreamKey.bootstrap:type_name -> s3_lifecycle_pb.BootstrapKey
-	18, // 15: s3_lifecycle_pb.StreamKey.pending:type_name -> s3_lifecycle_pb.PendingKey
-	4,  // 16: s3_lifecycle_pb.OriginalKey.position:type_name -> s3_lifecycle_pb.MessagePosition
-	4,  // 17: s3_lifecycle_pb.PredicateKey.position:type_name -> s3_lifecycle_pb.MessagePosition
-	14, // 18: s3_lifecycle_pb.RetryBudgetEntry.key:type_name -> s3_lifecycle_pb.StreamKey
-	14, // 19: s3_lifecycle_pb.RetryTarget.key:type_name -> s3_lifecycle_pb.StreamKey
-	11, // 20: s3_lifecycle_pb.ReaderState.LastProcessedOriginalEntry.value:type_name -> s3_lifecycle_pb.FilerShardCursorList
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	0,  // 12: s3_lifecycle_pb.BlockerRecord.action_kind:type_name -> s3_lifecycle_pb.ActionKind
+	15, // 13: s3_lifecycle_pb.StreamKey.original:type_name -> s3_lifecycle_pb.OriginalKey
+	16, // 14: s3_lifecycle_pb.StreamKey.predicate:type_name -> s3_lifecycle_pb.PredicateKey
+	17, // 15: s3_lifecycle_pb.StreamKey.bootstrap:type_name -> s3_lifecycle_pb.BootstrapKey
+	18, // 16: s3_lifecycle_pb.StreamKey.pending:type_name -> s3_lifecycle_pb.PendingKey
+	4,  // 17: s3_lifecycle_pb.OriginalKey.position:type_name -> s3_lifecycle_pb.MessagePosition
+	4,  // 18: s3_lifecycle_pb.PredicateKey.position:type_name -> s3_lifecycle_pb.MessagePosition
+	0,  // 19: s3_lifecycle_pb.BootstrapKey.action_kind:type_name -> s3_lifecycle_pb.ActionKind
+	0,  // 20: s3_lifecycle_pb.PendingKey.action_kind:type_name -> s3_lifecycle_pb.ActionKind
+	14, // 21: s3_lifecycle_pb.RetryBudgetEntry.key:type_name -> s3_lifecycle_pb.StreamKey
+	14, // 22: s3_lifecycle_pb.RetryTarget.key:type_name -> s3_lifecycle_pb.StreamKey
+	0,  // 23: s3_lifecycle_pb.RetryTarget.action_kind:type_name -> s3_lifecycle_pb.ActionKind
+	11, // 24: s3_lifecycle_pb.ReaderState.LastProcessedOriginalEntry.value:type_name -> s3_lifecycle_pb.FilerShardCursorList
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_s3_lifecycle_proto_init() }
