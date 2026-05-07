@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -43,7 +44,7 @@ func TestComputeEntryIdentity_NilSafeMissingChunks(t *testing.T) {
 func TestHashExtended_OrderStable(t *testing.T) {
 	a := map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")}
 	b := map[string][]byte{"k2": []byte("v2"), "k1": []byte("v1")}
-	if !bytesEqual(hashExtended(a), hashExtended(b)) {
+	if !bytes.Equal(hashExtended(a), hashExtended(b)) {
 		t.Fatalf("hash should be insensitive to map iteration order")
 	}
 }
@@ -53,7 +54,7 @@ func TestHashExtended_DelimiterCollisionResistant(t *testing.T) {
 	// Length-prefix encoding must keep them apart.
 	a := map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")}
 	b := map[string][]byte{"k1": []byte("v1k2v2")}
-	if bytesEqual(hashExtended(a), hashExtended(b)) {
+	if bytes.Equal(hashExtended(a), hashExtended(b)) {
 		t.Fatalf("delimiter-forged Extended payloads must not collide")
 	}
 }

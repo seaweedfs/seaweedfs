@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -234,19 +235,7 @@ func identityMatches(live, want *s3_lifecycle_pb.EntryIdentity) bool {
 	if live.HeadFid != want.HeadFid {
 		return false
 	}
-	return bytesEqual(live.ExtendedHash, want.ExtendedHash)
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(live.ExtendedHash, want.ExtendedHash)
 }
 
 func done() *s3_lifecycle_pb.LifecycleDeleteResponse {
