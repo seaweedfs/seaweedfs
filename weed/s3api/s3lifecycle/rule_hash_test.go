@@ -81,3 +81,34 @@ func TestRuleHash_NilSafe(t *testing.T) {
 		t.Fatalf("nil rule should yield zero hash, got %x", h)
 	}
 }
+
+func TestRuleHash_TagDelimiterCollisionResistant(t *testing.T) {
+	// With a naive "tag=K=V\n" encoding, ("a=b", "c") and ("a", "b=c")
+	// serialize identically. Length-prefixed encoding must keep them
+	// distinct.
+	r1 := &Rule{ExpirationDays: 30, FilterTags: map[string]string{"a=b": "c"}}
+	r2 := &Rule{ExpirationDays: 30, FilterTags: map[string]string{"a": "b=c"}}
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatalf("delimiter collision: tag(a=b,c) and tag(a,b=c) hash equal")
+	}
+}
+
+func TestRuleHash_TagNewlineCollisionResistant(t *testing.T) {
+	// "a\nb" -> single tag with a key that embeds a newline; naively this
+	// could be split across lines and matched by an unrelated 2-tag rule.
+	r1 := &Rule{ExpirationDays: 30, FilterTags: map[string]string{"a\nb": "c"}}
+	r2 := &Rule{ExpirationDays: 30, FilterTags: map[string]string{"a": "b", "c": ""}}
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatalf("delimiter collision via embedded newline")
+	}
+}
+
+func TestRuleHash_PrefixSeparatorIsolation(t *testing.T) {
+	// A prefix containing whatever the previous encoder used as a separator
+	// ("=" / "\n") must not be able to "escape" into another field.
+	r1 := &Rule{ExpirationDays: 30, Prefix: "logs\nexp_days=99"}
+	r2 := &Rule{ExpirationDays: 99, Prefix: "logs"}
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatalf("prefix-side delimiter forgery hashes equal")
+	}
+}
