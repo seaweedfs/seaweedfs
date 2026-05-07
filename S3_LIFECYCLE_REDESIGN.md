@@ -61,22 +61,26 @@ The bucket directory's xattrs continue to hold the policy itself:
 
 - `Extended["s3-bucket-lifecycle-configuration-xml"]` — original XML (existing key, see `weed/s3api/s3api_bucket_lifecycle_config.go:11`).
 
-**Per-rule state** lives outside the bucket under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/`. One subdirectory per rule; one writer per directory (the per-rule cluster lock):
+**Multi-action rules.** A single AWS lifecycle XML `<Rule>` may declare multiple actions in parallel — for example `Expiration.Days=90` together with `AbortIncompleteMultipartUpload.DaysAfterInitiation=7` and `NoncurrentVersionExpiration.NoncurrentDays=30`. Each action has its **own** delay/horizon/mode and must drive its own pending stream and cursor independently. Modeling a rule as one compiled entry with one `kind` and one delay collapses these — e.g. picking the smallest delay (7d MPU) means the 90d expiration cursor "advances past" objects that aren't yet due, and the 90d action never re-fires for them.
+
+The engine therefore **expands every XML rule into N compiled actions** at compile time, where N is the count of action sub-elements actually populated. Each compiled action has its own state, its own pending file, its own delay group, and its own mode. The shared filter (Prefix, Tags, Sizes, Status) is copied to each action — actions of the same rule are evaluated in parallel against the same filter.
+
+**Per-action state** lives outside the bucket under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/`. One subdirectory per action; one writer per directory (the per-action cluster lock). The intermediate `<rule_hash_hex>` keeps a rule's actions grouped so operators can list "rule R's status" by enumerating its action subdirectories:
 
 - `state` — protobuf, one record:
-  - `rule_hash` (8 bytes; key is the parent directory name in hex)
-  - `rule_id` (display only; can be empty/duplicate)
-  - `rule_kind`: `EXPIRATION_DAYS` | `EXPIRATION_DATE` | `NONCURRENT_DAYS` | `NEWER_NONCURRENT` | `ABORT_MPU` | `EXPIRED_DELETE_MARKER`
-  - `mode`: `event_driven` | `scan_at_date` | `scan_only` | `disabled` (scheduling intent)
-  - `degraded_reason`: `NONE` | `LAG_HIGH` | `PENDING_FULL` | `DELETE_FAILURES` | `OPERATOR_PAUSED` | `RETENTION_BELOW_HORIZON` | `LOST_LOG` (orthogonal health signal; a rule can be `event_driven AND LAG_HIGH`, with auto-promotion to `scan_only` deferred until the next threshold; `RETENTION_BELOW_HORIZON` and `LOST_LOG` are set together with `mode = scan_only` by the retention gate and lost-log GC respectively)
+  - `rule_hash` (8 bytes; matches the parent rule directory)
+  - `action_kind`: `EXPIRATION_DAYS` | `EXPIRATION_DATE` | `NONCURRENT_DAYS` | `NEWER_NONCURRENT` | `ABORT_MPU` | `EXPIRED_DELETE_MARKER` (matches the leaf directory name)
+  - `rule_id` (display only; can be empty/duplicate; identical across sibling actions of the same XML rule)
+  - `mode`: `event_driven` | `scan_at_date` | `scan_only` | `disabled` (scheduling intent — per action, not per rule)
+  - `degraded_reason`: `NONE` | `LAG_HIGH` | `PENDING_FULL` | `DELETE_FAILURES` | `OPERATOR_PAUSED` | `RETENTION_BELOW_HORIZON` | `LOST_LOG` (orthogonal health signal; a rule's individual action can be `event_driven AND LAG_HIGH`, with auto-promotion to `scan_only` deferred until the next threshold; `RETENTION_BELOW_HORIZON` and `LOST_LOG` are set together with `mode = scan_only` by the retention gate and lost-log GC respectively)
   - `degraded_since_ns`: when the current `degraded_reason` was set; cleared together with reason
   - `bootstrap_complete`
   - `bootstrap_started_at_ns`
   - `bootstrap_completed_at_ns`
   - `last_safety_scan_ts_ns`
   - `next_safety_scan_ts_ns`
-  - counters: evaluated, expired, metadata_only, errors
-- `pending` — protobuf, append-with-tombstones: `repeated PendingItem { path, version_id, due_at_ns, expected_identity }`. **One use only**: late predicate changes that create not-yet-due eligibility (tag added at age 30d on a 60d rule). Dedupe key `(path, version_id)`.
+  - counters: `evaluated_total`, `expired_total`, `metadata_only_total`, `error_total`
+- `pending` — protobuf, append-with-tombstones: `repeated PendingItem { path, version_id, due_at_ns, expected_identity }`. **One use only**: late predicate changes that create not-yet-due eligibility for *this* action (tag added at age 30d on a 60d rule's `EXPIRATION_DAYS` action). Dedupe key `(path, version_id)`. Sibling actions on the same rule have their own pending files.
 
 No per-rule `blocked` file (compliance ledger). Object-lock and retain-until are the operator's concern — see "Object lock and compliance" below. (Cluster-level `_reader/blockers` is unrelated — it tracks paused cursor positions for un-processable events, not retained objects.)
 
@@ -161,21 +165,21 @@ Why `/etc/...` rather than inside the bucket: keeps system state out of bucket l
 
 For each bucket with `lifecycle.xml`:
 
-1. Parse XML; compute `rule_hash` per rule.
-2. Reconcile per-rule `state` files under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/`: drop directories for rules no longer present (after a grace period to absorb policy edit-and-revert); create directories for new rule hashes (`bootstrap_complete=false`).
-3. Per rule, decide mode in this order:
-   - `rule_kind == EXPIRATION_DATE` → `mode = SCAN_AT_DATE`. Detector schedules a single bucket-level bootstrap at `rule.date`. No per-object pending. No reader involvement.
-   - Else compute `eventLogHorizon(rule)` — the maximum age of an event the reader needs to be able to observe for this rule kind:
+1. Parse XML; compute `rule_hash` per rule. Expand each rule into its compiled actions (one per populated action element); compute `(rule_hash, action_kind)` keys.
+2. Reconcile per-action `state` files under `/etc/s3/lifecycle/<bucket>/<rule_hash_hex>/<action_kind>/`: drop directories for `(rule_hash, action_kind)` pairs no longer present (after a grace period to absorb policy edit-and-revert); create directories for new pairs (`bootstrap_complete=false`).
+3. Per **compiled action** (not per rule), decide mode in this order:
+   - `action_kind == EXPIRATION_DATE` → `mode = SCAN_AT_DATE`. Detector schedules a single bucket-level bootstrap at the action's `rule.date`. No per-object pending. No reader involvement.
+   - Else compute `eventLogHorizon(rule, action_kind)` — the age of an event the reader needs to be able to observe for *this specific action*:
      - `EXPIRATION_DAYS`     → `rule.Days`              (age-origin events at `now - days`)
      - `NONCURRENT_DAYS`     → `rule.NoncurrentDays`    (version-flip events at `now - days`)
      - `ABORT_MPU`           → `rule.DaysAfterInitiation` (MPU init events at `now - days`)
      - `NEWER_NONCURRENT`    → `smallDelay`             (count-based; reader observes version-flip events near `now - smallDelay`)
      - `EXPIRED_DELETE_MARKER` → `smallDelay`           (immediate; reader observes the marker creation event near `now - smallDelay`)
-     If `metaLogRetention < eventLogHorizon(rule) + bootstrapLookbackMin` → `mode = scan_only` (with `degraded_reason = RETENTION_BELOW_HORIZON`). Event-driven would silently miss events that aged out of the log. The same gate applies to count-based and immediate kinds because they still depend on near-now reader events; `bootstrapLookbackMin` provides the minimum replay floor.
-   - Else if `bootstrap_complete == false` → run bootstrap (the same walker; on completion the rule transitions to its target mode).
+     If `metaLogRetention < eventLogHorizon(rule, action_kind) + bootstrapLookbackMin` → this action's `mode = scan_only` (with `degraded_reason = RETENTION_BELOW_HORIZON`). Event-driven would silently miss events that aged out of the log. Sibling actions on the same XML rule are evaluated independently — a 90d `EXPIRATION_DAYS` action may degrade to `scan_only` while its 7d `ABORT_MPU` sibling stays `event_driven`.
+   - Else if `bootstrap_complete == false` → run bootstrap (the same walker; on completion this action transitions to its target mode).
    - Otherwise → `event_driven`.
-4. Run `event_driven` rules: trigger pass, then drain `pending`.
-5. Run `scan_only` rules: re-run bootstrap on the per-kind safety-scan cadence (see "Safety-scan cadence per rule kind" table). Date and count rules don't have a TTL-style `MinTriggerAge`; their cadences are defined explicitly in that table. Bootstrap is idempotent; this is the same code path.
+4. Run `event_driven` actions: trigger pass, then drain `pending`.
+5. Run `scan_only` actions: re-run bootstrap on the per-kind safety-scan cadence (see "Safety-scan cadence per rule kind" table). Date and count kinds don't have a TTL-style `MinTriggerAge`; their cadences are defined explicitly in that table. Bootstrap is idempotent; this is the same code path.
 
 `metaLogRetention` is read from cluster config (Phase 0 confirms the knob). If unconfigured, default to a conservative value (e.g. 30d) and require operators to extend it explicitly for longer-TTL rules.
 
