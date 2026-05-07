@@ -89,8 +89,15 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if now.Before(due) {
 			return none
 		}
-		if rule.NewerNoncurrentVersions > 0 && info.NoncurrentIndex < rule.NewerNoncurrentVersions {
-			return none
+		if rule.NewerNoncurrentVersions > 0 {
+			// NewerNoncurrent retention is consulted only when the caller
+			// has supplied an index. Missing index means "we can't safely
+			// say whether this version is within the keep-N window," so
+			// don't expire — the safety-scan will revisit once the index
+			// is computed.
+			if info.NoncurrentIndex == nil || *info.NoncurrentIndex < rule.NewerNoncurrentVersions {
+				return none
+			}
 		}
 		return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
 
@@ -100,7 +107,10 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if info.IsLatest || rule.NoncurrentVersionExpirationDays > 0 || rule.NewerNoncurrentVersions <= 0 {
 			return none
 		}
-		if info.NoncurrentIndex < rule.NewerNoncurrentVersions {
+		// Without a NoncurrentIndex we can't evaluate count-based retention;
+		// the conservative answer is ActionNone — safety-scan picks up the
+		// version once the index is supplied.
+		if info.NoncurrentIndex == nil || *info.NoncurrentIndex < rule.NewerNoncurrentVersions {
 			return none
 		}
 		return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}

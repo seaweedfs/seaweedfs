@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// idx is a small helper for tests that need to express NoncurrentIndex as
+// *int (production callers either compute it or leave it nil for current
+// versions; tests want a one-liner).
+func idx(i int) *int { return &i }
+
 func mustTime(t *testing.T, s string) time.Time {
 	t.Helper()
 	tm, err := time.Parse(time.RFC3339, s)
@@ -142,7 +147,7 @@ func TestEvaluateAction_NoncurrentVersionDays(t *testing.T) {
 		IsLatest:         false,
 		ModTime:          mustTime(t, "2023-01-01T00:00:00Z"),
 		SuccessorModTime: successor,
-		NoncurrentIndex:  0,
+		NoncurrentIndex:  idx(0),
 	}
 	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.AddDate(0, 0, 29)); got.Action != ActionNone {
 		t.Fatalf("not due, got %v", got)
@@ -155,7 +160,7 @@ func TestEvaluateAction_NoncurrentVersionDays(t *testing.T) {
 func TestEvaluateAction_NoncurrentDaysFallsBackToModTime(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 30}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
-	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: 0}
+	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: idx(0)}
 	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, mod.AddDate(0, 0, 30)); got.Action != ActionDeleteVersion {
 		t.Fatalf("expected fallback to ModTime, got %v", got)
 	}
@@ -167,12 +172,12 @@ func TestEvaluateAction_NewerNoncurrentCountOnly(t *testing.T) {
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
 
 	for i := 0; i < 3; i++ {
-		info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: i}
+		info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: idx(i)}
 		if got := EvaluateAction(rule, ActionKindNewerNoncurrent, info, now); got.Action != ActionNone {
 			t.Fatalf("idx=%d should be retained, got %v", i, got)
 		}
 	}
-	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: 3}
+	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: idx(3)}
 	if got := EvaluateAction(rule, ActionKindNewerNoncurrent, info, now); got.Action != ActionDeleteVersion {
 		t.Fatalf("idx=3 should fire, got %v", got)
 	}
@@ -184,12 +189,12 @@ func TestEvaluateAction_NoncurrentDaysAndCount(t *testing.T) {
 	now := successor.AddDate(0, 0, 30)
 
 	for i := 0; i < 2; i++ {
-		info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: successor, SuccessorModTime: successor, NoncurrentIndex: i}
+		info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: successor, SuccessorModTime: successor, NoncurrentIndex: idx(i)}
 		if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, now); got.Action != ActionNone {
 			t.Fatalf("idx=%d kept by NewerNoncurrent retention, got %v", i, got)
 		}
 	}
-	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: successor, SuccessorModTime: successor, NoncurrentIndex: 2}
+	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: successor, SuccessorModTime: successor, NoncurrentIndex: idx(2)}
 	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, now); got.Action != ActionDeleteVersion {
 		t.Fatalf("idx=2 satisfies both, got %v", got)
 	}

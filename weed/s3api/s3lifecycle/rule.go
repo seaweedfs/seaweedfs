@@ -68,8 +68,13 @@ type ObjectInfo struct {
 
 	// NoncurrentIndex is the 0-based position among non-current versions
 	// sorted newest-first (0 = newest non-current version). Used by
-	// NewerNoncurrentVersions evaluation. -1 or unset for current versions.
-	NoncurrentIndex int
+	// NewerNoncurrentVersions evaluation. nil for current versions or for
+	// non-current entries whose index hasn't been computed yet — both cases
+	// short-circuit count-based retention checks (the action returns
+	// ActionNone rather than guessing). Pointer rather than int so the
+	// "0 means newest non-current" valid case can never collide with the
+	// zero-value "uninitialised" case.
+	NoncurrentIndex *int
 
 	// Tags are the object's user-defined tags, extracted from the entry's
 	// Extended metadata (keys prefixed with "X-Amz-Tagging-").
