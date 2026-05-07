@@ -21,7 +21,7 @@ func TestCompile_SingleRuleSingleAction(t *testing.T) {
 	rule := ruleExpDays("r1", "logs/", 30)
 	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{
 		PriorStates: map[s3lifecycle.ActionKey]PriorState{
-			{RuleHash: s3lifecycle.RuleHash(rule), ActionKind: s3lifecycle.ActionKindExpirationDays}: {
+			{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(rule), ActionKind: s3lifecycle.ActionKindExpirationDays}: {
 				BootstrapComplete: true,
 			},
 		},
@@ -56,7 +56,7 @@ func TestCompile_MultiAction_SiblingsHaveOwnEntries(t *testing.T) {
 	rh := s3lifecycle.RuleHash(rule)
 	prior := map[s3lifecycle.ActionKey]PriorState{}
 	for _, k := range s3lifecycle.RuleActionKinds(rule) {
-		prior[s3lifecycle.ActionKey{RuleHash: rh, ActionKind: k}] = PriorState{BootstrapComplete: true}
+		prior[s3lifecycle.ActionKey{Bucket: "b1", RuleHash: rh, ActionKind: k}] = PriorState{BootstrapComplete: true}
 	}
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: prior})
@@ -108,7 +108,7 @@ func TestCompile_RetentionGate(t *testing.T) {
 	rules := []*s3lifecycle.Rule{long, short}
 	prior := map[s3lifecycle.ActionKey]PriorState{}
 	for _, r := range rules {
-		k := s3lifecycle.ActionKey{RuleHash: s3lifecycle.RuleHash(r), ActionKind: s3lifecycle.ActionKindExpirationDays}
+		k := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(r), ActionKind: s3lifecycle.ActionKindExpirationDays}
 		prior[k] = PriorState{BootstrapComplete: true}
 	}
 
@@ -167,8 +167,8 @@ func TestCompile_SiblingsDegradeIndependently(t *testing.T) {
 		BootstrapLookbackMin: 5 * time.Minute,
 		PriorStates:          prior,
 	})
-	expDaysKey := s3lifecycle.ActionKey{RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
-	mpuKey := s3lifecycle.ActionKey{RuleHash: rh, ActionKind: s3lifecycle.ActionKindAbortMPU}
+	expDaysKey := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	mpuKey := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: rh, ActionKind: s3lifecycle.ActionKindAbortMPU}
 	if snap.actions[expDaysKey].Mode != ModeScanOnly {
 		t.Fatalf("ExpirationDays should be scan_only under 30d retention")
 	}
@@ -219,7 +219,7 @@ func TestSnapshot_MarkActiveFlipsRoutingFilter(t *testing.T) {
 	rule := ruleExpDays("r", "x/", 30)
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{})
-	key := s3lifecycle.ActionKey{RuleHash: s3lifecycle.RuleHash(rule), ActionKind: s3lifecycle.ActionKindExpirationDays}
+	key := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(rule), ActionKind: s3lifecycle.ActionKindExpirationDays}
 
 	if snap.actions[key].IsActive() {
 		t.Fatalf("should start inactive")
@@ -230,6 +230,35 @@ func TestSnapshot_MarkActiveFlipsRoutingFilter(t *testing.T) {
 	}
 	// MarkActive on a missing key is a no-op (stale callback after rebuild).
 	snap.MarkActive(s3lifecycle.ActionKey{})
+}
+
+func TestCompile_CrossBucketIdenticalRulesDoNotCollide(t *testing.T) {
+	// Two buckets carry rules whose XML — and therefore RuleHash — is
+	// identical. ActionKey must be bucket-scoped so the second bucket's
+	// CompiledAction does not overwrite the first's in snap.actions.
+	rule := ruleExpDays("shared", "x/", 30)
+	rh := s3lifecycle.RuleHash(rule)
+	prior := map[s3lifecycle.ActionKey]PriorState{
+		{Bucket: "alpha", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}: {BootstrapComplete: true},
+		{Bucket: "beta", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}:  {BootstrapComplete: true},
+	}
+	e := New()
+	snap := e.Compile([]CompileInput{
+		{Bucket: "alpha", Rules: []*s3lifecycle.Rule{rule}},
+		{Bucket: "beta", Rules: []*s3lifecycle.Rule{rule}},
+	}, CompileOptions{PriorStates: prior})
+
+	if got := len(snap.actions); got != 2 {
+		t.Fatalf("want 2 actions (one per bucket), got %d", got)
+	}
+	alphaKey := s3lifecycle.ActionKey{Bucket: "alpha", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	betaKey := s3lifecycle.ActionKey{Bucket: "beta", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	if snap.actions[alphaKey] == nil || snap.actions[alphaKey].Bucket != "alpha" {
+		t.Fatalf("alpha bucket action missing or wrong bucket")
+	}
+	if snap.actions[betaKey] == nil || snap.actions[betaKey].Bucket != "beta" {
+		t.Fatalf("beta bucket action missing or wrong bucket")
+	}
 }
 
 func TestEngine_SnapshotAtomicSwap(t *testing.T) {

@@ -10,13 +10,13 @@ import (
 )
 
 // activeAll returns a PriorStates map that activates every action of the
-// given canonical rules.
-func activeAll(rules []*s3lifecycle.Rule) map[s3lifecycle.ActionKey]PriorState {
+// given canonical rules under bucket.
+func activeAll(bucket string, rules []*s3lifecycle.Rule) map[s3lifecycle.ActionKey]PriorState {
 	out := map[s3lifecycle.ActionKey]PriorState{}
 	for _, r := range rules {
 		rh := s3lifecycle.RuleHash(r)
 		for _, k := range s3lifecycle.RuleActionKinds(r) {
-			out[s3lifecycle.ActionKey{RuleHash: rh, ActionKind: k}] = PriorState{BootstrapComplete: true}
+			out[s3lifecycle.ActionKey{Bucket: bucket, RuleHash: rh, ActionKind: k}] = PriorState{BootstrapComplete: true}
 		}
 	}
 	return out
@@ -35,7 +35,7 @@ func TestMatchOriginalWrite_DelayGroupRoutes(t *testing.T) {
 	r60 := ruleExpDays("b", "x/", 60)
 	rules := []*s3lifecycle.Rule{r30, r60}
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: rules}}, CompileOptions{PriorStates: activeAll(rules)})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: rules}}, CompileOptions{PriorStates: activeAll("bk", rules)})
 
 	ev := &Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "x/o"}
 	got30 := snap.MatchOriginalWrite(ev, 30*24*time.Hour)
@@ -51,7 +51,7 @@ func TestMatchOriginalWrite_DelayGroupRoutes(t *testing.T) {
 func TestMatchOriginalWrite_PrefixFilter(t *testing.T) {
 	r := ruleExpDays("a", "logs/", 30)
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{PriorStates: activeAll([]*s3lifecycle.Rule{r})})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{r})})
 
 	if got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "data/x"}, 30*24*time.Hour); len(got) != 0 {
 		t.Fatalf("non-matching prefix should reject, got %v", got)
@@ -72,7 +72,7 @@ func TestMatchOriginalWrite_OnlyActiveActions(t *testing.T) {
 	if got := snap.MatchOriginalWrite(ev, 30*24*time.Hour); len(got) != 0 {
 		t.Fatalf("inactive action should not match, got %v", got)
 	}
-	snap.MarkActive(s3lifecycle.ActionKey{RuleHash: s3lifecycle.RuleHash(r), ActionKind: s3lifecycle.ActionKindExpirationDays})
+	snap.MarkActive(s3lifecycle.ActionKey{Bucket: "bk", RuleHash: s3lifecycle.RuleHash(r), ActionKind: s3lifecycle.ActionKindExpirationDays})
 	// The action wasn't added to the delay-group index at compile time
 	// (it was inactive). markActive doesn't retroactively add it; that's
 	// the design — recompile populates indexes when prior state activates
@@ -90,7 +90,7 @@ func TestMatchOriginalWrite_AbortMPUOnlyOnMPUInit(t *testing.T) {
 		AbortMPUDaysAfterInitiation: 7,
 	}
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{PriorStates: activeAll([]*s3lifecycle.Rule{r})})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{r})})
 
 	// Non-MPU event under .uploads/ prefix: filtered out by shape gating.
 	got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: ".uploads/u1/", IsMPUInit: false}, 7*24*time.Hour)
@@ -114,7 +114,7 @@ func TestMatchPredicateChange_OnlyTagSensitiveActions(t *testing.T) {
 	rPlain := ruleExpDays("plain", "x/", 30)
 	rules := []*s3lifecycle.Rule{rTag, rPlain}
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: rules}}, CompileOptions{PriorStates: activeAll(rules)})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: rules}}, CompileOptions{PriorStates: activeAll("bk", rules)})
 
 	// Predicate-change event: should match only the predicate-sensitive rule.
 	ev := &Event{Shape: EventShapePredicateChange, Bucket: "bk", Path: "x/o", Tags: map[string]string{"env": "prod"}}
@@ -147,7 +147,7 @@ func TestMatchPath_BootstrapWalkerSeesAllActiveActions(t *testing.T) {
 		AbortMPUDaysAfterInitiation:     7,
 	}
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: activeAll([]*s3lifecycle.Rule{rule})})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{rule})})
 
 	got := snap.MatchPath("bk", "x/obj", nil)
 	if len(got) != 3 {
@@ -171,7 +171,7 @@ func TestMatchPath_BootstrapWalkerSeesAllActiveActions(t *testing.T) {
 func TestMatchPath_PrefixMismatchExcludes(t *testing.T) {
 	rule := ruleExpDays("a", "logs/", 30)
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: activeAll([]*s3lifecycle.Rule{rule})})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{rule})})
 	if got := snap.MatchPath("bk", "data/x", nil); len(got) != 0 {
 		t.Fatalf("prefix mismatch should reject, got %v", got)
 	}
@@ -186,7 +186,7 @@ func TestMatchPath_FilterRejectsByTag(t *testing.T) {
 		FilterTags:     map[string]string{"env": "prod"},
 	}
 	e := New()
-	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: activeAll([]*s3lifecycle.Rule{rule})})
+	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{rule})})
 	// With ev passed, tag mismatch rejects.
 	ev := &Event{Bucket: "bk", Path: "x/obj", Tags: map[string]string{"env": "dev"}}
 	if got := snap.MatchPath("bk", "x/obj", ev); len(got) != 0 {

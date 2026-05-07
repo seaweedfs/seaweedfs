@@ -7,7 +7,14 @@ package s3lifecycle
 // sets, bootstrap completion, drain locks, metrics, blocker / retry-budget
 // records — is keyed by ActionKey, not RuleHash alone, so sibling actions
 // of the same rule are scheduled and degraded independently.
+//
+// Bucket is part of the key because two buckets may carry rules whose XML
+// (and therefore RuleHash) is identical; without scoping, those collide in
+// any map keyed by ActionKey. The on-disk storage layout
+// /etc/s3/lifecycle/<bucket>/<rule_hash>/<action_kind>/ is naturally
+// bucket-scoped; ActionKey mirrors that.
 type ActionKey struct {
+	Bucket     string
 	RuleHash   [8]byte
 	ActionKind ActionKind
 }

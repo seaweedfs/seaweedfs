@@ -144,21 +144,37 @@ func (s *Snapshot) AllActions() []*CompiledAction {
 
 // OriginalDelayGroups returns the delay -> ActionKey mapping the reader
 // uses to schedule one sweep per delay group across all event-driven
-// age-origin actions.
+// age-origin actions. Returns a defensive copy: the snapshot's internal
+// indexes are immutable per the contract above; callers may freely
+// mutate the returned map / slices without affecting other readers.
 func (s *Snapshot) OriginalDelayGroups() map[time.Duration][]s3lifecycle.ActionKey {
-	return s.originalDelayGroups
+	out := make(map[time.Duration][]s3lifecycle.ActionKey, len(s.originalDelayGroups))
+	for d, keys := range s.originalDelayGroups {
+		copied := make([]s3lifecycle.ActionKey, len(keys))
+		copy(copied, keys)
+		out[d] = copied
+	}
+	return out
 }
 
 // PredicateActions returns ActionKeys with tag/size predicate sensitivity.
 // The reader sweeps these once per pass against predicate-change events.
+// Defensive copy — see OriginalDelayGroups.
 func (s *Snapshot) PredicateActions() []s3lifecycle.ActionKey {
-	return s.predicateActions
+	out := make([]s3lifecycle.ActionKey, len(s.predicateActions))
+	copy(out, s.predicateActions)
+	return out
 }
 
 // DateActions returns ActionKey -> date for SCAN_AT_DATE actions. The
-// detector schedules a single bootstrap at each date.
+// detector schedules a single bootstrap at each date. Defensive copy —
+// see OriginalDelayGroups.
 func (s *Snapshot) DateActions() map[s3lifecycle.ActionKey]time.Time {
-	return s.dateActions
+	out := make(map[s3lifecycle.ActionKey]time.Time, len(s.dateActions))
+	for k, v := range s.dateActions {
+		out[k] = v
+	}
+	return out
 }
 
 // BucketVersioned reports whether the bucket is configured with versioning

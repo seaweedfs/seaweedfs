@@ -85,7 +85,7 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 		for _, rule := range in.Rules {
 			ruleHash := s3lifecycle.RuleHash(rule)
 			for _, kind := range s3lifecycle.RuleActionKinds(rule) {
-				key := s3lifecycle.ActionKey{RuleHash: ruleHash, ActionKind: kind}
+				key := s3lifecycle.ActionKey{Bucket: in.Bucket, RuleHash: ruleHash, ActionKind: kind}
 				mode := decideMode(rule, kind, opts.MetaLogRetention, opts.BootstrapLookbackMin)
 				prior := opts.PriorStates[key]
 				active := prior.BootstrapComplete && mode == ModeEventDriven
@@ -118,12 +118,13 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 				if mode == ModeScanAtDate {
 					snap.dateActions[key] = rule.ExpirationDate
 				}
-				if active {
-					if mode == ModeEventDriven && kind != s3lifecycle.ActionKindExpirationDate {
-						snap.originalDelayGroups[ca.Delay] = append(snap.originalDelayGroups[ca.Delay], key)
-						if ca.PredicateSensitive {
-							snap.predicateActions = append(snap.predicateActions, key)
-						}
+				// mode==EVENT_DRIVEN already excludes EXPIRATION_DATE
+				// (decideMode routes the date kind to SCAN_AT_DATE); no
+				// extra kind check needed.
+				if active && mode == ModeEventDriven {
+					snap.originalDelayGroups[ca.Delay] = append(snap.originalDelayGroups[ca.Delay], key)
+					if ca.PredicateSensitive {
+						snap.predicateActions = append(snap.predicateActions, key)
 					}
 				}
 			}
