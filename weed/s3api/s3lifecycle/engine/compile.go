@@ -136,17 +136,14 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 }
 
 // rulePredicateSensitive returns true if the rule's filter has any predicate
-// (tag or size) that can flip post-PUT. Prefix is fixed at write time so
-// it's not predicate-sensitive.
+// that can flip post-PUT. Only tags qualify: prefix is fixed by the object's
+// path at write time, and an object's size is immutable once written (any
+// content change is a fresh write that flows through the original-write
+// stream). Size filters do not need predicate-change sweeps; including them
+// here would add to predicateActions for no purpose and waste sweep cycles.
 func rulePredicateSensitive(rule *s3lifecycle.Rule) bool {
 	if rule == nil {
 		return false
 	}
-	if len(rule.FilterTags) > 0 {
-		return true
-	}
-	if rule.FilterSizeGreaterThan > 0 || rule.FilterSizeLessThan > 0 {
-		return true
-	}
-	return false
+	return len(rule.FilterTags) > 0
 }
