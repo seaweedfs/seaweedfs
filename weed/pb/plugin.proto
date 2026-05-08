@@ -351,6 +351,7 @@ message ClusterContext {
   repeated string filer_grpc_addresses = 2;
   repeated string volume_grpc_addresses = 3;
   map<string, string> metadata = 4;
+  repeated string s3_grpc_addresses = 5;
 }
 
 message ActivityEvent {

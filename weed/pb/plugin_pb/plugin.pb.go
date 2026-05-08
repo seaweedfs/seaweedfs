@@ -3567,6 +3567,7 @@ type ClusterContext struct {
 	FilerGrpcAddresses  []string               `protobuf:"bytes,2,rep,name=filer_grpc_addresses,json=filerGrpcAddresses,proto3" json:"filer_grpc_addresses,omitempty"`
 	VolumeGrpcAddresses []string               `protobuf:"bytes,3,rep,name=volume_grpc_addresses,json=volumeGrpcAddresses,proto3" json:"volume_grpc_addresses,omitempty"`
 	Metadata            map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	S3GrpcAddresses     []string               `protobuf:"bytes,5,rep,name=s3_grpc_addresses,json=s3GrpcAddresses,proto3" json:"s3_grpc_addresses,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -3625,6 +3626,13 @@ func (x *ClusterContext) GetVolumeGrpcAddresses() []string {
 func (x *ClusterContext) GetMetadata() map[string]string {
 	if x != nil {
 		return x.Metadata
+	}
+	return nil
+}
+
+func (x *ClusterContext) GetS3GrpcAddresses() []string {
+	if x != nil {
+		return x.S3GrpcAddresses
 	}
 	return nil
 }
@@ -4265,12 +4273,13 @@ const file_plugin_proto_rawDesc = "" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x1aT\n" +
 	"\x11OutputValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xa9\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xd5\x02\n" +
 	"\x0eClusterContext\x122\n" +
 	"\x15master_grpc_addresses\x18\x01 \x03(\tR\x13masterGrpcAddresses\x120\n" +
 	"\x14filer_grpc_addresses\x18\x02 \x03(\tR\x12filerGrpcAddresses\x122\n" +
 	"\x15volume_grpc_addresses\x18\x03 \x03(\tR\x13volumeGrpcAddresses\x12@\n" +
-	"\bmetadata\x18\x04 \x03(\v2$.plugin.ClusterContext.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x04 \x03(\v2$.plugin.ClusterContext.MetadataEntryR\bmetadata\x12*\n" +
+	"\x11s3_grpc_addresses\x18\x05 \x03(\tR\x0fs3GrpcAddresses\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb9\x02\n" +
