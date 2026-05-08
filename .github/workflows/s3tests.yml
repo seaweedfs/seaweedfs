@@ -139,7 +139,7 @@ jobs:
           # the upload's mtime; -dispatch / -checkpoint defaults are already
           # tightened under the same build tag.
           LC_LOG=/tmp/lifecycle-worker.log
-          (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18000 -events 0 -runtime 1800s" && echo exit) \
+          (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18000 -events 0 -runtime 1800s -refresh 2s" && echo exit) \
             | weed shell -master=localhost:9333 \
             > "$LC_LOG" 2>&1 &
           lc_pid=$!
@@ -992,7 +992,7 @@ jobs:
 
           # Spawn the lifecycle worker (see basic-tests block for context).
           LC_LOG=/tmp/lifecycle-worker-sql.log
-          (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18004 -events 0 -runtime 1800s" && echo exit) \
+          (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18004 -events 0 -runtime 1800s -refresh 2s" && echo exit) \
             | weed shell -master=localhost:9337 \
             > "$LC_LOG" 2>&1 &
           lc_pid=$!

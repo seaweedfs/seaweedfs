@@ -67,6 +67,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	eventBudget := fs.Int("events", 1000, "max in-shard events to process before returning (0 = unbounded; counts only events that pass the shard filter)")
 	dispatchTick := fs.Duration("dispatch", 5*time.Second, "dispatcher tick cadence")
 	checkpointTick := fs.Duration("checkpoint", 30*time.Second, "cursor checkpoint cadence")
+	refreshInterval := fs.Duration("refresh", 5*time.Minute, "interval for rebuilding the engine snapshot from filer-backed bucket configs; 0 = compile once at startup")
 	runtime := fs.Duration("runtime", 0, "wall-clock cap on the run; 0 = no timeout. -events alone can hang on quiet shards")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -101,26 +102,33 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	// Run the whole pipeline inside one WithFilerClient so the reader's
 	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
-		inputs, parseErrors, err := scheduler.LoadCompileInputs(context.Background(), filerClient, bucketsPath)
-		if err != nil {
-			return fmt.Errorf("load lifecycle configs: %w", err)
-		}
-		for i, pe := range parseErrors {
-			if i < 3 {
-				fmt.Fprintf(writer, "warning: %s: %v\n", pe.Bucket, pe.Err)
-			}
-		}
-		if extra := len(parseErrors) - 3; extra > 0 {
-			fmt.Fprintf(writer, "warning: %d additional bucket(s) had malformed lifecycle config\n", extra)
-		}
-		if len(inputs) == 0 {
-			fmt.Fprintln(writer, "no buckets with enabled lifecycle rules found")
-			return nil
-		}
-		fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
-
 		eng := engine.New()
-		eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
+		compile := func(initial bool) {
+			inputs, parseErrors, err := scheduler.LoadCompileInputs(context.Background(), filerClient, bucketsPath)
+			if err != nil {
+				if initial {
+					fmt.Fprintf(writer, "warning: load lifecycle configs: %v\n", err)
+				}
+				return
+			}
+			if initial {
+				for i, pe := range parseErrors {
+					if i < 3 {
+						fmt.Fprintf(writer, "warning: %s: %v\n", pe.Bucket, pe.Err)
+					}
+				}
+				if extra := len(parseErrors) - 3; extra > 0 {
+					fmt.Fprintf(writer, "warning: %d additional bucket(s) had malformed lifecycle config\n", extra)
+				}
+				if len(inputs) == 0 {
+					fmt.Fprintln(writer, "no buckets with enabled lifecycle rules at startup; will refresh and pick them up as they're added")
+				} else {
+					fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
+				}
+			}
+			eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
+		}
+		compile(true)
 
 		pipeline := &dispatcher.Pipeline{
 			Shards:         shards,
@@ -145,7 +153,24 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		}
 		defer cancel()
 
-		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s)…\n", formatShardLabel(shards), *eventBudget, *runtime)
+		// Periodic engine rebuild so rules added (or disabled) after startup
+		// land in the snapshot the dispatcher reads on its next tick.
+		if *refreshInterval > 0 {
+			go func() {
+				t := time.NewTicker(*refreshInterval)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						compile(false)
+					}
+				}
+			}()
+		}
+
+		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n", formatShardLabel(shards), *eventBudget, *runtime, *refreshInterval)
 		if err := pipeline.Run(ctx); err != nil {
 			return fmt.Errorf("pipeline: %w", err)
 		}
