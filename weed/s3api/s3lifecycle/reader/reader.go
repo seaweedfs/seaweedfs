@@ -45,9 +45,9 @@ type Reader struct {
 	ShardPredicate func(int) bool  // accepts an event when true; nil falls back to ShardID equality
 
 	BucketsPath string // e.g. "/buckets"
-	// Cursor is the single-shard cursor used for SinceNs when StartTsNs is 0
-	// and for the validation that at least one of Cursor/StartTsNs is set.
-	// Range callers pass StartTsNs directly and leave Cursor nil.
+	// Cursor is the single-shard cursor used for SinceNs when StartTsNs is 0.
+	// Range callers pass StartTsNs directly and leave Cursor nil; SinceNs=0
+	// then means "subscribe from the start of the meta-log".
 	Cursor    *Cursor
 	StartTsNs int64
 	Events    chan<- *Event
@@ -78,9 +78,6 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	}
 	if r.BucketsPath == "" {
 		return errors.New("reader: empty BucketsPath")
-	}
-	if r.Cursor == nil && r.StartTsNs == 0 {
-		return errors.New("reader: must set StartTsNs or Cursor")
 	}
 	r.bucketsPathSlash = r.BucketsPath
 	if !strings.HasSuffix(r.bucketsPathSlash, "/") {
