@@ -151,7 +151,9 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				if planner == nil {
 					planner = newECPlacementPlanner(clusterInfo.ActiveTopology, ecConfig.PreferredTags)
 				}
-				multiPlan, err := planECDestinations(planner, metric, ecConfig)
+				dataShards := uint32(erasure_coding.DataShardsCount)
+				parityShards := uint32(erasure_coding.ParityShardsCount)
+				multiPlan, err := planECDestinations(planner, metric, ecConfig, dataShards, parityShards)
 				if err != nil {
 					glog.Warningf("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
 					consecutivePlanningFailures++
@@ -168,7 +170,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 				// Calculate expected shard size for EC operation
 				// Each data shard will be approximately volumeSize / dataShards
-				expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
+				expectedShardSize := uint64(metric.Size) / uint64(dataShards)
 
 				// Add pending EC shard task to ActiveTopology for capacity management
 
@@ -281,10 +283,10 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 					Sources: sourcesProto,
 
 					// Unified targets - all EC shard destinations
-					Targets: createECTargets(multiPlan),
+					Targets: createECTargets(multiPlan, dataShards, parityShards),
 
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
-						ErasureCodingParams: createECTaskParams(multiPlan),
+						ErasureCodingParams: createECTaskParams(multiPlan, dataShards, parityShards),
 					},
 				}
 
@@ -592,13 +594,24 @@ func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement
 }
 
 // planECDestinations plans the destinations for erasure coding operation
-// This function implements EC destination planning logic directly in the detection phase
-func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config) (*topology.MultiDestinationPlan, error) {
+// This function implements EC destination planning logic directly in the detection phase.
+// dataShards/parityShards are taken as parameters so callers (and forks running
+// non-default ratios) can drive placement without relying on the OSS 10+4 constants.
+func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config, dataShards, parityShards uint32) (*topology.MultiDestinationPlan, error) {
 	if planner == nil || planner.activeTopology == nil {
 		return nil, fmt.Errorf("active topology not available for EC placement")
 	}
+	if dataShards == 0 || parityShards == 0 {
+		return nil, fmt.Errorf("invalid EC ratio: dataShards=%d parityShards=%d", dataShards, parityShards)
+	}
+	totalShards := int(dataShards + parityShards)
+	// minTotalDisks mirrors erasure_coding.MinTotalDisks: total/parity + 1, i.e.
+	// strictly more than one shard-stripe per disk so a single disk loss never
+	// takes out more than parityShards shards.
+	minTotalDisks := totalShards/int(parityShards) + 1
+
 	// Calculate expected shard size for EC operation
-	expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
+	expectedShardSize := uint64(metric.Size) / uint64(dataShards)
 
 	// Get source node information from topology
 	var sourceRack, sourceDC string
@@ -626,12 +639,20 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 	}
 
 	// Select best disks for EC placement with rack/DC diversity using the cached planner
-	selectedDisks, err := planner.selectDestinations(sourceRack, sourceDC, erasure_coding.TotalShardsCount)
+	selectedDisks, err := planner.selectDestinations(sourceRack, sourceDC, totalShards)
 	if err != nil {
 		return nil, err
 	}
-	if len(selectedDisks) < erasure_coding.MinTotalDisks {
-		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), erasure_coding.MinTotalDisks)
+	if len(selectedDisks) < minTotalDisks {
+		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), minTotalDisks)
+	}
+	// #9369 / #9185: with disk_id-aware ReceiveFile, two shards on the same
+	// (server, disk_id) target collide. If the planner could not give us one
+	// distinct disk per shard, fail the plan rather than letting createECTargets
+	// pack multiple shards onto the same physical disk.
+	if len(selectedDisks) < totalShards {
+		return nil, fmt.Errorf("found %d disks, but EC %d+%d needs %d distinct (server, disk_id) targets so each shard lands on its own disk",
+			len(selectedDisks), dataShards, parityShards, totalShards)
 	}
 
 	var plans []*topology.DestinationPlan
@@ -689,10 +710,13 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 }
 
 // createECTargets creates unified TaskTarget structures from the multi-destination plan
-// with proper shard ID assignment during planning phase
-func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.TaskTarget {
+// with proper shard ID assignment during planning phase. dataShards/parityShards
+// drive the data-vs-parity classification and the total shard count, so the
+// function does not depend on the OSS 10+4 constants.
+func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards uint32) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
 	numTargets := len(multiPlan.Plans)
+	totalShards := dataShards + parityShards
 
 	// Create shard assignment arrays for each target (round-robin distribution)
 	targetShards := make([][]uint32, numTargets)
@@ -701,8 +725,9 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 	}
 
 	// Distribute shards in round-robin fashion to spread both data and parity shards
-	// This ensures each target gets a mix of data shards (0-9) and parity shards (10-13)
-	for shardId := uint32(0); shardId < uint32(erasure_coding.TotalShardsCount); shardId++ {
+	// across targets. planECDestinations guarantees numTargets == totalShards, so
+	// each target receives exactly one shard.
+	for shardId := uint32(0); shardId < totalShards; shardId++ {
 		targetIndex := int(shardId) % numTargets
 		targetShards[targetIndex] = append(targetShards[targetIndex], shardId)
 	}
@@ -720,22 +745,21 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 		targets = append(targets, target)
 
 		// Log shard assignment with data/parity classification
-		dataShards := make([]uint32, 0)
-		parityShards := make([]uint32, 0)
+		assignedData := make([]uint32, 0)
+		assignedParity := make([]uint32, 0)
 		for _, shardId := range targetShards[i] {
-			if shardId < uint32(erasure_coding.DataShardsCount) {
-				dataShards = append(dataShards, shardId)
+			if shardId < dataShards {
+				assignedData = append(assignedData, shardId)
 			} else {
-				parityShards = append(parityShards, shardId)
+				assignedParity = append(assignedParity, shardId)
 			}
 		}
 		glog.V(2).Infof("EC planning: target %s assigned shards %v (data: %v, parity: %v)",
-			plan.TargetNode, targetShards[i], dataShards, parityShards)
+			plan.TargetNode, targetShards[i], assignedData, assignedParity)
 	}
 
 	glog.V(1).Infof("EC planning: distributed %d shards across %d targets using round-robin (data shards 0-%d, parity shards %d-%d)",
-		erasure_coding.TotalShardsCount, numTargets,
-		erasure_coding.DataShardsCount-1, erasure_coding.DataShardsCount, erasure_coding.TotalShardsCount-1)
+		totalShards, numTargets, dataShards-1, dataShards, totalShards-1)
 	return targets
 }
 
@@ -779,10 +803,10 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 }
 
 // createECTaskParams creates clean EC task parameters (destinations now in unified targets)
-func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.ErasureCodingTaskParams {
+func createECTaskParams(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards uint32) *worker_pb.ErasureCodingTaskParams {
 	return &worker_pb.ErasureCodingTaskParams{
-		DataShards:   erasure_coding.DataShardsCount,   // Standard data shards
-		ParityShards: erasure_coding.ParityShardsCount, // Standard parity shards
+		DataShards:   int32(dataShards),
+		ParityShards: int32(parityShards),
 	}
 }
 

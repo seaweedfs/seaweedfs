@@ -408,6 +408,66 @@ func TestECPlanningNotBlockedByUnrelatedBalance(t *testing.T) {
 		"EC must still see all 4 disks even with an unrelated in-flight balance")
 }
 
+// TestECPlannerSeesEachPhysicalDisk reproduces #9369: when a volume server has
+// multiple physical disks of the same type (e.g. -dir=/d1,/d2 → diskIds 0,1),
+// the master collapses them into a single DiskInfo entry keyed by disk type.
+// The active topology must still expose one entry per physical disk_id so the
+// EC planner can place at most one shard per disk.
+func TestECPlannerSeesEachPhysicalDisk(t *testing.T) {
+	topology := NewActiveTopology(10)
+
+	// 7 volume servers, each with 2 physical HDDs visible only via per-volume
+	// disk_id annotations on the single "hdd" DiskInfo entry.
+	const numServers = 7
+	const disksPerServer = 2
+	nodes := make([]*master_pb.DataNodeInfo, 0, numServers)
+	for i := 1; i <= numServers; i++ {
+		volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, disksPerServer)
+		for d := uint32(0); d < disksPerServer; d++ {
+			volumeInfos = append(volumeInfos, &master_pb.VolumeInformationMessage{
+				Id:       uint32(i*10 + int(d)),
+				DiskId:   d,
+				DiskType: "hdd",
+			})
+		}
+		nodes = append(nodes, &master_pb.DataNodeInfo{
+			Id: fmt.Sprintf("127.0.0.1:%d", 8080+i),
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"hdd": {
+					DiskId:         0, // master only retains one DiskId per type
+					VolumeCount:    int64(disksPerServer),
+					MaxVolumeCount: 200, // aggregated across both physical disks
+					VolumeInfos:    volumeInfos,
+				},
+			},
+		})
+	}
+
+	require.NoError(t, topology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id:            "rack1",
+				DataNodeInfos: nodes,
+			}},
+		}},
+	}))
+
+	candidates := topology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 0)
+	assert.Equal(t, numServers*disksPerServer, len(candidates),
+		"EC planner must see %d physical disks (#9369: %d servers × %d disks)",
+		numServers*disksPerServer, numServers, disksPerServer)
+
+	// Every (server, disk_id) tuple must be distinct so the planner can spread
+	// shards 1-per-disk instead of doubling up on the same physical disk.
+	seen := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		key := fmt.Sprintf("%s:%d", c.NodeID, c.DiskID)
+		assert.False(t, seen[key], "duplicate placement target %s", key)
+		seen[key] = true
+	}
+}
+
 // TestPublicInterfaces tests the public interface methods
 func TestPublicInterfaces(t *testing.T) {
 	topology := NewActiveTopology(10)
