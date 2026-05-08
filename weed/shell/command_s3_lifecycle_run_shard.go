@@ -64,6 +64,9 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	if *s3Endpoint == "" {
 		return fmt.Errorf("-s3 required (host:port of s3 server gRPC)")
 	}
+	if *eventBudget < 0 {
+		return fmt.Errorf("-events must be >= 0 (0 = unbounded)")
+	}
 
 	bucketsPath, err := resolveBucketsPath(env)
 	if err != nil {
@@ -71,7 +74,9 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	}
 	fmt.Fprintf(writer, "buckets path: %s\n", bucketsPath)
 
-	conn, err := pb.GrpcDial(context.Background(), *s3Endpoint, false, env.option.GrpcDialOption)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	conn, err := pb.GrpcDial(dialCtx, *s3Endpoint, false, env.option.GrpcDialOption)
+	dialCancel()
 	if err != nil {
 		return fmt.Errorf("dial s3 %s: %w", *s3Endpoint, err)
 	}
@@ -81,9 +86,20 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	// Run the whole pipeline inside one WithFilerClient so the reader's
 	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
-		inputs, err := loadLifecycleCompileInputs(context.Background(), filerClient, bucketsPath)
+		inputs, parseErrors, err := loadLifecycleCompileInputs(context.Background(), filerClient, bucketsPath)
 		if err != nil {
 			return fmt.Errorf("load lifecycle configs: %w", err)
+		}
+		for i, pe := range parseErrors {
+			// Surface up to the first three parse errors so the operator
+			// can chase malformed configs; cap the rest with a count so
+			// the output stays readable on large clusters.
+			if i < 3 {
+				fmt.Fprintf(writer, "warning: %s: %v\n", pe.bucket, pe.err)
+			}
+		}
+		if extra := len(parseErrors) - 3; extra > 0 {
+			fmt.Fprintf(writer, "warning: %d additional bucket(s) had malformed lifecycle config\n", extra)
 		}
 		if len(inputs) == 0 {
 			fmt.Fprintln(writer, "no buckets with enabled lifecycle rules found")
@@ -155,34 +171,60 @@ func resolveBucketsPath(env *CommandEnv) (string, error) {
 	return path, nil
 }
 
+type lifecycleParseError struct {
+	bucket string
+	err    error
+}
+
 // loadLifecycleCompileInputs walks the buckets directory and reads each
-// bucket entry's lifecycle XML from its Extended attributes.
-func loadLifecycleCompileInputs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath string) ([]engine.CompileInput, error) {
-	var inputs []engine.CompileInput
-	err := filer_pb.SeaweedList(ctx, client, bucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if !entry.IsDirectory {
+// bucket entry's lifecycle XML from its Extended attributes. Pagination
+// loops with startFrom so clusters with more than one page of buckets
+// don't drop the tail. Parse errors are collected per bucket and returned
+// alongside the successful inputs so the caller can surface them.
+func loadLifecycleCompileInputs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath string) ([]engine.CompileInput, []lifecycleParseError, error) {
+	var (
+		inputs      []engine.CompileInput
+		parseErrors []lifecycleParseError
+		startFrom   string
+	)
+	const pageSize uint32 = 1024
+	for {
+		pageCount := 0
+		var lastName string
+		err := filer_pb.SeaweedList(ctx, client, bucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+			pageCount++
+			lastName = entry.Name
+			if !entry.IsDirectory {
+				return nil
+			}
+			xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]
+			if !ok || len(xmlBytes) == 0 {
+				return nil
+			}
+			rules, err := lifecycle_xml.ParseCanonical(xmlBytes)
+			if err != nil {
+				parseErrors = append(parseErrors, lifecycleParseError{bucket: entry.Name, err: err})
+				return nil
+			}
+			if len(rules) == 0 {
+				return nil
+			}
+			inputs = append(inputs, engine.CompileInput{
+				Bucket:    entry.Name,
+				Rules:     rules,
+				Versioned: isBucketVersioned(entry),
+			})
 			return nil
+		}, startFrom, false, pageSize)
+		if err != nil {
+			return nil, nil, err
 		}
-		xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]
-		if !ok || len(xmlBytes) == 0 {
-			return nil
+		if uint32(pageCount) < pageSize {
+			break
 		}
-		rules, err := lifecycle_xml.ParseCanonical(xmlBytes)
-		if err != nil || len(rules) == 0 {
-			// Skip buckets with malformed configs; report and continue.
-			return nil
-		}
-		inputs = append(inputs, engine.CompileInput{
-			Bucket:    entry.Name,
-			Rules:     rules,
-			Versioned: isBucketVersioned(entry),
-		})
-		return nil
-	}, "", false, 4096)
-	if err != nil {
-		return nil, err
+		startFrom = lastName
 	}
-	return inputs, nil
+	return inputs, parseErrors, nil
 }
 
 const bucketLifecycleConfigurationXMLKey = "s3-bucket-lifecycle-configuration-xml"
