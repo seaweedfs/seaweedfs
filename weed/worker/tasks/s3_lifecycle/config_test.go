@@ -1,7 +1,6 @@
 package s3_lifecycle
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -25,15 +24,11 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.EventBudget != 0 {
 		t.Errorf("EventBudget default=%d, want 0 (unbounded)", cfg.EventBudget)
 	}
-	if len(cfg.S3GrpcEndpoints) != 0 {
-		t.Errorf("S3GrpcEndpoints default=%v, want empty", cfg.S3GrpcEndpoints)
-	}
 }
 
 func TestParseConfigOverrides(t *testing.T) {
 	admin := map[string]*plugin_pb.ConfigValue{
-		"workers":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 4}},
-		"s3_grpc_endpoints": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "host1:18333, host2:18333"}},
+		"workers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 4}},
 	}
 	worker := map[string]*plugin_pb.ConfigValue{
 		"dispatch_tick_ms":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 500}},
@@ -56,10 +51,6 @@ func TestParseConfigOverrides(t *testing.T) {
 	}
 	if cfg.EventBudget != 100 {
 		t.Errorf("EventBudget=%d, want 100", cfg.EventBudget)
-	}
-	want := []string{"host1:18333", "host2:18333"}
-	if !reflect.DeepEqual(cfg.S3GrpcEndpoints, want) {
-		t.Errorf("S3GrpcEndpoints=%v, want %v", cfg.S3GrpcEndpoints, want)
 	}
 }
 

@@ -69,7 +69,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				{
 					SectionId:   "scope",
 					Title:       "Scope",
-					Description: "Where to dispatch lifecycle deletes and how many workers handle the load.",
+					Description: "How many pipeline goroutines split the 16-shard space.",
 					Fields: []*plugin_pb.ConfigField{
 						{
 							Name:        "workers",
@@ -80,20 +80,11 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 16}},
 						},
-						{
-							Name:        "s3_grpc_endpoints",
-							Label:       "S3 gRPC Endpoints",
-							Description: "Comma-separated host:port list of S3 server gRPC endpoints. The scheduler dials the first reachable one for LifecycleDelete RPCs.",
-							Placeholder: "localhost:18333",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
-						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"workers":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
-				"s3_grpc_endpoints": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"workers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -163,9 +154,9 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	if request.JobType != "" && request.JobType != jobType {
 		return fmt.Errorf("job type %q is not handled by s3 lifecycle handler", request.JobType)
 	}
-	cfg := ParseConfig(request.GetAdminConfigValues(), request.GetWorkerConfigValues())
-	if len(cfg.S3GrpcEndpoints) == 0 {
-		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no s3 grpc endpoints configured", nil))
+	s3Endpoints := clusterS3Endpoints(request.ClusterContext)
+	if len(s3Endpoints) == 0 {
+		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no s3 servers registered with master", nil))
 		return sender.SendComplete(&plugin_pb.DetectionComplete{JobType: jobType, Success: true})
 	}
 	filerAddresses := []string{}
@@ -206,8 +197,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return fmt.Errorf("job type %q is not handled by s3 lifecycle handler", request.Job.JobType)
 	}
 	cfg := ParseConfig(request.GetAdminConfigValues(), request.GetWorkerConfigValues())
-	if len(cfg.S3GrpcEndpoints) == 0 {
-		return fmt.Errorf("execute: no s3 grpc endpoints configured")
+	s3Endpoints := clusterS3Endpoints(request.ClusterContext)
+	if len(s3Endpoints) == 0 {
+		return fmt.Errorf("execute: no s3 servers registered with master")
 	}
 	filerAddress := readString(request.Job.Parameters, "filer_grpc_address", "")
 	if filerAddress == "" {
@@ -217,7 +209,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("scheduler workers=%d s3=%v", cfg.Workers, cfg.S3GrpcEndpoints),
+		Message: fmt.Sprintf("scheduler workers=%d s3=%v", cfg.Workers, s3Endpoints),
 	})
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -235,10 +227,10 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	}
 
 	dialCtx, dialCancel = context.WithTimeout(ctx, 30*time.Second)
-	s3Conn, err := pb.GrpcDial(dialCtx, cfg.S3GrpcEndpoints[0], false, h.grpcDialOption)
+	s3Conn, err := pb.GrpcDial(dialCtx, s3Endpoints[0], false, h.grpcDialOption)
 	dialCancel()
 	if err != nil {
-		return fmt.Errorf("dial s3 %s: %w", cfg.S3GrpcEndpoints[0], err)
+		return fmt.Errorf("dial s3 %s: %w", s3Endpoints[0], err)
 	}
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
@@ -262,6 +254,22 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return err
 	}
 	return nil
+}
+
+// clusterS3Endpoints returns the master-discovered S3 gRPC addresses for the
+// cluster. The handler dials the first reachable one; the master refreshes
+// the list on KeepConnected so a stale entry self-heals on the next run.
+func clusterS3Endpoints(cc *plugin_pb.ClusterContext) []string {
+	if cc == nil {
+		return nil
+	}
+	out := make([]string, 0, len(cc.S3GrpcAddresses))
+	for _, addr := range cc.S3GrpcAddresses {
+		if addr != "" {
+			out = append(out, addr)
+		}
+	}
+	return out
 }
 
 type lifecycleRPCAdapter struct {

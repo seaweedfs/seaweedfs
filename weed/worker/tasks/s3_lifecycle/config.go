@@ -1,7 +1,6 @@
 package s3_lifecycle
 
 import (
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
@@ -19,12 +18,11 @@ const (
 
 // Config is the parsed AdminConfigForm + WorkerConfigForm view.
 type Config struct {
-	Workers           int
-	DispatchTick      time.Duration
-	CheckpointTick    time.Duration
-	RefreshInterval   time.Duration
-	EventBudget       int
-	S3GrpcEndpoints   []string
+	Workers         int
+	DispatchTick    time.Duration
+	CheckpointTick  time.Duration
+	RefreshInterval time.Duration
+	EventBudget     int
 }
 
 // ParseConfig pulls the lifecycle Handler config from the merged
@@ -51,13 +49,6 @@ func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Co
 	}
 	if cfg.EventBudget < 0 {
 		cfg.EventBudget = 0
-	}
-	if endpoints := strings.TrimSpace(readString(adminValues, "s3_grpc_endpoints", "")); endpoints != "" {
-		for _, ep := range strings.Split(endpoints, ",") {
-			if ep = strings.TrimSpace(ep); ep != "" {
-				cfg.S3GrpcEndpoints = append(cfg.S3GrpcEndpoints, ep)
-			}
-		}
 	}
 	return cfg
 }
