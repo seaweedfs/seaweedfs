@@ -72,7 +72,8 @@ func matchBucketLifecycleTTLSeconds(rules []bucketLifecycleTTLRule, objectKey st
 	var bestPrefix string
 	var ttlSeconds int32
 	for _, rule := range rules {
-		prefix := normalizeLifecycleRulePrefix(rule.Prefix)
+		// rule.Prefix is already normalized at encode time.
+		prefix := rule.Prefix
 		if prefix != "" && !strings.HasPrefix(objectKey, prefix) {
 			continue
 		}
