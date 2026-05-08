@@ -1,18 +1,35 @@
-package s3api
+// Package lifecycle_xml is the XML wire-form for S3 BucketLifecycleConfiguration:
+// the structs S3 PutBucketLifecycleConfiguration accepts and
+// GetBucketLifecycleConfiguration returns. It lives outside weed/s3api so
+// callers outside that package (shell, lifecycle worker) can parse and
+// emit the same shape without pulling weed/s3api's full dependency graph
+// — weed/s3api transitively imports weed/server, which imports weed/shell.
+//
+// Conversion to the engine-friendly canonical form
+// (weed/s3api/s3lifecycle.Rule) lives next to the types here as
+// LifecycleToCanonical.
+package lifecycle_xml
 
 import (
 	"encoding/xml"
 	"time"
 )
 
-// Status represents lifecycle configuration status
-type ruleStatus string
+// RuleStatus represents lifecycle rule status.
+type RuleStatus string
 
-// Supported status types
+// Supported status types.
 const (
-	Enabled  ruleStatus = "Enabled"
-	Disabled ruleStatus = "Disabled"
+	Enabled  RuleStatus = "Enabled"
+	Disabled RuleStatus = "Disabled"
 )
+
+// Tag is the lifecycle filter tag pair. Defined locally so this package
+// has no dependency on weed/s3api.
+type Tag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
 
 // Lifecycle - Configuration for bucket lifecycle.
 type Lifecycle struct {
@@ -24,7 +41,7 @@ type Lifecycle struct {
 type Rule struct {
 	XMLName                        xml.Name                       `xml:"Rule"`
 	ID                             string                         `xml:"ID,omitempty"`
-	Status                         ruleStatus                     `xml:"Status"`
+	Status                         RuleStatus                     `xml:"Status"`
 	Filter                         Filter                         `xml:"Filter,omitempty"`
 	Prefix                         Prefix                         `xml:"Prefix,omitempty"`
 	Expiration                     Expiration                     `xml:"Expiration,omitempty"`
@@ -62,6 +79,36 @@ type Prefix struct {
 func (p Prefix) String() string {
 	return p.val
 }
+
+// Set returns whether the Prefix carries a value (vs being absent).
+func (p Prefix) Set() bool { return p.set }
+
+// Val returns the prefix string. Empty when !Set.
+func (p Prefix) Val() string { return p.val }
+
+// NewPrefix builds a Prefix marked as set.
+func NewPrefix(val string) Prefix { return Prefix{val: val, set: true} }
+
+// NewExpirationDays builds an Expiration with Days set.
+func NewExpirationDays(days int) Expiration { return Expiration{Days: days, set: true} }
+
+// Set reports whether this Filter is present in the XML.
+func (f Filter) Set() bool { return f.set }
+
+// AndSet reports whether the Filter contains an <And> branch.
+func (f Filter) AndSet() bool { return f.andSet }
+
+// TagSet reports whether the Filter contains a single <Tag> branch.
+func (f Filter) TagSet() bool { return f.tagSet }
+
+// Set reports whether the Transition element was present.
+func (t Transition) Set() bool { return t.set }
+
+// Set reports whether the NoncurrentVersionTransition element was present.
+func (n NoncurrentVersionTransition) Set() bool { return n.set }
+
+// Set reports whether the Expiration element was present.
+func (e Expiration) Set() bool { return e.set }
 
 // MarshalXML encodes Prefix field into an XML form.
 func (p Prefix) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error {

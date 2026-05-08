@@ -1,4 +1,4 @@
-package s3api
+package lifecycle_xml
 
 import (
 	"encoding/xml"

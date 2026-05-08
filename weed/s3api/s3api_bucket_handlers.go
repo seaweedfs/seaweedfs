@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/lifecycle_xml"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -840,7 +841,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
-	response := Lifecycle{}
+	response := lifecycle_xml.Lifecycle{}
 	// Sort locationPrefixes to ensure consistent ordering of lifecycle rules
 	var locationPrefixes []string
 	for locationPrefix := range ttls {
@@ -859,11 +860,11 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if !found {
 			continue
 		}
-		response.Rules = append(response.Rules, Rule{
+		response.Rules = append(response.Rules, lifecycle_xml.Rule{
 			ID:         prefix,
-			Status:     Enabled,
-			Prefix:     Prefix{val: prefix, set: true},
-			Expiration: Expiration{Days: days, set: true},
+			Status:     lifecycle_xml.Enabled,
+			Prefix:     lifecycle_xml.NewPrefix(prefix),
+			Expiration: lifecycle_xml.NewExpirationDays(days),
 		})
 	}
 
@@ -920,7 +921,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
-	lifeCycleConfig := Lifecycle{}
+	lifeCycleConfig := lifecycle_xml.Lifecycle{}
 	if err := xmlDecoder(bytes.NewReader(lifecycleXML), &lifeCycleConfig, int64(len(lifecycleXML))); err != nil {
 		glog.Warningf("PutBucketLifecycleConfigurationHandler xml decode: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
@@ -977,12 +978,12 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		bucketVersioning == s3_constants.VersioningSuspended
 
 	for _, rule := range lifeCycleConfig.Rules {
-		if rule.Status != Enabled {
+		if rule.Status != lifecycle_xml.Enabled {
 			continue
 		}
 		// Reject Transition rules — they require storage class migration
 		// infrastructure that does not exist yet.
-		if rule.Transition.set || rule.NoncurrentVersionTransition.set {
+		if rule.Transition.Set() || rule.NoncurrentVersionTransition.Set() {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 			return
 		}
@@ -993,12 +994,12 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 
 		var rulePrefix string
 		switch {
-		case rule.Filter.andSet:
-			rulePrefix = rule.Filter.And.Prefix.val
-		case rule.Filter.Prefix.set:
-			rulePrefix = rule.Filter.Prefix.val
-		case rule.Prefix.set:
-			rulePrefix = rule.Prefix.val
+		case rule.Filter.AndSet():
+			rulePrefix = rule.Filter.And.Prefix.Val()
+		case rule.Filter.Prefix.Set():
+			rulePrefix = rule.Filter.Prefix.Val()
+		case rule.Prefix.Set():
+			rulePrefix = rule.Prefix.Val()
 		}
 
 		// Only create filer.conf TTL entries for simple Expiration.Days rules
@@ -1009,9 +1010,9 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Expiration.Days == 0 {
 			continue
 		}
-		hasTagOrSizeFilter := rule.Filter.tagSet ||
+		hasTagOrSizeFilter := rule.Filter.TagSet() ||
 			rule.Filter.ObjectSizeGreaterThan > 0 || rule.Filter.ObjectSizeLessThan > 0 ||
-			(rule.Filter.andSet && (len(rule.Filter.And.Tags) > 0 ||
+			(rule.Filter.AndSet() && (len(rule.Filter.And.Tags) > 0 ||
 				rule.Filter.And.ObjectSizeGreaterThan > 0 || rule.Filter.And.ObjectSizeLessThan > 0))
 		if hasTagOrSizeFilter {
 			continue // evaluated by lifecycle worker at scan time

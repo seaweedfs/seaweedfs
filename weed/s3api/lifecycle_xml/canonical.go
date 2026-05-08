@@ -1,8 +1,31 @@
-package s3api
+package lifecycle_xml
 
 import (
+	"bytes"
+	"encoding/xml"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
+
+// Parse decodes a BucketLifecycleConfiguration XML body into the wire-form
+// Lifecycle struct.
+func Parse(xmlBytes []byte) (*Lifecycle, error) {
+	var lc Lifecycle
+	if err := xml.NewDecoder(bytes.NewReader(xmlBytes)).Decode(&lc); err != nil {
+		return nil, err
+	}
+	return &lc, nil
+}
+
+// ParseCanonical is the one-shot path most non-server callers want:
+// raw XML in, []*s3lifecycle.Rule out.
+func ParseCanonical(xmlBytes []byte) ([]*s3lifecycle.Rule, error) {
+	lc, err := Parse(xmlBytes)
+	if err != nil {
+		return nil, err
+	}
+	return LifecycleToCanonical(lc), nil
+}
 
 // LifecycleToCanonical flattens the XML-deserialized Lifecycle into the
 // engine's flat Rule shape. The optional <Filter> element may contain
