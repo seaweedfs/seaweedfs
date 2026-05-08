@@ -37,12 +37,13 @@ import (
 )
 
 const (
-	defaultS3Endpoint   = "http://localhost:8333"
-	defaultMasterEndpt  = "http://localhost:9333"
-	defaultFilerGRPC    = "localhost:18888"
+	defaultS3Endpoint     = "http://localhost:8333"
+	defaultS3GrpcEndpoint = "localhost:18333"
+	defaultMasterEndpt    = "http://localhost:9333"
+	defaultFilerGRPC      = "localhost:18888"
 	bucketLifecycleXMLKey = "s3-bucket-lifecycle-configuration-xml"
-	bucketsPath         = "/buckets"
-	accessKey           = "some_access_key1"
+	bucketsPath           = "/buckets"
+	accessKey             = "some_access_key1"
 	secretKey           = "some_secret_key1"
 	region              = "us-east-1"
 )
@@ -210,8 +211,9 @@ func TestLifecycleExpirationFiresOnBackdatedObject(t *testing.T) {
 	// when the in-shard event count never reaches -events.
 	out := runShellCommand(t, fmt.Sprintf(
 		"s3.lifecycle.run-shard -shards 0-15 -s3 %s -events 0 -dispatch 200ms -checkpoint 5s -runtime 10s",
-		strings.TrimPrefix(envOr("S3_ENDPOINT", defaultS3Endpoint), "http://"),
+		envOr("S3_GRPC_ENDPOINT", defaultS3GrpcEndpoint),
 	))
+	t.Logf("shell command output:\n%s", out)
 	require.NotContains(t, out, "FATAL", "shell output:\n%s", out)
 
 	// Allow the dispatched delete to land in the filer + propagate to S3.

@@ -67,6 +67,7 @@ health-check:
 test:
 	@WEED_BINARY=$$(cd ../../../weed && pwd)/weed_binary \
 	S3_ENDPOINT=http://localhost:$(S3_PORT) \
+	S3_GRPC_ENDPOINT=localhost:$$(($(S3_PORT) + 10000)) \
 	MASTER_ENDPOINT=http://localhost:$(MASTER_PORT) \
 	FILER_GRPC_ADDRESS=localhost:$$(($(FILER_PORT) + 10000)) \
 	go test -v -timeout $(TEST_TIMEOUT) -run $(TEST_PATTERN)
