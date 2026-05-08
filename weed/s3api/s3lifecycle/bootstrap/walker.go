@@ -140,6 +140,17 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 		if action.Mode == engine.ModeScanAtDate || action.Mode == engine.ModeDisabled {
 			continue
 		}
+		// (kind, info) shape gate: ABORT_MPU only on MPU init records,
+		// every other kind only on regular objects/versions. Mismatched
+		// pairs would either dispatch a noncurrent action with empty
+		// version_id (server BLOCKs, cursor freezes) or dispatch
+		// ABORT_MPU against a regular object path.
+		if entry.IsMPUInit && key.ActionKind != s3lifecycle.ActionKindAbortMPU {
+			continue
+		}
+		if !entry.IsMPUInit && key.ActionKind == s3lifecycle.ActionKindAbortMPU {
+			continue
+		}
 		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, now)
 		if res.Action == s3lifecycle.ActionNone {
 			continue

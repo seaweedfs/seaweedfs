@@ -305,3 +305,23 @@ func TestEvaluateAction_EmptyPrefixMatchesAll(t *testing.T) {
 		t.Fatalf("empty prefix should match, got %v", got)
 	}
 }
+
+func TestEvaluateAction_MPUInitDoesNotFireNoncurrent(t *testing.T) {
+	// IsLatest=false on an MPU init must not let NoncurrentDays /
+	// NewerNoncurrent fire. The dispatcher BLOCKs noncurrent kinds with
+	// empty version_id, which would freeze the cursor.
+	rule := &Rule{
+		ID:                              "r",
+		Status:                          StatusEnabled,
+		NoncurrentVersionExpirationDays: 7,
+		NewerNoncurrentVersions:         3,
+	}
+	init := time.Now().AddDate(0, 0, -30)
+	info := &ObjectInfo{Key: "logs/foo.txt", IsMPUInit: true, ModTime: init}
+
+	for _, kind := range []ActionKind{ActionKindNoncurrentDays, ActionKindNewerNoncurrent} {
+		if got := EvaluateAction(rule, kind, info, time.Now()); got.Action != ActionNone {
+			t.Fatalf("kind=%v on IsMPUInit must return None, got %+v", kind, got)
+		}
+	}
+}

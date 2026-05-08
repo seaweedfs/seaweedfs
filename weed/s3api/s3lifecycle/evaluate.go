@@ -17,6 +17,13 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 	if !filterMatches(rule, info) {
 		return none
 	}
+	// MPU init records carry IsLatest=false (they are not yet versions);
+	// without this guard NoncurrentDays / NewerNoncurrent fire on them
+	// and the dispatcher BLOCKs because version_id is empty, freezing
+	// the cursor. Only ABORT_MPU is meaningful for an in-flight upload.
+	if info.IsMPUInit && kind != ActionKindAbortMPU {
+		return none
+	}
 
 	switch kind {
 	case ActionKindAbortMPU:

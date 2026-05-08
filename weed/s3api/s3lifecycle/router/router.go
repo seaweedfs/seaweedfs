@@ -71,6 +71,17 @@ func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
 		if action.Mode != engine.ModeEventDriven {
 			continue
 		}
+		// (kind, info) shape gate: ABORT_MPU only fires on MPU init events,
+		// and other kinds never do. Without this an MPU init would be
+		// matched against NONCURRENT_DAYS (IsLatest=false reads as a
+		// non-current version) and the dispatcher would BLOCK on empty
+		// version_id.
+		if info.IsMPUInit && key.ActionKind != s3lifecycle.ActionKindAbortMPU {
+			continue
+		}
+		if !info.IsMPUInit && key.ActionKind == s3lifecycle.ActionKindAbortMPU {
+			continue
+		}
 		// Schedule from ModTime, not the meta-log event time: a backdated
 		// or out-of-band entry update has eventTime ≈ now but ModTime far
 		// in the past, so eventTime+Delay would push the dispatch into the

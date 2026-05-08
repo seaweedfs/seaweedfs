@@ -345,3 +345,28 @@ func TestRouteMPUPartEventSkipped(t *testing.T) {
 		t.Fatalf("expected 0 matches for part event, got %v", got)
 	}
 }
+
+func TestRouteMPUInitDoesNotFireNoncurrent(t *testing.T) {
+	// One rule with both ABORT_MPU and NONCURRENT_DAYS; an MPU init must
+	// only emit the ABORT_MPU match. Otherwise the dispatcher receives a
+	// NONCURRENT_DAYS action with version_id="" and freezes the cursor.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		AbortMPUDaysAfterInitiation:     7,
+		NoncurrentVersionExpirationDays: 7,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	init := now.AddDate(0, 0, -30)
+	ev := mpuInitEvent("bk", "u1", "logs/foo.txt", init.Unix(), init.UnixNano())
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 match (ABORT_MPU only), got %v", matches)
+	}
+	if got := matches[0].Key.ActionKind; got != s3lifecycle.ActionKindAbortMPU {
+		t.Fatalf("ActionKind=%v, want AbortMPU", got)
+	}
+}

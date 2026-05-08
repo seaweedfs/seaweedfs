@@ -369,3 +369,32 @@ func TestWalk_NonMPUDirectorySkipped(t *testing.T) {
 		t.Fatalf("plain directory should not dispatch, got %v", rec.calls)
 	}
 }
+
+func TestWalk_MPUInitDoesNotFireNoncurrent(t *testing.T) {
+	// Same rule covers both AbortMPU and NoncurrentVersionExpiration; the
+	// MPU init record must dispatch only the AbortMPU action. Without the
+	// engine guard, NONCURRENT_DAYS would fire (IsLatest=false) and the
+	// server would BLOCK on empty version_id, freezing the cursor.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		AbortMPUDaysAfterInitiation:     7,
+		NoncurrentVersionExpirationDays: 7,
+	}
+	snap := compileEvDriven(t, "bk", rule)
+	mod := mustTime(t, "2024-01-01T00:00:00Z")
+	now := mod.AddDate(0, 0, 30)
+
+	rec := &recorder{}
+	if _, err := Walk(context.Background(), snap, "bk", EntryCallback([]*Entry{
+		{Path: ".uploads/u1", IsDirectory: true, IsMPUInit: true, DestKey: "obj/a", ModTime: mod},
+	}), rec, WalkOptions{Now: now}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("expected 1 dispatch (AbortMPU only), got %v", rec.calls)
+	}
+	if rec.calls[0].kind != s3lifecycle.ActionKindAbortMPU {
+		t.Fatalf("kind=%v, want AbortMPU", rec.calls[0].kind)
+	}
+}
