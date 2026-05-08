@@ -370,11 +370,13 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		return fmt.Errorf("failed to create encoder: %w", err)
 	}
 
+	// Pre-allocate buffers for every shard, including the missing ones we
+	// need to reconstruct. reedsolomon.Reconstruct reuses cap when len==0
+	// (cap(shard) >= shardSize → shard[0:shardSize]), so handing it a 0-len
+	// slice with the right cap avoids a fresh allocation per chunk.
 	buffers := make([][]byte, ctx.Total())
 	for i := range buffers {
-		if shardHasData[i] {
-			buffers[i] = make([]byte, ErasureCodingSmallBlockSize)
-		}
+		buffers[i] = make([]byte, ErasureCodingSmallBlockSize)
 	}
 
 	for startOffset := int64(0); startOffset < expectedShardSize; {
@@ -394,7 +396,9 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 				}
 				buffers[i] = buf
 			} else {
-				buffers[i] = nil
+				// 0-len, full-cap: signals "missing" while letting Reconstruct
+				// reslice into our existing storage.
+				buffers[i] = buffers[i][:0]
 			}
 		}
 
