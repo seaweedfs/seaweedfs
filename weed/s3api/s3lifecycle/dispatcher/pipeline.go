@@ -23,7 +23,6 @@ type Pipeline struct {
 	Engine    *engine.Engine
 	Cursor    *reader.Cursor
 	Persister reader.Persister
-	Blockers  BlockerStore
 	Client    LifecycleClient
 
 	FilerClient filer_pb.SeaweedFilerClient
@@ -55,14 +54,16 @@ const (
 // is the durable buffer, so a restart re-derives them).
 func (p *Pipeline) Run(ctx context.Context) error {
 	if p.Engine == nil || p.Cursor == nil || p.Persister == nil ||
-		p.Blockers == nil || p.Client == nil || p.FilerClient == nil {
+		p.Client == nil || p.FilerClient == nil {
 		return errors.New("pipeline: missing required dependency")
 	}
 	if p.BucketsPath == "" {
 		return errors.New("pipeline: BucketsPath required")
 	}
 
-	// 1. Restore cursor + replay blocker freezes.
+	// Restore cursor; freezes re-arm naturally when the reader re-encounters
+	// the poison event at MinTsNs and the dispatch state machine drives it
+	// back to BLOCKED.
 	state, err := p.Persister.Load(ctx, p.ShardID)
 	if err != nil {
 		return fmt.Errorf("cursor load: %w", err)
@@ -73,11 +74,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		ShardID:  p.ShardID,
 		Client:   p.Client,
 		Cursor:   p.Cursor,
-		Blockers: p.Blockers,
 		Schedule: router.NewSchedule(),
-	}
-	if err := dispatch.ReplayBlockers(ctx); err != nil {
-		return fmt.Errorf("blocker replay: %w", err)
 	}
 
 	// 2. Wire reader -> router -> schedule via a buffered channel.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
@@ -20,19 +19,22 @@ type LifecycleClient interface {
 }
 
 // Dispatcher consumes due Matches, calls LifecycleDelete, and routes the
-// outcome back to the per-shard cursor and the blocker store.
+// outcome back to the per-shard cursor.
 //
 // State machine for one Match:
 //   DONE / NOOP_RESOLVED / SKIPPED_OBJECT_LOCK -> Cursor.Advance
 //   RETRY_LATER (within budget) -> back into the schedule with backoff
-//   RETRY_LATER (budget exhausted) -> escalate to BLOCKED
-//   BLOCKED                      -> BlockerStore.Put + Cursor.Freeze
-//   FATAL_EVENT_ERROR / unknown  -> treat as BLOCKED
+//   RETRY_LATER (budget exhausted) / BLOCKED   -> Cursor.Freeze in-memory
+//   FATAL_EVENT_ERROR / unknown                -> treat as BLOCKED
+//
+// A frozen cursor doesn't advance, so the durable cursor is the durable
+// "stuck" state on its own: a worker restart re-encounters the poison
+// event at MinTsNs and re-freezes after the same retry cycle. No separate
+// blocker store is needed.
 type Dispatcher struct {
 	ShardID  int
 	Client   LifecycleClient
 	Cursor   *reader.Cursor
-	Blockers BlockerStore
 	Schedule *router.Schedule
 
 	// RetryBudget caps RETRY_LATER attempts before escalating to BLOCKED.
@@ -44,8 +46,8 @@ type Dispatcher struct {
 	RetryBackoff time.Duration
 
 	// retries[Match.Key+ObjectKey] = attempts so far. In-memory only:
-	// worker restart resets the budget, which is fine because BLOCKED is
-	// durable and the cursor is durable.
+	// worker restart resets the budget, which is fine because the cursor
+	// is durable and the same poison event will land us here again.
 	retries map[retryKey]int
 }
 
@@ -169,31 +171,8 @@ func (d *Dispatcher) handleRetryLater(ctx context.Context, m router.Match, reaso
 
 func (d *Dispatcher) handleBlocked(ctx context.Context, m router.Match, reason string) {
 	delete(d.retries, keyOf(m))
-	rec := BlockerRecord{
-		ShardID:    d.ShardID,
-		Key:        m.Key,
-		FrozenAtNs: m.EventTs.UnixNano(),
-		Reason:     reason,
-		CreatedAt:  time.Now(),
-	}
-	if err := d.Blockers.Put(ctx, rec); err != nil {
-		// Persistence failure: retry; cursor stays frozen in-memory.
-		glog.Errorf("lifecycle blocker persist: shard=%d key=%v: %v", d.ShardID, m.Key, err)
-	}
 	d.Cursor.Freeze(m.Key, m.EventTs.UnixNano())
-}
-
-// ReplayBlockers re-applies in-memory freezes from the durable BlockerStore.
-// Call once on Pipeline startup before the reader begins emitting.
-func (d *Dispatcher) ReplayBlockers(ctx context.Context) error {
-	recs, err := d.Blockers.List(ctx, d.ShardID)
-	if err != nil {
-		return fmt.Errorf("blocker list: %w", err)
-	}
-	for _, r := range recs {
-		d.Cursor.Freeze(r.Key, r.FrozenAtNs)
-	}
-	return nil
+	_ = reason // reason is logged by the caller; freeze is the durable signal
 }
 
 func toProtoActionKind(k s3lifecycle.ActionKind) s3_lifecycle_pb.ActionKind {

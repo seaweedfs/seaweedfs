@@ -38,7 +38,6 @@ func newDispatcher(client LifecycleClient) (*Dispatcher, *router.Schedule) {
 		ShardID:      0,
 		Client:       client,
 		Cursor:       reader.NewCursor(),
-		Blockers:     NewInMemoryBlockerStore(),
 		Schedule:     sched,
 		RetryBudget:  3,
 		RetryBackoff: time.Millisecond,
@@ -142,12 +141,8 @@ func TestDispatchRetryBudgetEscalatesToBlocked(t *testing.T) {
 	if !d.Cursor.IsFrozen(m.Key) {
 		t.Fatal("expected freeze after budget exhausted")
 	}
-	recs, _ := d.Blockers.List(context.Background(), 0)
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 blocker record, got %d", len(recs))
-	}
-	if recs[0].Reason == "" {
-		t.Fatal("blocker record missing reason")
+	if d.Cursor.Get(m.Key) != t0.UnixNano() {
+		t.Fatal("frozen cursor should be pinned at event ts")
 	}
 }
 
@@ -241,27 +236,33 @@ func TestDispatchSkipsFrozenCursor(t *testing.T) {
 	}
 }
 
-func TestReplayBlockersRefreezes(t *testing.T) {
-	store := NewInMemoryBlockerStore()
+func TestDispatchRestartReFreezesNaturally(t *testing.T) {
+	// No durable blocker store: the durable cursor + a deterministic poison
+	// event self-recover to the blocked state on a fresh Dispatcher. After
+	// the budget burns, the new cursor freezes at the same EventTs.
+	respond := func(int) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+		return &s3_lifecycle_pb.LifecycleDeleteResponse{
+			Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED,
+			Reason:  "deterministic poison",
+		}, nil
+	}
+	d, sched := newDispatcher(&fakeClient{respond: respond})
 	t0 := time.Now()
-	key := s3lifecycle.ActionKey{Bucket: "bk", ActionKind: s3lifecycle.ActionKindExpirationDays}
-	store.Put(context.Background(), BlockerRecord{
-		ShardID:    0,
-		Key:        key,
-		FrozenAtNs: t0.UnixNano(),
-		Reason:     "prior run",
-		CreatedAt:  t0,
-	})
-	d := &Dispatcher{
-		ShardID:  0,
-		Cursor:   reader.NewCursor(),
-		Blockers: store,
-		Schedule: router.NewSchedule(),
+	m := mkMatch(t0, t0, "obj")
+	sched.Add(m)
+	d.Tick(context.Background(), t0)
+	if !d.Cursor.IsFrozen(m.Key) {
+		t.Fatal("first run should freeze")
 	}
-	if err := d.ReplayBlockers(context.Background()); err != nil {
-		t.Fatalf("ReplayBlockers: %v", err)
+
+	// Simulate restart: brand-new Dispatcher and Cursor, same poison event.
+	d2, sched2 := newDispatcher(&fakeClient{respond: respond})
+	sched2.Add(m)
+	d2.Tick(context.Background(), t0)
+	if !d2.Cursor.IsFrozen(m.Key) {
+		t.Fatal("restart should re-freeze without a durable blocker store")
 	}
-	if !d.Cursor.IsFrozen(key) {
-		t.Fatal("ReplayBlockers should refreeze cursor")
+	if d2.Cursor.Get(m.Key) != t0.UnixNano() {
+		t.Fatal("re-freeze cursor not pinned at event ts")
 	}
 }
