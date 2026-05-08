@@ -57,7 +57,7 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), uint32(erasure_coding.DataShardsCount), uint32(erasure_coding.ParityShardsCount))
+	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	assert.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
@@ -200,7 +200,7 @@ func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), uint32(erasure_coding.DataShardsCount), uint32(erasure_coding.ParityShardsCount))
+	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	require.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
@@ -225,7 +225,7 @@ func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 		Collection: "",
 	}
 
-	_, err := planECDestinations(planner, metric, NewDefaultConfig(), uint32(erasure_coding.DataShardsCount), uint32(erasure_coding.ParityShardsCount))
+	_, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.Error(t, err)
 }
 

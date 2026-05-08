@@ -151,8 +151,8 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				if planner == nil {
 					planner = newECPlacementPlanner(clusterInfo.ActiveTopology, ecConfig.PreferredTags)
 				}
-				dataShards := uint32(erasure_coding.DataShardsCount)
-				parityShards := uint32(erasure_coding.ParityShardsCount)
+				dataShards := erasure_coding.DataShardsCount
+				parityShards := erasure_coding.ParityShardsCount
 				multiPlan, err := planECDestinations(planner, metric, ecConfig, dataShards, parityShards)
 				if err != nil {
 					glog.Warningf("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
@@ -286,7 +286,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 					Targets: createECTargets(multiPlan, dataShards, parityShards),
 
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
-						ErasureCodingParams: createECTaskParams(multiPlan, dataShards, parityShards),
+						ErasureCodingParams: createECTaskParams(dataShards, parityShards),
 					},
 				}
 
@@ -595,15 +595,17 @@ func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement
 
 // planECDestinations plans the destinations for erasure coding operation.
 // dataShards/parityShards are parameters so callers can drive non-10+4 ratios.
-func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config, dataShards, parityShards uint32) (*topology.MultiDestinationPlan, error) {
+func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config, dataShards, parityShards int) (*topology.MultiDestinationPlan, error) {
 	if planner == nil || planner.activeTopology == nil {
 		return nil, fmt.Errorf("active topology not available for EC placement")
 	}
-	if dataShards == 0 || parityShards == 0 {
+	if dataShards <= 0 || parityShards <= 0 {
 		return nil, fmt.Errorf("invalid EC ratio: dataShards=%d parityShards=%d", dataShards, parityShards)
 	}
-	totalShards := int(dataShards + parityShards)
-	minTotalDisks := totalShards/int(parityShards) + 1
+	totalShards := dataShards + parityShards
+	// Survive losing one disk: each disk holds at most parityShards shards,
+	// so we need at least ceil(totalShards / parityShards) disks.
+	minTotalDisks := (totalShards + parityShards - 1) / parityShards
 	expectedShardSize := uint64(metric.Size) / uint64(dataShards)
 
 	// Get source node information from topology
@@ -702,7 +704,7 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 
 // createECTargets builds TaskTargets with one shard per plan entry.
 // planECDestinations ensures numTargets == totalShards.
-func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards uint32) []*worker_pb.TaskTarget {
+func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards int) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
 	numTargets := len(multiPlan.Plans)
 	totalShards := dataShards + parityShards
@@ -711,9 +713,9 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parit
 	for i := range targetShards {
 		targetShards[i] = make([]uint32, 0)
 	}
-	for shardId := uint32(0); shardId < totalShards; shardId++ {
-		targetIndex := int(shardId) % numTargets
-		targetShards[targetIndex] = append(targetShards[targetIndex], shardId)
+	for shardId := 0; shardId < totalShards; shardId++ {
+		targetIndex := shardId % numTargets
+		targetShards[targetIndex] = append(targetShards[targetIndex], uint32(shardId))
 	}
 
 	for i, plan := range multiPlan.Plans {
@@ -730,7 +732,7 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parit
 		assignedData := make([]uint32, 0)
 		assignedParity := make([]uint32, 0)
 		for _, shardId := range targetShards[i] {
-			if shardId < dataShards {
+			if int(shardId) < dataShards {
 				assignedData = append(assignedData, shardId)
 			} else {
 				assignedParity = append(assignedParity, shardId)
@@ -785,7 +787,7 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 }
 
 // createECTaskParams creates clean EC task parameters (destinations now in unified targets)
-func createECTaskParams(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards uint32) *worker_pb.ErasureCodingTaskParams {
+func createECTaskParams(dataShards, parityShards int) *worker_pb.ErasureCodingTaskParams {
 	return &worker_pb.ErasureCodingTaskParams{
 		DataShards:   int32(dataShards),
 		ParityShards: int32(parityShards),
