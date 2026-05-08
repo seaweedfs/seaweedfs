@@ -138,11 +138,34 @@ jobs:
           # day to LifeCycleInterval=10s, so a 1d rule fires within ~10s of
           # the upload's mtime; -dispatch / -checkpoint defaults are already
           # tightened under the same build tag.
+          LC_LOG=/tmp/lifecycle-worker.log
           (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18000 -events 0 -runtime 1800s" && echo exit) \
             | weed shell -master=localhost:9333 \
-            > /tmp/lifecycle-worker.log 2>&1 &
+            > "$LC_LOG" 2>&1 &
           lc_pid=$!
+          # Aliveness check: a bad shell command exits in <1s and the suite
+          # would otherwise just timeout the expiration tests with no signal.
+          sleep 2
+          if ! kill -0 "$lc_pid" 2>/dev/null; then
+            echo "lifecycle worker died on startup"
+            tail -50 "$LC_LOG" 2>/dev/null || true
+            exit 1
+          fi
           echo "lifecycle worker pid=$lc_pid"
+
+          # bash -e exits the step on the first tox failure, so move teardown
+          # into a trap to guarantee the worker log + data dir reach the runner.
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "=== lifecycle worker log (tail) ==="
+              tail -50 "$LC_LOG" 2>/dev/null || true
+            fi
+            kill -9 "$lc_pid" 2>/dev/null || true
+            kill -9 "$pid" 2>/dev/null || true
+            rm -rf "$WEED_DATA_DIR" 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
           tox -- \
           s3tests/functional/test_s3.py::test_bucket_list_empty \
@@ -324,10 +347,7 @@ jobs:
           s3tests/functional/test_s3.py::test_lifecycle_set_filter \
           s3tests/functional/test_s3.py::test_lifecycle_expiration \
           s3tests/functional/test_s3.py::test_lifecyclev2_expiration
-          kill -9 $lc_pid || true
-          kill -9 $pid || true
-          # Clean up data directory
-          rm -rf "$WEED_DATA_DIR" || true
+          # cleanup() trap handles worker/server kill + data dir wipe.
 
   versioning-tests:
     name: S3 Versioning & Object Lock tests
@@ -971,11 +991,30 @@ jobs:
           done
 
           # Spawn the lifecycle worker (see basic-tests block for context).
+          LC_LOG=/tmp/lifecycle-worker-sql.log
           (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18004 -events 0 -runtime 1800s" && echo exit) \
             | weed shell -master=localhost:9337 \
-            > /tmp/lifecycle-worker-sql.log 2>&1 &
+            > "$LC_LOG" 2>&1 &
           lc_pid=$!
+          sleep 2
+          if ! kill -0 "$lc_pid" 2>/dev/null; then
+            echo "lifecycle worker died on startup"
+            tail -50 "$LC_LOG" 2>/dev/null || true
+            exit 1
+          fi
           echo "lifecycle worker pid=$lc_pid"
+
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "=== lifecycle worker log (tail) ==="
+              tail -50 "$LC_LOG" 2>/dev/null || true
+            fi
+            kill -9 "$lc_pid" 2>/dev/null || true
+            kill -9 "$pid" 2>/dev/null || true
+            rm -rf "$WEED_DATA_DIR" 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
           tox -- \
           s3tests/functional/test_s3.py::test_bucket_list_empty \
@@ -1157,9 +1196,6 @@ jobs:
           s3tests/functional/test_s3.py::test_lifecycle_set_filter \
           s3tests/functional/test_s3.py::test_lifecycle_expiration \
           s3tests/functional/test_s3.py::test_lifecyclev2_expiration
-          kill -9 $lc_pid || true
-          kill -9 $pid || true
-          # Clean up data directory
-          rm -rf "$WEED_DATA_DIR" || true
+          # cleanup() trap handles worker/server kill + data dir wipe.
 
 
