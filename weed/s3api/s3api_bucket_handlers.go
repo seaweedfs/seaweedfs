@@ -957,22 +957,18 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	// PUT replaces the entire lifecycle policy, so any day-TTL filer.conf
 	// entry left over from a previous PUT (rule removed, prefix changed,
 	// rule disabled, gained a tag/size filter, bucket switched to
-	// versioned) must be cleared first — otherwise a stale entry keeps
-	// expiring objects after the operator updated the policy.
+	// versioned) must be removed first — otherwise a stale entry keeps
+	// routing new writes to the old collection/replication and the volume
+	// server keeps expiring objects under the prior TTL.
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 	for prefix, ttl := range collectionTtls {
 		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
 			continue
 		}
-		pathConf, found := fc.GetLocationConf(prefix)
-		if !found {
-			continue
-		}
-		pathConf.Ttl = ""
-		fc.SetLocationConf(pathConf)
+		fc.DeleteLocationConf(prefix)
 		changed = true
 	}
-	// Re-read after clearing so the per-rule dedupe below sees the freshly
+	// Re-read after removing so the per-rule dedupe below sees the freshly
 	// cleared state, not the snapshot from before the loop above.
 	collectionTtls = fc.GetCollectionTtls(collectionName)
 
@@ -1105,16 +1101,13 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 	}
 	collectionTtls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
 	changed := false
+	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 	for prefix, ttl := range collectionTtls {
-		bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-		if strings.HasPrefix(prefix, bucketPrefix) && strings.HasSuffix(ttl, "d") {
-			pathConf, found := fc.GetLocationConf(prefix)
-			if found {
-				pathConf.Ttl = ""
-				fc.SetLocationConf(pathConf)
-			}
-			changed = true
+		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
+			continue
 		}
+		fc.DeleteLocationConf(prefix)
+		changed = true
 	}
 
 	if changed {
