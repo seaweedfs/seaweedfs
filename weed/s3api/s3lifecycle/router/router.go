@@ -145,7 +145,7 @@ func buildObjectInfo(ev *reader.Event) *s3lifecycle.ObjectInfo {
 // for part uploads (deeper paths under the upload directory) are deliberately
 // rejected — they ride a different mtime and would over-fire ABORT_MPU.
 func mpuInitInfo(ev *reader.Event, entry *filer_pb.Entry) (destKey string, ok bool) {
-	const uploadsPrefix = ".uploads/"
+	uploadsPrefix := s3_constants.MultipartUploadsFolder + "/"
 	if !entry.IsDirectory || !strings.HasPrefix(ev.Key, uploadsPrefix) {
 		return "", false
 	}

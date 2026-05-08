@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
@@ -237,7 +238,7 @@ func mpuInitEvent(bucket, uploadID, destKey string, initS, ts int64) *reader.Eve
 			IsDirectory: true,
 			Attributes:  &filer_pb.FuseAttributes{Mtime: initS},
 			Extended: map[string][]byte{
-				"key": []byte(destKey),
+				s3_constants.ExtMultipartObjectKey: []byte(destKey),
 			},
 		},
 	}
@@ -336,7 +337,7 @@ func TestRouteMPUPartEventSkipped(t *testing.T) {
 		NewEntry: &filer_pb.Entry{
 			Name:       "0001",
 			Attributes: &filer_pb.FuseAttributes{Mtime: init.Unix()},
-			Extended:   map[string][]byte{"key": []byte("logs/foo.txt")},
+			Extended:   map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("logs/foo.txt")},
 		},
 	}
 
