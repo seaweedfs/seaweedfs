@@ -7,7 +7,7 @@ Create a Go integration test suite under `test/volume_server` that validates **d
 - Primary execution focus has shifted to implementing native Rust volume-server parity.
 - This integration suite is now the parity gate for Rust implementation work.
 - New tests should be added only when native Rust implementation reveals uncovered Go behavior that is not yet captured.
-- Rust implementation roadmap lives in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`.
+- Rust implementation roadmap lives in `rust/volume_server/DEV_PLAN.md`.
 
 ## Hard Requirements
 - Tests live under `test/volume_server`.
@@ -1138,7 +1138,7 @@ Update this section during implementation:
 - Change: Added Rust volume-server migration bootstrap wiring.
 - APIs covered: Harness now supports Go master + selectable volume binary (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY`), with Rust-mode smoke coverage for representative HTTP/gRPC integration tests.
 - Profiles covered: P1 smoke and default Go matrix unchanged.
-- Gaps introduced/remaining: native Rust handler implementations are tracked in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`; current Rust mode is a compatibility launcher phase.
+- Gaps introduced/remaining: native Rust handler implementations are tracked in `rust/volume_server/DEV_PLAN.md`; current Rust mode is a compatibility launcher phase.
 - Commit: `7beab85c2`, `880c2e1da`, `63d08e8a9`, `d402573ea`
 
 - Date: 2026-02-15

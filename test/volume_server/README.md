@@ -28,4 +28,4 @@ If a `weed` binary is not found, the harness will build one automatically.
 - Initial HTTP admin endpoint checks
 - Initial gRPC state/status checks
 
-More API coverage is tracked in `/Users/chris/dev/seaweedfs2/test/volume_server/DEV_PLAN.md`.
+More API coverage is tracked in `test/volume_server/DEV_PLAN.md`.
