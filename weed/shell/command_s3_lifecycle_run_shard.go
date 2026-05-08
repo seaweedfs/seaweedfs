@@ -103,19 +103,25 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
 		eng := engine.New()
-		// Walk each bucket on the same cadence as the engine refresh so a
-		// freshly-PUT rule's pre-existing entries roll past their (rescaled
-		// or real) due times within a couple ticks.
-		bootstrapWalkInterval := *refreshInterval
-		if bootstrapWalkInterval <= 0 {
-			bootstrapWalkInterval = 30 * time.Second
+
+		pipeline := &dispatcher.Pipeline{
+			Shards:         shards,
+			BucketsPath:    bucketsPath,
+			Engine:         eng,
+			Persister:      &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+			Client:         &lifecycleClientCallable{c: rpcClient},
+			FilerClient:    filerClient,
+			ClientID:       util.RandomInt32(),
+			ClientName:     fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
+			DispatchTick:   *dispatchTick,
+			CheckpointTick: *checkpointTick,
+			EventBudget:    *eventBudget,
 		}
+
 		bsr := &scheduler.BucketBootstrapper{
-			FilerClient:  filerClient,
-			Client:       &lifecycleClientCallable{c: rpcClient},
-			BucketsPath:  bucketsPath,
-			WalkInterval: bootstrapWalkInterval,
-			GetSnapshot:  eng.Snapshot,
+			FilerClient: filerClient,
+			BucketsPath: bucketsPath,
+			Injector:    pipeline,
 		}
 		bootstrapCtx, bootstrapCancel := context.WithCancel(context.Background())
 		defer bootstrapCancel()
@@ -144,11 +150,11 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				}
 			}
 			eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
-			// First time we see a bucket, spin up a per-bucket walker
-			// that re-walks every bootstrapWalkInterval until shutdown.
-			// The reader-driven path only sees events created after the
-			// rule lands, so without this backfill objects PUT before the
-			// rule (the s3-tests scenario) would never expire.
+			// First time we see a bucket, spin up a one-shot walker that
+			// lists existing entries and synthesizes events. The reader-
+			// driven path only sees events created after the rule lands,
+			// so without this backfill objects PUT before the rule (the
+			// s3-tests scenario) would never expire.
 			buckets := make([]string, 0, len(inputs))
 			for _, in := range inputs {
 				buckets = append(buckets, in.Bucket)
@@ -156,20 +162,6 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			bsr.KickOffNew(bootstrapCtx, buckets)
 		}
 		compile(true)
-
-		pipeline := &dispatcher.Pipeline{
-			Shards:         shards,
-			BucketsPath:    bucketsPath,
-			Engine:         eng,
-			Persister:      &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-			Client:         &lifecycleClientCallable{c: rpcClient},
-			FilerClient:    filerClient,
-			ClientID:       util.RandomInt32(),
-			ClientName:     fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
-			DispatchTick:   *dispatchTick,
-			CheckpointTick: *checkpointTick,
-			EventBudget:    *eventBudget,
-		}
 
 		var ctx context.Context
 		var cancel context.CancelFunc

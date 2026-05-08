@@ -38,12 +38,6 @@ type Scheduler struct {
 	CheckpointTick  time.Duration
 	RefreshInterval time.Duration
 	RetryBackoff    time.Duration
-
-	// BootstrapWalkInterval drives how often each per-bucket walker
-	// re-scans for entries that have aged into their action's threshold.
-	// Zero falls back to RefreshInterval (so a freshly-PUT rule's pre-
-	// existing entries roll past their due time within a couple ticks).
-	BootstrapWalkInterval time.Duration
 }
 
 // Run blocks until ctx is canceled. Spawns Workers + 1 goroutines: one
@@ -69,16 +63,46 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		retry = defaultRetryBackoff
 	}
 
-	walkInterval := s.BootstrapWalkInterval
-	if walkInterval <= 0 {
-		walkInterval = refresh
+	// Build all pipelines up front and remember which shard each owns.
+	// Doing this before Run lets the bootstrap injector route an event
+	// to the right pipeline by shard, and lets InjectEvent's lazy events
+	// channel be primed before the per-bucket walker starts pushing.
+	type pipelineSlot struct {
+		pipeline *dispatcher.Pipeline
+		shards   []int
 	}
+	var slots []*pipelineSlot
+	pipelinesByShard := make(map[int]*dispatcher.Pipeline)
+	for i := 0; i < workers; i++ {
+		shardSet := AssignShards(i, workers)
+		if len(shardSet) == 0 {
+			continue
+		}
+		slot := &pipelineSlot{
+			pipeline: &dispatcher.Pipeline{
+				Shards:         shardSet,
+				BucketsPath:    s.BucketsPath,
+				Engine:         s.Engine,
+				Persister:      s.Persister,
+				Client:         s.Client,
+				FilerClient:    s.FilerClient,
+				ClientID:       s.ClientID,
+				ClientName:     fmt.Sprintf("%s-w%02d", s.ClientName, i),
+				DispatchTick:   s.DispatchTick,
+				CheckpointTick: s.CheckpointTick,
+			},
+			shards: shardSet,
+		}
+		slots = append(slots, slot)
+		for _, sh := range shardSet {
+			pipelinesByShard[sh] = slot.pipeline
+		}
+	}
+
 	bs := &BucketBootstrapper{
-		FilerClient:  s.FilerClient,
-		Client:       s.Client,
-		BucketsPath:  s.BucketsPath,
-		WalkInterval: walkInterval,
-		GetSnapshot:  s.Engine.Snapshot,
+		FilerClient: s.FilerClient,
+		BucketsPath: s.BucketsPath,
+		Injector:    pipelineFanout(pipelinesByShard),
 	}
 
 	s.refreshEngine(ctx, bs)
@@ -99,13 +123,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		}
 	}()
 
-	for i := 0; i < workers; i++ {
-		shards := AssignShards(i, workers)
-		if len(shards) == 0 {
-			continue
-		}
+	for _, slot := range slots {
+		slot := slot
 		wg.Add(1)
-		go func(idx int, shardSet []int) {
+		go func() {
 			defer wg.Done()
 			for {
 				select {
@@ -113,20 +134,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 					return
 				default:
 				}
-				p := &dispatcher.Pipeline{
-					Shards:         shardSet,
-					BucketsPath:    s.BucketsPath,
-					Engine:         s.Engine,
-					Persister:      s.Persister,
-					Client:         s.Client,
-					FilerClient:    s.FilerClient,
-					ClientID:       s.ClientID,
-					ClientName:     fmt.Sprintf("%s-w%02d", s.ClientName, idx),
-					DispatchTick:   s.DispatchTick,
-					CheckpointTick: s.CheckpointTick,
-				}
-				if err := p.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					glog.Warningf("lifecycle scheduler: worker=%d shards=%v: %v", idx, shardSet, err)
+				if err := slot.pipeline.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					glog.Warningf("lifecycle scheduler: shards=%v: %v", slot.shards, err)
 				}
 				select {
 				case <-ctx.Done():
@@ -134,7 +143,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 				case <-time.After(retry):
 				}
 			}
-		}(i, shards)
+		}()
 	}
 
 	wg.Wait()
@@ -158,6 +167,25 @@ func (s *Scheduler) refreshEngine(ctx context.Context, bs *BucketBootstrapper) {
 		}
 		bs.KickOffNew(ctx, buckets)
 	}
+}
+
+// pipelineFanout routes a synthesized event to the pipeline that owns
+// its shard. Returned as an EventInjector so the bootstrapper doesn't
+// know about pipelines.
+type pipelineFanout map[int]*dispatcher.Pipeline
+
+func (f pipelineFanout) InjectEvent(ctx context.Context, ev *reader.Event) error {
+	if ev == nil {
+		return nil
+	}
+	p, ok := f[ev.ShardID]
+	if !ok {
+		// Shard isn't covered by any pipeline in this scheduler — nothing
+		// to do. This shouldn't happen with AssignShards covering [0, ShardCount),
+		// but stay tolerant if a future change introduces gaps.
+		return nil
+	}
+	return p.InjectEvent(ctx, ev)
 }
 
 // AssignShards returns the contiguous shard slice for worker idx of total.
