@@ -31,7 +31,9 @@ func TestFlushFileMetadataPreservesUserMtime(t *testing.T) {
 	fullPath := util.FullPath("/dir/sample.txt")
 	wfs.inodeToPath.Lookup(fullPath, 1, false, false, inode, true)
 
-	userMtime := time.Date(2020, 1, 15, 12, 34, 56, 0, time.UTC)
+	// Use a non-zero nanosecond so the *Ns assertions below catch a regression
+	// that zeroes the field instead of preserving it.
+	userMtime := time.Date(2020, 1, 15, 12, 34, 56, 123456789, time.UTC)
 	entry := &filer_pb.Entry{
 		Name: "sample.txt",
 		Attributes: &filer_pb.FuseAttributes{
@@ -62,41 +64,7 @@ func TestFlushFileMetadataPreservesUserMtime(t *testing.T) {
 	if got := entry.Attributes.Ctime; got != userMtime.Unix() {
 		t.Errorf("ctime sec changed: got %d, want %d", got, userMtime.Unix())
 	}
-}
-
-// TestWriteStampsEntryMtime verifies the companion behavior: Write() must
-// update entry.Attributes.Mtime/Ctime so flush has the correct value to
-// persist. The previous design relied on flush to synthesize mtime, which is
-// what allowed flush to clobber a user-set utimes value.
-//
-// The test exercises the stamp logic against a hand-built entry rather than
-// driving the full Write() path, which would require a real PageWriter and
-// chunk-allocation pipeline.
-func TestWriteStampsEntryMtime(t *testing.T) {
-	original := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	entry := &filer_pb.Entry{
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:   original.Unix(),
-			MtimeNs: int32(original.Nanosecond()),
-			Ctime:   original.Unix(),
-			CtimeNs: int32(original.Nanosecond()),
-		},
-	}
-
-	tsNs := time.Now().UnixNano()
-	writeNow := time.Unix(0, tsNs)
-	entry.Attributes.Mtime = writeNow.Unix()
-	entry.Attributes.MtimeNs = int32(writeNow.Nanosecond())
-	entry.Attributes.Ctime = writeNow.Unix()
-	entry.Attributes.CtimeNs = int32(writeNow.Nanosecond())
-
-	if entry.Attributes.Mtime == original.Unix() {
-		t.Fatal("mtime sec was not advanced from the original value")
-	}
-	if entry.Attributes.Mtime != writeNow.Unix() {
-		t.Errorf("mtime sec = %d, want %d", entry.Attributes.Mtime, writeNow.Unix())
-	}
-	if entry.Attributes.MtimeNs != int32(writeNow.Nanosecond()) {
-		t.Errorf("mtime ns = %d, want %d", entry.Attributes.MtimeNs, writeNow.Nanosecond())
+	if got := entry.Attributes.CtimeNs; got != int32(userMtime.Nanosecond()) {
+		t.Errorf("ctime ns changed: got %d, want %d", got, userMtime.Nanosecond())
 	}
 }
