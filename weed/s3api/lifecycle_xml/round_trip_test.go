@@ -101,8 +101,8 @@ func TestLifecycleXMLRoundTrip_FilterWithTag(t *testing.T) {
 	}
 
 	rule := lc.Rules[0]
-	if !rule.Filter.tagSet {
-		t.Error("expected Filter.tagSet to be true")
+	if !rule.Filter.TagSet() {
+		t.Error("expected Filter.TagSet() to be true")
 	}
 	if rule.Filter.Tag.Key != "env" || rule.Filter.Tag.Value != "dev" {
 		t.Errorf("expected Tag{env:dev}, got Tag{%s:%s}", rule.Filter.Tag.Key, rule.Filter.Tag.Value)
@@ -133,8 +133,8 @@ func TestLifecycleXMLRoundTrip_FilterWithAnd(t *testing.T) {
 	}
 
 	rule := lc.Rules[0]
-	if !rule.Filter.andSet {
-		t.Error("expected Filter.andSet to be true")
+	if !rule.Filter.AndSet() {
+		t.Error("expected Filter.AndSet() to be true")
 	}
 	if rule.Filter.And.Prefix.String() != "logs/" {
 		t.Errorf("expected And.Prefix='logs/', got %q", rule.Filter.And.Prefix.String())
@@ -178,7 +178,7 @@ func TestLifecycleXMLRoundTrip_FilterWithSizeOnly(t *testing.T) {
 }
 
 func TestLifecycleXML_TransitionSetFlag(t *testing.T) {
-	// Verify that Transition.set is true after unmarshaling.
+	// Verify that Transition.Set() is true after unmarshaling.
 	input := `<LifecycleConfiguration>
   <Rule>
     <ID>transition</ID>
@@ -195,8 +195,8 @@ func TestLifecycleXML_TransitionSetFlag(t *testing.T) {
 	if err := xml.Unmarshal([]byte(input), &lc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !lc.Rules[0].Transition.set {
-		t.Error("expected Transition.set=true after unmarshal")
+	if !lc.Rules[0].Transition.Set() {
+		t.Error("expected Transition.Set()=true after unmarshal")
 	}
 }
 
@@ -217,8 +217,8 @@ func TestLifecycleXML_NoncurrentVersionTransitionSetFlag(t *testing.T) {
 	if err := xml.Unmarshal([]byte(input), &lc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !lc.Rules[0].NoncurrentVersionTransition.set {
-		t.Error("expected NoncurrentVersionTransition.set=true after unmarshal")
+	if !lc.Rules[0].NoncurrentVersionTransition.Set() {
+		t.Error("expected NoncurrentVersionTransition.Set()=true after unmarshal")
 	}
 }
 

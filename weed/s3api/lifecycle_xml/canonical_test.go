@@ -1,20 +1,19 @@
 package lifecycle_xml
 
 import (
-	"encoding/xml"
 	"reflect"
 	"testing"
 	"time"
 )
 
-// parseLifecycle is a thin helper for tests; production code reads XML via the
-// regular bucket-config decoder, this shortcut keeps the test focused on the
-// canonical conversion.
+// parseLifecycle is a thin helper for tests; production code reads XML via
+// the regular bucket-config decoder, this shortcut goes through the
+// package's public Parse so the tests exercise the exported entrypoint.
 func parseLifecycle(t *testing.T, xmlSrc string) *Lifecycle {
 	t.Helper()
-	lc := &Lifecycle{}
-	if err := xml.Unmarshal([]byte(xmlSrc), lc); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	lc, err := Parse([]byte(xmlSrc))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
 	return lc
 }
