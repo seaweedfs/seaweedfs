@@ -103,6 +103,18 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
 		eng := engine.New()
+		bsRPC := &lifecycleClientCallable{c: rpcClient}
+		// Walk each bucket on the same cadence as the engine refresh so a
+		// freshly-PUT rule's pre-existing entries roll past their (rescaled
+		// or real) due times within a couple ticks.
+		bootstrapWalkInterval := *refreshInterval
+		if bootstrapWalkInterval <= 0 {
+			bootstrapWalkInterval = 30 * time.Second
+		}
+		bsr := newBucketBootstrapper(filerClient, bsRPC, bucketsPath, bootstrapWalkInterval, eng.Snapshot)
+		bootstrapCtx, bootstrapCancel := context.WithCancel(context.Background())
+		defer bootstrapCancel()
+
 		compile := func(initial bool) {
 			inputs, parseErrors, err := scheduler.LoadCompileInputs(context.Background(), filerClient, bucketsPath)
 			if err != nil {
@@ -127,6 +139,16 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				}
 			}
 			eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
+			// First time we see a bucket, spin up a per-bucket walker
+			// that re-walks every bootstrapWalkInterval until shutdown.
+			// The reader-driven path only sees events created after the
+			// rule lands, so without this backfill objects PUT before the
+			// rule (the s3-tests scenario) would never expire.
+			buckets := make([]string, 0, len(inputs))
+			for _, in := range inputs {
+				buckets = append(buckets, in.Bucket)
+			}
+			bsr.kickOffNew(bootstrapCtx, buckets)
 		}
 		compile(true)
 
