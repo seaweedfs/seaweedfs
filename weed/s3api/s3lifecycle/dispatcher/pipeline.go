@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
@@ -88,6 +89,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	shardSet := make(map[int]struct{}, len(shardIDs))
 	for _, s := range shardIDs {
+		if s < 0 || s >= s3lifecycle.ShardCount {
+			return fmt.Errorf("pipeline: shard %d out of [0,%d)", s, s3lifecycle.ShardCount)
+		}
 		shardSet[s] = struct{}{}
 	}
 
