@@ -176,7 +176,7 @@ func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, of
 		return 0, ErrorOutOfBounds
 	}
 	readOffset := nv.Offset.ToActualOffset() + int64(offset)
-	if n, err = v.DataBackend.ReadAt(data, readOffset); err != nil {
+	if n, err = v.DataBackend.ReadAt(data[:wanted], readOffset); err != nil {
 		if n != wanted {
 			return n, fmt.Errorf("read %s.dat [%d,%d): %v",
 				v.fileName, readOffset, int64(readOffset)+int64(wanted), err)
