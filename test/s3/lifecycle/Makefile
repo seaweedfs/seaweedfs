@@ -43,11 +43,11 @@ start-server: build-weed
 		echo $$! > weed-server.pid
 	@for i in $$(seq 1 90); do \
 		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
-			echo "✅ server up after $$i s"; exit 0; \
+			echo "server up after $$i s"; exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
-	echo "❌ server did not start within 90s"; \
+	echo "server did not start within 90s"; \
 	tail -50 weed-test.log; \
 	exit 1
 
@@ -62,7 +62,7 @@ stop-server:
 	@pkill -f "weed mini -dir=$(SERVER_DIR)" 2>/dev/null || true
 
 health-check:
-	@curl -s http://localhost:$(S3_PORT) >/dev/null && echo "✅ S3 up on $(S3_PORT)" || (echo "❌ S3 not reachable"; exit 1)
+	@curl -s http://localhost:$(S3_PORT) >/dev/null && echo "S3 up on $(S3_PORT)" || (echo "S3 not reachable"; exit 1)
 
 test:
 	@WEED_BINARY=$$(cd ../../../weed && pwd)/weed_binary \
