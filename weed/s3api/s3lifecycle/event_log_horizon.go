@@ -11,19 +11,18 @@ func EventLogHorizon(rule *Rule, kind ActionKind) time.Duration {
 	if rule == nil {
 		return 0
 	}
-	const day = 24 * time.Hour
 	switch kind {
 	case ActionKindExpirationDays:
 		if rule.ExpirationDays > 0 {
-			return time.Duration(rule.ExpirationDays) * day
+			return DaysToDuration(rule.ExpirationDays)
 		}
 	case ActionKindNoncurrentDays:
 		if rule.NoncurrentVersionExpirationDays > 0 {
-			return time.Duration(rule.NoncurrentVersionExpirationDays) * day
+			return DaysToDuration(rule.NoncurrentVersionExpirationDays)
 		}
 	case ActionKindAbortMPU:
 		if rule.AbortMPUDaysAfterInitiation > 0 {
-			return time.Duration(rule.AbortMPUDaysAfterInitiation) * day
+			return DaysToDuration(rule.AbortMPUDaysAfterInitiation)
 		}
 	case ActionKindNewerNoncurrent:
 		if rule.NewerNoncurrentVersions > 0 && rule.NoncurrentVersionExpirationDays == 0 {

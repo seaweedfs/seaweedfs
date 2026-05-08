@@ -15,9 +15,9 @@ func TestMinTriggerAge_PerKind(t *testing.T) {
 		kind ActionKind
 		want time.Duration
 	}{
-		{ActionKindExpirationDays, 30 * 24 * time.Hour},
-		{ActionKindNoncurrentDays, 7 * 24 * time.Hour},
-		{ActionKindAbortMPU, 14 * 24 * time.Hour},
+		{ActionKindExpirationDays, DaysToDuration(30)},
+		{ActionKindNoncurrentDays, DaysToDuration(7)},
+		{ActionKindAbortMPU, DaysToDuration(14)},
 		{ActionKindExpirationDate, 0},
 		{ActionKindNewerNoncurrent, 0},
 		{ActionKindExpiredDeleteMarker, 0},

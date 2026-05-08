@@ -8,7 +8,7 @@ func TestComputeDueAt_ExpirationDays(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, ExpirationDays: 30}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: "a", IsLatest: true, ModTime: mod}
-	want := mod.AddDate(0, 0, 30)
+	want := mod.Add(DaysToDuration(30))
 	if got := ComputeDueAt(rule, ActionKindExpirationDays, info); !got.Equal(want) {
 		t.Fatalf("want %v, got %v", want, got)
 	}
@@ -59,7 +59,7 @@ func TestComputeDueAt_NoncurrentDeleteMarkerHonorsNoncurrentDays(t *testing.T) {
 		NumVersions:      3,
 		SuccessorModTime: successor,
 	}
-	want := successor.AddDate(0, 0, 7)
+	want := successor.Add(DaysToDuration(7))
 	if got := ComputeDueAt(rule, ActionKindNoncurrentDays, info); !got.Equal(want) {
 		t.Fatalf("want %v, got %v", want, got)
 	}
@@ -69,7 +69,7 @@ func TestComputeDueAt_NoncurrentSuccessorMtime(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 30}
 	successor := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: "a", IsLatest: false, SuccessorModTime: successor}
-	want := successor.AddDate(0, 0, 30)
+	want := successor.Add(DaysToDuration(30))
 	if got := ComputeDueAt(rule, ActionKindNoncurrentDays, info); !got.Equal(want) {
 		t.Fatalf("want %v, got %v", want, got)
 	}
@@ -95,7 +95,7 @@ func TestComputeDueAt_MPUInit(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, AbortMPUDaysAfterInitiation: 7}
 	init := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: ".uploads/u1/", IsMPUInit: true, ModTime: init}
-	want := init.AddDate(0, 0, 7)
+	want := init.Add(DaysToDuration(7))
 	if got := ComputeDueAt(rule, ActionKindAbortMPU, info); !got.Equal(want) {
 		t.Fatalf("want %v, got %v", want, got)
 	}

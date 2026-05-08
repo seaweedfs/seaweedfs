@@ -151,7 +151,7 @@ func TestWalk_NotYetDueSkipped(t *testing.T) {
 	}
 	snap := compileEvDriven(t, "bk", rule)
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
-	now := mod.AddDate(0, 0, 10) // before the 30d threshold
+	now := mod.Add(s3lifecycle.DaysToDuration(10)) // before the 30d threshold
 
 	rec := &recorder{}
 	if _, err := Walk(context.Background(), snap, "bk", EntryCallback([]*Entry{

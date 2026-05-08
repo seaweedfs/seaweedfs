@@ -41,13 +41,13 @@ func TestEvaluateAction_ExpirationDaysBoundary(t *testing.T) {
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: "a", IsLatest: true, ModTime: mod}
 
-	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.AddDate(0, 0, 30).Add(-time.Nanosecond)); got.Action != ActionNone {
+	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.Add(DaysToDuration(30)).Add(-time.Nanosecond)); got.Action != ActionNone {
 		t.Fatalf("not yet due, got %v", got)
 	}
-	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.AddDate(0, 0, 30)); got.Action != ActionDeleteObject || got.RuleID != "r" {
+	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.Add(DaysToDuration(30))); got.Action != ActionDeleteObject || got.RuleID != "r" {
 		t.Fatalf("at boundary, got %v", got)
 	}
-	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.AddDate(0, 1, 0)); got.Action != ActionDeleteObject {
+	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.Add(DaysToDuration(31))); got.Action != ActionDeleteObject {
 		t.Fatalf("past due, got %v", got)
 	}
 }
@@ -58,7 +58,7 @@ func TestEvaluateAction_KindFiltersByDeclaredAction(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, ExpirationDays: 30}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: "a", IsLatest: true, ModTime: mod}
-	now := mod.AddDate(0, 1, 0)
+	now := mod.Add(DaysToDuration(31))
 	if got := EvaluateAction(rule, ActionKindAbortMPU, info, now); got.Action != ActionNone {
 		t.Fatalf("AbortMPU not declared, got %v", got)
 	}
@@ -76,7 +76,7 @@ func TestEvaluateAction_MultiActionRule_SiblingsIndependent(t *testing.T) {
 	info := &ObjectInfo{Key: "a", IsLatest: true, ModTime: mod}
 
 	// Past the 90d threshold: ExpirationDays fires.
-	now := mod.AddDate(0, 0, 91)
+	now := mod.Add(DaysToDuration(91))
 	if got := EvaluateAction(rule, ActionKindExpirationDays, info, now); got.Action != ActionDeleteObject {
 		t.Fatalf("90d action should fire, got %v", got)
 	}
@@ -132,9 +132,9 @@ func TestEvaluateAction_NoncurrentDeleteMarkerExpiresViaNoncurrentDays(t *testin
 		IsDeleteMarker:   true,
 		NumVersions:      3,
 		SuccessorModTime: successor,
-		ModTime:          successor.AddDate(0, 0, -1),
+		ModTime:          successor.Add(DaysToDuration(-1)),
 	}
-	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.AddDate(0, 0, 7)); got.Action != ActionDeleteVersion {
+	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.Add(DaysToDuration(7))); got.Action != ActionDeleteVersion {
 		t.Fatalf("noncurrent delete marker should be eligible under NoncurrentDays, got %v", got)
 	}
 }
@@ -149,10 +149,10 @@ func TestEvaluateAction_NoncurrentVersionDays(t *testing.T) {
 		SuccessorModTime: successor,
 		NoncurrentIndex:  idx(0),
 	}
-	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.AddDate(0, 0, 29)); got.Action != ActionNone {
+	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.Add(DaysToDuration(29))); got.Action != ActionNone {
 		t.Fatalf("not due, got %v", got)
 	}
-	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.AddDate(0, 0, 30)); got.Action != ActionDeleteVersion {
+	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, successor.Add(DaysToDuration(30))); got.Action != ActionDeleteVersion {
 		t.Fatalf("due, got %v", got)
 	}
 }
@@ -161,7 +161,7 @@ func TestEvaluateAction_NoncurrentDaysFallsBackToModTime(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 30}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: mod, NoncurrentIndex: idx(0)}
-	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, mod.AddDate(0, 0, 30)); got.Action != ActionDeleteVersion {
+	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, mod.Add(DaysToDuration(30))); got.Action != ActionDeleteVersion {
 		t.Fatalf("expected fallback to ModTime, got %v", got)
 	}
 }
@@ -179,7 +179,7 @@ func TestEvaluateAction_NoncurrentDays_WithKeepN_NilIndexIsNoOp(t *testing.T) {
 		SuccessorModTime: successor,
 		NoncurrentIndex:  nil,
 	}
-	now := successor.AddDate(0, 0, 30)
+	now := successor.Add(DaysToDuration(30))
 	if got := EvaluateAction(rule, ActionKindNoncurrentDays, info, now); got.Action != ActionNone {
 		t.Fatalf("nil index with keep-N must be no-op, got %v", got)
 	}
@@ -218,7 +218,7 @@ func TestEvaluateAction_NewerNoncurrentCountOnly(t *testing.T) {
 func TestEvaluateAction_NoncurrentDaysAndCount(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, NoncurrentVersionExpirationDays: 30, NewerNoncurrentVersions: 2}
 	successor := mustTime(t, "2024-01-01T00:00:00Z")
-	now := successor.AddDate(0, 0, 30)
+	now := successor.Add(DaysToDuration(30))
 
 	for i := 0; i < 2; i++ {
 		info := &ObjectInfo{Key: "a", IsLatest: false, ModTime: successor, SuccessorModTime: successor, NoncurrentIndex: idx(i)}
@@ -236,10 +236,10 @@ func TestEvaluateAction_AbortMultipartUpload(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, AbortMPUDaysAfterInitiation: 7}
 	init := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: ".uploads/u1/", IsMPUInit: true, ModTime: init}
-	if got := EvaluateAction(rule, ActionKindAbortMPU, info, init.AddDate(0, 0, 6)); got.Action != ActionNone {
+	if got := EvaluateAction(rule, ActionKindAbortMPU, info, init.Add(DaysToDuration(6))); got.Action != ActionNone {
 		t.Fatalf("not due, got %v", got)
 	}
-	if got := EvaluateAction(rule, ActionKindAbortMPU, info, init.AddDate(0, 0, 7)); got.Action != ActionAbortMultipartUpload {
+	if got := EvaluateAction(rule, ActionKindAbortMPU, info, init.Add(DaysToDuration(7))); got.Action != ActionAbortMultipartUpload {
 		t.Fatalf("due, got %v", got)
 	}
 }
@@ -247,7 +247,7 @@ func TestEvaluateAction_AbortMultipartUpload(t *testing.T) {
 func TestEvaluateAction_PrefixFilter(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, Prefix: "logs/", ExpirationDays: 1}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
-	now := mod.AddDate(0, 0, 10)
+	now := mod.Add(DaysToDuration(10))
 	if got := EvaluateAction(rule, ActionKindExpirationDays, &ObjectInfo{Key: "data/x", IsLatest: true, ModTime: mod}, now); got.Action != ActionNone {
 		t.Fatalf("prefix mismatch should reject, got %v", got)
 	}
@@ -259,7 +259,7 @@ func TestEvaluateAction_PrefixFilter(t *testing.T) {
 func TestEvaluateAction_TagFilter(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, ExpirationDays: 1, FilterTags: map[string]string{"env": "prod", "tier": "cold"}}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
-	now := mod.AddDate(0, 0, 10)
+	now := mod.Add(DaysToDuration(10))
 
 	info := &ObjectInfo{Key: "a", IsLatest: true, ModTime: mod}
 	if got := EvaluateAction(rule, ActionKindExpirationDays, info, now); got.Action != ActionNone {
@@ -278,7 +278,7 @@ func TestEvaluateAction_TagFilter(t *testing.T) {
 func TestEvaluateAction_SizeFilter(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, ExpirationDays: 1, FilterSizeGreaterThan: 100, FilterSizeLessThan: 1000}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
-	now := mod.AddDate(0, 0, 10)
+	now := mod.Add(DaysToDuration(10))
 	cases := []struct {
 		size int64
 		want Action
@@ -301,7 +301,7 @@ func TestEvaluateAction_EmptyPrefixMatchesAll(t *testing.T) {
 	rule := &Rule{Status: StatusEnabled, ExpirationDays: 1, Prefix: ""}
 	mod := mustTime(t, "2024-01-01T00:00:00Z")
 	info := &ObjectInfo{Key: "deeply/nested/path/x", IsLatest: true, ModTime: mod}
-	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.AddDate(0, 0, 10)); got.Action != ActionDeleteObject {
+	if got := EvaluateAction(rule, ActionKindExpirationDays, info, mod.Add(DaysToDuration(10))); got.Action != ActionDeleteObject {
 		t.Fatalf("empty prefix should match, got %v", got)
 	}
 }
@@ -316,7 +316,7 @@ func TestEvaluateAction_MPUInitDoesNotFireNoncurrent(t *testing.T) {
 		NoncurrentVersionExpirationDays: 7,
 		NewerNoncurrentVersions:         3,
 	}
-	init := time.Now().AddDate(0, 0, -30)
+	init := time.Now().Add(-DaysToDuration(30))
 	info := &ObjectInfo{Key: "logs/foo.txt", IsMPUInit: true, ModTime: init}
 
 	for _, kind := range []ActionKind{ActionKindNoncurrentDays, ActionKindNewerNoncurrent} {

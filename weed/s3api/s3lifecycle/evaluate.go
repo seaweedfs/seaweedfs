@@ -30,7 +30,7 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if !info.IsMPUInit || rule.AbortMPUDaysAfterInitiation <= 0 {
 			return none
 		}
-		due := info.ModTime.AddDate(0, 0, rule.AbortMPUDaysAfterInitiation)
+		due := info.ModTime.Add(DaysToDuration(rule.AbortMPUDaysAfterInitiation))
 		if now.Before(due) {
 			return none
 		}
@@ -49,7 +49,7 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if !info.IsLatest || info.IsDeleteMarker || rule.ExpirationDays <= 0 {
 			return none
 		}
-		due := info.ModTime.AddDate(0, 0, rule.ExpirationDays)
+		due := info.ModTime.Add(DaysToDuration(rule.ExpirationDays))
 		if now.Before(due) {
 			return none
 		}
@@ -72,7 +72,7 @@ func EvaluateAction(rule *Rule, kind ActionKind, info *ObjectInfo, now time.Time
 		if base.IsZero() {
 			base = info.ModTime
 		}
-		due := base.AddDate(0, 0, rule.NoncurrentVersionExpirationDays)
+		due := base.Add(DaysToDuration(rule.NoncurrentVersionExpirationDays))
 		if now.Before(due) {
 			return none
 		}

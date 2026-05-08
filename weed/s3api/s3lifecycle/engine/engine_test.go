@@ -36,7 +36,7 @@ func TestCompile_SingleRuleSingleAction(t *testing.T) {
 		if a.Mode != ModeEventDriven {
 			t.Fatalf("want EVENT_DRIVEN, got %v", a.Mode)
 		}
-		if a.Delay != 30*24*time.Hour {
+		if a.Delay != s3lifecycle.DaysToDuration(30) {
 			t.Fatalf("want 30d delay, got %v", a.Delay)
 		}
 	}
@@ -65,9 +65,9 @@ func TestCompile_MultiAction_SiblingsHaveOwnEntries(t *testing.T) {
 		t.Fatalf("want 3 actions, got %d", got)
 	}
 	wantDelays := map[time.Duration]bool{
-		90 * 24 * time.Hour: true, // ExpirationDays
-		30 * 24 * time.Hour: true, // NoncurrentDays
-		7 * 24 * time.Hour:  true, // AbortMPU
+		s3lifecycle.DaysToDuration(90): true, // ExpirationDays
+		s3lifecycle.DaysToDuration(30): true, // NoncurrentDays
+		s3lifecycle.DaysToDuration(7):  true, // AbortMPU
 	}
 	for delay, keys := range snap.originalDelayGroups {
 		if !wantDelays[delay] {
@@ -102,6 +102,15 @@ func TestCompile_BootstrapPendingIndexedButInactive(t *testing.T) {
 }
 
 func TestCompile_RetentionGate(t *testing.T) {
+	// Retention gate compares EventLogHorizon (scales with the day unit)
+	// against MetaLogRetention - BootstrapLookbackMin (where lookback is a
+	// fixed wall-clock minute count). Under the s3tests build tag the day
+	// unit shrinks to 10s, which collapses the margin to zero or negative
+	// and the gate degrades every rule. Skip there; the prod build still
+	// covers the gate semantics this test cares about.
+	if s3lifecycle.DaysToDuration(1) < time.Hour {
+		t.Skip("retention gate semantics require day-unit > lookback margin")
+	}
 	// A 90d ExpirationDays rule with 30d retention should land in scan_only.
 	// A 7d rule (under retention - lookback) stays event_driven.
 	long := ruleExpDays("long", "x/", 90)
@@ -115,7 +124,7 @@ func TestCompile_RetentionGate(t *testing.T) {
 
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: rules}}, CompileOptions{
-		MetaLogRetention:     30 * 24 * time.Hour,
+		MetaLogRetention:     s3lifecycle.DaysToDuration(30),
 		BootstrapLookbackMin: 5 * time.Minute,
 		PriorStates:          prior,
 	})
@@ -147,6 +156,11 @@ func TestCompile_RetentionUnboundedNeverGates(t *testing.T) {
 }
 
 func TestCompile_SiblingsDegradeIndependently(t *testing.T) {
+	// See TestCompile_RetentionGate for why the s3tests build can't honor
+	// the gate's absolute-time math.
+	if s3lifecycle.DaysToDuration(1) < time.Hour {
+		t.Skip("retention gate semantics require day-unit > lookback margin")
+	}
 	// 90d ExpirationDays + 7d AbortMPU under 30d retention: ExpirationDays
 	// degrades to scan_only, AbortMPU stays event_driven. The whole point
 	// of per-action keying.
@@ -164,7 +178,7 @@ func TestCompile_SiblingsDegradeIndependently(t *testing.T) {
 	}
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{rule}}}, CompileOptions{
-		MetaLogRetention:     30 * 24 * time.Hour,
+		MetaLogRetention:     s3lifecycle.DaysToDuration(30),
 		BootstrapLookbackMin: 5 * time.Minute,
 		PriorStates:          prior,
 	})

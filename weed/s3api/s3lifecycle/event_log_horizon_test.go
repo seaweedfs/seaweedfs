@@ -14,9 +14,9 @@ func TestEventLogHorizon_PerActionIsIndependent(t *testing.T) {
 		kind ActionKind
 		want time.Duration
 	}{
-		{ActionKindExpirationDays, 90 * 24 * time.Hour},
-		{ActionKindAbortMPU, 7 * 24 * time.Hour},
-		{ActionKindNoncurrentDays, 30 * 24 * time.Hour},
+		{ActionKindExpirationDays, DaysToDuration(90)},
+		{ActionKindAbortMPU, DaysToDuration(7)},
+		{ActionKindNoncurrentDays, DaysToDuration(30)},
 		{ActionKindExpirationDate, 0},
 	}
 	for _, c := range cases {
@@ -44,7 +44,7 @@ func TestEventLogHorizon_NewerNoncurrentWithDaysIsZero(t *testing.T) {
 		t.Fatalf("NEWER_NONCURRENT not declared when paired with days, got %v", got)
 	}
 	// The actual action this rule declares is NONCURRENT_DAYS — verify horizon there.
-	if got := EventLogHorizon(rule, ActionKindNoncurrentDays); got != 30*24*time.Hour {
+	if got := EventLogHorizon(rule, ActionKindNoncurrentDays); got != DaysToDuration(30) {
 		t.Fatalf("NoncurrentDays horizon, want 30d, got %v", got)
 	}
 }

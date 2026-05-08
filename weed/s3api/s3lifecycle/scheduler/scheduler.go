@@ -15,9 +15,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 )
 
+// defaultRefreshInterval lives in refresh_*.go so the s3tests build can
+// shrink the engine-rebuild cadence to seconds.
 const (
-	defaultRefreshInterval = 5 * time.Minute
-	defaultRetryBackoff    = 5 * time.Second
+	defaultRetryBackoff = 5 * time.Second
 )
 
 // Scheduler runs N pipeline goroutines, one per worker, each owning a

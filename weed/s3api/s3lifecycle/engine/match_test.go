@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
@@ -38,11 +37,11 @@ func TestMatchOriginalWrite_DelayGroupRoutes(t *testing.T) {
 	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: rules}}, CompileOptions{PriorStates: activeAll("bk", rules)})
 
 	ev := &Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "x/o"}
-	got30 := snap.MatchOriginalWrite(ev, 30*24*time.Hour)
+	got30 := snap.MatchOriginalWrite(ev, s3lifecycle.DaysToDuration(30))
 	if len(got30) != 1 || got30[0].ActionKind != s3lifecycle.ActionKindExpirationDays {
 		t.Fatalf("30d sweep should match r30, got %v", got30)
 	}
-	got60 := snap.MatchOriginalWrite(ev, 60*24*time.Hour)
+	got60 := snap.MatchOriginalWrite(ev, s3lifecycle.DaysToDuration(60))
 	if len(got60) != 1 {
 		t.Fatalf("60d sweep should match r60, got %v", got60)
 	}
@@ -53,10 +52,10 @@ func TestMatchOriginalWrite_PrefixFilter(t *testing.T) {
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{r})})
 
-	if got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "data/x"}, 30*24*time.Hour); len(got) != 0 {
+	if got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "data/x"}, s3lifecycle.DaysToDuration(30)); len(got) != 0 {
 		t.Fatalf("non-matching prefix should reject, got %v", got)
 	}
-	if got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "logs/x"}, 30*24*time.Hour); len(got) != 1 {
+	if got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "logs/x"}, s3lifecycle.DaysToDuration(30)); len(got) != 1 {
 		t.Fatalf("matching prefix should fire, got %v", got)
 	}
 }
@@ -69,11 +68,11 @@ func TestMatchOriginalWrite_MarkActiveBecomesRoutable(t *testing.T) {
 	e := New()
 	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{})
 	ev := &Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: "x/o"}
-	if got := snap.MatchOriginalWrite(ev, 30*24*time.Hour); len(got) != 0 {
+	if got := snap.MatchOriginalWrite(ev, s3lifecycle.DaysToDuration(30)); len(got) != 0 {
 		t.Fatalf("inactive action should not match, got %v", got)
 	}
 	snap.MarkActive(s3lifecycle.ActionKey{Bucket: "bk", RuleHash: s3lifecycle.RuleHash(r), ActionKind: s3lifecycle.ActionKindExpirationDays})
-	if got := snap.MatchOriginalWrite(ev, 30*24*time.Hour); len(got) != 1 {
+	if got := snap.MatchOriginalWrite(ev, s3lifecycle.DaysToDuration(30)); len(got) != 1 {
 		t.Fatalf("post-markActive should be routable, got %v", got)
 	}
 }
@@ -89,11 +88,11 @@ func TestMatchOriginalWrite_AbortMPUOnlyOnMPUInit(t *testing.T) {
 	snap := e.Compile([]CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{r}}}, CompileOptions{PriorStates: activeAll("bk", []*s3lifecycle.Rule{r})})
 
 	// Non-MPU event under .uploads/ prefix: filtered out by shape gating.
-	got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: ".uploads/u1/", IsMPUInit: false}, 7*24*time.Hour)
+	got := snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: ".uploads/u1/", IsMPUInit: false}, s3lifecycle.DaysToDuration(7))
 	if len(got) != 0 {
 		t.Fatalf("non-MPU event should be filtered, got %v", got)
 	}
-	got = snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: ".uploads/u1/", IsMPUInit: true}, 7*24*time.Hour)
+	got = snap.MatchOriginalWrite(&Event{Shape: EventShapeOriginalWrite, Bucket: "bk", Path: ".uploads/u1/", IsMPUInit: true}, s3lifecycle.DaysToDuration(7))
 	if len(got) != 1 {
 		t.Fatalf("MPU init should fire, got %v", got)
 	}

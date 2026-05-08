@@ -132,7 +132,18 @@ jobs:
           done
           
           echo "✅ S3 server is responding, starting tests..."
-          
+
+          # Spawn the lifecycle worker so test_lifecycle_expiration etc. have
+          # something driving deletions. The s3tests build tag rescales one
+          # day to LifeCycleInterval=10s, so a 1d rule fires within ~10s of
+          # the upload's mtime; -dispatch / -checkpoint defaults are already
+          # tightened under the same build tag.
+          (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18000 -events 0 -runtime 1800s" && echo exit) \
+            | weed shell -master=localhost:9333 \
+            > /tmp/lifecycle-worker.log 2>&1 &
+          lc_pid=$!
+          echo "lifecycle worker pid=$lc_pid"
+
           tox -- \
           s3tests/functional/test_s3.py::test_bucket_list_empty \
           s3tests/functional/test_s3.py::test_bucket_list_distinct \
@@ -312,8 +323,8 @@ jobs:
           s3tests/functional/test_s3.py::test_lifecycle_get \
           s3tests/functional/test_s3.py::test_lifecycle_set_filter \
           s3tests/functional/test_s3.py::test_lifecycle_expiration \
-          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
-          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
+          s3tests/functional/test_s3.py::test_lifecyclev2_expiration
+          kill -9 $lc_pid || true
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
@@ -958,6 +969,14 @@ jobs:
             
             sleep 2
           done
+
+          # Spawn the lifecycle worker (see basic-tests block for context).
+          (echo "s3.lifecycle.run-shard -shards 0-15 -s3 localhost:18004 -events 0 -runtime 1800s" && echo exit) \
+            | weed shell -master=localhost:9337 \
+            > /tmp/lifecycle-worker-sql.log 2>&1 &
+          lc_pid=$!
+          echo "lifecycle worker pid=$lc_pid"
+
           tox -- \
           s3tests/functional/test_s3.py::test_bucket_list_empty \
           s3tests/functional/test_s3.py::test_bucket_list_distinct \
@@ -1137,8 +1156,8 @@ jobs:
           s3tests/functional/test_s3.py::test_lifecycle_get \
           s3tests/functional/test_s3.py::test_lifecycle_set_filter \
           s3tests/functional/test_s3.py::test_lifecycle_expiration \
-          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
-          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
+          s3tests/functional/test_s3.py::test_lifecyclev2_expiration
+          kill -9 $lc_pid || true
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true

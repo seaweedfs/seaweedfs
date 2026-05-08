@@ -14,8 +14,9 @@ func TestWorkerDefaultJobTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandlers(default worker flag) err = %v", err)
 	}
-	// Expected: vacuum, volume_balance, admin_script, erasure_coding, iceberg_maintenance, ec_balance
-	if len(handlers) != 6 {
-		t.Fatalf("expected default worker job types to include 6 handlers, got %d", len(handlers))
+	// Expected: vacuum, volume_balance, admin_script, erasure_coding,
+	// iceberg_maintenance, ec_balance, s3_lifecycle.
+	if len(handlers) != 7 {
+		t.Fatalf("expected default worker job types to include 7 handlers, got %d", len(handlers))
 	}
 }

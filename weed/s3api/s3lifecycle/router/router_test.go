@@ -111,7 +111,7 @@ func TestRouteFreshObjectSchedulesInFuture(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match (scheduled), got %v", matches)
 	}
-	if !matches[0].DueTime.After(now.Add(6 * 24 * time.Hour)) {
+	if !matches[0].DueTime.After(now.Add(s3lifecycle.DaysToDuration(6))) {
 		t.Fatalf("DueTime=%v, want ~7 days from now", matches[0].DueTime)
 	}
 }

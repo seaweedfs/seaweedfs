@@ -56,12 +56,13 @@ type Pipeline struct {
 	EventBuffer int
 }
 
+// Tick defaults live in dispatch_ticks_*.go so the s3tests build can shrink
+// them without touching production timings. defaultDispatchTick and
+// defaultCheckpointTick are the only knobs that change per build tag.
 const (
-	defaultDispatchTick   = 5 * time.Second
-	defaultCheckpointTick = 30 * time.Second
-	defaultEventBuffer    = 1024
-	shutdownDrainTimeout  = 30 * time.Second
-	shutdownSaveTimeout   = 5 * time.Second
+	defaultEventBuffer   = 1024
+	shutdownDrainTimeout = 30 * time.Second
+	shutdownSaveTimeout  = 5 * time.Second
 )
 
 // shardState bundles per-shard mutable state so the single dispatch
