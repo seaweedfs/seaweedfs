@@ -15,7 +15,7 @@ func TestMiniDefaultPluginJobTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandlers(mini default) err = %v", err)
 	}
-	if len(handlers) != 6 {
-		t.Fatalf("expected mini default job types to include 6 handlers, got %d", len(handlers))
+	if len(handlers) != 7 {
+		t.Fatalf("expected mini default job types to include 7 handlers, got %d", len(handlers))
 	}
 }
