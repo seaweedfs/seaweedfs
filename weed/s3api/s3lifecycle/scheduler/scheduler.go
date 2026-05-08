@@ -18,7 +18,6 @@ import (
 const (
 	defaultRefreshInterval = 5 * time.Minute
 	defaultRetryBackoff    = 5 * time.Second
-	defaultEventBudget     = 5000
 )
 
 // Scheduler runs N pipeline goroutines, one per worker, each owning a
@@ -34,7 +33,6 @@ type Scheduler struct {
 	ClientName  string
 
 	Workers         int
-	EventBudget     int
 	DispatchTick    time.Duration
 	CheckpointTick  time.Duration
 	RefreshInterval time.Duration
@@ -62,10 +60,6 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	retry := s.RetryBackoff
 	if retry <= 0 {
 		retry = defaultRetryBackoff
-	}
-	budget := s.EventBudget
-	if budget <= 0 {
-		budget = defaultEventBudget
 	}
 
 	s.refreshEngine(ctx)
@@ -111,7 +105,6 @@ func (s *Scheduler) Run(ctx context.Context) error {
 					ClientName:     fmt.Sprintf("%s-w%02d", s.ClientName, idx),
 					DispatchTick:   s.DispatchTick,
 					CheckpointTick: s.CheckpointTick,
-					EventBudget:    budget,
 				}
 				if err := p.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					glog.Warningf("lifecycle scheduler: worker=%d shards=%v: %v", idx, shardSet, err)

@@ -31,8 +31,9 @@ func init() {
 
 // Handler is the worker-side runner for S3 object lifecycle expiration.
 // One Execute call drives a long-running scheduler.Scheduler against the
-// configured S3 endpoint(s); admin caps concurrency at one job per worker
-// so a fresh proposal only spawns a new run after the prior one exits.
+// S3 endpoints discovered from the master; admin caps concurrency at one
+// job per worker so a fresh proposal only spawns a new run after the
+// prior one exits.
 type Handler struct {
 	grpcDialOption grpc.DialOption
 }
@@ -49,7 +50,7 @@ func (h *Handler) Capability() *plugin_pb.JobTypeCapability {
 		MaxDetectionConcurrency: 1,
 		MaxExecutionConcurrency: 1,
 		DisplayName:             "S3 Lifecycle",
-		Description:             "Event-driven S3 object expiration: scans the filer meta-log and deletes objects whose lifecycle rule has fired.",
+		Description:             "Daily batch: scan the filer meta-log and delete objects whose lifecycle rule has fired.",
 		Weight:                  20,
 	}
 }
@@ -58,7 +59,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 	return &plugin_pb.JobTypeDescriptor{
 		JobType:           jobType,
 		DisplayName:       "S3 Lifecycle",
-		Description:       "Event-driven S3 object expiration with per-shard cursors and bounded retry.",
+		Description:       "Daily S3 object expiration scan with per-shard cursors and bounded retry.",
 		Icon:              "fas fa-recycle",
 		DescriptorVersion: 1,
 		AdminConfigForm: &plugin_pb.ConfigForm{
@@ -95,54 +96,54 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				{
 					SectionId:   "cadence",
 					Title:       "Cadence",
-					Description: "Tick intervals for the dispatch loop and durable checkpoint.",
+					Description: "Tick intervals for the dispatch loop, durable checkpoint, and engine refresh; plus the wall-clock cap on each daily run.",
 					Fields: []*plugin_pb.ConfigField{
 						{
-							Name:        "dispatch_tick_ms",
-							Label:       "Dispatch Tick (ms)",
+							Name:        "dispatch_tick_minutes",
+							Label:       "Dispatch Tick (minutes)",
 							Description: "How often each pipeline drains its schedule.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 100}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 						{
-							Name:        "checkpoint_tick_ms",
-							Label:       "Cursor Checkpoint Tick (ms)",
+							Name:        "checkpoint_tick_seconds",
+							Label:       "Cursor Checkpoint Tick (seconds)",
 							Description: "How often each pipeline persists its cursor map to the filer.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1000}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 						{
-							Name:        "refresh_interval_ms",
-							Label:       "Engine Refresh Interval (ms)",
+							Name:        "refresh_interval_minutes",
+							Label:       "Engine Refresh Interval (minutes)",
 							Description: "How often the scheduler rebuilds the engine snapshot from bucket lifecycle configs.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1000}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 						{
-							Name:        "event_budget",
-							Label:       "Event Budget",
-							Description: "Soft cap on events processed per pipeline iteration before it loops. 0 = unbounded (recommended for the daemon model).",
+							Name:        "max_runtime_minutes",
+							Label:       "Max Runtime (minutes)",
+							Description: "Wall-clock cap on each run. Each daily run processes events for one day; the cursor persists across runs.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"dispatch_tick_ms":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDispatchTickMs}},
-				"checkpoint_tick_ms":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultCheckpointTickMs}},
-				"refresh_interval_ms": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultRefreshIntervalMs}},
-				"event_budget":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultEventBudget}},
+				"dispatch_tick_minutes":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDispatchTickMinutes}},
+				"checkpoint_tick_seconds":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultCheckpointTickSeconds}},
+				"refresh_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultRefreshIntervalMinutes}},
+				"max_runtime_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
-			DetectionIntervalSeconds: 300, // 5 minutes; cheap, just emits one proposal
+			DetectionIntervalSeconds: 24 * 60 * 60, // daily
 			DetectionTimeoutSeconds:  60,
-			MaxJobsPerDetection:      1, // single daemon-style job
+			MaxJobsPerDetection:      1,
 		},
 	}
 }
@@ -206,13 +207,16 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return fmt.Errorf("execute: missing filer_grpc_address in job parameters")
 	}
 
+	runCtx, cancel := context.WithTimeout(ctx, cfg.MaxRuntime)
+	defer cancel()
+
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("scheduler workers=%d s3=%v", cfg.Workers, s3Endpoints),
+		Message: fmt.Sprintf("scheduler workers=%d s3=%v runtime=%s", cfg.Workers, s3Endpoints, cfg.MaxRuntime),
 	})
 
-	dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
+	dialCtx, dialCancel := context.WithTimeout(runCtx, 30*time.Second)
 	filerConn, err := pb.GrpcDial(dialCtx, filerAddress, false, h.grpcDialOption)
 	dialCancel()
 	if err != nil {
@@ -221,12 +225,12 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer filerConn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(filerConn)
 
-	bucketsPath, err := lookupBucketsPath(ctx, filerClient)
+	bucketsPath, err := lookupBucketsPath(runCtx, filerClient)
 	if err != nil {
 		return fmt.Errorf("buckets path: %w", err)
 	}
 
-	dialCtx, dialCancel = context.WithTimeout(ctx, 30*time.Second)
+	dialCtx, dialCancel = context.WithTimeout(runCtx, 30*time.Second)
 	s3Conn, err := pb.GrpcDial(dialCtx, s3Endpoints[0], false, h.grpcDialOption)
 	dialCancel()
 	if err != nil {
@@ -244,12 +248,11 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		ClientID:        util.RandomInt32(),
 		ClientName:      "worker-s3-lifecycle",
 		Workers:         cfg.Workers,
-		EventBudget:     cfg.EventBudget,
 		DispatchTick:    cfg.DispatchTick,
 		CheckpointTick:  cfg.CheckpointTick,
 		RefreshInterval: cfg.RefreshInterval,
 	}
-	if err := sched.Run(ctx); err != nil {
+	if err := sched.Run(runCtx); err != nil {
 		glog.Warningf("s3 lifecycle execute: %v", err)
 		return err
 	}
@@ -289,6 +292,17 @@ func lookupBucketsPath(ctx context.Context, client filer_pb.SeaweedFilerClient) 
 		return path, nil
 	}
 	return "/buckets", nil
+}
+
+func readString(values map[string]*plugin_pb.ConfigValue, field, fallback string) string {
+	v, ok := values[field]
+	if !ok || v == nil {
+		return fallback
+	}
+	if k, ok := v.Kind.(*plugin_pb.ConfigValue_StringValue); ok {
+		return k.StringValue
+	}
+	return fallback
 }
 
 var _ pluginworker.JobHandler = (*Handler)(nil)

@@ -9,11 +9,11 @@ import (
 const (
 	jobType = "s3_lifecycle"
 
-	defaultWorkers           = 1
-	defaultDispatchTickMs    = int64(5 * 1000)
-	defaultCheckpointTickMs  = int64(30 * 1000)
-	defaultRefreshIntervalMs = int64(5 * 60 * 1000)
-	defaultEventBudget       = int64(0) // unbounded — handler runs as a daemon
+	defaultWorkers                = 1
+	defaultDispatchTickMinutes    = int64(1)
+	defaultCheckpointTickSeconds  = int64(30)
+	defaultRefreshIntervalMinutes = int64(5)
+	defaultMaxRuntimeMinutes      = int64(60)
 )
 
 // Config is the parsed AdminConfigForm + WorkerConfigForm view.
@@ -22,7 +22,7 @@ type Config struct {
 	DispatchTick    time.Duration
 	CheckpointTick  time.Duration
 	RefreshInterval time.Duration
-	EventBudget     int
+	MaxRuntime      time.Duration
 }
 
 // ParseConfig pulls the lifecycle Handler config from the merged
@@ -30,25 +30,25 @@ type Config struct {
 func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
 		Workers:         int(readInt64(adminValues, "workers", defaultWorkers)),
-		DispatchTick:    time.Duration(readInt64(workerValues, "dispatch_tick_ms", defaultDispatchTickMs)) * time.Millisecond,
-		CheckpointTick:  time.Duration(readInt64(workerValues, "checkpoint_tick_ms", defaultCheckpointTickMs)) * time.Millisecond,
-		RefreshInterval: time.Duration(readInt64(workerValues, "refresh_interval_ms", defaultRefreshIntervalMs)) * time.Millisecond,
-		EventBudget:     int(readInt64(workerValues, "event_budget", defaultEventBudget)),
+		DispatchTick:    time.Duration(readInt64(workerValues, "dispatch_tick_minutes", defaultDispatchTickMinutes)) * time.Minute,
+		CheckpointTick:  time.Duration(readInt64(workerValues, "checkpoint_tick_seconds", defaultCheckpointTickSeconds)) * time.Second,
+		RefreshInterval: time.Duration(readInt64(workerValues, "refresh_interval_minutes", defaultRefreshIntervalMinutes)) * time.Minute,
+		MaxRuntime:      time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = defaultWorkers
 	}
 	if cfg.DispatchTick <= 0 {
-		cfg.DispatchTick = time.Duration(defaultDispatchTickMs) * time.Millisecond
+		cfg.DispatchTick = time.Duration(defaultDispatchTickMinutes) * time.Minute
 	}
 	if cfg.CheckpointTick <= 0 {
-		cfg.CheckpointTick = time.Duration(defaultCheckpointTickMs) * time.Millisecond
+		cfg.CheckpointTick = time.Duration(defaultCheckpointTickSeconds) * time.Second
 	}
 	if cfg.RefreshInterval <= 0 {
-		cfg.RefreshInterval = time.Duration(defaultRefreshIntervalMs) * time.Millisecond
+		cfg.RefreshInterval = time.Duration(defaultRefreshIntervalMinutes) * time.Minute
 	}
-	if cfg.EventBudget < 0 {
-		cfg.EventBudget = 0
+	if cfg.MaxRuntime <= 0 {
+		cfg.MaxRuntime = time.Duration(defaultMaxRuntimeMinutes) * time.Minute
 	}
 	return cfg
 }
@@ -64,18 +64,7 @@ func readInt64(values map[string]*plugin_pb.ConfigValue, field string, fallback 
 	case *plugin_pb.ConfigValue_DoubleValue:
 		return int64(k.DoubleValue)
 	case *plugin_pb.ConfigValue_StringValue:
-		return fallback // strict: don't try to atoi here, descriptor types are explicit
-	}
-	return fallback
-}
-
-func readString(values map[string]*plugin_pb.ConfigValue, field, fallback string) string {
-	v, ok := values[field]
-	if !ok || v == nil {
 		return fallback
-	}
-	if k, ok := v.Kind.(*plugin_pb.ConfigValue_StringValue); ok {
-		return k.StringValue
 	}
 	return fallback
 }
