@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
@@ -171,8 +172,9 @@ func (d *Dispatcher) handleRetryLater(ctx context.Context, m router.Match, reaso
 
 func (d *Dispatcher) handleBlocked(ctx context.Context, m router.Match, reason string) {
 	delete(d.retries, keyOf(m))
+	glog.Warningf("lifecycle: cursor frozen shard=%d key=%+v eventTs=%s reason=%s",
+		d.ShardID, m.Key, m.EventTs.UTC().Format(time.RFC3339Nano), reason)
 	d.Cursor.Freeze(m.Key, m.EventTs.UnixNano())
-	_ = reason // reason is logged by the caller; freeze is the durable signal
 }
 
 func toProtoActionKind(k s3lifecycle.ActionKind) s3_lifecycle_pb.ActionKind {
