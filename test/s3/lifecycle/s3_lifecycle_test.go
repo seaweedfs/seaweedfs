@@ -206,8 +206,10 @@ func TestLifecycleExpirationFiresOnBackdatedObject(t *testing.T) {
 
 	// One subscription handles every shard via -shards 0-15; this stays
 	// independent of which (bucket, key) hash lands the target on.
+	// -runtime caps the run by wall-clock so the subprocess exits even
+	// when the in-shard event count never reaches -events.
 	out := runShellCommand(t, fmt.Sprintf(
-		"s3.lifecycle.run-shard -shards 0-15 -s3 %s -events 200 -dispatch 200ms -checkpoint 5s",
+		"s3.lifecycle.run-shard -shards 0-15 -s3 %s -events 0 -dispatch 200ms -checkpoint 5s -runtime 10s",
 		strings.TrimPrefix(envOr("S3_ENDPOINT", defaultS3Endpoint), "http://"),
 	))
 	require.NotContains(t, out, "FATAL", "shell output:\n%s", out)
