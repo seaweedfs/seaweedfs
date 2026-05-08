@@ -64,7 +64,7 @@ func (store *FilerEtcStore) saveLegacyPoliciesCollection(ctx context.Context, po
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile, content)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory, filer.IamPoliciesFile, content)
 	})
 }
 
@@ -216,7 +216,7 @@ func (store *FilerEtcStore) savePolicy(ctx context.Context, name string, documen
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json", data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json", data)
 	})
 }
 

@@ -484,7 +484,7 @@ func (store *FilerEtcStore) saveIdentity(ctx context.Context, identity *iam_pb.I
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, identity.Name+".json", data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, identity.Name+".json", data)
 	})
 }
 

@@ -205,7 +205,7 @@ func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, write
 	}
 
 	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, conf.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcRemote, conf.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, data)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}

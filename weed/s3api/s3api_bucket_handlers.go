@@ -1051,7 +1051,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
 		}); err != nil {
 			glog.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -1106,7 +1106,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
 		}); err != nil {
 			glog.Errorf("DeleteBucketLifecycleHandler save config inside filer: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

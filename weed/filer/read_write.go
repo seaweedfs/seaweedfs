@@ -41,15 +41,15 @@ func ReadInsideFiler(ctx context.Context, filerClient filer_pb.SeaweedFilerClien
 	return
 }
 
-func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, content []byte) error {
+func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, name string, content []byte) error {
 
-	resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
 
 	if err == filer_pb.ErrNotFound {
-		err = filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+		err = filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
 				Name:        name,
@@ -69,7 +69,7 @@ func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, conte
 		entry.Content = content
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = uint64(len(content))
-		err = filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+		err = filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
 		})

@@ -92,7 +92,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 		fc.ToText(&buf2)
 
 		if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
+			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
 		}); err != nil && err != filer_pb.ErrNotFound {
 			return err
 		}

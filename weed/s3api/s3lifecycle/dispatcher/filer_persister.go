@@ -35,7 +35,7 @@ func (s *filerStoreClient) Read(ctx context.Context, dir, name string) ([]byte, 
 }
 
 func (s *filerStoreClient) Save(ctx context.Context, dir, name string, content []byte) error {
-	return filer.SaveInsideFiler(s.client, dir, name, content)
+	return filer.SaveInsideFiler(ctx, s.client, dir, name, content)
 }
 
 // CursorDir is the filer directory holding per-shard cursor files.

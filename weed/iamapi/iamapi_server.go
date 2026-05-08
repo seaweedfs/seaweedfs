@@ -193,7 +193,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiC
 	}
 	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		err = util.Retry("saveIamIdentity", func() error {
-			return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
+			return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
 		})
 		if err != nil {
 			return err
@@ -229,7 +229,7 @@ func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 		return err
 	}
 	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		if err := filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile, b); err != nil {
+		if err := filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory, filer.IamPoliciesFile, b); err != nil {
 			return err
 		}
 		return nil

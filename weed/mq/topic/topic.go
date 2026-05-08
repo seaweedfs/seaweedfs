@@ -100,7 +100,7 @@ func (t Topic) ReadConfFileWithMetadata(client filer_pb.SeaweedFilerClient) (*mq
 func (t Topic) WriteConfFile(client filer_pb.SeaweedFilerClient, conf *mq_pb.ConfigureTopicResponse) error {
 	var buf bytes.Buffer
 	filer.ProtoToText(&buf, conf)
-	if err := filer.SaveInsideFiler(client, t.Dir(), filer.TopicConfFile, buf.Bytes()); err != nil {
+	if err := filer.SaveInsideFiler(context.Background(), client, t.Dir(), filer.TopicConfFile, buf.Bytes()); err != nil {
 		return fmt.Errorf("save topic %v conf: %w", t, err)
 	}
 	return nil

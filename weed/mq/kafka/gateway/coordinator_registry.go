@@ -662,7 +662,7 @@ func (cr *CoordinatorRegistry) saveCoordinatorAssignment(consumerGroup string, a
 
 		// Save to individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
-		return filer.SaveInsideFiler(client, CoordinatorAssignmentsDir, fileName, assignmentData)
+		return filer.SaveInsideFiler(context.Background(), client, CoordinatorAssignmentsDir, fileName, assignmentData)
 	})
 }
 

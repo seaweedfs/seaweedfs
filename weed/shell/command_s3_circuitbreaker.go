@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -186,7 +187,7 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 
 	if *apply {
 		if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, dir, file, buf.Bytes())
+			return filer.SaveInsideFiler(context.Background(), client, dir, file, buf.Bytes())
 		}); err != nil {
 			return err
 		}

@@ -86,7 +86,7 @@ func (f *FilerConsumerGroupOffsetStorage) SaveConsumerGroupPosition(t topic.Topi
 	}
 
 	return f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, consumersDir, offsetFileName, jsonBytes)
+		return filer.SaveInsideFiler(context.Background(), client, consumersDir, offsetFileName, jsonBytes)
 	})
 }
 

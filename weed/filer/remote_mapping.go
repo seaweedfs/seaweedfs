@@ -52,7 +52,7 @@ func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStor
 
 	// save back
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
+		return SaveInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
 	})
 	if err != nil {
 		return fmt.Errorf("save mapping: %w", err)
@@ -83,7 +83,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 
 	// save back
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
+		return SaveInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
 	})
 	if err != nil {
 		return fmt.Errorf("save mapping: %w", err)

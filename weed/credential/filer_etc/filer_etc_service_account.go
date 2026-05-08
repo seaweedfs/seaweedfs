@@ -71,7 +71,7 @@ func (store *FilerEtcStore) saveServiceAccount(ctx context.Context, sa *iam_pb.S
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, sa.Id+".json", data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, sa.Id+".json", data)
 	})
 }
 

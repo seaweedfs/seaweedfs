@@ -78,7 +78,7 @@ func (store *FilerEtcStore) saveGroup(ctx context.Context, group *iam_pb.Group) 
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamGroupsDirectory, group.Name+".json", data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamGroupsDirectory, group.Name+".json", data)
 	})
 }
 

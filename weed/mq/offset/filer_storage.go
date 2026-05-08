@@ -38,7 +38,7 @@ func (f *FilerOffsetStorage) SaveCheckpoint(namespace, topicName string, partiti
 	util.Uint64toBytes(offsetBytes, uint64(offset))
 
 	return f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, partitionDir, fileName, offsetBytes)
+		return filer.SaveInsideFiler(context.Background(), client, partitionDir, fileName, offsetBytes)
 	})
 }
 
