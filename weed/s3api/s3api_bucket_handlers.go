@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/util"
-
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
@@ -1035,13 +1033,10 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
-		ttlSec := int32((time.Duration(rule.Expiration.Days) * util.LifeCycleInterval).Seconds())
-		glog.V(2).Infof("Start updating TTL for %s", locationPrefix)
-		if updErr := s3a.updateEntriesTTL(locationPrefix, ttlSec); updErr != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler update TTL for %s: %s", locationPrefix, updErr)
-		} else {
-			glog.V(2).Infof("Finished updating TTL for %s", locationPrefix)
-		}
+		// Existing entries are not back-stamped here; the lifecycle worker
+		// drives expiration off the meta-log and bootstrap walk so a PUT
+		// stays O(rules) instead of O(objects). New writes inherit TTL from
+		// the filer.conf entry above.
 		changed = true
 	}
 
