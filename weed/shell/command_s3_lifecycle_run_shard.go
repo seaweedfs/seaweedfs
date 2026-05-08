@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -31,18 +32,29 @@ func (c *commandS3LifecycleRunShard) Name() string {
 }
 
 func (c *commandS3LifecycleRunShard) Help() string {
-	return `manually run one shard of the event-driven S3 lifecycle worker
+	return `manually run one or more shards of the event-driven S3 lifecycle worker
 
-Subscribes to the filer meta-log filtered to the given (bucket, key-prefix-hash)
-shard, routes events through the compiled lifecycle engine, and dispatches due
-actions to the S3 server's LifecycleDelete RPC. Persists the per-shard cursor
-to /etc/s3/lifecycle/cursors/shard-NN.json so subsequent runs resume.
+Subscribes once to the filer meta-log, filters events to the configured
+(bucket, key-prefix-hash) shards, routes them through the compiled lifecycle
+engine, and dispatches due actions to the S3 server's LifecycleDelete RPC.
+Persists each shard's cursor to /etc/s3/lifecycle/cursors/shard-NN.json so
+subsequent runs resume.
 
-	# run shard 0 against an S3 server, bound at 100 events
+The -shards form covers a range or set; one filer subscription handles the
+whole set, with no per-shard goroutine fan-out. Provide either -shard or
+-shards, not both.
+
+	# single shard
 	s3.lifecycle.run-shard -shard 0 -s3 localhost:8333 -events 100
 
-	# run shard 7 with custom dispatch tick + checkpoint cadence
-	s3.lifecycle.run-shard -shard 7 -s3 s3-host:8333 -dispatch 1s -checkpoint 10s
+	# contiguous range, all 16 shards via one subscription
+	s3.lifecycle.run-shard -shards 0-15 -s3 localhost:8333 -events 5000
+
+	# explicit set
+	s3.lifecycle.run-shard -shards 0,3,7 -s3 localhost:8333
+
+	# custom cadence
+	s3.lifecycle.run-shard -shards 0-15 -s3 s3-host:8333 -dispatch 1s -checkpoint 10s
 `
 }
 
@@ -50,7 +62,8 @@ func (c *commandS3LifecycleRunShard) HasTag(CommandTag) bool { return false }
 
 func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer io.Writer) error {
 	fs := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	shard := fs.Int("shard", -1, "shard id in [0, 16)")
+	shard := fs.Int("shard", -1, "single shard id in [0, 16); use -shards for a range or set")
+	shardsSpec := fs.String("shards", "", "shard range \"lo-hi\" or comma list \"a,b,c\"; mutually exclusive with -shard")
 	s3Endpoint := fs.String("s3", "", "s3 server gRPC endpoint, host:port")
 	eventBudget := fs.Int("events", 1000, "max events to process before returning (0 = unbounded)")
 	dispatchTick := fs.Duration("dispatch", 5*time.Second, "dispatcher tick cadence")
@@ -58,8 +71,10 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *shard < 0 || *shard >= s3lifecycle.ShardCount {
-		return fmt.Errorf("-shard required in [0,%d)", s3lifecycle.ShardCount)
+
+	shards, err := resolveShardSelection(*shard, *shardsSpec)
+	if err != nil {
+		return err
 	}
 	if *s3Endpoint == "" {
 		return fmt.Errorf("-s3 required (host:port of s3 server gRPC)")
@@ -114,15 +129,14 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		eng.Compile(inputs, engine.CompileOptions{PriorStates: allActivePriorStates(inputs)})
 
 		pipeline := &dispatcher.Pipeline{
-			ShardID:        *shard,
+			Shards:         shards,
 			BucketsPath:    bucketsPath,
 			Engine:         eng,
-			Cursor:         reader.NewCursor(),
 			Persister:      &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
 			Client:         &lifecycleClientCallable{c: rpcClient},
 			FilerClient:    filerClient,
 			ClientID:       util.RandomInt32(),
-			ClientName:     fmt.Sprintf("shell-lifecycle-shard-%02d", *shard),
+			ClientName:     fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
 			DispatchTick:   *dispatchTick,
 			CheckpointTick: *checkpointTick,
 			EventBudget:    *eventBudget,
@@ -131,13 +145,109 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fmt.Fprintf(writer, "running shard %d (event budget=%d)…\n", *shard, *eventBudget)
+		fmt.Fprintf(writer, "running shards %s (event budget=%d)…\n", formatShardLabel(shards), *eventBudget)
 		if err := pipeline.Run(ctx); err != nil {
 			return fmt.Errorf("pipeline: %w", err)
 		}
-		fmt.Fprintf(writer, "shard %d complete; cursor checkpointed\n", *shard)
+		fmt.Fprintf(writer, "shards %s complete; cursors checkpointed\n", formatShardLabel(shards))
 		return nil
 	})
+}
+
+// resolveShardSelection turns the -shard / -shards flags into a sorted,
+// deduplicated []int. Exactly one form must be specified.
+func resolveShardSelection(singleShard int, shardsSpec string) ([]int, error) {
+	if singleShard >= 0 && shardsSpec != "" {
+		return nil, fmt.Errorf("-shard and -shards are mutually exclusive")
+	}
+	if singleShard < 0 && shardsSpec == "" {
+		return nil, fmt.Errorf("specify -shard <id> or -shards <range|set>")
+	}
+	if singleShard >= 0 {
+		if singleShard >= s3lifecycle.ShardCount {
+			return nil, fmt.Errorf("-shard %d out of [0,%d)", singleShard, s3lifecycle.ShardCount)
+		}
+		return []int{singleShard}, nil
+	}
+	return parseShardsSpec(shardsSpec)
+}
+
+// parseShardsSpec accepts "lo-hi" (inclusive) or "a,b,c" and returns a
+// sorted, deduplicated, in-range []int.
+func parseShardsSpec(spec string) ([]int, error) {
+	spec = strings.TrimSpace(spec)
+	seen := map[int]struct{}{}
+	add := func(v int) error {
+		if v < 0 || v >= s3lifecycle.ShardCount {
+			return fmt.Errorf("shard %d out of [0,%d)", v, s3lifecycle.ShardCount)
+		}
+		seen[v] = struct{}{}
+		return nil
+	}
+	if strings.Contains(spec, "-") && !strings.Contains(spec, ",") {
+		parts := strings.SplitN(spec, "-", 2)
+		lo, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("range lo: %w", err)
+		}
+		hi, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return nil, fmt.Errorf("range hi: %w", err)
+		}
+		if lo > hi {
+			return nil, fmt.Errorf("range lo %d > hi %d", lo, hi)
+		}
+		for v := lo; v <= hi; v++ {
+			if err := add(v); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		for _, part := range strings.Split(spec, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			v, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("shard list: %w", err)
+			}
+			if err := add(v); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil, fmt.Errorf("empty shard set")
+	}
+	out := make([]int, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+func formatShardLabel(shards []int) string {
+	if len(shards) == 1 {
+		return fmt.Sprintf("%d", shards[0])
+	}
+	// Detect contiguous range.
+	contiguous := true
+	for i := 1; i < len(shards); i++ {
+		if shards[i] != shards[i-1]+1 {
+			contiguous = false
+			break
+		}
+	}
+	if contiguous {
+		return fmt.Sprintf("%d-%d", shards[0], shards[len(shards)-1])
+	}
+	parts := make([]string, len(shards))
+	for i, v := range shards {
+		parts[i] = strconv.Itoa(v)
+	}
+	return strings.Join(parts, ",")
 }
 
 // lifecycleClientCallable adapts the generated grpc client (variadic

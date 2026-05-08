@@ -17,6 +17,7 @@ type Event struct {
 	TsNs      int64
 	Bucket    string
 	Key       string
+	ShardID   int
 	OldEntry  *filer_pb.Entry
 	NewEntry  *filer_pb.Entry
 	NewParent string
@@ -32,15 +33,24 @@ func (e *Event) IsCreate() bool {
 	return e.OldEntry == nil && e.NewEntry != nil
 }
 
-// Reader subscribes to the filer meta-log for one shard. It owns a Cursor
-// (per-ActionKey position within the shard) and emits in-shard Events to a
-// channel; the downstream router consumes events and ack-advances the cursor
-// for matched ActionKeys when their actions complete.
+// Reader subscribes to the filer meta-log and emits in-range Events to a
+// channel. One subscription handles a contiguous span (or arbitrary set)
+// of shards via ShardPredicate; the downstream router/dispatcher consume
+// events and ack-advance the per-shard cursor for matched ActionKeys
+// when their actions complete.
 type Reader struct {
-	ShardID     int    // [0, s3lifecycle.ShardCount)
+	// ShardID and ShardPredicate are alternatives — set at most one.
+	// ShardPredicate wins if both are populated.
+	ShardID        int             // [0, s3lifecycle.ShardCount); used when ShardPredicate is nil
+	ShardPredicate func(int) bool  // accepts an event when true; nil falls back to ShardID equality
+
 	BucketsPath string // e.g. "/buckets"
-	Cursor      *Cursor
-	Events      chan<- *Event
+	// Cursor is the single-shard cursor used for SinceNs when StartTsNs is 0
+	// and for the validation that at least one of Cursor/StartTsNs is set.
+	// Range callers pass StartTsNs directly and leave Cursor nil.
+	Cursor    *Cursor
+	StartTsNs int64
+	Events    chan<- *Event
 
 	// EventBudget caps how many events Run processes before returning nil.
 	// Zero = unbounded; the run continues until ctx cancellation or stream
@@ -53,15 +63,15 @@ type Reader struct {
 	bucketsPathSlash string
 }
 
-// Run subscribes via SubscribeMetadata starting at Cursor.MinTsNs(), filters
-// to this shard, and emits Events. Returns on ctx.Done(), io.EOF, or
-// stream error. Caller is responsible for closing Events if it owns it.
+// Run subscribes via SubscribeMetadata starting at the configured position,
+// filters to the configured shard set, and emits Events. Returns on
+// ctx.Done(), io.EOF, or stream error. Caller is responsible for closing
+// Events if it owns it.
 func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, clientName string, clientID int32) error {
-	if r.ShardID < 0 || r.ShardID >= s3lifecycle.ShardCount {
-		return fmt.Errorf("reader: shard_id %d out of range", r.ShardID)
-	}
-	if r.Cursor == nil {
-		return errors.New("reader: nil Cursor")
+	if r.ShardPredicate == nil {
+		if r.ShardID < 0 || r.ShardID >= s3lifecycle.ShardCount {
+			return fmt.Errorf("reader: shard_id %d out of range and no ShardPredicate", r.ShardID)
+		}
 	}
 	if r.Events == nil {
 		return errors.New("reader: nil Events channel")
@@ -69,15 +79,22 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	if r.BucketsPath == "" {
 		return errors.New("reader: empty BucketsPath")
 	}
+	if r.Cursor == nil && r.StartTsNs == 0 {
+		return errors.New("reader: must set StartTsNs or Cursor")
+	}
 	r.bucketsPathSlash = r.BucketsPath
 	if !strings.HasSuffix(r.bucketsPathSlash, "/") {
 		r.bucketsPathSlash += "/"
 	}
 
+	sinceNs := r.StartTsNs
+	if sinceNs == 0 && r.Cursor != nil {
+		sinceNs = r.Cursor.MinTsNs()
+	}
 	stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 		ClientName:             clientName,
 		PathPrefix:             r.BucketsPath,
-		SinceNs:                r.Cursor.MinTsNs(),
+		SinceNs:                sinceNs,
 		ClientId:               clientID,
 		ClientSupportsBatching: true,
 	})
@@ -118,7 +135,12 @@ func (r *Reader) dispatchOne(ctx context.Context, resp *filer_pb.SubscribeMetada
 	if !ok {
 		return nil
 	}
-	if s3lifecycle.ShardID(bucket, key) != r.ShardID {
+	shardID := s3lifecycle.ShardID(bucket, key)
+	if r.ShardPredicate != nil {
+		if !r.ShardPredicate(shardID) {
+			return nil
+		}
+	} else if shardID != r.ShardID {
 		return nil
 	}
 
@@ -126,6 +148,7 @@ func (r *Reader) dispatchOne(ctx context.Context, resp *filer_pb.SubscribeMetada
 		TsNs:      resp.TsNs,
 		Bucket:    bucket,
 		Key:       key,
+		ShardID:   shardID,
 		OldEntry:  resp.EventNotification.OldEntry,
 		NewEntry:  resp.EventNotification.NewEntry,
 		NewParent: resp.EventNotification.NewParentPath,
@@ -212,6 +235,14 @@ func (r *Reader) extractBucketKey(resp *filer_pb.SubscribeMetadataResponse) (str
 // LogStartup is a small helper for callers that want a one-line readable
 // description of where the reader is starting.
 func (r *Reader) LogStartup() {
+	sinceNs := r.StartTsNs
+	if sinceNs == 0 && r.Cursor != nil {
+		sinceNs = r.Cursor.MinTsNs()
+	}
+	if r.ShardPredicate != nil {
+		glog.V(1).Infof("lifecycle reader: shard=range sinceNs=%d budget=%d", sinceNs, r.EventBudget)
+		return
+	}
 	glog.V(1).Infof("lifecycle reader: shard=%d sinceNs=%d budget=%d",
-		r.ShardID, r.Cursor.MinTsNs(), r.EventBudget)
+		r.ShardID, sinceNs, r.EventBudget)
 }

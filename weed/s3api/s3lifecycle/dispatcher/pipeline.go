@@ -14,13 +14,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 )
 
-// Pipeline composes the per-shard reader, router, dispatcher, and cursor
-// checkpoint into a single Run loop. One Pipeline per (worker, shard).
+// Pipeline composes the reader, router, dispatcher, and cursor checkpoint
+// into a single Run loop. One Pipeline can handle a contiguous shard span
+// or any explicit set of shards via Shards; ShardID still works for the
+// single-shard case (and is preferred for short-form configuration).
+//
+// Internally there is exactly one filer subscription regardless of how
+// many shards Shards contains; events are filtered by the reader's
+// ShardPredicate and routed to the matching shard's Cursor + Schedule
+// inside the existing dispatch goroutine — no per-shard goroutines.
 type Pipeline struct {
-	ShardID     int
+	ShardID     int   // used when Shards is empty
+	Shards      []int // overrides ShardID when non-empty
 	BucketsPath string
 
-	Engine    *engine.Engine
+	Engine *engine.Engine
+	// Cursor is consulted only when len(Shards) <= 1. Range mode allocates
+	// a fresh Cursor per shard internally.
 	Cursor    *reader.Cursor
 	Persister reader.Persister
 	Client    LifecycleClient
@@ -49,44 +59,81 @@ const (
 	defaultEventBuffer    = 1024
 )
 
-// Run blocks until ctx is canceled or a fatal error occurs. On exit, the
-// cursor is persisted; in-flight schedule entries are dropped (the meta-log
-// is the durable buffer, so a restart re-derives them).
+// shardState bundles per-shard mutable state so the single dispatch
+// goroutine can route an event to the right cursor + schedule by lookup.
+type shardState struct {
+	cursor   *reader.Cursor
+	dispatch *Dispatcher
+}
+
+// Run blocks until ctx is canceled or a fatal error occurs. On exit, every
+// shard's cursor is persisted; in-flight schedule entries are dropped
+// (the meta-log is the durable buffer, so a restart re-derives them).
 func (p *Pipeline) Run(ctx context.Context) error {
-	if p.Engine == nil || p.Cursor == nil || p.Persister == nil ||
-		p.Client == nil || p.FilerClient == nil {
+	if p.Engine == nil || p.Persister == nil || p.Client == nil || p.FilerClient == nil {
 		return errors.New("pipeline: missing required dependency")
 	}
 	if p.BucketsPath == "" {
 		return errors.New("pipeline: BucketsPath required")
 	}
 
-	// Restore cursor; freezes re-arm naturally when the reader re-encounters
-	// the poison event at MinTsNs and the dispatch state machine drives it
+	// Resolve the active shard set. Single-shard configurations populate
+	// either Shards=[N] or Shards=nil with ShardID=N (latter is the legacy
+	// path that also supplies a Cursor); both feed the same range model.
+	shardIDs := p.Shards
+	if len(shardIDs) == 0 {
+		shardIDs = []int{p.ShardID}
+	}
+	shardSet := make(map[int]struct{}, len(shardIDs))
+	for _, s := range shardIDs {
+		shardSet[s] = struct{}{}
+	}
+
+	// Per-shard cursor + dispatcher. Cursors restore from the durable
+	// store; freezes re-arm naturally when the reader re-encounters the
+	// poison event at MinTsNs and the dispatch state machine drives it
 	// back to BLOCKED.
-	state, err := p.Persister.Load(ctx, p.ShardID)
-	if err != nil {
-		return fmt.Errorf("cursor load: %w", err)
+	states := make(map[int]*shardState, len(shardIDs))
+	var minStartTsNs int64 = -1
+	for _, shardID := range shardIDs {
+		c := p.Cursor
+		if len(shardIDs) != 1 || c == nil {
+			c = reader.NewCursor()
+		}
+		state, err := p.Persister.Load(ctx, shardID)
+		if err != nil {
+			return fmt.Errorf("cursor load shard=%d: %w", shardID, err)
+		}
+		c.Restore(state)
+		states[shardID] = &shardState{
+			cursor: c,
+			dispatch: &Dispatcher{
+				ShardID:  shardID,
+				Client:   p.Client,
+				Cursor:   c,
+				Schedule: router.NewSchedule(),
+			},
+		}
+		if mt := c.MinTsNs(); mt > 0 && (minStartTsNs < 0 || mt < minStartTsNs) {
+			minStartTsNs = mt
+		}
 	}
-	p.Cursor.Restore(state)
-
-	dispatch := &Dispatcher{
-		ShardID:  p.ShardID,
-		Client:   p.Client,
-		Cursor:   p.Cursor,
-		Schedule: router.NewSchedule(),
+	if minStartTsNs < 0 {
+		minStartTsNs = 0
 	}
 
-	// 2. Wire reader -> router -> schedule via a buffered channel.
 	bufSize := p.EventBuffer
 	if bufSize <= 0 {
 		bufSize = defaultEventBuffer
 	}
 	events := make(chan *reader.Event, bufSize)
 	rd := &reader.Reader{
-		ShardID:     p.ShardID,
 		BucketsPath: p.BucketsPath,
-		Cursor:      p.Cursor,
+		ShardPredicate: func(s int) bool {
+			_, ok := shardSet[s]
+			return ok
+		},
+		StartTsNs:   minStartTsNs,
 		Events:      events,
 		EventBudget: p.EventBudget,
 	}
@@ -105,12 +152,15 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		defer close(events)
 		readerErr = rd.Run(runCtx, p.FilerClient, p.ClientName, p.ClientID)
 		if readerErr != nil && !errors.Is(readerErr, context.Canceled) {
-			glog.Errorf("lifecycle reader: shard=%d: %v", p.ShardID, readerErr)
+			glog.Errorf("lifecycle reader: shards=%v: %v", shardIDs, readerErr)
 		}
 		cancel() // wake the dispatcher goroutine to drain & exit
 	}()
 
-	// Router/dispatcher goroutine: pulls events, routes them, ticks schedule.
+	// Router/dispatcher goroutine: pulls events, routes them to per-shard
+	// schedules, ticks every shard's dispatcher on the same cadence, and
+	// checkpoints every shard's cursor on the checkpoint cadence. One
+	// goroutine handles all shards — there is no fan-out per shard.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -128,28 +178,46 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		defer ct.Stop()
 		snap := p.Engine.Snapshot()
 
+		drainAll := func() {
+			now := time.Now()
+			for _, st := range states {
+				st.dispatch.Tick(context.Background(), now)
+			}
+		}
+
 		for {
 			select {
 			case <-runCtx.Done():
-				dispatch.Tick(context.Background(), time.Now())
+				drainAll()
 				return
 			case ev, ok := <-events:
 				if !ok {
-					dispatch.Tick(context.Background(), time.Now())
+					drainAll()
 					return
+				}
+				st := states[ev.ShardID]
+				if st == nil {
+					// Shouldn't happen — the predicate filtered events to
+					// our shard set — but guard against any future change.
+					continue
 				}
 				if snap == nil {
 					snap = p.Engine.Snapshot()
 				}
 				for _, m := range router.Route(snap, ev, time.Now()) {
-					dispatch.Schedule.Add(m)
+					st.dispatch.Schedule.Add(m)
 				}
 			case <-dt.C:
-				snap = p.Engine.Snapshot() // refresh between tick boundaries
-				dispatch.Tick(runCtx, time.Now())
+				snap = p.Engine.Snapshot()
+				now := time.Now()
+				for _, st := range states {
+					st.dispatch.Tick(runCtx, now)
+				}
 			case <-ct.C:
-				if err := p.Persister.Save(runCtx, p.ShardID, p.Cursor.Snapshot()); err != nil {
-					glog.Warningf("lifecycle cursor checkpoint: shard=%d: %v", p.ShardID, err)
+				for shardID, st := range states {
+					if err := p.Persister.Save(runCtx, shardID, st.cursor.Snapshot()); err != nil {
+						glog.Warningf("lifecycle cursor checkpoint: shard=%d: %v", shardID, err)
+					}
 				}
 			}
 		}
@@ -158,8 +226,10 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	wg.Wait()
 
 	// Final cursor checkpoint on graceful shutdown.
-	if err := p.Persister.Save(context.Background(), p.ShardID, p.Cursor.Snapshot()); err != nil {
-		glog.Warningf("lifecycle cursor final save: shard=%d: %v", p.ShardID, err)
+	for shardID, st := range states {
+		if err := p.Persister.Save(context.Background(), shardID, st.cursor.Snapshot()); err != nil {
+			glog.Warningf("lifecycle cursor final save: shard=%d: %v", shardID, err)
+		}
 	}
 
 	if readerErr != nil && !errors.Is(readerErr, context.Canceled) {

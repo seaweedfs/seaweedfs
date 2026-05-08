@@ -204,18 +204,13 @@ func TestLifecycleExpirationFiresOnBackdatedObject(t *testing.T) {
 	putObject(t, c, bucket, freshKey, "fresh")
 	backdateMtime(t, fc, bucket, oldKey, 30)
 
-	// The shell command works per-shard; each (bucket, key) lands on a
-	// specific shard (sha256[0]>>4). Run all 16 to make the test
-	// independent of which key landed where.
-	for shard := 0; shard < 16; shard++ {
-		out := runShellCommand(t, fmt.Sprintf(
-			"s3.lifecycle.run-shard -shard %d -s3 %s -events 50 -dispatch 200ms -checkpoint 5s",
-			shard, strings.TrimPrefix(envOr("S3_ENDPOINT", defaultS3Endpoint), "http://"),
-		))
-		// Surface obvious failures in the shell output rather than waiting
-		// for the deletion-check timeout.
-		require.NotContains(t, out, "FATAL", "shard %d output:\n%s", shard, out)
-	}
+	// One subscription handles every shard via -shards 0-15; this stays
+	// independent of which (bucket, key) hash lands the target on.
+	out := runShellCommand(t, fmt.Sprintf(
+		"s3.lifecycle.run-shard -shards 0-15 -s3 %s -events 200 -dispatch 200ms -checkpoint 5s",
+		strings.TrimPrefix(envOr("S3_ENDPOINT", defaultS3Endpoint), "http://"),
+	))
+	require.NotContains(t, out, "FATAL", "shell output:\n%s", out)
 
 	// Allow the dispatched delete to land in the filer + propagate to S3.
 	require.Eventuallyf(t, func() bool {
