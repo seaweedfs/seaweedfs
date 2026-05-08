@@ -398,3 +398,114 @@ func TestRouteRegularObjectUnderDualRuleSkipsAbortMPU(t *testing.T) {
 		t.Fatalf("ActionKind=%v, want ExpirationDays", got)
 	}
 }
+
+func compileWithVersioned(rule *s3lifecycle.Rule, prior map[s3lifecycle.ActionKey]engine.PriorState) *engine.Snapshot {
+	e := engine.New()
+	return e.Compile([]engine.CompileInput{{Bucket: "bk", Rules: []*s3lifecycle.Rule{rule}, Versioned: true}},
+		engine.CompileOptions{PriorStates: prior})
+}
+
+func TestRouteVersionedNoncurrentEventFiresNoncurrentDays(t *testing.T) {
+	// Versioned bucket, time-based NoncurrentVersionExpiration rule.
+	// Event arrives at the storage path <key>.versions/<vid>. The router
+	// must classify it as noncurrent (IsLatest=false), strip the suffix
+	// for filter matching, and propagate the version_id so the
+	// dispatcher can target a single version on the server.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		Prefix:                          "logs/",
+		NoncurrentVersionExpirationDays: 7,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -30)
+	ev := eventCreate("bk", "logs/foo.versions/v1", old.Unix(), 1, old.UnixNano())
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match (NONCURRENT_DAYS), got %v", matches)
+	}
+	m := matches[0]
+	if m.Key.ActionKind != s3lifecycle.ActionKindNoncurrentDays {
+		t.Fatalf("ActionKind=%v, want NoncurrentDays", m.Key.ActionKind)
+	}
+	if m.ObjectKey != "logs/foo.versions/v1" {
+		t.Fatalf("ObjectKey=%q, want full storage path so dispatcher can locate the version", m.ObjectKey)
+	}
+	if m.VersionID != "v1" {
+		t.Fatalf("VersionID=%q, want v1", m.VersionID)
+	}
+}
+
+func TestRouteVersionedCurrentEventStaysLatest(t *testing.T) {
+	// Versioned bucket, ExpirationDays rule. The current-version event
+	// arrives at the bare <key>; nothing about its path looks like a
+	// .versions/ entry, so IsLatest stays true and the rule fires.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	ev := eventCreate("bk", "logs/foo", old.Unix(), 1, old.UnixNano())
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match (EXPIRATION_DAYS), got %v", matches)
+	}
+	if matches[0].Key.ActionKind != s3lifecycle.ActionKindExpirationDays {
+		t.Fatalf("ActionKind=%v, want ExpirationDays", matches[0].Key.ActionKind)
+	}
+	if matches[0].VersionID != "" {
+		t.Fatalf("VersionID=%q, want empty for current-version path", matches[0].VersionID)
+	}
+}
+
+func TestRouteNonVersionedBucketIgnoresVersionsSuffix(t *testing.T) {
+	// A non-versioned bucket happens to have an object literally named
+	// "logs/foo.versions/v1" — that's just a regular path. The router
+	// must NOT classify it as noncurrent or set IsLatest=false; the
+	// rule fires as a normal current-object expiration.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	ev := eventCreate("bk", "logs/foo.versions/v1", old.Unix(), 1, old.UnixNano())
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %v", matches)
+	}
+	if matches[0].VersionID != "" {
+		t.Fatalf("VersionID=%q, want empty for non-versioned bucket", matches[0].VersionID)
+	}
+	if matches[0].ObjectKey != "logs/foo.versions/v1" {
+		t.Fatalf("ObjectKey=%q, want unchanged for non-versioned bucket", matches[0].ObjectKey)
+	}
+}
+
+func TestRouteVersionedExpiredDeleteMarkerSuppressedWithoutSiblings(t *testing.T) {
+	// ExpiredObjectDeleteMarker requires NumVersions==1 — the marker is
+	// the sole-survivor. Without sibling listing the router can't
+	// confirm that, so the rule must NOT fire just because the latest
+	// is a delete marker. A future PR adds sibling listing.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := eventCreate("bk", "logs/gone", old.Unix(), 0, old.UnixNano())
+	ev.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtDeleteMarkerKey: {1},
+	}
+
+	if got := Route(snap, ev, now); len(got) != 0 {
+		t.Fatalf("ExpiredDeleteMarker without sibling count must not fire, got %v", got)
+	}
+}
