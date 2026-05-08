@@ -226,3 +226,121 @@ func TestRouteIdentityHashesExtended(t *testing.T) {
 		t.Fatalf("ExtendedHash mismatch:\n got %x\nwant %x", id.ExtendedHash, want)
 	}
 }
+
+func mpuInitEvent(bucket, uploadID, destKey string, initS, ts int64) *reader.Event {
+	return &reader.Event{
+		TsNs:   ts,
+		Bucket: bucket,
+		Key:    ".uploads/" + uploadID,
+		NewEntry: &filer_pb.Entry{
+			Name:        uploadID,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: initS},
+			Extended: map[string][]byte{
+				"key": []byte(destKey),
+			},
+		},
+	}
+}
+
+func TestRouteMPUInitFiresAbortAfterDelay(t *testing.T) {
+	// 7-day MPU abort. Init 8 days ago must fire; rule's prefix matches the
+	// destination key, not the .uploads/ path.
+	rule := &s3lifecycle.Rule{
+		ID:                          "r-mpu",
+		Status:                      s3lifecycle.StatusEnabled,
+		Prefix:                      "logs/",
+		AbortMPUDaysAfterInitiation: 7,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	init := now.AddDate(0, 0, -8)
+	ev := mpuInitEvent("bk", "u1", "logs/foo.txt", init.Unix(), init.UnixNano())
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %v", matches)
+	}
+	if got, want := matches[0].Key.ActionKind, s3lifecycle.ActionKindAbortMPU; got != want {
+		t.Fatalf("ActionKind=%v, want %v", got, want)
+	}
+	if got, want := matches[0].ObjectKey, ".uploads/u1"; got != want {
+		t.Fatalf("ObjectKey=%q, want %q (server needs the upload directory path)", got, want)
+	}
+}
+
+func TestRouteMPUInitFilteredOutByPrefix(t *testing.T) {
+	// Same rule, MPU uploads to a different prefix → no match.
+	rule := &s3lifecycle.Rule{
+		ID:                          "r-mpu",
+		Status:                      s3lifecycle.StatusEnabled,
+		Prefix:                      "logs/",
+		AbortMPUDaysAfterInitiation: 7,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	init := now.AddDate(0, 0, -8)
+	ev := mpuInitEvent("bk", "u2", "data/foo.txt", init.Unix(), init.UnixNano())
+
+	if got := Route(snap, ev, now); len(got) != 0 {
+		t.Fatalf("expected 0 matches for foreign prefix, got %v", got)
+	}
+}
+
+func TestRouteMPUInitMissingDestKeySkipped(t *testing.T) {
+	// .uploads/<id> directory without ExtMultipartObjectKey is malformed
+	// (mkdir wrote it before the metadata, or it's a stray dir). Skip.
+	rule := &s3lifecycle.Rule{
+		ID:                          "r-mpu",
+		Status:                      s3lifecycle.StatusEnabled,
+		AbortMPUDaysAfterInitiation: 7,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	init := now.AddDate(0, 0, -8)
+	ev := &reader.Event{
+		TsNs:   init.UnixNano(),
+		Bucket: "bk",
+		Key:    ".uploads/u3",
+		NewEntry: &filer_pb.Entry{
+			Name:        "u3",
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: init.Unix()},
+		},
+	}
+
+	if got := Route(snap, ev, now); len(got) != 0 {
+		t.Fatalf("expected 0 matches for missing destKey, got %v", got)
+	}
+}
+
+func TestRouteMPUPartEventSkipped(t *testing.T) {
+	// Part-upload events at .uploads/<id>/<part> ride a different mtime and
+	// must not over-fire ABORT_MPU.
+	rule := &s3lifecycle.Rule{
+		ID:                          "r-mpu",
+		Status:                      s3lifecycle.StatusEnabled,
+		AbortMPUDaysAfterInitiation: 7,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	init := now.AddDate(0, 0, -8)
+	ev := &reader.Event{
+		TsNs:   init.UnixNano(),
+		Bucket: "bk",
+		Key:    ".uploads/u4/0001",
+		NewEntry: &filer_pb.Entry{
+			Name:       "0001",
+			Attributes: &filer_pb.FuseAttributes{Mtime: init.Unix()},
+			Extended:   map[string][]byte{"key": []byte("logs/foo.txt")},
+		},
+	}
+
+	if got := Route(snap, ev, now); len(got) != 0 {
+		t.Fatalf("expected 0 matches for part event, got %v", got)
+	}
+}
