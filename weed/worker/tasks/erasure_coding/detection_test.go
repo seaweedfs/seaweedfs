@@ -140,8 +140,7 @@ func TestDetectionContextCancellation(t *testing.T) {
 }
 
 func TestDetectionMaxResultsHonorsLimit(t *testing.T) {
-	// Need at least TotalShardsCount distinct (server, disk_id) targets so each
-	// EC shard gets its own disk (#9369 placement invariant).
+	// One node per shard so each shard gets its own disk (#9369).
 	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd"}, 20, 0)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
 	metrics := buildVolumeMetricsForIDs(3)
@@ -152,10 +151,8 @@ func TestDetectionMaxResultsHonorsLimit(t *testing.T) {
 	assert.True(t, hasMore)
 }
 
-// TestPlanECDestinationsSpreadsAcrossPhysicalDisks reproduces #9369: with 7
-// volume servers each owning 2 physical HDDs, the EC planner must produce 14
-// destinations on 14 distinct (server, disk_id) tuples — not 7 destinations
-// each receiving 2 shards on the same disk.
+// #9369: 7 servers × 2 physical HDDs must yield 14 distinct (server, disk_id)
+// destinations, not 7 destinations doubled up on the same disk.
 func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 	const numServers = 7
 	const disksPerServer = 2
@@ -206,13 +203,12 @@ func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), uint32(erasure_coding.DataShardsCount), uint32(erasure_coding.ParityShardsCount))
 	require.NoError(t, err)
 	require.NotNil(t, plan)
-	require.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans),
-		"need one destination per shard so #9185 disk_id routing is unambiguous")
+	require.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
 
 	seen := make(map[string]bool, len(plan.Plans))
 	for _, p := range plan.Plans {
 		key := fmt.Sprintf("%s:%d", p.TargetNode, p.TargetDisk)
-		assert.False(t, seen[key], "duplicate (server,disk_id) target %s — would race in ReceiveFile", key)
+		assert.False(t, seen[key], "duplicate (server,disk_id) target %s", key)
 		seen[key] = true
 	}
 }

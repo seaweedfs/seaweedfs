@@ -593,10 +593,8 @@ func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement
 	return candidateSets
 }
 
-// planECDestinations plans the destinations for erasure coding operation
-// This function implements EC destination planning logic directly in the detection phase.
-// dataShards/parityShards are taken as parameters so callers (and forks running
-// non-default ratios) can drive placement without relying on the OSS 10+4 constants.
+// planECDestinations plans the destinations for erasure coding operation.
+// dataShards/parityShards are parameters so callers can drive non-10+4 ratios.
 func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config, dataShards, parityShards uint32) (*topology.MultiDestinationPlan, error) {
 	if planner == nil || planner.activeTopology == nil {
 		return nil, fmt.Errorf("active topology not available for EC placement")
@@ -605,12 +603,7 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 		return nil, fmt.Errorf("invalid EC ratio: dataShards=%d parityShards=%d", dataShards, parityShards)
 	}
 	totalShards := int(dataShards + parityShards)
-	// minTotalDisks mirrors erasure_coding.MinTotalDisks: total/parity + 1, i.e.
-	// strictly more than one shard-stripe per disk so a single disk loss never
-	// takes out more than parityShards shards.
 	minTotalDisks := totalShards/int(parityShards) + 1
-
-	// Calculate expected shard size for EC operation
 	expectedShardSize := uint64(metric.Size) / uint64(dataShards)
 
 	// Get source node information from topology
@@ -646,12 +639,10 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 	if len(selectedDisks) < minTotalDisks {
 		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), minTotalDisks)
 	}
-	// #9369 / #9185: with disk_id-aware ReceiveFile, two shards on the same
-	// (server, disk_id) target collide. If the planner could not give us one
-	// distinct disk per shard, fail the plan rather than letting createECTargets
-	// pack multiple shards onto the same physical disk.
+	// One shard per (server, disk_id): #9185's disk_id-aware ReceiveFile rejects
+	// a second shard on the same disk.
 	if len(selectedDisks) < totalShards {
-		return nil, fmt.Errorf("found %d disks, but EC %d+%d needs %d distinct (server, disk_id) targets so each shard lands on its own disk",
+		return nil, fmt.Errorf("found %d disks, but EC %d+%d needs %d distinct (server, disk_id) targets",
 			len(selectedDisks), dataShards, parityShards, totalShards)
 	}
 
@@ -709,42 +700,33 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 	}, nil
 }
 
-// createECTargets creates unified TaskTarget structures from the multi-destination plan
-// with proper shard ID assignment during planning phase. dataShards/parityShards
-// drive the data-vs-parity classification and the total shard count, so the
-// function does not depend on the OSS 10+4 constants.
+// createECTargets builds TaskTargets with one shard per plan entry.
+// planECDestinations ensures numTargets == totalShards.
 func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards uint32) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
 	numTargets := len(multiPlan.Plans)
 	totalShards := dataShards + parityShards
 
-	// Create shard assignment arrays for each target (round-robin distribution)
 	targetShards := make([][]uint32, numTargets)
 	for i := range targetShards {
 		targetShards[i] = make([]uint32, 0)
 	}
-
-	// Distribute shards in round-robin fashion to spread both data and parity shards
-	// across targets. planECDestinations guarantees numTargets == totalShards, so
-	// each target receives exactly one shard.
 	for shardId := uint32(0); shardId < totalShards; shardId++ {
 		targetIndex := int(shardId) % numTargets
 		targetShards[targetIndex] = append(targetShards[targetIndex], shardId)
 	}
 
-	// Create targets with assigned shard IDs
 	for i, plan := range multiPlan.Plans {
 		target := &worker_pb.TaskTarget{
 			Node:          plan.TargetAddress,
 			DiskId:        plan.TargetDisk,
 			Rack:          plan.TargetRack,
 			DataCenter:    plan.TargetDC,
-			ShardIds:      targetShards[i], // Round-robin assigned shards
+			ShardIds:      targetShards[i],
 			EstimatedSize: plan.ExpectedSize,
 		}
 		targets = append(targets, target)
 
-		// Log shard assignment with data/parity classification
 		assignedData := make([]uint32, 0)
 		assignedParity := make([]uint32, 0)
 		for _, shardId := range targetShards[i] {

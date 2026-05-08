@@ -408,16 +408,11 @@ func TestECPlanningNotBlockedByUnrelatedBalance(t *testing.T) {
 		"EC must still see all 4 disks even with an unrelated in-flight balance")
 }
 
-// TestECPlannerSeesEachPhysicalDisk reproduces #9369: when a volume server has
-// multiple physical disks of the same type (e.g. -dir=/d1,/d2 → diskIds 0,1),
-// the master collapses them into a single DiskInfo entry keyed by disk type.
-// The active topology must still expose one entry per physical disk_id so the
-// EC planner can place at most one shard per disk.
+// #9369: same-type physical disks collapse into one DiskInfo at the master;
+// the active topology must still expose one entry per physical disk_id.
 func TestECPlannerSeesEachPhysicalDisk(t *testing.T) {
 	topology := NewActiveTopology(10)
 
-	// 7 volume servers, each with 2 physical HDDs visible only via per-volume
-	// disk_id annotations on the single "hdd" DiskInfo entry.
 	const numServers = 7
 	const disksPerServer = 2
 	nodes := make([]*master_pb.DataNodeInfo, 0, numServers)
@@ -434,9 +429,9 @@ func TestECPlannerSeesEachPhysicalDisk(t *testing.T) {
 			Id: fmt.Sprintf("127.0.0.1:%d", 8080+i),
 			DiskInfos: map[string]*master_pb.DiskInfo{
 				"hdd": {
-					DiskId:         0, // master only retains one DiskId per type
+					DiskId:         0,
 					VolumeCount:    int64(disksPerServer),
-					MaxVolumeCount: 200, // aggregated across both physical disks
+					MaxVolumeCount: 200,
 					VolumeInfos:    volumeInfos,
 				},
 			},
@@ -454,12 +449,8 @@ func TestECPlannerSeesEachPhysicalDisk(t *testing.T) {
 	}))
 
 	candidates := topology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 0)
-	assert.Equal(t, numServers*disksPerServer, len(candidates),
-		"EC planner must see %d physical disks (#9369: %d servers × %d disks)",
-		numServers*disksPerServer, numServers, disksPerServer)
+	assert.Equal(t, numServers*disksPerServer, len(candidates))
 
-	// Every (server, disk_id) tuple must be distinct so the planner can spread
-	// shards 1-per-disk instead of doubling up on the same physical disk.
 	seen := make(map[string]bool, len(candidates))
 	for _, c := range candidates {
 		key := fmt.Sprintf("%s:%d", c.NodeID, c.DiskID)

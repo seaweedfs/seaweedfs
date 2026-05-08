@@ -8,23 +8,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-// splitDiskInfoByPhysicalDisk returns one master_pb.DiskInfo per physical disk
-// observed inside the given (per-disk-type) entry. Multiple physical disks of
-// the same type collapse into a single DiskInfo at the master, but per-volume
-// and per-EC-shard records still carry their original disk_id, so we can
-// reconstruct the per-disk view here. Aggregate capacity (MaxVolumeCount,
-// VolumeCount) is split evenly across the discovered disks — exact per-disk
-// numbers are not preserved on the wire today.
+// splitDiskInfoByPhysicalDisk returns one master_pb.DiskInfo per physical
+// disk_id observed in VolumeInfos / EcShardInfos. Multiple same-type physical
+// disks collapse to one DiskInfo at the master; per-volume/per-shard records
+// keep the original disk_id and are the authoritative signal here. Capacity
+// is split evenly — the wire format doesn't carry per-disk capacity yet.
 func splitDiskInfoByPhysicalDisk(diskInfo *master_pb.DiskInfo) []*master_pb.DiskInfo {
 	if diskInfo == nil {
 		return nil
 	}
 
-	// Normalize each record's DiskId: if a volume/shard reports DiskId=0 while
-	// the outer DiskInfo.DiskId is non-zero, treat it as belonging to the
-	// outer disk. This handles fixtures (and older payloads) that don't
-	// populate the per-record DiskId. The same fallback is applied in
-	// rebuildIndexes so the volume index and the activeDisk map agree.
+	// Records with DiskId=0 and a non-zero outer DiskId belong to the outer
+	// disk — handles older payloads / fixtures that omit the per-record id.
 	normalize := func(id uint32) uint32 {
 		if id == 0 && diskInfo.DiskId != 0 {
 			return diskInfo.DiskId
@@ -40,14 +35,10 @@ func splitDiskInfoByPhysicalDisk(diskInfo *master_pb.DiskInfo) []*master_pb.Disk
 		diskIDs[normalize(eci.DiskId)] = struct{}{}
 	}
 	if len(diskIDs) == 0 {
-		// Empty DiskInfo (no volumes or shards) — keep one entry under the
-		// reported outer DiskId so the disk still shows up for placement.
 		diskIDs[diskInfo.DiskId] = struct{}{}
 	}
 
 	if len(diskIDs) == 1 {
-		// Single physical disk — keep as-is so existing DiskInfo identity /
-		// capacity numbers are unchanged.
 		for diskID := range diskIDs {
 			if diskID == diskInfo.DiskId {
 				return []*master_pb.DiskInfo{diskInfo}
@@ -150,13 +141,8 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 					disks:      make(map[uint32]*activeDisk),
 				}
 
-				// Add disks for this node. master_pb.DataNodeInfo.DiskInfos is
-				// keyed by disk type, so a server with N physical disks of the
-				// same type collapses into a single entry. Per-physical-disk
-				// attribution survives only inside VolumeInfos[].DiskId and
-				// EcShardInfos[].DiskId. Expand back to one activeDisk per
-				// physical disk_id so EC placement (and any other per-disk
-				// scheduling) treats them as distinct targets — see #9369.
+				// One activeDisk per physical disk_id (#9369): the master keys
+				// DiskInfos by disk type, so same-type disks must be split out.
 				for diskType, diskInfo := range nodeInfo.DiskInfos {
 					perDiskInfos := splitDiskInfoByPhysicalDisk(diskInfo)
 					for _, perDisk := range perDiskInfos {
@@ -291,17 +277,12 @@ func (at *ActiveTopology) rebuildIndexes() {
 	at.volumeIndex = make(map[uint32][]string)
 	at.ecShardIndex = make(map[uint32][]string)
 
-	// Rebuild indexes from current topology. We index by the per-volume /
-	// per-EC-shard DiskId (not the outer DiskInfo.DiskId) so the result lines
-	// up with the per-physical-disk activeDisk entries built by UpdateTopology
-	// — see splitDiskInfoByPhysicalDisk and #9369.
+	// Index by the per-record DiskId (not the outer DiskInfo.DiskId) so the
+	// keys match the per-physical-disk activeDisk entries — see #9369.
 	for _, dc := range at.topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, nodeInfo := range rack.DataNodeInfos {
 				for _, diskInfo := range nodeInfo.DiskInfos {
-					// Index volumes by their own DiskId (falling back to the
-					// outer DiskId for entries that omit it, e.g. older test
-					// fixtures).
 					for _, volumeInfo := range diskInfo.VolumeInfos {
 						diskID := volumeInfo.DiskId
 						if diskID == 0 && diskInfo.DiskId != 0 {
@@ -310,8 +291,6 @@ func (at *ActiveTopology) rebuildIndexes() {
 						diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskID)
 						at.volumeIndex[volumeInfo.Id] = append(at.volumeIndex[volumeInfo.Id], diskKey)
 					}
-
-					// Index EC shards by their own DiskId.
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
 						diskID := ecShardInfo.DiskId
 						if diskID == 0 && diskInfo.DiskId != 0 {
