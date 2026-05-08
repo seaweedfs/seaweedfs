@@ -3,15 +3,13 @@ package s3api
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
-	"sort"
-	"strconv"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
 // LifecycleDelete executes one (rule, action) verdict: re-fetch, identity
@@ -36,8 +34,7 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 		return retryLater("TRANSPORT_ERROR: " + err.Error()), nil
 	}
 
-	live := computeEntryIdentity(entry)
-	if !identityMatches(live, req.ExpectedIdentity) {
+	if !identityMatches(computeEntryIdentity(entry), req.ExpectedIdentity) {
 		return noopResolved("STALE_IDENTITY"), nil
 	}
 
@@ -144,32 +141,8 @@ func computeEntryIdentity(entry *filer_pb.Entry) *s3_lifecycle_pb.EntryIdentity 
 	if len(entry.GetChunks()) > 0 {
 		id.HeadFid = entry.GetChunks()[0].FileId
 	}
-	id.ExtendedHash = hashExtended(entry.Extended)
+	id.ExtendedHash = s3lifecycle.HashExtended(entry.Extended)
 	return id
-}
-
-// hashExtended is length-prefixed; a forged tag value can't collide with a
-// legitimate multi-tag map.
-func hashExtended(ext map[string][]byte) []byte {
-	if len(ext) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(ext))
-	for k := range ext {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	h := sha256.New()
-	for _, k := range keys {
-		h.Write([]byte(strconv.Itoa(len(k))))
-		h.Write([]byte{':'})
-		h.Write([]byte(k))
-		v := ext[k]
-		h.Write([]byte(strconv.Itoa(len(v))))
-		h.Write([]byte{':'})
-		h.Write(v)
-	}
-	return h.Sum(nil)
 }
 
 func identityMatches(live, want *s3_lifecycle_pb.EntryIdentity) bool {

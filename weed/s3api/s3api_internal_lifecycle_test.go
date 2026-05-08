@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
 func TestComputeEntryIdentity_BasicFields(t *testing.T) {
@@ -45,7 +46,7 @@ func TestComputeEntryIdentity_NilSafeMissingChunks(t *testing.T) {
 func TestHashExtended_OrderStable(t *testing.T) {
 	a := map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")}
 	b := map[string][]byte{"k2": []byte("v2"), "k1": []byte("v1")}
-	if !bytes.Equal(hashExtended(a), hashExtended(b)) {
+	if !bytes.Equal(s3lifecycle.HashExtended(a), s3lifecycle.HashExtended(b)) {
 		t.Fatalf("hash should be insensitive to map iteration order")
 	}
 }
@@ -55,16 +56,16 @@ func TestHashExtended_DelimiterCollisionResistant(t *testing.T) {
 	// Length-prefix encoding must keep them apart.
 	a := map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")}
 	b := map[string][]byte{"k1": []byte("v1k2v2")}
-	if bytes.Equal(hashExtended(a), hashExtended(b)) {
+	if bytes.Equal(s3lifecycle.HashExtended(a), s3lifecycle.HashExtended(b)) {
 		t.Fatalf("delimiter-forged Extended payloads must not collide")
 	}
 }
 
 func TestHashExtended_NilEqualsEmpty(t *testing.T) {
-	if got := hashExtended(nil); len(got) != 0 {
+	if got := s3lifecycle.HashExtended(nil); len(got) != 0 {
 		t.Fatalf("nil should produce zero-length hash, got %d bytes", len(got))
 	}
-	if got := hashExtended(map[string][]byte{}); len(got) != 0 {
+	if got := s3lifecycle.HashExtended(map[string][]byte{}); len(got) != 0 {
 		t.Fatalf("empty map should produce zero-length hash, got %d bytes", len(got))
 	}
 }
