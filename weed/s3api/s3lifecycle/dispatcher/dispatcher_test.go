@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 type fakeClient struct {
@@ -265,4 +267,52 @@ func TestDispatchRestartReFreezesNaturally(t *testing.T) {
 	if d2.Cursor.Get(m.Key) != t0.UnixNano() {
 		t.Fatal("re-freeze cursor not pinned at event ts")
 	}
+}
+
+func TestDispatchEmitsOutcomeMetric(t *testing.T) {
+	// The Prometheus counter is the operator's signal that lifecycle
+	// is doing real work; it must increment for every dispatch path
+	// (success, retry, transport error). Use the shared label tuple
+	// (bucket, kind, outcome) and read the counter delta.
+	client := &fakeClient{
+		respond: func(call int) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+			if call == 1 {
+				return &s3_lifecycle_pb.LifecycleDeleteResponse{
+					Outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
+				}, nil
+			}
+			return nil, errors.New("network down")
+		},
+	}
+	d, sched := newDispatcher(client)
+	t0 := time.Now()
+
+	bucket := "bk"
+	kind := s3lifecycle.ActionKindExpirationDays.String()
+
+	startDone := counterValue(t, bucket, kind, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE.String())
+	startRpc := counterValue(t, bucket, kind, "RPC_ERROR")
+
+	sched.Add(mkMatch(t0, t0, "obj-done"))
+	d.Tick(context.Background(), t0)
+
+	// Second match exercises the transport-error path.
+	sched.Add(mkMatch(t0, t0, "obj-fail"))
+	d.Tick(context.Background(), t0)
+
+	if got := counterValue(t, bucket, kind, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE.String()) - startDone; got != 1 {
+		t.Errorf("DONE counter delta=%v, want 1", got)
+	}
+	if got := counterValue(t, bucket, kind, "RPC_ERROR") - startRpc; got != 1 {
+		t.Errorf("RPC_ERROR counter delta=%v, want 1", got)
+	}
+}
+
+func counterValue(t *testing.T, bucket, kind, outcome string) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := stats.S3LifecycleDispatchCounter.WithLabelValues(bucket, kind, outcome).Write(m); err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	return m.GetCounter().GetValue()
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // Entry is the routing-relevant slice of a filer entry. SuccessorModTime
@@ -160,6 +161,7 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 				bucket, entry.Path, key.ActionKind, err)
 			return err
 		}
+		stats.S3LifecycleBootstrapDispatchCounter.WithLabelValues(bucket, key.ActionKind.String()).Inc()
 	}
 	return nil
 }

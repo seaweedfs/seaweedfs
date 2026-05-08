@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -246,6 +248,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				if st == nil {
 					continue
 				}
+				stats.S3LifecycleEventCounter.WithLabelValues(strconv.Itoa(ev.ShardID)).Inc()
 				// Always re-fetch the snapshot — caching it across events
 				// means an event arriving between dispatch ticks routes
 				// against a stale snap. With bootstrap injection, events
@@ -261,12 +264,14 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				now := time.Now()
 				for _, st := range states {
 					st.dispatch.Tick(runCtx, now)
+					st.dispatch.observeScheduleDepth()
 				}
 			case <-ct.C:
 				for shardID, st := range states {
 					if err := p.Persister.Save(runCtx, shardID, st.cursor.Snapshot()); err != nil {
 						glog.Warningf("lifecycle cursor checkpoint: shard=%d: %v", shardID, err)
 					}
+					stats.S3LifecycleCursorMinTsNs.WithLabelValues(strconv.Itoa(shardID)).Set(float64(st.cursor.MinTsNs()))
 				}
 			}
 		}

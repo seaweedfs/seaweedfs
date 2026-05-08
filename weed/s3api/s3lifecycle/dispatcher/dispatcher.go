@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // LifecycleClient abstracts the LifecycleDelete RPC so the dispatcher is
@@ -136,9 +138,11 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, m router.Match, now time.T
 		// Transport error: classify as RETRY_LATER. The remote handler
 		// already classifies its own filer-side errors; the only path
 		// that hits this branch is the RPC itself failing.
+		stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR").Inc()
 		d.handleRetryLater(ctx, m, fmt.Sprintf("RPC: %v", err), now)
 		return
 	}
+	stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), resp.Outcome.String()).Inc()
 	switch resp.Outcome {
 	case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 		s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,
@@ -151,6 +155,12 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, m router.Match, now time.T
 	default:
 		d.handleBlocked(ctx, m, fmt.Sprintf("unknown outcome %v: %s", resp.Outcome, resp.Reason))
 	}
+}
+
+// observeScheduleDepth publishes the current schedule depth gauge for
+// this shard. Called from Pipeline on each tick.
+func (d *Dispatcher) observeScheduleDepth() {
+	stats.S3LifecycleScheduleDepthGauge.WithLabelValues(strconv.Itoa(d.ShardID)).Set(float64(d.Schedule.Len()))
 }
 
 func (d *Dispatcher) advance(m router.Match) {

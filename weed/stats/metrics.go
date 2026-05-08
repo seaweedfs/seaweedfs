@@ -537,6 +537,46 @@ var (
 			Name:      "upload_error_total",
 			Help:      "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received).",
 		}, []string{"code"})
+
+	S3LifecycleDispatchCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "dispatch_total",
+			Help:      "Counter of LifecycleDelete RPC outcomes by bucket, action kind, and outcome.",
+		}, []string{"bucket", "kind", "outcome"})
+
+	S3LifecycleScheduleDepthGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "schedule_depth",
+			Help:      "Number of pending matches in the dispatcher schedule per shard.",
+		}, []string{"shard"})
+
+	S3LifecycleCursorMinTsNs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "cursor_min_ts_ns",
+			Help:      "Per-shard min cursor timestamp in nanoseconds since epoch (lag = now - min).",
+		}, []string{"shard"})
+
+	S3LifecycleEventCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "events_total",
+			Help:      "Counter of meta-log events the reader emitted to the router, partitioned by shard.",
+		}, []string{"shard"})
+
+	S3LifecycleBootstrapDispatchCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "bootstrap_dispatch_total",
+			Help:      "Counter of bootstrap-walk Delete dispatches by bucket and action kind.",
+		}, []string{"bucket", "kind"})
 )
 
 func init() {
@@ -606,6 +646,12 @@ func init() {
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
 	Gather.MustRegister(S3BucketObjectCountGauge)
+
+	Gather.MustRegister(S3LifecycleDispatchCounter)
+	Gather.MustRegister(S3LifecycleScheduleDepthGauge)
+	Gather.MustRegister(S3LifecycleCursorMinTsNs)
+	Gather.MustRegister(S3LifecycleEventCounter)
+	Gather.MustRegister(S3LifecycleBootstrapDispatchCounter)
 
 	Gather.MustRegister(UploadErrorCounter)
 
