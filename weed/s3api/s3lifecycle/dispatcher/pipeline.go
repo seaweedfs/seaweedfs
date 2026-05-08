@@ -60,6 +60,8 @@ const (
 	defaultDispatchTick   = 5 * time.Second
 	defaultCheckpointTick = 30 * time.Second
 	defaultEventBuffer    = 1024
+	shutdownDrainTimeout  = 30 * time.Second
+	shutdownSaveTimeout   = 5 * time.Second
 )
 
 // shardState bundles per-shard mutable state so the single dispatch
@@ -185,9 +187,11 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		snap := p.Engine.Snapshot()
 
 		drainAll := func() {
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
+			defer drainCancel()
 			now := time.Now()
 			for _, st := range states {
-				st.dispatch.Tick(context.Background(), now)
+				st.dispatch.Tick(drainCtx, now)
 			}
 		}
 
@@ -231,7 +235,10 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 	// Final cursor checkpoint on graceful shutdown.
 	for shardID, st := range states {
-		if err := p.Persister.Save(context.Background(), shardID, st.cursor.Snapshot()); err != nil {
+		saveCtx, saveCancel := context.WithTimeout(context.Background(), shutdownSaveTimeout)
+		err := p.Persister.Save(saveCtx, shardID, st.cursor.Snapshot())
+		saveCancel()
+		if err != nil {
 			glog.Warningf("lifecycle cursor final save: shard=%d: %v", shardID, err)
 		}
 	}
