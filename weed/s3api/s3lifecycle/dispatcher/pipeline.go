@@ -222,7 +222,6 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		defer dt.Stop()
 		ct := time.NewTicker(checkpointTick)
 		defer ct.Stop()
-		snap := p.Engine.Snapshot()
 
 		drainAll := func() {
 			drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
@@ -247,14 +246,18 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				if st == nil {
 					continue
 				}
-				if snap == nil {
-					snap = p.Engine.Snapshot()
-				}
+				// Always re-fetch the snapshot — caching it across events
+				// means an event arriving between dispatch ticks routes
+				// against a stale snap. With bootstrap injection, events
+				// often land within the same dispatch interval as the
+				// engine.Compile that introduced their bucket; routing
+				// against the prior (empty) snapshot would silently drop
+				// every match. Engine.Snapshot is an atomic Load.
+				snap := p.Engine.Snapshot()
 				for _, m := range router.Route(snap, ev, time.Now()) {
 					st.dispatch.Schedule.Add(m)
 				}
 			case <-dt.C:
-				snap = p.Engine.Snapshot()
 				now := time.Now()
 				for _, st := range states {
 					st.dispatch.Tick(runCtx, now)
