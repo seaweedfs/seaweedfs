@@ -12,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Pipeline composes the reader, router, dispatcher, and cursor checkpoint
@@ -197,8 +199,6 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				}
 				st := states[ev.ShardID]
 				if st == nil {
-					// Shouldn't happen — the predicate filtered events to
-					// our shard set — but guard against any future change.
 					continue
 				}
 				if snap == nil {
@@ -239,8 +239,17 @@ func (p *Pipeline) Run(ctx context.Context) error {
 }
 
 // isCtxShutdown reports whether err is a graceful ctx-driven shutdown
-// (Canceled or DeadlineExceeded). Both are normal exit signals — the
-// caller cancelled, or the wall-clock cap was reached.
+// (Canceled or DeadlineExceeded), including the gRPC status forms that
+// don't unwrap to the std-lib ctx errors.
 func isCtxShutdown(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if code := status.Code(err); code == codes.Canceled || code == codes.DeadlineExceeded {
+		return true
+	}
+	return false
 }
