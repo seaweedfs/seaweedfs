@@ -70,11 +70,13 @@ func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
 		if action.Mode != engine.ModeEventDriven {
 			continue
 		}
-		// Evaluate at the scheduled dispatch time, not the event time:
-		// ExpirationDays gates on now >= modtime + N, which is exactly
-		// what holds when we actually dispatch. The dispatcher's
-		// identity-CAS catches drift if the object changes meanwhile.
-		dueTime := eventTime.Add(action.Delay)
+		// Schedule from ModTime, not the meta-log event time: a backdated
+		// or out-of-band entry update has eventTime ≈ now but ModTime far
+		// in the past, so eventTime+Delay would push the dispatch into the
+		// future even though the rule fires immediately. ModTime+Delay is
+		// the correct fire moment; the dispatcher's identity-CAS catches
+		// drift if the object changes meanwhile.
+		dueTime := info.ModTime.Add(action.Delay)
 		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
 		if res.Action == s3lifecycle.ActionNone {
 			continue
