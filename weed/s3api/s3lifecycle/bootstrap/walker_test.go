@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -117,18 +119,24 @@ func TestWalk_MultiActionRule_AllDueDispatched(t *testing.T) {
 		t.Fatalf("Walk: %v", err)
 	}
 
-	gotKinds := map[s3lifecycle.ActionKind]bool{}
-	for _, c := range rec.calls {
-		gotKinds[c.kind] = true
+	// Exact-shape assertion: each entry dispatches exactly one action,
+	// and ABORT_MPU only fires on the .uploads/<id> entry. A weaker
+	// "kinds-as-set" check would have missed the (kind, info) gating
+	// regression where an MPU init also fired NONCURRENT_DAYS.
+	want := []dispatchCall{
+		{kind: s3lifecycle.ActionKindAbortMPU, path: ".uploads/u1"},
+		{kind: s3lifecycle.ActionKindExpirationDays, path: "obj/a"},
+		{kind: s3lifecycle.ActionKindNoncurrentDays, path: "obj/a/.versions/v1"},
 	}
-	for _, want := range []s3lifecycle.ActionKind{
-		s3lifecycle.ActionKindExpirationDays,
-		s3lifecycle.ActionKindNoncurrentDays,
-		s3lifecycle.ActionKindAbortMPU,
-	} {
-		if !gotKinds[want] {
-			t.Fatalf("expected dispatch for %v, got %v", want, rec.calls)
+	got := append([]dispatchCall(nil), rec.calls...)
+	sort.Slice(got, func(i, j int) bool {
+		if got[i].path != got[j].path {
+			return got[i].path < got[j].path
 		}
+		return got[i].kind < got[j].kind
+	})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dispatch calls mismatch:\n got %+v\nwant %+v", got, want)
 	}
 }
 

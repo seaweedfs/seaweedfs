@@ -370,3 +370,31 @@ func TestRouteMPUInitDoesNotFireNoncurrent(t *testing.T) {
 		t.Fatalf("ActionKind=%v, want AbortMPU", got)
 	}
 }
+
+func TestRouteRegularObjectUnderDualRuleSkipsAbortMPU(t *testing.T) {
+	// Converse of TestRouteMPUInitDoesNotFireNoncurrent: a regular
+	// current-version object under a rule that has both ExpirationDays
+	// and AbortIncompleteMultipartUpload must fire EXPIRATION_DAYS only.
+	// Without the gate the dispatcher would also receive an ABORT_MPU
+	// action targeting the object path, which would rm a regular object
+	// via the MPU code path.
+	rule := &s3lifecycle.Rule{
+		ID:                          "r",
+		Status:                      s3lifecycle.StatusEnabled,
+		ExpirationDays:              1,
+		AbortMPUDaysAfterInitiation: 7,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2) // past the 1d expiration
+	ev := eventCreate("bk", "obj", old.Unix(), 1, old.UnixNano())
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 match (EXPIRATION_DAYS only), got %v", matches)
+	}
+	if got := matches[0].Key.ActionKind; got != s3lifecycle.ActionKindExpirationDays {
+		t.Fatalf("ActionKind=%v, want ExpirationDays", got)
+	}
+}
