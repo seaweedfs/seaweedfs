@@ -880,7 +880,16 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Expiration.Days == 0 {
 			continue
 		}
-		ttlSec := int32((time.Duration(rule.Expiration.Days) * util.LifeCycleInterval).Seconds())
+		// Compute in int64 first, then refuse rules whose TTL won't fit
+		// int32 seconds. AWS allows Days up to 2,147,483,647, which would
+		// silently overflow if we cast directly.
+		ttlSecondsInt64 := int64(rule.Expiration.Days) * int64(util.LifeCycleInterval/time.Second)
+		if ttlSecondsInt64 > math.MaxInt32 {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler %s: Expiration.Days=%d exceeds int32-second TTL", bucket, rule.Expiration.Days)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
+		ttlSec := int32(ttlSecondsInt64)
 		lifecycleRules = append(lifecycleRules, bucketLifecycleTTLRule{
 			Prefix: rulePrefix,
 			TtlSec: ttlSec,
