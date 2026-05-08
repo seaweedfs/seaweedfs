@@ -181,7 +181,7 @@ require (
 	github.com/anchore/go-lzo v0.1.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apache/arrow-go/v18 v18.5.2-0.20260220015023-a886a5722b87 // indirect
-	github.com/apache/thrift v0.22.0 // indirect
+	github.com/apache/thrift v0.23.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.9 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bazelbuild/rules_go v0.46.0 // indirect

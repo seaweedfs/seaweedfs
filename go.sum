@@ -697,8 +697,8 @@ github.com/apache/cassandra-gocql-driver/v2 v2.1.0/go.mod h1:QH/asJjB3mHvY6Dot6Z
 github.com/apache/iceberg-go v0.5.0 h1:wQj4CK5YiXZcB+tj19gWG+Jf1I6MiORQ/StSL/E5gGQ=
 github.com/apache/iceberg-go v0.5.0/go.mod h1:F/rdP1yZmnO4mQ0Qew2HTGdc+ZV57cRfxbbq/uJm1eM=
 github.com/apache/thrift v0.16.0/go.mod h1:PHK3hniurgQaNMZYaCLEqXKsYK8upmhPbmdP2FXSqgU=
-github.com/apache/thrift v0.22.0 h1:r7mTJdj51TMDe6RtcmNdQxgn9XcyfGDOzegMDRg47uc=
-github.com/apache/thrift v0.22.0/go.mod h1:1e7J/O1Ae6ZQMTYdy9xa3w9k+XHWPfRvdPyJeynQ+/g=
+github.com/apache/thrift v0.23.0 h1:wKR6YnefQSEnxpEfmgTPuJibNG4bF0p2TK34tHLWi3s=
+github.com/apache/thrift v0.23.0/go.mod h1:zPt6WxgvTOM6hF92y8C+MkEM5LMxZuk4JcQOiU4Esvs=
 github.com/apparentlymart/go-textseg/v15 v15.0.0 h1:uYvfpb3DyLSCGWnctWKGj857c6ew1u1fNQOlOtuGxQY=
 github.com/apparentlymart/go-textseg/v15 v15.0.0/go.mod h1:K8XmNZdhEBkdlyDdvbmmsvpAG721bKi0joRfFdHIWJ4=
 github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3 h1:WZaTKNHCfcw7fWSR6/RKnCldVzvYZC+Y20Su4lffEIg=
