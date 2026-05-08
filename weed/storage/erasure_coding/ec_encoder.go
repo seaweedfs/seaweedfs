@@ -131,7 +131,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 // (typically left behind by a previously aborted rebuild) are returned in ghosts
 // so the caller can remove them — otherwise they shadow real shards on the next
 // rebuild attempt and the volume gets silently mounted with empty stripes.
-func findShardFile(baseFileName string, ext string, additionalDirs []string) (shardPath string, ghosts []string) {
+func findShardFile(baseFileName string, ext string, additionalDirs []string) (shardPath string, shardSize int64, ghosts []string) {
 	candidates := make([]string, 0, 1+len(additionalDirs))
 	candidates = append(candidates, baseFileName+ext)
 	baseName := filepath.Base(baseFileName)
@@ -149,6 +149,7 @@ func findShardFile(baseFileName string, ext string, additionalDirs []string) (sh
 		}
 		if shardPath == "" {
 			shardPath = c
+			shardSize = fi.Size()
 		}
 	}
 	return
@@ -166,21 +167,17 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	presentCount := 0
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		ext := ctx.ToExt(shardId)
-		shardPath, ghosts := findShardFile(baseFileName, ext, additionalDirs)
+		shardPath, shardSize, ghosts := findShardFile(baseFileName, ext, additionalDirs)
 		ghostPaths = append(ghostPaths, ghosts...)
 		if shardPath == "" {
 			generatedShardIds = append(generatedShardIds, uint32(shardId))
 			continue
 		}
-		fi, statErr := os.Stat(shardPath)
-		if statErr != nil {
-			return nil, fmt.Errorf("stat shard %s: %w", shardPath, statErr)
-		}
 		if expectedShardSize < 0 {
-			expectedShardSize = fi.Size()
-		} else if fi.Size() != expectedShardSize {
+			expectedShardSize = shardSize
+		} else if shardSize != expectedShardSize {
 			return nil, fmt.Errorf("ec shard size mismatch: %s is %d bytes, expected %d (refusing to rebuild from inconsistent shards)",
-				shardPath, fi.Size(), expectedShardSize)
+				shardPath, shardSize, expectedShardSize)
 		}
 		shardHasData[shardId] = true
 		shardPaths[shardId] = shardPath
