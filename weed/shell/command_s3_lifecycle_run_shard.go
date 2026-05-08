@@ -13,11 +13,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/lifecycle_xml"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -102,16 +101,13 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	// Run the whole pipeline inside one WithFilerClient so the reader's
 	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
-		inputs, parseErrors, err := loadLifecycleCompileInputs(context.Background(), filerClient, bucketsPath)
+		inputs, parseErrors, err := scheduler.LoadCompileInputs(context.Background(), filerClient, bucketsPath)
 		if err != nil {
 			return fmt.Errorf("load lifecycle configs: %w", err)
 		}
 		for i, pe := range parseErrors {
-			// Surface up to the first three parse errors so the operator
-			// can chase malformed configs; cap the rest with a count so
-			// the output stays readable on large clusters.
 			if i < 3 {
-				fmt.Fprintf(writer, "warning: %s: %v\n", pe.bucket, pe.err)
+				fmt.Fprintf(writer, "warning: %s: %v\n", pe.Bucket, pe.Err)
 			}
 		}
 		if extra := len(parseErrors) - 3; extra > 0 {
@@ -123,11 +119,8 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		}
 		fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
 
-		// Activate every action so this manual run dispatches whatever fires.
-		// The production bootstrap walker promotes actions only after a clean
-		// walk; this shell entrypoint runs out-of-band of that flow.
 		eng := engine.New()
-		eng.Compile(inputs, engine.CompileOptions{PriorStates: allActivePriorStates(inputs)})
+		eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
 
 		pipeline := &dispatcher.Pipeline{
 			Shards:         shards,
@@ -288,89 +281,3 @@ func resolveBucketsPath(env *CommandEnv) (string, error) {
 	return path, nil
 }
 
-type lifecycleParseError struct {
-	bucket string
-	err    error
-}
-
-// loadLifecycleCompileInputs walks the buckets directory and reads each
-// bucket entry's lifecycle XML from its Extended attributes. Pagination
-// loops with startFrom so clusters with more than one page of buckets
-// don't drop the tail. Parse errors are collected per bucket and returned
-// alongside the successful inputs so the caller can surface them.
-func loadLifecycleCompileInputs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath string) ([]engine.CompileInput, []lifecycleParseError, error) {
-	var (
-		inputs      []engine.CompileInput
-		parseErrors []lifecycleParseError
-		startFrom   string
-	)
-	const pageSize uint32 = 1024
-	for {
-		pageCount := 0
-		var lastName string
-		err := filer_pb.SeaweedList(ctx, client, bucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-			pageCount++
-			lastName = entry.Name
-			if !entry.IsDirectory {
-				return nil
-			}
-			xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]
-			if !ok || len(xmlBytes) == 0 {
-				return nil
-			}
-			rules, err := lifecycle_xml.ParseCanonical(xmlBytes)
-			if err != nil {
-				parseErrors = append(parseErrors, lifecycleParseError{bucket: entry.Name, err: err})
-				return nil
-			}
-			if len(rules) == 0 {
-				return nil
-			}
-			inputs = append(inputs, engine.CompileInput{
-				Bucket:    entry.Name,
-				Rules:     rules,
-				Versioned: isBucketVersioned(entry),
-			})
-			return nil
-		}, startFrom, false, pageSize)
-		if err != nil {
-			return nil, nil, err
-		}
-		if uint32(pageCount) < pageSize {
-			break
-		}
-		startFrom = lastName
-	}
-	return inputs, parseErrors, nil
-}
-
-const bucketLifecycleConfigurationXMLKey = "s3-bucket-lifecycle-configuration-xml"
-
-func isBucketVersioned(entry *filer_pb.Entry) bool {
-	v, ok := entry.Extended[s3_constants.ExtVersioningKey]
-	if !ok {
-		return false
-	}
-	s := strings.ToLower(strings.TrimSpace(string(v)))
-	return s == "enabled" || s == "suspended"
-}
-
-// allActivePriorStates seeds every compiled action as bootstrap-complete +
-// event-driven so the run dispatches whatever fires. Production bootstrap
-// walks set this incrementally per bucket; this manual run skips the walk.
-func allActivePriorStates(inputs []engine.CompileInput) map[s3lifecycle.ActionKey]engine.PriorState {
-	prior := map[s3lifecycle.ActionKey]engine.PriorState{}
-	for _, in := range inputs {
-		for _, rule := range in.Rules {
-			hash := s3lifecycle.RuleHash(rule)
-			for _, kind := range s3lifecycle.RuleActionKinds(rule) {
-				key := s3lifecycle.ActionKey{Bucket: in.Bucket, RuleHash: hash, ActionKind: kind}
-				prior[key] = engine.PriorState{
-					BootstrapComplete: true,
-					Mode:              engine.ModeEventDriven,
-				}
-			}
-		}
-	}
-	return prior
-}
