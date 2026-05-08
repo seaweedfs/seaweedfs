@@ -103,7 +103,6 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
 		eng := engine.New()
-		bsRPC := &lifecycleClientCallable{c: rpcClient}
 		// Walk each bucket on the same cadence as the engine refresh so a
 		// freshly-PUT rule's pre-existing entries roll past their (rescaled
 		// or real) due times within a couple ticks.
@@ -111,7 +110,13 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		if bootstrapWalkInterval <= 0 {
 			bootstrapWalkInterval = 30 * time.Second
 		}
-		bsr := newBucketBootstrapper(filerClient, bsRPC, bucketsPath, bootstrapWalkInterval, eng.Snapshot)
+		bsr := &scheduler.BucketBootstrapper{
+			FilerClient:  filerClient,
+			Client:       &lifecycleClientCallable{c: rpcClient},
+			BucketsPath:  bucketsPath,
+			WalkInterval: bootstrapWalkInterval,
+			GetSnapshot:  eng.Snapshot,
+		}
 		bootstrapCtx, bootstrapCancel := context.WithCancel(context.Background())
 		defer bootstrapCancel()
 
@@ -148,7 +153,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			for _, in := range inputs {
 				buckets = append(buckets, in.Bucket)
 			}
-			bsr.kickOffNew(bootstrapCtx, buckets)
+			bsr.KickOffNew(bootstrapCtx, buckets)
 		}
 		compile(true)
 

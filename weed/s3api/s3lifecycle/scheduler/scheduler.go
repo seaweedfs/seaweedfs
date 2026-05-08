@@ -38,6 +38,12 @@ type Scheduler struct {
 	CheckpointTick  time.Duration
 	RefreshInterval time.Duration
 	RetryBackoff    time.Duration
+
+	// BootstrapWalkInterval drives how often each per-bucket walker
+	// re-scans for entries that have aged into their action's threshold.
+	// Zero falls back to RefreshInterval (so a freshly-PUT rule's pre-
+	// existing entries roll past their due time within a couple ticks).
+	BootstrapWalkInterval time.Duration
 }
 
 // Run blocks until ctx is canceled. Spawns Workers + 1 goroutines: one
@@ -63,7 +69,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		retry = defaultRetryBackoff
 	}
 
-	s.refreshEngine(ctx)
+	walkInterval := s.BootstrapWalkInterval
+	if walkInterval <= 0 {
+		walkInterval = refresh
+	}
+	bs := &BucketBootstrapper{
+		FilerClient:  s.FilerClient,
+		Client:       s.Client,
+		BucketsPath:  s.BucketsPath,
+		WalkInterval: walkInterval,
+		GetSnapshot:  s.Engine.Snapshot,
+	}
+
+	s.refreshEngine(ctx, bs)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -76,7 +94,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				s.refreshEngine(ctx)
+				s.refreshEngine(ctx, bs)
 			}
 		}
 	}()
@@ -123,7 +141,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Scheduler) refreshEngine(ctx context.Context) {
+func (s *Scheduler) refreshEngine(ctx context.Context, bs *BucketBootstrapper) {
 	inputs, parseErrors, err := LoadCompileInputs(ctx, s.FilerClient, s.BucketsPath)
 	if err != nil {
 		glog.Warningf("lifecycle scheduler: refresh engine: %v", err)
@@ -133,6 +151,13 @@ func (s *Scheduler) refreshEngine(ctx context.Context) {
 		glog.Warningf("lifecycle scheduler: malformed config in bucket %s: %v", pe.Bucket, pe.Err)
 	}
 	s.Engine.Compile(inputs, engine.CompileOptions{PriorStates: AllActivePriorStates(inputs)})
+	if bs != nil {
+		buckets := make([]string, 0, len(inputs))
+		for _, in := range inputs {
+			buckets = append(buckets, in.Bucket)
+		}
+		bs.KickOffNew(ctx, buckets)
+	}
 }
 
 // AssignShards returns the contiguous shard slice for worker idx of total.
