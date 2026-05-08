@@ -146,6 +146,11 @@ func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 			IsMPUInit: true,
 		}
 	}
+	// Directory entries that aren't MPU inits aren't lifecycle subjects:
+	// the .versions/ folder itself, prefix dirs, etc. — emit nothing.
+	if entry.IsDirectory {
+		return nil
+	}
 	info := &s3lifecycle.ObjectInfo{
 		Key:         ev.Key,
 		ModTime:     time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),

@@ -517,9 +517,10 @@ func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
 	now := time.Now()
 	old := now.AddDate(0, 0, -2)
 	cases := []struct {
-		name string
-		key  string
-		ext  map[string][]byte
+		name  string
+		key   string
+		isDir bool
+		ext   map[string][]byte
 	}{
 		{
 			name: "tracked version file",
@@ -535,12 +536,24 @@ func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
 			key:  ".versions/v_v1",
 			ext:  map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")},
 		},
+		{
+			// The .versions/ folder itself is a directory entry; the
+			// router must not emit ObjectInfo for it. Without the
+			// directory short-circuit it would route as a regular
+			// object and the dispatcher would target a directory path.
+			name:  "versions dir itself",
+			key:   "logs/foo.versions",
+			isDir: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := eventCreate("bk", tc.key, old.Unix(), 1, old.UnixNano())
 			if tc.ext != nil {
 				ev.NewEntry.Extended = tc.ext
+			}
+			if tc.isDir {
+				ev.NewEntry.IsDirectory = true
 			}
 			if got := Route(snap, ev, now); len(got) != 0 {
 				t.Fatalf("version-folder event should be skipped, got %v", got)

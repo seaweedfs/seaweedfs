@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -184,7 +184,7 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 // bucket isn't versioned in this object's history).
 func (s3a *S3ApiServer) isCurrentLatestVersion(bucket, object, versionId string) (bool, error) {
 	versionsDir := s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-	parent, name := filepath.Split(versionsDir)
+	parent, name := path.Split(versionsDir)
 	parent = strings.TrimRight(parent, "/")
 	if parent == "" {
 		parent = "/"
