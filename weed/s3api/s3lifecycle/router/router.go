@@ -31,9 +31,10 @@ type Match struct {
 // s3_lifecycle_pb.EntryIdentity but stay in-package so the router doesn't
 // pull a proto dependency.
 type EntryIdentity struct {
-	MtimeNs int64
-	Size    int64
-	HeadFid string
+	MtimeNs      int64
+	Size         int64
+	HeadFid      string
+	ExtendedHash []byte
 }
 
 // Route returns the matches that fire for ev against snap. Only EVENT_DRIVEN
@@ -142,6 +143,7 @@ func buildIdentity(ev *reader.Event) *EntryIdentity {
 	if len(entry.GetChunks()) > 0 {
 		id.HeadFid = entry.GetChunks()[0].FileId
 	}
+	id.ExtendedHash = s3lifecycle.HashExtended(entry.Extended)
 	return id
 }
 

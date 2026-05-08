@@ -200,8 +200,9 @@ func toProtoIdentity(id *router.EntryIdentity) *s3_lifecycle_pb.EntryIdentity {
 		return nil
 	}
 	return &s3_lifecycle_pb.EntryIdentity{
-		MtimeNs: id.MtimeNs,
-		Size:    id.Size,
-		HeadFid: id.HeadFid,
+		MtimeNs:      id.MtimeNs,
+		Size:         id.Size,
+		HeadFid:      id.HeadFid,
+		ExtendedHash: id.ExtendedHash,
 	}
 }

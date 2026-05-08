@@ -195,3 +195,34 @@ func TestRouteIdentityCapturedForNewEntry(t *testing.T) {
 		t.Fatalf("MtimeNs=%d, want %d (Mtime*1e9)", id.MtimeNs, wantNs)
 	}
 }
+
+func TestRouteIdentityHashesExtended(t *testing.T) {
+	// A normal S3 PUT stores ETag/content-type etc. in Extended; the worker
+	// must hash these into ExtendedHash so the server's identity-CAS sees
+	// the same fingerprint. Without this the live entry's non-nil
+	// ExtendedHash diverges from the worker's nil value and every
+	// dispatch returns NOOP_RESOLVED:STALE_IDENTITY.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	ev := eventCreate("bk", "k", old.Unix(), 1, old.UnixNano())
+	ev.NewEntry.Extended = map[string][]byte{
+		"X-Amz-Meta-Etag": []byte("abc123"),
+		"Content-Type":    []byte("text/plain"),
+	}
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %v", matches)
+	}
+	id := matches[0].Identity
+	if id == nil || len(id.ExtendedHash) == 0 {
+		t.Fatalf("ExtendedHash not captured for non-empty Extended: %+v", id)
+	}
+	want := s3lifecycle.HashExtended(ev.NewEntry.Extended)
+	if string(id.ExtendedHash) != string(want) {
+		t.Fatalf("ExtendedHash mismatch:\n got %x\nwant %x", id.ExtendedHash, want)
+	}
+}
