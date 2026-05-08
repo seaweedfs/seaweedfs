@@ -73,6 +73,8 @@ func (b *BucketBootstrapper) KickOffNew(ctx context.Context, buckets []string) {
 
 func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	root := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket
+	glog.V(0).Infof("lifecycle bootstrap: starting walk for bucket %s (root=%s)", bucket, root)
+	count := 0
 	if err := walkBucketDir(ctx, b.FilerClient, root, root, func(entry *filer_pb.Entry, key string) error {
 		ev := &reader.Event{
 			// TsNs=0 sentinel: dispatcher.advance treats <=0 as no-op,
@@ -84,12 +86,15 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 			ShardID:  s3lifecycle.ShardID(bucket, key),
 			NewEntry: entry,
 		}
+		count++
 		return b.Injector.InjectEvent(ctx, ev)
 	}); err != nil {
 		if ctx.Err() == nil {
-			glog.V(1).Infof("lifecycle bootstrap %s: %v", bucket, err)
+			glog.V(0).Infof("lifecycle bootstrap %s: %v", bucket, err)
 		}
+		return
 	}
+	glog.V(0).Infof("lifecycle bootstrap: bucket %s injected %d entries", bucket, count)
 }
 
 // walkBucketDir lists every file under dir recursively and invokes cb
