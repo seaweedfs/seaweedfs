@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -115,6 +116,17 @@ func (p *FilerPersister) Save(ctx context.Context, shardID int, state map[s3life
 			TsNs:       v,
 		})
 	}
+	// Stable order so the on-disk file diffs cleanly across saves.
+	sort.Slice(cf.Entries, func(i, j int) bool {
+		a, b := cf.Entries[i], cf.Entries[j]
+		if a.Bucket != b.Bucket {
+			return a.Bucket < b.Bucket
+		}
+		if a.ActionKind != b.ActionKind {
+			return a.ActionKind < b.ActionKind
+		}
+		return bytes.Compare(a.RuleHash, b.RuleHash) < 0
+	})
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(cf); err != nil {
 		return fmt.Errorf("cursor encode shard=%d: %w", shardID, err)

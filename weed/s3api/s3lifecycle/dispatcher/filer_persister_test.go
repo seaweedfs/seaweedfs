@@ -122,6 +122,32 @@ func TestFilerPersisterSaveOverwrites(t *testing.T) {
 	}
 }
 
+func TestFilerPersisterSaveIsDeterministic(t *testing.T) {
+	// Saving the same map twice must produce byte-identical content so the
+	// on-disk file diffs cleanly when the state hasn't changed.
+	store := newFakeFilerStore()
+	p := &FilerPersister{Store: store}
+	ctx := context.Background()
+
+	in := map[s3lifecycle.ActionKey]int64{
+		mkKey("zeta", s3lifecycle.ActionKindNoncurrentDays, 0xCC):  300,
+		mkKey("alpha", s3lifecycle.ActionKindExpirationDays, 0xAA): 100,
+		mkKey("alpha", s3lifecycle.ActionKindAbortMPU, 0xBB):       200,
+	}
+	if err := p.Save(ctx, 0, in); err != nil {
+		t.Fatalf("Save 1: %v", err)
+	}
+	first := append([]byte(nil), store.files[store.key(CursorDir, cursorFileName(0))]...)
+
+	if err := p.Save(ctx, 0, in); err != nil {
+		t.Fatalf("Save 2: %v", err)
+	}
+	second := store.files[store.key(CursorDir, cursorFileName(0))]
+	if string(first) != string(second) {
+		t.Fatalf("non-deterministic save:\n first=%s\nsecond=%s", first, second)
+	}
+}
+
 func TestFilerPersisterCorruptDataReturnsError(t *testing.T) {
 	store := newFakeFilerStore()
 	store.Save(context.Background(), CursorDir, "shard-00.json", []byte("not json"))
