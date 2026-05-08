@@ -220,7 +220,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      30 * 60,
+			DetectionIntervalMinutes:      30,
 			DetectionTimeoutSeconds:       120,
 			MaxJobsPerDetection:           100,
 			GlobalExecutionConcurrency:    16,

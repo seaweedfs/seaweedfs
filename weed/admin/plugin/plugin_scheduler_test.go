@@ -23,7 +23,7 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 		JobType: "vacuum",
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      30,
+			DetectionIntervalMinutes:      30,
 			DetectionTimeoutSeconds:       20,
 			MaxJobsPerDetection:           123,
 			GlobalExecutionConcurrency:    5,
@@ -74,7 +74,7 @@ func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T
 		JobType: "ec",
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      60,
+			DetectionIntervalMinutes:      60,
 			DetectionTimeoutSeconds:       25,
 			MaxJobsPerDetection:           30,
 			GlobalExecutionConcurrency:    4,
@@ -397,7 +397,7 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 		JobType: jobType,
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      45,
+			DetectionIntervalMinutes:      45,
 			DetectionTimeoutSeconds:       30,
 			MaxJobsPerDetection:           80,
 			GlobalExecutionConcurrency:    3,
@@ -448,8 +448,8 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 	if state.NextDetectionAt.Unix() != nextDetectionAt.Unix() {
 		t.Fatalf("unexpected next detection time: got=%v want=%v", state.NextDetectionAt, nextDetectionAt)
 	}
-	if state.DetectionIntervalSeconds != 45 {
-		t.Fatalf("unexpected detection interval: got=%d", state.DetectionIntervalSeconds)
+	if state.DetectionIntervalMinutes != 45 {
+		t.Fatalf("unexpected detection interval: got=%d", state.DetectionIntervalMinutes)
 	}
 	if state.DetectionTimeoutSeconds != 30 {
 		t.Fatalf("unexpected detection timeout: got=%d", state.DetectionTimeoutSeconds)
@@ -657,7 +657,7 @@ func TestRunLaneSchedulerIterationLockBehavior(t *testing.T) {
 				JobType: tt.jobType,
 				AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 					Enabled:                  true,
-					DetectionIntervalSeconds: 1,
+					DetectionIntervalMinutes: 1,
 				},
 			})
 			if err != nil {

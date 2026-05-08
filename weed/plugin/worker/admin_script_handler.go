@@ -22,7 +22,7 @@ const (
 	adminScriptJobType        = "admin_script"
 	maxAdminScriptOutputBytes = 16 * 1024
 	defaultAdminScriptRunMins = 17
-	adminScriptDetectTickSecs = 17 * 60
+	adminScriptDetectTickMinutes = 17
 )
 
 const defaultAdminScript = `ec.balance -apply
@@ -115,7 +115,7 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      adminScriptDetectTickSecs,
+			DetectionIntervalMinutes:      adminScriptDetectTickMinutes,
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           1,
 			GlobalExecutionConcurrency:    1,

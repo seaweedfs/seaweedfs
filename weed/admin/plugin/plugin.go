@@ -1036,7 +1036,7 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		defaults := descriptor.AdminRuntimeDefaults
 		adminRuntime = &plugin_pb.AdminRuntimeConfig{
 			Enabled:                       defaults.Enabled,
-			DetectionIntervalSeconds:      defaults.DetectionIntervalSeconds,
+			DetectionIntervalMinutes:      defaults.DetectionIntervalMinutes,
 			DetectionTimeoutSeconds:       defaults.DetectionTimeoutSeconds,
 			MaxJobsPerDetection:           defaults.MaxJobsPerDetection,
 			GlobalExecutionConcurrency:    defaults.GlobalExecutionConcurrency,

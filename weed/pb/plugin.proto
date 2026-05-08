@@ -225,7 +225,7 @@ message ValueMap {
 
 message AdminRuntimeDefaults {
   bool enabled = 1;
-  int32 detection_interval_seconds = 2;
+  int32 detection_interval_minutes = 2;
   int32 detection_timeout_seconds = 3;
   int32 max_jobs_per_detection = 4;
   int32 global_execution_concurrency = 5;
@@ -241,7 +241,7 @@ message AdminRuntimeDefaults {
 
 message AdminRuntimeConfig {
   bool enabled = 1;
-  int32 detection_interval_seconds = 2;
+  int32 detection_interval_minutes = 2;
   int32 detection_timeout_seconds = 3;
   int32 max_jobs_per_detection = 4;
   int32 global_execution_concurrency = 5;

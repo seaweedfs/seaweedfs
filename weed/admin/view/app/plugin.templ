@@ -258,7 +258,7 @@ templ Plugin(page string, initialJob string, lane string) {
                                     </div>
                                 </div>
                                 <div class="col-12">
-                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
+                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (min)</label>
                                     <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
                                     <div class="form-text">How often to check for new work.</div>
                                 </div>
@@ -2526,7 +2526,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 document.getElementById('plugin-admin-enabled').checked = pickBool('enabled');
-                document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_seconds'));
+                document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_minutes'));
                 document.getElementById('plugin-admin-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
                 document.getElementById('plugin-admin-execution-timeout').value = String(pickNumber('execution_timeout_seconds'));
                 document.getElementById('plugin-admin-max-runtime').value = String(pickNumber('job_type_max_runtime_seconds'));
@@ -2552,7 +2552,7 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 return {
                     enabled: !!document.getElementById('plugin-admin-enabled').checked,
-                    detection_interval_seconds: getInt('plugin-admin-detection-interval'),
+                    detection_interval_minutes: getInt('plugin-admin-detection-interval'),
                     detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
                     execution_timeout_seconds: getInt('plugin-admin-execution-timeout'),
                     job_type_max_runtime_seconds: getInt('plugin-admin-max-runtime'),

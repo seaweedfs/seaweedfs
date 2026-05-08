@@ -936,8 +936,8 @@ func applyDescriptorDefaultsToPersistedConfig(
 	if descriptor.AdminRuntimeDefaults != nil {
 		runtime := config.AdminRuntime
 		defaults := descriptor.AdminRuntimeDefaults
-		if runtime.DetectionIntervalSeconds <= 0 {
-			runtime.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+		if runtime.DetectionIntervalMinutes <= 0 {
+			runtime.DetectionIntervalMinutes = defaults.DetectionIntervalMinutes
 		}
 		if runtime.DetectionTimeoutSeconds <= 0 {
 			runtime.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds

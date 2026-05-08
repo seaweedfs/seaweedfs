@@ -158,7 +158,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      17 * 60,
+			DetectionIntervalMinutes:      17,
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           500,
 			GlobalExecutionConcurrency:    16,

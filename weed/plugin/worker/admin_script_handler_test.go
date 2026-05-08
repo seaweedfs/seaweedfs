@@ -18,9 +18,9 @@ func TestAdminScriptDescriptorDefaults(t *testing.T) {
 	if descriptor.AdminRuntimeDefaults == nil {
 		t.Fatalf("expected admin runtime defaults")
 	}
-	if descriptor.AdminRuntimeDefaults.DetectionIntervalSeconds != adminScriptDetectTickSecs {
+	if descriptor.AdminRuntimeDefaults.DetectionIntervalMinutes != adminScriptDetectTickMinutes {
 		t.Fatalf("unexpected detection interval seconds: got=%d want=%d",
-			descriptor.AdminRuntimeDefaults.DetectionIntervalSeconds, adminScriptDetectTickSecs)
+			descriptor.AdminRuntimeDefaults.DetectionIntervalMinutes, adminScriptDetectTickMinutes)
 	}
 	if descriptor.AdminConfigForm == nil {
 		t.Fatalf("expected admin config form")

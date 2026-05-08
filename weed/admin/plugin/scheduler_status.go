@@ -47,7 +47,7 @@ type SchedulerJobTypeStatus struct {
 	Enabled                  bool       `json:"enabled"`
 	DetectionInFlight        bool       `json:"detection_in_flight"`
 	NextDetectionAt          *time.Time `json:"next_detection_at,omitempty"`
-	DetectionIntervalSeconds int32      `json:"detection_interval_seconds,omitempty"`
+	DetectionIntervalMinutes int32      `json:"detection_interval_minutes,omitempty"`
 	LastDetectedAt           *time.Time `json:"last_detected_at,omitempty"`
 	LastDetectedCount        int        `json:"last_detected_count,omitempty"`
 	LastDetectionError       string     `json:"last_detection_error,omitempty"`
@@ -347,7 +347,7 @@ func (r *Plugin) GetLaneSchedulerStatus(lane SchedulerLane) SchedulerStatus {
 			Enabled:                  state.Enabled,
 			DetectionInFlight:        state.DetectionInFlight,
 			NextDetectionAt:          state.NextDetectionAt,
-			DetectionIntervalSeconds: state.DetectionIntervalSeconds,
+			DetectionIntervalMinutes: state.DetectionIntervalMinutes,
 		}
 		if !info.lastDetectedAt.IsZero() {
 			jobStatus.LastDetectedAt = timeToPtr(info.lastDetectedAt)
@@ -430,7 +430,7 @@ func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 			Enabled:                  state.Enabled,
 			DetectionInFlight:        state.DetectionInFlight,
 			NextDetectionAt:          state.NextDetectionAt,
-			DetectionIntervalSeconds: state.DetectionIntervalSeconds,
+			DetectionIntervalMinutes: state.DetectionIntervalMinutes,
 		}
 		if !info.lastDetectedAt.IsZero() {
 			jobStatus.LastDetectedAt = timeToPtr(info.lastDetectedAt)

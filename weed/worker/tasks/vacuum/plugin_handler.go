@@ -178,7 +178,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      17 * 60,
+			DetectionIntervalMinutes:      17,
 			DetectionTimeoutSeconds:       120,
 			MaxJobsPerDetection:           200,
 			GlobalExecutionConcurrency:    16,

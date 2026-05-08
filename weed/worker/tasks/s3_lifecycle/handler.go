@@ -141,7 +141,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
-			DetectionIntervalSeconds: 24 * 60 * 60, // daily
+			DetectionIntervalMinutes: 24 * 60, // daily
 			DetectionTimeoutSeconds:  60,
 			MaxJobsPerDetection:      1,
 		},

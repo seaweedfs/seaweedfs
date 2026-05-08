@@ -159,7 +159,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      60 * 30,
+			DetectionIntervalMinutes:      30,
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           500,
 			GlobalExecutionConcurrency:    16,

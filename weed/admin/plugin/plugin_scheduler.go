@@ -466,7 +466,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 	}
 
 	policy := schedulerPolicy{
-		DetectionInterval:      durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
+		DetectionInterval:      durationFromMinutes(adminRuntime.DetectionIntervalMinutes, defaultScheduledDetectionInterval),
 		DetectionTimeout:       durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
 		ExecutionTimeout:       durationFromSeconds(adminRuntime.ExecutionTimeoutSeconds, defaultScheduledExecutionTimeout),
 		JobTypeMaxRuntime:      durationFromSeconds(adminRuntime.JobTypeMaxRuntimeSeconds, defaultScheduledJobTypeMaxRuntime),
@@ -548,7 +548,7 @@ func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 		} else {
 			state.Enabled = enabled
 			if enabled {
-				state.DetectionIntervalSeconds = secondsFromDuration(policy.DetectionInterval)
+				state.DetectionIntervalMinutes = minutesFromDuration(policy.DetectionInterval)
 				state.DetectionTimeoutSeconds = secondsFromDuration(policy.DetectionTimeout)
 				state.ExecutionTimeoutSeconds = secondsFromDuration(policy.ExecutionTimeout)
 				state.JobTypeMaxRuntimeSeconds = secondsFromDuration(policy.JobTypeMaxRuntime)
@@ -613,8 +613,8 @@ func deriveSchedulerAdminRuntime(
 		// default instead of the handler's declared baseline.
 		if descriptor != nil && descriptor.AdminRuntimeDefaults != nil {
 			defaults := descriptor.AdminRuntimeDefaults
-			if adminConfig.DetectionIntervalSeconds <= 0 {
-				adminConfig.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+			if adminConfig.DetectionIntervalMinutes <= 0 {
+				adminConfig.DetectionIntervalMinutes = defaults.DetectionIntervalMinutes
 			}
 			if adminConfig.DetectionTimeoutSeconds <= 0 {
 				adminConfig.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds
@@ -648,7 +648,7 @@ func deriveSchedulerAdminRuntime(
 	defaults := descriptor.AdminRuntimeDefaults
 	return &plugin_pb.AdminRuntimeConfig{
 		Enabled:                       defaults.Enabled,
-		DetectionIntervalSeconds:      defaults.DetectionIntervalSeconds,
+		DetectionIntervalMinutes:      defaults.DetectionIntervalMinutes,
 		DetectionTimeoutSeconds:       defaults.DetectionTimeoutSeconds,
 		MaxJobsPerDetection:           defaults.MaxJobsPerDetection,
 		GlobalExecutionConcurrency:    defaults.GlobalExecutionConcurrency,
@@ -1366,11 +1366,25 @@ func durationFromSeconds(seconds int32, defaultValue time.Duration) time.Duratio
 	return time.Duration(seconds) * time.Second
 }
 
+func durationFromMinutes(minutes int32, defaultValue time.Duration) time.Duration {
+	if minutes <= 0 {
+		return defaultValue
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
 func secondsFromDuration(duration time.Duration) int32 {
 	if duration <= 0 {
 		return 0
 	}
 	return int32(duration / time.Second)
+}
+
+func minutesFromDuration(duration time.Duration) int32 {
+	if duration <= 0 {
+		return 0
+	}
+	return int32(duration / time.Minute)
 }
 
 func waitForShutdownOrTimerWithContext(shutdown <-chan struct{}, ctx context.Context, duration time.Duration) bool {

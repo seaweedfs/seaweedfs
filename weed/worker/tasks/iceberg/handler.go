@@ -324,7 +324,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       false, // disabled by default
-			DetectionIntervalSeconds:      3600,  // 1 hour
+			DetectionIntervalMinutes:      60, // 1 hour
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           100,
 			GlobalExecutionConcurrency:    4,
@@ -374,7 +374,7 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 		return fmt.Errorf("invalid where config: %w", err)
 	}
 
-	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.
+	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalMinutes.
 
 	// Get filer addresses from cluster context
 	filerAddresses := make([]string, 0)

@@ -112,7 +112,7 @@ templ PluginLane(page string, lane string) {
                     html += '<tr>';
                     html += '<td>' + jt.job_type + '</td>';
                     html += '<td>' + (jt.enabled ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-secondary">No</span>') + '</td>';
-                    html += '<td>' + (jt.detection_interval_seconds || '-') + 's</td>';
+                    html += '<td>' + (jt.detection_interval_minutes || '-') + 'm</td>';
                     html += '<td>' + (jt.detection_in_flight ? '<span class="badge bg-warning">Yes</span>' : 'No') + '</td>';
                     html += '<td>' + (jt.next_detection_at ? new Date(jt.next_detection_at).toLocaleTimeString() : '-') + '</td>';
                     html += '</tr>';
@@ -132,7 +132,7 @@ templ PluginLane(page string, lane string) {
                 html += '<td><a href="' + basePath('/plugin/configuration?job=' + s.job_type) + '">' + s.job_type + '</a></td>';
                 html += '<td>' + (s.enabled ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-secondary">No</span>') + '</td>';
                 html += '<td>' + (s.global_execution_concurrency || 1) + '</td>';
-                html += '<td>' + (s.detection_interval_seconds || '-') + 's</td>';
+                html += '<td>' + (s.detection_interval_minutes || '-') + 'm</td>';
                 html += '<td>' + (s.last_run_status || '-') + '</td>';
                 html += '</tr>';
             });

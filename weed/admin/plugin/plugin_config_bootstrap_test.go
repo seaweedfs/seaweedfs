@@ -30,7 +30,7 @@ func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      60,
+			DetectionIntervalMinutes:      60,
 			DetectionTimeoutSeconds:       20,
 			MaxJobsPerDetection:           30,
 			GlobalExecutionConcurrency:    4,

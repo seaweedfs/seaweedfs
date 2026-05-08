@@ -90,7 +90,7 @@ func TestGetLaneSchedulerStatusShowsActiveConcurrentLaneWork(t *testing.T) {
 		JobType: jobType,
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 			Enabled:                  true,
-			DetectionIntervalSeconds: 30,
+			DetectionIntervalMinutes: 30,
 			DetectionTimeoutSeconds:  15,
 		},
 	})

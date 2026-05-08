@@ -88,7 +88,7 @@ type SchedulerJobTypeState struct {
 	PolicyError                   string     `json:"policy_error,omitempty"`
 	DetectionInFlight             bool       `json:"detection_in_flight"`
 	NextDetectionAt               *time.Time `json:"next_detection_at,omitempty"`
-	DetectionIntervalSeconds      int32      `json:"detection_interval_seconds,omitempty"`
+	DetectionIntervalMinutes      int32      `json:"detection_interval_minutes,omitempty"`
 	DetectionTimeoutSeconds       int32      `json:"detection_timeout_seconds,omitempty"`
 	ExecutionTimeoutSeconds       int32      `json:"execution_timeout_seconds,omitempty"`
 	JobTypeMaxRuntimeSeconds      int32      `json:"job_type_max_runtime_seconds,omitempty"`

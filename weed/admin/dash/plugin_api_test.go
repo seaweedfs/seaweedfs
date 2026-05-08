@@ -137,7 +137,7 @@ func TestApplyDescriptorDefaultsToPersistedConfigBackfillsAdminDefaults(t *testi
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
-			DetectionIntervalSeconds: 60,
+			DetectionIntervalMinutes: 60,
 			DetectionTimeoutSeconds:  300,
 		},
 	}
@@ -152,7 +152,7 @@ func TestApplyDescriptorDefaultsToPersistedConfigBackfillsAdminDefaults(t *testi
 	if !ok || scriptKind.StringValue == "" {
 		t.Fatalf("expected non-empty script default, got=%+v", script)
 	}
-	if config.AdminRuntime.DetectionIntervalSeconds != 60 {
+	if config.AdminRuntime.DetectionIntervalMinutes != 60 {
 		t.Fatalf("expected runtime detection interval default to be backfilled")
 	}
 }
