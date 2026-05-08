@@ -20,8 +20,14 @@ import (
 // Entry is the routing-relevant slice of a filer entry. SuccessorModTime
 // and NoncurrentIndex are populated only on versioned-bucket walks; the
 // retention path bails out conservatively when they're zero / nil.
+//
+// MPU init directories at .uploads/<id> populate DestKey with the
+// destination object key (from entry.Extended[ExtMultipartObjectKey]) so
+// rule-prefix matching works on the user's intended path while Path
+// stays as the upload directory the dispatcher must rm.
 type Entry struct {
 	Path           string
+	DestKey        string
 	ModTime        time.Time
 	Size           int64
 	IsDirectory    bool
@@ -76,8 +82,9 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 		if entry == nil || entry.Path == "" {
 			return nil
 		}
-		// Lifecycle never applies to directory entries.
-		if entry.IsDirectory {
+		// MPU init directories at .uploads/<id> are the one directory
+		// shape lifecycle cares about; everything else stays out.
+		if entry.IsDirectory && !entry.IsMPUInit {
 			cp.LastScannedPath = entry.Path
 			return nil
 		}
@@ -95,12 +102,23 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 }
 
 func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry *Entry, dispatch Dispatcher, now time.Time, info *s3lifecycle.ObjectInfo) error {
-	keys := snap.MatchPath(bucket, entry.Path, nil)
+	// MPU init: rule-prefix matching uses the destination key, not the
+	// .uploads/<id> directory path. A bare directory with no DestKey is
+	// either a stray dir or an init mid-write before metadata landed —
+	// skip rather than guess.
+	matchKey := entry.Path
+	if entry.IsMPUInit {
+		if entry.DestKey == "" {
+			return nil
+		}
+		matchKey = entry.DestKey
+	}
+	keys := snap.MatchPath(bucket, matchKey, nil)
 	if len(keys) == 0 {
 		return nil
 	}
 	*info = s3lifecycle.ObjectInfo{
-		Key:              entry.Path,
+		Key:              matchKey,
 		ModTime:          entry.ModTime,
 		Size:             entry.Size,
 		IsLatest:         entry.IsLatest,
