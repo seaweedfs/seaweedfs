@@ -117,3 +117,33 @@ func TestLifecycleDelete_RejectsEmptyRequest(t *testing.T) {
 		t.Fatalf("empty request should be BLOCKED, got %v", resp.Outcome)
 	}
 }
+
+func TestLifecycleAbortMPU_RejectsTraversalUploadIDs(t *testing.T) {
+	// "." and ".." pass the no-slash check but resolve to the bucket
+	// root via util.JoinPath; they must be rejected before any rm call.
+	s := &S3ApiServer{}
+	cases := []string{
+		"",
+		".uploads",
+		".uploads/",
+		".uploads/.",
+		".uploads/..",
+		".uploads/u1/extra",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			resp, err := s.LifecycleDelete(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:     "bk",
+				ObjectPath: path,
+				ActionKind: s3_lifecycle_pb.ActionKind_ABORT_MPU,
+			})
+			if err != nil {
+				t.Fatalf("unexpected gRPC error: %v", err)
+			}
+			if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+				t.Fatalf("path %q: outcome=%v reason=%q, want BLOCKED",
+					path, resp.Outcome, resp.Reason)
+			}
+		})
+	}
+}
