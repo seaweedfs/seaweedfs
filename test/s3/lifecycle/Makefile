@@ -59,7 +59,6 @@ stop-server:
 		kill -KILL $$PID 2>/dev/null || true; \
 		rm -f weed-server.pid; \
 	fi
-	@pkill -f "weed mini -dir=$(SERVER_DIR)" 2>/dev/null || true
 
 health-check:
 	@curl -s http://localhost:$(S3_PORT) >/dev/null && echo "S3 up on $(S3_PORT)" || (echo "S3 not reachable"; exit 1)
