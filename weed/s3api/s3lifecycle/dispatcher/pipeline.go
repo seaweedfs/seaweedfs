@@ -151,7 +151,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		defer wg.Done()
 		defer close(events)
 		readerErr = rd.Run(runCtx, p.FilerClient, p.ClientName, p.ClientID)
-		if readerErr != nil && !errors.Is(readerErr, context.Canceled) {
+		if readerErr != nil && !isCtxShutdown(readerErr) {
 			glog.Errorf("lifecycle reader: shards=%v: %v", shardIDs, readerErr)
 		}
 		cancel() // wake the dispatcher goroutine to drain & exit
@@ -232,8 +232,15 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		}
 	}
 
-	if readerErr != nil && !errors.Is(readerErr, context.Canceled) {
+	if readerErr != nil && !isCtxShutdown(readerErr) {
 		return readerErr
 	}
 	return nil
+}
+
+// isCtxShutdown reports whether err is a graceful ctx-driven shutdown
+// (Canceled or DeadlineExceeded). Both are normal exit signals — the
+// caller cancelled, or the wall-clock cap was reached.
+func isCtxShutdown(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

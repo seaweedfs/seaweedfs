@@ -65,9 +65,10 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	shard := fs.Int("shard", -1, "single shard id in [0, 16); use -shards for a range or set")
 	shardsSpec := fs.String("shards", "", "shard range \"lo-hi\" or comma list \"a,b,c\"; mutually exclusive with -shard")
 	s3Endpoint := fs.String("s3", "", "s3 server gRPC endpoint, host:port")
-	eventBudget := fs.Int("events", 1000, "max events to process before returning (0 = unbounded)")
+	eventBudget := fs.Int("events", 1000, "max in-shard events to process before returning (0 = unbounded; counts only events that pass the shard filter)")
 	dispatchTick := fs.Duration("dispatch", 5*time.Second, "dispatcher tick cadence")
 	checkpointTick := fs.Duration("checkpoint", 30*time.Second, "cursor checkpoint cadence")
+	runtime := fs.Duration("runtime", 0, "wall-clock cap on the run; 0 = no timeout. -events alone can hang on quiet shards")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -142,10 +143,16 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			EventBudget:    *eventBudget,
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if *runtime > 0 {
+			ctx, cancel = context.WithTimeout(context.Background(), *runtime)
+		} else {
+			ctx, cancel = context.WithCancel(context.Background())
+		}
 		defer cancel()
 
-		fmt.Fprintf(writer, "running shards %s (event budget=%d)…\n", formatShardLabel(shards), *eventBudget)
+		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s)…\n", formatShardLabel(shards), *eventBudget, *runtime)
 		if err := pipeline.Run(ctx); err != nil {
 			return fmt.Errorf("pipeline: %w", err)
 		}
