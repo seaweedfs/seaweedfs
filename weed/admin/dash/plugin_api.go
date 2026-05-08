@@ -14,7 +14,9 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -738,6 +740,9 @@ func (s *AdminServer) parseOrBuildClusterContext(raw json.RawMessage) (*plugin_p
 	if len(contextMessage.VolumeGrpcAddresses) == 0 {
 		contextMessage.VolumeGrpcAddresses = append(contextMessage.VolumeGrpcAddresses, fallback.VolumeGrpcAddresses...)
 	}
+	if len(contextMessage.S3GrpcAddresses) == 0 {
+		contextMessage.S3GrpcAddresses = append(contextMessage.S3GrpcAddresses, fallback.S3GrpcAddresses...)
+	}
 	if contextMessage.Metadata == nil {
 		contextMessage.Metadata = map[string]string{}
 	}
@@ -751,6 +756,7 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 		MasterGrpcAddresses: make([]string, 0),
 		FilerGrpcAddresses:  make([]string, 0),
 		VolumeGrpcAddresses: make([]string, 0),
+		S3GrpcAddresses:     make([]string, 0),
 		Metadata: map[string]string{
 			"source": "admin",
 		},
@@ -794,9 +800,34 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 		glog.V(1).Infof("failed to build default plugin volume context: %v", err)
 	}
 
+	s3Seen := map[string]struct{}{}
+	if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.S3Type,
+		})
+		if err != nil {
+			return err
+		}
+		for _, node := range resp.GetClusterNodes() {
+			address := strings.TrimSpace(node.GetAddress())
+			if address == "" {
+				continue
+			}
+			if _, exists := s3Seen[address]; exists {
+				continue
+			}
+			s3Seen[address] = struct{}{}
+			clusterContext.S3GrpcAddresses = append(clusterContext.S3GrpcAddresses, address)
+		}
+		return nil
+	}); err != nil {
+		glog.V(1).Infof("failed to list cluster S3 nodes: %v", err)
+	}
+
 	sort.Strings(clusterContext.MasterGrpcAddresses)
 	sort.Strings(clusterContext.FilerGrpcAddresses)
 	sort.Strings(clusterContext.VolumeGrpcAddresses)
+	sort.Strings(clusterContext.S3GrpcAddresses)
 
 	return clusterContext
 }
