@@ -21,10 +21,11 @@ make test-with-server
 make test
 ```
 
-The test runs the shell command for every shard `[0, 16)` rather than
-computing the target object's shard up front. This keeps the test
-independent of the `ShardID(bucket, key)` hash function — only that some
-shard reaches the deletion within the polling window.
+The test runs the shell command once with `-shards 0-15` (one filer
+subscription covering all 16 shards) rather than computing the target
+object's shard up front. This keeps the test independent of the
+`ShardID(bucket, key)` hash function — only that some shard reaches the
+deletion within the polling window.
 
 ## Environment
 
