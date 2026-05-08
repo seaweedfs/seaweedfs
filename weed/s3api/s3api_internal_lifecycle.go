@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -102,6 +103,23 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 		if req.VersionId == "" {
 			return blocked("FATAL_EVENT_ERROR: version_id required for noncurrent / delete-marker delete"), nil
 		}
+		// Latest-pointer guard for noncurrent kinds: refuse to delete
+		// the version that the .versions/ directory currently points
+		// to. The router can't always tell current from noncurrent
+		// without sibling state, so the server checks here.
+		if req.ActionKind == s3_lifecycle_pb.ActionKind_NONCURRENT_DAYS ||
+			req.ActionKind == s3_lifecycle_pb.ActionKind_NEWER_NONCURRENT {
+			isLatest, lookupErr := s3a.isCurrentLatestVersion(req.Bucket, req.ObjectPath, req.VersionId)
+			if lookupErr != nil {
+				if errors.Is(lookupErr, filer_pb.ErrNotFound) || errors.Is(lookupErr, ErrObjectNotFound) {
+					return noopResolved("NOT_FOUND"), nil
+				}
+				return retryLater("TRANSPORT_ERROR: latest-pointer lookup: " + lookupErr.Error()), nil
+			}
+			if isLatest {
+				return noopResolved("VERSION_IS_LATEST"), nil
+			}
+		}
 		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId); err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
@@ -155,6 +173,34 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 		return retryLater("TRANSPORT_ERROR: rm: " + err.Error()), nil
 	}
 	return done(), nil
+}
+
+// isCurrentLatestVersion reports whether versionId is the version the
+// .versions/ directory currently points to. SeaweedFS records the latest
+// version on the parent directory's Extended map; without consulting it,
+// a noncurrent-kind dispatch can't safely distinguish current from
+// noncurrent and would risk deleting the live version. Returns
+// (false, nil) when the directory has no latest pointer (e.g., the
+// bucket isn't versioned in this object's history).
+func (s3a *S3ApiServer) isCurrentLatestVersion(bucket, object, versionId string) (bool, error) {
+	versionsDir := s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+	parent, name := filepath.Split(versionsDir)
+	parent = strings.TrimRight(parent, "/")
+	if parent == "" {
+		parent = "/"
+	}
+	entry, err := s3a.getEntry(parent, name)
+	if err != nil {
+		return false, err
+	}
+	if entry == nil || len(entry.Extended) == 0 {
+		return false, nil
+	}
+	latest, ok := entry.Extended[s3_constants.ExtLatestVersionIdKey]
+	if !ok {
+		return false, nil
+	}
+	return string(latest) == versionId, nil
 }
 
 // computeEntryIdentity captures (mtime, size, head fid, sorted-Extended hash):
