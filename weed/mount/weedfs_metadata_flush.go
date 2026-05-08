@@ -110,13 +110,9 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	}
 	entry.Name = name
 
-	if entry.Attributes != nil {
-		metaNow := time.Now()
-		entry.Attributes.Mtime = metaNow.Unix()
-		entry.Attributes.MtimeNs = int32(metaNow.Nanosecond())
-		entry.Attributes.Ctime = metaNow.Unix()
-		entry.Attributes.CtimeNs = int32(metaNow.Nanosecond())
-	}
+	// Do not stamp mtime/ctime here. Write/SetAttr already maintain
+	// them on the entry; overwriting at periodic-flush time clobbered
+	// user-set mtime (utimes/touch -m -d) once the timer fired.
 
 	// Get current chunks - these include chunks that have been uploaded
 	// but not yet persisted to filer metadata

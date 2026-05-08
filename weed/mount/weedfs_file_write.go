@@ -66,6 +66,15 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	newFileSize := max(offset+int64(len(data)), oldFileSize)
 	entry.Attributes.FileSize = uint64(newFileSize)
 
+	// POSIX: writes update mtime and ctime. Stamp the entry now so the
+	// flush path persists the write time rather than overwriting any
+	// user-set mtime (e.g., utimes/touch -m -d) at flush time.
+	writeNow := time.Unix(0, tsNs)
+	entry.Attributes.Mtime = writeNow.Unix()
+	entry.Attributes.MtimeNs = int32(writeNow.Nanosecond())
+	entry.Attributes.Ctime = writeNow.Unix()
+	entry.Attributes.CtimeNs = int32(writeNow.Nanosecond())
+
 	// Track uncommitted bytes for real-time quota enforcement.
 	// Only count the new bytes being added beyond the current file size.
 	if newFileSize > oldFileSize {

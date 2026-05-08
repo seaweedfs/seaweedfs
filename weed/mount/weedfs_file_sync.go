@@ -201,11 +201,9 @@ func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid 
 		if entry.Attributes.Gid == 0 {
 			entry.Attributes.Gid = gid
 		}
-		flushNow := time.Now()
-		entry.Attributes.Mtime = flushNow.Unix()
-		entry.Attributes.MtimeNs = int32(flushNow.Nanosecond())
-		entry.Attributes.Ctime = flushNow.Unix()
-		entry.Attributes.CtimeNs = int32(flushNow.Nanosecond())
+		// Do not stamp mtime/ctime here. Write/SetAttr already maintain
+		// them on the entry; overwriting at flush time clobbered user-set
+		// mtime (utimes/touch -m -d) once the deferred flush ran.
 	}
 
 	glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
