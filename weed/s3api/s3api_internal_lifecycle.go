@@ -131,20 +131,9 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 		return blocked("FATAL_EVENT_ERROR: ABORT_MPU object_path malformed: " + req.ObjectPath), nil
 	}
 
-	uploadsFolder := s3a.genUploadsFolder(req.Bucket)
-	exists, err := s3a.exists(uploadsFolder, uploadID, true)
-	if err != nil {
+	if err := s3a.rm(s3a.genUploadsFolder(req.Bucket), uploadID, true, true); err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return noopResolved("NOT_FOUND"), nil
-		}
-		return retryLater("TRANSPORT_ERROR: exists: " + err.Error()), nil
-	}
-	if !exists {
-		return noopResolved("NOT_FOUND"), nil
-	}
-	if err := s3a.rm(uploadsFolder, uploadID, true, true); err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return noopResolved("NOT_FOUND_AT_DELETE"), nil
 		}
 		glog.V(1).Infof("lifecycle abort_mpu %s/%s: %v", req.Bucket, req.ObjectPath, err)
 		return retryLater("TRANSPORT_ERROR: rm: " + err.Error()), nil
