@@ -954,6 +954,28 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	collectionTtls := fc.GetCollectionTtls(collectionName)
 	changed := false
 
+	// PUT replaces the entire lifecycle policy, so any day-TTL filer.conf
+	// entry left over from a previous PUT (rule removed, prefix changed,
+	// rule disabled, gained a tag/size filter, bucket switched to
+	// versioned) must be cleared first — otherwise a stale entry keeps
+	// expiring objects after the operator updated the policy.
+	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
+	for prefix, ttl := range collectionTtls {
+		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
+			continue
+		}
+		pathConf, found := fc.GetLocationConf(prefix)
+		if !found {
+			continue
+		}
+		pathConf.Ttl = ""
+		fc.SetLocationConf(pathConf)
+		changed = true
+	}
+	// Re-read after clearing so the per-rule dedupe below sees the freshly
+	// cleared state, not the snapshot from before the loop above.
+	collectionTtls = fc.GetCollectionTtls(collectionName)
+
 	// Check whether the bucket has versioning enabled. Versioned buckets must
 	// NOT use the TTL fast-path because:
 	//  1. TTL volumes expire as a unit, destroying all data — including
