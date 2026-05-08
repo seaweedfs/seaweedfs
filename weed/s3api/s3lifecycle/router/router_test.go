@@ -422,6 +422,12 @@ func TestRouteVersionedNoncurrentEventFiresNoncurrentDays(t *testing.T) {
 	now := time.Now()
 	old := now.AddDate(0, 0, -30)
 	ev := eventCreate("bk", "logs/foo.versions/v1", old.Unix(), 1, old.UnixNano())
+	// SeaweedFS sets ExtVersionIdKey on stored versions; the router uses
+	// it to disambiguate genuine noncurrent versions from literal-key
+	// collisions, so the test must mirror that.
+	ev.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte("v1"),
+	}
 
 	matches := Route(snap, ev, now)
 	if len(matches) != 1 {
@@ -507,5 +513,70 @@ func TestRouteVersionedExpiredDeleteMarkerSuppressedWithoutSiblings(t *testing.T
 
 	if got := Route(snap, ev, now); len(got) != 0 {
 		t.Fatalf("ExpiredDeleteMarker without sibling count must not fire, got %v", got)
+	}
+}
+
+func TestRouteVersionedLiteralKeyCollisionStaysCurrent(t *testing.T) {
+	// Versioned bucket, but the user wrote a literal key
+	// "logs/backup.versions/2023" — the path matches the storage shape
+	// of a noncurrent version yet the entry isn't a tracked version
+	// (no ExtVersionIdKey, or the stored vid doesn't match the path
+	// suffix). The router must NOT misclassify it as noncurrent — that
+	// would strip the suffix from info.Key and lose the user's actual
+	// rule-prefix-matching key.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	ev := eventCreate("bk", "logs/backup.versions/2023", old.Unix(), 1, old.UnixNano())
+	// No ExtVersionIdKey: the entry is a regular object with a colourful
+	// name. EXPIRATION_DAYS must fire against the full key.
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match (EXPIRATION_DAYS), got %v", matches)
+	}
+	if matches[0].Key.ActionKind != s3lifecycle.ActionKindExpirationDays {
+		t.Fatalf("ActionKind=%v, want ExpirationDays", matches[0].Key.ActionKind)
+	}
+	if matches[0].ObjectKey != "logs/backup.versions/2023" {
+		t.Fatalf("ObjectKey=%q, want unchanged", matches[0].ObjectKey)
+	}
+	if matches[0].VersionID != "" {
+		t.Fatalf("VersionID=%q, want empty", matches[0].VersionID)
+	}
+
+	// And again with a stored vid that *doesn't* match the suffix —
+	// e.g. "2023" suffix but ExtVersionIdKey="other": still a literal-
+	// key collision, treat as current.
+	ev2 := eventCreate("bk", "logs/backup.versions/2023", old.Unix(), 1, old.UnixNano())
+	ev2.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte("not-the-suffix"),
+	}
+	matches2 := Route(snap, ev2, now)
+	if len(matches2) != 1 || matches2[0].VersionID != "" || matches2[0].ObjectKey != "logs/backup.versions/2023" {
+		t.Fatalf("mismatched-vid collision: matches=%v", matches2)
+	}
+}
+
+func TestRouteVersionedRootVersionsPathRejected(t *testing.T) {
+	// A path like ".versions/v1" would yield an empty logical key if we
+	// stripped the suffix; that's malformed even in seaweedfs's own
+	// layout. Treat as a regular current-version object so we don't
+	// emit a Match with an empty ObjectKey.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	ev := eventCreate("bk", ".versions/v1", old.Unix(), 1, old.UnixNano())
+	// Even with ExtVersionIdKey=v1, idx==0 must be rejected.
+	ev.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte("v1"),
+	}
+
+	matches := Route(snap, ev, now)
+	if len(matches) != 1 || matches[0].VersionID != "" || matches[0].ObjectKey != ".versions/v1" {
+		t.Fatalf("root .versions/<vid> must be treated as a regular key, got %v", matches)
 	}
 }

@@ -159,21 +159,16 @@ func buildObjectInfo(ev *reader.Event, versioned bool) (*s3lifecycle.ObjectInfo,
 	}
 	versionID := ""
 	if versioned {
-		if logicalKey, vid, ok := splitNoncurrentKey(ev.Key); ok {
+		// Without sibling listing we can't compute NumVersions or
+		// NoncurrentIndex. Drop NumVersions to 0 so ExpiredDeleteMarker
+		// (which requires sole-survivor) stays suppressed; the engine
+		// also treats nil NoncurrentIndex as "can't evaluate count
+		// retention" and conservatively skips NewerNoncurrent.
+		info.NumVersions = 0
+		if logicalKey, vid, ok := classifyNoncurrent(ev.Key, entry); ok {
 			info.Key = logicalKey
 			info.IsLatest = false
-			// Without sibling listing we can't compute NumVersions or
-			// NoncurrentIndex; the engine treats the latter being nil as
-			// "can't evaluate count retention" and conservatively skips
-			// NewerNoncurrent. Time-based NoncurrentDays still fires.
-			info.NumVersions = 0
 			versionID = vid
-		} else {
-			// Current/latest version: NumVersions stays 1 only when we
-			// know it's the sole version. ExpiredDeleteMarker requires
-			// NumVersions==1 (sole-survivor delete marker); without
-			// sibling listing we can't be sure, so suppress.
-			info.NumVersions = 0
 		}
 	}
 	if tags := extractTags(entry.Extended); len(tags) > 0 {
@@ -185,18 +180,33 @@ func buildObjectInfo(ev *reader.Event, versioned bool) (*s3lifecycle.ObjectInfo,
 	return info, versionID
 }
 
-// splitNoncurrentKey decomposes a versioned-bucket storage path
-// `<key>.versions/<vid>` into the logical object key and version id.
-// Returns ok=false for current-version paths.
-func splitNoncurrentKey(key string) (logicalKey, versionID string, ok bool) {
+// classifyNoncurrent returns the logical key and version id when the event
+// is a noncurrent version, or ok=false when the path is either a current
+// version or just a regular object whose name happens to contain the
+// ".versions/" sequence.
+//
+// The path shape `<key>.versions/<vid>` is necessary but not sufficient:
+// SeaweedFS doesn't reserve the segment, so a user who writes a literal
+// key like "backup.versions/2023" gets the same path. The entry's
+// ExtVersionIdKey is the authoritative confirmation — it's set when a
+// version is actually stored. We require both to agree.
+func classifyNoncurrent(key string, entry *filer_pb.Entry) (logicalKey, versionID string, ok bool) {
 	const sep = s3_constants.VersionsFolder + "/"
 	idx := strings.LastIndex(key, sep)
-	if idx < 0 {
+	if idx <= 0 {
+		// idx<0: path doesn't carry the segment.
+		// idx==0: would yield an empty logicalKey; reject.
 		return "", "", false
 	}
 	versionID = key[idx+len(sep):]
 	if versionID == "" || strings.ContainsRune(versionID, '/') {
-		// Trailing slash or further nesting: not a single-segment vid.
+		return "", "", false
+	}
+	stored, has := entry.Extended[s3_constants.ExtVersionIdKey]
+	if !has || string(stored) != versionID {
+		// Literal-key collision: path looks like a noncurrent storage
+		// path but the entry isn't a tracked version (or carries a
+		// different vid). Treat as a regular current-version object.
 		return "", "", false
 	}
 	return key[:idx], versionID, true
