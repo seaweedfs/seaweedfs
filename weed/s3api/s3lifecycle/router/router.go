@@ -141,7 +141,10 @@ func buildIdentity(ev *reader.Event) *EntryIdentity {
 		id.Size = int64(entry.Attributes.FileSize)
 	}
 	if len(entry.GetChunks()) > 0 {
-		id.HeadFid = entry.GetChunks()[0].FileId
+		// Meta-log events arrive with chunk.FileId cleared by
+		// BeforeEntrySerialization; GetFileIdString reconstructs it from
+		// Fid so the worker matches the server-side fingerprint.
+		id.HeadFid = entry.GetChunks()[0].GetFileIdString()
 	}
 	id.ExtendedHash = s3lifecycle.HashExtended(entry.Extended)
 	return id

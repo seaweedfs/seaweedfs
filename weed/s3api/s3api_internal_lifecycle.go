@@ -139,7 +139,7 @@ func computeEntryIdentity(entry *filer_pb.Entry) *s3_lifecycle_pb.EntryIdentity 
 		id.Size = int64(entry.Attributes.FileSize)
 	}
 	if len(entry.GetChunks()) > 0 {
-		id.HeadFid = entry.GetChunks()[0].FileId
+		id.HeadFid = entry.GetChunks()[0].GetFileIdString()
 	}
 	id.ExtendedHash = s3lifecycle.HashExtended(entry.Extended)
 	return id
