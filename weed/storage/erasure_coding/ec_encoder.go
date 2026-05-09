@@ -99,7 +99,7 @@ func RebuildEcFiles(baseFileName string, additionalDirs ...string) ([]uint32, er
 // RebuildEcFilesWithContext rebuilds missing EC files using the provided context.
 // additionalDirs are extra directories to search for existing shard files.
 func RebuildEcFilesWithContext(baseFileName string, ctx *ECContext, additionalDirs ...string) ([]uint32, error) {
-	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, additionalDirs)
+	return generateMissingEcFiles(baseFileName, ctx, additionalDirs)
 }
 
 func ToExt(ecIndex int) string {
@@ -155,7 +155,7 @@ func findShardFile(baseFileName string, ext string, additionalDirs []string) (sh
 	return
 }
 
-func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, additionalDirs []string) (generatedShardIds []uint32, err error) {
+func generateMissingEcFiles(baseFileName string, ctx *ECContext, additionalDirs []string) (generatedShardIds []uint32, err error) {
 
 	// Pass 1: discover which shards exist and which are missing,
 	// opening input files but NOT creating output files yet.
