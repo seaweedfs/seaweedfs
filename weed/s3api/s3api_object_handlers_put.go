@@ -296,7 +296,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				dataReader = mimeDetect(r, dataReader)
 			}
 
-			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, nil)
+			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r.ContentLength)
+			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -351,7 +352,14 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 	return fn()
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+// putToFiler writes one chunk of object bytes (a full PutObject body, a
+// single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
+// only for top-level PutObject paths where the lifecycle XML's
+// Expiration.Days fast path applies — MPU parts and copy-parts always
+// pass 0 because their own keys aren't the user-visible object the rule
+// targets and a part write would otherwise bind a TTL clock starting
+// before CompleteMultipartUpload.
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -465,6 +473,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				DataCenter:       s3a.option.DataCenter,
 				Path:             filePath,
 				ExpectedDataSize: expectedDataSize,
+				TtlSec:           lifecycleTTLSec,
 			})
 			if err != nil {
 				return fmt.Errorf("assign volume: %w", err)
@@ -639,6 +648,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			Gid:      0,
 			Mime:     mimeType,
 			FileSize: uint64(chunkResult.TotalSize),
+			TtlSec:   lifecycleTTLSec,
 		},
 		Chunks:   chunkResult.FileChunks, // All chunks from auto-chunking
 		Extended: make(map[string][]byte),
@@ -1261,8 +1271,10 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		}
 	}
 
-	// Upload the file using putToFiler - this will create the file with version metadata
-	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, nil)
+	// Upload the file using putToFiler - this will create the file with version metadata.
+	// Versioned/suspended bucket → resolver returns 0 by construction;
+	// pass 0 directly so the path is explicit at the call site.
+	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, nil)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
@@ -1412,7 +1424,10 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 		}
 	}
 
-	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
+	// Versioned bucket: resolver returns 0 by construction. Pass 0
+	// directly — versioned objects sit on regular volumes and the
+	// lifecycle worker handles their expiration.
+	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0, func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
 		if err := s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName, versionEntry); err != nil {
 			glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
 			return s3err.ErrInternalError
