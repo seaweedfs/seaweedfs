@@ -3,7 +3,9 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -80,9 +82,32 @@ func (c *fakeFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 	c.mu.Unlock()
 	atomic.AddInt32(&c.listedN, 1)
 
-	children := c.tree[in.Directory]
-	responses := make([]*filer_pb.ListEntriesResponse, 0, len(children))
-	for _, e := range children {
+	// Mirror the filer: sort children by name, honor StartFromFileName
+	// (exclusive unless InclusiveStartFrom), and cap at Limit. listAll's
+	// pagination loop depends on these semantics to advance correctly.
+	src := c.tree[in.Directory]
+	filtered := make([]*filer_pb.Entry, 0, len(src))
+	for _, e := range src {
+		if e == nil {
+			continue
+		}
+		if in.StartFromFileName != "" {
+			if in.InclusiveStartFrom {
+				if e.Name < in.StartFromFileName {
+					continue
+				}
+			} else if e.Name <= in.StartFromFileName {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].Name < filtered[j].Name })
+	if in.Limit > 0 && uint32(len(filtered)) > in.Limit {
+		filtered = filtered[:in.Limit]
+	}
+	responses := make([]*filer_pb.ListEntriesResponse, 0, len(filtered))
+	for _, e := range filtered {
 		responses = append(responses, &filer_pb.ListEntriesResponse{Entry: e})
 	}
 	return &fakeListStream{responses: responses, ctx: ctx}, nil
@@ -968,4 +993,100 @@ func TestExpandVersionsDir_SuspendedThenReEnabledNullIsNoncurrent(t *testing.T) 
 	assert.True(t, byID["v-new"].IsLatest, "newest sibling wins even when an older explicit null exists")
 	assert.False(t, byID["null"].IsLatest)
 	assert.Equal(t, 0, byID["null"].NoncurrentIndex)
+}
+
+func TestExpandVersionsDir_PaginatesBeyondListingLimit(t *testing.T) {
+	// The filer caps SeaweedList(..., limit=0) at DirListingLimit per
+	// call. Expanding a hot key with more versions than that limit
+	// would silently truncate, so the rank/sort math would be wrong
+	// past the boundary. listAll paginates via StartFromFileName.
+	// Shrink listPageSize so the test doesn't need thousands of entries.
+	prevPageSize := listPageSize
+	listPageSize = 2
+	t.Cleanup(func() { listPageSize = prevPageSize })
+
+	now := time.Now().Truncate(time.Second)
+	const total = 7
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v0"),
+	})
+	versions := make([]*filer_pb.Entry, 0, total)
+	for i := 0; i < total; i++ {
+		// v0 is newest; v6 is oldest. Names are v_v00 .. v_v06 so the
+		// sort-by-name in the fake matches the sort-by-mtime here.
+		versions = append(versions, versionFile(fmt.Sprintf("v%02d", i), now.Add(-time.Duration(i)*time.Hour), false))
+	}
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: versions,
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	count, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, total, count, "every page must reach the injector")
+
+	listed := client.listedCopy()
+	calls := 0
+	for _, d := range listed {
+		if d == testBucketRoot+"/foo"+s3_constants.VersionsFolder {
+			calls++
+		}
+	}
+	// Pages of 2 over 7 items = 4 calls (2+2+2+1). Loop exits once
+	// page count < listPageSize on the 4th call.
+	assert.Equal(t, 4, calls, "must paginate via StartFromFileName")
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	require.Len(t, byID, total, "no version dropped at a page boundary")
+	for i := 0; i < total; i++ {
+		bv := byID[fmt.Sprintf("v%02d", i)]
+		require.NotNil(t, bv)
+		assert.Equal(t, total, bv.NumVersions, "NumVersions reflects every page")
+	}
+	// v0 is the latest pointer target and the newest by mtime.
+	assert.True(t, byID["v00"].IsLatest)
+	// v6 is the oldest noncurrent.
+	assert.Equal(t, total-2, byID["v06"].NoncurrentIndex)
+}
+
+func TestWalkBucketDir_PaginatesBeyondListingLimit(t *testing.T) {
+	// Same correctness story for the bucket-level walk: hot buckets
+	// with thousands of objects must not silently truncate.
+	prevPageSize := listPageSize
+	listPageSize = 2
+	t.Cleanup(func() { listPageSize = prevPageSize })
+
+	const total = 5
+	rootChildren := make([]*filer_pb.Entry, 0, total)
+	for i := 0; i < total; i++ {
+		rootChildren = append(rootChildren, fileEntry(fmt.Sprintf("k%02d", i)))
+	}
+	client := &fakeFilerClient{tree: map[string][]*filer_pb.Entry{testBucketRoot: rootChildren}}
+	var seen []string
+	err := walkBucketDir(context.Background(), client, testBucketRoot, testBucketRoot, func(_ *filer_pb.Entry, key string) error {
+		seen = append(seen, key)
+		return nil
+	})
+	require.NoError(t, err)
+
+	want := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		want = append(want, fmt.Sprintf("k%02d", i))
+	}
+	assert.ElementsMatch(t, want, seen, "every page processed")
+
+	listed := client.listedCopy()
+	calls := 0
+	for _, d := range listed {
+		if d == testBucketRoot {
+			calls++
+		}
+	}
+	// 5 entries / page 2 = 3 calls (2+2+1).
+	assert.Equal(t, 3, calls)
 }

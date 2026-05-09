@@ -23,6 +23,39 @@ type EventInjector interface {
 	InjectEvent(ctx context.Context, ev *reader.Event) error
 }
 
+// listPageSize is the page size for paginated directory listings during
+// the bucket walk. The filer caps SeaweedList(..., limit=0) at
+// DirListingLimit (1000 by default) per call, so a single-page list
+// would silently truncate large directories — a correctness bug for
+// noncurrent retention since older versions past the page boundary
+// would never reach the rank/sort math. var so tests can shrink it
+// without producing thousands of entries.
+var listPageSize uint32 = 1024
+
+// listAll issues paginated SeaweedList calls until the listing is
+// exhausted, invoking fn for every entry. Pagination uses
+// startFrom = lastEntryName (exclusive) to advance.
+func listAll(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, fn func(*filer_pb.Entry) error) error {
+	startFrom := ""
+	for {
+		var pageCount uint32
+		var lastName string
+		if err := filer_pb.SeaweedList(ctx, client, dir, "", func(e *filer_pb.Entry, _ bool) error {
+			pageCount++
+			if e != nil {
+				lastName = e.Name
+			}
+			return fn(e)
+		}, startFrom, false, listPageSize); err != nil {
+			return err
+		}
+		if pageCount < listPageSize {
+			return nil
+		}
+		startFrom = lastName
+	}
+}
+
 // BucketBootstrapper backfills already-existing entries when a freshly-PUT
 // rule's bucket appears in the engine. The reader-driven path only sees
 // meta-log events created after the rule lands; without this walk,
@@ -160,14 +193,15 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 	versionsDir := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket + "/" + versionsKey
 	// Collect file children only. Subdirectories under .versions/ would
 	// corrupt sort/rank math; the disambiguation pass below also wants
-	// to see only file-shaped children.
+	// to see only file-shaped children. Paginate so a hot key with
+	// thousands of versions doesn't truncate at DirListingLimit.
 	var children []*filer_pb.Entry
-	if err := filer_pb.SeaweedList(ctx, b.FilerClient, versionsDir, "", func(e *filer_pb.Entry, _ bool) error {
+	if err := listAll(ctx, b.FilerClient, versionsDir, func(e *filer_pb.Entry) error {
 		if e != nil && e.Attributes != nil && !e.IsDirectory {
 			children = append(children, e)
 		}
 		return nil
-	}, "", false, 0); err != nil {
+	}); err != nil {
 		return 0, fmt.Errorf("list %s: %w", versionsDir, err)
 	}
 	items := make([]versionItem, 0, len(children)+1)
@@ -322,10 +356,10 @@ func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logi
 // in the walk-shared skip set before the same level emits the bare entry.
 func walkBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot string, cb func(entry *filer_pb.Entry, key string) error) error {
 	var children []*filer_pb.Entry
-	if err := filer_pb.SeaweedList(ctx, client, dir, "", func(e *filer_pb.Entry, _ bool) error {
+	if err := listAll(ctx, client, dir, func(e *filer_pb.Entry) error {
 		children = append(children, e)
 		return nil
-	}, "", false, 0); err != nil {
+	}); err != nil {
 		return fmt.Errorf("list %s: %w", dir, err)
 	}
 	// Pass 1: .versions/ directories. The cb expands them and may
