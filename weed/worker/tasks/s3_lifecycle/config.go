@@ -9,31 +9,34 @@ import (
 const (
 	jobType = "s3_lifecycle"
 
-	defaultWorkers                = 1
-	defaultDispatchTickMinutes    = int64(1)
-	defaultCheckpointTickSeconds  = int64(30)
-	defaultRefreshIntervalMinutes = int64(5)
-	defaultMaxRuntimeMinutes      = int64(60)
+	defaultWorkers                  = 1
+	defaultDispatchTickMinutes      = int64(1)
+	defaultCheckpointTickSeconds    = int64(30)
+	defaultRefreshIntervalMinutes   = int64(5)
+	defaultMaxRuntimeMinutes        = int64(60)
+	defaultBootstrapIntervalMinutes = int64(0) // 0 = walk once per process
 )
 
 // Config is the parsed AdminConfigForm + WorkerConfigForm view.
 type Config struct {
-	Workers         int
-	DispatchTick    time.Duration
-	CheckpointTick  time.Duration
-	RefreshInterval time.Duration
-	MaxRuntime      time.Duration
+	Workers           int
+	DispatchTick      time.Duration
+	CheckpointTick    time.Duration
+	RefreshInterval   time.Duration
+	BootstrapInterval time.Duration
+	MaxRuntime        time.Duration
 }
 
 // ParseConfig pulls the lifecycle Handler config from the merged
 // admin+worker config values. Missing fields fall back to defaults.
 func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		Workers:         int(readInt64(adminValues, "workers", defaultWorkers)),
-		DispatchTick:    time.Duration(readInt64(workerValues, "dispatch_tick_minutes", defaultDispatchTickMinutes)) * time.Minute,
-		CheckpointTick:  time.Duration(readInt64(workerValues, "checkpoint_tick_seconds", defaultCheckpointTickSeconds)) * time.Second,
-		RefreshInterval: time.Duration(readInt64(workerValues, "refresh_interval_minutes", defaultRefreshIntervalMinutes)) * time.Minute,
-		MaxRuntime:      time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
+		Workers:           int(readInt64(adminValues, "workers", defaultWorkers)),
+		DispatchTick:      time.Duration(readInt64(workerValues, "dispatch_tick_minutes", defaultDispatchTickMinutes)) * time.Minute,
+		CheckpointTick:    time.Duration(readInt64(workerValues, "checkpoint_tick_seconds", defaultCheckpointTickSeconds)) * time.Second,
+		RefreshInterval:   time.Duration(readInt64(workerValues, "refresh_interval_minutes", defaultRefreshIntervalMinutes)) * time.Minute,
+		BootstrapInterval: time.Duration(readInt64(workerValues, "bootstrap_interval_minutes", defaultBootstrapIntervalMinutes)) * time.Minute,
+		MaxRuntime:        time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = defaultWorkers
@@ -46,6 +49,13 @@ func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Co
 	}
 	if cfg.RefreshInterval <= 0 {
 		cfg.RefreshInterval = time.Duration(defaultRefreshIntervalMinutes) * time.Minute
+	}
+	// BootstrapInterval is intentionally NOT clamped — zero means
+	// "walk once per process", which is the legacy default for any
+	// deployment that hasn't opted into a cadence yet. Negative values
+	// fall back to zero.
+	if cfg.BootstrapInterval < 0 {
+		cfg.BootstrapInterval = 0
 	}
 	if cfg.MaxRuntime <= 0 {
 		cfg.MaxRuntime = time.Duration(defaultMaxRuntimeMinutes) * time.Minute

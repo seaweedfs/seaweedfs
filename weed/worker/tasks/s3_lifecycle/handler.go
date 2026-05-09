@@ -123,6 +123,14 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 						{
+							Name:        "bootstrap_interval_minutes",
+							Label:       "Bootstrap Re-walk Interval (minutes)",
+							Description: "How often each bucket is re-walked. scan_only rules — those whose retention horizon exceeds meta-log retention — only fire from the bootstrap walk, so a non-zero value is required to enforce them on a long-running worker. 0 keeps the legacy walk-once-per-process behavior.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+						{
 							Name:        "max_runtime_minutes",
 							Label:       "Max Runtime (minutes)",
 							Description: "Wall-clock cap on each run. Each daily run processes events for one day; the cursor persists across runs.",
@@ -134,10 +142,11 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"dispatch_tick_minutes":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDispatchTickMinutes}},
-				"checkpoint_tick_seconds":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultCheckpointTickSeconds}},
-				"refresh_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultRefreshIntervalMinutes}},
-				"max_runtime_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
+				"dispatch_tick_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDispatchTickMinutes}},
+				"checkpoint_tick_seconds":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultCheckpointTickSeconds}},
+				"refresh_interval_minutes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultRefreshIntervalMinutes}},
+				"bootstrap_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultBootstrapIntervalMinutes}},
+				"max_runtime_minutes":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -240,17 +249,18 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
 	sched := &scheduler.Scheduler{
-		BucketsPath:     bucketsPath,
-		Engine:          engine.New(),
-		Persister:       &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-		Client:          lifecycleRPCAdapter{c: rpc},
-		FilerClient:     filerClient,
-		ClientID:        util.RandomInt32(),
-		ClientName:      "worker-s3-lifecycle",
-		Workers:         cfg.Workers,
-		DispatchTick:    cfg.DispatchTick,
-		CheckpointTick:  cfg.CheckpointTick,
-		RefreshInterval: cfg.RefreshInterval,
+		BucketsPath:       bucketsPath,
+		Engine:            engine.New(),
+		Persister:         &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Client:            lifecycleRPCAdapter{c: rpc},
+		FilerClient:       filerClient,
+		ClientID:          util.RandomInt32(),
+		ClientName:        "worker-s3-lifecycle",
+		Workers:           cfg.Workers,
+		DispatchTick:      cfg.DispatchTick,
+		CheckpointTick:    cfg.CheckpointTick,
+		RefreshInterval:   cfg.RefreshInterval,
+		BootstrapInterval: cfg.BootstrapInterval,
 	}
 	if err := sched.Run(runCtx); err != nil {
 		glog.Warningf("s3 lifecycle execute: %v", err)

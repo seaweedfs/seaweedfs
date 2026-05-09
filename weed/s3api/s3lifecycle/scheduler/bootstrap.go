@@ -78,33 +78,70 @@ func listAll(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string
 // Synthesized events carry TsNs=0 so dispatcher.advance is a no-op for
 // them — the reader still resumes from its persisted cursor on restart.
 //
-// Bucket completion is in-memory per process; a fresh worker run walks
-// each bucket once on first refresh.
+// Walk state is tracked in-memory per process via two maps:
+//   - lastCompleted: time of the last successful walk, drives the
+//     BootstrapInterval cadence; zero interval means "walk once per
+//     process".
+//   - inFlight: buckets whose walk goroutines are still running.
+//     Skipped regardless of cadence so a walk that takes longer than
+//     BootstrapInterval can't trigger a duplicate goroutine on the
+//     next refresh.
 type BucketBootstrapper struct {
 	FilerClient filer_pb.SeaweedFilerClient
 	BucketsPath string
 	Injector    EventInjector
 
-	mu    sync.Mutex
-	known map[string]bool
+	// BootstrapInterval gates re-walks. Zero means "walk once per
+	// process". Non-zero means "walk again once it's been at least
+	// this long since the last completed walk" — the cadence scan_only
+	// actions rely on, since they can only fire from bootstrap.
+	BootstrapInterval time.Duration
+
+	// Now overrides time.Now for tests.
+	Now func() time.Time
+
+	mu            sync.Mutex
+	lastCompleted map[string]time.Time
+	inFlight      map[string]bool
+}
+
+func (b *BucketBootstrapper) now() time.Time {
+	if b.Now != nil {
+		return b.Now()
+	}
+	return time.Now()
 }
 
 // KickOffNew launches a one-shot walker goroutine for every bucket
-// in `buckets` that hasn't been seen before.
+// that's not currently in flight and either has never completed a walk
+// or whose last successful walk finished more than BootstrapInterval ago.
 func (b *BucketBootstrapper) KickOffNew(ctx context.Context, buckets []string) {
 	if b.Injector == nil {
 		return
 	}
+	now := b.now()
 	b.mu.Lock()
-	if b.known == nil {
-		b.known = map[string]bool{}
+	if b.lastCompleted == nil {
+		b.lastCompleted = map[string]time.Time{}
+	}
+	if b.inFlight == nil {
+		b.inFlight = map[string]bool{}
 	}
 	fresh := make([]string, 0, len(buckets))
 	for _, bucket := range buckets {
-		if b.known[bucket] {
+		if b.inFlight[bucket] {
+			// Walk still running from an earlier KickOffNew — never
+			// double up regardless of cadence. A large bucket that
+			// takes longer than BootstrapInterval would otherwise
+			// have a fresh goroutine fire on every refresh tick.
 			continue
 		}
-		b.known[bucket] = true
+		if last, ok := b.lastCompleted[bucket]; ok {
+			if b.BootstrapInterval <= 0 || now.Sub(last) < b.BootstrapInterval {
+				continue
+			}
+		}
+		b.inFlight[bucket] = true
 		fresh = append(fresh, bucket)
 	}
 	b.mu.Unlock()
@@ -152,9 +189,22 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 		count++
 		return b.Injector.InjectEvent(ctx, ev)
 	}
-	if err := walkBucketDir(ctx, b.FilerClient, root, root, cb); err != nil {
+	walkErr := walkBucketDir(ctx, b.FilerClient, root, root, cb)
+	b.mu.Lock()
+	delete(b.inFlight, bucket)
+	if walkErr == nil {
+		// Stamp completion so BootstrapInterval cadence measures from
+		// end-of-walk. Failures leave lastCompleted alone, so the next
+		// KickOffNew sees no record and walks the bucket again.
+		if b.lastCompleted == nil {
+			b.lastCompleted = map[string]time.Time{}
+		}
+		b.lastCompleted[bucket] = b.now()
+	}
+	b.mu.Unlock()
+	if walkErr != nil {
 		if ctx.Err() == nil {
-			glog.V(0).Infof("lifecycle bootstrap %s: %v", bucket, err)
+			glog.V(0).Infof("lifecycle bootstrap %s: %v", bucket, walkErr)
 		}
 		return
 	}
