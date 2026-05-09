@@ -1341,9 +1341,14 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 	// Clear the latest version metadata from .versions directory since "null" is now latest
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err == nil && versionsEntry.Extended != nil {
-		// Remove latest version metadata so all versions show IsLatest=false
+		// Remove latest version metadata so all versions show IsLatest=false.
+		// Also wipe cached list-metadata (size/mtime/etag/owner/delete-marker):
+		// they were stamped from the prior latest, and stale cached mtime
+		// would let lifecycle compute SuccessorModTime off the displaced
+		// version's age rather than today's null PUT.
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+		clearCachedVersionMetadata(versionsEntry.Extended)
 
 		// Update the .versions directory entry
 		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {

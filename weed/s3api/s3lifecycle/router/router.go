@@ -2,6 +2,8 @@ package router
 
 import (
 	"context"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,9 +16,21 @@ import (
 )
 
 // SiblingLister inspects the surviving versions of a versioned key.
-// nil receiver or an error means "unknown" — callers suppress.
+// nil receiver or an error means "unknown" — callers suppress. Four
+// queries: Survivors paginates the .versions/ container plus the bare
+// null version (used by sole-survivor and bootstrap); LookupVersion
+// fetches a single version file by id (used by pointer-transition
+// routing to read the displaced version's identity and mtime);
+// ListVersions paginates every version file in the .versions/
+// container (used to compute NoncurrentIndex when a NewerNoncurrent
+// rule is active); LookupNullVersion returns the bare-key entry that
+// represents the null version (used by pointer-transition routing
+// when oldID is empty and to include the null in expansion ranks).
 type SiblingLister interface {
 	Survivors(ctx context.Context, bucket, objectKey string) (Survivors, error)
+	LookupVersion(ctx context.Context, bucket, objectKey, versionID string) (*filer_pb.Entry, error)
+	ListVersions(ctx context.Context, bucket, objectKey string) ([]*filer_pb.Entry, error)
+	LookupNullVersion(ctx context.Context, bucket, objectKey string) (entry *filer_pb.Entry, explicit bool, err error)
 }
 
 // Survivors describes the state under .versions/<key>/ plus the bare
@@ -80,6 +94,18 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 
 	versioned := snap.BucketVersioned(ev.Bucket)
 
+	// .versions/ directory metadata update: when ExtLatestVersionIdKey
+	// changes, the OLD pointer value names a version that's now
+	// noncurrent. Route NoncurrentDays / NewerNoncurrent for it without
+	// waiting for the next bootstrap.
+	if versioned && ev.NewEntry != nil && ev.OldEntry != nil && ev.NewEntry.IsDirectory && isVersionsContainerKey(ev.Key) {
+		if !hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindNoncurrentDays) &&
+			!hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindNewerNoncurrent) {
+			return nil
+		}
+		return routePointerTransition(ctx, snap, ev, keys, lister)
+	}
+
 	// EXP_DM can fire on two version-folder events: the marker create
 	// (sole survivor immediately) and a noncurrent hard-delete that
 	// leaves only the marker behind. Both reach routeSoleSurvivorMarker.
@@ -139,6 +165,334 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 			Bucket:    ev.Bucket,
 			ObjectKey: ev.Key,
 			Identity:  buildIdentity(ev),
+		})
+	}
+	return matches
+}
+
+// routePointerTransition handles a .versions/ container update where
+// ExtLatestVersionIdKey changed: the OLD pointer value names a version
+// that just became noncurrent. Two lookup shapes:
+//
+//   - Pure NoncurrentVersionExpirationDays without NewerNoncurrentVersions:
+//     a single LookupVersion of oldID is enough — the displaced version
+//     is the only one that newly entered eligibility for this rule.
+//
+//   - Any active NewerNoncurrentVersions rule: a pointer flip shifts
+//     every prior noncurrent's rank by one, so the version that *just
+//     crossed* the keep-count threshold needs evaluation too. List the
+//     full .versions/ container, rank newest-first, and route every
+//     eligible noncurrent. Identity-CAS handles dedup with earlier
+//     schedules.
+//
+// Without this branch the worker has to wait for the next bootstrap to
+// schedule retention on a freshly-noncurrent version.
+func routePointerTransition(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister) []Match {
+	if lister == nil {
+		return nil
+	}
+	logical := strings.TrimSuffix(ev.Key, s3_constants.VersionsFolder)
+	if logical == "" {
+		return nil
+	}
+	oldID := string(ev.OldEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	newID := string(ev.NewEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	if oldID == newID {
+		// Same id means the update didn't transition the pointer.
+		return nil
+	}
+	// oldID == "" doesn't mean "nothing displaced": a bare null may
+	// have been the implicit/explicit latest before the pointer
+	// flipped to a real id.
+	// newID == "" means a suspended-versioning write cleared the
+	// pointer and made the bare null current. The cached
+	// ExtLatestVersionMtimeKey may still hold the prior latest's
+	// mtime (stale), so we must NOT use successorModTimeFromContainer
+	// in that case — derive the successor clock from the null entry's
+	// mtime instead. latestIDForExpand carries the same substitution
+	// so the expansion path's latestPos lookup matches the null sibling.
+	var successor time.Time
+	latestIDForExpand := newID
+	if newID == "" {
+		nullEntry, _, err := lister.LookupNullVersion(ctx, ev.Bucket, logical)
+		if err != nil {
+			glog.V(2).Infof("lifecycle router: lookup null %s/%s: %v", ev.Bucket, logical, err)
+			return nil
+		}
+		if nullEntry == nil || nullEntry.Attributes == nil {
+			return nil
+		}
+		successor = time.Unix(nullEntry.Attributes.Mtime, int64(nullEntry.Attributes.MtimeNs))
+		latestIDForExpand = "null"
+	} else {
+		successor = successorModTimeFromContainer(ev.NewEntry)
+	}
+	if successor.IsZero() {
+		return nil
+	}
+	if needsFullExpansion(snap, keys) {
+		return routePointerTransitionExpand(ctx, snap, ev, keys, lister, logical, latestIDForExpand, successor)
+	}
+	return routePointerTransitionDisplaced(ctx, snap, ev, keys, lister, logical, oldID, successor)
+}
+
+// needsFullExpansion reports whether any active event-driven rule on
+// this bucket cares about NoncurrentIndex (NewerNoncurrentVersions > 0
+// in either NoncurrentDays or pure-count NewerNoncurrent).
+func needsFullExpansion(snap *engine.Snapshot, keys []s3lifecycle.ActionKey) bool {
+	for _, k := range keys {
+		if k.ActionKind != s3lifecycle.ActionKindNoncurrentDays && k.ActionKind != s3lifecycle.ActionKindNewerNoncurrent {
+			continue
+		}
+		a := snap.Action(k)
+		if a == nil || !a.IsActive() || a.Mode != engine.ModeEventDriven {
+			continue
+		}
+		if a.Rule != nil && a.Rule.NewerNoncurrentVersions > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// successorModTimeFromContainer reads the cached latest-version mtime
+// from the .versions/ container's Extended map.
+// updateLatestVersionInDirectory writes it via setCachedListMetadata
+// alongside ExtLatestVersionIdKey, but the directory's own
+// Attributes.Mtime is preserved across pointer updates — using it
+// directly would let a stale dir mtime trigger expiration immediately.
+// Returns zero time if the cached mtime is missing or unparseable; the
+// caller suppresses in that case.
+func successorModTimeFromContainer(entry *filer_pb.Entry) time.Time {
+	raw, ok := entry.Extended[s3_constants.ExtLatestVersionMtimeKey]
+	if !ok || len(raw) == 0 {
+		return time.Time{}
+	}
+	secs, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil || secs <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(secs, 0)
+}
+
+// routePointerTransitionDisplaced is the single-lookup path: only the
+// displaced version's noncurrent eligibility could have changed, so
+// fetching just its file is enough. oldID == "" routes the bare null
+// version instead — it was the implicit latest before the pointer
+// flipped to a real id.
+func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister, logical, oldID string, successor time.Time) []Match {
+	var displaced *filer_pb.Entry
+	displacedID := oldID
+	if oldID == "" {
+		nullEntry, _, err := lister.LookupNullVersion(ctx, ev.Bucket, logical)
+		if err != nil {
+			glog.V(2).Infof("lifecycle router: lookup null version %s/%s: %v", ev.Bucket, logical, err)
+			return nil
+		}
+		if nullEntry == nil {
+			return nil
+		}
+		displaced = nullEntry
+		displacedID = "null"
+	} else {
+		entry, err := lister.LookupVersion(ctx, ev.Bucket, logical, oldID)
+		if err != nil {
+			glog.V(2).Infof("lifecycle router: lookup displaced version %s/%s/%s: %v", ev.Bucket, logical, oldID, err)
+			return nil
+		}
+		displaced = entry
+	}
+	if displaced == nil || displaced.Attributes == nil {
+		return nil
+	}
+	idx := 0
+	info := &s3lifecycle.ObjectInfo{
+		Key:              logical,
+		ModTime:          time.Unix(displaced.Attributes.Mtime, int64(displaced.Attributes.MtimeNs)),
+		Size:             int64(displaced.Attributes.FileSize),
+		IsLatest:         false,
+		IsDeleteMarker:   string(displaced.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
+		NoncurrentIndex:  &idx,
+		SuccessorModTime: successor,
+	}
+	if tags := extractTags(displaced.Extended); len(tags) > 0 {
+		info.Tags = tags
+	}
+	return emitNoncurrentMatches(snap, ev, keys, info, displaced, displacedID, successor)
+}
+
+// routePointerTransitionExpand routes only the versions that newly
+// became eligible by the pointer flip:
+//
+//   - rank 0: the displaced version (newly noncurrent), needed for the
+//     pure-NoncurrentDays clock,
+//   - rank == rule.NewerNoncurrentVersions for each active rule that
+//     gates on count: the version at exactly that rank just crossed
+//     from kept to expired.
+//
+// Emitting every eligible noncurrent on every PUT would push
+// O(versions) heap entries per flip — Schedule.Add doesn't dedup, so
+// identity-CAS at dispatch only stops the wasted RPC, not the heap
+// growth. Bootstrap still owns full backfill.
+func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister, logical, newID string, successor time.Time) []Match {
+	rawVersions, err := lister.ListVersions(ctx, ev.Bucket, logical)
+	if err != nil {
+		glog.V(2).Infof("lifecycle router: list versions %s/%s: %v", ev.Bucket, logical, err)
+		return nil
+	}
+	// Include the bare null version in the sibling set: count-based
+	// ranks are wrong if a pre-versioning or suspended-null entry
+	// exists outside .versions/. ID is "null" for sort + emit.
+	nullEntry, _, nullErr := lister.LookupNullVersion(ctx, ev.Bucket, logical)
+	if nullErr != nil {
+		glog.V(2).Infof("lifecycle router: lookup null %s/%s: %v", ev.Bucket, logical, nullErr)
+		return nil
+	}
+	type sibling struct {
+		entry *filer_pb.Entry
+		id    string
+	}
+	siblings := make([]sibling, 0, len(rawVersions)+1)
+	for _, v := range rawVersions {
+		if v == nil || v.Attributes == nil {
+			continue
+		}
+		id := string(v.Extended[s3_constants.ExtVersionIdKey])
+		if id == "" {
+			continue
+		}
+		siblings = append(siblings, sibling{entry: v, id: id})
+	}
+	if nullEntry != nil && nullEntry.Attributes != nil {
+		siblings = append(siblings, sibling{entry: nullEntry, id: "null"})
+	}
+	if len(siblings) == 0 {
+		return nil
+	}
+	sort.SliceStable(siblings, func(i, j int) bool {
+		mi := siblings[i].entry.Attributes.Mtime*int64(1e9) + int64(siblings[i].entry.Attributes.MtimeNs)
+		mj := siblings[j].entry.Attributes.Mtime*int64(1e9) + int64(siblings[j].entry.Attributes.MtimeNs)
+		if mi != mj {
+			return mi > mj
+		}
+		return s3lifecycle.CompareVersionIds(siblings[i].id, siblings[j].id) < 0
+	})
+	// Resolve latestPos by finding newID. Default to -1 so a missing
+	// newID (race with the listing, or torn write) suppresses the
+	// expansion: we'd otherwise call the actual newest sibling "latest"
+	// against the pointer's intent and misrank every noncurrent.
+	// Bootstrap repairs state on the next walk.
+	latestPos := -1
+	if newID != "" {
+		for i, s := range siblings {
+			if s.id == newID {
+				latestPos = i
+				break
+			}
+		}
+	}
+	if latestPos < 0 {
+		glog.V(2).Infof("lifecycle router: pointer transition %s/%s: new id %s not found in listing", ev.Bucket, logical, newID)
+		return nil
+	}
+	noncurrentCount := len(siblings) - 1
+
+	// Collect the target noncurrent ranks: 0 (the freshly displaced)
+	// plus N for each active count-gated rule.
+	rankSet := map[int]struct{}{0: {}}
+	for _, k := range keys {
+		if k.ActionKind != s3lifecycle.ActionKindNoncurrentDays && k.ActionKind != s3lifecycle.ActionKindNewerNoncurrent {
+			continue
+		}
+		a := snap.Action(k)
+		if a == nil || !a.IsActive() || a.Mode != engine.ModeEventDriven {
+			continue
+		}
+		if a.Rule != nil && a.Rule.NewerNoncurrentVersions > 0 {
+			rankSet[a.Rule.NewerNoncurrentVersions] = struct{}{}
+		}
+	}
+	ranks := make([]int, 0, len(rankSet))
+	for r := range rankSet {
+		ranks = append(ranks, r)
+	}
+	sort.Ints(ranks)
+
+	var matches []Match
+	for _, rank := range ranks {
+		if rank >= noncurrentCount {
+			continue
+		}
+		// Convert noncurrent rank to position in the sorted slice,
+		// skipping the latest's slot.
+		i := rank
+		if rank >= latestPos {
+			i = rank + 1
+		}
+		s := siblings[i]
+		// Successor mtime: the entry directly newer than this one in
+		// the sorted list. When the next-newer slot is the latest,
+		// use the cached successor (the new latest's mtime); otherwise
+		// the immediate predecessor's mtime.
+		var thisSuccessor time.Time
+		if i > 0 && i-1 != latestPos {
+			thisSuccessor = time.Unix(siblings[i-1].entry.Attributes.Mtime, int64(siblings[i-1].entry.Attributes.MtimeNs))
+		} else {
+			thisSuccessor = successor
+		}
+		idx := rank
+		info := &s3lifecycle.ObjectInfo{
+			Key:              logical,
+			ModTime:          time.Unix(s.entry.Attributes.Mtime, int64(s.entry.Attributes.MtimeNs)),
+			Size:             int64(s.entry.Attributes.FileSize),
+			IsLatest:         false,
+			IsDeleteMarker:   string(s.entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
+			NoncurrentIndex:  &idx,
+			SuccessorModTime: thisSuccessor,
+			NumVersions:      len(siblings),
+		}
+		if tags := extractTags(s.entry.Extended); len(tags) > 0 {
+			info.Tags = tags
+		}
+		matches = append(matches, emitNoncurrentMatches(snap, ev, keys, info, s.entry, s.id, thisSuccessor)...)
+	}
+	return matches
+}
+
+// emitNoncurrentMatches walks NoncurrentDays / NewerNoncurrent action
+// keys and emits Matches for each one that fires. Shared between the
+// single-lookup and full-expansion paths.
+func emitNoncurrentMatches(snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, info *s3lifecycle.ObjectInfo, entry *filer_pb.Entry, versionID string, successor time.Time) []Match {
+	eventTime := time.Unix(0, ev.TsNs)
+	identity := buildIdentityFromEntry(entry)
+	var matches []Match
+	for _, key := range keys {
+		if key.ActionKind != s3lifecycle.ActionKindNoncurrentDays && key.ActionKind != s3lifecycle.ActionKindNewerNoncurrent {
+			continue
+		}
+		action := snap.Action(key)
+		if action == nil || !action.IsActive() || action.Mode != engine.ModeEventDriven {
+			continue
+		}
+		clock := successor
+		if clock.IsZero() {
+			clock = info.ModTime
+		}
+		dueTime := clock.Add(action.Delay)
+		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
+		if res.Action == s3lifecycle.ActionNone {
+			continue
+		}
+		matches = append(matches, Match{
+			Key:       key,
+			Action:    action,
+			Result:    res,
+			EventTs:   eventTime,
+			DueTime:   dueTime,
+			Bucket:    ev.Bucket,
+			ObjectKey: info.Key,
+			VersionID: versionID,
+			Identity:  identity,
 		})
 	}
 	return matches
@@ -373,6 +727,18 @@ func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 		info.IsDeleteMarker = true
 	}
 	return info
+}
+
+// isVersionsContainerKey reports whether the bucket-relative key IS a
+// .versions/ container itself (e.g. "logs/foo.versions"), as opposed to
+// a file inside one. Used to recognize directory-level events whose
+// Extended map carries the latest pointer for an object.
+func isVersionsContainerKey(key string) bool {
+	if key == s3_constants.VersionsFolder {
+		// Bucket-root .versions: no logical object key.
+		return false
+	}
+	return strings.HasSuffix(key, s3_constants.VersionsFolder)
 }
 
 // isVersionFolderPath reports whether the bucket-relative key sits inside a

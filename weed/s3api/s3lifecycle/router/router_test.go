@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -499,9 +500,34 @@ func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64)
 // state to return; calls list is appended on each invocation so tests
 // can assert whether the lister was consulted at all.
 type recordingLister struct {
-	calls    []string
-	survivors Survivors
-	err      error
+	calls           []string
+	survivors       Survivors
+	err             error
+	lookupCalls     []string
+	lookupEntry     *filer_pb.Entry
+	lookupErr       error
+	listCalls       []string
+	listVersions    []*filer_pb.Entry
+	listErr         error
+	nullCalls       []string
+	nullEntry       *filer_pb.Entry
+	nullExplicit    bool
+	nullErr         error
+}
+
+func (r *recordingLister) ListVersions(_ context.Context, bucket, key string) ([]*filer_pb.Entry, error) {
+	r.listCalls = append(r.listCalls, bucket+"/"+key)
+	return r.listVersions, r.listErr
+}
+
+func (r *recordingLister) LookupNullVersion(_ context.Context, bucket, key string) (*filer_pb.Entry, bool, error) {
+	r.nullCalls = append(r.nullCalls, bucket+"/"+key)
+	return r.nullEntry, r.nullExplicit, r.nullErr
+}
+
+func (r *recordingLister) LookupVersion(_ context.Context, bucket, key, versionID string) (*filer_pb.Entry, error) {
+	r.lookupCalls = append(r.lookupCalls, bucket+"/"+key+"@"+versionID)
+	return r.lookupEntry, r.lookupErr
 }
 
 func (r *recordingLister) Survivors(_ context.Context, bucket, key string) (Survivors, error) {
@@ -990,5 +1016,638 @@ func TestRouteBootstrapVersionAbortMPUNeverEmittedForVersion(t *testing.T) {
 	}
 	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 		t.Fatalf("bootstrap version event must not produce ABORT_MPU match, got %v", got)
+	}
+}
+
+// versionsContainerEvent builds a .versions/<key>/ directory update.
+// The NEW entry carries the cached latest-version mtime (the value
+// setCachedListMetadata writes alongside the latest pointer). The
+// directory's own Mtime is preserved at containerStaleMtime so the
+// router can't accidentally use it as the successor clock.
+func versionsContainerEvent(bucket, logical, oldID, newID string, latestMtimeUnix int64) *reader.Event {
+	const containerStaleMtime int64 = 1
+	mk := func(id string, includeMtime bool) *filer_pb.Entry {
+		ext := map[string][]byte{}
+		if id != "" {
+			ext[s3_constants.ExtLatestVersionIdKey] = []byte(id)
+		}
+		if includeMtime {
+			ext[s3_constants.ExtLatestVersionMtimeKey] = []byte(fmt.Sprintf("%d", latestMtimeUnix))
+		}
+		return &filer_pb.Entry{
+			Name:        logical + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: containerStaleMtime},
+			Extended:    ext,
+		}
+	}
+	return &reader.Event{
+		Bucket:   bucket,
+		Key:      logical + s3_constants.VersionsFolder,
+		OldEntry: mk(oldID, false),
+		NewEntry: mk(newID, true),
+	}
+}
+
+func displacedVersionEntry(versionID string, mtimeUnix int64) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name: "v_" + versionID,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    mtimeUnix,
+			FileSize: 100,
+		},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte(versionID),
+		},
+	}
+}
+
+func TestRoutePointerTransitionFiresNoncurrentDays(t *testing.T) {
+	// .versions/<key>/ directory update flips ExtLatestVersionIdKey from
+	// v-old to v-new. v-old becomes noncurrent immediately. The router
+	// looks up v-old's file (one RPC) and emits NoncurrentDays Match
+	// against the LOGICAL key with VersionID=v-old.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	displaced := displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+
+	lister := &recordingLister{lookupEntry: displaced}
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays), got %v", matches)
+	}
+	m := matches[0]
+	if m.ObjectKey != "logs/foo" {
+		t.Fatalf("ObjectKey=%q, want logs/foo", m.ObjectKey)
+	}
+	if m.VersionID != "v-old" {
+		t.Fatalf("VersionID=%q, want displaced v-old", m.VersionID)
+	}
+	if len(lister.lookupCalls) != 1 || lister.lookupCalls[0] != "bk/logs/foo@v-old" {
+		t.Fatalf("lookup calls=%v, want [bk/logs/foo@v-old]", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionPointerUnchangedSkipped(t *testing.T) {
+	// Directory update with same OLD/NEW pointer (e.g. some other
+	// metadata changed): no transition; nothing to schedule and no
+	// lookup RPC.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-same", "v-same", now.Unix())
+
+	lister := &recordingLister{}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("unchanged pointer must not fire, got %v", got)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("unchanged pointer must not consult lister: %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionEmptyOldPointerNoNullSkipped(t *testing.T) {
+	// First PUT on a brand-new versioned object: OLD pointer is empty,
+	// no bare null version exists. Nothing displaced.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "", "v-new", now.Unix())
+
+	lister := &recordingLister{} // nullEntry is nil
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("empty old pointer + no null must not fire, got %v", got)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("LookupVersion must not be called for empty oldID, got %v", lister.lookupCalls)
+	}
+	if len(lister.nullCalls) != 1 {
+		t.Fatalf("expected exactly one LookupNullVersion call, got %v", lister.nullCalls)
+	}
+}
+
+func TestRoutePointerTransitionEmptyOldPointerWithNullSchedules(t *testing.T) {
+	// First versioned PUT after a pre-versioning bare object exists.
+	// OLD pointer is empty, but the bare null is the displaced version.
+	// NoncurrentDays must schedule it as VersionID="null" so the worker
+	// doesn't have to wait for the next bootstrap.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "", "v-new", now.Unix())
+	nullMt := now.AddDate(0, 0, -10)
+	lister := &recordingLister{nullEntry: &filer_pb.Entry{
+		Name: "foo",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    nullMt.Unix(),
+			FileSize: 50,
+		},
+	}}
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays on null), got %v", matches)
+	}
+	if matches[0].VersionID != "null" {
+		t.Fatalf("VersionID=%q, want \"null\"", matches[0].VersionID)
+	}
+	if matches[0].ObjectKey != "logs/foo" {
+		t.Fatalf("ObjectKey=%q, want logs/foo", matches[0].ObjectKey)
+	}
+}
+
+func TestRoutePointerTransitionExpansionIncludesNullVersion(t *testing.T) {
+	// Suspended-bucket history: bare null exists with a recent mtime.
+	// Versioning re-enabled and a new version was just written. With
+	// NewerNoncurrentVersions=2 the rank-2 entry is the threshold-
+	// crosser. Because the null sits between v-mid and v-old by mtime,
+	// it occupies a noncurrent rank slot and shifts what the rank-2
+	// entry actually IS. Without including null, ranks would be wrong.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
+	// Mtimes (newest-first): v-new, v-cur, v-mid, null, v-old, v-old2.
+	// Post-flip ranks: latest=v-new, rank0=v-cur, rank1=v-mid,
+	// rank2=null, rank3=v-old, rank4=v-old2. The rank-2 crossing is
+	// "null" — and without including null in the sibling set, rank2
+	// would have been v-old (different version_id, wrong identity).
+	listVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -2).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix()),
+		displacedVersionEntry("v-old2", now.AddDate(0, 0, -20).Unix()),
+	}
+	nullEntry := &filer_pb.Entry{
+		Name:       "foo",
+		Attributes: &filer_pb.FuseAttributes{Mtime: now.AddDate(0, 0, -3).Unix()},
+	}
+	lister := &recordingLister{listVersions: listVersions, nullEntry: nullEntry}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	if !contains(versionIDs, "null") {
+		t.Fatalf("rank-2 should be null after including bare entry, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"v-cur", "v-mid", "v-old", "v-old2", "v-new"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("only the rank-2 (null) entry should fire, got %s in matches=%v", id, versionIDs)
+		}
+	}
+}
+
+func TestRoutePointerTransitionDisplacedVersionMissingSuppressed(t *testing.T) {
+	// Race: by the time the router looks up v-old, it's already been
+	// hard-deleted. LookupVersion returns (nil, nil); no Match.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+
+	lister := &recordingLister{lookupEntry: nil} // not found
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("missing displaced version must suppress, got %v", got)
+	}
+	if len(lister.lookupCalls) != 1 {
+		t.Fatalf("lookup attempted once, got %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionNoNoncurrentRuleSkipsLookup(t *testing.T) {
+	// Bucket has only ExpirationDays — no NoncurrentDays / NewerNoncurrent.
+	// The router must NOT issue the lookup RPC.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+
+	lister := &recordingLister{lookupEntry: displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())}
+	Route(context.Background(), snap, ev, now, lister)
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("lister consulted without noncurrent rule: %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionNewerNoncurrentNewestNoncurrentRetained(t *testing.T) {
+	// NewerNoncurrentVersions=2 routes through the expansion path. The
+	// freshly-noncurrent version is at rank 0 (newest noncurrent) and
+	// the threshold-crossing rank N=2 doesn't exist (only 2 versions
+	// total). No match expected — and ListVersions must be the one
+	// consulted, not LookupVersion.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	lister := &recordingLister{listVersions: []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix()),
+	}}
+
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("rank-0 noncurrent must be retained under NewerNoncurrentVersions=2, got %v", got)
+	}
+	if len(lister.listCalls) != 1 {
+		t.Fatalf("expansion path must consult ListVersions, calls=%v", lister.listCalls)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("expansion path must not consult LookupVersion, calls=%v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionExpansionMissingNewIDSuppressed(t *testing.T) {
+	// Race window: by the time ListVersions returns, the new pointer's
+	// version file isn't visible yet. latestPos can't resolve, so the
+	// router suppresses (bootstrap repairs state) instead of treating
+	// the actual newest sibling as latest and misranking every other
+	// version.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	// Listing returns v-old + v-mid but NOT v-new (the just-named latest).
+	lister := &recordingLister{listVersions: []*filer_pb.Entry{
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix()),
+	}}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("missing new id must suppress, got %v", got)
+	}
+}
+
+func TestRoutePointerTransitionUnversionedBucketSkipped(t *testing.T) {
+	// Same event shape on an unversioned bucket: should not even reach
+	// the pointer-transition branch.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	lister := &recordingLister{}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("unversioned bucket must not route pointer transitions, got %v", got)
+	}
+}
+
+func TestRoutePointerTransitionMissingCachedMtimeSuppressed(t *testing.T) {
+	// Older builds (or buggy paths) may write the latest pointer
+	// without ExtLatestVersionMtimeKey. Without a reliable successor
+	// clock NoncurrentDays would compute a year-0001 base and fire
+	// immediately. Suppress until the cache lands.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	// Hand-build the event WITHOUT ExtLatestVersionMtimeKey on NewEntry.
+	now := time.Now()
+	ev := &reader.Event{
+		Bucket: "bk",
+		Key:    "logs/foo" + s3_constants.VersionsFolder,
+		OldEntry: &filer_pb.Entry{
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1},
+			Extended:    map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("v-old")},
+		},
+		NewEntry: &filer_pb.Entry{
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1},
+			Extended:    map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("v-new")},
+		},
+	}
+	displaced := displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())
+	lister := &recordingLister{lookupEntry: displaced}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("missing cached mtime must suppress, got %v", got)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("must not consult lister without successor mtime, got %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionUsesCachedMtimeNotStaleDirMtime(t *testing.T) {
+	// Regression: the .versions/ directory's own Attributes.Mtime is
+	// preserved across pointer updates by updateLatestVersionInDirectory.
+	// Using it as SuccessorModTime would let a fresh pointer flip on an
+	// old directory fire NoncurrentDays right away. Use the cached
+	// latest-mtime instead.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 30,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	// The cached latest-mtime IS now (fresh PUT). Container's Attrs.Mtime
+	// is stale (containerStaleMtime=1). With the buggy old code, the
+	// match would fire immediately because successor=year-1970 +
+	// 30 days < now. With the fix, due = cached latest mtime + 30 days,
+	// which is in the future.
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	displaced := displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())
+	lister := &recordingLister{lookupEntry: displaced}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (scheduled, not fired), got %v", matches)
+	}
+	if !matches[0].DueTime.After(now.Add(29 * 24 * time.Hour)) {
+		t.Fatalf("DueTime=%v, want ~30d from now (cached mtime + 30d)", matches[0].DueTime)
+	}
+}
+
+func TestRoutePointerTransitionNewerNoncurrentExpansionFiresOnCrossingThreshold(t *testing.T) {
+	// NewerNoncurrentVersions=2 keeps the 2 newest noncurrents. Before
+	// the pointer flip there were 3 versions: v-cur (latest), v-mid
+	// (rank 0 noncurrent), v-old (rank 1 noncurrent). After flipping
+	// to v-new the ranks shift to: v-new latest, v-cur rank 0, v-mid
+	// rank 1, v-old rank 2 — v-old just crossed the threshold and
+	// must fire NoncurrentDays this run instead of waiting for the
+	// next bootstrap.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	// Successor mtime (cached on container) is "now" — the new latest.
+	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
+	allVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),                  // newest
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -10).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -30).Unix()), // oldest
+	}
+	lister := &recordingLister{listVersions: allVersions}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	// v-cur (rank 0) and v-mid (rank 1) retained; v-old (rank 2) fires.
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	if !contains(versionIDs, "v-old") {
+		t.Fatalf("v-old at rank 2 (>= NewerNoncurrentVersions=2) must fire, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"v-cur", "v-mid"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("rank-%d noncurrent must be retained, matches=%v", indexOf([]string{"v-cur", "v-mid"}, id), versionIDs)
+		}
+	}
+	if len(lister.listCalls) != 1 {
+		t.Fatalf("expansion path must call ListVersions once, got %v", lister.listCalls)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("expansion path must not call LookupVersion, got %v", lister.lookupCalls)
+	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOf(ss []string, s string) int {
+	for i, x := range ss {
+		if x == s {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestRoutePointerTransitionExpansionEmitsOnlyThresholdCrossing(t *testing.T) {
+	// Hot key with many already-eligible noncurrents under
+	// NewerNoncurrentVersions=2. A pointer flip must NOT enqueue every
+	// over-threshold version (Schedule.Add doesn't dedup; identity-CAS
+	// only saves the dispatch RPC, not the heap slot). Only the version
+	// that JUST crossed from kept to expired needs to enter the heap;
+	// everything else was already scheduled by an earlier transition or
+	// bootstrap.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
+	// 6 versions total: v-new latest after flip, then v-cur (rank 0),
+	// v-mid (rank 1), v-2 (rank 2 — newly crossed), v-3, v-4 (already
+	// past threshold from previous flips). Only rank 2 should enter
+	// the heap on this flip.
+	allVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -2).Unix()),
+		displacedVersionEntry("v-2", now.AddDate(0, 0, -10).Unix()),
+		displacedVersionEntry("v-3", now.AddDate(0, 0, -20).Unix()),
+		displacedVersionEntry("v-4", now.AddDate(0, 0, -30).Unix()),
+	}
+	lister := &recordingLister{listVersions: allVersions}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	// Want exactly v-2 (rank 2 — newly crossed). Not v-3 / v-4 (already
+	// over) and not v-cur / v-mid (still kept).
+	if !contains(versionIDs, "v-2") {
+		t.Fatalf("v-2 at the new crossing rank must fire, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"v-3", "v-4"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("over-threshold %s must NOT re-enter the heap on this flip, matches=%v", id, versionIDs)
+		}
+	}
+	for _, id := range []string{"v-cur", "v-mid"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("retained %s must not fire, matches=%v", id, versionIDs)
+		}
+	}
+}
+
+// versionsContainerEventStaleMtime simulates the pointer-cleared
+// suspended-versioning shape: NewEntry has no ExtLatestVersionIdKey
+// but DOES carry a stale ExtLatestVersionMtimeKey from the displaced
+// version (the cached value the buggy server-side code left behind).
+func versionsContainerEventStaleMtime(bucket, logical, oldID string, staleMtimeUnix int64) *reader.Event {
+	const containerStaleMtime int64 = 1
+	return &reader.Event{
+		Bucket: bucket,
+		Key:    logical + s3_constants.VersionsFolder,
+		OldEntry: &filer_pb.Entry{
+			Name:        logical + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: containerStaleMtime},
+			Extended: map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:    []byte(oldID),
+				s3_constants.ExtLatestVersionMtimeKey: []byte(fmt.Sprintf("%d", staleMtimeUnix)),
+			},
+		},
+		NewEntry: &filer_pb.Entry{
+			Name:        logical + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: containerStaleMtime},
+			Extended: map[string][]byte{
+				// Pointer cleared. Cached mtime intentionally left stale
+				// (the bug we're guarding against on the router side).
+				s3_constants.ExtLatestVersionMtimeKey: []byte(fmt.Sprintf("%d", staleMtimeUnix)),
+			},
+		},
+	}
+}
+
+func TestRoutePointerTransitionSuspendedClearsPointerUsesNullMtime(t *testing.T) {
+	// Suspended write: NewEntry's ExtLatestVersionIdKey is gone. The
+	// cached ExtLatestVersionMtimeKey may still hold the displaced
+	// version's mtime (server-side bug + defensive router behavior).
+	// Router must use the null entry's mtime as the successor clock,
+	// not the cached stale value — otherwise NoncurrentDays=30 fires
+	// on a 100-day-old displaced version even though it became
+	// noncurrent today.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 30,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	staleMtime := now.AddDate(0, 0, -100).Unix() // displaced version is 100 days old
+	ev := versionsContainerEventStaleMtime("bk", "logs/foo", "v-old", staleMtime)
+	displaced := displacedVersionEntry("v-old", staleMtime)
+	// Null was written today (the suspended PUT itself).
+	nullEntry := &filer_pb.Entry{
+		Name:       "foo",
+		Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
+	}
+	lister := &recordingLister{lookupEntry: displaced, nullEntry: nullEntry}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays scheduled, NOT fired), got %v", matches)
+	}
+	// Successor = null mtime (today). Days threshold = 30. DueTime ≈ now+30d.
+	if !matches[0].DueTime.After(now.Add(29 * 24 * time.Hour)) {
+		t.Fatalf("DueTime=%v, want ~30d from null PUT (not from displaced version's age)", matches[0].DueTime)
+	}
+	if matches[0].VersionID != "v-old" {
+		t.Fatalf("VersionID=%q, want displaced v-old", matches[0].VersionID)
+	}
+}
+
+func TestRoutePointerTransitionSuspendedClearsPointerExpansionLatestPosIsNull(t *testing.T) {
+	// Same shape under a NewerNoncurrentVersions rule — exercises the
+	// expansion path. The new latest is "null", so latestPos must
+	// resolve to the null sibling. With a substitution latestIDForExpand
+	// = "null", the existing match-on-id logic finds it.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	staleMtime := now.AddDate(0, 0, -10).Unix()
+	ev := versionsContainerEventStaleMtime("bk", "logs/foo", "v-cur", staleMtime)
+
+	// Versions in .versions/, plus null. Mtime order newest-first:
+	// null (today), v-cur (-1d), v-mid (-2d), v-old (-30d).
+	// Post-flip ranks: latest=null, rank0=v-cur, rank1=v-mid, rank2=v-old.
+	// rank-2 v-old is the threshold-crosser. v-cur (rank0) and v-mid
+	// (rank1) retained.
+	listVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -2).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -30).Unix()),
+	}
+	nullEntry := &filer_pb.Entry{
+		Name:       "foo",
+		Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
+	}
+	lister := &recordingLister{listVersions: listVersions, nullEntry: nullEntry}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	if !contains(versionIDs, "v-old") {
+		t.Fatalf("rank-2 v-old must fire, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"null", "v-cur", "v-mid"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("%s must not fire (latest or retained), matches=%v", id, versionIDs)
+		}
 	}
 }
