@@ -226,11 +226,11 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	freshOutputs := make(map[string]struct{}, len(outputFiles))
 	for _, f := range outputFiles {
 		if f != nil {
-			freshOutputs[f.Name()] = struct{}{}
+			freshOutputs[filepath.Clean(f.Name())] = struct{}{}
 		}
 	}
 	for _, ghost := range ghostPaths {
-		if _, overwritten := freshOutputs[ghost]; overwritten {
+		if _, overwritten := freshOutputs[filepath.Clean(ghost)]; overwritten {
 			continue
 		}
 		if removeErr := os.Remove(ghost); removeErr != nil && !os.IsNotExist(removeErr) {
