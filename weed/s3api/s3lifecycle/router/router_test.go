@@ -726,6 +726,34 @@ func TestRouteVersionedExpiredDeleteMarkerInactiveActionSkipsListing(t *testing.
 	}
 }
 
+func TestRouteVersionedRegularVersionCreateSkipsListing(t *testing.T) {
+	// A non-marker version create under .versions/<key>/ can never be the
+	// sole survivor (Count >= 2 by definition), so the lister must NOT
+	// be consulted on every regular versioned PUT.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	versionPath := "logs/keep" + s3_constants.VersionsFolder + "/v_v1"
+	ev := eventCreate("bk", versionPath, old.Unix(), 100, old.UnixNano())
+	ev.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte("v1"),
+	}
+
+	lister := &recordingLister{survivors: Survivors{Count: 1}}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("regular version create must not fire EXP_DM, got %v", got)
+	}
+	if len(lister.calls) != 0 {
+		t.Fatalf("lister consulted for regular version create: calls=%v", lister.calls)
+	}
+}
+
 func TestRouteVersionedDeleteMarkerNoExpDMRuleSkipsListing(t *testing.T) {
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
 	snap := compileWithVersioned(rule, activatedPrior(rule))

@@ -124,7 +124,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 		// and dispatch. Identity-CAS upstream covers the marker bytes;
 		// this covers the directory shape.
 		if req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER {
-			outcome, err := s3a.checkSoleSurvivorMarker(req.Bucket, req.ObjectPath, req.VersionId)
+			outcome, err := s3a.checkSoleSurvivorMarker(ctx, req.Bucket, req.ObjectPath, req.VersionId)
 			if outcome != nil || err != nil {
 				return outcome, err
 			}
@@ -190,13 +190,13 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 // pointer doesn't name versionId, or a bare null-version exists outside
 // .versions/. Pointer missing while a marker is present is treated as
 // retry-later — the create races with the directory metadata update.
-func (s3a *S3ApiServer) checkSoleSurvivorMarker(bucket, object, versionId string) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+func (s3a *S3ApiServer) checkSoleSurvivorMarker(ctx context.Context, bucket, object, versionId string) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsDir := bucketDir + "/" + object + s3_constants.VersionsFolder
 	count := 0
 	var firstName string
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.SeaweedList(context.Background(), client, versionsDir, "", func(entry *filer_pb.Entry, _ bool) error {
+		return filer_pb.SeaweedList(ctx, client, versionsDir, "", func(entry *filer_pb.Entry, _ bool) error {
 			count++
 			if count == 1 && entry != nil {
 				firstName = entry.Name
@@ -216,7 +216,13 @@ func (s3a *S3ApiServer) checkSoleSurvivorMarker(bucket, object, versionId string
 	if count > 1 {
 		return noopResolved("NOT_SOLE_SURVIVOR"), nil
 	}
-	if versionId != "" && firstName != "" && firstName != s3a.getVersionFileName(versionId) {
+	// SeaweedList delivered a single callback but with a nil entry; we
+	// can't compare names so retry rather than silently bypass the
+	// marker-replaced check.
+	if firstName == "" {
+		return retryLater("PENDING_SURVIVOR_ENTRY"), nil
+	}
+	if versionId != "" && firstName != s3a.getVersionFileName(versionId) {
 		return noopResolved("MARKER_REPLACED"), nil
 	}
 	// Latest-pointer check: createDeleteMarker writes the marker file

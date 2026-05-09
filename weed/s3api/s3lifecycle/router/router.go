@@ -147,6 +147,12 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 	if lister == nil {
 		return nil
 	}
+	// Skip the listing RPC for events that can't possibly produce a
+	// sole-survivor marker: a regular non-marker version create/update
+	// always lands at Count >= 2.
+	if ev.NewEntry != nil && !isDeleteMarkerEntry(ev.NewEntry) {
+		return nil
+	}
 	logicalKey, ok := logicalKeyFromVersionPath(ev.Key)
 	if !ok {
 		return nil
@@ -214,6 +220,9 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 	return matches
 }
 
+// logicalKeyFromVersionPath extracts <logical> from <logical>.versions/<file>.
+// Returns false for a bucket-root marker (path = ".versions/<file>"), since
+// AWS S3 has no concept of an object at the bucket key itself.
 func logicalKeyFromVersionPath(versionPath string) (string, bool) {
 	lastSlash := strings.LastIndex(versionPath, "/")
 	if lastSlash <= 0 {
