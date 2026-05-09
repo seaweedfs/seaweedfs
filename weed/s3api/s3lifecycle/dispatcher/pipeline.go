@@ -205,6 +205,8 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		cancel() // wake the dispatcher goroutine to drain & exit
 	}()
 
+	lister := &filerSiblingLister{client: p.FilerClient, bucketsPath: p.BucketsPath}
+
 	// Router/dispatcher goroutine: pulls events, routes them to per-shard
 	// schedules, ticks every shard's dispatcher on the same cadence, and
 	// checkpoints every shard's cursor on the checkpoint cadence. One
@@ -257,7 +259,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				// against the prior (empty) snapshot would silently drop
 				// every match. Engine.Snapshot is an atomic Load.
 				snap := p.Engine.Snapshot()
-				for _, m := range router.Route(snap, ev, time.Now()) {
+				for _, m := range router.Route(runCtx, snap, ev, time.Now(), lister) {
 					st.dispatch.Schedule.Add(m)
 				}
 			case <-dt.C:

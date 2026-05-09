@@ -120,6 +120,19 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return noopResolved("VERSION_IS_LATEST"), nil
 			}
 		}
+		// Sole-survivor guard for EXPIRED_DELETE_MARKER: the router's
+		// schedule-time count is advisory — between schedule and dispatch
+		// a fresh PUT can land another version under .versions/<key>/, or
+		// the marker can be replaced by a new marker. Re-check here so
+		// the rule only fires when the marker is still the only entry.
+		// Identity-CAS upstream covers the marker entry's bytes; this
+		// covers the directory-shape invariant separately.
+		if req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER {
+			outcome, err := s3a.checkSoleSurvivorMarker(req.Bucket, req.ObjectPath, req.VersionId)
+			if outcome != nil || err != nil {
+				return outcome, err
+			}
+		}
 		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId); err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
@@ -173,6 +186,48 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 		return retryLater("TRANSPORT_ERROR: rm: " + err.Error()), nil
 	}
 	return done(), nil
+}
+
+// checkSoleSurvivorMarker re-validates the EXPIRED_DELETE_MARKER invariant
+// at dispatch time: the marker must still be the only entry under
+// .versions/<object>/, and the directory's latest pointer (when set)
+// must still name versionId. Returns a non-nil response when the
+// dispatch should not delete (NOOP_RESOLVED for resolved drift, retry
+// for transient errors). Returns (nil, nil) when the delete should
+// proceed.
+func (s3a *S3ApiServer) checkSoleSurvivorMarker(bucket, object, versionId string) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	versionsDir := s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+	count := 0
+	var firstName string
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.SeaweedList(context.Background(), client, versionsDir, "", func(entry *filer_pb.Entry, _ bool) error {
+			count++
+			if count == 1 && entry != nil {
+				firstName = entry.Name
+			}
+			return nil
+		}, "", false, 2)
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return noopResolved("NOT_FOUND"), nil
+		}
+		return retryLater("TRANSPORT_ERROR: sole-survivor list: " + err.Error()), nil
+	}
+	if count == 0 {
+		return noopResolved("NOT_FOUND"), nil
+	}
+	if count > 1 {
+		return noopResolved("NOT_SOLE_SURVIVOR"), nil
+	}
+	// One entry — confirm it's the same marker we scheduled, by file
+	// name. SeaweedFS stores each version as v_<versionId>; a mismatch
+	// means the marker was replaced (e.g. another DELETE landed) and
+	// the rule no longer applies to this dispatch.
+	if versionId != "" && firstName != "" && firstName != s3a.getVersionFileName(versionId) {
+		return noopResolved("MARKER_REPLACED"), nil
+	}
+	return nil, nil
 }
 
 // isCurrentLatestVersion reports whether versionId is the version the

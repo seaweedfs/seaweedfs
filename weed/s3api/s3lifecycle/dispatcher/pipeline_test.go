@@ -48,7 +48,7 @@ func TestPipelineIntegrationInMemory(t *testing.T) {
 		},
 	}
 
-	matches := router.Route(snap, ev, now)
+	matches := router.Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %v", matches)
 	}

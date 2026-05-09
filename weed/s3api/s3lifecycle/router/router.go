@@ -1,15 +1,26 @@
 package router
 
 import (
+	"context"
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 )
+
+// SiblingLister counts the surviving versions of a versioned-bucket key.
+// Implementations must return the count of entries currently inside the
+// .versions/<key>/ folder. A nil lister or an error from Count means
+// "unknown" — callers must NOT mark the marker as sole survivor in that
+// case (suppress ExpiredObjectDeleteMarker rather than risk a wrong fire).
+type SiblingLister interface {
+	Count(ctx context.Context, bucket, objectKey string) (int, error)
+}
 
 // Match is one (event, action) pair where EvaluateAction fired. The
 // dispatcher runs `LifecycleDelete` at DueTime; identity-CAS in the RPC
@@ -46,7 +57,12 @@ type EntryIdentity struct {
 // actions on this bucket are considered; actions in SCAN_AT_DATE or DISABLED
 // modes are out-of-band of the event stream. Inactive actions
 // (BootstrapComplete=false) are also skipped.
-func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
+//
+// lister is consulted only for delete-marker version-folder events on a
+// versioned bucket when the bucket has an active ExpiredObjectDeleteMarker
+// rule; pass nil to suppress sole-survivor detection (no EXP_DM match
+// emitted rather than risk a wrong fire).
+func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now time.Time, lister SiblingLister) []Match {
 	if snap == nil || ev == nil {
 		return nil
 	}
@@ -61,7 +77,26 @@ func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
 	if len(keys) == 0 {
 		return nil
 	}
-	info := buildObjectInfo(ev, snap.BucketVersioned(ev.Bucket))
+	versioned := snap.BucketVersioned(ev.Bucket)
+
+	// Production stores delete markers under <object>.versions/<version-file>;
+	// buildObjectInfo skips every version-folder event because it can't tell
+	// current from noncurrent without sibling state. EXP_DM is the one case
+	// we can route from the file path alone: if the marker is the only entry
+	// under .versions/<key>/ then it's necessarily the latest. Gate behind
+	// (versioned, version-folder path, marker entry, EXP_DM rule active,
+	// lister supplied) so non-marker version writes pay nothing.
+	if versioned && isVersionFolderPath(ev.Key) {
+		if !isDeleteMarkerEntry(ev.NewEntry) {
+			return nil
+		}
+		if !hasActionKind(keys, s3lifecycle.ActionKindExpiredDeleteMarker) {
+			return nil
+		}
+		return routeSoleSurvivorMarker(ctx, snap, ev, keys, lister)
+	}
+
+	info := buildObjectInfo(ev, versioned)
 	if info == nil {
 		return nil
 	}
@@ -112,19 +147,110 @@ func Route(snap *engine.Snapshot, ev *reader.Event, now time.Time) []Match {
 	return matches
 }
 
+// routeSoleSurvivorMarker handles the version-folder delete-marker case.
+// The Match's ObjectKey is the LOGICAL key (parent dir minus the .versions
+// suffix) and VersionID is the marker's stored version id; the dispatcher
+// uses both to reach deleteSpecificObjectVersion. The schedule-time count
+// is advisory — server-side re-checks the sole-survivor invariant before
+// actually deleting (another version may have landed between schedule and
+// dispatch).
+func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister) []Match {
+	logicalKey, ok := logicalKeyFromVersionPath(ev.Key)
+	if !ok {
+		return nil
+	}
+	versionID := string(ev.NewEntry.Extended[s3_constants.ExtVersionIdKey])
+	if versionID == "" {
+		// Without a version_id the dispatcher can't target the marker;
+		// blocked dispatch would freeze the cursor.
+		return nil
+	}
+	if lister == nil {
+		return nil
+	}
+	n, err := lister.Count(ctx, ev.Bucket, logicalKey)
+	if err != nil {
+		glog.V(2).Infof("lifecycle router: sibling count %s/%s: %v", ev.Bucket, logicalKey, err)
+		return nil
+	}
+	if n != 1 {
+		return nil
+	}
+	entry := ev.NewEntry
+	info := &s3lifecycle.ObjectInfo{
+		Key:            logicalKey,
+		ModTime:        time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),
+		Size:           int64(entry.Attributes.FileSize),
+		IsLatest:       true,
+		IsDeleteMarker: true,
+		NumVersions:    1,
+	}
+	if tags := extractTags(entry.Extended); len(tags) > 0 {
+		info.Tags = tags
+	}
+	eventTime := time.Unix(0, ev.TsNs)
+	var matches []Match
+	for _, key := range keys {
+		if key.ActionKind != s3lifecycle.ActionKindExpiredDeleteMarker {
+			continue
+		}
+		action := snap.Action(key)
+		if action == nil || !action.IsActive() || action.Mode != engine.ModeEventDriven {
+			continue
+		}
+		dueTime := info.ModTime.Add(action.Delay)
+		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
+		if res.Action == s3lifecycle.ActionNone {
+			continue
+		}
+		matches = append(matches, Match{
+			Key:       key,
+			Action:    action,
+			Result:    res,
+			EventTs:   eventTime,
+			DueTime:   dueTime,
+			Bucket:    ev.Bucket,
+			ObjectKey: logicalKey,
+			VersionID: versionID,
+			Identity:  buildIdentity(ev),
+		})
+	}
+	return matches
+}
+
+// logicalKeyFromVersionPath strips the trailing /<version-file> and the
+// .versions suffix from the parent. Returns false if the path doesn't
+// have the expected shape.
+func logicalKeyFromVersionPath(versionPath string) (string, bool) {
+	lastSlash := strings.LastIndex(versionPath, "/")
+	if lastSlash <= 0 {
+		return "", false
+	}
+	parent := versionPath[:lastSlash]
+	if !strings.HasSuffix(parent, s3_constants.VersionsFolder) {
+		return "", false
+	}
+	logical := strings.TrimSuffix(parent, s3_constants.VersionsFolder)
+	if logical == "" {
+		return "", false
+	}
+	return logical, true
+}
+
 // buildObjectInfo derives an ObjectInfo from a meta-log event and the
 // bucket's versioning state. Returns nil when the event has no usable
-// shape (missing attributes, hard delete already handled upstream).
+// shape (missing attributes, hard delete already handled upstream, or
+// version-folder file event — those are routed by routeSoleSurvivorMarker
+// upstream of this call when applicable).
 //
 // On a versioned bucket the storage layout (<key>.versions/v_<id>) is
 // shared between the current latest and the noncurrent versions; the
 // latest pointer lives in the .versions/ directory's Extended map and
 // is updated separately. Without that pointer-transition signal here,
-// the router conservatively classifies every event as if it were the
-// current version (IsLatest=true) so it never deletes the live
-// latest; bootstrap walking + the server-side dispatch guard handle
-// noncurrent retention. NumVersions=0 keeps ExpiredObjectDeleteMarker
-// (which requires sole-survivor) suppressed.
+// the router conservatively classifies every bare-key event as if it
+// were the current version (IsLatest=true) and leaves NumVersions=0 so
+// ExpiredObjectDeleteMarker stays suppressed by default — the worker's
+// bootstrap walk handles noncurrent retention.
 //
 // MPU init directories at .uploads/<upload_id> populate IsMPUInit and
 // use the destination object key from the entry's Extended map for
@@ -172,9 +298,11 @@ func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 		if isVersionFolderPath(ev.Key) {
 			return nil
 		}
-		// NumVersions=0 keeps ExpiredObjectDeleteMarker (sole-survivor
-		// gate) suppressed for the bare-key delete-marker case until
-		// sibling listing lands.
+		// NumVersions=0 keeps ExpiredObjectDeleteMarker suppressed for
+		// the bare-key path; production never emits delete markers as
+		// bare keys (see routeSoleSurvivorMarker for the real path),
+		// but a defensive zero here means a misclassified event can't
+		// fire the rule.
 		info.NumVersions = 0
 	}
 	if tags := extractTags(entry.Extended); len(tags) > 0 {
@@ -266,10 +394,23 @@ func extractTags(ext map[string][]byte) map[string]string {
 	return out
 }
 
+func hasActionKind(keys []s3lifecycle.ActionKey, kind s3lifecycle.ActionKind) bool {
+	for _, k := range keys {
+		if k.ActionKind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeleteMarkerEntry mirrors the production predicate: every site that
+// writes a delete marker stores []byte("true") (see
+// s3api_object_versioning.go createDeleteMarker), and every read site
+// compares string(v) == "true".
 func isDeleteMarkerEntry(entry *filer_pb.Entry) bool {
 	if entry == nil || len(entry.Extended) == 0 {
 		return false
 	}
 	v, ok := entry.Extended[s3_constants.ExtDeleteMarkerKey]
-	return ok && len(v) == 1 && v[0] == 1
+	return ok && string(v) == "true"
 }

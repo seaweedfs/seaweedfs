@@ -1,6 +1,8 @@
 package router
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -45,7 +47,7 @@ func eventCreate(bucket, key string, modTimeS, size int64, ts int64) *reader.Eve
 }
 
 func TestRouteNoSnapshotNoMatches(t *testing.T) {
-	if got := Route(nil, eventCreate("bk", "k", 0, 1, 1), time.Now()); got != nil {
+	if got := Route(context.Background(), nil, eventCreate("bk", "k", 0, 1, 1), time.Now(), nil); got != nil {
 		t.Fatalf("nil snap should yield nil, got %v", got)
 	}
 }
@@ -54,7 +56,7 @@ func TestRouteMissingBucketNoMatches(t *testing.T) {
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
 	snap := compileWith(rule, activatedPrior(rule))
 	ev := eventCreate("other-bucket", "k", 0, 1, 1)
-	if got := Route(snap, ev, time.Now()); got != nil {
+	if got := Route(context.Background(), snap, ev, time.Now(), nil); got != nil {
 		t.Fatalf("foreign bucket should yield nil, got %v", got)
 	}
 }
@@ -68,7 +70,7 @@ func TestRouteInactiveSkipped(t *testing.T) {
 	old := now.Add(-48 * time.Hour) // past 1-day expiration
 	ev := eventCreate("bk", "k", old.Unix(), 1, old.UnixNano())
 
-	if got := Route(snap, ev, now); got != nil {
+	if got := Route(context.Background(), snap, ev, now, nil); got != nil {
 		t.Fatalf("inactive action should not match, got %v", got)
 	}
 }
@@ -81,7 +83,7 @@ func TestRouteExpirationDaysFires(t *testing.T) {
 	old := now.Add(-48 * time.Hour) // past 1-day expiration
 	ev := eventCreate("bk", "k", old.Unix(), 1, old.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %+v", matches)
 	}
@@ -107,7 +109,7 @@ func TestRouteFreshObjectSchedulesInFuture(t *testing.T) {
 	now := time.Now()
 	ev := eventCreate("bk", "k", now.Unix(), 1, now.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match (scheduled), got %v", matches)
 	}
@@ -127,13 +129,13 @@ func TestRouteRespectsPrefixFilter(t *testing.T) {
 
 	// Out of prefix: no match.
 	ev := eventCreate("bk", "data/file", old.Unix(), 1, old.UnixNano())
-	if got := Route(snap, ev, now); got != nil {
+	if got := Route(context.Background(), snap, ev, now, nil); got != nil {
 		t.Fatalf("out-of-prefix should not match, got %v", got)
 	}
 
 	// In prefix: matches.
 	ev = eventCreate("bk", "logs/file", old.Unix(), 1, old.UnixNano())
-	if got := Route(snap, ev, now); len(got) != 1 {
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 1 {
 		t.Fatalf("in-prefix should match, got %v", got)
 	}
 }
@@ -153,7 +155,7 @@ func TestRouteSkipsHardDelete(t *testing.T) {
 			Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 1},
 		},
 	}
-	if got := Route(snap, ev, now); got != nil {
+	if got := Route(context.Background(), snap, ev, now, nil); got != nil {
 		t.Fatalf("hard delete should not route, got %v", got)
 	}
 }
@@ -169,7 +171,7 @@ func TestRouteSkipsMissingAttributes(t *testing.T) {
 		Key:      "k",
 		NewEntry: &filer_pb.Entry{Name: "k"}, // no Attributes
 	}
-	if got := Route(snap, ev, time.Now()); got != nil {
+	if got := Route(context.Background(), snap, ev, time.Now(), nil); got != nil {
 		t.Fatalf("missing-Attributes event should not route, got %v", got)
 	}
 }
@@ -183,7 +185,7 @@ func TestRouteIdentityCapturedForNewEntry(t *testing.T) {
 	ev := eventCreate("bk", "k", old.Unix(), 42, old.UnixNano())
 	ev.NewEntry.Chunks = []*filer_pb.FileChunk{{FileId: "1,abc"}}
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %v", matches)
 	}
@@ -214,7 +216,7 @@ func TestRouteIdentityHashesExtended(t *testing.T) {
 		"Content-Type":    []byte("text/plain"),
 	}
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %v", matches)
 	}
@@ -259,7 +261,7 @@ func TestRouteMPUInitFiresAbortAfterDelay(t *testing.T) {
 	init := now.AddDate(0, 0, -8)
 	ev := mpuInitEvent("bk", "u1", "logs/foo.txt", init.Unix(), init.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %v", matches)
 	}
@@ -285,7 +287,7 @@ func TestRouteMPUInitFilteredOutByPrefix(t *testing.T) {
 	init := now.AddDate(0, 0, -8)
 	ev := mpuInitEvent("bk", "u2", "data/foo.txt", init.Unix(), init.UnixNano())
 
-	if got := Route(snap, ev, now); len(got) != 0 {
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 		t.Fatalf("expected 0 matches for foreign prefix, got %v", got)
 	}
 }
@@ -313,7 +315,7 @@ func TestRouteMPUInitMissingDestKeySkipped(t *testing.T) {
 		},
 	}
 
-	if got := Route(snap, ev, now); len(got) != 0 {
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 		t.Fatalf("expected 0 matches for missing destKey, got %v", got)
 	}
 }
@@ -341,7 +343,7 @@ func TestRouteMPUPartEventSkipped(t *testing.T) {
 		},
 	}
 
-	if got := Route(snap, ev, now); len(got) != 0 {
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 		t.Fatalf("expected 0 matches for part event, got %v", got)
 	}
 }
@@ -362,7 +364,7 @@ func TestRouteMPUInitDoesNotFireNoncurrent(t *testing.T) {
 	init := now.AddDate(0, 0, -30)
 	ev := mpuInitEvent("bk", "u1", "logs/foo.txt", init.Unix(), init.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected exactly 1 match (ABORT_MPU only), got %v", matches)
 	}
@@ -390,7 +392,7 @@ func TestRouteRegularObjectUnderDualRuleSkipsAbortMPU(t *testing.T) {
 	old := now.AddDate(0, 0, -2) // past the 1d expiration
 	ev := eventCreate("bk", "obj", old.Unix(), 1, old.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected exactly 1 match (EXPIRATION_DAYS only), got %v", matches)
 	}
@@ -427,7 +429,7 @@ func TestRouteVersionedNoncurrentEventDoesNotFireFromRouter(t *testing.T) {
 		s3_constants.ExtVersionIdKey: []byte("v1"),
 	}
 
-	if got := Route(snap, ev, now); len(got) != 0 {
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 		t.Fatalf("router must not emit noncurrent matches yet, got %v", got)
 	}
 }
@@ -443,7 +445,7 @@ func TestRouteVersionedCurrentEventStaysLatest(t *testing.T) {
 	old := now.AddDate(0, 0, -2)
 	ev := eventCreate("bk", "logs/foo", old.Unix(), 1, old.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match (EXPIRATION_DAYS), got %v", matches)
 	}
@@ -467,7 +469,7 @@ func TestRouteNonVersionedBucketIgnoresVersionsSuffix(t *testing.T) {
 	old := now.AddDate(0, 0, -2)
 	ev := eventCreate("bk", "logs/foo.versions/v1", old.Unix(), 1, old.UnixNano())
 
-	matches := Route(snap, ev, now)
+	matches := Route(context.Background(), snap, ev, now, nil)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %v", matches)
 	}
@@ -479,11 +481,36 @@ func TestRouteNonVersionedBucketIgnoresVersionsSuffix(t *testing.T) {
 	}
 }
 
-func TestRouteVersionedExpiredDeleteMarkerSuppressedWithoutSiblings(t *testing.T) {
-	// ExpiredObjectDeleteMarker requires NumVersions==1 — the marker is
-	// the sole-survivor. Without sibling listing the router can't
-	// confirm that, so the rule must NOT fire just because the latest
-	// is a delete marker. A future PR adds sibling listing.
+// markerEventBytes returns the production shape: a file event under
+// <key>.versions/v_<version-id>, with ExtDeleteMarkerKey="true" and
+// ExtVersionIdKey populated. Mirrors createDeleteMarker in
+// s3api_object_versioning.go.
+func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64) *reader.Event {
+	versionPath := logicalKey + s3_constants.VersionsFolder + "/v_" + versionID
+	ev := eventCreate(bucket, versionPath, mtimeUnix, 0, mtimeNs)
+	ev.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+		s3_constants.ExtVersionIdKey:    []byte(versionID),
+	}
+	return ev
+}
+
+// recordingLister captures Count calls so tests can assert the lister was
+// (or was NOT) consulted, and replay a configured count or error.
+type recordingLister struct {
+	calls []string
+	count int
+	err   error
+}
+
+func (r *recordingLister) Count(_ context.Context, bucket, key string) (int, error) {
+	r.calls = append(r.calls, bucket+"/"+key)
+	return r.count, r.err
+}
+
+func TestRouteVersionedExpiredDeleteMarkerNilListerSuppresses(t *testing.T) {
+	// Sole-survivor detection needs a sibling count; without a lister the
+	// router suppresses rather than risk a wrong fire.
 	rule := &s3lifecycle.Rule{
 		ID:                        "r",
 		Status:                    s3lifecycle.StatusEnabled,
@@ -493,13 +520,102 @@ func TestRouteVersionedExpiredDeleteMarkerSuppressedWithoutSiblings(t *testing.T
 
 	now := time.Now()
 	old := now.AddDate(0, 0, -1)
-	ev := eventCreate("bk", "logs/gone", old.Unix(), 0, old.UnixNano())
-	ev.NewEntry.Extended = map[string][]byte{
-		s3_constants.ExtDeleteMarkerKey: {1},
-	}
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
 
-	if got := Route(snap, ev, now); len(got) != 0 {
-		t.Fatalf("ExpiredDeleteMarker without sibling count must not fire, got %v", got)
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
+		t.Fatalf("nil lister must suppress, got %v", got)
+	}
+}
+
+func TestRouteVersionedExpiredDeleteMarkerSoleSurvivorFires(t *testing.T) {
+	// Exactly one entry under .versions/<key>/ — the marker itself —
+	// fires ExpiredObjectDeleteMarker. Match must carry the LOGICAL key
+	// in ObjectKey and the version_id in VersionID so the dispatcher
+	// can call deleteSpecificObjectVersion(bucket, logical, version).
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{count: 1}
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match (ExpiredDeleteMarker), got %v", matches)
+	}
+	m := matches[0]
+	if m.Result.Action != s3lifecycle.ActionExpireDeleteMarker {
+		t.Fatalf("Action=%v, want ExpireDeleteMarker", m.Result.Action)
+	}
+	if m.ObjectKey != "logs/gone" {
+		t.Fatalf("ObjectKey=%q, want logical key logs/gone", m.ObjectKey)
+	}
+	if m.VersionID != "2026-05-09-abc" {
+		t.Fatalf("VersionID=%q, want 2026-05-09-abc", m.VersionID)
+	}
+	if len(lister.calls) != 1 || lister.calls[0] != "bk/logs/gone" {
+		t.Fatalf("lister calls=%v, want [bk/logs/gone]", lister.calls)
+	}
+}
+
+func TestRouteVersionedExpiredDeleteMarkerSiblingsRemainSuppressed(t *testing.T) {
+	// More than one entry under .versions/<key>/ means other versions
+	// survive; the marker is not a sole survivor so the rule stays off.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{count: 2}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("siblings present, must not fire, got %v", got)
+	}
+}
+
+func TestRouteVersionedExpiredDeleteMarkerListerErrorSuppressed(t *testing.T) {
+	// Lister error == unknown count; suppress rather than risk a wrong fire.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{err: errors.New("filer down")}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("lister error must suppress, got %v", got)
+	}
+}
+
+func TestRouteVersionedDeleteMarkerNoExpDMRuleSkipsListing(t *testing.T) {
+	// Bucket has no ExpiredObjectDeleteMarker rule — the lister must NOT
+	// be consulted; that gate keeps the listing cost off most buckets.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{count: 1}
+	Route(context.Background(), snap, ev, now, lister)
+	if len(lister.calls) != 0 {
+		t.Fatalf("lister consulted without EXP_DM rule: calls=%v", lister.calls)
 	}
 }
 
@@ -555,7 +671,7 @@ func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
 			if tc.isDir {
 				ev.NewEntry.IsDirectory = true
 			}
-			if got := Route(snap, ev, now); len(got) != 0 {
+			if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 				t.Fatalf("version-folder event should be skipped, got %v", got)
 			}
 		})
