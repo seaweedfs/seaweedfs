@@ -3,12 +3,12 @@ package dispatcher
 import (
 	"context"
 	"errors"
-	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // filerSiblingLister inspects the .versions/<key>/ folder and the bare
@@ -36,12 +36,13 @@ func (l *filerSiblingLister) Survivors(ctx context.Context, bucket, objectKey st
 		return router.Survivors{}, err
 	}
 
-	parent, name := path.Split(bucketPath + "/" + objectKey)
-	parent = strings.TrimRight(parent, "/")
-	if parent == "" {
-		parent = "/"
-	}
-	resp, err := l.client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+	// NewFullPath strips a trailing slash from objectKey so directory-key
+	// objects (foo/) split the same as regular keys. LookupEntry
+	// normalizes the gRPC string-mapped not-found into ErrNotFound; a
+	// raw client.LookupDirectoryEntry would return that as a generic
+	// error and suppress every otherwise-valid match.
+	parent, name := util.NewFullPath(bucketPath, objectKey).DirAndName()
+	resp, err := filer_pb.LookupEntry(ctx, l.client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: parent,
 		Name:      name,
 	})
@@ -51,7 +52,9 @@ func (l *filerSiblingLister) Survivors(ctx context.Context, bucket, objectKey st
 		}
 		return router.Survivors{}, err
 	}
-	if resp.Entry != nil && !resp.Entry.IsDirectory {
+	// Bare regular file or an explicit S3 directory-marker (an empty
+	// directory entry with Mime set) both count as the null version.
+	if resp.Entry != nil && (!resp.Entry.IsDirectory || resp.Entry.IsDirectoryKeyObject()) {
 		s.HasNullVersion = true
 	}
 	return s, nil

@@ -246,13 +246,19 @@ func (s3a *S3ApiServer) checkSoleSurvivorMarker(bucket, object, versionId string
 		return noopResolved("MARKER_NOT_LATEST"), nil
 	}
 	// Null-version check: pre-versioning objects survive as the bare
-	// <bucket>/<key> entry. Deleting the marker while one exists would
-	// re-expose the older object.
-	bareExists, err := s3a.exists(bucketDir+"/"+path.Dir(object), path.Base(object), false)
+	// <bucket>/<key>. Both regular files and explicit S3 directory-key
+	// markers (object names ending in /) qualify; the listing path
+	// (s3api_object_versioning.go processExplicitDirectory) treats both
+	// as the null version. getEntry uses NewFullPath so a trailing slash
+	// in object splits the same as a regular key.
+	bareEntry, err := s3a.getEntry(bucketDir, object)
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, nil
+		}
 		return retryLater("TRANSPORT_ERROR: null-version lookup: " + err.Error()), nil
 	}
-	if bareExists {
+	if bareEntry != nil && (!bareEntry.IsDirectory || bareEntry.IsDirectoryKeyObject()) {
 		return noopResolved("NULL_VERSION_PRESENT"), nil
 	}
 	return nil, nil
