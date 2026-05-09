@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // EventInjector is the bootstrap-side hook into the dispatcher pipeline.
@@ -77,17 +78,25 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	root := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket
 	glog.V(0).Infof("lifecycle bootstrap: starting walk for bucket %s (root=%s)", bucket, root)
 	count := 0
+	// skipBare records bucket-relative bare-key paths that
+	// expandVersionsDir already routed as the null version. Without it
+	// the walker's regular emission would also fire for the bare entry
+	// — in a versioned bucket buildObjectInfo classifies it as
+	// IsLatest=true, NumVersions=0, and ExpirationDays would create a
+	// stray delete marker that hides the real latest.
+	skipBare := map[string]bool{}
 	var cb func(entry *filer_pb.Entry, key string) error
 	cb = func(entry *filer_pb.Entry, key string) error {
-		// .versions/-suffixed directories may be SeaweedFS version
-		// storage OR a coincidentally-named user folder.
-		// expandVersionsDir disambiguates by inspecting children and
-		// falls back to a regular recursion via cb when the dir holds
-		// no version files.
 		if isVersionsDir(entry) {
-			n, err := b.expandVersionsDir(ctx, bucket, root, key, entry, cb)
+			n, err := b.expandVersionsDir(ctx, bucket, root, key, entry, cb, skipBare)
 			count += n
 			return err
+		}
+		if !entry.IsDirectory && skipBare[key] {
+			return nil
+		}
+		if entry.IsDirectoryKeyObject() && skipBare[key] {
+			return nil
 		}
 		ev := &reader.Event{
 			// TsNs=0 sentinel: dispatcher.advance treats <=0 as no-op,
@@ -111,28 +120,42 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	glog.V(0).Infof("lifecycle bootstrap: bucket %s injected %d entries", bucket, count)
 }
 
+// versionItem is the per-sibling state expandVersionsDir builds: the
+// filer entry plus its version_id (or "null" for the bare null version
+// living outside .versions/). Carrying both together keeps the sort,
+// latest-resolution, and event-injection passes simple.
+type versionItem struct {
+	entry     *filer_pb.Entry
+	versionID string
+	bareKey   string // bucket-relative path; non-empty only for the null version
+}
+
 // expandVersionsDir lists <root>/<key>/ and, when the children look like
-// SeaweedFS version files (each carries ExtVersionIdKey), injects one
-// reader.Event per version with BootstrapVersion populated. versionsKey
-// is the bucket-relative path of the directory itself (e.g.
-// "logs/foo.versions"). SuccessorModTime is the immediately newer
-// sibling's mtime — when this version became noncurrent, the clock
-// NoncurrentDays uses.
+// SeaweedFS version files, injects one reader.Event per version with
+// BootstrapVersion populated. The bare logical key (the "null" version,
+// living outside .versions/) is included as a sibling so:
+//   - pre-versioning objects with a newer .versions/ history fire
+//     NoncurrentDays as id="null"
+//   - suspended-bucket writes (which clear the .versions/ latest pointer)
+//     correctly classify null as the current version while every
+//     .versions/ child becomes noncurrent
 //
-// When no child has ExtVersionIdKey the directory is treated as a
-// coincidentally-named user folder and walked recursively via fallback,
-// which is the same callback walkBucket builds. Reusing the same cb
-// keeps any nested .versions/<x> within it routed correctly.
-func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root, versionsKey string, versionsEntry *filer_pb.Entry, fallback func(*filer_pb.Entry, string) error) (int, error) {
+// versionsKey is the bucket-relative path of the .versions/ directory
+// (e.g. "logs/foo.versions"). When the bare null version is included,
+// its bucket-relative path is added to skipBare so the walker's regular
+// emission for the same entry is suppressed.
+//
+// When no child has ExtVersionIdKey the directory is a coincidentally-
+// named user folder; recurse via fallback (the bucket walk's own cb).
+func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root, versionsKey string, versionsEntry *filer_pb.Entry, fallback func(*filer_pb.Entry, string) error, skipBare map[string]bool) (int, error) {
 	logical := strings.TrimSuffix(versionsKey, s3_constants.VersionsFolder)
 	if logical == "" {
 		return 0, nil
 	}
 	versionsDir := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket + "/" + versionsKey
-	// First pass: collect every direct child that's a file (subdirs would
-	// corrupt the mtime sort and rank math). The hasVersionFile check
-	// inspects this raw set so a .versions/-suffixed user folder full of
-	// directories falls through to the recursion below.
+	// Collect file children only. Subdirectories under .versions/ would
+	// corrupt sort/rank math; the disambiguation pass below also wants
+	// to see only file-shaped children.
 	var children []*filer_pb.Entry
 	if err := filer_pb.SeaweedList(ctx, b.FilerClient, versionsDir, "", func(e *filer_pb.Entry, _ bool) error {
 		if e != nil && e.Attributes != nil && !e.IsDirectory {
@@ -142,16 +165,13 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 	}, "", false, 0); err != nil {
 		return 0, fmt.Errorf("list %s: %w", versionsDir, err)
 	}
-	// Disambiguate: a real .versions container's children always carry
-	// ExtVersionIdKey. createDeleteMarker writes the version file with
-	// the key set, so even mid-update the children look like versions.
-	versions := make([]*filer_pb.Entry, 0, len(children))
+	items := make([]versionItem, 0, len(children)+1)
 	for _, e := range children {
 		if id, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok && len(id) > 0 {
-			versions = append(versions, e)
+			items = append(items, versionItem{entry: e, versionID: string(id)})
 		}
 	}
-	if len(versions) == 0 {
+	if len(items) == 0 {
 		// Coincidentally-named user folder (or an empty .versions
 		// container). fallback is the bucket walk's own cb so nested
 		// .versions/ entries inside still expand.
@@ -163,76 +183,132 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 		}
 		return 0, nil
 	}
-	// Newest-first by mtime: NoncurrentIndex is 0-based among noncurrents
-	// in that order, and SuccessorModTime is the next-newer sibling's mtime.
-	sort.SliceStable(versions, func(i, j int) bool {
-		mi := versions[i].Attributes.Mtime*int64(1e9) + int64(versions[i].Attributes.MtimeNs)
-		mj := versions[j].Attributes.Mtime*int64(1e9) + int64(versions[j].Attributes.MtimeNs)
-		return mi > mj
+	// Look up the bare null version. SeaweedFS keeps it at the logical
+	// path for pre-versioning objects and for suspended-bucket writes.
+	// Both shapes count: regular file (PUT'd object) and explicit S3
+	// directory-key marker (object name ends in /).
+	if nullEntry, nullKey, ok := b.lookupNullVersion(ctx, bucket, logical); ok {
+		items = append(items, versionItem{
+			entry:     nullEntry,
+			versionID: "null",
+			bareKey:   nullKey,
+		})
+	}
+	// Sort newest-first: primary by mtime ns, fallback by version_id
+	// (CompareVersionIds returns <0 when first arg is newer). PUTs only
+	// set second-level Mtime, so collisions in the same second are
+	// resolved by the canonical version-id ordering used elsewhere.
+	sort.SliceStable(items, func(i, j int) bool {
+		mi := items[i].entry.Attributes.Mtime*int64(1e9) + int64(items[i].entry.Attributes.MtimeNs)
+		mj := items[j].entry.Attributes.Mtime*int64(1e9) + int64(items[j].entry.Attributes.MtimeNs)
+		if mi != mj {
+			return mi > mj
+		}
+		return s3lifecycle.CompareVersionIds(items[i].versionID, items[j].versionID) < 0
 	})
-	// Resolve the latest position. If the directory's latest pointer is
-	// missing or names a version that's no longer present (rare, e.g.
-	// race with createDeleteMarker), fall back to the newest sibling
-	// rather than mark every version noncurrent.
+	// Resolve latest position. Pointer present + names a real id wins.
+	// Pointer absent + null exists means a suspended-bucket clear made
+	// null the latest; locate it. Otherwise (e.g. mid-update race) fall
+	// back to the newest sibling so retention isn't unsafe.
 	latestID := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	latestPos := 0
 	if latestID != "" {
-		for i, v := range versions {
-			if string(v.Extended[s3_constants.ExtVersionIdKey]) == latestID {
+		for i, it := range items {
+			if it.versionID == latestID {
+				latestPos = i
+				break
+			}
+		}
+	} else {
+		for i, it := range items {
+			if it.versionID == "null" {
 				latestPos = i
 				break
 			}
 		}
 	}
 	count := 0
-	for i, v := range versions {
-		versionID := string(v.Extended[s3_constants.ExtVersionIdKey])
-		if versionID == "" {
-			continue
-		}
+	for i, it := range items {
 		var successor time.Time
 		if i > 0 {
-			successor = time.Unix(versions[i-1].Attributes.Mtime, int64(versions[i-1].Attributes.MtimeNs))
+			prev := items[i-1].entry.Attributes
+			successor = time.Unix(prev.Mtime, int64(prev.MtimeNs))
 		}
 		bv := &reader.BootstrapVersion{
 			LogicalKey:       logical,
-			VersionID:        versionID,
+			VersionID:        it.versionID,
 			IsLatest:         i == latestPos,
-			IsDeleteMarker:   string(v.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
-			NumVersions:      len(versions),
+			IsDeleteMarker:   string(it.entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
+			NumVersions:      len(items),
 			SuccessorModTime: successor,
 		}
 		if !bv.IsLatest {
-			// 0-based among noncurrents in newest-first order.
 			rank := i
 			if i > latestPos {
 				rank = i - 1
 			}
 			bv.NoncurrentIndex = rank
 		}
+		// Event Key for bookkeeping: real version files keep the
+		// .versions/<file> path; the null version uses its bare path
+		// so the dispatcher's identity check resolves to the same
+		// entry the walker would have emitted.
+		evKey := versionsKey + "/" + it.entry.Name
+		if it.versionID == "null" {
+			evKey = it.bareKey
+		}
 		ev := &reader.Event{
 			TsNs:             0,
 			Bucket:           bucket,
-			Key:              versionsKey + "/" + v.Name,
+			Key:              evKey,
 			ShardID:          s3lifecycle.ShardID(bucket, logical),
-			NewEntry:         v,
+			NewEntry:         it.entry,
 			BootstrapVersion: bv,
 		}
 		if err := b.Injector.InjectEvent(ctx, ev); err != nil {
 			return count, err
+		}
+		if it.versionID == "null" && skipBare != nil {
+			skipBare[it.bareKey] = true
 		}
 		count++
 	}
 	return count, nil
 }
 
-// walkBucketDir lists every file under dir recursively and invokes cb
-// with the filer entry plus its bucket-relative key. Two kinds of
-// directories are emitted whole rather than recursed into:
+// lookupNullVersion returns the bare-key entry that represents the null
+// version of logical, if any. Both regular files and S3 directory-key
+// markers (an empty directory entry with Mime set) qualify. The
+// returned bucketRelKey is the bucket-relative path the walker would
+// have emitted for this entry, so the caller can suppress the duplicate.
+func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logical string) (*filer_pb.Entry, string, bool) {
+	bucketPath := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket
+	parent, name := util.NewFullPath(bucketPath, logical).DirAndName()
+	resp, err := filer_pb.LookupEntry(ctx, b.FilerClient, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: parent,
+		Name:      name,
+	})
+	if err != nil || resp == nil || resp.Entry == nil {
+		return nil, "", false
+	}
+	e := resp.Entry
+	if e.IsDirectory && !e.IsDirectoryKeyObject() {
+		return nil, "", false
+	}
+	bucketRelKey := strings.TrimPrefix(parent+"/"+name, bucketPath+"/")
+	return e, bucketRelKey, true
+}
+
+// walkBucketDir lists every entry under dir and invokes cb. Two kinds
+// of directories are emitted whole rather than recursed into:
 //   - .uploads/<id> MPU init dirs (router fires ABORT_MPU off the dir entry)
 //   - <key>.versions/ directories (caller expands them into per-version
 //     events; recursing here would emit individual version files without
 //     the sibling state needed for NoncurrentDays / NewerNoncurrent)
+//
+// .versions/ dirs are processed before everything else at each level so
+// the cb's expandVersionsDir call can record the bare null-version key
+// in the walk-shared skip set before the same level emits the bare entry.
 func walkBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot string, cb func(entry *filer_pb.Entry, key string) error) error {
 	var children []*filer_pb.Entry
 	if err := filer_pb.SeaweedList(ctx, client, dir, "", func(e *filer_pb.Entry, _ bool) error {
@@ -241,21 +317,34 @@ func walkBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir,
 	}, "", false, 0); err != nil {
 		return fmt.Errorf("list %s: %w", dir, err)
 	}
+	// Pass 1: .versions/ directories. The cb expands them and may
+	// claim a sibling bare key as the null version.
 	for _, entry := range children {
 		if entry == nil || entry.Attributes == nil {
 			continue
 		}
+		if !entry.IsDirectory || !isVersionsDir(entry) {
+			continue
+		}
 		full := dir + "/" + entry.Name
 		key := strings.TrimPrefix(full, bucketRoot+"/")
-
+		if err := cb(entry, key); err != nil {
+			return err
+		}
+	}
+	// Pass 2: everything else. Bare entries whose name was claimed by
+	// a sibling .versions/ expansion are dropped by the cb's skip-set.
+	for _, entry := range children {
+		if entry == nil || entry.Attributes == nil {
+			continue
+		}
+		if entry.IsDirectory && isVersionsDir(entry) {
+			continue
+		}
+		full := dir + "/" + entry.Name
+		key := strings.TrimPrefix(full, bucketRoot+"/")
 		if entry.IsDirectory {
 			if isMPUInitDir(key, entry) {
-				if err := cb(entry, key); err != nil {
-					return err
-				}
-				continue
-			}
-			if isVersionsDir(entry) {
 				if err := cb(entry, key); err != nil {
 					return err
 				}
