@@ -13,11 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 )
 
-// SiblingLister counts the surviving versions of a versioned-bucket key.
-// Implementations must return the count of entries currently inside the
-// .versions/<key>/ folder. A nil lister or an error from Count means
-// "unknown" — callers must NOT mark the marker as sole survivor in that
-// case (suppress ExpiredObjectDeleteMarker rather than risk a wrong fire).
+// SiblingLister counts entries under .versions/<key>/. nil receiver or
+// an error means "unknown" — callers suppress rather than risk a wrong fire.
 type SiblingLister interface {
 	Count(ctx context.Context, bucket, objectKey string) (int, error)
 }
@@ -53,23 +50,14 @@ type EntryIdentity struct {
 	ExtendedHash []byte
 }
 
-// Route returns the matches that fire for ev against snap. Only EVENT_DRIVEN
-// actions on this bucket are considered; actions in SCAN_AT_DATE or DISABLED
-// modes are out-of-band of the event stream. Inactive actions
-// (BootstrapComplete=false) are also skipped.
-//
-// lister is consulted only for delete-marker version-folder events on a
-// versioned bucket when the bucket has an active ExpiredObjectDeleteMarker
-// rule; pass nil to suppress sole-survivor detection (no EXP_DM match
-// emitted rather than risk a wrong fire).
+// Route returns the matches that fire for ev against snap. Only active
+// event-driven actions are considered; SCAN_AT_DATE and DISABLED bypass
+// this path. Hard deletes (NewEntry==nil) skip — Expiration would hit
+// NOOP_RESOLVED anyway and EXP_DM fires on the marker create.
 func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now time.Time, lister SiblingLister) []Match {
 	if snap == nil || ev == nil {
 		return nil
 	}
-	// Hard deletes carry no schedule-relevant state: an Expiration would
-	// hit NOOP_RESOLVED at dispatch time anyway, ExpiredObjectDeleteMarker
-	// only fires on the latest-version delete-marker which is a Create
-	// from the server's perspective. Skip rather than burn a schedule slot.
 	if ev.NewEntry == nil {
 		return nil
 	}
@@ -79,13 +67,10 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 	}
 	versioned := snap.BucketVersioned(ev.Bucket)
 
-	// Production stores delete markers under <object>.versions/<version-file>;
-	// buildObjectInfo skips every version-folder event because it can't tell
-	// current from noncurrent without sibling state. EXP_DM is the one case
-	// we can route from the file path alone: if the marker is the only entry
-	// under .versions/<key>/ then it's necessarily the latest. Gate behind
-	// (versioned, version-folder path, marker entry, EXP_DM rule active,
-	// lister supplied) so non-marker version writes pay nothing.
+	// EXP_DM is the only rule routable from a version-folder file event:
+	// when the marker is the sole entry under .versions/<key>/ it is
+	// necessarily the latest, no pointer lookup needed. buildObjectInfo
+	// can't see sibling state and skips these events outright.
 	if versioned && isVersionFolderPath(ev.Key) {
 		if !isDeleteMarkerEntry(ev.NewEntry) {
 			return nil
@@ -147,22 +132,18 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 	return matches
 }
 
-// routeSoleSurvivorMarker handles the version-folder delete-marker case.
-// The Match's ObjectKey is the LOGICAL key (parent dir minus the .versions
-// suffix) and VersionID is the marker's stored version id; the dispatcher
-// uses both to reach deleteSpecificObjectVersion. The schedule-time count
-// is advisory — server-side re-checks the sole-survivor invariant before
-// actually deleting (another version may have landed between schedule and
-// dispatch).
+// routeSoleSurvivorMarker emits an EXP_DM Match against the LOGICAL key
+// (so the dispatcher can call deleteSpecificObjectVersion) with the
+// marker's version_id. Schedule-time count is advisory — the server
+// re-checks before deleting in case another version lands first.
 func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister) []Match {
 	logicalKey, ok := logicalKeyFromVersionPath(ev.Key)
 	if !ok {
 		return nil
 	}
+	// Empty version_id would BLOCK at dispatch and freeze the cursor.
 	versionID := string(ev.NewEntry.Extended[s3_constants.ExtVersionIdKey])
 	if versionID == "" {
-		// Without a version_id the dispatcher can't target the marker;
-		// blocked dispatch would freeze the cursor.
 		return nil
 	}
 	if lister == nil {
@@ -218,9 +199,6 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 	return matches
 }
 
-// logicalKeyFromVersionPath strips the trailing /<version-file> and the
-// .versions suffix from the parent. Returns false if the path doesn't
-// have the expected shape.
 func logicalKeyFromVersionPath(versionPath string) (string, bool) {
 	lastSlash := strings.LastIndex(versionPath, "/")
 	if lastSlash <= 0 {
@@ -237,43 +215,25 @@ func logicalKeyFromVersionPath(versionPath string) (string, bool) {
 	return logical, true
 }
 
-// buildObjectInfo derives an ObjectInfo from a meta-log event and the
-// bucket's versioning state. Returns nil when the event has no usable
-// shape (missing attributes, hard delete already handled upstream, or
-// version-folder file event — those are routed by routeSoleSurvivorMarker
-// upstream of this call when applicable).
-//
-// On a versioned bucket the storage layout (<key>.versions/v_<id>) is
-// shared between the current latest and the noncurrent versions; the
-// latest pointer lives in the .versions/ directory's Extended map and
-// is updated separately. Without that pointer-transition signal here,
-// the router conservatively classifies every bare-key event as if it
-// were the current version (IsLatest=true) and leaves NumVersions=0 so
-// ExpiredObjectDeleteMarker stays suppressed by default — the worker's
-// bootstrap walk handles noncurrent retention.
-//
-// MPU init directories at .uploads/<upload_id> populate IsMPUInit and
-// use the destination object key from the entry's Extended map for
-// filter matching, so a rule with Filter.Prefix=foo/ matches an MPU
-// uploading to foo/bar.txt.
+// buildObjectInfo derives an ObjectInfo from a meta-log event. Returns
+// nil for shapes the router can't classify safely: missing attributes,
+// non-MPU directories, version-folder files (those route through
+// routeSoleSurvivorMarker upstream when EXP_DM applies). On a versioned
+// bucket the latest pointer lives in the .versions/ directory's
+// Extended map; without it we leave NumVersions=0 so the bootstrap walk
+// drives noncurrent retention.
 func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 	entry := ev.NewEntry
 	if entry == nil || entry.Attributes == nil {
 		return nil
 	}
 	if destKey, ok := mpuInitInfo(ev, entry); ok {
-		// MPU intermediate state has no tags, no versions, no delete-marker
-		// semantics. info.Key is the user's destination key so a rule's
-		// Filter.Prefix matches the eventual object; the dispatcher already
-		// carries .uploads/<upload_id> in m.ObjectKey for ABORT_MPU.
 		return &s3lifecycle.ObjectInfo{
 			Key:       destKey,
 			ModTime:   time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),
 			IsMPUInit: true,
 		}
 	}
-	// Directory entries that aren't MPU inits aren't lifecycle subjects:
-	// the .versions/ folder itself, prefix dirs, etc. — emit nothing.
 	if entry.IsDirectory {
 		return nil
 	}
@@ -285,24 +245,9 @@ func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 		NumVersions: 1,
 	}
 	if versioned {
-		// On a versioned bucket the actual file path doesn't tell us
-		// whether the entry is the current latest or a noncurrent
-		// version — the latest pointer lives in the .versions/
-		// directory's Extended map and isn't part of this event. We
-		// also can't compute NumVersions / NoncurrentIndex here. Skip
-		// any version-folder file event for now; bootstrap walking
-		// drives noncurrent retention and current-version expiration
-		// for versioned buckets until pointer-transition routing
-		// lands. The bare-key path (null-version, pre-versioning
-		// objects) keeps the regular routing.
 		if isVersionFolderPath(ev.Key) {
 			return nil
 		}
-		// NumVersions=0 keeps ExpiredObjectDeleteMarker suppressed for
-		// the bare-key path; production never emits delete markers as
-		// bare keys (see routeSoleSurvivorMarker for the real path),
-		// but a defensive zero here means a misclassified event can't
-		// fire the rule.
 		info.NumVersions = 0
 	}
 	if tags := extractTags(entry.Extended); len(tags) > 0 {
@@ -394,12 +339,9 @@ func extractTags(ext map[string][]byte) map[string]string {
 	return out
 }
 
-// hasActiveEventDrivenAction reports whether any key with the given kind
-// has an action that's active and event-driven — the same conditions
-// Route applies before emitting a match. Use this for I/O gates (e.g.
-// sibling listing) so the cost is paid only when a match could actually
-// fire; matching on key presence alone would still issue RPCs for keys
-// whose action is disabled or scan-only.
+// hasActiveEventDrivenAction gates I/O (e.g. sibling listing) on whether
+// a match could actually fire. Mirrors the per-key filter in Route so
+// disabled or scan-only actions don't pay the RPC.
 func hasActiveEventDrivenAction(snap *engine.Snapshot, keys []s3lifecycle.ActionKey, kind s3lifecycle.ActionKind) bool {
 	for _, k := range keys {
 		if k.ActionKind != kind {
@@ -416,10 +358,8 @@ func hasActiveEventDrivenAction(snap *engine.Snapshot, keys []s3lifecycle.Action
 	return false
 }
 
-// isDeleteMarkerEntry mirrors the production predicate: every site that
-// writes a delete marker stores []byte("true") (see
-// s3api_object_versioning.go createDeleteMarker), and every read site
-// compares string(v) == "true".
+// isDeleteMarkerEntry mirrors every read site for ExtDeleteMarkerKey:
+// production writes []byte("true").
 func isDeleteMarkerEntry(entry *filer_pb.Entry) bool {
 	if entry == nil || len(entry.Extended) == 0 {
 		return false
