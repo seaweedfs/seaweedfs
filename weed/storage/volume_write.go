@@ -17,15 +17,24 @@ var ErrorNotFound = errors.New("not found")
 var ErrorDeleted = errors.New("already deleted")
 var ErrorSizeMismatch = errors.New("size mismatch")
 
+// IoErrorTolerance is the number of consecutive EIOs a volume must
+// see before CollectHeartbeat treats the replica as broken. A single
+// transient error is forgiven so a brief NFS / fabric / power blip
+// affecting several replicas at once does not cascade into removal of
+// the last healthy copy.
+const IoErrorTolerance = 3
+
 func (v *Volume) checkReadWriteError(err error) {
 	if err == nil {
 		if v.lastIoError != nil {
 			v.lastIoError = nil
 		}
+		v.lastIoErrorCount.Store(0)
 		return
 	}
 	if errors.Is(err, syscall.EIO) {
 		v.lastIoError = err
+		v.lastIoErrorCount.Add(1)
 	}
 }
 

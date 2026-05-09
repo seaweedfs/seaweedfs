@@ -53,7 +53,13 @@ type Volume struct {
 	location         *DiskLocation
 	diskId           uint32 // ID of this volume's disk in Store.Locations array
 
-	lastIoError error
+	// lastIoError is the most recent EIO from a read/write/delete; cleared
+	// on the next successful op. lastIoErrorCount tracks consecutive EIOs
+	// so CollectHeartbeat can require a sustained failure before unmounting
+	// the replica — protects against a transient hardware/network blip
+	// hitting multiple replicas at once and stranding the only good copy.
+	lastIoError      error
+	lastIoErrorCount atomic.Int32
 }
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {

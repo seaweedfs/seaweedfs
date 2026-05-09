@@ -394,12 +394,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
-		// keepRemoteData is parallel to deleteVids: true entries preserve the
-		// cloud-tier object on Volume.Destroy. IO-error deletions on a
-		// remote-tiered volume must not nuke the remote object — the error
-		// is local/transient and the cloud copy is the source of truth.
 		var deleteVids []needle.VolumeId
-		var keepRemoteData []bool
 		effectiveMaxCount := location.MaxVolumeCount
 		if location.isDiskSpaceLow {
 			usedSlots := int32(location.LocalVolumesLen())
@@ -422,11 +417,20 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			}
 			shouldDeleteVolume := false
 
-			if v.lastIoError != nil {
-				deleteVids = append(deleteVids, v.Id)
-				keepRemoteData = append(keepRemoteData, v.HasRemoteFile())
+			if v.lastIoError != nil && v.lastIoErrorCount.Load() >= IoErrorTolerance {
+				// Sustained EIO: stop announcing this replica so the master
+				// re-replicates from healthy peers, and mark it read-only so
+				// further writes fail fast instead of producing more EIOs.
+				// Never physically delete the data — the disk may be
+				// transiently bad and this could be the last good copy.
 				shouldDeleteVolume = true
-				glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
+				glog.Warningf("volume %d has %d consecutive IO errors, marking read-only and unreporting from master: %v",
+					v.Id, v.lastIoErrorCount.Load(), v.lastIoError)
+				if !v.noWriteOrDelete {
+					v.noWriteLock.Lock()
+					v.noWriteOrDelete = true
+					v.noWriteLock.Unlock()
+				}
 			} else {
 				if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 					volumeMessages = append(volumeMessages, volumeMessage)
@@ -434,7 +438,6 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 						if !shouldDeleteVolume {
 							deleteVids = append(deleteVids, v.Id)
-							keepRemoteData = append(keepRemoteData, false)
 							shouldDeleteVolume = true
 						}
 					} else {
@@ -483,8 +486,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		if len(deleteVids) > 0 {
 			// delete expired volumes.
 			location.volumesLock.Lock()
-			for i, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false, keepRemoteData[i])
+			for _, vid := range deleteVids {
+				found, err := location.deleteVolumeById(vid, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
