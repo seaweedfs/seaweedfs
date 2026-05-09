@@ -59,3 +59,29 @@ func (l *filerSiblingLister) Survivors(ctx context.Context, bucket, objectKey st
 	}
 	return s, nil
 }
+
+// LookupVersion fetches <bucketsPath>/<bucket>/<objectKey>.versions/v_<id>
+// for the pointer-transition router branch. NotFound returns (nil, nil)
+// — the displaced version may have been hard-deleted between the
+// pointer update and the lookup.
+func (l *filerSiblingLister) LookupVersion(ctx context.Context, bucket, objectKey, versionID string) (*filer_pb.Entry, error) {
+	if versionID == "" {
+		return nil, nil
+	}
+	bucketPath := strings.TrimSuffix(l.bucketsPath, "/") + "/" + bucket
+	dir := bucketPath + "/" + objectKey + s3_constants.VersionsFolder
+	resp, err := filer_pb.LookupEntry(ctx, l.client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      "v_" + versionID,
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if resp == nil {
+		return nil, nil
+	}
+	return resp.Entry, nil
+}

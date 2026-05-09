@@ -499,9 +499,17 @@ func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64)
 // state to return; calls list is appended on each invocation so tests
 // can assert whether the lister was consulted at all.
 type recordingLister struct {
-	calls    []string
-	survivors Survivors
-	err      error
+	calls       []string
+	survivors   Survivors
+	err         error
+	lookupCalls []string
+	lookupEntry *filer_pb.Entry
+	lookupErr   error
+}
+
+func (r *recordingLister) LookupVersion(_ context.Context, bucket, key, versionID string) (*filer_pb.Entry, error) {
+	r.lookupCalls = append(r.lookupCalls, bucket+"/"+key+"@"+versionID)
+	return r.lookupEntry, r.lookupErr
 }
 
 func (r *recordingLister) Survivors(_ context.Context, bucket, key string) (Survivors, error) {
@@ -990,5 +998,194 @@ func TestRouteBootstrapVersionAbortMPUNeverEmittedForVersion(t *testing.T) {
 	}
 	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
 		t.Fatalf("bootstrap version event must not produce ABORT_MPU match, got %v", got)
+	}
+}
+
+func versionsContainerEvent(bucket, logical, oldID, newID string, mtimeUnix int64) *reader.Event {
+	mk := func(id string, mt int64) *filer_pb.Entry {
+		ext := map[string][]byte{}
+		if id != "" {
+			ext[s3_constants.ExtLatestVersionIdKey] = []byte(id)
+		}
+		return &filer_pb.Entry{
+			Name:        logical + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: mt},
+			Extended:    ext,
+		}
+	}
+	return &reader.Event{
+		Bucket:   bucket,
+		Key:      logical + s3_constants.VersionsFolder,
+		OldEntry: mk(oldID, mtimeUnix-1),
+		NewEntry: mk(newID, mtimeUnix),
+	}
+}
+
+func displacedVersionEntry(versionID string, mtimeUnix int64) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name: "v_" + versionID,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    mtimeUnix,
+			FileSize: 100,
+		},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte(versionID),
+		},
+	}
+}
+
+func TestRoutePointerTransitionFiresNoncurrentDays(t *testing.T) {
+	// .versions/<key>/ directory update flips ExtLatestVersionIdKey from
+	// v-old to v-new. v-old becomes noncurrent immediately. The router
+	// looks up v-old's file (one RPC) and emits NoncurrentDays Match
+	// against the LOGICAL key with VersionID=v-old.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	displaced := displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+
+	lister := &recordingLister{lookupEntry: displaced}
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays), got %v", matches)
+	}
+	m := matches[0]
+	if m.ObjectKey != "logs/foo" {
+		t.Fatalf("ObjectKey=%q, want logs/foo", m.ObjectKey)
+	}
+	if m.VersionID != "v-old" {
+		t.Fatalf("VersionID=%q, want displaced v-old", m.VersionID)
+	}
+	if len(lister.lookupCalls) != 1 || lister.lookupCalls[0] != "bk/logs/foo@v-old" {
+		t.Fatalf("lookup calls=%v, want [bk/logs/foo@v-old]", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionPointerUnchangedSkipped(t *testing.T) {
+	// Directory update with same OLD/NEW pointer (e.g. some other
+	// metadata changed): no transition; nothing to schedule and no
+	// lookup RPC.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-same", "v-same", now.Unix())
+
+	lister := &recordingLister{}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("unchanged pointer must not fire, got %v", got)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("unchanged pointer must not consult lister: %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionEmptyOldPointerSkipped(t *testing.T) {
+	// First PUT after enabling versioning: OLD pointer is empty (no
+	// prior latest), NEW is the freshly-written id. Nothing displaced.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "", "v-new", now.Unix())
+
+	lister := &recordingLister{}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("empty old pointer must not fire, got %v", got)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("must not consult lister, got %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionDisplacedVersionMissingSuppressed(t *testing.T) {
+	// Race: by the time the router looks up v-old, it's already been
+	// hard-deleted. LookupVersion returns (nil, nil); no Match.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+
+	lister := &recordingLister{lookupEntry: nil} // not found
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("missing displaced version must suppress, got %v", got)
+	}
+	if len(lister.lookupCalls) != 1 {
+		t.Fatalf("lookup attempted once, got %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionNoNoncurrentRuleSkipsLookup(t *testing.T) {
+	// Bucket has only ExpirationDays — no NoncurrentDays / NewerNoncurrent.
+	// The router must NOT issue the lookup RPC.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+
+	lister := &recordingLister{lookupEntry: displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())}
+	Route(context.Background(), snap, ev, now, lister)
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("lister consulted without noncurrent rule: %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionNewerNoncurrentNewestNoncurrentRetained(t *testing.T) {
+	// NewerNoncurrentVersions=2 and the freshly-noncurrent version is at
+	// rank 0 (the newest noncurrent immediately after pointer flip).
+	// The retention rule must NOT fire on rank 0.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	lister := &recordingLister{lookupEntry: displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())}
+
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("rank-0 noncurrent must be retained under NewerNoncurrentVersions=2, got %v", got)
+	}
+}
+
+func TestRoutePointerTransitionUnversionedBucketSkipped(t *testing.T) {
+	// Same event shape on an unversioned bucket: should not even reach
+	// the pointer-transition branch.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWith(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	lister := &recordingLister{}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("unversioned bucket must not route pointer transitions, got %v", got)
 	}
 }

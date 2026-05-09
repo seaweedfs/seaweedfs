@@ -14,9 +14,14 @@ import (
 )
 
 // SiblingLister inspects the surviving versions of a versioned key.
-// nil receiver or an error means "unknown" — callers suppress.
+// nil receiver or an error means "unknown" — callers suppress. Two
+// queries: Survivors paginates the .versions/ container plus the bare
+// null version (used by sole-survivor and bootstrap); LookupVersion
+// fetches a single version file by id (used by pointer-transition
+// routing to read the displaced version's identity and mtime).
 type SiblingLister interface {
 	Survivors(ctx context.Context, bucket, objectKey string) (Survivors, error)
+	LookupVersion(ctx context.Context, bucket, objectKey, versionID string) (*filer_pb.Entry, error)
 }
 
 // Survivors describes the state under .versions/<key>/ plus the bare
@@ -80,6 +85,18 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 
 	versioned := snap.BucketVersioned(ev.Bucket)
 
+	// .versions/ directory metadata update: when ExtLatestVersionIdKey
+	// changes, the OLD pointer value names a version that's now
+	// noncurrent. Route NoncurrentDays / NewerNoncurrent for it without
+	// waiting for the next bootstrap.
+	if versioned && ev.NewEntry != nil && ev.OldEntry != nil && ev.NewEntry.IsDirectory && isVersionsContainerKey(ev.Key) {
+		if !hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindNoncurrentDays) &&
+			!hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindNewerNoncurrent) {
+			return nil
+		}
+		return routePointerTransition(ctx, snap, ev, keys, lister)
+	}
+
 	// EXP_DM can fire on two version-folder events: the marker create
 	// (sole survivor immediately) and a noncurrent hard-delete that
 	// leaves only the marker behind. Both reach routeSoleSurvivorMarker.
@@ -139,6 +156,82 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 			Bucket:    ev.Bucket,
 			ObjectKey: ev.Key,
 			Identity:  buildIdentity(ev),
+		})
+	}
+	return matches
+}
+
+// routePointerTransition handles a .versions/ container update where
+// ExtLatestVersionIdKey changed: the OLD pointer value names a version
+// that just became noncurrent. Looks up that version file (one RPC),
+// builds an ObjectInfo with IsLatest=false / NoncurrentIndex=0 /
+// SuccessorModTime=now, and runs the match loop with NoncurrentDays /
+// NewerNoncurrent. Without this branch the worker has to wait for the
+// next bootstrap to schedule retention on a freshly-noncurrent version.
+func routePointerTransition(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister) []Match {
+	if lister == nil {
+		return nil
+	}
+	logical := strings.TrimSuffix(ev.Key, s3_constants.VersionsFolder)
+	if logical == "" {
+		return nil
+	}
+	oldID := string(ev.OldEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	newID := string(ev.NewEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	if oldID == "" || oldID == newID {
+		// Empty old pointer means there was no prior latest version
+		// (first PUT after enabling versioning); nothing displaced.
+		// Same id means the update didn't transition the pointer.
+		return nil
+	}
+	displaced, err := lister.LookupVersion(ctx, ev.Bucket, logical, oldID)
+	if err != nil {
+		glog.V(2).Infof("lifecycle router: lookup displaced version %s/%s/%s: %v", ev.Bucket, logical, oldID, err)
+		return nil
+	}
+	if displaced == nil || displaced.Attributes == nil {
+		return nil
+	}
+	successor := time.Unix(ev.NewEntry.Attributes.Mtime, int64(ev.NewEntry.Attributes.MtimeNs))
+	idx := 0
+	info := &s3lifecycle.ObjectInfo{
+		Key:              logical,
+		ModTime:          time.Unix(displaced.Attributes.Mtime, int64(displaced.Attributes.MtimeNs)),
+		Size:             int64(displaced.Attributes.FileSize),
+		IsLatest:         false,
+		IsDeleteMarker:   string(displaced.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
+		NoncurrentIndex:  &idx,
+		SuccessorModTime: successor,
+	}
+	if tags := extractTags(displaced.Extended); len(tags) > 0 {
+		info.Tags = tags
+	}
+	eventTime := time.Unix(0, ev.TsNs)
+	identity := buildIdentityFromEntry(displaced)
+	var matches []Match
+	for _, key := range keys {
+		if key.ActionKind != s3lifecycle.ActionKindNoncurrentDays && key.ActionKind != s3lifecycle.ActionKindNewerNoncurrent {
+			continue
+		}
+		action := snap.Action(key)
+		if action == nil || !action.IsActive() || action.Mode != engine.ModeEventDriven {
+			continue
+		}
+		dueTime := successor.Add(action.Delay)
+		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
+		if res.Action == s3lifecycle.ActionNone {
+			continue
+		}
+		matches = append(matches, Match{
+			Key:       key,
+			Action:    action,
+			Result:    res,
+			EventTs:   eventTime,
+			DueTime:   dueTime,
+			Bucket:    ev.Bucket,
+			ObjectKey: logical,
+			VersionID: oldID,
+			Identity:  identity,
 		})
 	}
 	return matches
@@ -373,6 +466,18 @@ func buildObjectInfo(ev *reader.Event, versioned bool) *s3lifecycle.ObjectInfo {
 		info.IsDeleteMarker = true
 	}
 	return info
+}
+
+// isVersionsContainerKey reports whether the bucket-relative key IS a
+// .versions/ container itself (e.g. "logs/foo.versions"), as opposed to
+// a file inside one. Used to recognize directory-level events whose
+// Extended map carries the latest pointer for an object.
+func isVersionsContainerKey(key string) bool {
+	if key == s3_constants.VersionsFolder {
+		// Bucket-root .versions: no logical object key.
+		return false
+	}
+	return strings.HasSuffix(key, s3_constants.VersionsFolder)
 }
 
 // isVersionFolderPath reports whether the bucket-relative key sits inside a
