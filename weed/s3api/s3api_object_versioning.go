@@ -964,8 +964,11 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 	return entry, nil
 }
 
-// deleteSpecificObjectVersion deletes a specific version of an object
-func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string) error {
+// deleteSpecificObjectVersion deletes a specific version of an object.
+// metadataOnly=true skips per-chunk DeleteFile RPCs at the filer; only
+// pass true when the live entry's Attributes.TtlSec > 0 so the volume
+// reclaims chunks on its own.
+func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string, metadataOnly bool) error {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
@@ -986,7 +989,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		}
 
 		// Delete the regular file
-		deleteErr := s3a.rmObject(bucketDir, normalizedObject, true, false)
+		deleteErr := s3a.rmObject(bucketDir, normalizedObject, !metadataOnly, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
 			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
@@ -1013,7 +1016,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	// Attempt to delete the version file
 	// Note: We don't check if the file exists first to avoid race conditions
 	// The deletion operation should be idempotent
-	deleteErr := s3a.rm(versionsDir, versionFile, true, false)
+	deleteErr := s3a.rm(versionsDir, versionFile, !metadataOnly, false)
 	if deleteErr != nil {
 		// Check if file was already deleted by another process (race condition handling)
 		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
