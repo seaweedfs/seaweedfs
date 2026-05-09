@@ -1,0 +1,80 @@
+name: "S3 Lifecycle Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/s3api/s3lifecycle/**'
+      - 'weed/s3api/s3api_internal_lifecycle.go'
+      - 'weed/s3api/s3api_internal_lifecycle_test.go'
+      - 'weed/s3api/s3api_object_lifecycle_ttl*.go'
+      - 'weed/s3api/s3api_bucket_handlers.go'
+      - 'weed/s3api/s3api_bucket_lifecycle_config.go'
+      - 'weed/s3api/lifecycle_xml/**'
+      - 'weed/worker/tasks/s3_lifecycle/**'
+      - 'weed/shell/command_s3_lifecycle_*.go'
+      - 'test/s3/lifecycle/**'
+      - '.github/workflows/s3-lifecycle-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/s3api/s3lifecycle/**'
+      - 'weed/s3api/s3api_internal_lifecycle.go'
+      - 'weed/s3api/s3api_internal_lifecycle_test.go'
+      - 'weed/s3api/s3api_object_lifecycle_ttl*.go'
+      - 'weed/s3api/s3api_bucket_handlers.go'
+      - 'weed/s3api/s3api_bucket_lifecycle_config.go'
+      - 'weed/s3api/lifecycle_xml/**'
+      - 'weed/worker/tasks/s3_lifecycle/**'
+      - 'weed/shell/command_s3_lifecycle_*.go'
+      - 'test/s3/lifecycle/**'
+      - '.github/workflows/s3-lifecycle-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/s3-lifecycle-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  s3-lifecycle-integration:
+    name: S3 Lifecycle Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run S3 Lifecycle Tests
+        timeout-minutes: 15
+        working-directory: test/s3/lifecycle
+        run: |
+          set -x
+          make test-with-server
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/lifecycle
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            tail -200 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp 2>/dev/null | grep -E "(8333|9333|8080|8888)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-lifecycle-test-logs
+          path: test/s3/lifecycle/weed-test*.log
+          retention-days: 3
