@@ -828,3 +828,163 @@ func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
 	}
 }
 
+
+func bootstrapVersionEntry(versionID string, mtime time.Time, isDeleteMarker bool) *filer_pb.Entry {
+	ext := map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte(versionID),
+	}
+	if isDeleteMarker {
+		ext[s3_constants.ExtDeleteMarkerKey] = []byte("true")
+	}
+	return &filer_pb.Entry{
+		Name: "v_" + versionID,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: mtime.Unix(),
+		},
+		Extended: ext,
+	}
+}
+
+func TestRouteBootstrapVersionLatestExpirationDaysFires(t *testing.T) {
+	// Bootstrap-emitted event for the LATEST version of a versioned
+	// object. ExpirationDays should fire (creates a delete marker at
+	// dispatch). ObjectKey is the LOGICAL key, VersionID is set.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	entry := bootstrapVersionEntry("v-current", old, false)
+	ev := &reader.Event{
+		Bucket:   "bk",
+		Key:      "logs/foo" + s3_constants.VersionsFolder + "/v_v-current",
+		NewEntry: entry,
+		BootstrapVersion: &reader.BootstrapVersion{
+			LogicalKey:  "logs/foo",
+			VersionID:   "v-current",
+			IsLatest:    true,
+			NumVersions: 1,
+		},
+	}
+	matches := Route(context.Background(), snap, ev, now, nil)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (ExpirationDays on latest), got %v", matches)
+	}
+	if matches[0].ObjectKey != "logs/foo" {
+		t.Fatalf("ObjectKey=%q, want logs/foo", matches[0].ObjectKey)
+	}
+	if matches[0].VersionID != "v-current" {
+		t.Fatalf("VersionID=%q, want v-current", matches[0].VersionID)
+	}
+}
+
+func TestRouteBootstrapVersionNoncurrentDaysFires(t *testing.T) {
+	// Bootstrap-emitted event for a NONCURRENT version. NoncurrentDays
+	// uses SuccessorModTime as the clock — when this version was
+	// replaced by the next-newer sibling.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	successor := now.AddDate(0, 0, -3) // replaced 3 days ago
+	old := now.AddDate(0, 0, -10)      // mtime older still
+	entry := bootstrapVersionEntry("v-old", old, false)
+	idx := 0
+	_ = idx
+	ev := &reader.Event{
+		Bucket:   "bk",
+		Key:      "logs/foo" + s3_constants.VersionsFolder + "/v_v-old",
+		NewEntry: entry,
+		BootstrapVersion: &reader.BootstrapVersion{
+			LogicalKey:       "logs/foo",
+			VersionID:        "v-old",
+			IsLatest:         false,
+			NumVersions:      2,
+			NoncurrentIndex:  0,
+			SuccessorModTime: successor,
+		},
+	}
+	matches := Route(context.Background(), snap, ev, now, nil)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays), got %v", matches)
+	}
+	if matches[0].VersionID != "v-old" {
+		t.Fatalf("VersionID=%q, want v-old", matches[0].VersionID)
+	}
+}
+
+func TestRouteBootstrapVersionNoncurrentRespectsNewerNoncurrentVersions(t *testing.T) {
+	// NewerNoncurrentVersions=2 keeps the two newest noncurrents safe.
+	// A version at NoncurrentIndex=0 (newest noncurrent) must NOT fire;
+	// index=2 (third-newest) MUST fire.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	successor := now.AddDate(0, 0, -3)
+	old := now.AddDate(0, 0, -10)
+
+	mk := func(idx int) *reader.Event {
+		return &reader.Event{
+			Bucket:   "bk",
+			Key:      "logs/foo" + s3_constants.VersionsFolder + "/v_old" + string(rune('0'+idx)),
+			NewEntry: bootstrapVersionEntry("old"+string(rune('0'+idx)), old, false),
+			BootstrapVersion: &reader.BootstrapVersion{
+				LogicalKey:       "logs/foo",
+				VersionID:        "old" + string(rune('0'+idx)),
+				IsLatest:         false,
+				NumVersions:      4,
+				NoncurrentIndex:  idx,
+				SuccessorModTime: successor,
+			},
+		}
+	}
+
+	if got := Route(context.Background(), snap, mk(0), now, nil); len(got) != 0 {
+		t.Fatalf("noncurrent rank 0 must be retained, got %v", got)
+	}
+	if got := Route(context.Background(), snap, mk(1), now, nil); len(got) != 0 {
+		t.Fatalf("noncurrent rank 1 must be retained, got %v", got)
+	}
+	if got := Route(context.Background(), snap, mk(2), now, nil); len(got) != 1 {
+		t.Fatalf("noncurrent rank 2 must fire, got %v", got)
+	}
+}
+
+func TestRouteBootstrapVersionAbortMPUNeverEmittedForVersion(t *testing.T) {
+	// AbortIncompleteMultipartUpload only applies to MPU init dirs, not
+	// versioned object versions. Even if the bucket has the rule, a
+	// bootstrap version event must not produce an ABORT_MPU match.
+	rule := &s3lifecycle.Rule{
+		ID:                          "r",
+		Status:                      s3lifecycle.StatusEnabled,
+		AbortMPUDaysAfterInitiation: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -10)
+	ev := &reader.Event{
+		Bucket:   "bk",
+		Key:      "logs/foo" + s3_constants.VersionsFolder + "/v_x",
+		NewEntry: bootstrapVersionEntry("x", old, false),
+		BootstrapVersion: &reader.BootstrapVersion{
+			LogicalKey:  "logs/foo",
+			VersionID:   "x",
+			IsLatest:    true,
+			NumVersions: 1,
+		},
+	}
+	if got := Route(context.Background(), snap, ev, now, nil); len(got) != 0 {
+		t.Fatalf("bootstrap version event must not produce ABORT_MPU match, got %v", got)
+	}
+}

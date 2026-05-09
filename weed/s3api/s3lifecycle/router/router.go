@@ -71,6 +71,13 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 	if len(keys) == 0 {
 		return nil
 	}
+	// Bootstrap-expanded version event: sibling state is pre-computed,
+	// info.Key is the LOGICAL key so rule prefixes match. Skip the
+	// meta-log path's version-folder skip.
+	if ev.BootstrapVersion != nil {
+		return routeBootstrapVersion(snap, ev, keys)
+	}
+
 	versioned := snap.BucketVersioned(ev.Bucket)
 
 	// EXP_DM can fire on two version-folder events: the marker create
@@ -214,6 +221,75 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 			Bucket:    ev.Bucket,
 			ObjectKey: logicalKey,
 			VersionID: versionID,
+			Identity:  identity,
+		})
+	}
+	return matches
+}
+
+// routeBootstrapVersion handles a synthesized event from BucketBootstrapper.
+// The bootstrap walker has already listed .versions/<key>/, sorted siblings
+// newest-first, and stamped each one's IsLatest / NoncurrentIndex /
+// SuccessorModTime. The router only needs to assemble ObjectInfo and run
+// the match loop with the standard kind gates. ev.NewEntry is the version
+// file itself; ev.Key is the version-folder path; the LOGICAL key from
+// BootstrapVersion drives prefix matching and the dispatcher.
+func routeBootstrapVersion(snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey) []Match {
+	bv := ev.BootstrapVersion
+	entry := ev.NewEntry
+	if entry == nil || entry.Attributes == nil || bv.LogicalKey == "" {
+		return nil
+	}
+	idx := bv.NoncurrentIndex
+	info := &s3lifecycle.ObjectInfo{
+		Key:              bv.LogicalKey,
+		ModTime:          time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),
+		Size:             int64(entry.Attributes.FileSize),
+		IsLatest:         bv.IsLatest,
+		IsDeleteMarker:   bv.IsDeleteMarker,
+		NumVersions:      bv.NumVersions,
+		SuccessorModTime: bv.SuccessorModTime,
+	}
+	if !bv.IsLatest {
+		info.NoncurrentIndex = &idx
+	}
+	if tags := extractTags(entry.Extended); len(tags) > 0 {
+		info.Tags = tags
+	}
+	eventTime := time.Unix(0, ev.TsNs)
+	identity := buildIdentityFromEntry(entry)
+	var matches []Match
+	for _, key := range keys {
+		action := snap.Action(key)
+		if action == nil || !action.IsActive() || action.Mode != engine.ModeEventDriven {
+			continue
+		}
+		// ABORT_MPU never applies to a versioned object.
+		if key.ActionKind == s3lifecycle.ActionKindAbortMPU {
+			continue
+		}
+		// Noncurrent rules clock from when this version was replaced
+		// (SuccessorModTime), not from when it was originally written.
+		// Bootstrap populates SuccessorModTime; fall back to ModTime
+		// for the latest version (no successor exists).
+		clock := info.ModTime
+		if !info.IsLatest && !info.SuccessorModTime.IsZero() {
+			clock = info.SuccessorModTime
+		}
+		dueTime := clock.Add(action.Delay)
+		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
+		if res.Action == s3lifecycle.ActionNone {
+			continue
+		}
+		matches = append(matches, Match{
+			Key:       key,
+			Action:    action,
+			Result:    res,
+			EventTs:   eventTime,
+			DueTime:   dueTime,
+			Bucket:    ev.Bucket,
+			ObjectKey: bv.LogicalKey,
+			VersionID: bv.VersionID,
 			Identity:  identity,
 		})
 	}

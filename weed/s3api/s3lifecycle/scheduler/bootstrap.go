@@ -3,8 +3,10 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -76,6 +78,14 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	glog.V(0).Infof("lifecycle bootstrap: starting walk for bucket %s (root=%s)", bucket, root)
 	count := 0
 	if err := walkBucketDir(ctx, b.FilerClient, root, root, func(entry *filer_pb.Entry, key string) error {
+		// .versions/ directories are emitted whole; expand into one event
+		// per version with sibling state pre-computed so the router can
+		// fire NoncurrentDays / NewerNoncurrent without listing again.
+		if isVersionsDir(entry) {
+			n, err := b.expandVersionsDir(ctx, bucket, key, entry)
+			count += n
+			return err
+		}
 		ev := &reader.Event{
 			// TsNs=0 sentinel: dispatcher.advance treats <=0 as no-op,
 			// so the reader's persisted cursor isn't ratcheted forward
@@ -97,10 +107,100 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	glog.V(0).Infof("lifecycle bootstrap: bucket %s injected %d entries", bucket, count)
 }
 
+// expandVersionsDir lists <root>/<key>/, sorts the versions newest-first by
+// mtime, and injects one event per version with BootstrapVersion populated.
+// versionsKey is the bucket-relative path of the .versions/ directory itself
+// (e.g. "logs/foo.versions"); versionsEntry carries ExtLatestVersionIdKey.
+// SuccessorModTime is the immediately newer sibling's mtime — when this
+// version became noncurrent, the clock that NoncurrentDays uses.
+func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, versionsKey string, versionsEntry *filer_pb.Entry) (int, error) {
+	logical := strings.TrimSuffix(versionsKey, s3_constants.VersionsFolder)
+	if logical == "" {
+		return 0, nil
+	}
+	versionsDir := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket + "/" + versionsKey
+	var versions []*filer_pb.Entry
+	if err := filer_pb.SeaweedList(ctx, b.FilerClient, versionsDir, "", func(e *filer_pb.Entry, _ bool) error {
+		if e != nil && e.Attributes != nil {
+			versions = append(versions, e)
+		}
+		return nil
+	}, "", false, 0); err != nil {
+		return 0, fmt.Errorf("list %s: %w", versionsDir, err)
+	}
+	if len(versions) == 0 {
+		return 0, nil
+	}
+	// Newest-first by mtime: NoncurrentIndex is 0-based among noncurrents
+	// in that order, and SuccessorModTime is the next-newer sibling's mtime.
+	sort.SliceStable(versions, func(i, j int) bool {
+		mi := versions[i].Attributes.Mtime*int64(1e9) + int64(versions[i].Attributes.MtimeNs)
+		mj := versions[j].Attributes.Mtime*int64(1e9) + int64(versions[j].Attributes.MtimeNs)
+		return mi > mj
+	})
+	// Resolve the latest position. If the directory's latest pointer is
+	// missing or names a version that's no longer present (rare, e.g.
+	// race with createDeleteMarker), fall back to the newest sibling
+	// rather than mark every version noncurrent.
+	latestID := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	latestPos := 0
+	if latestID != "" {
+		for i, v := range versions {
+			if string(v.Extended[s3_constants.ExtVersionIdKey]) == latestID {
+				latestPos = i
+				break
+			}
+		}
+	}
+	count := 0
+	for i, v := range versions {
+		versionID := string(v.Extended[s3_constants.ExtVersionIdKey])
+		if versionID == "" {
+			continue
+		}
+		var successor time.Time
+		if i > 0 {
+			successor = time.Unix(versions[i-1].Attributes.Mtime, int64(versions[i-1].Attributes.MtimeNs))
+		}
+		bv := &reader.BootstrapVersion{
+			LogicalKey:       logical,
+			VersionID:        versionID,
+			IsLatest:         i == latestPos,
+			IsDeleteMarker:   string(v.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
+			NumVersions:      len(versions),
+			SuccessorModTime: successor,
+		}
+		if !bv.IsLatest {
+			// 0-based among noncurrents in newest-first order.
+			rank := i
+			if i > latestPos {
+				rank = i - 1
+			}
+			bv.NoncurrentIndex = rank
+		}
+		ev := &reader.Event{
+			TsNs:             0,
+			Bucket:           bucket,
+			Key:              versionsKey + "/" + v.Name,
+			ShardID:          s3lifecycle.ShardID(bucket, logical),
+			NewEntry:         v,
+			BootstrapVersion: bv,
+		}
+		if err := b.Injector.InjectEvent(ctx, ev); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
 // walkBucketDir lists every file under dir recursively and invokes cb
-// with the filer entry plus its bucket-relative key. MPU init dirs at
-// .uploads/<id> are emitted as a single (directory-shaped) entry so the
-// router's MPU detection fires; deeper directories recurse.
+// with the filer entry plus its bucket-relative key. Two kinds of
+// directories are emitted whole rather than recursed into:
+//   - .uploads/<id> MPU init dirs (router fires ABORT_MPU off the dir entry)
+//   - <key>.versions/ directories (caller expands them into per-version
+//     events; recursing here would emit individual version files without
+//     the sibling state needed for NoncurrentDays / NewerNoncurrent)
 func walkBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot string, cb func(entry *filer_pb.Entry, key string) error) error {
 	var children []*filer_pb.Entry
 	if err := filer_pb.SeaweedList(ctx, client, dir, "", func(e *filer_pb.Entry, _ bool) error {
@@ -118,6 +218,12 @@ func walkBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir,
 
 		if entry.IsDirectory {
 			if isMPUInitDir(key, entry) {
+				if err := cb(entry, key); err != nil {
+					return err
+				}
+				continue
+			}
+			if isVersionsDir(entry) {
 				if err := cb(entry, key); err != nil {
 					return err
 				}
@@ -150,5 +256,18 @@ func isMPUInitDir(key string, entry *filer_pb.Entry) bool {
 	}
 	v, ok := entry.Extended[s3_constants.ExtMultipartObjectKey]
 	return ok && len(v) > 0
+}
+
+// isVersionsDir reports whether entry is a SeaweedFS .versions container —
+// the directory whose Extended map carries ExtLatestVersionIdKey for
+// versioned objects. Matching by name suffix alone would also catch
+// pre-existing directories named `<x>.versions/` that aren't versioned
+// objects; the latest-pointer key disambiguates.
+func isVersionsDir(entry *filer_pb.Entry) bool {
+	if !entry.IsDirectory || !strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+		return false
+	}
+	_, hasLatest := entry.Extended[s3_constants.ExtLatestVersionIdKey]
+	return hasLatest
 }
 
