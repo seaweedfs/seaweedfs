@@ -1128,6 +1128,22 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
+// waitForCompleted blocks until the bootstrapper has stamped a
+// lastCompleted entry for the given bucket. Polling listedN is not
+// enough — that fires once both list passes have started, but
+// walkBucket stamps lastCompleted only after walkBucketDir returns,
+// so a clock.Advance between those events would record the stamp at
+// post-advance time and skew BootstrapInterval cadence assertions.
+func waitForCompleted(t *testing.T, b *BucketBootstrapper, bucket string) {
+	t.Helper()
+	waitFor(t, func() bool {
+		b.mu.Lock()
+		_, ok := b.lastCompleted[bucket]
+		b.mu.Unlock()
+		return ok
+	}, "lastCompleted stamp for "+bucket)
+}
+
 func TestBucketBootstrapper_KickOffNew_BootstrapIntervalRevisitsBucket(t *testing.T) {
 	// scan_only actions only fire from bootstrap, so a long-running
 	// worker has to revisit each bucket on a cadence. With
@@ -1144,9 +1160,12 @@ func TestBucketBootstrapper_KickOffNew_BootstrapIntervalRevisitsBucket(t *testin
 		Now:               clock.Now,
 	}
 
-	// First wave: walks once.
+	// First wave: walks once. Wait for the goroutine to actually stamp
+	// lastCompleted before advancing the clock — otherwise the stamp
+	// could land at clock+30m instead of T0 and the cadence assertion
+	// would race.
 	b.KickOffNew(context.Background(), []string{"bucketA"})
-	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 2 }, "first walk")
+	waitForCompleted(t, b, "bucketA")
 	firstCount := atomic.LoadInt32(&client.listedN)
 
 	// Inside the interval: skip.
@@ -1178,7 +1197,7 @@ func TestBucketBootstrapper_KickOffNew_ZeroIntervalLegacyOnceOnly(t *testing.T) 
 	}
 
 	b.KickOffNew(context.Background(), []string{"bucketA"})
-	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 2 }, "first walk")
+	waitForCompleted(t, b, "bucketA")
 	firstCount := atomic.LoadInt32(&client.listedN)
 
 	// Even after 100 hours, KickOffNew skips the bucket.
