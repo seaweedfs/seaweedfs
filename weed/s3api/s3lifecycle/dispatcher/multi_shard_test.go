@@ -61,14 +61,6 @@ func (r *recordingClient) LifecycleDelete(ctx context.Context, req *s3_lifecycle
 	return r.respond(req)
 }
 
-func (r *recordingClient) snapshot() []*s3_lifecycle_pb.LifecycleDeleteRequest {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]*s3_lifecycle_pb.LifecycleDeleteRequest, len(r.requests))
-	copy(out, r.requests)
-	return out
-}
-
 func TestPipelineMultiShardFanOutKeepsCursorsIsolated(t *testing.T) {
 	// Two events for two different shards land in different schedules
 	// and dispatch independently. Each shard's cursor advances only
@@ -192,7 +184,7 @@ func TestPipelinePersisterCheckpointRoundTripsEveryShard(t *testing.T) {
 	}
 
 	t0 := time.Now()
-	addAndTick := func(s *shardKit, key, obj string, kind s3lifecycle.ActionKind, ts time.Time) {
+	addAndTick := func(s *shardKit, obj string, kind s3lifecycle.ActionKind, ts time.Time) {
 		s.dispatch.Schedule.Add(router.Match{
 			Key:       s3lifecycle.ActionKey{Bucket: "bk", ActionKind: kind},
 			EventTs:   ts,
@@ -202,8 +194,8 @@ func TestPipelinePersisterCheckpointRoundTripsEveryShard(t *testing.T) {
 		})
 		s.dispatch.Tick(context.Background(), t0.Add(time.Hour))
 	}
-	addAndTick(shards[0], "k0", "alpha", s3lifecycle.ActionKindExpirationDays, t0)
-	addAndTick(shards[1], "k1", "beta", s3lifecycle.ActionKindNoncurrentDays, t0.Add(time.Second))
+	addAndTick(shards[0], "alpha", s3lifecycle.ActionKindExpirationDays, t0)
+	addAndTick(shards[1], "beta", s3lifecycle.ActionKindNoncurrentDays, t0.Add(time.Second))
 
 	pers := reader.NewInMemoryPersister()
 	for id, s := range shards {
