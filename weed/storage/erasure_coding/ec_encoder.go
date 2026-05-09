@@ -160,7 +160,6 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	// Pass 1: discover which shards exist and which are missing,
 	// opening input files but NOT creating output files yet.
 	shardHasData := make([]bool, ctx.Total())
-	shardPaths := make([]string, ctx.Total()) // non-empty for present shards
 	inputFiles := make([]*os.File, ctx.Total())
 	var ghostPaths []string
 	expectedShardSize := int64(-1)
@@ -180,7 +179,6 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 				shardPath, shardSize, expectedShardSize)
 		}
 		shardHasData[shardId] = true
-		shardPaths[shardId] = shardPath
 		inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
 		if err != nil {
 			return nil, err
