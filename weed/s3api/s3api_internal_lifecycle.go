@@ -54,6 +54,12 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 }
 
 func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	// metadataOnly: skip per-chunk DeleteFile RPCs because the volume's TTL
+	// will reclaim chunks on its own. Per-write TTL stamping (PR 9377) sets
+	// Attributes.TtlSec on every entry whose lifecycle rule fits within
+	// volume TTL — observing a non-zero TtlSec on the live entry is the
+	// authoritative signal.
+	metadataOnly := entry != nil && entry.Attributes != nil && entry.Attributes.TtlSec > 0
 	switch req.ActionKind {
 	case s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, s3_lifecycle_pb.ActionKind_EXPIRATION_DATE:
 		// Current-version expiration: Enabled -> delete marker; Suspended
@@ -74,7 +80,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		case s3_constants.VersioningSuspended:
 			// Best-effort null delete; NotFound is benign.
-			if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, "null"); err != nil {
+			if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
 				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
 					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
 				}
@@ -85,7 +91,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		default:
 			err := s3a.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath)
+				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath, metadataOnly)
 			})
 			if err != nil {
 				if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) {
@@ -129,7 +135,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return outcome, err
 			}
 		}
-		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId); err != nil {
+		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId, metadataOnly); err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
 			}
