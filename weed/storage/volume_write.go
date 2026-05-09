@@ -26,16 +26,16 @@ const IoErrorTolerance = 3
 
 func (v *Volume) checkReadWriteError(err error) {
 	if err == nil {
-		if v.lastIoError != nil {
-			v.lastIoError = nil
-		}
-		v.lastIoErrorCount.Store(0)
+		v.clearIoError()
 		return
 	}
 	if errors.Is(err, syscall.EIO) {
-		v.lastIoError = err
-		v.lastIoErrorCount.Add(1)
+		v.noteIoError(err)
+		return
 	}
+	// non-EIO error breaks the EIO streak — only sustained EIOs should
+	// be treated as a failing volume.
+	v.clearIoError()
 }
 
 // isFileUnchanged checks whether this needle to write is same as last one.

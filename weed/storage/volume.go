@@ -54,12 +54,42 @@ type Volume struct {
 	diskId           uint32 // ID of this volume's disk in Store.Locations array
 
 	// lastIoError is the most recent EIO from a read/write/delete; cleared
-	// on the next successful op. lastIoErrorCount tracks consecutive EIOs
-	// so CollectHeartbeat can require a sustained failure before unmounting
-	// the replica — protects against a transient hardware/network blip
-	// hitting multiple replicas at once and stranding the only good copy.
+	// on the next successful or non-EIO op. lastIoErrorCount tracks
+	// consecutive EIOs so CollectHeartbeat can require a sustained failure
+	// before unmounting the replica — protects against a transient
+	// hardware/network blip hitting multiple replicas at once and
+	// stranding the only good copy. Both fields are guarded together so
+	// the heartbeat reader sees a consistent (err, count) snapshot.
 	lastIoError      error
-	lastIoErrorCount atomic.Int32
+	lastIoErrorCount int32
+	lastIoErrorLock  sync.RWMutex
+}
+
+// noteIoError records an EIO and increments the consecutive-error
+// counter. Caller has already verified errors.Is(err, syscall.EIO).
+func (v *Volume) noteIoError(err error) {
+	v.lastIoErrorLock.Lock()
+	defer v.lastIoErrorLock.Unlock()
+	v.lastIoError = err
+	v.lastIoErrorCount++
+}
+
+// clearIoError resets the EIO streak. Called on any successful op or on
+// a non-EIO error (which still breaks the EIO streak — only sustained
+// EIOs are diagnostic of a failing volume).
+func (v *Volume) clearIoError() {
+	v.lastIoErrorLock.Lock()
+	defer v.lastIoErrorLock.Unlock()
+	v.lastIoError = nil
+	v.lastIoErrorCount = 0
+}
+
+// getIoErrorState returns the latest EIO and its consecutive-error count
+// as a single atomic snapshot.
+func (v *Volume) getIoErrorState() (error, int32) {
+	v.lastIoErrorLock.RLock()
+	defer v.lastIoErrorLock.RUnlock()
+	return v.lastIoError, v.lastIoErrorCount
 }
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {
