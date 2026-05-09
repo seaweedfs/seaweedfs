@@ -296,7 +296,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				dataReader = mimeDetect(r, dataReader)
 			}
 
-			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r)
+			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r.ContentLength)
 			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil)
 
 			if errCode != s3err.ErrNone {

@@ -131,7 +131,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// Forward validated POST form fields to the underlying PUT as headers.
 	applyPostPolicyFormHeaders(r, formValues)
 
-	ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r)
+	// Use fileSize, not r.ContentLength: the multipart body wrapping form
+	// fields and boundaries inflates ContentLength relative to the
+	// object body, which would mis-evaluate any size-filtered rule.
+	ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
 	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil)
 
 	if errCode != s3err.ErrNone {

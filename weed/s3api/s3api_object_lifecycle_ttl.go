@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"math"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -138,10 +137,16 @@ func (r *LifecycleTTLResolver) Resolve(objectKey string, size int64) int32 {
 // lifecycleTTLForObjectWrite is the PutObject call-site wrapper. Returns 0
 // for any caller (MPU part, copy-part) that shouldn't bind a TTL clock —
 // see putToFiler's signature comment for which paths pass 0 directly.
-func (s3a *S3ApiServer) lifecycleTTLForObjectWrite(bucket, objectKey string, r *http.Request) int32 {
+//
+// Callers MUST pass the actual object size, not r.ContentLength when those
+// differ. r.ContentLength is the wire size: for a multipart PostPolicy
+// upload it includes form fields and boundaries, so a size-filtered rule
+// would mis-evaluate against the form total instead of the file body.
+// objectSize<0 is "unknown" — the resolver skips any size-filtered rule.
+func (s3a *S3ApiServer) lifecycleTTLForObjectWrite(bucket, objectKey string, objectSize int64) int32 {
 	cfg, _ := s3a.getBucketConfig(bucket)
 	if cfg == nil || cfg.LifecycleTTL == nil {
 		return 0
 	}
-	return cfg.LifecycleTTL.Resolve(objectKey, r.ContentLength)
+	return cfg.LifecycleTTL.Resolve(objectKey, objectSize)
 }
