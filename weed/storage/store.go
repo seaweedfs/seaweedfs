@@ -416,22 +416,29 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				maxFileKey = curMaxFileKey
 			}
 
-			if ioErr, ioCount := v.getIoErrorState(); ioErr != nil && ioCount >= IoErrorTolerance {
+			ioErr, ioCount, quarantined := v.getIoErrorState()
+			if quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
 				// Sustained EIO: stop announcing this replica so the master
-				// re-replicates from healthy peers, and mark it read-only so
-				// further writes fail fast instead of producing more EIOs.
-				// Never physically delete the data — the disk may be
-				// transiently bad and this could be the last good copy.
-				glog.Warningf("volume %d has %d consecutive IO errors, marking read-only and unreporting from master: %v",
-					v.Id, ioCount, ioErr)
+				// re-replicates from healthy peers, and mark it read-only
+				// so further writes fail fast instead of producing more
+				// EIOs. Never physically delete the data — the disk may
+				// be transiently bad and this could be the last good
+				// copy. The quarantine is sticky: a stray successful read
+				// clears the streak counter but must not silently put a
+				// known-bad replica back into rotation; recovery is via
+				// MarkVolumeWritable.
+				if !quarantined {
+					glog.Warningf("volume %d quarantined after %d consecutive IO errors: %v",
+						v.Id, ioCount, ioErr)
+					v.markIoQuarantined()
+				}
 				v.noWriteLock.Lock()
 				v.noWriteOrDelete = true
 				v.noWriteLock.Unlock()
 				// Skip per-volume size and read-only bookkeeping: a
 				// quarantined replica should not be summed into the
 				// collection's reported total nor counted in the
-				// read-only stats. Recovery via MarkVolumeWritable
-				// resets the error state so it can rejoin.
+				// read-only stats.
 				continue
 			}
 
@@ -682,10 +689,10 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	v.noWriteOrDelete = false
 	v.PersistReadOnly(false)
 	v.noWriteLock.Unlock()
-	// Clear any sustained-EIO state so the next CollectHeartbeat can
-	// announce the volume again. If the disk is still bad, the next
-	// failed op will re-arm the streak.
-	v.clearIoError()
+	// Clear the EIO streak and the sticky quarantine flag so the next
+	// CollectHeartbeat can announce the volume again. If the disk is
+	// still bad, the next failed op will re-arm the streak.
+	v.resetIoErrorState()
 	return nil
 }
 
