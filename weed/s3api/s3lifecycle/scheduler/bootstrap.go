@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -28,14 +29,21 @@ type EventInjector interface {
 // DirListingLimit (1000 by default) per call, so a single-page list
 // would silently truncate large directories — a correctness bug for
 // noncurrent retention since older versions past the page boundary
-// would never reach the rank/sort math. var so tests can shrink it
-// without producing thousands of entries.
-var listPageSize uint32 = 1024
+// would never reach the rank/sort math. Atomic so tests can shrink it
+// without racing the async bootstrap goroutines other tests leave
+// behind (KickOffNew dispatches walks via `go b.walkBucket(...)`,
+// and a fresh test's Cleanup might land before those goroutines exit).
+var listPageSize atomic.Uint32
+
+func init() {
+	listPageSize.Store(1024)
+}
 
 // listAll issues paginated SeaweedList calls until the listing is
 // exhausted, invoking fn for every entry. Pagination uses
 // startFrom = lastEntryName (exclusive) to advance.
 func listAll(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, fn func(*filer_pb.Entry) error) error {
+	pageSize := listPageSize.Load()
 	startFrom := ""
 	for {
 		var pageCount uint32
@@ -46,10 +54,10 @@ func listAll(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string
 				lastName = e.Name
 			}
 			return fn(e)
-		}, startFrom, false, listPageSize); err != nil {
+		}, startFrom, false, pageSize); err != nil {
 			return err
 		}
-		if pageCount < listPageSize {
+		if pageCount < pageSize {
 			return nil
 		}
 		startFrom = lastName

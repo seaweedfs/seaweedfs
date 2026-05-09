@@ -1009,9 +1009,9 @@ func TestExpandVersionsDir_PaginatesBeyondListingLimit(t *testing.T) {
 	// would silently truncate, so the rank/sort math would be wrong
 	// past the boundary. listAll paginates via StartFromFileName.
 	// Shrink listPageSize so the test doesn't need thousands of entries.
-	prevPageSize := listPageSize
-	listPageSize = 2
-	t.Cleanup(func() { listPageSize = prevPageSize })
+	prevPageSize := listPageSize.Load()
+	listPageSize.Store(2)
+	t.Cleanup(func() { listPageSize.Store(prevPageSize) })
 
 	now := time.Now().Truncate(time.Second)
 	const total = 7
@@ -1065,9 +1065,9 @@ func TestExpandVersionsDir_PaginatesBeyondListingLimit(t *testing.T) {
 func TestWalkBucketDir_PaginatesBeyondListingLimit(t *testing.T) {
 	// Same correctness story for the bucket-level walk: hot buckets
 	// with thousands of objects must not silently truncate.
-	prevPageSize := listPageSize
-	listPageSize = 2
-	t.Cleanup(func() { listPageSize = prevPageSize })
+	prevPageSize := listPageSize.Load()
+	listPageSize.Store(2)
+	t.Cleanup(func() { listPageSize.Store(prevPageSize) })
 
 	const total = 5
 	rootChildren := make([]*filer_pb.Entry, 0, total)
