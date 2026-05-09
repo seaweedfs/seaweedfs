@@ -3,6 +3,7 @@ package reader
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/stretchr/testify/assert"
@@ -64,6 +65,7 @@ func TestCursorSnapshotIsDeepCopy(t *testing.T) {
 	snap[key("z", s3lifecycle.ActionKindAbortMPU)] = 42
 	assert.Equal(t, int64(100), c.Get(a), "cursor must be insulated from snapshot writes")
 	assert.Equal(t, int64(200), c.Get(b), "cursor must retain key the caller deleted from snapshot")
+	assert.Equal(t, int64(0), c.Get(key("z", s3lifecycle.ActionKindAbortMPU)), "cursor must not see keys added to snapshot")
 
 	// Mutating the cursor after Snapshot must not bleed into the map
 	// the caller is still holding (e.g., between Snapshot and Save).
@@ -91,9 +93,15 @@ func TestCursorRestoreReplacesNotMerges(t *testing.T) {
 	require.Equal(t, int64(200), c.Get(b))
 	require.Equal(t, int64(300), c.Get(cc))
 
+	// Freeze a key before second Restore; Restore must clear frozen state
+	// alongside the value map so a stale freeze doesn't survive a reload.
+	c.Freeze(a, 100)
+	require.True(t, c.IsFrozen(a))
+
 	// Second Restore drops keys b and c entirely; a is replaced.
 	c.Restore(map[s3lifecycle.ActionKey]int64{a: 50})
 	assert.Equal(t, int64(50), c.Get(a))
+	assert.False(t, c.IsFrozen(a), "Restore must clear frozen state")
 	assert.Equal(t, int64(0), c.Get(b), "key absent from second Restore must be removed")
 	assert.Equal(t, int64(0), c.Get(cc), "key absent from second Restore must be removed")
 
@@ -141,7 +149,12 @@ func TestReaderRunValidatesInputsBeforeSubscribing(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.reader.Run(context.Background(), nil, "test", 0)
+			// Bound the call so a regression that lets Run reach the
+			// nil client's blocking subscribe surfaces as a test failure
+			// instead of hanging the suite.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err := tc.reader.Run(ctx, nil, "test", 0)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantSub)
 		})
