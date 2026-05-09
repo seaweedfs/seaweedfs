@@ -240,17 +240,18 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
 	sched := &scheduler.Scheduler{
-		BucketsPath:     bucketsPath,
-		Engine:          engine.New(),
-		Persister:       &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-		Client:          lifecycleRPCAdapter{c: rpc},
-		FilerClient:     filerClient,
-		ClientID:        util.RandomInt32(),
-		ClientName:      "worker-s3-lifecycle",
-		Workers:         cfg.Workers,
-		DispatchTick:    cfg.DispatchTick,
-		CheckpointTick:  cfg.CheckpointTick,
-		RefreshInterval: cfg.RefreshInterval,
+		BucketsPath:       bucketsPath,
+		Engine:            engine.New(),
+		Persister:         &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Client:            lifecycleRPCAdapter{c: rpc},
+		FilerClient:       filerClient,
+		ClientID:          util.RandomInt32(),
+		ClientName:        "worker-s3-lifecycle",
+		Workers:           cfg.Workers,
+		DispatchTick:      cfg.DispatchTick,
+		CheckpointTick:    cfg.CheckpointTick,
+		RefreshInterval:   cfg.RefreshInterval,
+		BootstrapInterval: cfg.BootstrapInterval,
 	}
 	if err := sched.Run(runCtx); err != nil {
 		glog.Warningf("s3 lifecycle execute: %v", err)

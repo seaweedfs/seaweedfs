@@ -33,11 +33,12 @@ type Scheduler struct {
 	ClientID    int32
 	ClientName  string
 
-	Workers         int
-	DispatchTick    time.Duration
-	CheckpointTick  time.Duration
-	RefreshInterval time.Duration
-	RetryBackoff    time.Duration
+	Workers           int
+	DispatchTick      time.Duration
+	CheckpointTick    time.Duration
+	RefreshInterval   time.Duration
+	BootstrapInterval time.Duration
+	RetryBackoff      time.Duration
 }
 
 // Run blocks until ctx is canceled. Spawns Workers + 1 goroutines: one
@@ -100,9 +101,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 
 	bs := &BucketBootstrapper{
-		FilerClient: s.FilerClient,
-		BucketsPath: s.BucketsPath,
-		Injector:    pipelineFanout(pipelinesByShard),
+		FilerClient:       s.FilerClient,
+		BucketsPath:       s.BucketsPath,
+		Injector:          pipelineFanout(pipelinesByShard),
+		BootstrapInterval: s.BootstrapInterval,
 	}
 
 	s.refreshEngine(ctx, bs)

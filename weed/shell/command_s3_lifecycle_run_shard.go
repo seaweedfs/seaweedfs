@@ -69,7 +69,6 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	checkpointTick := fs.Duration("checkpoint", 30*time.Second, "cursor checkpoint cadence")
 	refreshInterval := fs.Duration("refresh", 5*time.Minute, "interval for rebuilding the engine snapshot from filer-backed bucket configs; 0 = compile once at startup")
 	bootstrapInterval := fs.Duration("bootstrap-interval", 0, "cadence for revisiting each bucket's bootstrap walk; 0 = walk once per process. scan_only actions only fire from bootstrap, so a long-running worker needs a non-zero value to handle their retention horizon")
-	forceBootstrap := fs.Bool("force-bootstrap", false, "drop in-memory bootstrap state on startup so every bucket walks again immediately; useful when a config change should take effect without a restart")
 	runtime := fs.Duration("runtime", 0, "wall-clock cap on the run; 0 = no timeout. -events alone can hang on quiet shards")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -125,9 +124,6 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			BucketsPath:       bucketsPath,
 			Injector:          pipeline,
 			BootstrapInterval: *bootstrapInterval,
-		}
-		if *forceBootstrap {
-			bsr.MarkAllDirty()
 		}
 		bootstrapCtx, bootstrapCancel := context.WithCancel(context.Background())
 		defer bootstrapCancel()

@@ -24,6 +24,9 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.MaxRuntime != 60*time.Minute {
 		t.Errorf("MaxRuntime default=%v, want 60m", cfg.MaxRuntime)
 	}
+	if cfg.BootstrapInterval != 0 {
+		t.Errorf("BootstrapInterval default=%v, want 0 (walk-once-per-process)", cfg.BootstrapInterval)
+	}
 }
 
 func TestParseConfigOverrides(t *testing.T) {
@@ -31,10 +34,11 @@ func TestParseConfigOverrides(t *testing.T) {
 		"workers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 4}},
 	}
 	worker := map[string]*plugin_pb.ConfigValue{
-		"dispatch_tick_minutes":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
-		"checkpoint_tick_seconds":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 15}},
-		"refresh_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 10}},
-		"max_runtime_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 120}},
+		"dispatch_tick_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+		"checkpoint_tick_seconds":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 15}},
+		"refresh_interval_minutes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 10}},
+		"bootstrap_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 120}},
+		"max_runtime_minutes":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 120}},
 	}
 	cfg := ParseConfig(admin, worker)
 	if cfg.Workers != 4 {
@@ -49,6 +53,9 @@ func TestParseConfigOverrides(t *testing.T) {
 	if cfg.RefreshInterval != 10*time.Minute {
 		t.Errorf("RefreshInterval=%v, want 10m", cfg.RefreshInterval)
 	}
+	if cfg.BootstrapInterval != 120*time.Minute {
+		t.Errorf("BootstrapInterval=%v, want 120m", cfg.BootstrapInterval)
+	}
 	if cfg.MaxRuntime != 120*time.Minute {
 		t.Errorf("MaxRuntime=%v, want 120m", cfg.MaxRuntime)
 	}
@@ -56,10 +63,11 @@ func TestParseConfigOverrides(t *testing.T) {
 
 func TestParseConfigClampsZeroAndNegative(t *testing.T) {
 	worker := map[string]*plugin_pb.ConfigValue{
-		"dispatch_tick_minutes":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-		"checkpoint_tick_seconds":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-		"refresh_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-		"max_runtime_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -5}},
+		"dispatch_tick_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+		"checkpoint_tick_seconds":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+		"refresh_interval_minutes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+		"bootstrap_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -5}},
+		"max_runtime_minutes":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -5}},
 	}
 	cfg := ParseConfig(nil, worker)
 	if cfg.DispatchTick != 1*time.Minute {
@@ -71,7 +79,23 @@ func TestParseConfigClampsZeroAndNegative(t *testing.T) {
 	if cfg.RefreshInterval != 5*time.Minute {
 		t.Errorf("zero RefreshInterval should clamp to default, got %v", cfg.RefreshInterval)
 	}
+	if cfg.BootstrapInterval != 0 {
+		t.Errorf("negative BootstrapInterval should clamp to 0, got %v", cfg.BootstrapInterval)
+	}
 	if cfg.MaxRuntime != 60*time.Minute {
 		t.Errorf("negative MaxRuntime should clamp to default, got %v", cfg.MaxRuntime)
+	}
+}
+
+func TestParseConfigBootstrapIntervalZeroIsLegacy(t *testing.T) {
+	// Explicit zero stays zero (walk-once-per-process). Existing
+	// deployments that don't set bootstrap_interval_minutes get the
+	// legacy behavior unchanged.
+	worker := map[string]*plugin_pb.ConfigValue{
+		"bootstrap_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+	}
+	cfg := ParseConfig(nil, worker)
+	if cfg.BootstrapInterval != 0 {
+		t.Errorf("zero BootstrapInterval must stay zero, got %v", cfg.BootstrapInterval)
 	}
 }

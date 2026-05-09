@@ -396,11 +396,11 @@ func TestBucketBootstrapper_KickOffNew_LaunchesPerBucket(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	_, hasA := b.lastWalk["bucketA"]
-	_, hasB := b.lastWalk["bucketB"]
+	_, hasA := b.lastCompleted["bucketA"]
+	_, hasB := b.lastCompleted["bucketB"]
 	assert.True(t, hasA)
 	assert.True(t, hasB)
-	assert.Len(t, b.lastWalk, 2)
+	assert.Len(t, b.lastCompleted, 2)
 }
 
 func TestBucketBootstrapper_KickOffNew_SkipsAlreadyKnown(t *testing.T) {
@@ -444,8 +444,8 @@ func TestBucketBootstrapper_KickOffNew_SkipsAlreadyKnown(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	assert.Len(t, b.lastWalk, 3)
-	_, hasC := b.lastWalk["bucketC"]
+	assert.Len(t, b.lastCompleted, 3)
+	_, hasC := b.lastCompleted["bucketC"]
 	assert.True(t, hasC)
 }
 
@@ -465,7 +465,7 @@ func TestBucketBootstrapper_KickOffNew_NilInjectorIsNoop(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&client.listedN))
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	assert.Empty(t, b.lastWalk)
+	assert.Empty(t, b.lastCompleted)
 }
 
 func TestBucketBootstrapper_KickOffNew_EmptyBucketListIsNoop(t *testing.T) {
@@ -1219,9 +1219,94 @@ func TestBucketBootstrapper_MarkAllDirtyResets(t *testing.T) {
 
 	b.MarkAllDirty()
 	b.mu.Lock()
-	empty := len(b.lastWalk) == 0
+	empty := len(b.lastCompleted) == 0
 	b.mu.Unlock()
 	if !empty {
 		t.Fatalf("MarkAllDirty must clear the lastWalk map")
+	}
+}
+
+// blockingInjector lets the test pin a walk in progress until it
+// signals release. Useful for asserting in-flight debounce.
+type blockingInjector struct {
+	mu       sync.Mutex
+	events   []*reader.Event
+	released chan struct{}
+}
+
+func newBlockingInjector() *blockingInjector {
+	return &blockingInjector{released: make(chan struct{})}
+}
+
+func (b *blockingInjector) InjectEvent(ctx context.Context, ev *reader.Event) error {
+	select {
+	case <-b.released:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	b.mu.Lock()
+	b.events = append(b.events, ev)
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *blockingInjector) release() { close(b.released) }
+
+func (b *blockingInjector) eventCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.events)
+}
+
+func TestBucketBootstrapper_KickOffNew_InFlightDebounceBlocksDuplicate(t *testing.T) {
+	// A walk that takes longer than BootstrapInterval would otherwise
+	// have a fresh KickOffNew start a duplicate goroutine on the next
+	// refresh tick. The inFlight set prevents that. Verify by:
+	//  1) Pinning a walk in progress via a blockingInjector,
+	//  2) Advancing the clock past BootstrapInterval,
+	//  3) Confirming the second KickOffNew is a no-op while the first
+	//     is still running,
+	//  4) Releasing the first walk and asserting only one walk
+	//     completed (one bucket-root listing pair).
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			"/buckets/bucketA": {fileEntry("a.txt")},
+		},
+	}
+	inj := newBlockingInjector()
+	clock := newFakeClock()
+	b := &BucketBootstrapper{
+		FilerClient:       client,
+		BucketsPath:       "/buckets",
+		Injector:          inj,
+		BootstrapInterval: time.Hour,
+		Now:               clock.Now,
+	}
+
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	// Wait for the walk goroutine to actually start listing (pass 1
+	// fires a ListEntries before InjectEvent).
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 1 }, "first walk to begin listing")
+
+	// Advance past the interval — a stale-state KickOffNew would now
+	// see the lastCompleted as expired and try again.
+	clock.Advance(2 * time.Hour)
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	time.Sleep(20 * time.Millisecond)
+	if got := inj.eventCount(); got != 0 {
+		t.Fatalf("first walk still blocked, got %d injected events from a phantom second walk", got)
+	}
+
+	// Release: the first walk completes. eventCount goes to 1.
+	inj.release()
+	waitFor(t, func() bool { return inj.eventCount() == 1 }, "first walk to drain")
+	// Even after another KickOffNew at the same simulated time, the
+	// in-flight is now cleared and lastCompleted is fresh — second
+	// KickOffNew within interval is a no-op.
+	prevListed := atomic.LoadInt32(&client.listedN)
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	time.Sleep(20 * time.Millisecond)
+	if got := atomic.LoadInt32(&client.listedN); got != prevListed {
+		t.Fatalf("post-release KickOffNew within interval must be a no-op; listedN=%d, want %d", got, prevListed)
 	}
 }
