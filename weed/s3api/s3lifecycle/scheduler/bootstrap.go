@@ -103,6 +103,13 @@ type BucketBootstrapper struct {
 	mu            sync.Mutex
 	lastCompleted map[string]time.Time
 	inFlight      map[string]bool
+	// pendingDirty records MarkDirty calls that arrived while a bucket
+	// was in flight. The walk goroutine consumes the entry on
+	// completion and skips stamping lastCompleted, so the next
+	// KickOffNew picks the bucket up immediately rather than waiting
+	// for BootstrapInterval to elapse against the (now-stale) finish
+	// time of a walk the operator already invalidated.
+	pendingDirty map[string]bool
 }
 
 func (b *BucketBootstrapper) now() time.Time {
@@ -153,23 +160,38 @@ func (b *BucketBootstrapper) KickOffNew(ctx context.Context, buckets []string) {
 }
 
 // MarkDirty drops the completed-walk timestamp for the given buckets
-// so the next KickOffNew walks them again. In-flight walks are left
-// running; a re-walk fires after they finish.
+// so the next KickOffNew walks them again. For in-flight walks, the
+// dirty flag is recorded in pendingDirty; the walk goroutine reads it
+// on completion and skips stamping lastCompleted, so the next
+// KickOffNew picks up the bucket without waiting for the cadence.
 func (b *BucketBootstrapper) MarkDirty(buckets ...string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.pendingDirty == nil {
+		b.pendingDirty = map[string]bool{}
+	}
 	for _, bucket := range buckets {
 		delete(b.lastCompleted, bucket)
+		if b.inFlight[bucket] {
+			b.pendingDirty[bucket] = true
+		}
 	}
 }
 
 // MarkAllDirty drops every completed-walk record. In-flight walks
-// continue. Useful when a worker config change should cause every
-// bucket to be re-bootstrapped on the next tick.
+// stay scheduled to skip their completion stamp via pendingDirty so
+// the operator's "everything is dirty" intent isn't lost when the
+// in-flight walk finishes after this call.
 func (b *BucketBootstrapper) MarkAllDirty() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lastCompleted = nil
+	if b.pendingDirty == nil {
+		b.pendingDirty = map[string]bool{}
+	}
+	for bucket := range b.inFlight {
+		b.pendingDirty[bucket] = true
+	}
 }
 
 func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
@@ -212,10 +234,16 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	walkErr := walkBucketDir(ctx, b.FilerClient, root, root, cb)
 	b.mu.Lock()
 	delete(b.inFlight, bucket)
-	if walkErr == nil {
+	wasDirty := b.pendingDirty[bucket]
+	delete(b.pendingDirty, bucket)
+	if walkErr == nil && !wasDirty {
 		// Stamp completion so BootstrapInterval cadence measures from
 		// end-of-walk. Failures leave lastCompleted alone, so the next
-		// KickOffNew sees no record and walks the bucket again.
+		// KickOffNew sees no record and walks the bucket again. A
+		// MarkDirty arrived during the walk also leaves it alone so
+		// the next KickOffNew picks the bucket up immediately —
+		// otherwise stamping here would silently ignore the operator's
+		// invalidation request.
 		if b.lastCompleted == nil {
 			b.lastCompleted = map[string]time.Time{}
 		}

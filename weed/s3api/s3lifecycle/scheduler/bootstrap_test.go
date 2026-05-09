@@ -1329,3 +1329,56 @@ func TestBucketBootstrapper_KickOffNew_InFlightDebounceBlocksDuplicate(t *testin
 		t.Fatalf("post-release KickOffNew within interval must be a no-op; listedN=%d, want %d", got, prevListed)
 	}
 }
+
+func TestBucketBootstrapper_MarkDirtyDuringInFlightTakesEffectAfterCompletion(t *testing.T) {
+	// MarkDirty arriving while a walk is in progress used to be lost:
+	// the goroutine wrote a fresh lastCompleted on success, hiding
+	// the operator's invalidation. Verify the pending-dirty set
+	// suppresses the stamp so the next KickOffNew picks the bucket
+	// up without waiting for the cadence.
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			"/buckets/bucketA": {fileEntry("a.txt")},
+		},
+	}
+	inj := newBlockingInjector()
+	clock := newFakeClock()
+	b := &BucketBootstrapper{
+		FilerClient:       client,
+		BucketsPath:       "/buckets",
+		Injector:          inj,
+		BootstrapInterval: time.Hour,
+		Now:               clock.Now,
+	}
+
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 1 }, "first walk to begin")
+
+	// MarkDirty before the walk completes: its effect must survive.
+	b.MarkDirty("bucketA")
+	inj.release()
+	// Wait for the walk goroutine to fully exit and clear inFlight.
+	waitFor(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return !b.inFlight["bucketA"]
+	}, "first walk to finish")
+
+	// lastCompleted must NOT have been stamped — the in-flight
+	// MarkDirty was honored.
+	b.mu.Lock()
+	_, hasCompleted := b.lastCompleted["bucketA"]
+	b.mu.Unlock()
+	if hasCompleted {
+		t.Fatalf("MarkDirty during walk must suppress the success stamp")
+	}
+
+	// Even within the BootstrapInterval, the next KickOffNew should
+	// re-walk the bucket because lastCompleted is empty.
+	listedBefore := atomic.LoadInt32(&client.listedN)
+	inj2 := newBlockingInjector()
+	b.Injector = inj2
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) > listedBefore }, "second walk to begin after MarkDirty")
+	inj2.release()
+}
