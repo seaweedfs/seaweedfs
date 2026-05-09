@@ -701,6 +701,22 @@ func bareFile(name string, mtime time.Time) *filer_pb.Entry {
 	}
 }
 
+// suspendedNullFile mirrors the suspended-versioning write path: the
+// bare entry carries ExtVersionIdKey="null" so bootstrap can tell it
+// apart from a pre-versioning bare object during a pointer-missing
+// race window.
+func suspendedNullFile(name string, mtime time.Time) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name: name,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: mtime.Unix(),
+		},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte("null"),
+		},
+	}
+}
+
 func TestExpandVersionsDir_PreVersioningNullIsNoncurrent(t *testing.T) {
 	// Object existed pre-versioning as the bare key. Versioning was
 	// enabled and a newer version v1 was PUT under .versions/. The
@@ -739,9 +755,9 @@ func TestExpandVersionsDir_PreVersioningNullIsNoncurrent(t *testing.T) {
 
 func TestExpandVersionsDir_SuspendedNullIsCurrent(t *testing.T) {
 	// Suspended-bucket scenario: a write to the null version cleared the
-	// .versions/ latest pointer. Older real versions remain in
-	// .versions/. Null must be IsLatest=true; .versions/ children become
-	// noncurrent.
+	// .versions/ latest pointer AND tagged the bare entry with
+	// ExtVersionIdKey="null". Older real versions remain in .versions/.
+	// Null must be IsLatest=true; .versions/ children become noncurrent.
 	now := time.Now()
 	v1mt := now.Add(-3 * time.Hour)
 	v2mt := now.Add(-2 * time.Hour)
@@ -749,7 +765,7 @@ func TestExpandVersionsDir_SuspendedNullIsCurrent(t *testing.T) {
 	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{}) // pointer cleared
 	client := &fakeFilerClient{
 		tree: map[string][]*filer_pb.Entry{
-			testBucketRoot: {bareFile("foo", nullMt), versionsDir},
+			testBucketRoot: {suspendedNullFile("foo", nullMt), versionsDir},
 			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
 				versionFile("v1", v1mt, false),
 				versionFile("v2", v2mt, false),
@@ -880,4 +896,39 @@ func TestExpandVersionsDir_VersionIDTiebreakOnSameSecondMtime(t *testing.T) {
 	assert.True(t, byID[idNewer].IsLatest, "newer canonical id wins the tiebreak")
 	assert.False(t, byID[idOlder].IsLatest)
 	assert.Equal(t, 0, byID[idOlder].NoncurrentIndex)
+}
+
+func TestExpandVersionsDir_PreVersioningNullDuringPointerRaceFallsBackToNewest(t *testing.T) {
+	// Pre-versioning bare object existed when versioning was enabled.
+	// A new version v1 was just written under .versions/<file> but the
+	// parent's ExtLatestVersionIdKey update has not landed yet. The
+	// bare entry has NO ExtVersionIdKey marker — distinguishing it from
+	// a suspended-bucket write. Bootstrap must treat v1 as latest (the
+	// newest sibling) and the implicit null as noncurrent, so the null
+	// expiration is scheduled this run instead of waiting for a future
+	// bootstrap.
+	now := time.Now()
+	v1mt := now.Add(-1 * time.Hour) // newer
+	nullMt := now.Add(-3 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{}) // pointer not yet written
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {bareFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v1"].IsLatest, "newest sibling wins when null is implicit")
+	assert.False(t, byID["null"].IsLatest, "implicit null is noncurrent during pointer-missing race")
 }

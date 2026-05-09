@@ -122,12 +122,17 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 
 // versionItem is the per-sibling state expandVersionsDir builds: the
 // filer entry plus its version_id (or "null" for the bare null version
-// living outside .versions/). Carrying both together keeps the sort,
-// latest-resolution, and event-injection passes simple.
+// living outside .versions/). isExplicitNull marks bare entries the
+// suspended-versioning write path tagged with ExtVersionIdKey="null"
+// (s3api_object_handlers_put.go); we trust those as latest when the
+// .versions/ pointer is missing. A pre-versioning bare object has no
+// such marker, so a missing pointer there is a race window with a new
+// version write and we keep the newest-sibling fallback.
 type versionItem struct {
-	entry     *filer_pb.Entry
-	versionID string
-	bareKey   string // bucket-relative path; non-empty only for the null version
+	entry          *filer_pb.Entry
+	versionID      string
+	bareKey        string // bucket-relative path; non-empty only for the null version
+	isExplicitNull bool
 }
 
 // expandVersionsDir lists <root>/<key>/ and, when the children look like
@@ -187,11 +192,12 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 	// path for pre-versioning objects and for suspended-bucket writes.
 	// Both shapes count: regular file (PUT'd object) and explicit S3
 	// directory-key marker (object name ends in /).
-	if nullEntry, nullKey, ok := b.lookupNullVersion(ctx, bucket, logical); ok {
+	if nullEntry, nullKey, explicit, ok := b.lookupNullVersion(ctx, bucket, logical); ok {
 		items = append(items, versionItem{
-			entry:     nullEntry,
-			versionID: "null",
-			bareKey:   nullKey,
+			entry:          nullEntry,
+			versionID:      "null",
+			bareKey:        nullKey,
+			isExplicitNull: explicit,
 		})
 	}
 	// Sort newest-first: primary by mtime ns, fallback by version_id
@@ -206,10 +212,14 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 		}
 		return s3lifecycle.CompareVersionIds(items[i].versionID, items[j].versionID) < 0
 	})
-	// Resolve latest position. Pointer present + names a real id wins.
-	// Pointer absent + null exists means a suspended-bucket clear made
-	// null the latest; locate it. Otherwise (e.g. mid-update race) fall
-	// back to the newest sibling so retention isn't unsafe.
+	// Resolve latest position.
+	//   1. Pointer names a real id -> that wins (in-order or backdated).
+	//   2. Pointer absent + an EXPLICIT null exists (suspended write
+	//      cleared the pointer and tagged the bare object as null) -> null
+	//      is latest.
+	//   3. Pointer absent + only an implicit null (pre-versioning bare
+	//      object): treat as a race window with a new version write, fall
+	//      back to the newest sibling so retention isn't unsafe.
 	latestID := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	latestPos := 0
 	if latestID != "" {
@@ -221,7 +231,7 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 		}
 	} else {
 		for i, it := range items {
-			if it.versionID == "null" {
+			if it.versionID == "null" && it.isExplicitNull {
 				latestPos = i
 				break
 			}
@@ -279,9 +289,12 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 // lookupNullVersion returns the bare-key entry that represents the null
 // version of logical, if any. Both regular files and S3 directory-key
 // markers (an empty directory entry with Mime set) qualify. The
-// returned bucketRelKey is the bucket-relative path the walker would
-// have emitted for this entry, so the caller can suppress the duplicate.
-func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logical string) (*filer_pb.Entry, string, bool) {
+// explicit return reports whether the entry's Extended map carries
+// ExtVersionIdKey == "null" — the marker the suspended-versioning
+// write path applies (s3api_object_handlers_put.go). bucketRelKey is
+// the bucket-relative path the walker would otherwise emit, so the
+// caller can suppress the duplicate.
+func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logical string) (entry *filer_pb.Entry, bucketRelKey string, explicit bool, ok bool) {
 	bucketPath := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket
 	parent, name := util.NewFullPath(bucketPath, logical).DirAndName()
 	resp, err := filer_pb.LookupEntry(ctx, b.FilerClient, &filer_pb.LookupDirectoryEntryRequest{
@@ -289,14 +302,16 @@ func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logi
 		Name:      name,
 	})
 	if err != nil || resp == nil || resp.Entry == nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	e := resp.Entry
 	if e.IsDirectory && !e.IsDirectoryKeyObject() {
-		return nil, "", false
+		return nil, "", false, false
 	}
-	bucketRelKey := strings.TrimPrefix(parent+"/"+name, bucketPath+"/")
-	return e, bucketRelKey, true
+	if id, hasID := e.Extended[s3_constants.ExtVersionIdKey]; hasID && string(id) == "null" {
+		explicit = true
+	}
+	return e, strings.TrimPrefix(parent+"/"+name, bucketPath+"/"), explicit, true
 }
 
 // walkBucketDir lists every entry under dir and invokes cb. Two kinds
