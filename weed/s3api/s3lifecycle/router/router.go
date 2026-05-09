@@ -312,7 +312,12 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 		aj := string(versions[j].Extended[s3_constants.ExtVersionIdKey])
 		return s3lifecycle.CompareVersionIds(ai, aj) < 0
 	})
-	latestPos := 0
+	// Resolve latestPos by finding newID. Default to -1 so a missing
+	// newID (race with the listing, or torn write) suppresses the
+	// expansion: we'd otherwise call the actual newest sibling "latest"
+	// against the pointer's intent and misrank every noncurrent.
+	// Bootstrap repairs state on the next walk.
+	latestPos := -1
 	if newID != "" {
 		for i, v := range versions {
 			if string(v.Extended[s3_constants.ExtVersionIdKey]) == newID {
@@ -320,6 +325,10 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 				break
 			}
 		}
+	}
+	if latestPos < 0 {
+		glog.V(2).Infof("lifecycle router: pointer transition %s/%s: new id %s not found in listing", ev.Bucket, logical, newID)
+		return nil
 	}
 	noncurrentCount := len(versions) - 1
 

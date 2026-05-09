@@ -1170,9 +1170,11 @@ func TestRoutePointerTransitionNoNoncurrentRuleSkipsLookup(t *testing.T) {
 }
 
 func TestRoutePointerTransitionNewerNoncurrentNewestNoncurrentRetained(t *testing.T) {
-	// NewerNoncurrentVersions=2 and the freshly-noncurrent version is at
-	// rank 0 (the newest noncurrent immediately after pointer flip).
-	// The retention rule must NOT fire on rank 0.
+	// NewerNoncurrentVersions=2 routes through the expansion path. The
+	// freshly-noncurrent version is at rank 0 (newest noncurrent) and
+	// the threshold-crossing rank N=2 doesn't exist (only 2 versions
+	// total). No match expected — and ListVersions must be the one
+	// consulted, not LookupVersion.
 	rule := &s3lifecycle.Rule{
 		ID:                              "r",
 		Status:                          s3lifecycle.StatusEnabled,
@@ -1183,10 +1185,45 @@ func TestRoutePointerTransitionNewerNoncurrentNewestNoncurrentRetained(t *testin
 
 	now := time.Now()
 	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
-	lister := &recordingLister{lookupEntry: displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())}
+	lister := &recordingLister{listVersions: []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix()),
+	}}
 
 	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
 		t.Fatalf("rank-0 noncurrent must be retained under NewerNoncurrentVersions=2, got %v", got)
+	}
+	if len(lister.listCalls) != 1 {
+		t.Fatalf("expansion path must consult ListVersions, calls=%v", lister.listCalls)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("expansion path must not consult LookupVersion, calls=%v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionExpansionMissingNewIDSuppressed(t *testing.T) {
+	// Race window: by the time ListVersions returns, the new pointer's
+	// version file isn't visible yet. latestPos can't resolve, so the
+	// router suppresses (bootstrap repairs state) instead of treating
+	// the actual newest sibling as latest and misranking every other
+	// version.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	// Listing returns v-old + v-mid but NOT v-new (the just-named latest).
+	lister := &recordingLister{listVersions: []*filer_pb.Entry{
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix()),
+	}}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("missing new id must suppress, got %v", got)
 	}
 }
 
