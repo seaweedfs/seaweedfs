@@ -185,10 +185,14 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 }
 
 // checkSoleSurvivorMarker returns nil to proceed with the delete, or a
-// terminal response when state has drifted (count != 1, or the surviving
-// entry is a different version than the one scheduled).
+// terminal response when state has drifted: count != 1, the surviving
+// entry is a different version, the .versions/ directory's latest
+// pointer doesn't name versionId, or a bare null-version exists outside
+// .versions/. Pointer missing while a marker is present is treated as
+// retry-later — the create races with the directory metadata update.
 func (s3a *S3ApiServer) checkSoleSurvivorMarker(bucket, object, versionId string) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
-	versionsDir := s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+	bucketDir := s3a.bucketDir(bucket)
+	versionsDir := bucketDir + "/" + object + s3_constants.VersionsFolder
 	count := 0
 	var firstName string
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -214,6 +218,42 @@ func (s3a *S3ApiServer) checkSoleSurvivorMarker(bucket, object, versionId string
 	}
 	if versionId != "" && firstName != "" && firstName != s3a.getVersionFileName(versionId) {
 		return noopResolved("MARKER_REPLACED"), nil
+	}
+	// Latest-pointer check: createDeleteMarker writes the marker file
+	// and then updates the parent directory's Extended map. Reading
+	// before the second step lands would see count==1 but no pointer;
+	// retry-later rather than mistakenly delete.
+	parent, name := path.Split(versionsDir)
+	parent = strings.TrimRight(parent, "/")
+	if parent == "" {
+		parent = "/"
+	}
+	versionsEntry, err := s3a.getEntry(parent, name)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return noopResolved("NOT_FOUND"), nil
+		}
+		return retryLater("TRANSPORT_ERROR: latest-pointer lookup: " + err.Error()), nil
+	}
+	if versionsEntry == nil {
+		return noopResolved("NOT_FOUND"), nil
+	}
+	latest, hasPointer := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+	if !hasPointer || len(latest) == 0 {
+		return retryLater("PENDING_LATEST_POINTER"), nil
+	}
+	if string(latest) != versionId {
+		return noopResolved("MARKER_NOT_LATEST"), nil
+	}
+	// Null-version check: pre-versioning objects survive as the bare
+	// <bucket>/<key> entry. Deleting the marker while one exists would
+	// re-expose the older object.
+	bareExists, err := s3a.exists(bucketDir+"/"+path.Dir(object), path.Base(object), false)
+	if err != nil {
+		return retryLater("TRANSPORT_ERROR: null-version lookup: " + err.Error()), nil
+	}
+	if bareExists {
+		return noopResolved("NULL_VERSION_PRESENT"), nil
 	}
 	return nil, nil
 }

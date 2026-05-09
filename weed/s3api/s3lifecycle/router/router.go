@@ -13,10 +13,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 )
 
-// SiblingLister counts entries under .versions/<key>/. nil receiver or
-// an error means "unknown" — callers suppress rather than risk a wrong fire.
+// SiblingLister inspects the surviving versions of a versioned key.
+// nil receiver or an error means "unknown" — callers suppress.
 type SiblingLister interface {
-	Count(ctx context.Context, bucket, objectKey string) (int, error)
+	Survivors(ctx context.Context, bucket, objectKey string) (Survivors, error)
+}
+
+// Survivors describes the state under .versions/<key>/ plus the bare
+// null-version that exists when versioning was turned on after the
+// object was first PUT (s3api_object_versioning.go treats <bucket>/<key>
+// as a regular file, the null version, in that case).
+type Survivors struct {
+	Count          int             // entries under .versions/<key>/, capped at 2
+	LoneEntry      *filer_pb.Entry // populated when Count == 1
+	HasNullVersion bool            // bare <bucket>/<key> exists as a regular file
 }
 
 // Match is one (event, action) pair where EvaluateAction fired. The
@@ -52,13 +62,9 @@ type EntryIdentity struct {
 
 // Route returns the matches that fire for ev against snap. Only active
 // event-driven actions are considered; SCAN_AT_DATE and DISABLED bypass
-// this path. Hard deletes (NewEntry==nil) skip — Expiration would hit
-// NOOP_RESOLVED anyway and EXP_DM fires on the marker create.
+// this path.
 func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now time.Time, lister SiblingLister) []Match {
 	if snap == nil || ev == nil {
-		return nil
-	}
-	if ev.NewEntry == nil {
 		return nil
 	}
 	keys := snap.BucketActionKeys(ev.Bucket)
@@ -67,20 +73,19 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 	}
 	versioned := snap.BucketVersioned(ev.Bucket)
 
-	// EXP_DM is the only rule routable from a version-folder file event:
-	// when the marker is the sole entry under .versions/<key>/ it is
-	// necessarily the latest, no pointer lookup needed. buildObjectInfo
-	// can't see sibling state and skips these events outright.
+	// EXP_DM can fire on two version-folder events: the marker create
+	// (sole survivor immediately) and a noncurrent hard-delete that
+	// leaves only the marker behind. Both reach routeSoleSurvivorMarker.
 	if versioned && isVersionFolderPath(ev.Key) {
-		if !isDeleteMarkerEntry(ev.NewEntry) {
-			return nil
-		}
 		if !hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindExpiredDeleteMarker) {
 			return nil
 		}
 		return routeSoleSurvivorMarker(ctx, snap, ev, keys, lister)
 	}
 
+	if ev.NewEntry == nil {
+		return nil
+	}
 	info := buildObjectInfo(ev, versioned)
 	if info == nil {
 		return nil
@@ -134,30 +139,39 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 
 // routeSoleSurvivorMarker emits an EXP_DM Match against the LOGICAL key
 // (so the dispatcher can call deleteSpecificObjectVersion) with the
-// marker's version_id. Schedule-time count is advisory — the server
-// re-checks before deleting in case another version lands first.
+// marker's version_id. Handles two events: a marker create (the new
+// entry IS the marker) and a noncurrent hard-delete that leaves the
+// marker behind (the listing's lone entry IS the marker). The server
+// re-checks before deleting.
 func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister) []Match {
+	if lister == nil {
+		return nil
+	}
 	logicalKey, ok := logicalKeyFromVersionPath(ev.Key)
 	if !ok {
 		return nil
 	}
-	// Empty version_id would BLOCK at dispatch and freeze the cursor.
-	versionID := string(ev.NewEntry.Extended[s3_constants.ExtVersionIdKey])
-	if versionID == "" {
-		return nil
-	}
-	if lister == nil {
-		return nil
-	}
-	n, err := lister.Count(ctx, ev.Bucket, logicalKey)
+	s, err := lister.Survivors(ctx, ev.Bucket, logicalKey)
 	if err != nil {
-		glog.V(2).Infof("lifecycle router: sibling count %s/%s: %v", ev.Bucket, logicalKey, err)
+		glog.V(2).Infof("lifecycle router: survivors %s/%s: %v", ev.Bucket, logicalKey, err)
 		return nil
 	}
-	if n != 1 {
+	// Pre-versioning bare-key objects (the "null" version) live outside
+	// .versions/. Treating count==1 as sole-survivor while a null
+	// version exists would let lifecycle delete the marker and re-expose
+	// the old object.
+	if s.Count != 1 || s.HasNullVersion || s.LoneEntry == nil {
 		return nil
 	}
-	entry := ev.NewEntry
+	if !isDeleteMarkerEntry(s.LoneEntry) {
+		return nil
+	}
+	versionID := string(s.LoneEntry.Extended[s3_constants.ExtVersionIdKey])
+	if versionID == "" {
+		// Empty version_id would BLOCK at dispatch and freeze the cursor.
+		return nil
+	}
+	entry := s.LoneEntry
 	info := &s3lifecycle.ObjectInfo{
 		Key:            logicalKey,
 		ModTime:        time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),
@@ -170,6 +184,7 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 		info.Tags = tags
 	}
 	eventTime := time.Unix(0, ev.TsNs)
+	identity := buildIdentityFromEntry(entry)
 	var matches []Match
 	for _, key := range keys {
 		if key.ActionKind != s3lifecycle.ActionKindExpiredDeleteMarker {
@@ -193,7 +208,7 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 			Bucket:    ev.Bucket,
 			ObjectKey: logicalKey,
 			VersionID: versionID,
-			Identity:  buildIdentity(ev),
+			Identity:  identity,
 		})
 	}
 	return matches
@@ -299,7 +314,10 @@ func mpuInitInfo(ev *reader.Event, entry *filer_pb.Entry) (destKey string, ok bo
 // buildIdentity captures the entry's schedule-time fingerprint for the CAS
 // witness. Returns nil if the event has no entry to fingerprint (deletes).
 func buildIdentity(ev *reader.Event) *EntryIdentity {
-	entry := ev.NewEntry
+	return buildIdentityFromEntry(ev.NewEntry)
+}
+
+func buildIdentityFromEntry(entry *filer_pb.Entry) *EntryIdentity {
 	if entry == nil {
 		return nil
 	}

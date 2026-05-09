@@ -495,22 +495,35 @@ func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64)
 	return ev
 }
 
-// recordingLister captures Count calls so tests can assert the lister was
-// (or was NOT) consulted, and replay a configured count or error.
+// recordingLister captures Survivors calls. Configure with the exact
+// state to return; calls list is appended on each invocation so tests
+// can assert whether the lister was consulted at all.
 type recordingLister struct {
-	calls []string
-	count int
-	err   error
+	calls    []string
+	survivors Survivors
+	err      error
 }
 
-func (r *recordingLister) Count(_ context.Context, bucket, key string) (int, error) {
+func (r *recordingLister) Survivors(_ context.Context, bucket, key string) (Survivors, error) {
 	r.calls = append(r.calls, bucket+"/"+key)
-	return r.count, r.err
+	return r.survivors, r.err
+}
+
+func markerLoneEntry(versionID string, mtimeUnix, mtimeNs int64) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name: "v_" + versionID,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:   mtimeUnix,
+			MtimeNs: int32(mtimeNs - mtimeUnix*int64(1e9)),
+		},
+		Extended: map[string][]byte{
+			s3_constants.ExtDeleteMarkerKey: []byte("true"),
+			s3_constants.ExtVersionIdKey:    []byte(versionID),
+		},
+	}
 }
 
 func TestRouteVersionedExpiredDeleteMarkerNilListerSuppresses(t *testing.T) {
-	// Sole-survivor detection needs a sibling count; without a lister the
-	// router suppresses rather than risk a wrong fire.
 	rule := &s3lifecycle.Rule{
 		ID:                        "r",
 		Status:                    s3lifecycle.StatusEnabled,
@@ -528,10 +541,8 @@ func TestRouteVersionedExpiredDeleteMarkerNilListerSuppresses(t *testing.T) {
 }
 
 func TestRouteVersionedExpiredDeleteMarkerSoleSurvivorFires(t *testing.T) {
-	// Exactly one entry under .versions/<key>/ — the marker itself —
-	// fires ExpiredObjectDeleteMarker. Match must carry the LOGICAL key
-	// in ObjectKey and the version_id in VersionID so the dispatcher
-	// can call deleteSpecificObjectVersion(bucket, logical, version).
+	// Exactly one entry under .versions/<key>/ — the marker — and no
+	// bare null version: EXP_DM fires with the LOGICAL key + version_id.
 	rule := &s3lifecycle.Rule{
 		ID:                        "r",
 		Status:                    s3lifecycle.StatusEnabled,
@@ -543,7 +554,10 @@ func TestRouteVersionedExpiredDeleteMarkerSoleSurvivorFires(t *testing.T) {
 	old := now.AddDate(0, 0, -1)
 	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
 
-	lister := &recordingLister{count: 1}
+	lister := &recordingLister{survivors: Survivors{
+		Count:     1,
+		LoneEntry: markerLoneEntry("2026-05-09-abc", old.Unix(), old.UnixNano()),
+	}}
 	matches := Route(context.Background(), snap, ev, now, lister)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match (ExpiredDeleteMarker), got %v", matches)
@@ -564,8 +578,6 @@ func TestRouteVersionedExpiredDeleteMarkerSoleSurvivorFires(t *testing.T) {
 }
 
 func TestRouteVersionedExpiredDeleteMarkerSiblingsRemainSuppressed(t *testing.T) {
-	// More than one entry under .versions/<key>/ means other versions
-	// survive; the marker is not a sole survivor so the rule stays off.
 	rule := &s3lifecycle.Rule{
 		ID:                        "r",
 		Status:                    s3lifecycle.StatusEnabled,
@@ -577,14 +589,104 @@ func TestRouteVersionedExpiredDeleteMarkerSiblingsRemainSuppressed(t *testing.T)
 	old := now.AddDate(0, 0, -1)
 	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
 
-	lister := &recordingLister{count: 2}
+	lister := &recordingLister{survivors: Survivors{Count: 2}}
 	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
 		t.Fatalf("siblings present, must not fire, got %v", got)
 	}
 }
 
+func TestRouteVersionedExpiredDeleteMarkerNullVersionSuppresses(t *testing.T) {
+	// A pre-versioning bare-key object (HasNullVersion=true) still survives
+	// outside .versions/. Firing EXP_DM would re-expose it; suppress.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{survivors: Survivors{
+		Count:          1,
+		LoneEntry:      markerLoneEntry("2026-05-09-abc", old.Unix(), old.UnixNano()),
+		HasNullVersion: true,
+	}}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("null-version present, must not fire, got %v", got)
+	}
+}
+
+func TestRouteVersionedExpiredDeleteMarkerHardDeleteLeavesLoneMarkerFires(t *testing.T) {
+	// Sequence: object had v1 + DM, hard-delete of v1 leaves DM as the
+	// sole survivor. The hard-delete event has NewEntry=nil; the router
+	// must still consult the lister, see the lone DM, and emit a match
+	// using the LoneEntry's version_id and identity.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	versionPath := "logs/gone" + s3_constants.VersionsFolder + "/v_2026-05-08-old"
+	ev := &reader.Event{
+		TsNs:     now.UnixNano(),
+		Bucket:   "bk",
+		Key:      versionPath,
+		OldEntry: &filer_pb.Entry{Name: "v_2026-05-08-old"},
+	}
+	lister := &recordingLister{survivors: Survivors{
+		Count:     1,
+		LoneEntry: markerLoneEntry("2026-05-09-abc", old.Unix(), old.UnixNano()),
+	}}
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match after hard-delete, got %v", matches)
+	}
+	if matches[0].VersionID != "2026-05-09-abc" {
+		t.Fatalf("VersionID=%q, want lone-entry's version 2026-05-09-abc", matches[0].VersionID)
+	}
+	if matches[0].ObjectKey != "logs/gone" {
+		t.Fatalf("ObjectKey=%q, want logs/gone", matches[0].ObjectKey)
+	}
+}
+
+func TestRouteVersionedExpiredDeleteMarkerHardDeleteLoneNonMarkerNoFire(t *testing.T) {
+	// After a hard-delete the surviving entry is a regular version, not
+	// a marker. Nothing to expire.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	versionPath := "logs/gone" + s3_constants.VersionsFolder + "/v_2026-05-08-old"
+	ev := &reader.Event{
+		TsNs:     now.UnixNano(),
+		Bucket:   "bk",
+		Key:      versionPath,
+		OldEntry: &filer_pb.Entry{Name: "v_2026-05-08-old"},
+	}
+	regular := &filer_pb.Entry{
+		Name:       "v_v1",
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")},
+	}
+	lister := &recordingLister{survivors: Survivors{Count: 1, LoneEntry: regular}}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("non-marker survivor must not fire, got %v", got)
+	}
+}
+
 func TestRouteVersionedExpiredDeleteMarkerListerErrorSuppressed(t *testing.T) {
-	// Lister error == unknown count; suppress rather than risk a wrong fire.
 	rule := &s3lifecycle.Rule{
 		ID:                        "r",
 		Status:                    s3lifecycle.StatusEnabled,
@@ -603,11 +705,6 @@ func TestRouteVersionedExpiredDeleteMarkerListerErrorSuppressed(t *testing.T) {
 }
 
 func TestRouteVersionedExpiredDeleteMarkerInactiveActionSkipsListing(t *testing.T) {
-	// EXP_DM rule exists but the action's BootstrapComplete=false leaves it
-	// inactive. The cost gate must not pay the listing for an action that
-	// can't fire — even if the per-key filter inside routeSoleSurvivorMarker
-	// would later drop the match, the gate runs first and would otherwise
-	// have already issued the RPC.
 	rule := &s3lifecycle.Rule{
 		ID:                        "r",
 		Status:                    s3lifecycle.StatusEnabled,
@@ -620,7 +717,7 @@ func TestRouteVersionedExpiredDeleteMarkerInactiveActionSkipsListing(t *testing.
 	old := now.AddDate(0, 0, -1)
 	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
 
-	lister := &recordingLister{count: 1}
+	lister := &recordingLister{survivors: Survivors{Count: 1}}
 	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
 		t.Fatalf("inactive action must not produce a match, got %v", got)
 	}
@@ -630,8 +727,6 @@ func TestRouteVersionedExpiredDeleteMarkerInactiveActionSkipsListing(t *testing.
 }
 
 func TestRouteVersionedDeleteMarkerNoExpDMRuleSkipsListing(t *testing.T) {
-	// Bucket has no ExpiredObjectDeleteMarker rule — the lister must NOT
-	// be consulted; that gate keeps the listing cost off most buckets.
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
 	snap := compileWithVersioned(rule, activatedPrior(rule))
 
@@ -639,7 +734,7 @@ func TestRouteVersionedDeleteMarkerNoExpDMRuleSkipsListing(t *testing.T) {
 	old := now.AddDate(0, 0, -1)
 	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
 
-	lister := &recordingLister{count: 1}
+	lister := &recordingLister{survivors: Survivors{Count: 1}}
 	Route(context.Background(), snap, ev, now, lister)
 	if len(lister.calls) != 0 {
 		t.Fatalf("lister consulted without EXP_DM rule: calls=%v", lister.calls)
