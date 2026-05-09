@@ -74,10 +74,27 @@ func TestFake_VersionIDPartOfKey(t *testing.T) {
 	f.Queue("b", "k", "v1", SkippedObjectLock("v1-locked"))
 	f.Queue("b", "k", "v2", Done())
 
-	respV1, _ := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k", VersionId: "v1"})
-	respV2, _ := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k", VersionId: "v2"})
+	respV1, err := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k", VersionId: "v1"})
+	require.NoError(t, err)
+	respV2, err := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k", VersionId: "v2"})
+	require.NoError(t, err)
 	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_SKIPPED_OBJECT_LOCK, respV1.Outcome)
 	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, respV2.Outcome)
+}
+
+func TestFake_KeyComponentsWithDelimitersDoNotCollide(t *testing.T) {
+	// String-concatenation keys would have made these two requests
+	// indistinguishable. The struct key keeps them separate.
+	f := NewFakeLifecycleServer()
+	f.Queue("b/k", "", "", Blocked("variant-a"))
+	f.Queue("b", "k", "", Done())
+
+	respA, err := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b/k", ObjectPath: ""})
+	require.NoError(t, err)
+	respB, err := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k"})
+	require.NoError(t, err)
+	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED, respA.Outcome)
+	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, respB.Outcome)
 }
 
 func TestFake_ErrShortCircuitsBeforeRecording(t *testing.T) {
@@ -132,6 +149,34 @@ func TestFake_RecordedIsSnapshot(t *testing.T) {
 	again := f.Recorded()
 	require.Len(t, again, 1)
 	assert.NotNil(t, again[0], "internal record must survive caller-side mutation of the snapshot")
+}
+
+func TestFake_RecordedRequestsAreDeepCopies(t *testing.T) {
+	// A caller mutating fields on a Recorded() entry must not bleed
+	// into a later Recorded() snapshot. We also confirm the original
+	// request the caller passed in stays decoupled from internal state
+	// — proto.Clone runs at record time, so the caller's pointer is
+	// no longer the one the fake holds.
+	f := NewFakeLifecycleServer()
+	orig := &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k", VersionId: "v"}
+	_, err := f.LifecycleDelete(context.Background(), orig)
+	require.NoError(t, err)
+
+	snap := f.Recorded()
+	require.Len(t, snap, 1)
+	snap[0].Bucket = "mutated-by-caller"
+	snap[0].ObjectPath = "also-mutated"
+
+	again := f.Recorded()
+	require.Len(t, again, 1)
+	assert.Equal(t, "b", again[0].Bucket, "field mutations on a snapshot must not bleed back")
+	assert.Equal(t, "k", again[0].ObjectPath)
+	assert.Equal(t, "v", again[0].VersionId)
+
+	// The caller's own pointer is independent of the fake's record.
+	orig.Bucket = "caller-mutates-original"
+	yetAgain := f.Recorded()
+	assert.Equal(t, "b", yetAgain[0].Bucket, "caller mutating the input pointer must not bleed in either")
 }
 
 func TestFake_NilRequestUsesDefault(t *testing.T) {

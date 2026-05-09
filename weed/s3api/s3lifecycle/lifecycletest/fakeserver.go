@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 // Outcome is what the fake returns for a single LifecycleDelete call.
@@ -101,14 +102,17 @@ func (f *FakeLifecycleServer) SetError(err error) {
 	f.err = err
 }
 
-// Recorded returns a snapshot copy of every request the server has received
-// (excluding calls that returned a transport error). Caller may mutate the
-// returned slice freely.
+// Recorded returns a deep-copied snapshot of every request the server has
+// received (excluding calls that returned a transport error). Both the
+// slice and each element are independent of the fake's internal state, so
+// callers can mutate freely without affecting later Recorded() snapshots.
 func (f *FakeLifecycleServer) Recorded() []*s3_lifecycle_pb.LifecycleDeleteRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]*s3_lifecycle_pb.LifecycleDeleteRequest, len(f.received))
-	copy(out, f.received)
+	for i, r := range f.received {
+		out[i] = cloneRequest(r)
+	}
 	return out
 }
 
@@ -121,7 +125,10 @@ func (f *FakeLifecycleServer) LifecycleDelete(ctx context.Context, req *s3_lifec
 		f.mu.Unlock()
 		return nil, err
 	}
-	f.received = append(f.received, req)
+	// Record a deep copy so a caller mutating a Recorded() entry can't
+	// reach back into the fake's bookkeeping (and so subsequent calls'
+	// view of "what arrived" stays stable across assertions).
+	f.received = append(f.received, cloneRequest(req))
 	if req == nil {
 		out := f.def
 		f.mu.Unlock()
@@ -142,4 +149,11 @@ func (f *FakeLifecycleServer) LifecycleDelete(ctx context.Context, req *s3_lifec
 
 func key(bucket, objectPath, versionId string) requestKey {
 	return requestKey{bucket: bucket, objectPath: objectPath, versionId: versionId}
+}
+
+func cloneRequest(req *s3_lifecycle_pb.LifecycleDeleteRequest) *s3_lifecycle_pb.LifecycleDeleteRequest {
+	if req == nil {
+		return nil
+	}
+	return proto.Clone(req).(*s3_lifecycle_pb.LifecycleDeleteRequest)
 }
