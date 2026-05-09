@@ -3,7 +3,9 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -52,8 +54,8 @@ func (s *fakeListStream) SendMsg(any) error { return nil }
 func (s *fakeListStream) RecvMsg(any) error { return nil }
 
 // fakeFilerClient embeds SeaweedFilerClient (nil interface) and overrides
-// only ListEntries. Calling any other method panics, which is fine for
-// these tests.
+// ListEntries + LookupDirectoryEntry. Calling any other method panics,
+// which is fine for these tests.
 type fakeFilerClient struct {
 	filer_pb.SeaweedFilerClient
 
@@ -63,15 +65,49 @@ type fakeFilerClient struct {
 	listedN  int32                        // atomic counter for cross-goroutine reads
 }
 
+func (c *fakeFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.tree[in.Directory] {
+		if e != nil && e.Name == in.Name {
+			return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
+		}
+	}
+	return nil, filer_pb.ErrNotFound
+}
+
 func (c *fakeFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	c.mu.Lock()
 	c.listed = append(c.listed, in.Directory)
 	c.mu.Unlock()
 	atomic.AddInt32(&c.listedN, 1)
 
-	children := c.tree[in.Directory]
-	responses := make([]*filer_pb.ListEntriesResponse, 0, len(children))
-	for _, e := range children {
+	// Mirror the filer: sort children by name, honor StartFromFileName
+	// (exclusive unless InclusiveStartFrom), and cap at Limit. listAll's
+	// pagination loop depends on these semantics to advance correctly.
+	src := c.tree[in.Directory]
+	filtered := make([]*filer_pb.Entry, 0, len(src))
+	for _, e := range src {
+		if e == nil {
+			continue
+		}
+		if in.StartFromFileName != "" {
+			if in.InclusiveStartFrom {
+				if e.Name < in.StartFromFileName {
+					continue
+				}
+			} else if e.Name <= in.StartFromFileName {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].Name < filtered[j].Name })
+	if in.Limit > 0 && uint32(len(filtered)) > in.Limit {
+		filtered = filtered[:in.Limit]
+	}
+	responses := make([]*filer_pb.ListEntriesResponse, 0, len(filtered))
+	for _, e := range filtered {
 		responses = append(responses, &filer_pb.ListEntriesResponse{Entry: e})
 	}
 	return &fakeListStream{responses: responses, ctx: ctx}, nil
@@ -345,13 +381,18 @@ func TestBucketBootstrapper_KickOffNew_LaunchesPerBucket(t *testing.T) {
 
 	b.KickOffNew(context.Background(), []string{"bucketA", "bucketB"})
 
-	// Both walks must hit ListEntries once each (empty trees -> no recursion).
+	// Each walk lists the bucket root twice (pass 1: .versions/, pass 2:
+	// everything else); 2 buckets * 2 passes = 4 listings total.
 	waitFor(t, func() bool {
-		return atomic.LoadInt32(&client.listedN) >= 2
-	}, "both bucket walks to start")
+		return atomic.LoadInt32(&client.listedN) >= 4
+	}, "both bucket walks to complete")
 
 	listed := client.listedCopy()
-	assert.ElementsMatch(t, []string{"/buckets/bucketA", "/buckets/bucketB"}, listed)
+	seen := map[string]bool{}
+	for _, d := range listed {
+		seen[d] = true
+	}
+	assert.Equal(t, map[string]bool{"/buckets/bucketA": true, "/buckets/bucketB": true}, seen)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -370,31 +411,34 @@ func TestBucketBootstrapper_KickOffNew_SkipsAlreadyKnown(t *testing.T) {
 	}
 
 	b.KickOffNew(context.Background(), []string{"bucketA", "bucketB"})
+	// Each walk does two ListEntries calls (pass 1: .versions/, pass 2:
+	// everything else). 2 buckets * 2 passes = 4 listings.
 	waitFor(t, func() bool {
-		return atomic.LoadInt32(&client.listedN) >= 2
+		return atomic.LoadInt32(&client.listedN) >= 4
 	}, "first wave to complete")
 
 	firstWave := atomic.LoadInt32(&client.listedN)
 
 	// Second call: bucketA is already known, bucketC is new. Only one
-	// new walk should fire.
+	// new walk should fire (2 listings).
 	b.KickOffNew(context.Background(), []string{"bucketA", "bucketC"})
 	waitFor(t, func() bool {
-		return atomic.LoadInt32(&client.listedN) >= firstWave+1
-	}, "bucketC walk to start")
+		return atomic.LoadInt32(&client.listedN) >= firstWave+2
+	}, "bucketC walk to complete")
 
 	// Give a moment for any spurious bucketA walk to also tick.
 	time.Sleep(20 * time.Millisecond)
 
 	listed := client.listedCopy()
-	// Count distinct buckets walked.
+	// Each bucket walks once across both calls; the walk does two
+	// listings of the bucket root (pass 1 + pass 2).
 	bucketCount := map[string]int{}
 	for _, d := range listed {
 		bucketCount[d]++
 	}
-	assert.Equal(t, 1, bucketCount["/buckets/bucketA"], "bucketA must be walked exactly once across both calls")
-	assert.Equal(t, 1, bucketCount["/buckets/bucketB"])
-	assert.Equal(t, 1, bucketCount["/buckets/bucketC"])
+	assert.Equal(t, 2, bucketCount["/buckets/bucketA"], "bucketA must be walked exactly once (=2 list calls) across both calls")
+	assert.Equal(t, 2, bucketCount["/buckets/bucketB"])
+	assert.Equal(t, 2, bucketCount["/buckets/bucketC"])
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -434,4 +478,625 @@ func TestBucketBootstrapper_KickOffNew_EmptyBucketListIsNoop(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	assert.Equal(t, int32(0), atomic.LoadInt32(&client.listedN))
 	assert.Empty(t, inj.snapshot())
+}
+
+// versionFile builds a version-file entry with the given mtime, version_id,
+// and optional delete-marker flag.
+func versionFile(versionID string, mtime time.Time, isMarker bool) *filer_pb.Entry {
+	ext := map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte(versionID),
+	}
+	if isMarker {
+		ext[s3_constants.ExtDeleteMarkerKey] = []byte("true")
+	}
+	return &filer_pb.Entry{
+		Name: "v_" + versionID,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: mtime.Unix(),
+		},
+		Extended: ext,
+	}
+}
+
+func TestWalkBucketDir_VersionsDirEmittedOnceAndNotRecursed(t *testing.T) {
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v2"),
+	})
+	now := time.Now()
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", now.Add(-2*time.Hour), false),
+				versionFile("v2", now, false),
+			},
+		},
+	}
+	var seen []string
+	err := walkBucketDir(context.Background(), client, testBucketRoot, testBucketRoot, func(_ *filer_pb.Entry, key string) error {
+		seen = append(seen, key)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"foo" + s3_constants.VersionsFolder}, seen)
+	assert.NotContains(t, client.listedCopy(), testBucketRoot+"/foo"+s3_constants.VersionsFolder)
+}
+
+func TestWalkBucketDir_VersionsDirEmittedRegardlessOfLatestPointer(t *testing.T) {
+	// walkBucketDir matches <x>.versions/ purely on the name suffix —
+	// gating on ExtLatestVersionIdKey would lose the race window where
+	// the version file exists before the parent's metadata update lands.
+	// expandVersionsDir handles disambiguation by inspecting children.
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, nil)
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {fileEntry("inner.txt")},
+		},
+	}
+	var seen []string
+	err := walkBucketDir(context.Background(), client, testBucketRoot, testBucketRoot, func(_ *filer_pb.Entry, key string) error {
+		seen = append(seen, key)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"foo" + s3_constants.VersionsFolder}, seen)
+}
+
+func TestExpandVersionsDir_CoincidentallyNamedFolderRecursesViaFallback(t *testing.T) {
+	// A user-created folder happening to end in .versions/ has children
+	// without ExtVersionIdKey. expandVersionsDir must recurse via the
+	// fallback callback so inner files still emit normal events.
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, nil)
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				fileEntry("inner.txt"),
+				dirEntry("sub", nil),
+			},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder + "/sub": {fileEntry("deep.txt")},
+		},
+	}
+	var seen []string
+	cb := func(_ *filer_pb.Entry, key string) error {
+		seen = append(seen, key)
+		return nil
+	}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets"}
+	count, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, cb, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "fallback path returns 0 — events go through cb")
+	assert.ElementsMatch(t, []string{"foo" + s3_constants.VersionsFolder + "/inner.txt", "foo" + s3_constants.VersionsFolder + "/sub/deep.txt"}, seen)
+}
+
+func TestExpandVersionsDir_RaceWithMissingPointerStillExpands(t *testing.T) {
+	// Real .versions container whose parent metadata update hasn't
+	// landed yet (no ExtLatestVersionIdKey on the dir). Children DO
+	// carry ExtVersionIdKey. expandVersionsDir must still emit version
+	// events; missing-pointer fallback (newest-by-mtime as latest)
+	// covers retention safety.
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, nil) // no Extended at all
+	now := time.Now()
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", now.Add(-2*time.Hour), false),
+				versionFile("v2", now.Add(-1*time.Hour), false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	count, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v2"].IsLatest, "newest by mtime is latest when pointer missing")
+}
+
+func TestExpandVersionsDir_LatestAndNoncurrentsByMtime(t *testing.T) {
+	now := time.Now()
+	v1mt := now.Add(-3 * time.Hour)
+	v2mt := now.Add(-2 * time.Hour)
+	v3mt := now.Add(-1 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v3"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+				versionFile("v2", v2mt, false),
+				versionFile("v3", v3mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+
+	count, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		require.NotNil(t, ev.BootstrapVersion)
+		assert.Equal(t, "foo", ev.BootstrapVersion.LogicalKey)
+		assert.Equal(t, 3, ev.BootstrapVersion.NumVersions)
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	require.Contains(t, byID, "v1")
+	require.Contains(t, byID, "v2")
+	require.Contains(t, byID, "v3")
+
+	assert.True(t, byID["v3"].IsLatest)
+	assert.True(t, byID["v3"].SuccessorModTime.IsZero(), "newest sibling has no successor")
+
+	assert.False(t, byID["v2"].IsLatest)
+	assert.Equal(t, 0, byID["v2"].NoncurrentIndex, "newest noncurrent")
+	assert.Equal(t, v3mt.Unix(), byID["v2"].SuccessorModTime.Unix())
+
+	assert.False(t, byID["v1"].IsLatest)
+	assert.Equal(t, 1, byID["v1"].NoncurrentIndex)
+	assert.Equal(t, v2mt.Unix(), byID["v1"].SuccessorModTime.Unix())
+}
+
+func TestExpandVersionsDir_LatestPointerOutOfOrderByMtime(t *testing.T) {
+	// Backdated PUT scenario: latest pointer names v1 but v1's mtime is
+	// OLDER than v2's. After newest-first sort the order is [v2, v1] so
+	// latestPos == 1, exercising the rank-skip path for the noncurrent.
+	now := time.Now()
+	v1mt := now.Add(-3 * time.Hour)
+	v2mt := now.Add(-1 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v1"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+				versionFile("v2", v2mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v1"].IsLatest)
+	assert.False(t, byID["v2"].IsLatest)
+	assert.Equal(t, 0, byID["v2"].NoncurrentIndex, "v2 is the only noncurrent → rank 0")
+}
+
+func TestExpandVersionsDir_MissingLatestPointerFallsBackToNewest(t *testing.T) {
+	// No latest pointer (rare race window): treat the newest sibling
+	// by mtime as latest so retention isn't unsafe.
+	now := time.Now()
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", now.Add(-2*time.Hour), false),
+				versionFile("v2", now.Add(-1*time.Hour), false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v2"].IsLatest, "newest by mtime is latest when pointer missing")
+	assert.False(t, byID["v1"].IsLatest)
+}
+
+func TestExpandVersionsDir_DeleteMarkerFlagPropagated(t *testing.T) {
+	now := time.Now()
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v-marker"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v-marker", now, true),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+
+	events := inj.snapshot()
+	require.Len(t, events, 1)
+	assert.True(t, events[0].BootstrapVersion.IsDeleteMarker)
+	assert.True(t, events[0].BootstrapVersion.IsLatest)
+}
+
+func bareFile(name string, mtime time.Time) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name: name,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: mtime.Unix(),
+		},
+	}
+}
+
+// suspendedNullFile mirrors the suspended-versioning write path: the
+// bare entry carries ExtVersionIdKey="null" so bootstrap can tell it
+// apart from a pre-versioning bare object during a pointer-missing
+// race window.
+func suspendedNullFile(name string, mtime time.Time) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name: name,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: mtime.Unix(),
+		},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte("null"),
+		},
+	}
+}
+
+func TestExpandVersionsDir_PreVersioningNullIsNoncurrent(t *testing.T) {
+	// Object existed pre-versioning as the bare key. Versioning was
+	// enabled and a newer version v1 was PUT under .versions/. The
+	// .versions/ latest pointer names v1, so null is noncurrent.
+	now := time.Now()
+	v1mt := now.Add(-1 * time.Hour)
+	nullMt := now.Add(-3 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v1"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {bareFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	count, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v1"].IsLatest)
+	assert.False(t, byID["null"].IsLatest)
+	assert.Equal(t, 0, byID["null"].NoncurrentIndex)
+	assert.Equal(t, 2, byID["null"].NumVersions)
+	assert.True(t, skipBare["foo"], "bare-key skip recorded")
+}
+
+func TestExpandVersionsDir_SuspendedNullIsCurrent(t *testing.T) {
+	// Suspended-bucket scenario: a write to the null version cleared the
+	// .versions/ latest pointer AND tagged the bare entry with
+	// ExtVersionIdKey="null". Older real versions remain in .versions/.
+	// Null must be IsLatest=true; .versions/ children become noncurrent.
+	now := time.Now()
+	v1mt := now.Add(-3 * time.Hour)
+	v2mt := now.Add(-2 * time.Hour)
+	nullMt := now.Add(-1 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{}) // pointer cleared
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {suspendedNullFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+				versionFile("v2", v2mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["null"].IsLatest, "pointer cleared + null exists -> null is latest")
+	assert.False(t, byID["v1"].IsLatest)
+	assert.False(t, byID["v2"].IsLatest)
+	assert.True(t, skipBare["foo"])
+}
+
+func TestExpandVersionsDir_NullVersionDirectoryKeyMarker(t *testing.T) {
+	// Directory-key marker (object name ends in /): the bare entry is a
+	// directory with Mime set. Treat as null version.
+	now := time.Now()
+	v1mt := now.Add(-1 * time.Hour)
+	dirMarker := &filer_pb.Entry{
+		Name:        "foo",
+		IsDirectory: true,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: now.Add(-3 * time.Hour).Unix(),
+			Mime:  "application/x-directory",
+		},
+	}
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v1"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {dirMarker, versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	require.Contains(t, byID, "null", "directory-key marker counts as null version")
+	assert.True(t, skipBare["foo"])
+}
+
+func TestWalkBucketDir_VersionsDirOrderingClaimsNullSibling(t *testing.T) {
+	// End-to-end through walkBucket: bare foo + foo.versions/ are
+	// siblings in the same directory. The two-pass walker processes
+	// the .versions/ first; expandVersionsDir claims "foo" as null;
+	// the second pass sees skipBare["foo"]==true and emits no regular
+	// event for the bare entry.
+	now := time.Now()
+	v1mt := now.Add(-1 * time.Hour)
+	nullMt := now.Add(-3 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v1"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {bareFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	b.KickOffNew(context.Background(), []string{"b1"})
+	// give the goroutine time to finish
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(inj.snapshot()) < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	events := inj.snapshot()
+
+	// Exactly two events: v1 (latest) and null (noncurrent). NO third
+	// regular event for the bare "foo" entry.
+	assert.Len(t, events, 2)
+	versionIDs := []string{}
+	for _, ev := range events {
+		require.NotNil(t, ev.BootstrapVersion, "all events must be BootstrapVersion-tagged")
+		versionIDs = append(versionIDs, ev.BootstrapVersion.VersionID)
+	}
+	assert.ElementsMatch(t, []string{"v1", "null"}, versionIDs)
+}
+
+func TestExpandVersionsDir_VersionIDTiebreakOnSameSecondMtime(t *testing.T) {
+	// Two versions written in the same second: Mtime ties. The
+	// CompareVersionIds tiebreak puts the version_id with newer
+	// canonical ordering first. Use new-format IDs (inverted timestamps)
+	// so smaller string sorts as newer.
+	now := time.Now().Truncate(time.Second)
+	idNewer := "8000000000000000aaaaaaaaaaaaaaaa"
+	idOlder := "9000000000000000bbbbbbbbbbbbbbbb"
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte(idNewer),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile(idOlder, now, false),
+				versionFile(idNewer, now, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID[idNewer].IsLatest, "newer canonical id wins the tiebreak")
+	assert.False(t, byID[idOlder].IsLatest)
+	assert.Equal(t, 0, byID[idOlder].NoncurrentIndex)
+}
+
+func TestExpandVersionsDir_PreVersioningNullDuringPointerRaceFallsBackToNewest(t *testing.T) {
+	// Pre-versioning bare object existed when versioning was enabled.
+	// A new version v1 was just written under .versions/<file> but the
+	// parent's ExtLatestVersionIdKey update has not landed yet. The
+	// bare entry has NO ExtVersionIdKey marker — distinguishing it from
+	// a suspended-bucket write. Bootstrap must treat v1 as latest (the
+	// newest sibling) and the implicit null as noncurrent, so the null
+	// expiration is scheduled this run instead of waiting for a future
+	// bootstrap.
+	now := time.Now()
+	v1mt := now.Add(-1 * time.Hour) // newer
+	nullMt := now.Add(-3 * time.Hour)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{}) // pointer not yet written
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {bareFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v1", v1mt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v1"].IsLatest, "newest sibling wins when null is implicit")
+	assert.False(t, byID["null"].IsLatest, "implicit null is noncurrent during pointer-missing race")
+}
+
+func TestExpandVersionsDir_SuspendedThenReEnabledNullIsNoncurrent(t *testing.T) {
+	// Bucket was suspended: bare entry was written with
+	// ExtVersionIdKey="null" and the .versions/ pointer cleared.
+	// Versioning was re-enabled and a fresh PUT created
+	// .versions/<v-new> with newer mtime, but the pointer-update for
+	// that new version hasn't landed yet. Bootstrap running in this
+	// window must keep v-new as latest (it's newest by mtime); the
+	// explicit null is noncurrent. Promoting the older null to latest
+	// just because it's explicit would skip current-version expiration
+	// of v-new and never schedule the null's noncurrent retention.
+	now := time.Now()
+	nullMt := now.Add(-3 * time.Hour) // OLDER bare-null
+	vNewMt := now.Add(-1 * time.Hour) // newer real version
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{}) // pointer not yet written
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {suspendedNullFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v-new", vNewMt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v-new"].IsLatest, "newest sibling wins even when an older explicit null exists")
+	assert.False(t, byID["null"].IsLatest)
+	assert.Equal(t, 0, byID["null"].NoncurrentIndex)
+}
+
+func TestExpandVersionsDir_PaginatesBeyondListingLimit(t *testing.T) {
+	// The filer caps SeaweedList(..., limit=0) at DirListingLimit per
+	// call. Expanding a hot key with more versions than that limit
+	// would silently truncate, so the rank/sort math would be wrong
+	// past the boundary. listAll paginates via StartFromFileName.
+	// Shrink listPageSize so the test doesn't need thousands of entries.
+	prevPageSize := listPageSize
+	listPageSize = 2
+	t.Cleanup(func() { listPageSize = prevPageSize })
+
+	now := time.Now().Truncate(time.Second)
+	const total = 7
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v0"),
+	})
+	versions := make([]*filer_pb.Entry, 0, total)
+	for i := 0; i < total; i++ {
+		// v0 is newest; v6 is oldest. Names are v_v00 .. v_v06 so the
+		// sort-by-name in the fake matches the sort-by-mtime here.
+		versions = append(versions, versionFile(fmt.Sprintf("v%02d", i), now.Add(-time.Duration(i)*time.Hour), false))
+	}
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: versions,
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	count, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, total, count, "every page must reach the injector")
+
+	listed := client.listedCopy()
+	calls := 0
+	for _, d := range listed {
+		if d == testBucketRoot+"/foo"+s3_constants.VersionsFolder {
+			calls++
+		}
+	}
+	// Pages of 2 over 7 items = 4 calls (2+2+2+1). Loop exits once
+	// page count < listPageSize on the 4th call.
+	assert.Equal(t, 4, calls, "must paginate via StartFromFileName")
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	require.Len(t, byID, total, "no version dropped at a page boundary")
+	for i := 0; i < total; i++ {
+		bv := byID[fmt.Sprintf("v%02d", i)]
+		require.NotNil(t, bv)
+		assert.Equal(t, total, bv.NumVersions, "NumVersions reflects every page")
+	}
+	// v0 is the latest pointer target and the newest by mtime.
+	assert.True(t, byID["v00"].IsLatest)
+	// v6 is the oldest noncurrent.
+	assert.Equal(t, total-2, byID["v06"].NoncurrentIndex)
+}
+
+func TestWalkBucketDir_PaginatesBeyondListingLimit(t *testing.T) {
+	// Same correctness story for the bucket-level walk: hot buckets
+	// with thousands of objects must not silently truncate.
+	prevPageSize := listPageSize
+	listPageSize = 2
+	t.Cleanup(func() { listPageSize = prevPageSize })
+
+	const total = 5
+	rootChildren := make([]*filer_pb.Entry, 0, total)
+	for i := 0; i < total; i++ {
+		rootChildren = append(rootChildren, fileEntry(fmt.Sprintf("k%02d", i)))
+	}
+	client := &fakeFilerClient{tree: map[string][]*filer_pb.Entry{testBucketRoot: rootChildren}}
+	var seen []string
+	err := walkBucketDir(context.Background(), client, testBucketRoot, testBucketRoot, func(_ *filer_pb.Entry, key string) error {
+		seen = append(seen, key)
+		return nil
+	})
+	require.NoError(t, err)
+
+	want := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		want = append(want, fmt.Sprintf("k%02d", i))
+	}
+	assert.ElementsMatch(t, want, seen, "every page processed")
+
+	listed := client.listedCopy()
+	calls := 0
+	for _, d := range listed {
+		if d == testBucketRoot {
+			calls++
+		}
+	}
+	// Each directory is streamed twice (pass 1: .versions/, pass 2:
+	// everything else) to keep memory bounded on flat buckets. 5
+	// entries at page 2 = 3 paginated calls per pass = 6 total.
+	assert.Equal(t, 6, calls)
 }
