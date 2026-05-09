@@ -22,7 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
 // BucketConfig represents cached bucket configuration
@@ -36,11 +35,13 @@ type BucketConfig struct {
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration      // Cached parsed Object Lock configuration
 	BucketPolicy     *policy_engine.PolicyDocument // Cached bucket policy for performance
-	LifecycleRules   []*s3lifecycle.Rule           // Pre-parsed canonical rules; nil when no lifecycle config
 	// LifecycleTTL answers "what volume TTL should this PutObject get?"
 	// using only fast-path-safe predicates (prefix + size; tags excluded
-	// because they're mutable post-PUT). nil = no TTL applies (versioned
-	// bucket, no eligible rules, or all rules overflow int32 seconds).
+	// because they're mutable post-PUT). nil = no TTL applies (no
+	// lifecycle config, versioned bucket, or only ineligible rules).
+	// The full canonical rule set lives inside the resolver; the
+	// lifecycle worker reads bucket entries directly off the meta-log
+	// rather than this cache.
 	LifecycleTTL *LifecycleTTLResolver
 	KMSKeyCache  *BucketKMSCache // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
@@ -417,7 +418,6 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		// PUT path falls through to "no TTL" rather than rejecting writes.
 		if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
 			if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
-				config.LifecycleRules = rules
 				versioned := config.Versioning == s3_constants.VersioningEnabled || config.Versioning == s3_constants.VersioningSuspended
 				config.LifecycleTTL = NewLifecycleTTLResolver(rules, versioned)
 			} else {
