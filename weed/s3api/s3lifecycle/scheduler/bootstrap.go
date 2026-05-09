@@ -344,8 +344,8 @@ func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logi
 	return e, strings.TrimPrefix(parent+"/"+name, bucketPath+"/"), explicit, true
 }
 
-// walkBucketDir lists every entry under dir and invokes cb. Two kinds
-// of directories are emitted whole rather than recursed into:
+// walkBucketDir streams entries under dir and invokes cb. Two kinds of
+// directories are emitted whole rather than recursed into:
 //   - .uploads/<id> MPU init dirs (router fires ABORT_MPU off the dir entry)
 //   - <key>.versions/ directories (caller expands them into per-version
 //     events; recursing here would emit individual version files without
@@ -354,57 +354,43 @@ func (b *BucketBootstrapper) lookupNullVersion(ctx context.Context, bucket, logi
 // .versions/ dirs are processed before everything else at each level so
 // the cb's expandVersionsDir call can record the bare null-version key
 // in the walk-shared skip set before the same level emits the bare entry.
+// Two streaming passes (rather than buffering the whole directory) trade
+// a second listing for bounded memory on flat buckets with millions of
+// entries.
 func walkBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot string, cb func(entry *filer_pb.Entry, key string) error) error {
-	var children []*filer_pb.Entry
+	// Pass 1: .versions/ dirs only.
 	if err := listAll(ctx, client, dir, func(e *filer_pb.Entry) error {
-		children = append(children, e)
-		return nil
+		if e == nil || e.Attributes == nil {
+			return nil
+		}
+		if !e.IsDirectory || !isVersionsDir(e) {
+			return nil
+		}
+		full := dir + "/" + e.Name
+		key := strings.TrimPrefix(full, bucketRoot+"/")
+		return cb(e, key)
 	}); err != nil {
 		return fmt.Errorf("list %s: %w", dir, err)
 	}
-	// Pass 1: .versions/ directories. The cb expands them and may
-	// claim a sibling bare key as the null version.
-	for _, entry := range children {
-		if entry == nil || entry.Attributes == nil {
-			continue
-		}
-		if !entry.IsDirectory || !isVersionsDir(entry) {
-			continue
-		}
-		full := dir + "/" + entry.Name
-		key := strings.TrimPrefix(full, bucketRoot+"/")
-		if err := cb(entry, key); err != nil {
-			return err
-		}
-	}
 	// Pass 2: everything else. Bare entries whose name was claimed by
 	// a sibling .versions/ expansion are dropped by the cb's skip-set.
-	for _, entry := range children {
-		if entry == nil || entry.Attributes == nil {
-			continue
+	return listAll(ctx, client, dir, func(e *filer_pb.Entry) error {
+		if e == nil || e.Attributes == nil {
+			return nil
 		}
-		if entry.IsDirectory && isVersionsDir(entry) {
-			continue
+		if e.IsDirectory && isVersionsDir(e) {
+			return nil
 		}
-		full := dir + "/" + entry.Name
+		full := dir + "/" + e.Name
 		key := strings.TrimPrefix(full, bucketRoot+"/")
-		if entry.IsDirectory {
-			if isMPUInitDir(key, entry) {
-				if err := cb(entry, key); err != nil {
-					return err
-				}
-				continue
+		if e.IsDirectory {
+			if isMPUInitDir(key, e) {
+				return cb(e, key)
 			}
-			if err := walkBucketDir(ctx, client, full, bucketRoot, cb); err != nil {
-				return err
-			}
-			continue
+			return walkBucketDir(ctx, client, full, bucketRoot, cb)
 		}
-		if err := cb(entry, key); err != nil {
-			return err
-		}
-	}
-	return nil
+		return cb(e, key)
+	})
 }
 
 // isMPUInitDir mirrors router.mpuInitInfo: a directory at .uploads/<id>

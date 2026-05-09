@@ -381,13 +381,18 @@ func TestBucketBootstrapper_KickOffNew_LaunchesPerBucket(t *testing.T) {
 
 	b.KickOffNew(context.Background(), []string{"bucketA", "bucketB"})
 
-	// Both walks must hit ListEntries once each (empty trees -> no recursion).
+	// Each walk lists the bucket root twice (pass 1: .versions/, pass 2:
+	// everything else); 2 buckets * 2 passes = 4 listings total.
 	waitFor(t, func() bool {
-		return atomic.LoadInt32(&client.listedN) >= 2
-	}, "both bucket walks to start")
+		return atomic.LoadInt32(&client.listedN) >= 4
+	}, "both bucket walks to complete")
 
 	listed := client.listedCopy()
-	assert.ElementsMatch(t, []string{"/buckets/bucketA", "/buckets/bucketB"}, listed)
+	seen := map[string]bool{}
+	for _, d := range listed {
+		seen[d] = true
+	}
+	assert.Equal(t, map[string]bool{"/buckets/bucketA": true, "/buckets/bucketB": true}, seen)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -406,31 +411,34 @@ func TestBucketBootstrapper_KickOffNew_SkipsAlreadyKnown(t *testing.T) {
 	}
 
 	b.KickOffNew(context.Background(), []string{"bucketA", "bucketB"})
+	// Each walk does two ListEntries calls (pass 1: .versions/, pass 2:
+	// everything else). 2 buckets * 2 passes = 4 listings.
 	waitFor(t, func() bool {
-		return atomic.LoadInt32(&client.listedN) >= 2
+		return atomic.LoadInt32(&client.listedN) >= 4
 	}, "first wave to complete")
 
 	firstWave := atomic.LoadInt32(&client.listedN)
 
 	// Second call: bucketA is already known, bucketC is new. Only one
-	// new walk should fire.
+	// new walk should fire (2 listings).
 	b.KickOffNew(context.Background(), []string{"bucketA", "bucketC"})
 	waitFor(t, func() bool {
-		return atomic.LoadInt32(&client.listedN) >= firstWave+1
-	}, "bucketC walk to start")
+		return atomic.LoadInt32(&client.listedN) >= firstWave+2
+	}, "bucketC walk to complete")
 
 	// Give a moment for any spurious bucketA walk to also tick.
 	time.Sleep(20 * time.Millisecond)
 
 	listed := client.listedCopy()
-	// Count distinct buckets walked.
+	// Each bucket walks once across both calls; the walk does two
+	// listings of the bucket root (pass 1 + pass 2).
 	bucketCount := map[string]int{}
 	for _, d := range listed {
 		bucketCount[d]++
 	}
-	assert.Equal(t, 1, bucketCount["/buckets/bucketA"], "bucketA must be walked exactly once across both calls")
-	assert.Equal(t, 1, bucketCount["/buckets/bucketB"])
-	assert.Equal(t, 1, bucketCount["/buckets/bucketC"])
+	assert.Equal(t, 2, bucketCount["/buckets/bucketA"], "bucketA must be walked exactly once (=2 list calls) across both calls")
+	assert.Equal(t, 2, bucketCount["/buckets/bucketB"])
+	assert.Equal(t, 2, bucketCount["/buckets/bucketC"])
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -1087,6 +1095,8 @@ func TestWalkBucketDir_PaginatesBeyondListingLimit(t *testing.T) {
 			calls++
 		}
 	}
-	// 5 entries / page 2 = 3 calls (2+2+1).
-	assert.Equal(t, 3, calls)
+	// Each directory is streamed twice (pass 1: .versions/, pass 2:
+	// everything else) to keep memory bounded on flat buckets. 5
+	// entries at page 2 = 3 paginated calls per pass = 6 total.
+	assert.Equal(t, 6, calls)
 }
