@@ -6,7 +6,6 @@ package lifecycletest
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
@@ -54,17 +53,24 @@ type FakeLifecycleServer struct {
 	s3_lifecycle_pb.UnimplementedSeaweedS3LifecycleInternalServer
 
 	mu       sync.Mutex
-	queues   map[string][]Outcome
+	queues   map[requestKey][]Outcome
 	def      Outcome
 	err      error
 	received []*s3_lifecycle_pb.LifecycleDeleteRequest
+}
+
+// requestKey is the map key for queues. A struct rather than a delimited
+// string so bucket/object/versionId values containing "/" or "@" can't
+// collide.
+type requestKey struct {
+	bucket, objectPath, versionId string
 }
 
 // NewFakeLifecycleServer returns a server whose Default outcome is DONE.
 // Most tests want a different default; call SetDefault to change it.
 func NewFakeLifecycleServer() *FakeLifecycleServer {
 	return &FakeLifecycleServer{
-		queues: map[string][]Outcome{},
+		queues: map[requestKey][]Outcome{},
 		def:    Done(),
 	}
 }
@@ -134,6 +140,6 @@ func (f *FakeLifecycleServer) LifecycleDelete(ctx context.Context, req *s3_lifec
 	return &s3_lifecycle_pb.LifecycleDeleteResponse{Outcome: out.Code, Reason: out.Reason}, nil
 }
 
-func key(bucket, objectPath, versionId string) string {
-	return fmt.Sprintf("%s/%s@%s", bucket, objectPath, versionId)
+func key(bucket, objectPath, versionId string) requestKey {
+	return requestKey{bucket: bucket, objectPath: objectPath, versionId: versionId}
 }
