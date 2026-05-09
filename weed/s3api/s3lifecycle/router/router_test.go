@@ -1344,3 +1344,57 @@ func indexOf(ss []string, s string) int {
 	}
 	return -1
 }
+
+func TestRoutePointerTransitionExpansionEmitsOnlyThresholdCrossing(t *testing.T) {
+	// Hot key with many already-eligible noncurrents under
+	// NewerNoncurrentVersions=2. A pointer flip must NOT enqueue every
+	// over-threshold version (Schedule.Add doesn't dedup; identity-CAS
+	// only saves the dispatch RPC, not the heap slot). Only the version
+	// that JUST crossed from kept to expired needs to enter the heap;
+	// everything else was already scheduled by an earlier transition or
+	// bootstrap.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
+	// 6 versions total: v-new latest after flip, then v-cur (rank 0),
+	// v-mid (rank 1), v-2 (rank 2 — newly crossed), v-3, v-4 (already
+	// past threshold from previous flips). Only rank 2 should enter
+	// the heap on this flip.
+	allVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -2).Unix()),
+		displacedVersionEntry("v-2", now.AddDate(0, 0, -10).Unix()),
+		displacedVersionEntry("v-3", now.AddDate(0, 0, -20).Unix()),
+		displacedVersionEntry("v-4", now.AddDate(0, 0, -30).Unix()),
+	}
+	lister := &recordingLister{listVersions: allVersions}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	// Want exactly v-2 (rank 2 — newly crossed). Not v-3 / v-4 (already
+	// over) and not v-cur / v-mid (still kept).
+	if !contains(versionIDs, "v-2") {
+		t.Fatalf("v-2 at the new crossing rank must fire, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"v-3", "v-4"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("over-threshold %s must NOT re-enter the heap on this flip, matches=%v", id, versionIDs)
+		}
+	}
+	for _, id := range []string{"v-cur", "v-mid"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("retained %s must not fire, matches=%v", id, versionIDs)
+		}
+	}
+}

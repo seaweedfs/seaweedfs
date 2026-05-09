@@ -280,8 +280,19 @@ func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot,
 	return emitNoncurrentMatches(snap, ev, keys, info, displaced, oldID, successor)
 }
 
-// routePointerTransitionExpand is the full-listing path: rank every
-// version newest-first against the new pointer, then route the noncurrents.
+// routePointerTransitionExpand routes only the versions that newly
+// became eligible by the pointer flip:
+//
+//   - rank 0: the displaced version (newly noncurrent), needed for the
+//     pure-NoncurrentDays clock,
+//   - rank == rule.NewerNoncurrentVersions for each active rule that
+//     gates on count: the version at exactly that rank just crossed
+//     from kept to expired.
+//
+// Emitting every eligible noncurrent on every PUT would push
+// O(versions) heap entries per flip — Schedule.Add doesn't dedup, so
+// identity-CAS at dispatch only stops the wasted RPC, not the heap
+// growth. Bootstrap still owns full backfill.
 func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister, logical, newID string, successor time.Time) []Match {
 	versions, err := lister.ListVersions(ctx, ev.Bucket, logical)
 	if err != nil {
@@ -310,27 +321,53 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 			}
 		}
 	}
-	var matches []Match
-	for i, v := range versions {
-		if i == latestPos {
+	noncurrentCount := len(versions) - 1
+
+	// Collect the target noncurrent ranks: 0 (the freshly displaced)
+	// plus N for each active count-gated rule.
+	rankSet := map[int]struct{}{0: {}}
+	for _, k := range keys {
+		if k.ActionKind != s3lifecycle.ActionKindNoncurrentDays && k.ActionKind != s3lifecycle.ActionKindNewerNoncurrent {
 			continue
 		}
+		a := snap.Action(k)
+		if a == nil || !a.IsActive() || a.Mode != engine.ModeEventDriven {
+			continue
+		}
+		if a.Rule != nil && a.Rule.NewerNoncurrentVersions > 0 {
+			rankSet[a.Rule.NewerNoncurrentVersions] = struct{}{}
+		}
+	}
+	ranks := make([]int, 0, len(rankSet))
+	for r := range rankSet {
+		ranks = append(ranks, r)
+	}
+	sort.Ints(ranks)
+
+	var matches []Match
+	for _, rank := range ranks {
+		if rank >= noncurrentCount {
+			continue
+		}
+		// Convert noncurrent rank to position in the sorted slice,
+		// skipping the latest's slot.
+		i := rank
+		if rank >= latestPos {
+			i = rank + 1
+		}
+		v := versions[i]
 		versionID := string(v.Extended[s3_constants.ExtVersionIdKey])
 		if versionID == "" {
 			continue
 		}
-		rank := i
-		if i > latestPos {
-			rank = i - 1
-		}
 		// Successor mtime: the entry directly newer than this one in
-		// the sorted list. The displaced version's successor is the
-		// new latest's mtime (cached in container Extended); other
-		// noncurrents use their next-newer sibling's mtime.
+		// the sorted list. When the next-newer slot is the latest,
+		// use the cached successor (the new latest's mtime); otherwise
+		// the immediate predecessor's mtime.
 		var thisSuccessor time.Time
 		if i > 0 && i-1 != latestPos {
 			thisSuccessor = time.Unix(versions[i-1].Attributes.Mtime, int64(versions[i-1].Attributes.MtimeNs))
-		} else if i == 0 || i-1 == latestPos {
+		} else {
 			thisSuccessor = successor
 		}
 		idx := rank
