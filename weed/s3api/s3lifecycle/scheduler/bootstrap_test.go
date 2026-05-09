@@ -601,11 +601,12 @@ func TestExpandVersionsDir_LatestAndNoncurrentsByMtime(t *testing.T) {
 }
 
 func TestExpandVersionsDir_LatestPointerOutOfOrderByMtime(t *testing.T) {
-	// Backdated PUT scenario: latest pointer names v1 even though v2 has
-	// newer mtime. NoncurrentIndex must skip the latest's position.
+	// Backdated PUT scenario: latest pointer names v1 but v1's mtime is
+	// OLDER than v2's. After newest-first sort the order is [v2, v1] so
+	// latestPos == 1, exercising the rank-skip path for the noncurrent.
 	now := time.Now()
-	v1mt := now.Add(-1 * time.Hour)
-	v2mt := now.Add(-3 * time.Hour)
+	v1mt := now.Add(-3 * time.Hour)
+	v2mt := now.Add(-1 * time.Hour)
 	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
 		s3_constants.ExtLatestVersionIdKey: []byte("v1"),
 	})

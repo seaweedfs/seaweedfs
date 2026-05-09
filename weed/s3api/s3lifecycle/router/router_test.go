@@ -836,10 +836,12 @@ func bootstrapVersionEntry(versionID string, mtime time.Time, isDeleteMarker boo
 	if isDeleteMarker {
 		ext[s3_constants.ExtDeleteMarkerKey] = []byte("true")
 	}
+	mtimeUnix := mtime.Unix()
 	return &filer_pb.Entry{
 		Name: "v_" + versionID,
 		Attributes: &filer_pb.FuseAttributes{
-			Mtime: mtime.Unix(),
+			Mtime:   mtimeUnix,
+			MtimeNs: int32(mtime.UnixNano() - mtimeUnix*int64(1e9)),
 		},
 		Extended: ext,
 	}
@@ -897,8 +899,6 @@ func TestRouteBootstrapVersionNoncurrentDaysFires(t *testing.T) {
 	successor := now.AddDate(0, 0, -3) // replaced 3 days ago
 	old := now.AddDate(0, 0, -10)      // mtime older still
 	entry := bootstrapVersionEntry("v-old", old, false)
-	idx := 0
-	_ = idx
 	ev := &reader.Event{
 		Bucket:   "bk",
 		Key:      "logs/foo" + s3_constants.VersionsFolder + "/v_v-old",

@@ -129,37 +129,40 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 		return 0, nil
 	}
 	versionsDir := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket + "/" + versionsKey
+	// First pass: collect every direct child that's a file (subdirs would
+	// corrupt the mtime sort and rank math). The hasVersionFile check
+	// inspects this raw set so a .versions/-suffixed user folder full of
+	// directories falls through to the recursion below.
 	var children []*filer_pb.Entry
 	if err := filer_pb.SeaweedList(ctx, b.FilerClient, versionsDir, "", func(e *filer_pb.Entry, _ bool) error {
-		if e != nil && e.Attributes != nil {
+		if e != nil && e.Attributes != nil && !e.IsDirectory {
 			children = append(children, e)
 		}
 		return nil
 	}, "", false, 0); err != nil {
 		return 0, fmt.Errorf("list %s: %w", versionsDir, err)
 	}
-	if len(children) == 0 {
-		return 0, nil
-	}
 	// Disambiguate: a real .versions container's children always carry
 	// ExtVersionIdKey. createDeleteMarker writes the version file with
 	// the key set, so even mid-update the children look like versions.
-	hasVersionFile := false
+	versions := make([]*filer_pb.Entry, 0, len(children))
 	for _, e := range children {
-		if _, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok {
-			hasVersionFile = true
-			break
+		if id, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok && len(id) > 0 {
+			versions = append(versions, e)
 		}
 	}
-	if !hasVersionFile {
-		// Walk as a regular subfolder. fallback is the bucket walk's
-		// own cb so nested .versions/ entries inside still expand.
+	if len(versions) == 0 {
+		// Coincidentally-named user folder (or an empty .versions
+		// container). fallback is the bucket walk's own cb so nested
+		// .versions/ entries inside still expand.
+		if fallback == nil {
+			return 0, nil
+		}
 		if err := walkBucketDir(ctx, b.FilerClient, versionsDir, root, fallback); err != nil {
 			return 0, err
 		}
 		return 0, nil
 	}
-	versions := children
 	// Newest-first by mtime: NoncurrentIndex is 0-based among noncurrents
 	// in that order, and SuccessorModTime is the next-newer sibling's mtime.
 	sort.SliceStable(versions, func(i, j int) bool {
