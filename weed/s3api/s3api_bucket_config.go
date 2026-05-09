@@ -442,7 +442,13 @@ func (s3a *S3ApiServer) populateBucketConfigDerivedFields(config *BucketConfig) 
 		// writes.
 		if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
 			if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
-				versioned := config.Versioning == s3_constants.VersioningEnabled || config.Versioning == s3_constants.VersioningSuspended
+				// Object Lock requires versioning, so an ObjectLockConfig
+				// implies the bucket is versioned even when the explicit
+				// Versioning header was never written. BucketIsVersioned
+				// in this file uses the same OR — keep them aligned.
+				versioned := config.Versioning == s3_constants.VersioningEnabled ||
+					config.Versioning == s3_constants.VersioningSuspended ||
+					config.ObjectLockConfig != nil
 				config.LifecycleTTL = NewLifecycleTTLResolver(rules, versioned)
 			} else {
 				glog.V(1).Infof("populateBucketConfigDerivedFields: bucket %s lifecycle xml parse: %v", bucket, err)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
@@ -233,5 +234,29 @@ func TestPopulateBucketConfigDerivedFields_RefreshesLifecycleTTL(t *testing.T) {
 	s.populateBucketConfigDerivedFields(cfg)
 	if cfg.LifecycleTTL != nil {
 		t.Fatalf("after delete, want nil resolver, got %v", cfg.LifecycleTTL)
+	}
+}
+
+func TestPopulateBucketConfigDerivedFields_ObjectLockTreatedAsVersioned(t *testing.T) {
+	// Object Lock requires versioning, so a bucket with ObjectLock but
+	// no explicit Versioning header is still effectively versioned —
+	// volume TTL would expire all noncurrent versions as a unit. The
+	// resolver-construction site must mirror BucketIsVersioned and
+	// treat ObjectLockConfig != nil as versioned.
+	s := &S3ApiServer{}
+	xml := []byte(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>7</Days></Expiration></Rule></LifecycleConfiguration>`)
+	cfg := &BucketConfig{
+		Name: "bk",
+		Entry: &filer_pb.Entry{Extended: map[string][]byte{
+			s3_constants.ExtObjectLockEnabledKey:    []byte(s3_constants.ObjectLockEnabled),
+			bucketLifecycleConfigurationXMLKey:      xml,
+		}},
+	}
+	s.populateBucketConfigDerivedFields(cfg)
+	if cfg.ObjectLockConfig == nil {
+		t.Fatal("test setup: ObjectLockConfig should be parsed")
+	}
+	if cfg.LifecycleTTL != nil {
+		t.Fatalf("ObjectLock buckets must skip the fast-path resolver, got %v", cfg.LifecycleTTL)
 	}
 }
