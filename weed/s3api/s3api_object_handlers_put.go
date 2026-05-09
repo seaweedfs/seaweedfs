@@ -453,6 +453,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		collection = s3a.getCollectionName(bucket)
 	}
 
+	// Resolve volume-TTL from the bucket's lifecycle XML. The bucket
+	// config is cached + parsed up-front in getBucketConfig, so this is
+	// a slice walk; chunks land on TTL volumes and the volume server
+	// handles physical expiration without any filer.conf bookkeeping.
+	requestTags := parseRequestTags(r)
+	bucketCfg, _ := s3a.getBucketConfig(bucket)
+	lifecycleTTLSec := resolveLifecycleTTLForWrite(bucketCfg, object, requestTags, r.ContentLength)
+
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
 		var assignResult *filer_pb.AssignVolumeResponse
@@ -465,6 +473,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				DataCenter:       s3a.option.DataCenter,
 				Path:             filePath,
 				ExpectedDataSize: expectedDataSize,
+				TtlSec:           lifecycleTTLSec,
 			})
 			if err != nil {
 				return fmt.Errorf("assign volume: %w", err)
@@ -639,6 +648,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			Gid:      0,
 			Mime:     mimeType,
 			FileSize: uint64(chunkResult.TotalSize),
+			TtlSec:   lifecycleTTLSec,
 		},
 		Chunks:   chunkResult.FileChunks, // All chunks from auto-chunking
 		Extended: make(map[string][]byte),

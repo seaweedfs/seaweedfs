@@ -18,9 +18,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/lifecycle_xml"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
 // BucketConfig represents cached bucket configuration
@@ -34,6 +36,7 @@ type BucketConfig struct {
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration      // Cached parsed Object Lock configuration
 	BucketPolicy     *policy_engine.PolicyDocument // Cached bucket policy for performance
+	LifecycleRules   []*s3lifecycle.Rule           // Pre-parsed canonical rules; nil when no lifecycle config
 	KMSKeyCache      *BucketKMSCache               // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
 	Entry            *filer_pb.Entry
@@ -403,6 +406,17 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 		// Load bucket policy if present (for performance optimization)
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
+
+		// Pre-parse lifecycle XML so the per-write TTL resolver doesn't
+		// pay parsing cost on every PutObject. nil on parse error so the
+		// PUT path falls through to "no TTL" rather than rejecting writes.
+		if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
+			if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
+				config.LifecycleRules = rules
+			} else {
+				glog.V(1).Infof("getBucketConfig: bucket %s lifecycle xml parse: %v", bucket, err)
+			}
+		}
 	}
 
 	// Sync bucket policy to the policy engine for evaluation
