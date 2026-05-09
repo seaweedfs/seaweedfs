@@ -848,7 +848,11 @@ func bootstrapVersionEntry(versionID string, mtime time.Time, isDeleteMarker boo
 func TestRouteBootstrapVersionLatestExpirationDaysFires(t *testing.T) {
 	// Bootstrap-emitted event for the LATEST version of a versioned
 	// object. ExpirationDays should fire (creates a delete marker at
-	// dispatch). ObjectKey is the LOGICAL key, VersionID is set.
+	// dispatch). ObjectKey is the LOGICAL key. VersionID must be EMPTY
+	// for EXPIRATION_DAYS so the dispatcher fetches the current latest:
+	// if a fresh PUT landed between schedule and dispatch, identity-CAS
+	// against the original version's bytes would pass even though the
+	// latest has moved on.
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
 	snap := compileWithVersioned(rule, activatedPrior(rule))
 
@@ -873,8 +877,8 @@ func TestRouteBootstrapVersionLatestExpirationDaysFires(t *testing.T) {
 	if matches[0].ObjectKey != "logs/foo" {
 		t.Fatalf("ObjectKey=%q, want logs/foo", matches[0].ObjectKey)
 	}
-	if matches[0].VersionID != "v-current" {
-		t.Fatalf("VersionID=%q, want v-current", matches[0].VersionID)
+	if matches[0].VersionID != "" {
+		t.Fatalf("VersionID=%q, want empty for EXPIRATION_DAYS", matches[0].VersionID)
 	}
 }
 

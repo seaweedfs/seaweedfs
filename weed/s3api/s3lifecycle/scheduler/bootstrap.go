@@ -77,12 +77,15 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	root := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket
 	glog.V(0).Infof("lifecycle bootstrap: starting walk for bucket %s (root=%s)", bucket, root)
 	count := 0
-	if err := walkBucketDir(ctx, b.FilerClient, root, root, func(entry *filer_pb.Entry, key string) error {
-		// .versions/ directories are emitted whole; expand into one event
-		// per version with sibling state pre-computed so the router can
-		// fire NoncurrentDays / NewerNoncurrent without listing again.
+	var cb func(entry *filer_pb.Entry, key string) error
+	cb = func(entry *filer_pb.Entry, key string) error {
+		// .versions/-suffixed directories may be SeaweedFS version
+		// storage OR a coincidentally-named user folder.
+		// expandVersionsDir disambiguates by inspecting children and
+		// falls back to a regular recursion via cb when the dir holds
+		// no version files.
 		if isVersionsDir(entry) {
-			n, err := b.expandVersionsDir(ctx, bucket, key, entry)
+			n, err := b.expandVersionsDir(ctx, bucket, root, key, entry, cb)
 			count += n
 			return err
 		}
@@ -98,7 +101,8 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 		}
 		count++
 		return b.Injector.InjectEvent(ctx, ev)
-	}); err != nil {
+	}
+	if err := walkBucketDir(ctx, b.FilerClient, root, root, cb); err != nil {
 		if ctx.Err() == nil {
 			glog.V(0).Infof("lifecycle bootstrap %s: %v", bucket, err)
 		}
@@ -107,30 +111,55 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 	glog.V(0).Infof("lifecycle bootstrap: bucket %s injected %d entries", bucket, count)
 }
 
-// expandVersionsDir lists <root>/<key>/, sorts the versions newest-first by
-// mtime, and injects one event per version with BootstrapVersion populated.
-// versionsKey is the bucket-relative path of the .versions/ directory itself
-// (e.g. "logs/foo.versions"); versionsEntry carries ExtLatestVersionIdKey.
-// SuccessorModTime is the immediately newer sibling's mtime — when this
-// version became noncurrent, the clock that NoncurrentDays uses.
-func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, versionsKey string, versionsEntry *filer_pb.Entry) (int, error) {
+// expandVersionsDir lists <root>/<key>/ and, when the children look like
+// SeaweedFS version files (each carries ExtVersionIdKey), injects one
+// reader.Event per version with BootstrapVersion populated. versionsKey
+// is the bucket-relative path of the directory itself (e.g.
+// "logs/foo.versions"). SuccessorModTime is the immediately newer
+// sibling's mtime — when this version became noncurrent, the clock
+// NoncurrentDays uses.
+//
+// When no child has ExtVersionIdKey the directory is treated as a
+// coincidentally-named user folder and walked recursively via fallback,
+// which is the same callback walkBucket builds. Reusing the same cb
+// keeps any nested .versions/<x> within it routed correctly.
+func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root, versionsKey string, versionsEntry *filer_pb.Entry, fallback func(*filer_pb.Entry, string) error) (int, error) {
 	logical := strings.TrimSuffix(versionsKey, s3_constants.VersionsFolder)
 	if logical == "" {
 		return 0, nil
 	}
 	versionsDir := strings.TrimSuffix(b.BucketsPath, "/") + "/" + bucket + "/" + versionsKey
-	var versions []*filer_pb.Entry
+	var children []*filer_pb.Entry
 	if err := filer_pb.SeaweedList(ctx, b.FilerClient, versionsDir, "", func(e *filer_pb.Entry, _ bool) error {
 		if e != nil && e.Attributes != nil {
-			versions = append(versions, e)
+			children = append(children, e)
 		}
 		return nil
 	}, "", false, 0); err != nil {
 		return 0, fmt.Errorf("list %s: %w", versionsDir, err)
 	}
-	if len(versions) == 0 {
+	if len(children) == 0 {
 		return 0, nil
 	}
+	// Disambiguate: a real .versions container's children always carry
+	// ExtVersionIdKey. createDeleteMarker writes the version file with
+	// the key set, so even mid-update the children look like versions.
+	hasVersionFile := false
+	for _, e := range children {
+		if _, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok {
+			hasVersionFile = true
+			break
+		}
+	}
+	if !hasVersionFile {
+		// Walk as a regular subfolder. fallback is the bucket walk's
+		// own cb so nested .versions/ entries inside still expand.
+		if err := walkBucketDir(ctx, b.FilerClient, versionsDir, root, fallback); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+	versions := children
 	// Newest-first by mtime: NoncurrentIndex is 0-based among noncurrents
 	// in that order, and SuccessorModTime is the next-newer sibling's mtime.
 	sort.SliceStable(versions, func(i, j int) bool {
@@ -258,16 +287,16 @@ func isMPUInitDir(key string, entry *filer_pb.Entry) bool {
 	return ok && len(v) > 0
 }
 
-// isVersionsDir reports whether entry is a SeaweedFS .versions container —
-// the directory whose Extended map carries ExtLatestVersionIdKey for
-// versioned objects. Matching by name suffix alone would also catch
-// pre-existing directories named `<x>.versions/` that aren't versioned
-// objects; the latest-pointer key disambiguates.
+// isVersionsDir matches `<x>.versions/` by name suffix. We can't gate on
+// ExtLatestVersionIdKey here: createDeleteMarker writes the version file
+// before updating the parent's Extended pointer, so a walk that races
+// with that update would see the directory without the pointer and
+// recurse into raw version files, losing the sibling state needed for
+// noncurrent rules. expandVersionsDir handles disambiguation by
+// inspecting children for ExtVersionIdKey; coincidentally-named
+// directories that aren't real .versions storage fall through to a
+// regular recursion.
 func isVersionsDir(entry *filer_pb.Entry) bool {
-	if !entry.IsDirectory || !strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-		return false
-	}
-	_, hasLatest := entry.Extended[s3_constants.ExtLatestVersionIdKey]
-	return hasLatest
+	return entry.IsDirectory && strings.HasSuffix(entry.Name, s3_constants.VersionsFolder)
 }
 

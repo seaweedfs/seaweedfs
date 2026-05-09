@@ -281,6 +281,22 @@ func routeBootstrapVersion(snap *engine.Snapshot, ev *reader.Event, keys []s3lif
 		if res.Action == s3lifecycle.ActionNone {
 			continue
 		}
+		// Pin the version_id only for kinds the dispatcher needs to
+		// target by version: noncurrent retention and the marker
+		// itself. EXPIRATION_DAYS / EXPIRATION_DATE on the latest
+		// must NOT carry it — between schedule and dispatch a fresh
+		// PUT can land, and identity-CAS against the original
+		// version's bytes would still pass even though the latest has
+		// moved on. Empty VersionID makes the dispatcher fetch the
+		// current latest, where identity-CAS resolves to STALE_IDENTITY
+		// and bootstrap re-schedules with the new latest's identity.
+		var matchVersionID string
+		switch key.ActionKind {
+		case s3lifecycle.ActionKindNoncurrentDays,
+			s3lifecycle.ActionKindNewerNoncurrent,
+			s3lifecycle.ActionKindExpiredDeleteMarker:
+			matchVersionID = bv.VersionID
+		}
 		matches = append(matches, Match{
 			Key:       key,
 			Action:    action,
@@ -289,7 +305,7 @@ func routeBootstrapVersion(snap *engine.Snapshot, ev *reader.Event, keys []s3lif
 			DueTime:   dueTime,
 			Bucket:    ev.Bucket,
 			ObjectKey: bv.LogicalKey,
-			VersionID: bv.VersionID,
+			VersionID: matchVersionID,
 			Identity:  identity,
 		})
 	}
