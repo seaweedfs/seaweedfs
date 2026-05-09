@@ -24,14 +24,14 @@ type commandS3LifecycleRouteTTL struct{}
 func (c *commandS3LifecycleRouteTTL) Name() string { return "s3.lifecycle.route-ttl" }
 
 func (c *commandS3LifecycleRouteTTL) Help() string {
-	return `apply filer.conf TTL volume routing for a bucket's lifecycle policy
+	return `set up filer.conf TTL volume routing for a bucket's lifecycle policy
 
-PutBucketLifecycleConfiguration no longer back-stamps existing entries; this
-command is the explicit operator hook for setting up volume-TTL routing so
-new writes under a rule's prefix land on TTL volumes and the volume server
-handles physical expiration. Reads the bucket's lifecycle XML from the filer
-and proposes one filer.conf path-config entry per simple Expiration.Days rule
-(no tag / size filter, prefix-only).
+PutBucketLifecycleConfiguration no longer touches filer.conf — it just
+validates and stores the XML. Volume-TTL routing is now an explicit
+operator step: this command reads the bucket's lifecycle XML and writes
+one filer.conf path-config entry per simple Expiration.Days rule, so new
+writes under that prefix land on TTL volumes and the volume server
+handles physical expiration. Companion to s3.lifecycle.unroute-ttl.
 
 	# dry-run: show what would change
 	s3.lifecycle.route-ttl -bucket logs-prod
@@ -40,7 +40,7 @@ and proposes one filer.conf path-config entry per simple Expiration.Days rule
 	s3.lifecycle.route-ttl -bucket logs-prod -apply
 
 Versioned buckets are skipped: TTL volumes expire as a unit, which would
-destroy noncurrent versions; the lifecycle worker must drive expiration on
+destroy noncurrent versions; the lifecycle worker drives expiration for
 versioned buckets.
 `
 }
