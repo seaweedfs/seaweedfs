@@ -396,9 +396,11 @@ func TestBucketBootstrapper_KickOffNew_LaunchesPerBucket(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	assert.True(t, b.known["bucketA"])
-	assert.True(t, b.known["bucketB"])
-	assert.Len(t, b.known, 2)
+	_, hasA := b.lastWalk["bucketA"]
+	_, hasB := b.lastWalk["bucketB"]
+	assert.True(t, hasA)
+	assert.True(t, hasB)
+	assert.Len(t, b.lastWalk, 2)
 }
 
 func TestBucketBootstrapper_KickOffNew_SkipsAlreadyKnown(t *testing.T) {
@@ -442,8 +444,9 @@ func TestBucketBootstrapper_KickOffNew_SkipsAlreadyKnown(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	assert.Len(t, b.known, 3)
-	assert.True(t, b.known["bucketC"])
+	assert.Len(t, b.lastWalk, 3)
+	_, hasC := b.lastWalk["bucketC"]
+	assert.True(t, hasC)
 }
 
 func TestBucketBootstrapper_KickOffNew_NilInjectorIsNoop(t *testing.T) {
@@ -456,12 +459,13 @@ func TestBucketBootstrapper_KickOffNew_NilInjectorIsNoop(t *testing.T) {
 	require.NotPanics(t, func() {
 		b.KickOffNew(context.Background(), []string{"bucketA"})
 	})
-	// No walks must have been kicked off, and known must remain empty.
+	// No walks must have been kicked off, and the lastWalk map must
+	// remain empty.
 	time.Sleep(20 * time.Millisecond)
 	assert.Equal(t, int32(0), atomic.LoadInt32(&client.listedN))
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	assert.Empty(t, b.known)
+	assert.Empty(t, b.lastWalk)
 }
 
 func TestBucketBootstrapper_KickOffNew_EmptyBucketListIsNoop(t *testing.T) {
@@ -1099,4 +1103,125 @@ func TestWalkBucketDir_PaginatesBeyondListingLimit(t *testing.T) {
 	// everything else) to keep memory bounded on flat buckets. 5
 	// entries at page 2 = 3 paginated calls per pass = 6 total.
 	assert.Equal(t, 6, calls)
+}
+
+// fakeClock is a thread-safe time source for tests that need to fast-
+// forward across a BootstrapInterval boundary. Bootstrap goroutines
+// read it concurrently with the test advancing it, so a plain
+// `clock := time.Now()` plus closure write would race under -race.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{t: time.Now()} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+func TestBucketBootstrapper_KickOffNew_BootstrapIntervalRevisitsBucket(t *testing.T) {
+	// scan_only actions only fire from bootstrap, so a long-running
+	// worker has to revisit each bucket on a cadence. With
+	// BootstrapInterval set, KickOffNew re-walks once enough wall-clock
+	// has passed since the last completed walk.
+	client := newEmptyFilerClient()
+	inj := &recordingInjector{}
+	clock := newFakeClock()
+	b := &BucketBootstrapper{
+		FilerClient:       client,
+		BucketsPath:       "/buckets",
+		Injector:          inj,
+		BootstrapInterval: time.Hour,
+		Now:               clock.Now,
+	}
+
+	// First wave: walks once.
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 2 }, "first walk")
+	firstCount := atomic.LoadInt32(&client.listedN)
+
+	// Inside the interval: skip.
+	clock.Advance(30 * time.Minute)
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	time.Sleep(20 * time.Millisecond)
+	if got := atomic.LoadInt32(&client.listedN); got != firstCount {
+		t.Fatalf("inside interval, must not re-walk; listedN=%d, want %d", got, firstCount)
+	}
+
+	// Past the interval: re-walk.
+	clock.Advance(45 * time.Minute) // total elapsed > 1h
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= firstCount+2 }, "re-walk after interval")
+}
+
+func TestBucketBootstrapper_KickOffNew_ZeroIntervalLegacyOnceOnly(t *testing.T) {
+	// BootstrapInterval == 0 preserves the original "walk once per
+	// process" behavior so existing deployments don't get a different
+	// cadence by default.
+	client := newEmptyFilerClient()
+	inj := &recordingInjector{}
+	clock := newFakeClock()
+	b := &BucketBootstrapper{
+		FilerClient: client,
+		BucketsPath: "/buckets",
+		Injector:    inj,
+		Now:         clock.Now,
+	}
+
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 2 }, "first walk")
+	firstCount := atomic.LoadInt32(&client.listedN)
+
+	// Even after 100 hours, KickOffNew skips the bucket.
+	clock.Advance(100 * time.Hour)
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	time.Sleep(20 * time.Millisecond)
+	if got := atomic.LoadInt32(&client.listedN); got != firstCount {
+		t.Fatalf("zero interval must keep the once-per-process behavior; listedN=%d, want %d", got, firstCount)
+	}
+}
+
+func TestBucketBootstrapper_MarkDirtyForcesRewalk(t *testing.T) {
+	// Operator hook: MarkDirty drops the in-memory record so the next
+	// KickOffNew walks the bucket again, regardless of cadence.
+	client := newEmptyFilerClient()
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{
+		FilerClient:       client,
+		BucketsPath:       "/buckets",
+		Injector:          inj,
+		BootstrapInterval: 24 * time.Hour, // large interval that would otherwise skip
+	}
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 2 }, "first walk")
+	firstCount := atomic.LoadInt32(&client.listedN)
+
+	b.MarkDirty("bucketA")
+	b.KickOffNew(context.Background(), []string{"bucketA"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= firstCount+2 }, "re-walk after MarkDirty")
+}
+
+func TestBucketBootstrapper_MarkAllDirtyResets(t *testing.T) {
+	client := newEmptyFilerClient()
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	b.KickOffNew(context.Background(), []string{"bucketA", "bucketB"})
+	waitFor(t, func() bool { return atomic.LoadInt32(&client.listedN) >= 4 }, "first wave")
+
+	b.MarkAllDirty()
+	b.mu.Lock()
+	empty := len(b.lastWalk) == 0
+	b.mu.Unlock()
+	if !empty {
+		t.Fatalf("MarkAllDirty must clear the lastWalk map")
+	}
 }

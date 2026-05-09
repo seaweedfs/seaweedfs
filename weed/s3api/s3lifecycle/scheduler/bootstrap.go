@@ -78,33 +78,58 @@ func listAll(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string
 // Synthesized events carry TsNs=0 so dispatcher.advance is a no-op for
 // them — the reader still resumes from its persisted cursor on restart.
 //
-// Bucket completion is in-memory per process; a fresh worker run walks
-// each bucket once on first refresh.
+// Walk completion is tracked in-memory per process. KickOffNew skips a
+// bucket whose last walk is younger than BootstrapInterval (or always,
+// when the interval is zero — the legacy "walk once per process"
+// behavior). Operators can force a re-walk via MarkDirty.
 type BucketBootstrapper struct {
 	FilerClient filer_pb.SeaweedFilerClient
 	BucketsPath string
 	Injector    EventInjector
 
-	mu    sync.Mutex
-	known map[string]bool
+	// BootstrapInterval gates re-walks. Zero means "walk once per
+	// process": after the initial walk the bucket stays known forever.
+	// Non-zero means "walk again once it's been at least this long
+	// since the last completed walk" — the cadence scan_only actions
+	// rely on, since they can only fire from bootstrap.
+	BootstrapInterval time.Duration
+
+	// Now overrides time.Now for tests.
+	Now func() time.Time
+
+	mu       sync.Mutex
+	lastWalk map[string]time.Time
+}
+
+func (b *BucketBootstrapper) now() time.Time {
+	if b.Now != nil {
+		return b.Now()
+	}
+	return time.Now()
 }
 
 // KickOffNew launches a one-shot walker goroutine for every bucket
-// in `buckets` that hasn't been seen before.
+// that's either never been walked or whose last walk completed more
+// than BootstrapInterval ago.
 func (b *BucketBootstrapper) KickOffNew(ctx context.Context, buckets []string) {
 	if b.Injector == nil {
 		return
 	}
+	now := b.now()
 	b.mu.Lock()
-	if b.known == nil {
-		b.known = map[string]bool{}
+	if b.lastWalk == nil {
+		b.lastWalk = map[string]time.Time{}
 	}
 	fresh := make([]string, 0, len(buckets))
 	for _, bucket := range buckets {
-		if b.known[bucket] {
+		last, seen := b.lastWalk[bucket]
+		if seen && (b.BootstrapInterval <= 0 || now.Sub(last) < b.BootstrapInterval) {
 			continue
 		}
-		b.known[bucket] = true
+		// Stamp now so a concurrent KickOffNew skips this bucket while
+		// the walk is in flight; walkBucket re-stamps with the actual
+		// completion time on success.
+		b.lastWalk[bucket] = now
 		fresh = append(fresh, bucket)
 	}
 	b.mu.Unlock()
@@ -113,6 +138,27 @@ func (b *BucketBootstrapper) KickOffNew(ctx context.Context, buckets []string) {
 		bucket := bucket
 		go b.walkBucket(ctx, bucket)
 	}
+}
+
+// MarkDirty drops the in-memory record for the given buckets so the
+// next KickOffNew call walks them again. Operator hook for forcing a
+// re-bootstrap on a long-running worker — the standard knob is
+// BootstrapInterval, this is the manual override.
+func (b *BucketBootstrapper) MarkDirty(buckets ...string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, bucket := range buckets {
+		delete(b.lastWalk, bucket)
+	}
+}
+
+// MarkAllDirty drops every in-memory record. Equivalent to a process
+// restart for bootstrap purposes; useful when an operator wants to
+// reconcile every bucket immediately.
+func (b *BucketBootstrapper) MarkAllDirty() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lastWalk = nil
 }
 
 func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
@@ -153,11 +199,22 @@ func (b *BucketBootstrapper) walkBucket(ctx context.Context, bucket string) {
 		return b.Injector.InjectEvent(ctx, ev)
 	}
 	if err := walkBucketDir(ctx, b.FilerClient, root, root, cb); err != nil {
+		// Walk failed mid-way; drop the lastWalk stamp so the next
+		// KickOffNew picks this bucket up again. KickOffNew stamped
+		// the start time as a debounce.
 		if ctx.Err() == nil {
 			glog.V(0).Infof("lifecycle bootstrap %s: %v", bucket, err)
+			b.MarkDirty(bucket)
 		}
 		return
 	}
+	// Re-stamp with the actual completion time so the BootstrapInterval
+	// cadence measures from end-of-walk, not start.
+	b.mu.Lock()
+	if b.lastWalk != nil {
+		b.lastWalk[bucket] = b.now()
+	}
+	b.mu.Unlock()
 	glog.V(0).Infof("lifecycle bootstrap: bucket %s injected %d entries", bucket, count)
 }
 
