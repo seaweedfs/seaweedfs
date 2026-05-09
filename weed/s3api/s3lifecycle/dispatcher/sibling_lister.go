@@ -60,6 +60,48 @@ func (l *filerSiblingLister) Survivors(ctx context.Context, bucket, objectKey st
 	return s, nil
 }
 
+// ListVersions paginates every file under .versions/<key>/. Used by
+// the pointer-transition expansion path when a NewerNoncurrentVersions
+// rule needs accurate per-version ranking. Subdirectories and entries
+// without ExtVersionIdKey are filtered out. NotFound returns
+// (nil, nil) so a hard-deleted .versions/ container collapses cleanly.
+func (l *filerSiblingLister) ListVersions(ctx context.Context, bucket, objectKey string) ([]*filer_pb.Entry, error) {
+	bucketPath := strings.TrimSuffix(l.bucketsPath, "/") + "/" + bucket
+	dir := bucketPath + "/" + objectKey + s3_constants.VersionsFolder
+	const pageSize uint32 = 1024
+	startFrom := ""
+	var versions []*filer_pb.Entry
+	for {
+		var pageCount uint32
+		var lastName string
+		err := filer_pb.SeaweedList(ctx, l.client, dir, "", func(e *filer_pb.Entry, _ bool) error {
+			pageCount++
+			if e == nil {
+				return nil
+			}
+			lastName = e.Name
+			if e.Attributes == nil || e.IsDirectory {
+				return nil
+			}
+			if id, ok := e.Extended[s3_constants.ExtVersionIdKey]; !ok || len(id) == 0 {
+				return nil
+			}
+			versions = append(versions, e)
+			return nil
+		}, startFrom, false, pageSize)
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if pageCount < pageSize {
+			return versions, nil
+		}
+		startFrom = lastName
+	}
+}
+
 // LookupVersion fetches <bucketsPath>/<bucket>/<objectKey>.versions/v_<id>
 // for the pointer-transition router branch. NotFound returns (nil, nil)
 // — the displaced version may have been hard-deleted between the

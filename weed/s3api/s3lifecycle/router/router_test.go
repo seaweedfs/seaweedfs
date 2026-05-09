@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -499,12 +500,20 @@ func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64)
 // state to return; calls list is appended on each invocation so tests
 // can assert whether the lister was consulted at all.
 type recordingLister struct {
-	calls       []string
-	survivors   Survivors
-	err         error
-	lookupCalls []string
-	lookupEntry *filer_pb.Entry
-	lookupErr   error
+	calls        []string
+	survivors    Survivors
+	err          error
+	lookupCalls  []string
+	lookupEntry  *filer_pb.Entry
+	lookupErr    error
+	listCalls    []string
+	listVersions []*filer_pb.Entry
+	listErr      error
+}
+
+func (r *recordingLister) ListVersions(_ context.Context, bucket, key string) ([]*filer_pb.Entry, error) {
+	r.listCalls = append(r.listCalls, bucket+"/"+key)
+	return r.listVersions, r.listErr
 }
 
 func (r *recordingLister) LookupVersion(_ context.Context, bucket, key, versionID string) (*filer_pb.Entry, error) {
@@ -1001,24 +1010,33 @@ func TestRouteBootstrapVersionAbortMPUNeverEmittedForVersion(t *testing.T) {
 	}
 }
 
-func versionsContainerEvent(bucket, logical, oldID, newID string, mtimeUnix int64) *reader.Event {
-	mk := func(id string, mt int64) *filer_pb.Entry {
+// versionsContainerEvent builds a .versions/<key>/ directory update.
+// The NEW entry carries the cached latest-version mtime (the value
+// setCachedListMetadata writes alongside the latest pointer). The
+// directory's own Mtime is preserved at containerStaleMtime so the
+// router can't accidentally use it as the successor clock.
+func versionsContainerEvent(bucket, logical, oldID, newID string, latestMtimeUnix int64) *reader.Event {
+	const containerStaleMtime int64 = 1
+	mk := func(id string, includeMtime bool) *filer_pb.Entry {
 		ext := map[string][]byte{}
 		if id != "" {
 			ext[s3_constants.ExtLatestVersionIdKey] = []byte(id)
 		}
+		if includeMtime {
+			ext[s3_constants.ExtLatestVersionMtimeKey] = []byte(fmt.Sprintf("%d", latestMtimeUnix))
+		}
 		return &filer_pb.Entry{
 			Name:        logical + s3_constants.VersionsFolder,
 			IsDirectory: true,
-			Attributes:  &filer_pb.FuseAttributes{Mtime: mt},
+			Attributes:  &filer_pb.FuseAttributes{Mtime: containerStaleMtime},
 			Extended:    ext,
 		}
 	}
 	return &reader.Event{
 		Bucket:   bucket,
 		Key:      logical + s3_constants.VersionsFolder,
-		OldEntry: mk(oldID, mtimeUnix-1),
-		NewEntry: mk(newID, mtimeUnix),
+		OldEntry: mk(oldID, false),
+		NewEntry: mk(newID, true),
 	}
 }
 
@@ -1188,4 +1206,141 @@ func TestRoutePointerTransitionUnversionedBucketSkipped(t *testing.T) {
 	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
 		t.Fatalf("unversioned bucket must not route pointer transitions, got %v", got)
 	}
+}
+
+func TestRoutePointerTransitionMissingCachedMtimeSuppressed(t *testing.T) {
+	// Older builds (or buggy paths) may write the latest pointer
+	// without ExtLatestVersionMtimeKey. Without a reliable successor
+	// clock NoncurrentDays would compute a year-0001 base and fire
+	// immediately. Suppress until the cache lands.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	// Hand-build the event WITHOUT ExtLatestVersionMtimeKey on NewEntry.
+	now := time.Now()
+	ev := &reader.Event{
+		Bucket: "bk",
+		Key:    "logs/foo" + s3_constants.VersionsFolder,
+		OldEntry: &filer_pb.Entry{
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1},
+			Extended:    map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("v-old")},
+		},
+		NewEntry: &filer_pb.Entry{
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1},
+			Extended:    map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("v-new")},
+		},
+	}
+	displaced := displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())
+	lister := &recordingLister{lookupEntry: displaced}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("missing cached mtime must suppress, got %v", got)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("must not consult lister without successor mtime, got %v", lister.lookupCalls)
+	}
+}
+
+func TestRoutePointerTransitionUsesCachedMtimeNotStaleDirMtime(t *testing.T) {
+	// Regression: the .versions/ directory's own Attributes.Mtime is
+	// preserved across pointer updates by updateLatestVersionInDirectory.
+	// Using it as SuccessorModTime would let a fresh pointer flip on an
+	// old directory fire NoncurrentDays right away. Use the cached
+	// latest-mtime instead.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 30,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	// The cached latest-mtime IS now (fresh PUT). Container's Attrs.Mtime
+	// is stale (containerStaleMtime=1). With the buggy old code, the
+	// match would fire immediately because successor=year-1970 +
+	// 30 days < now. With the fix, due = cached latest mtime + 30 days,
+	// which is in the future.
+	ev := versionsContainerEvent("bk", "logs/foo", "v-old", "v-new", now.Unix())
+	displaced := displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix())
+	lister := &recordingLister{lookupEntry: displaced}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (scheduled, not fired), got %v", matches)
+	}
+	if !matches[0].DueTime.After(now.Add(29 * 24 * time.Hour)) {
+		t.Fatalf("DueTime=%v, want ~30d from now (cached mtime + 30d)", matches[0].DueTime)
+	}
+}
+
+func TestRoutePointerTransitionNewerNoncurrentExpansionFiresOnCrossingThreshold(t *testing.T) {
+	// NewerNoncurrentVersions=2 keeps the 2 newest noncurrents. Before
+	// the pointer flip there were 3 versions: v-cur (latest), v-mid
+	// (rank 0 noncurrent), v-old (rank 1 noncurrent). After flipping
+	// to v-new the ranks shift to: v-new latest, v-cur rank 0, v-mid
+	// rank 1, v-old rank 2 — v-old just crossed the threshold and
+	// must fire NoncurrentDays this run instead of waiting for the
+	// next bootstrap.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	// Successor mtime (cached on container) is "now" — the new latest.
+	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
+	allVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),                  // newest
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -10).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -30).Unix()), // oldest
+	}
+	lister := &recordingLister{listVersions: allVersions}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	// v-cur (rank 0) and v-mid (rank 1) retained; v-old (rank 2) fires.
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	if !contains(versionIDs, "v-old") {
+		t.Fatalf("v-old at rank 2 (>= NewerNoncurrentVersions=2) must fire, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"v-cur", "v-mid"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("rank-%d noncurrent must be retained, matches=%v", indexOf([]string{"v-cur", "v-mid"}, id), versionIDs)
+		}
+	}
+	if len(lister.listCalls) != 1 {
+		t.Fatalf("expansion path must call ListVersions once, got %v", lister.listCalls)
+	}
+	if len(lister.lookupCalls) != 0 {
+		t.Fatalf("expansion path must not call LookupVersion, got %v", lister.lookupCalls)
+	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOf(ss []string, s string) int {
+	for i, x := range ss {
+		if x == s {
+			return i
+		}
+	}
+	return -1
 }
