@@ -214,12 +214,13 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 	})
 	// Resolve latest position.
 	//   1. Pointer names a real id -> that wins (in-order or backdated).
-	//   2. Pointer absent + an EXPLICIT null exists (suspended write
-	//      cleared the pointer and tagged the bare object as null) -> null
-	//      is latest.
-	//   3. Pointer absent + only an implicit null (pre-versioning bare
-	//      object): treat as a race window with a new version write, fall
-	//      back to the newest sibling so retention isn't unsafe.
+	//   2. Pointer absent + items[0] is an EXPLICIT null (suspended write
+	//      cleared the pointer and tagged the bare object as null, AND
+	//      the bare object is newest by mtime) -> null is latest.
+	//   3. Pointer absent in any other shape: fall back to newest
+	//      sibling. Catches the post-suspended re-enable race window —
+	//      a fresh .versions/<v1> write whose pointer update hasn't
+	//      landed yet outranks the older suspended-null bare object.
 	latestID := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	latestPos := 0
 	if latestID != "" {
@@ -229,13 +230,8 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 				break
 			}
 		}
-	} else {
-		for i, it := range items {
-			if it.versionID == "null" && it.isExplicitNull {
-				latestPos = i
-				break
-			}
-		}
+	} else if len(items) > 0 && items[0].versionID == "null" && items[0].isExplicitNull {
+		latestPos = 0
 	}
 	count := 0
 	for i, it := range items {

@@ -932,3 +932,40 @@ func TestExpandVersionsDir_PreVersioningNullDuringPointerRaceFallsBackToNewest(t
 	assert.True(t, byID["v1"].IsLatest, "newest sibling wins when null is implicit")
 	assert.False(t, byID["null"].IsLatest, "implicit null is noncurrent during pointer-missing race")
 }
+
+func TestExpandVersionsDir_SuspendedThenReEnabledNullIsNoncurrent(t *testing.T) {
+	// Bucket was suspended: bare entry was written with
+	// ExtVersionIdKey="null" and the .versions/ pointer cleared.
+	// Versioning was re-enabled and a fresh PUT created
+	// .versions/<v-new> with newer mtime, but the pointer-update for
+	// that new version hasn't landed yet. Bootstrap running in this
+	// window must keep v-new as latest (it's newest by mtime); the
+	// explicit null is noncurrent. Promoting the older null to latest
+	// just because it's explicit would skip current-version expiration
+	// of v-new and never schedule the null's noncurrent retention.
+	now := time.Now()
+	nullMt := now.Add(-3 * time.Hour) // OLDER bare-null
+	vNewMt := now.Add(-1 * time.Hour) // newer real version
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{}) // pointer not yet written
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot: {suspendedNullFile("foo", nullMt), versionsDir},
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {
+				versionFile("v-new", vNewMt, false),
+			},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	skipBare := map[string]bool{}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, skipBare)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.True(t, byID["v-new"].IsLatest, "newest sibling wins even when an older explicit null exists")
+	assert.False(t, byID["null"].IsLatest)
+	assert.Equal(t, 0, byID["null"].NoncurrentIndex)
+}
