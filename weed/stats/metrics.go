@@ -725,6 +725,8 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+	c += S3LifecycleDispatchCounter.DeletePartialMatch(labels)
+	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
 }
