@@ -90,7 +90,7 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 		if !isDeleteMarkerEntry(ev.NewEntry) {
 			return nil
 		}
-		if !hasActionKind(keys, s3lifecycle.ActionKindExpiredDeleteMarker) {
+		if !hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindExpiredDeleteMarker) {
 			return nil
 		}
 		return routeSoleSurvivorMarker(ctx, snap, ev, keys, lister)
@@ -394,9 +394,22 @@ func extractTags(ext map[string][]byte) map[string]string {
 	return out
 }
 
-func hasActionKind(keys []s3lifecycle.ActionKey, kind s3lifecycle.ActionKind) bool {
+// hasActiveEventDrivenAction reports whether any key with the given kind
+// has an action that's active and event-driven — the same conditions
+// Route applies before emitting a match. Use this for I/O gates (e.g.
+// sibling listing) so the cost is paid only when a match could actually
+// fire; matching on key presence alone would still issue RPCs for keys
+// whose action is disabled or scan-only.
+func hasActiveEventDrivenAction(snap *engine.Snapshot, keys []s3lifecycle.ActionKey, kind s3lifecycle.ActionKind) bool {
 	for _, k := range keys {
-		if k.ActionKind == kind {
+		if k.ActionKind != kind {
+			continue
+		}
+		a := snap.Action(k)
+		if a == nil {
+			continue
+		}
+		if a.IsActive() && a.Mode == engine.ModeEventDriven {
 			return true
 		}
 	}

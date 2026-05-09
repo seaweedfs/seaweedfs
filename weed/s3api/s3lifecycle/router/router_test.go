@@ -602,6 +602,33 @@ func TestRouteVersionedExpiredDeleteMarkerListerErrorSuppressed(t *testing.T) {
 	}
 }
 
+func TestRouteVersionedExpiredDeleteMarkerInactiveActionSkipsListing(t *testing.T) {
+	// EXP_DM rule exists but the action's BootstrapComplete=false leaves it
+	// inactive. The cost gate must not pay the listing for an action that
+	// can't fire — even if the per-key filter inside routeSoleSurvivorMarker
+	// would later drop the match, the gate runs first and would otherwise
+	// have already issued the RPC.
+	rule := &s3lifecycle.Rule{
+		ID:                        "r",
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	// PriorStates omitted => BootstrapComplete=false => action stays inactive.
+	snap := compileWithVersioned(rule, nil)
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{count: 1}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("inactive action must not produce a match, got %v", got)
+	}
+	if len(lister.calls) != 0 {
+		t.Fatalf("inactive action must not consult lister, calls=%v", lister.calls)
+	}
+}
+
 func TestRouteVersionedDeleteMarkerNoExpDMRuleSkipsListing(t *testing.T) {
 	// Bucket has no ExpiredObjectDeleteMarker rule — the lister must NOT
 	// be consulted; that gate keeps the listing cost off most buckets.
