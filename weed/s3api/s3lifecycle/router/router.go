@@ -16,18 +16,21 @@ import (
 )
 
 // SiblingLister inspects the surviving versions of a versioned key.
-// nil receiver or an error means "unknown" — callers suppress. Three
+// nil receiver or an error means "unknown" — callers suppress. Four
 // queries: Survivors paginates the .versions/ container plus the bare
 // null version (used by sole-survivor and bootstrap); LookupVersion
 // fetches a single version file by id (used by pointer-transition
 // routing to read the displaced version's identity and mtime);
 // ListVersions paginates every version file in the .versions/
 // container (used to compute NoncurrentIndex when a NewerNoncurrent
-// rule is active and a single-oldID lookup isn't enough).
+// rule is active); LookupNullVersion returns the bare-key entry that
+// represents the null version (used by pointer-transition routing
+// when oldID is empty and to include the null in expansion ranks).
 type SiblingLister interface {
 	Survivors(ctx context.Context, bucket, objectKey string) (Survivors, error)
 	LookupVersion(ctx context.Context, bucket, objectKey, versionID string) (*filer_pb.Entry, error)
 	ListVersions(ctx context.Context, bucket, objectKey string) ([]*filer_pb.Entry, error)
+	LookupNullVersion(ctx context.Context, bucket, objectKey string) (entry *filer_pb.Entry, explicit bool, err error)
 }
 
 // Survivors describes the state under .versions/<key>/ plus the bare
@@ -194,12 +197,15 @@ func routePointerTransition(ctx context.Context, snap *engine.Snapshot, ev *read
 	}
 	oldID := string(ev.OldEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	newID := string(ev.NewEntry.Extended[s3_constants.ExtLatestVersionIdKey])
-	if oldID == "" || oldID == newID {
-		// Empty old pointer means there was no prior latest version
-		// (first PUT after enabling versioning); nothing displaced.
+	if oldID == newID {
 		// Same id means the update didn't transition the pointer.
 		return nil
 	}
+	// oldID == "" is NOT "nothing displaced": a bare null version may
+	// have been the implicit (or explicit) latest before the pointer
+	// flipped to a real id. Bootstrap routes that case, but live PUTs
+	// would otherwise wait for the next bootstrap. The displaced and
+	// expansion paths both consult LookupNullVersion to recover it.
 	successor := successorModTimeFromContainer(ev.NewEntry)
 	if successor.IsZero() {
 		// Without a reliable successor mtime NoncurrentDays would clock
@@ -254,12 +260,30 @@ func successorModTimeFromContainer(entry *filer_pb.Entry) time.Time {
 
 // routePointerTransitionDisplaced is the single-lookup path: only the
 // displaced version's noncurrent eligibility could have changed, so
-// fetching just its file is enough.
+// fetching just its file is enough. oldID == "" routes the bare null
+// version instead — it was the implicit latest before the pointer
+// flipped to a real id.
 func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister, logical, oldID string, successor time.Time) []Match {
-	displaced, err := lister.LookupVersion(ctx, ev.Bucket, logical, oldID)
-	if err != nil {
-		glog.V(2).Infof("lifecycle router: lookup displaced version %s/%s/%s: %v", ev.Bucket, logical, oldID, err)
-		return nil
+	var displaced *filer_pb.Entry
+	displacedID := oldID
+	if oldID == "" {
+		nullEntry, _, err := lister.LookupNullVersion(ctx, ev.Bucket, logical)
+		if err != nil {
+			glog.V(2).Infof("lifecycle router: lookup null version %s/%s: %v", ev.Bucket, logical, err)
+			return nil
+		}
+		if nullEntry == nil {
+			return nil
+		}
+		displaced = nullEntry
+		displacedID = "null"
+	} else {
+		entry, err := lister.LookupVersion(ctx, ev.Bucket, logical, oldID)
+		if err != nil {
+			glog.V(2).Infof("lifecycle router: lookup displaced version %s/%s/%s: %v", ev.Bucket, logical, oldID, err)
+			return nil
+		}
+		displaced = entry
 	}
 	if displaced == nil || displaced.Attributes == nil {
 		return nil
@@ -277,7 +301,7 @@ func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot,
 	if tags := extractTags(displaced.Extended); len(tags) > 0 {
 		info.Tags = tags
 	}
-	return emitNoncurrentMatches(snap, ev, keys, info, displaced, oldID, successor)
+	return emitNoncurrentMatches(snap, ev, keys, info, displaced, displacedID, successor)
 }
 
 // routePointerTransitionExpand routes only the versions that newly
@@ -294,23 +318,47 @@ func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot,
 // identity-CAS at dispatch only stops the wasted RPC, not the heap
 // growth. Bootstrap still owns full backfill.
 func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, lister SiblingLister, logical, newID string, successor time.Time) []Match {
-	versions, err := lister.ListVersions(ctx, ev.Bucket, logical)
+	rawVersions, err := lister.ListVersions(ctx, ev.Bucket, logical)
 	if err != nil {
 		glog.V(2).Infof("lifecycle router: list versions %s/%s: %v", ev.Bucket, logical, err)
 		return nil
 	}
-	if len(versions) == 0 {
+	// Include the bare null version in the sibling set: count-based
+	// ranks are wrong if a pre-versioning or suspended-null entry
+	// exists outside .versions/. ID is "null" for sort + emit.
+	nullEntry, _, nullErr := lister.LookupNullVersion(ctx, ev.Bucket, logical)
+	if nullErr != nil {
+		glog.V(2).Infof("lifecycle router: lookup null %s/%s: %v", ev.Bucket, logical, nullErr)
 		return nil
 	}
-	sort.SliceStable(versions, func(i, j int) bool {
-		mi := versions[i].Attributes.Mtime*int64(1e9) + int64(versions[i].Attributes.MtimeNs)
-		mj := versions[j].Attributes.Mtime*int64(1e9) + int64(versions[j].Attributes.MtimeNs)
+	type sibling struct {
+		entry *filer_pb.Entry
+		id    string
+	}
+	siblings := make([]sibling, 0, len(rawVersions)+1)
+	for _, v := range rawVersions {
+		if v == nil || v.Attributes == nil {
+			continue
+		}
+		id := string(v.Extended[s3_constants.ExtVersionIdKey])
+		if id == "" {
+			continue
+		}
+		siblings = append(siblings, sibling{entry: v, id: id})
+	}
+	if nullEntry != nil && nullEntry.Attributes != nil {
+		siblings = append(siblings, sibling{entry: nullEntry, id: "null"})
+	}
+	if len(siblings) == 0 {
+		return nil
+	}
+	sort.SliceStable(siblings, func(i, j int) bool {
+		mi := siblings[i].entry.Attributes.Mtime*int64(1e9) + int64(siblings[i].entry.Attributes.MtimeNs)
+		mj := siblings[j].entry.Attributes.Mtime*int64(1e9) + int64(siblings[j].entry.Attributes.MtimeNs)
 		if mi != mj {
 			return mi > mj
 		}
-		ai := string(versions[i].Extended[s3_constants.ExtVersionIdKey])
-		aj := string(versions[j].Extended[s3_constants.ExtVersionIdKey])
-		return s3lifecycle.CompareVersionIds(ai, aj) < 0
+		return s3lifecycle.CompareVersionIds(siblings[i].id, siblings[j].id) < 0
 	})
 	// Resolve latestPos by finding newID. Default to -1 so a missing
 	// newID (race with the listing, or torn write) suppresses the
@@ -319,8 +367,8 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 	// Bootstrap repairs state on the next walk.
 	latestPos := -1
 	if newID != "" {
-		for i, v := range versions {
-			if string(v.Extended[s3_constants.ExtVersionIdKey]) == newID {
+		for i, s := range siblings {
+			if s.id == newID {
 				latestPos = i
 				break
 			}
@@ -330,7 +378,7 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 		glog.V(2).Infof("lifecycle router: pointer transition %s/%s: new id %s not found in listing", ev.Bucket, logical, newID)
 		return nil
 	}
-	noncurrentCount := len(versions) - 1
+	noncurrentCount := len(siblings) - 1
 
 	// Collect the target noncurrent ranks: 0 (the freshly displaced)
 	// plus N for each active count-gated rule.
@@ -364,36 +412,32 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 		if rank >= latestPos {
 			i = rank + 1
 		}
-		v := versions[i]
-		versionID := string(v.Extended[s3_constants.ExtVersionIdKey])
-		if versionID == "" {
-			continue
-		}
+		s := siblings[i]
 		// Successor mtime: the entry directly newer than this one in
 		// the sorted list. When the next-newer slot is the latest,
 		// use the cached successor (the new latest's mtime); otherwise
 		// the immediate predecessor's mtime.
 		var thisSuccessor time.Time
 		if i > 0 && i-1 != latestPos {
-			thisSuccessor = time.Unix(versions[i-1].Attributes.Mtime, int64(versions[i-1].Attributes.MtimeNs))
+			thisSuccessor = time.Unix(siblings[i-1].entry.Attributes.Mtime, int64(siblings[i-1].entry.Attributes.MtimeNs))
 		} else {
 			thisSuccessor = successor
 		}
 		idx := rank
 		info := &s3lifecycle.ObjectInfo{
 			Key:              logical,
-			ModTime:          time.Unix(v.Attributes.Mtime, int64(v.Attributes.MtimeNs)),
-			Size:             int64(v.Attributes.FileSize),
+			ModTime:          time.Unix(s.entry.Attributes.Mtime, int64(s.entry.Attributes.MtimeNs)),
+			Size:             int64(s.entry.Attributes.FileSize),
 			IsLatest:         false,
-			IsDeleteMarker:   string(v.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
+			IsDeleteMarker:   string(s.entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
 			NoncurrentIndex:  &idx,
 			SuccessorModTime: thisSuccessor,
-			NumVersions:      len(versions),
+			NumVersions:      len(siblings),
 		}
-		if tags := extractTags(v.Extended); len(tags) > 0 {
+		if tags := extractTags(s.entry.Extended); len(tags) > 0 {
 			info.Tags = tags
 		}
-		matches = append(matches, emitNoncurrentMatches(snap, ev, keys, info, v, versionID, thisSuccessor)...)
+		matches = append(matches, emitNoncurrentMatches(snap, ev, keys, info, s.entry, s.id, thisSuccessor)...)
 	}
 	return matches
 }

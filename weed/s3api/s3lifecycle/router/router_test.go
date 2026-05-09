@@ -500,20 +500,29 @@ func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64)
 // state to return; calls list is appended on each invocation so tests
 // can assert whether the lister was consulted at all.
 type recordingLister struct {
-	calls        []string
-	survivors    Survivors
-	err          error
-	lookupCalls  []string
-	lookupEntry  *filer_pb.Entry
-	lookupErr    error
-	listCalls    []string
-	listVersions []*filer_pb.Entry
-	listErr      error
+	calls           []string
+	survivors       Survivors
+	err             error
+	lookupCalls     []string
+	lookupEntry     *filer_pb.Entry
+	lookupErr       error
+	listCalls       []string
+	listVersions    []*filer_pb.Entry
+	listErr         error
+	nullCalls       []string
+	nullEntry       *filer_pb.Entry
+	nullExplicit    bool
+	nullErr         error
 }
 
 func (r *recordingLister) ListVersions(_ context.Context, bucket, key string) ([]*filer_pb.Entry, error) {
 	r.listCalls = append(r.listCalls, bucket+"/"+key)
 	return r.listVersions, r.listErr
+}
+
+func (r *recordingLister) LookupNullVersion(_ context.Context, bucket, key string) (*filer_pb.Entry, bool, error) {
+	r.nullCalls = append(r.nullCalls, bucket+"/"+key)
+	return r.nullEntry, r.nullExplicit, r.nullErr
 }
 
 func (r *recordingLister) LookupVersion(_ context.Context, bucket, key, versionID string) (*filer_pb.Entry, error) {
@@ -1109,9 +1118,9 @@ func TestRoutePointerTransitionPointerUnchangedSkipped(t *testing.T) {
 	}
 }
 
-func TestRoutePointerTransitionEmptyOldPointerSkipped(t *testing.T) {
-	// First PUT after enabling versioning: OLD pointer is empty (no
-	// prior latest), NEW is the freshly-written id. Nothing displaced.
+func TestRoutePointerTransitionEmptyOldPointerNoNullSkipped(t *testing.T) {
+	// First PUT on a brand-new versioned object: OLD pointer is empty,
+	// no bare null version exists. Nothing displaced.
 	rule := &s3lifecycle.Rule{
 		ID:                              "r",
 		Status:                          s3lifecycle.StatusEnabled,
@@ -1122,12 +1131,99 @@ func TestRoutePointerTransitionEmptyOldPointerSkipped(t *testing.T) {
 	now := time.Now()
 	ev := versionsContainerEvent("bk", "logs/foo", "", "v-new", now.Unix())
 
-	lister := &recordingLister{}
+	lister := &recordingLister{} // nullEntry is nil
 	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
-		t.Fatalf("empty old pointer must not fire, got %v", got)
+		t.Fatalf("empty old pointer + no null must not fire, got %v", got)
 	}
 	if len(lister.lookupCalls) != 0 {
-		t.Fatalf("must not consult lister, got %v", lister.lookupCalls)
+		t.Fatalf("LookupVersion must not be called for empty oldID, got %v", lister.lookupCalls)
+	}
+	if len(lister.nullCalls) != 1 {
+		t.Fatalf("expected exactly one LookupNullVersion call, got %v", lister.nullCalls)
+	}
+}
+
+func TestRoutePointerTransitionEmptyOldPointerWithNullSchedules(t *testing.T) {
+	// First versioned PUT after a pre-versioning bare object exists.
+	// OLD pointer is empty, but the bare null is the displaced version.
+	// NoncurrentDays must schedule it as VersionID="null" so the worker
+	// doesn't have to wait for the next bootstrap.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "", "v-new", now.Unix())
+	nullMt := now.AddDate(0, 0, -10)
+	lister := &recordingLister{nullEntry: &filer_pb.Entry{
+		Name: "foo",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    nullMt.Unix(),
+			FileSize: 50,
+		},
+	}}
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays on null), got %v", matches)
+	}
+	if matches[0].VersionID != "null" {
+		t.Fatalf("VersionID=%q, want \"null\"", matches[0].VersionID)
+	}
+	if matches[0].ObjectKey != "logs/foo" {
+		t.Fatalf("ObjectKey=%q, want logs/foo", matches[0].ObjectKey)
+	}
+}
+
+func TestRoutePointerTransitionExpansionIncludesNullVersion(t *testing.T) {
+	// Suspended-bucket history: bare null exists with a recent mtime.
+	// Versioning re-enabled and a new version was just written. With
+	// NewerNoncurrentVersions=2 the rank-2 entry is the threshold-
+	// crosser. Because the null sits between v-mid and v-old by mtime,
+	// it occupies a noncurrent rank slot and shifts what the rank-2
+	// entry actually IS. Without including null, ranks would be wrong.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
+	// Mtimes (newest-first): v-new, v-cur, v-mid, null, v-old, v-old2.
+	// Post-flip ranks: latest=v-new, rank0=v-cur, rank1=v-mid,
+	// rank2=null, rank3=v-old, rank4=v-old2. The rank-2 crossing is
+	// "null" — and without including null in the sibling set, rank2
+	// would have been v-old (different version_id, wrong identity).
+	listVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-new", now.Unix()),
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -2).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -10).Unix()),
+		displacedVersionEntry("v-old2", now.AddDate(0, 0, -20).Unix()),
+	}
+	nullEntry := &filer_pb.Entry{
+		Name:       "foo",
+		Attributes: &filer_pb.FuseAttributes{Mtime: now.AddDate(0, 0, -3).Unix()},
+	}
+	lister := &recordingLister{listVersions: listVersions, nullEntry: nullEntry}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	if !contains(versionIDs, "null") {
+		t.Fatalf("rank-2 should be null after including bare entry, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"v-cur", "v-mid", "v-old", "v-old2", "v-new"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("only the rank-2 (null) entry should fire, got %s in matches=%v", id, versionIDs)
+		}
 	}
 }
 
