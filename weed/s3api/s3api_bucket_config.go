@@ -37,7 +37,13 @@ type BucketConfig struct {
 	ObjectLockConfig *ObjectLockConfiguration      // Cached parsed Object Lock configuration
 	BucketPolicy     *policy_engine.PolicyDocument // Cached bucket policy for performance
 	LifecycleRules   []*s3lifecycle.Rule           // Pre-parsed canonical rules; nil when no lifecycle config
-	KMSKeyCache      *BucketKMSCache               // Per-bucket KMS key cache for SSE-KMS operations
+	// ttlFastPathRules: subset of LifecycleRules with Status=Enabled and
+	// ExpirationDays>0, sorted by Prefix length descending. PutObject's
+	// per-write TTL resolver walks this — first prefix match wins, so a
+	// bucket with no Expiration.Days rules costs O(1) and a typical bucket
+	// with 1-2 eligible rules costs ~one HasPrefix per PUT.
+	ttlFastPathRules []*s3lifecycle.Rule
+	KMSKeyCache      *BucketKMSCache // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
 	Entry            *filer_pb.Entry
 }
@@ -413,6 +419,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
 			if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
 				config.LifecycleRules = rules
+				config.ttlFastPathRules = buildTTLFastPathRules(rules)
 			} else {
 				glog.V(1).Infof("getBucketConfig: bucket %s lifecycle xml parse: %v", bucket, err)
 			}

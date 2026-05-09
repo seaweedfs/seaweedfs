@@ -18,6 +18,13 @@ func enabledRule(prefix string, days int) *s3lifecycle.Rule {
 	}
 }
 
+func bucketCfgWithRules(rules ...*s3lifecycle.Rule) *BucketConfig {
+	return &BucketConfig{
+		LifecycleRules:   rules,
+		ttlFastPathRules: buildTTLFastPathRules(rules),
+	}
+}
+
 func TestResolveLifecycleTTL_NoConfig(t *testing.T) {
 	if got := resolveLifecycleTTLForWrite(nil, "logs/foo", nil, 1); got != 0 {
 		t.Fatalf("nil config should yield 0, got %d", got)
@@ -28,9 +35,7 @@ func TestResolveLifecycleTTL_NoConfig(t *testing.T) {
 }
 
 func TestResolveLifecycleTTL_PrefixMatch(t *testing.T) {
-	cfg := &BucketConfig{
-		LifecycleRules: []*s3lifecycle.Rule{enabledRule("logs/", 7)},
-	}
+	cfg := bucketCfgWithRules(enabledRule("logs/", 7))
 	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo.txt", nil, 1); got != 7*86400 {
 		t.Fatalf("want 7d in seconds, got %d", got)
 	}
@@ -40,12 +45,10 @@ func TestResolveLifecycleTTL_PrefixMatch(t *testing.T) {
 }
 
 func TestResolveLifecycleTTL_LongestPrefixWins(t *testing.T) {
-	cfg := &BucketConfig{
-		LifecycleRules: []*s3lifecycle.Rule{
-			enabledRule("logs/", 30),
-			enabledRule("logs/critical/", 7),
-		},
-	}
+	cfg := bucketCfgWithRules(
+		enabledRule("logs/", 30),
+		enabledRule("logs/critical/", 7),
+	)
 	// "logs/foo" → only the broader rule matches → 30d.
 	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo", nil, 1); got != 30*86400 {
 		t.Fatalf("broad-only match: got %d, want 30d", got)
@@ -56,34 +59,51 @@ func TestResolveLifecycleTTL_LongestPrefixWins(t *testing.T) {
 	}
 }
 
-func TestResolveLifecycleTTL_SkipDisabled(t *testing.T) {
-	rule := enabledRule("logs/", 7)
-	rule.Status = s3lifecycle.StatusDisabled
-	cfg := &BucketConfig{LifecycleRules: []*s3lifecycle.Rule{rule}}
+func TestResolveLifecycleTTL_PreFiltersDisabledAndNonExpirationDays(t *testing.T) {
+	// Disabled and non-Expiration.Days rules are dropped at parse time
+	// so the per-PUT walk doesn't even see them. A bucket whose lifecycle
+	// XML carries only those rules has an empty fast-path slice and
+	// resolves to 0 in O(1).
+	disabled := enabledRule("logs/", 7)
+	disabled.Status = s3lifecycle.StatusDisabled
+	noExpDays := &s3lifecycle.Rule{
+		ID: "r", Status: s3lifecycle.StatusEnabled, Prefix: "logs/",
+		NoncurrentVersionExpirationDays: 7,
+	}
+	cfg := bucketCfgWithRules(disabled, noExpDays)
+	if cfg.ttlFastPathRules != nil {
+		t.Fatalf("ineligible rules must drop out of fast-path, got %v", cfg.ttlFastPathRules)
+	}
 	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo", nil, 1); got != 0 {
-		t.Fatalf("disabled rule must not apply, got %d", got)
+		t.Fatalf("ineligible rules must not apply, got %d", got)
 	}
 }
 
-func TestResolveLifecycleTTL_SkipNonExpirationDays(t *testing.T) {
-	// Rules without Expiration.Days (e.g., NoncurrentVersionExpiration only)
-	// stay on the worker — the volume-TTL fast path can't model them.
-	cfg := &BucketConfig{
-		LifecycleRules: []*s3lifecycle.Rule{{
-			ID: "r", Status: s3lifecycle.StatusEnabled, Prefix: "logs/",
-			NoncurrentVersionExpirationDays: 7,
-		}},
+func TestResolveLifecycleTTL_FastPathIsSortedDesc(t *testing.T) {
+	// XML order: short, long, medium. Fast-path order: long, medium, short.
+	cfg := bucketCfgWithRules(
+		enabledRule("a/", 1),
+		enabledRule("a/b/c/", 3),
+		enabledRule("a/b/", 2),
+	)
+	gotPrefixes := []string{}
+	for _, r := range cfg.ttlFastPathRules {
+		gotPrefixes = append(gotPrefixes, r.Prefix)
 	}
-	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo", nil, 1); got != 0 {
-		t.Fatalf("noncurrent-only rule must not apply, got %d", got)
+	want := []string{"a/b/c/", "a/b/", "a/"}
+	if len(gotPrefixes) != len(want) {
+		t.Fatalf("got %v, want %v", gotPrefixes, want)
+	}
+	for i := range want {
+		if gotPrefixes[i] != want[i] {
+			t.Fatalf("position %d: got %q, want %q (full: %v)", i, gotPrefixes[i], want[i], gotPrefixes)
+		}
 	}
 }
 
 func TestResolveLifecycleTTL_VersionedSkipped(t *testing.T) {
-	cfg := &BucketConfig{
-		Versioning:     s3_constants.VersioningEnabled,
-		LifecycleRules: []*s3lifecycle.Rule{enabledRule("logs/", 7)},
-	}
+	cfg := bucketCfgWithRules(enabledRule("logs/", 7))
+	cfg.Versioning = s3_constants.VersioningEnabled
 	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo", nil, 1); got != 0 {
 		t.Fatalf("versioned bucket must not get TTL, got %d", got)
 	}
@@ -96,7 +116,7 @@ func TestResolveLifecycleTTL_VersionedSkipped(t *testing.T) {
 func TestResolveLifecycleTTL_TagFilter(t *testing.T) {
 	rule := enabledRule("logs/", 7)
 	rule.FilterTags = map[string]string{"k": "v"}
-	cfg := &BucketConfig{LifecycleRules: []*s3lifecycle.Rule{rule}}
+	cfg := bucketCfgWithRules(rule)
 
 	// Request without the tag → rule doesn't apply.
 	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo", nil, 1); got != 0 {
@@ -115,7 +135,7 @@ func TestResolveLifecycleTTL_TagFilter(t *testing.T) {
 func TestResolveLifecycleTTL_SizeFilter(t *testing.T) {
 	rule := enabledRule("logs/", 7)
 	rule.FilterSizeGreaterThan = 1024
-	cfg := &BucketConfig{LifecycleRules: []*s3lifecycle.Rule{rule}}
+	cfg := bucketCfgWithRules(rule)
 
 	// Below threshold → skip.
 	if got := resolveLifecycleTTLForWrite(cfg, "logs/foo", nil, 100); got != 0 {
@@ -133,9 +153,7 @@ func TestResolveLifecycleTTL_SizeFilter(t *testing.T) {
 
 func TestResolveLifecycleTTL_OverflowCappedAtMaxInt32(t *testing.T) {
 	// AWS allows Days up to 2^31-1, which overflows int32 seconds.
-	cfg := &BucketConfig{
-		LifecycleRules: []*s3lifecycle.Rule{enabledRule("", 1<<30)},
-	}
+	cfg := bucketCfgWithRules(enabledRule("", 1<<30))
 	got := resolveLifecycleTTLForWrite(cfg, "anything", nil, 1)
 	if got != (1<<31)-1 {
 		t.Fatalf("overflow should cap at int32 max, got %d", got)
