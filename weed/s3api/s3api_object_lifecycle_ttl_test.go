@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
@@ -189,5 +190,48 @@ func BenchmarkLifecycleTTLResolver_Resolve_FiveRulesNoMatch(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = r.Resolve("z/foo.txt", 4096)
+	}
+}
+
+func TestPopulateBucketConfigDerivedFields_RefreshesLifecycleTTL(t *testing.T) {
+	// Regression: storeBucketLifecycleConfiguration only updates
+	// Entry.Extended; if the cache-refresh path doesn't re-derive
+	// LifecycleTTL, an Add → Update → Delete dance would leave a stale
+	// resolver applying the wrong volume TTL to subsequent writes. Walk
+	// the three transitions and assert the resolver follows.
+	s := &S3ApiServer{}
+
+	xmlAdd := []byte(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>7</Days></Expiration></Rule></LifecycleConfiguration>`)
+	xmlReplace := []byte(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>30</Days></Expiration></Rule></LifecycleConfiguration>`)
+
+	cfg := &BucketConfig{Name: "bk", Entry: &filer_pb.Entry{Extended: map[string][]byte{}}}
+
+	// 1) No XML yet → no resolver.
+	s.populateBucketConfigDerivedFields(cfg)
+	if cfg.LifecycleTTL != nil {
+		t.Fatalf("no XML must yield nil resolver, got %v", cfg.LifecycleTTL)
+	}
+
+	// 2) Add: 7d.
+	cfg.Entry.Extended[bucketLifecycleConfigurationXMLKey] = xmlAdd
+	s.populateBucketConfigDerivedFields(cfg)
+	if got := cfg.LifecycleTTL.Resolve("logs/foo", 1); got != 7*86400 {
+		t.Fatalf("after add, want 7d, got %d", got)
+	}
+
+	// 3) Replace: 30d. The previous resolver must NOT linger.
+	cfg.Entry.Extended[bucketLifecycleConfigurationXMLKey] = xmlReplace
+	s.populateBucketConfigDerivedFields(cfg)
+	if got := cfg.LifecycleTTL.Resolve("logs/foo", 1); got != 30*86400 {
+		t.Fatalf("after replace, want 30d, got %d (stale resolver?)", got)
+	}
+
+	// 4) Delete: nil resolver. The most dangerous regression — leaving
+	//    the old resolver here would keep stamping irreversible volume
+	//    TTL onto writes after the policy was removed.
+	delete(cfg.Entry.Extended, bucketLifecycleConfigurationXMLKey)
+	s.populateBucketConfigDerivedFields(cfg)
+	if cfg.LifecycleTTL != nil {
+		t.Fatalf("after delete, want nil resolver, got %v", cfg.LifecycleTTL)
 	}
 }
