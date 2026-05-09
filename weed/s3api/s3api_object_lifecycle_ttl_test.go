@@ -156,3 +156,38 @@ func TestResolve_NilReceiverReturnsZero(t *testing.T) {
 		t.Fatalf("nil resolver must return 0, got %d", got)
 	}
 }
+
+func BenchmarkLifecycleTTLResolver_Resolve_NilReceiver(b *testing.B) {
+	// Common case: bucket has no lifecycle config → resolver is nil.
+	var r *LifecycleTTLResolver
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = r.Resolve("logs/foo.txt", 4096)
+	}
+}
+
+func BenchmarkLifecycleTTLResolver_Resolve_OneRule(b *testing.B) {
+	// Typical case: one Expiration.Days rule that the key matches.
+	r := NewLifecycleTTLResolver([]*s3lifecycle.Rule{
+		enabledRule("logs/", 7),
+	}, false)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = r.Resolve("logs/foo.txt", 4096)
+	}
+}
+
+func BenchmarkLifecycleTTLResolver_Resolve_FiveRulesNoMatch(b *testing.B) {
+	// Worst typical case: walks all rules and none match.
+	r := NewLifecycleTTLResolver([]*s3lifecycle.Rule{
+		enabledRule("a/", 1),
+		enabledRule("b/", 7),
+		enabledRule("c/", 30),
+		enabledRule("d/", 90),
+		enabledRule("e/", 365),
+	}, false)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = r.Resolve("z/foo.txt", 4096)
+	}
+}
