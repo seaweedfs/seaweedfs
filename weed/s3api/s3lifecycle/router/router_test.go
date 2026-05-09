@@ -1531,3 +1531,123 @@ func TestRoutePointerTransitionExpansionEmitsOnlyThresholdCrossing(t *testing.T)
 		}
 	}
 }
+
+// versionsContainerEventStaleMtime simulates the pointer-cleared
+// suspended-versioning shape: NewEntry has no ExtLatestVersionIdKey
+// but DOES carry a stale ExtLatestVersionMtimeKey from the displaced
+// version (the cached value the buggy server-side code left behind).
+func versionsContainerEventStaleMtime(bucket, logical, oldID string, staleMtimeUnix int64) *reader.Event {
+	const containerStaleMtime int64 = 1
+	return &reader.Event{
+		Bucket: bucket,
+		Key:    logical + s3_constants.VersionsFolder,
+		OldEntry: &filer_pb.Entry{
+			Name:        logical + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: containerStaleMtime},
+			Extended: map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:    []byte(oldID),
+				s3_constants.ExtLatestVersionMtimeKey: []byte(fmt.Sprintf("%d", staleMtimeUnix)),
+			},
+		},
+		NewEntry: &filer_pb.Entry{
+			Name:        logical + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: containerStaleMtime},
+			Extended: map[string][]byte{
+				// Pointer cleared. Cached mtime intentionally left stale
+				// (the bug we're guarding against on the router side).
+				s3_constants.ExtLatestVersionMtimeKey: []byte(fmt.Sprintf("%d", staleMtimeUnix)),
+			},
+		},
+	}
+}
+
+func TestRoutePointerTransitionSuspendedClearsPointerUsesNullMtime(t *testing.T) {
+	// Suspended write: NewEntry's ExtLatestVersionIdKey is gone. The
+	// cached ExtLatestVersionMtimeKey may still hold the displaced
+	// version's mtime (server-side bug + defensive router behavior).
+	// Router must use the null entry's mtime as the successor clock,
+	// not the cached stale value — otherwise NoncurrentDays=30 fires
+	// on a 100-day-old displaced version even though it became
+	// noncurrent today.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 30,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	staleMtime := now.AddDate(0, 0, -100).Unix() // displaced version is 100 days old
+	ev := versionsContainerEventStaleMtime("bk", "logs/foo", "v-old", staleMtime)
+	displaced := displacedVersionEntry("v-old", staleMtime)
+	// Null was written today (the suspended PUT itself).
+	nullEntry := &filer_pb.Entry{
+		Name:       "foo",
+		Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
+	}
+	lister := &recordingLister{lookupEntry: displaced, nullEntry: nullEntry}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match (NoncurrentDays scheduled, NOT fired), got %v", matches)
+	}
+	// Successor = null mtime (today). Days threshold = 30. DueTime ≈ now+30d.
+	if !matches[0].DueTime.After(now.Add(29 * 24 * time.Hour)) {
+		t.Fatalf("DueTime=%v, want ~30d from null PUT (not from displaced version's age)", matches[0].DueTime)
+	}
+	if matches[0].VersionID != "v-old" {
+		t.Fatalf("VersionID=%q, want displaced v-old", matches[0].VersionID)
+	}
+}
+
+func TestRoutePointerTransitionSuspendedClearsPointerExpansionLatestPosIsNull(t *testing.T) {
+	// Same shape under a NewerNoncurrentVersions rule — exercises the
+	// expansion path. The new latest is "null", so latestPos must
+	// resolve to the null sibling. With a substitution latestIDForExpand
+	// = "null", the existing match-on-id logic finds it.
+	rule := &s3lifecycle.Rule{
+		ID:                              "r",
+		Status:                          s3lifecycle.StatusEnabled,
+		NoncurrentVersionExpirationDays: 1,
+		NewerNoncurrentVersions:         2,
+	}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	staleMtime := now.AddDate(0, 0, -10).Unix()
+	ev := versionsContainerEventStaleMtime("bk", "logs/foo", "v-cur", staleMtime)
+
+	// Versions in .versions/, plus null. Mtime order newest-first:
+	// null (today), v-cur (-1d), v-mid (-2d), v-old (-30d).
+	// Post-flip ranks: latest=null, rank0=v-cur, rank1=v-mid, rank2=v-old.
+	// rank-2 v-old is the threshold-crosser. v-cur (rank0) and v-mid
+	// (rank1) retained.
+	listVersions := []*filer_pb.Entry{
+		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
+		displacedVersionEntry("v-mid", now.AddDate(0, 0, -2).Unix()),
+		displacedVersionEntry("v-old", now.AddDate(0, 0, -30).Unix()),
+	}
+	nullEntry := &filer_pb.Entry{
+		Name:       "foo",
+		Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
+	}
+	lister := &recordingLister{listVersions: listVersions, nullEntry: nullEntry}
+
+	matches := Route(context.Background(), snap, ev, now, lister)
+	versionIDs := []string{}
+	for _, m := range matches {
+		versionIDs = append(versionIDs, m.VersionID)
+	}
+	if !contains(versionIDs, "v-old") {
+		t.Fatalf("rank-2 v-old must fire, matches=%v", versionIDs)
+	}
+	for _, id := range []string{"null", "v-cur", "v-mid"} {
+		if contains(versionIDs, id) {
+			t.Fatalf("%s must not fire (latest or retained), matches=%v", id, versionIDs)
+		}
+	}
+}

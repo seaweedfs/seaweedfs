@@ -201,20 +201,37 @@ func routePointerTransition(ctx context.Context, snap *engine.Snapshot, ev *read
 		// Same id means the update didn't transition the pointer.
 		return nil
 	}
-	// oldID == "" is NOT "nothing displaced": a bare null version may
-	// have been the implicit (or explicit) latest before the pointer
-	// flipped to a real id. Bootstrap routes that case, but live PUTs
-	// would otherwise wait for the next bootstrap. The displaced and
-	// expansion paths both consult LookupNullVersion to recover it.
-	successor := successorModTimeFromContainer(ev.NewEntry)
+	// oldID == "" doesn't mean "nothing displaced": a bare null may
+	// have been the implicit/explicit latest before the pointer
+	// flipped to a real id.
+	// newID == "" means a suspended-versioning write cleared the
+	// pointer and made the bare null current. The cached
+	// ExtLatestVersionMtimeKey may still hold the prior latest's
+	// mtime (stale), so we must NOT use successorModTimeFromContainer
+	// in that case — derive the successor clock from the null entry's
+	// mtime instead. latestIDForExpand carries the same substitution
+	// so the expansion path's latestPos lookup matches the null sibling.
+	var successor time.Time
+	latestIDForExpand := newID
+	if newID == "" {
+		nullEntry, _, err := lister.LookupNullVersion(ctx, ev.Bucket, logical)
+		if err != nil {
+			glog.V(2).Infof("lifecycle router: lookup null %s/%s: %v", ev.Bucket, logical, err)
+			return nil
+		}
+		if nullEntry == nil || nullEntry.Attributes == nil {
+			return nil
+		}
+		successor = time.Unix(nullEntry.Attributes.Mtime, int64(nullEntry.Attributes.MtimeNs))
+		latestIDForExpand = "null"
+	} else {
+		successor = successorModTimeFromContainer(ev.NewEntry)
+	}
 	if successor.IsZero() {
-		// Without a reliable successor mtime NoncurrentDays would clock
-		// off year-0001 and fire immediately. Suppress until the cached
-		// latest-mtime lands or bootstrap re-schedules.
 		return nil
 	}
 	if needsFullExpansion(snap, keys) {
-		return routePointerTransitionExpand(ctx, snap, ev, keys, lister, logical, newID, successor)
+		return routePointerTransitionExpand(ctx, snap, ev, keys, lister, logical, latestIDForExpand, successor)
 	}
 	return routePointerTransitionDisplaced(ctx, snap, ev, keys, lister, logical, oldID, successor)
 }
