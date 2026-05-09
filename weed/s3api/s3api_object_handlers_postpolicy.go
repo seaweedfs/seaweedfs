@@ -131,7 +131,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// Forward validated POST form fields to the underlying PUT as headers.
 	applyPostPolicyFormHeaders(r, formValues)
 
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, nil)
+	ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r)
+	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)

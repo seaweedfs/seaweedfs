@@ -395,7 +395,9 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	// on the UploadPartCopy response. Without this, clients have no way to
 	// see that the destination was encrypted.
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
-	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, nil)
+	// Copy-part is an MPU part write under .uploads/<id>/<n>; lifecycle
+	// TTL only applies to the eventual completed object. Pass 0.
+	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil)
 	if code != s3err.ErrNone {
 		return "", SSEResponseMetadata{}, code
 	}

@@ -3,11 +3,9 @@ package s3api
 import (
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
 
@@ -19,24 +17,50 @@ import (
 // each write.
 const secondsPerDay = int64(86400)
 
-// buildTTLFastPathRules pre-filters the canonical rules down to the ones the
-// PutObject TTL resolver could ever fire for and sorts by descending prefix
-// length so first match is longest match. Disabled / non-Expiration.Days
-// rules are dropped entirely so the per-PUT walk skips them without an
-// inline check.
-func buildTTLFastPathRules(rules []*s3lifecycle.Rule) []*s3lifecycle.Rule {
-	if len(rules) == 0 {
+// LifecycleTTLResolver answers "what volume TTL should this write get?" for
+// the PutObject path. Constructed once per bucket-config load with a
+// pre-filtered, pre-sorted slice of rules so per-write cost is one
+// HasPrefix per rule walked, exiting on first match.
+//
+// Stable predicates only: prefix and size. Tag-filtered rules are NOT in
+// the fast path because tags can be replaced post-PUT via PutObjectTagging
+// while volume TTL is irreversible — an object that matched at write time
+// would still expire after the tag was removed. The lifecycle worker
+// re-evaluates current tags at scan time.
+//
+// nil receiver means "no TTL applies" (no eligible rules, bucket
+// versioned, or rules that overflow int32 seconds); callers can use a nil
+// resolver freely.
+type LifecycleTTLResolver struct {
+	rules []*s3lifecycle.Rule
+}
+
+// NewLifecycleTTLResolver pre-filters and pre-sorts rules. Returns nil
+// when nothing on the fast path can apply — callers don't need to special-
+// case the empty-bucket / versioned-bucket / tag-only-rules cases.
+//
+// Sort is ascending by ExpirationDays so first prefix match is also the
+// shortest matching expiration — AWS's overlapping-rule precedence (see
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-conflicts.html).
+// Stable so equal-Days rules keep their XML order.
+func NewLifecycleTTLResolver(rules []*s3lifecycle.Rule, versioned bool) *LifecycleTTLResolver {
+	if versioned || len(rules) == 0 {
+		// Versioned buckets: TTL volumes expire as a unit, which would
+		// destroy noncurrent versions. Worker drives expiration there.
 		return nil
 	}
 	out := make([]*s3lifecycle.Rule, 0, len(rules))
 	for _, r := range rules {
-		if r == nil {
-			continue
-		}
-		if r.Status != s3lifecycle.StatusEnabled {
+		if r == nil || r.Status != s3lifecycle.StatusEnabled {
 			continue
 		}
 		if r.ExpirationDays <= 0 {
+			// NoncurrentVersionExpiration / AbortMPU / etc. — worker only.
+			continue
+		}
+		if len(r.FilterTags) > 0 {
+			// Tag-mutable; defer to the worker so a tag flip can't leave
+			// us with a volume-TTL stamp the policy no longer dictates.
 			continue
 		}
 		out = append(out, r)
@@ -44,40 +68,23 @@ func buildTTLFastPathRules(rules []*s3lifecycle.Rule) []*s3lifecycle.Rule {
 	if len(out) == 0 {
 		return nil
 	}
-	// Stable sort so rules with equal prefix length keep their XML order
-	// (matches AWS's "rules are evaluated in document order for ties").
 	sort.SliceStable(out, func(i, j int) bool {
-		return len(out[i].Prefix) > len(out[j].Prefix)
+		return out[i].ExpirationDays < out[j].ExpirationDays
 	})
-	return out
+	return &LifecycleTTLResolver{rules: out}
 }
 
-// resolveLifecycleTTLForWrite returns the volume TTL (in seconds) the
-// PutObject path should pass to AssignVolume and stamp on the new entry.
+// Resolve returns the volume TTL (in seconds) for a write of the given
+// object key and size, or 0 when no fast-path rule applies.
 //
-// Returns 0 ("no TTL — let the lifecycle worker handle it later") when:
-//   - the bucket has no fast-path-eligible rules (no XML, all rules
-//     disabled, or only NoncurrentVersionExpiration / AbortMPU / etc.),
-//   - the bucket is versioned (TTL volumes expire as a unit, which would
-//     destroy noncurrent versions),
-//   - no rule's prefix matches the object key,
-//   - the matching rule's tag or size filter doesn't match this request.
-//
-// Cost: one HasPrefix per rule walked, exiting on first match. The cache
-// pre-sorts by descending prefix length so first match is also longest
-// match — a typical PUT walks one rule.
-func resolveLifecycleTTLForWrite(cfg *BucketConfig, objectKey string, requestTags map[string]string, size int64) int32 {
-	if cfg == nil || len(cfg.ttlFastPathRules) == 0 {
+// The receiver may be nil — that's the common "no rules" case and it
+// returns 0 without allocating.
+func (r *LifecycleTTLResolver) Resolve(objectKey string, size int64) int32 {
+	if r == nil {
 		return 0
 	}
-	if cfg.Versioning == s3_constants.VersioningEnabled || cfg.Versioning == s3_constants.VersioningSuspended {
-		return 0
-	}
-	for _, rule := range cfg.ttlFastPathRules {
+	for _, rule := range r.rules {
 		if !strings.HasPrefix(objectKey, rule.Prefix) {
-			continue
-		}
-		if !ruleTagsMatch(rule.FilterTags, requestTags) {
 			continue
 		}
 		if !ruleSizeMatches(rule, size) {
@@ -85,57 +92,33 @@ func resolveLifecycleTTLForWrite(cfg *BucketConfig, objectKey string, requestTag
 		}
 		secs := int64(rule.ExpirationDays) * secondsPerDay
 		if secs > math.MaxInt32 {
-			// AWS allows Expiration.Days up to 2,147,483,647 — that
-			// overflows int32 seconds (~24,855 days). Cap at int32 max;
-			// the rule effectively becomes "never expire via volume TTL"
-			// and the lifecycle worker enforces it on its own schedule.
-			return math.MaxInt32
+			// Volume TTL field is int32 seconds (~68 years). A longer
+			// rule can't be represented without expiring early, so let
+			// the lifecycle worker enforce it on its own schedule.
+			return 0
 		}
 		return int32(secs)
 	}
 	return 0
 }
 
-// parseRequestTags pulls k=v pairs from the X-Amz-Tagging header. AWS sends
-// them URL-encoded; duplicates and parse errors yield an empty map so a
-// malformed header doesn't accidentally match a tag-filtered lifecycle rule.
-func parseRequestTags(r *http.Request) map[string]string {
-	raw := r.Header.Get(s3_constants.AmzObjectTagging)
-	if raw == "" {
-		return nil
+// lifecycleTTLForObjectWrite is the PutObject call-site wrapper. Returns 0
+// for any caller (MPU part, copy-part) that shouldn't bind a TTL clock —
+// see putToFiler's signature comment for which paths pass 0 directly.
+func (s3a *S3ApiServer) lifecycleTTLForObjectWrite(bucket, objectKey string, r *http.Request) int32 {
+	cfg, _ := s3a.getBucketConfig(bucket)
+	if cfg == nil || cfg.LifecycleTTL == nil {
+		return 0
 	}
-	values, err := url.ParseQuery(raw)
-	if err != nil {
-		return nil
-	}
-	out := make(map[string]string, len(values))
-	for k, v := range values {
-		if len(v) != 1 {
-			return nil
-		}
-		out[k] = v[0]
-	}
-	return out
-}
-
-func ruleTagsMatch(want, got map[string]string) bool {
-	if len(want) == 0 {
-		return true
-	}
-	for k, v := range want {
-		if g, ok := got[k]; !ok || g != v {
-			return false
-		}
-	}
-	return true
+	return cfg.LifecycleTTL.Resolve(objectKey, r.ContentLength)
 }
 
 func ruleSizeMatches(rule *s3lifecycle.Rule, size int64) bool {
 	hasFilter := rule.FilterSizeGreaterThan > 0 || rule.FilterSizeLessThan > 0
 	if hasFilter && size < 0 {
-		// Content-Length wasn't sent; any "size > N" / "size < N" filter
-		// is unevaluable, so be safe and skip the rule. The lifecycle
-		// worker re-evaluates with the real size at scan time.
+		// Content-Length wasn't sent; the size filter is unevaluable so
+		// be safe and skip the rule. The worker re-evaluates at scan
+		// time with the actual size.
 		return false
 	}
 	if rule.FilterSizeGreaterThan > 0 && size <= rule.FilterSizeGreaterThan {
