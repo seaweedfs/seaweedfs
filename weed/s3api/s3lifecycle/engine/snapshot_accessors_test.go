@@ -38,13 +38,16 @@ func TestSnapshot_OriginalDelayGroupsExposesCompiledGroups(t *testing.T) {
 	groups := snap.OriginalDelayGroups()
 	require.NotNil(t, groups)
 
-	// 7d expiration delay group exists.
+	// 7d expiration delay group must contain the specific expiration key.
 	expirationDelay := s3lifecycle.MinTriggerAge(rule, s3lifecycle.ActionKindExpirationDays)
-	assert.NotEmpty(t, groups[expirationDelay], "7d expiration delay group must contain its key")
-	// 3d abort-mpu delay group exists and is distinct.
+	expirationKey := s3lifecycle.ActionKey{Bucket: "bk", RuleHash: hash, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	assert.Contains(t, groups[expirationDelay], expirationKey, "expiration delay group must carry its specific key")
+
+	// 3d abort-mpu delay group is distinct and contains the abort key.
 	abortDelay := s3lifecycle.MinTriggerAge(rule, s3lifecycle.ActionKindAbortMPU)
 	assert.NotEqual(t, expirationDelay, abortDelay)
-	assert.NotEmpty(t, groups[abortDelay], "3d abort-mpu delay group must contain its key")
+	abortKey := s3lifecycle.ActionKey{Bucket: "bk", RuleHash: hash, ActionKind: s3lifecycle.ActionKindAbortMPU}
+	assert.Contains(t, groups[abortDelay], abortKey, "abort-mpu delay group must carry its specific key")
 }
 
 func TestSnapshot_OriginalDelayGroupsScanOnlyExcluded(t *testing.T) {
@@ -92,6 +95,10 @@ func TestSnapshot_PredicateActionsContainsTagSensitive(t *testing.T) {
 	)
 	predicates := snap.PredicateActions()
 	require.NotEmpty(t, predicates, "tag-sensitive rule must populate predicateActions")
+	// Verify the specific key landed (not just non-empty) so a routing
+	// regression that emits a wrong ActionKey is caught.
+	expectedKey := s3lifecycle.ActionKey{Bucket: "bk", RuleHash: hash, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	assert.Contains(t, predicates, expectedKey, "predicateActions must carry the rule's specific ActionKey")
 }
 
 func TestSnapshot_PredicateActionsEmptyForNonTagSensitiveRule(t *testing.T) {
@@ -180,4 +187,15 @@ func TestSnapshot_BucketIndexedActionKeysCoverAllKinds(t *testing.T) {
 	keys := snap.BucketActionKeys("bk")
 	wantKinds := s3lifecycle.RuleActionKinds(rule)
 	require.Len(t, keys, len(wantKinds))
+
+	// Verify the contents, not just the count: every key must carry
+	// the right bucket scope, and the kinds must match RuleActionKinds
+	// element-for-element (in any order). Catches an indexing
+	// regression that produces N keys but with wrong kinds.
+	gotKinds := make([]s3lifecycle.ActionKind, 0, len(keys))
+	for _, k := range keys {
+		assert.Equal(t, "bk", k.Bucket, "key leaked across bucket")
+		gotKinds = append(gotKinds, k.ActionKind)
+	}
+	assert.ElementsMatch(t, wantKinds, gotKinds, "kinds must match RuleActionKinds")
 }
