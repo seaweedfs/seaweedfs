@@ -2,95 +2,103 @@ package needle
 
 import (
 	"bytes"
-	"mime/multipart"
-	"net/http"
-	"net/http/httptest"
-	"runtime"
 	"testing"
 )
 
-// TestParseUpload_AllocationBound is a regression guard for
-// https://github.com/seaweedfs/seaweedfs/issues/6541 (volume-side amplifier).
+// TestEagerPreGrow is a regression guard for the volume-side amplifier in
+// https://github.com/seaweedfs/seaweedfs/issues/6541.
 //
-// parseUpload reads the multipart part body via bytes.Buffer.ReadFrom. If the
-// receive buffer has cap=0 (sync.Pool dropped the prior buffer, or the buffer
-// was never grown), ReadFrom doubles capacity on each grow — for a 64 MiB
-// chunk that's roughly 1+2+4+...+64 ≈ 128 MiB of allocations to receive one
-// chunk. Combined with concurrent volume-server uploads (the destination side
-// of every s3 chunk copy), this is one of the primary contributors to the
-// runaway-RSS pattern in the issue.
+// ParseUpload reads the multipart part body via bytes.Buffer.ReadFrom; if the
+// receive buffer arrives with cap=0 (sync.Pool dropped the prior buffer),
+// ReadFrom doubles capacity on each grow and pays 2-4x the chunk size in
+// cumulative allocations. eagerPreGrow shaves the first few rounds off that
+// grow chain by pre-sizing from r.ContentLength.
 //
-// The fix: ParseUpload pre-sizes the buffer to r.ContentLength before
-// parseUpload runs. This test asserts that downloading a 16 MiB multipart
-// body allocates ≤ 1.5x the chunk size. Without the Grow call, parseUpload
-// allocates ~2.5x and the bound trips.
-func TestParseUpload_AllocationBound(t *testing.T) {
-	const chunkSize = 16 << 20 // 16 MiB
+// Two policy invariants the cases below pin:
+//
+//  1. The cap. We never grow more than maxEagerPreGrow per request, so a
+//     misreported Content-Length or a slow/idle client cannot force
+//     per-request preallocation up to the configured sizeLimit. This is the
+//     review concern that landed during PR review and is what changed the
+//     test from a TotalAlloc bound to this structural form.
+//  2. The validity gates. Negative / zero / oversized Content-Length and
+//     buffers that already have enough capacity should not trigger a Grow.
+func TestEagerPreGrow(t *testing.T) {
+	const sizeLimit = int64(256 * 1024 * 1024)
 
-	payload := make([]byte, chunkSize)
-	for i := range payload {
-		payload[i] = byte(i)
+	cases := []struct {
+		name        string
+		startCap    int
+		cl          int64
+		wantMinCap  int
+		wantNoop    bool // post: cap stays at startCap
+	}{
+		{
+			name:       "small content-length grows exactly",
+			cl:         1 * 1024 * 1024,
+			wantMinCap: 1 * 1024 * 1024,
+		},
+		{
+			name:       "content-length at cap grows to cap",
+			cl:         maxEagerPreGrow,
+			wantMinCap: maxEagerPreGrow,
+		},
+		{
+			name:       "content-length above cap is clamped to cap",
+			cl:         200 * 1024 * 1024,
+			wantMinCap: maxEagerPreGrow,
+		},
+		{
+			name:     "content-length above sizeLimit is rejected",
+			cl:       sizeLimit + 1,
+			wantNoop: true,
+		},
+		{
+			name:     "zero content-length is a no-op",
+			cl:       0,
+			wantNoop: true,
+		},
+		{
+			name:     "negative content-length (chunked encoding) is a no-op",
+			cl:       -1,
+			wantNoop: true,
+		},
+		{
+			name:       "buffer with sufficient cap is left alone",
+			startCap:   maxEagerPreGrow,
+			cl:         1 * 1024 * 1024,
+			wantMinCap: maxEagerPreGrow,
+		},
 	}
 
-	var bodyBuf bytes.Buffer
-	mw := multipart.NewWriter(&bodyBuf)
-	fw, err := mw.CreateFormFile("file", "test.bin")
-	if err != nil {
-		t.Fatalf("CreateFormFile: %v", err)
-	}
-	if _, err := fw.Write(payload); err != nil {
-		t.Fatalf("write payload: %v", err)
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatalf("close multipart writer: %v", err)
-	}
-	bodyBytes := bodyBuf.Bytes()
-	contentType := mw.FormDataContentType()
-	contentLength := int64(len(bodyBytes))
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bb := &bytes.Buffer{}
+			if c.startCap > 0 {
+				bb.Grow(c.startCap)
+			}
+			startCap := bb.Cap()
 
-	makeReq := func() *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(bodyBytes))
-		req.Header.Set("Content-Type", contentType)
-		req.ContentLength = contentLength
-		return req
+			eagerPreGrow(bb, c.cl, sizeLimit)
+
+			if c.wantNoop {
+				if got := bb.Cap(); got != startCap {
+					t.Fatalf("eagerPreGrow(cl=%d, sizeLimit=%d) should not have grown: "+
+						"cap=%d, want %d (regression: validity gate removed?)",
+						c.cl, sizeLimit, got, startCap)
+				}
+				return
+			}
+			if got := bb.Cap(); got < c.wantMinCap {
+				t.Fatalf("after eagerPreGrow(cl=%d): cap=%d, want >=%d", c.cl, got, c.wantMinCap)
+			}
+			// Hard upper bound: never above the cap (regardless of cl/sizeLimit).
+			// Note bytes.Buffer.Grow may round capacity up modestly, so allow
+			// a generous overshoot but still well below sizeLimit.
+			if got := int64(bb.Cap()); got > 2*int64(maxEagerPreGrow) {
+				t.Fatalf("after eagerPreGrow(cl=%d): cap=%d exceeds 2*maxEagerPreGrow=%d "+
+					"(regression: cap removed?)", c.cl, got, 2*maxEagerPreGrow)
+			}
+		})
 	}
-
-	const sizeLimit = 256 << 20
-
-	// Warm-up call: prime any package-level lazy allocations (mime tables,
-	// http internals) so they don't pollute the measurement window.
-	{
-		bb := &bytes.Buffer{}
-		if _, err := ParseUpload(makeReq(), sizeLimit, bb); err != nil {
-			t.Fatalf("warm-up ParseUpload: %v", err)
-		}
-	}
-
-	bb := &bytes.Buffer{}
-
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-
-	pu, err := ParseUpload(makeReq(), sizeLimit, bb)
-	if err != nil {
-		t.Fatalf("ParseUpload: %v", err)
-	}
-	if got := len(pu.Data); got != chunkSize {
-		t.Fatalf("ParseUpload returned %d bytes, want %d", got, chunkSize)
-	}
-
-	runtime.ReadMemStats(&after)
-	allocated := after.TotalAlloc - before.TotalAlloc
-
-	// Receive buffer alone is chunkSize. Multipart framing + http internals
-	// add a few KiB. A 1.5x bound is comfortably above the steady-state cost
-	// and well below the geometric-grow cost (~2.5x in measurement).
-	maxAllowed := uint64(chunkSize) * 3 / 2
-	if allocated > maxAllowed {
-		t.Fatalf("ParseUpload allocated %d bytes for a %d-byte chunk; bound is %d "+
-			"(regression: ParseUpload not pre-sizing the receive buffer to r.ContentLength?)",
-			allocated, chunkSize, maxAllowed)
-	}
-	t.Logf("allocated=%d bytes, bound=%d, output=%d", allocated, maxAllowed, chunkSize)
 }
