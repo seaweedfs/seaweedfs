@@ -226,8 +226,11 @@ func TestLoadCompileInputs_PaginatesAcrossPages(t *testing.T) {
 	inputs, perr, err := LoadCompileInputs(context.Background(), client, testBucketsRoot)
 	require.NoError(t, err)
 	assert.Empty(t, perr)
-	assert.Len(t, inputs, total, "pagination must surface every bucket")
-	// Order is preserved across pages.
+	require.Len(t, inputs, total, "pagination must surface every bucket")
+	// Order is preserved across pages, and the page boundary at 1023/1024
+	// (pageSize is 1024) must not skip or duplicate entries.
 	assert.Equal(t, "b00000", inputs[0].Bucket)
+	assert.Equal(t, "b01023", inputs[1023].Bucket, "last entry of first page")
+	assert.Equal(t, "b01024", inputs[1024].Bucket, "first entry of second page")
 	assert.Equal(t, fmt.Sprintf("b%05d", total-1), inputs[total-1].Bucket)
 }
