@@ -160,7 +160,7 @@ func BenchmarkCopyChunk_Streamed(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if err := s3a.streamCopyChunkRange(context.Background(),
 					env.srcSrv.URL, env.assign.FileId, 0, int64(size),
-					env.assign, false); err != nil {
+					true /*isFullChunk*/, env.assign); err != nil {
 					b.Fatalf("stream: %v", err)
 				}
 			}
