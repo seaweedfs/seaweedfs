@@ -5,9 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 // Tests cover the worker-handler surface that runs without a live filer
@@ -464,4 +466,55 @@ func TestExecute_EmptyJobTypeAccepted(t *testing.T) {
 	}, &recordingExecSender{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no s3 servers", "validation flowed past the type check")
+}
+
+// ---------- lookupBucketsPath ----------
+
+// stubFilerConfigClient implements filer_pb.SeaweedFilerClient for the
+// GetFilerConfiguration call lookupBucketsPath relies on; methods that
+// aren't named here would panic if called, which the tests rely on to
+// keep the surface narrow.
+type stubFilerConfigClient struct {
+	filer_pb.SeaweedFilerClient
+	resp *filer_pb.GetFilerConfigurationResponse
+	err  error
+}
+
+func (c *stubFilerConfigClient) GetFilerConfiguration(_ context.Context, _ *filer_pb.GetFilerConfigurationRequest, _ ...grpc.CallOption) (*filer_pb.GetFilerConfigurationResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.resp, nil
+}
+
+func TestLookupBucketsPath_PropagatesGRPCError(t *testing.T) {
+	// A failed config lookup must surface; without it, Execute would
+	// proceed to dial S3 with an empty buckets path and quietly never
+	// dispatch anything.
+	want := errors.New("filer down")
+	got, err := lookupBucketsPath(context.Background(), &stubFilerConfigClient{err: want})
+	assert.ErrorIs(t, err, want)
+	assert.Empty(t, got)
+}
+
+func TestLookupBucketsPath_UsesConfiguredDirBuckets(t *testing.T) {
+	// When the filer reports a non-empty DirBuckets, the worker honors
+	// it. Operators with a non-default layout (e.g. "/data/buckets")
+	// can't be routed to "/buckets".
+	got, err := lookupBucketsPath(context.Background(), &stubFilerConfigClient{
+		resp: &filer_pb.GetFilerConfigurationResponse{DirBuckets: "/data/buckets"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/data/buckets", got)
+}
+
+func TestLookupBucketsPath_EmptyDirBucketsFallsBackToDefault(t *testing.T) {
+	// Filer doesn't always populate DirBuckets (older configs); the
+	// helper falls back to the documented default "/buckets" rather
+	// than returning an empty path that would force-route to root.
+	got, err := lookupBucketsPath(context.Background(), &stubFilerConfigClient{
+		resp: &filer_pb.GetFilerConfigurationResponse{DirBuckets: ""},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/buckets", got)
 }
