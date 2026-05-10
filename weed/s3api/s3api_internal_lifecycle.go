@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"path"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // LifecycleDelete executes one (rule, action) verdict: re-fetch, identity
@@ -99,6 +101,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				}
 				return retryLater("TRANSPORT_ERROR: deleteUnversioned: " + err.Error()), nil
 			}
+			recordMetadataOnlyIf(metadataOnly, req)
 			return done(), nil
 		}
 
@@ -141,6 +144,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			}
 			return retryLater("TRANSPORT_ERROR: deleteSpecificVersion: " + err.Error()), nil
 		}
+		recordMetadataOnlyIf(metadataOnly, req)
 		return done(), nil
 
 	case s3_lifecycle_pb.ActionKind_ABORT_MPU:
@@ -341,6 +345,17 @@ func identityMatches(live, want *s3_lifecycle_pb.EntryIdentity) bool {
 		return false
 	}
 	return bytes.Equal(live.ExtendedHash, want.ExtendedHash)
+}
+
+// recordMetadataOnlyIf bumps the metadata-only counter when on=true.
+// Skipped when off so callers don't need a guard at every call site.
+// rule_hash is hex-encoded so operators can group by rule when
+// debugging; nil rule_hash collapses to the empty string.
+func recordMetadataOnlyIf(on bool, req *s3_lifecycle_pb.LifecycleDeleteRequest) {
+	if !on || req == nil {
+		return
+	}
+	stats_collect.S3LifecycleMetadataOnlyCounter.WithLabelValues(req.Bucket, hex.EncodeToString(req.RuleHash)).Inc()
 }
 
 func done() *s3_lifecycle_pb.LifecycleDeleteResponse {

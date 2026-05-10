@@ -577,6 +577,21 @@ var (
 			Name:      "bootstrap_dispatch_total",
 			Help:      "Counter of bootstrap-walk Delete dispatches by bucket and action kind.",
 		}, []string{"bucket", "kind"})
+
+	// S3LifecycleMetadataOnlyCounter counts successful LifecycleDelete
+	// dispatches that took the metadata-only path — entry was removed
+	// without per-chunk DeleteFile RPCs because the entry's Attributes
+	// .TtlSec > 0 and the volume's natural TTL will reclaim chunks. Per-
+	// rule cardinality (rule_hash hex-encoded) lets operators identify
+	// which specific rule is exercising the optimization; in clusters
+	// with many rules this can be reduced via Prometheus relabeling.
+	S3LifecycleMetadataOnlyCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "metadata_only_total",
+			Help:      "Counter of LifecycleDelete completions that skipped per-chunk delete (volume TTL reclaim).",
+		}, []string{"bucket", "rule_hash"})
 )
 
 func init() {
@@ -652,6 +667,7 @@ func init() {
 	Gather.MustRegister(S3LifecycleCursorMinTsNs)
 	Gather.MustRegister(S3LifecycleEventCounter)
 	Gather.MustRegister(S3LifecycleBootstrapDispatchCounter)
+	Gather.MustRegister(S3LifecycleMetadataOnlyCounter)
 
 	Gather.MustRegister(UploadErrorCounter)
 
@@ -727,6 +743,7 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
 	c += S3LifecycleDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
+	c += S3LifecycleMetadataOnlyCounter.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
 }

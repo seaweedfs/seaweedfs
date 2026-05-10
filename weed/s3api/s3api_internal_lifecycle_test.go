@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func TestComputeEntryIdentity_BasicFields(t *testing.T) {
@@ -145,5 +147,53 @@ func TestLifecycleAbortMPU_RejectsTraversalUploadIDs(t *testing.T) {
 					path, resp.Outcome, resp.Reason)
 			}
 		})
+	}
+}
+
+func TestRecordMetadataOnlyIf_OnlyFiresWhenOn(t *testing.T) {
+	// Counter must increment exactly once per (bucket, hex(rule_hash))
+	// when on=true, and not at all when on=false. Other lifecycle paths
+	// in the same suite share the global counter — use distinct bucket
+	// names per test so series don't bleed.
+	c := stats_collect.S3LifecycleMetadataOnlyCounter
+	bucket := "bk-counter-on"
+	hash := []byte{0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04}
+	hexHash := "deadbeef01020304"
+
+	before := testutil.ToFloat64(c.WithLabelValues(bucket, hexHash))
+	recordMetadataOnlyIf(true, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:   bucket,
+		RuleHash: hash,
+	})
+	if got := testutil.ToFloat64(c.WithLabelValues(bucket, hexHash)); got != before+1 {
+		t.Fatalf("on=true should bump by 1; before=%v after=%v", before, got)
+	}
+
+	beforeOff := testutil.ToFloat64(c.WithLabelValues("bk-counter-off", hexHash))
+	recordMetadataOnlyIf(false, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:   "bk-counter-off",
+		RuleHash: hash,
+	})
+	if got := testutil.ToFloat64(c.WithLabelValues("bk-counter-off", hexHash)); got != beforeOff {
+		t.Fatalf("on=false should not bump; before=%v after=%v", beforeOff, got)
+	}
+}
+
+func TestRecordMetadataOnlyIf_NilRequestSafe(t *testing.T) {
+	// A nil req is a defensive no-op; never panic on the prometheus
+	// label call which would otherwise dereference req.Bucket.
+	recordMetadataOnlyIf(true, nil)
+}
+
+func TestRecordMetadataOnlyIf_EmptyRuleHashCollapsesToEmptyLabel(t *testing.T) {
+	// Bootstrap or test paths may not stamp a rule hash; the label
+	// must end up as an empty string rather than panicking on
+	// hex.EncodeToString(nil).
+	c := stats_collect.S3LifecycleMetadataOnlyCounter
+	bucket := "bk-counter-emptyhash"
+	before := testutil.ToFloat64(c.WithLabelValues(bucket, ""))
+	recordMetadataOnlyIf(true, &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: bucket})
+	if got := testutil.ToFloat64(c.WithLabelValues(bucket, "")); got != before+1 {
+		t.Fatalf("nil rule_hash should produce empty-label series; before=%v after=%v", before, got)
 	}
 }
