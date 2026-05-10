@@ -1053,7 +1053,18 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 		return nil, err
 	}
 
-	// Download and upload the chunk
+	// Stream the chunk through io.Pipe when no in-transit transformation is
+	// required; this holds only ~32 KiB per copy in flight, vs. the
+	// chunk-sized buffers the buffered path needs.
+	if canStreamCopyChunk(chunk) {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), assignResult, chunk.IsCompressed); err != nil {
+			return nil, fmt.Errorf("stream chunk: %w", err)
+		}
+		return dstChunk, nil
+	}
+
+	// SSE / per-chunk-cipher: bytes need to be transformed in transit, so
+	// download into a buffer first.
 	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
@@ -1087,6 +1098,17 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	chunkStart := originalChunk.Offset
 	overlapStart := max(rangeStart, chunkStart)
 	offsetInChunk := overlapStart - chunkStart
+
+	// Stream the byte range through io.Pipe when there's no in-transit
+	// transformation required (see canStreamCopyChunk for the eligibility
+	// rules); this is the dominant path for Harbor-style multipart
+	// assemble loads, which use UploadPartCopy with a CopySourceRange.
+	if canStreamCopyChunk(originalChunk) {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), assignResult, originalChunk.IsCompressed); err != nil {
+			return nil, fmt.Errorf("stream chunk range: %w", err)
+		}
+		return dstChunk, nil
+	}
 
 	// Download and upload the chunk portion
 	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), originalChunk.CipherKey)
