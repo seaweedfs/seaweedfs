@@ -193,17 +193,25 @@ func TestFake_NilRequestUsesDefault(t *testing.T) {
 
 func TestFake_ConcurrentCallsSerializeWithoutDeadlock(t *testing.T) {
 	// The dispatcher fans dispatch across many goroutines; the fake
-	// must not livelock or drop records under concurrent load.
+	// must not livelock or drop records under concurrent load. Capture
+	// each goroutine's err so a regression in concurrent paths surfaces
+	// instead of being masked by length-only assertions.
 	f := NewFakeLifecycleServer()
 	const N = 64
 	var wg sync.WaitGroup
+	errCh := make(chan error, N)
 	wg.Add(N)
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			_, _ = f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k"})
+			_, err := f.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: "b", ObjectPath: "k"})
+			errCh <- err
 		}()
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
 	assert.Len(t, f.Recorded(), N)
 }
