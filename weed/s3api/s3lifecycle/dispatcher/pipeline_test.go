@@ -105,83 +105,37 @@ func fullPipeline() *Pipeline {
 	}
 }
 
-func TestPipelineRunMissingEngine(t *testing.T) {
-	p := fullPipeline()
-	p.Engine = nil
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
-		t.Fatalf("expected dependency error, got %v", err)
+func TestPipelineRunValidation(t *testing.T) {
+	// Each case mutates one piece of a fullPipeline() and asserts the
+	// expected error fragment. Per-dependency cases pin that the nil
+	// check exercises every required field individually; the Buckets-
+	// Path case asserts the distinct error message; the shard cases
+	// pin the half-open [0, ShardCount) range and that any one bad
+	// entry refuses the whole multi-shard run.
+	cases := []struct {
+		name    string
+		mutate  func(*Pipeline)
+		wantErr string
+	}{
+		{"missing Engine", func(p *Pipeline) { p.Engine = nil }, "missing required dependency"},
+		{"missing Persister", func(p *Pipeline) { p.Persister = nil }, "missing required dependency"},
+		{"missing Client", func(p *Pipeline) { p.Client = nil }, "missing required dependency"},
+		{"missing FilerClient", func(p *Pipeline) { p.FilerClient = nil }, "missing required dependency"},
+		{"missing BucketsPath", func(p *Pipeline) { p.BucketsPath = "" }, "BucketsPath required"},
+		{"negative ShardID", func(p *Pipeline) { p.ShardID = -1 }, "out of"},
+		{"ShardID at boundary", func(p *Pipeline) { p.ShardID = s3lifecycle.ShardCount }, "out of"},
+		{"multi-shard out of range", func(p *Pipeline) {
+			p.Shards = []int{0, 1, s3lifecycle.ShardCount + 1}
+		}, "out of"},
 	}
-}
-
-func TestPipelineRunMissingPersister(t *testing.T) {
-	p := fullPipeline()
-	p.Persister = nil
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
-		t.Fatalf("expected dependency error, got %v", err)
-	}
-}
-
-func TestPipelineRunMissingClient(t *testing.T) {
-	p := fullPipeline()
-	p.Client = nil
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
-		t.Fatalf("expected dependency error, got %v", err)
-	}
-}
-
-func TestPipelineRunMissingFilerClient(t *testing.T) {
-	p := fullPipeline()
-	p.FilerClient = nil
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
-		t.Fatalf("expected dependency error, got %v", err)
-	}
-}
-
-func TestPipelineRunMissingBucketsPath(t *testing.T) {
-	// BucketsPath has its own error message so operators can spot the
-	// missing wiring (the dependency check runs first and would mask it).
-	p := fullPipeline()
-	p.BucketsPath = ""
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "BucketsPath required") {
-		t.Fatalf("expected BucketsPath error, got %v", err)
-	}
-}
-
-func TestPipelineRunRejectsNegativeShard(t *testing.T) {
-	p := fullPipeline()
-	p.ShardID = -1
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "out of") {
-		t.Fatalf("expected shard-range error, got %v", err)
-	}
-}
-
-func TestPipelineRunRejectsShardAtBoundary(t *testing.T) {
-	// The range is half-open [0, ShardCount); ShardCount itself is
-	// out-of-range. Catch this so a refactor that flips < to <= can't
-	// introduce a one-past-the-end shard.
-	p := fullPipeline()
-	p.ShardID = s3lifecycle.ShardCount
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "out of") {
-		t.Fatalf("expected shard-range error, got %v", err)
-	}
-}
-
-func TestPipelineRunRejectsAnyShardOutOfRange(t *testing.T) {
-	// Multi-shard configs use Shards rather than ShardID; if any one
-	// of them is out of range the whole run must refuse, otherwise a
-	// single bad entry could silently disable the rest.
-	p := fullPipeline()
-	p.ShardID = 0
-	p.Shards = []int{0, 1, s3lifecycle.ShardCount + 1}
-	err := p.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "out of") {
-		t.Fatalf("expected shard-range error for multi-shard config, got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fullPipeline()
+			tc.mutate(p)
+			err := p.Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }
