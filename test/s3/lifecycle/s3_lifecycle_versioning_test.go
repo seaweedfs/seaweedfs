@@ -200,8 +200,13 @@ func TestLifecycleNoncurrentVersionExpiration(t *testing.T) {
 	v2 := aws.ToString(put2.VersionId)
 	require.NotEqual(t, v1, v2)
 
-	// Age the noncurrent (v1) past the 1-day threshold.
-	backdateVersionedMtime(t, fc, bucket, key, v1, 30)
+	// NoncurrentDays is clocked from the SUCCESSOR's mtime — i.e. when
+	// the version became noncurrent — not from the displaced version's
+	// own mtime. Backdating only v1 leaves the noncurrent clock (v2's
+	// mtime) at "now" and the rule never fires. Age both with v1 older
+	// than v2 so the ordering is realistic.
+	backdateVersionedMtime(t, fc, bucket, key, v1, 31)
+	backdateVersionedMtime(t, fc, bucket, key, v2, 30)
 
 	out := runLifecycleShard(t)
 	t.Logf("shell output:\n%s", out)
