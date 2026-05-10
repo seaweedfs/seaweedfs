@@ -65,11 +65,11 @@ func TestPipelineFanout_RoutesToCorrectPipeline(t *testing.T) {
 
 	require.NoError(t, f.InjectEvent(context.Background(), &reader.Event{ShardID: 7}))
 
-	// Second send to shard 7 fills nothing (it would block); use a
-	// canceled ctx to detect the buffer-full state on B without hanging.
-	canceled, cancel := context.WithCancel(context.Background())
+	// Second send to shard 7 would block on the full buffer; use a
+	// pre-canceled ctx to detect the buffer-full state without hanging.
+	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := f.InjectEvent(canceled, &reader.Event{ShardID: 7})
+	err := f.InjectEvent(canceledCtx, &reader.Event{ShardID: 7})
 	require.Error(t, err, "B's buffer should be full so a canceled-ctx send returns ctx.Err")
 
 	// Send to shard 0 still succeeds because A's buffer is untouched.
