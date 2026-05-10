@@ -17,6 +17,31 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// maxEagerPreGrow caps how many bytes ParseUpload is willing to pre-allocate
+// from a request's announced Content-Length. Large enough to skip a few
+// rounds of bytes.Buffer.ReadFrom geometric grow on typical small uploads;
+// small enough that a misreported Content-Length or a slow/idle client can
+// only ever waste this much memory per request. Bigger uploads fall back to
+// the standard ReadFrom-grow path for the remainder.
+const maxEagerPreGrow = 4 * 1024 * 1024
+
+// eagerPreGrow ensures bytesBuffer has at least min(contentLength, sizeLimit,
+// maxEagerPreGrow) bytes of capacity, so the bytes.Buffer.ReadFrom pumps
+// inside parseUpload below skip the first round(s) of geometric grow on the
+// common upload sizes — see #6541. The cap policy is the load-bearing piece
+// here; it's extracted so unit tests can exercise the policy directly
+// without spinning a real http upload.
+func eagerPreGrow(bytesBuffer *bytes.Buffer, contentLength, sizeLimit int64) {
+	if contentLength <= 0 || contentLength > sizeLimit {
+		return
+	}
+	grow := contentLength
+	if grow > maxEagerPreGrow {
+		grow = maxEagerPreGrow
+	}
+	bytesBuffer.Grow(int(grow))
+}
+
 type ParsedUpload struct {
 	FileName    string
 	Data        []byte
@@ -35,6 +60,7 @@ type ParsedUpload struct {
 
 func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (pu *ParsedUpload, e error) {
 	bytesBuffer.Reset()
+	eagerPreGrow(bytesBuffer, r.ContentLength, sizeLimit)
 	pu = &ParsedUpload{bytesBuffer: bytesBuffer}
 	pu.PairMap = make(map[string]string)
 	for k, v := range r.Header {
