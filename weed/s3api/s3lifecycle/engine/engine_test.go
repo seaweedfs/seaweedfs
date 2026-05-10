@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -322,3 +323,60 @@ func TestEngine_SnapshotAtomicSwap(t *testing.T) {
 		t.Fatalf("Engine.Snapshot should return the latest")
 	}
 }
+
+// TestCompile_DelayGroupsDedupeAcrossBuckets pins the scaling property
+// the dispatcher relies on: originalDelayGroups is keyed by Delay, so N
+// rules sharing the same Days threshold across M buckets collapse into
+// one delay group with N*M action keys — not N*M groups. The dispatch
+// path can then index by delay group rather than per-rule.
+func TestCompile_DelayGroupsDedupeAcrossBuckets(t *testing.T) {
+	const buckets = 100
+	const rulesPerBucket = 5
+	// Five rules per bucket, but only three distinct day values, so two
+	// pairs of rules per bucket share a delay group.
+	dayValues := []int{1, 1, 7, 7, 30}
+	distinctDays := map[int]bool{}
+	for _, d := range dayValues {
+		distinctDays[d] = true
+	}
+
+	inputs := make([]CompileInput, buckets)
+	prior := map[s3lifecycle.ActionKey]PriorState{}
+	for b := 0; b < buckets; b++ {
+		bucket := "b" + strconv.Itoa(b)
+		rules := make([]*s3lifecycle.Rule, rulesPerBucket)
+		for r, days := range dayValues {
+			rule := ruleExpDays("r"+strconv.Itoa(r), "p"+strconv.Itoa(r)+"/", days)
+			rules[r] = rule
+			prior[s3lifecycle.ActionKey{
+				Bucket:     bucket,
+				RuleHash:   s3lifecycle.RuleHash(rule),
+				ActionKind: s3lifecycle.ActionKindExpirationDays,
+			}] = PriorState{BootstrapComplete: true}
+		}
+		inputs[b] = CompileInput{Bucket: bucket, Rules: rules}
+	}
+
+	e := New()
+	snap := e.Compile(inputs, CompileOptions{PriorStates: prior})
+
+	if got := len(snap.actions); got != buckets*rulesPerBucket {
+		t.Fatalf("want %d actions (no collapse), got %d", buckets*rulesPerBucket, got)
+	}
+	if got := len(snap.originalDelayGroups); got != len(distinctDays) {
+		t.Fatalf("want %d delay groups (one per distinct Days), got %d",
+			len(distinctDays), got)
+	}
+	// Per-group key count: each distinct day appears in `count` rules per
+	// bucket, so the group holds count*buckets keys.
+	wantPerGroup := map[time.Duration]int{}
+	for _, d := range dayValues {
+		wantPerGroup[s3lifecycle.DaysToDuration(d)] += buckets
+	}
+	for delay, want := range wantPerGroup {
+		if got := len(snap.originalDelayGroups[delay]); got != want {
+			t.Fatalf("delay %v: want %d action keys, got %d", delay, want, got)
+		}
+	}
+}
+
