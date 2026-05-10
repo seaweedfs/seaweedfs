@@ -1055,9 +1055,11 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 
 	// Stream the chunk through io.Pipe when no in-transit transformation is
 	// required; this holds only ~32 KiB per copy in flight, vs. the
-	// chunk-sized buffers the buffered path needs.
+	// chunk-sized buffers the buffered path needs. isFullChunk=true asks
+	// the source volume for compressed bytes, so a gzipped chunk is
+	// forwarded to the destination without anyone having to decompress.
 	if canStreamCopyChunk(chunk) {
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), assignResult, chunk.IsCompressed); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult); err != nil {
 			return nil, fmt.Errorf("stream chunk: %w", err)
 		}
 		return dstChunk, nil
@@ -1103,8 +1105,16 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	// transformation required (see canStreamCopyChunk for the eligibility
 	// rules); this is the dominant path for Harbor-style multipart
 	// assemble loads, which use UploadPartCopy with a CopySourceRange.
+	//
+	// When the requested range happens to cover the entire source chunk
+	// exactly, switch to the full-chunk fetch mode: that asks the source
+	// volume for compressed bytes (Accept-Encoding: gzip) and forwards
+	// them as-is, avoiding the volume-side decompression that a Range
+	// fetch on a gzipped chunk would otherwise pay. Harbor's typical
+	// part-size = chunk-size assemble pattern hits this branch.
 	if canStreamCopyChunk(originalChunk) {
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), assignResult, originalChunk.IsCompressed); err != nil {
+		isFullChunk := offsetInChunk == 0 && rangeChunk.Size == originalChunk.Size
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult); err != nil {
 			return nil, fmt.Errorf("stream chunk range: %w", err)
 		}
 		return dstChunk, nil
