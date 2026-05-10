@@ -135,10 +135,16 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 		if action == nil {
 			continue
 		}
-		// SCAN_AT_DATE runs its own date-triggered bootstrap. DISABLED can
-		// be flipped at runtime independent of XML Status, so skip it even
-		// though EvaluateAction would also reject.
-		if action.Mode == engine.ModeScanAtDate || action.Mode == engine.ModeDisabled {
+		// DISABLED can be flipped at runtime independent of XML Status,
+		// so skip it even though EvaluateAction would also reject.
+		// SCAN_AT_DATE actions are processed here too — the date check
+		// in EvaluateAction (now.Before(rule.ExpirationDate)) gates the
+		// dispatch, so pre-date walks are no-ops and post-date walks
+		// expire eligible objects. The earlier "scan-at-date runs its
+		// own bootstrap" plan was never wired; until that lands, the
+		// regular bootstrap walk is the only path that fires
+		// ExpirationDate rules.
+		if action.Mode == engine.ModeDisabled {
 			continue
 		}
 		// (kind, info) shape gate: ABORT_MPU only on MPU init records,
