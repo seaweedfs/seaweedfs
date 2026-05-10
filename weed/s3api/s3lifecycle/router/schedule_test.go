@@ -125,20 +125,29 @@ func TestScheduleNextDueAfterPartialDrain(t *testing.T) {
 }
 
 func TestScheduleAddAfterDrainKeepsOrder(t *testing.T) {
-	// Adding to a non-empty schedule mid-stream — a fresh Match with an
-	// earlier DueTime than the existing minimum must become the next
-	// drainable. Pins that heap.Push correctly bubbles up.
+	// Adding to a non-empty schedule mid-stream — after a real Drain
+	// has popped at least one entry, a fresh Match with an earlier
+	// DueTime than the existing minimum must become the next drainable.
+	// Pins that heap.Pop + Push together preserve the heap invariant
+	// across the Drain → Add boundary.
 	s := NewSchedule()
 	t0 := time.Now()
 	s.Add(mkMatch(t0.Add(10*time.Second), "old"))
-	s.Add(mkMatch(t0.Add(1*time.Second), "new")) // pushed after but earlier
+	s.Add(mkMatch(t0.Add(6*time.Second), "drain_me"))
 
-	due, ok := s.NextDue()
-	if !ok || !due.Equal(t0.Add(1*time.Second)) {
-		t.Fatalf("NextDue=%v ok=%v, want t+1s", due, ok)
+	drained := s.Drain(t0.Add(7 * time.Second))
+	if len(drained) != 1 || drained[0].ObjectKey != "drain_me" {
+		t.Fatalf("pre-drain=%+v, want [drain_me]", drained)
 	}
 
-	got := s.Drain(t0.Add(2 * time.Second))
+	s.Add(mkMatch(t0.Add(5*time.Second), "new")) // added after Drain, earlier than old
+
+	due, ok := s.NextDue()
+	if !ok || !due.Equal(t0.Add(5*time.Second)) {
+		t.Fatalf("NextDue=%v ok=%v, want t+5s", due, ok)
+	}
+
+	got := s.Drain(t0.Add(6 * time.Second))
 	if len(got) != 1 || got[0].ObjectKey != "new" {
 		t.Fatalf("Drain=%+v, want [new]", got)
 	}
