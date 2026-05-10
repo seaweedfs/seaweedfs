@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -54,6 +55,11 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 	assignResult *filer_pb.AssignVolumeResponse,
 	isCompressed bool,
 ) error {
+	// ReadUrlAsStream takes int for size; reject anything that would
+	// truncate negative on 32-bit. Mirrors the guard in downloadChunkData.
+	if size > int64(math.MaxInt32) {
+		return fmt.Errorf("chunk size %d exceeds maximum int32 size", size)
+	}
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
 	dstJwt := security.EncodedJwt(assignResult.Auth)
 	srcJwt := filer.JwtForVolumeServer(srcFileId)
@@ -115,6 +121,16 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 			producerErr = fmt.Errorf("stream read: %w", readErr)
 			return
 		}
+		// shouldRetry can be set without an error (e.g. ReadUrlAsStream
+		// surfacing a partial-read condition that the buffered path
+		// re-fetches). Treat it as a failed copy here too — otherwise we
+		// would close the multipart cleanly and let the destination POST
+		// succeed against a possibly-truncated body. Mirrors the explicit
+		// check downloadChunkData makes after ReadUrlAsStream returns.
+		if shouldRetry {
+			producerErr = fmt.Errorf("stream read %s offset=%d size=%d: retry needed", srcUrl, offset, size)
+			return
+		}
 
 		if err := mw.Close(); err != nil {
 			producerErr = fmt.Errorf("multipart close: %w", err)
@@ -140,14 +156,12 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 		pipeReader.CloseWithError(err)
 		return fmt.Errorf("POST: %w", err)
 	}
+	// CloseResponse drains and closes resp.Body for us; no manual io.Copy
+	// drain needed for keepalive.
 	defer util_http.CloseResponse(resp)
 
 	if resp.StatusCode >= 400 {
-		// Drain the body so the connection can be reused.
-		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("POST %s: %s", dstUrl, resp.Status)
 	}
-	// Drain the body even on success — http.Client's keepalive depends on it.
-	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
