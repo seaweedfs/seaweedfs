@@ -267,6 +267,104 @@ func TestDetect_PropagatesCompleteSendError(t *testing.T) {
 	assert.Empty(t, r.completes)
 }
 
+// ---------- Descriptor ----------
+
+func TestDescriptor_BasicShape(t *testing.T) {
+	// Sanity-check the Descriptor's public-facing identifiers so a
+	// rename in handler.go doesn't silently break the admin UI without
+	// an admin-side change too.
+	h := NewHandler(nil)
+	d := h.Descriptor()
+	require.NotNil(t, d)
+	assert.Equal(t, jobType, d.JobType)
+	assert.NotEmpty(t, d.DisplayName)
+	assert.NotEmpty(t, d.Description)
+	assert.Greater(t, d.DescriptorVersion, uint32(0), "descriptor version must be positive (admins use it for compat)")
+}
+
+func TestDescriptor_AdminConfigFormHasWorkersField(t *testing.T) {
+	// Workers is the only admin-side knob today; if it disappears, the
+	// admin form would render empty and operators couldn't tune
+	// concurrency.
+	h := NewHandler(nil)
+	d := h.Descriptor()
+	require.NotNil(t, d.AdminConfigForm)
+	assert.Equal(t, "s3-lifecycle-admin", d.AdminConfigForm.FormId)
+
+	// Walk every section's fields and find "workers".
+	var found bool
+	for _, sec := range d.AdminConfigForm.Sections {
+		for _, f := range sec.Fields {
+			if f.Name == "workers" {
+				found = true
+				assert.Equal(t, plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64, f.FieldType)
+			}
+		}
+	}
+	assert.True(t, found, "admin form must expose 'workers' field")
+
+	// Default value matches the constant used by ParseConfig.
+	dv, ok := d.AdminConfigForm.DefaultValues["workers"]
+	require.True(t, ok, "workers must have a default in AdminConfigForm")
+	assert.Equal(t, int64(defaultWorkers), dv.GetInt64Value())
+}
+
+func TestDescriptor_WorkerConfigFormCadenceDefaultsMatchParseConfig(t *testing.T) {
+	// Every default the parser reads must be exposed in the descriptor's
+	// DefaultValues; otherwise the admin UI would seed the form with a
+	// blank or zero value and the worker would silently clamp to the
+	// hardcoded fallback. Drift between the two is the bug this test
+	// catches.
+	h := NewHandler(nil)
+	d := h.Descriptor()
+	require.NotNil(t, d.WorkerConfigForm)
+	assert.Equal(t, "s3-lifecycle-worker", d.WorkerConfigForm.FormId)
+
+	wantDefaults := map[string]int64{
+		"dispatch_tick_minutes":      defaultDispatchTickMinutes,
+		"checkpoint_tick_seconds":    defaultCheckpointTickSeconds,
+		"refresh_interval_minutes":   defaultRefreshIntervalMinutes,
+		"bootstrap_interval_minutes": defaultBootstrapIntervalMinutes,
+		"max_runtime_minutes":        defaultMaxRuntimeMinutes,
+	}
+	for name, want := range wantDefaults {
+		t.Run(name, func(t *testing.T) {
+			dv, ok := d.WorkerConfigForm.DefaultValues[name]
+			require.True(t, ok, "WorkerConfigForm.DefaultValues missing %q", name)
+			assert.Equal(t, want, dv.GetInt64Value(), "default mismatch for %q", name)
+		})
+	}
+	// And the form fields themselves: every default must be paired with
+	// a field of matching name AND INT64 type so the admin can render +
+	// edit it and ParseConfig's readInt64 reads it correctly. Drift to
+	// e.g. STRING here would silently make the worker fall back to the
+	// hardcoded default and ignore admin edits.
+	declared := map[string]plugin_pb.ConfigFieldType{}
+	for _, sec := range d.WorkerConfigForm.Sections {
+		for _, f := range sec.Fields {
+			declared[f.Name] = f.FieldType
+		}
+	}
+	for name := range wantDefaults {
+		ft, ok := declared[name]
+		assert.True(t, ok, "WorkerConfigForm has no field named %q", name)
+		assert.Equal(t, plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64, ft, "field %q must be INT64 to match readInt64", name)
+	}
+}
+
+func TestDescriptor_AdminRuntimeDefaultsDailyCadence(t *testing.T) {
+	// Lifecycle is a daily batch; the admin must default to a 24-hour
+	// detection interval so cron pressure doesn't escalate. Bound the
+	// detection timeout so a stuck detect can't pin a worker slot
+	// indefinitely. Max 1 job per detection = scheduler runs alone.
+	h := NewHandler(nil)
+	d := h.Descriptor()
+	require.NotNil(t, d.AdminRuntimeDefaults)
+	assert.Equal(t, int32(24*60), d.AdminRuntimeDefaults.DetectionIntervalMinutes)
+	assert.Equal(t, int32(60), d.AdminRuntimeDefaults.DetectionTimeoutSeconds, "60s timeout caps a stuck detect at one minute")
+	assert.Equal(t, int32(1), d.AdminRuntimeDefaults.MaxJobsPerDetection)
+}
+
 // ---------- Execute ----------
 
 // recordingExecSender captures Execute-side messages. The Execute path
