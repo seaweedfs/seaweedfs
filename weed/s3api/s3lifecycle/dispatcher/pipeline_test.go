@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,5 +81,107 @@ func TestPipelineRunRequiresDependencies(t *testing.T) {
 	err := p.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for empty Pipeline")
+	}
+}
+
+// stubFilerClient satisfies filer_pb.SeaweedFilerClient just enough to
+// pass the nil-check in Pipeline.Run; methods would panic if called,
+// but the validation tests below all return before any RPC.
+type stubFilerClient struct {
+	filer_pb.SeaweedFilerClient
+}
+
+// fullPipeline assembles a Pipeline whose dependencies all pass the
+// nil-check, so individual tests can knock out one piece at a time
+// to exercise specific validation branches.
+func fullPipeline() *Pipeline {
+	return &Pipeline{
+		Engine:      engine.New(),
+		Persister:   reader.NewInMemoryPersister(),
+		Client:      &fakeClient{},
+		FilerClient: &stubFilerClient{},
+		BucketsPath: "/buckets",
+		ShardID:     0,
+	}
+}
+
+func TestPipelineRunMissingEngine(t *testing.T) {
+	p := fullPipeline()
+	p.Engine = nil
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
+		t.Fatalf("expected dependency error, got %v", err)
+	}
+}
+
+func TestPipelineRunMissingPersister(t *testing.T) {
+	p := fullPipeline()
+	p.Persister = nil
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
+		t.Fatalf("expected dependency error, got %v", err)
+	}
+}
+
+func TestPipelineRunMissingClient(t *testing.T) {
+	p := fullPipeline()
+	p.Client = nil
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
+		t.Fatalf("expected dependency error, got %v", err)
+	}
+}
+
+func TestPipelineRunMissingFilerClient(t *testing.T) {
+	p := fullPipeline()
+	p.FilerClient = nil
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing required dependency") {
+		t.Fatalf("expected dependency error, got %v", err)
+	}
+}
+
+func TestPipelineRunMissingBucketsPath(t *testing.T) {
+	// BucketsPath has its own error message so operators can spot the
+	// missing wiring (the dependency check runs first and would mask it).
+	p := fullPipeline()
+	p.BucketsPath = ""
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "BucketsPath required") {
+		t.Fatalf("expected BucketsPath error, got %v", err)
+	}
+}
+
+func TestPipelineRunRejectsNegativeShard(t *testing.T) {
+	p := fullPipeline()
+	p.ShardID = -1
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "out of") {
+		t.Fatalf("expected shard-range error, got %v", err)
+	}
+}
+
+func TestPipelineRunRejectsShardAtBoundary(t *testing.T) {
+	// The range is half-open [0, ShardCount); ShardCount itself is
+	// out-of-range. Catch this so a refactor that flips < to <= can't
+	// introduce a one-past-the-end shard.
+	p := fullPipeline()
+	p.ShardID = s3lifecycle.ShardCount
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "out of") {
+		t.Fatalf("expected shard-range error, got %v", err)
+	}
+}
+
+func TestPipelineRunRejectsAnyShardOutOfRange(t *testing.T) {
+	// Multi-shard configs use Shards rather than ShardID; if any one
+	// of them is out of range the whole run must refuse, otherwise a
+	// single bad entry could silently disable the rest.
+	p := fullPipeline()
+	p.ShardID = 0
+	p.Shards = []int{0, 1, s3lifecycle.ShardCount + 1}
+	err := p.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "out of") {
+		t.Fatalf("expected shard-range error for multi-shard config, got %v", err)
 	}
 }
