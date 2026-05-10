@@ -150,6 +150,97 @@ func TestLifecycleAbortMPU_RejectsTraversalUploadIDs(t *testing.T) {
 	}
 }
 
+func TestLifecycleDispatch_AbortMPUAfterFetchIsBlocked(t *testing.T) {
+	// LifecycleDelete routes ABORT_MPU to lifecycleAbortMPU before
+	// getObjectEntry; reaching lifecycleDispatch with ABORT_MPU means
+	// some caller bypassed that route. Defensive BLOCKED so a
+	// regression there can't accidentally rm a real object via the
+	// expiration paths.
+	s := &S3ApiServer{}
+	resp, err := s.lifecycleDispatch(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:     "bk",
+		ObjectPath: "k",
+		ActionKind: s3_lifecycle_pb.ActionKind_ABORT_MPU,
+	}, &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}})
+	if err != nil {
+		t.Fatalf("unexpected gRPC error: %v", err)
+	}
+	if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+		t.Fatalf("ABORT_MPU at dispatch should be BLOCKED, got %v reason=%q", resp.Outcome, resp.Reason)
+	}
+	if !contains(resp.Reason, "ABORT_MPU dispatched after fetch") {
+		t.Fatalf("reason should name the route bypass, got %q", resp.Reason)
+	}
+}
+
+func TestLifecycleDispatch_UnknownActionKindIsBlocked(t *testing.T) {
+	// An ActionKind value the proto doesn't define yet must produce a
+	// FATAL outcome rather than fall through to a default delete path.
+	s := &S3ApiServer{}
+	const bogus = s3_lifecycle_pb.ActionKind(999)
+	resp, err := s.lifecycleDispatch(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:     "bk",
+		ObjectPath: "k",
+		ActionKind: bogus,
+	}, &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}})
+	if err != nil {
+		t.Fatalf("unexpected gRPC error: %v", err)
+	}
+	if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+		t.Fatalf("unknown action kind should be BLOCKED, got %v reason=%q", resp.Outcome, resp.Reason)
+	}
+	if !contains(resp.Reason, "unknown action_kind") {
+		t.Fatalf("reason should name the unknown kind, got %q", resp.Reason)
+	}
+}
+
+func TestLifecycleDispatch_NoncurrentRequiresVersionID(t *testing.T) {
+	// Noncurrent / EXPIRED_DELETE_MARKER target a specific version; an
+	// empty version_id is a writer-side bug and must be rejected before
+	// any filer call. This pinning keeps the early-return in place so
+	// a refactor doesn't accidentally let the empty-version_id path
+	// reach deleteSpecificObjectVersion.
+	s := &S3ApiServer{}
+	for _, kind := range []s3_lifecycle_pb.ActionKind{
+		s3_lifecycle_pb.ActionKind_NONCURRENT_DAYS,
+		s3_lifecycle_pb.ActionKind_NEWER_NONCURRENT,
+		s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER,
+	} {
+		t.Run(kind.String(), func(t *testing.T) {
+			resp, err := s.lifecycleDispatch(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:     "bk",
+				ObjectPath: "k",
+				ActionKind: kind,
+				// VersionId intentionally empty
+			}, &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}})
+			if err != nil {
+				t.Fatalf("unexpected gRPC error: %v", err)
+			}
+			if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+				t.Fatalf("kind %v with empty version_id should be BLOCKED, got %v reason=%q",
+					kind, resp.Outcome, resp.Reason)
+			}
+			if !contains(resp.Reason, "version_id required") {
+				t.Fatalf("reason should name the missing version_id, got %q", resp.Reason)
+			}
+		})
+	}
+}
+
+// contains is a tiny helper so the tests above don't pull in strings
+// just for a substring check.
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRecordMetadataOnlyIf_OnlyFiresWhenOn(t *testing.T) {
 	// Counter must increment exactly once per (bucket, hex(rule_hash))
 	// when on=true, and not at all when on=false. Other lifecycle paths
