@@ -64,7 +64,14 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 				if !hasPrior || mode == ModeUnspecified {
 					mode = decideMode(rule, kind, opts.MetaLogRetention, opts.BootstrapLookbackMin)
 				}
-				active := prior.BootstrapComplete && mode == ModeEventDriven
+				// Active gates routing: MatchPath / MatchOriginalWrite skip
+				// !IsActive actions. ScanAtDate's only dispatch path is the
+				// bootstrap walk's MatchPath call, so the action must be
+				// considered active there or its rule is silently a no-op.
+				// Bootstrap-completion state is per-action and event-driven-
+				// shaped; date-based actions don't need a bootstrap rendezvous.
+				active := mode == ModeScanAtDate ||
+					(prior.BootstrapComplete && mode == ModeEventDriven)
 
 				ca := &CompiledAction{
 					Rule:               rule,

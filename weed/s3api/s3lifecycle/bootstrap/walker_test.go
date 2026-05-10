@@ -164,9 +164,10 @@ func TestWalk_NotYetDueSkipped(t *testing.T) {
 	}
 }
 
-func TestWalk_DateActionsSkipped(t *testing.T) {
-	// Date kind is handled by its own SCAN_AT_DATE bootstrap, not by the
-	// regular bootstrap walker.
+func TestWalk_DateActionFiresAfterDate(t *testing.T) {
+	// The dedicated SCAN_AT_DATE bootstrap was never wired; until it
+	// lands, the regular bootstrap walker is the only path that fires
+	// ExpirationDate rules. Entries past the rule's date must dispatch.
 	date := mustTime(t, "2025-06-15T00:00:00Z")
 	rule := &s3lifecycle.Rule{
 		ID:             "d",
@@ -181,8 +182,30 @@ func TestWalk_DateActionsSkipped(t *testing.T) {
 	}), rec, WalkOptions{Now: date.AddDate(0, 1, 0)}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
+	if len(rec.calls) != 1 || rec.calls[0].path != "x/a" {
+		t.Fatalf("date kind past the rule date must dispatch, got %v", rec.calls)
+	}
+}
+
+func TestWalk_DateActionSkippedBeforeDate(t *testing.T) {
+	// Pre-date walks are no-ops: EvaluateAction returns ActionNone when
+	// now is before rule.ExpirationDate.
+	date := mustTime(t, "2025-06-15T00:00:00Z")
+	rule := &s3lifecycle.Rule{
+		ID:             "d",
+		Status:         s3lifecycle.StatusEnabled,
+		ExpirationDate: date,
+	}
+	snap := compileEvDriven(t, "bk", rule)
+
+	rec := &recorder{}
+	if _, err := Walk(context.Background(), snap, "bk", EntryCallback([]*Entry{
+		{Path: "x/a", IsLatest: true, ModTime: mustTime(t, "2024-01-01T00:00:00Z")},
+	}), rec, WalkOptions{Now: date.AddDate(0, -1, 0)}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
 	if len(rec.calls) != 0 {
-		t.Fatalf("date kind should not dispatch from walker, got %v", rec.calls)
+		t.Fatalf("pre-date walk must not dispatch, got %v", rec.calls)
 	}
 }
 
