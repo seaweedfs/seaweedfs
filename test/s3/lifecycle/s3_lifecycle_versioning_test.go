@@ -214,12 +214,37 @@ func TestLifecycleNoncurrentVersionExpiration(t *testing.T) {
 		return err != nil
 	}, 30*time.Second, 500*time.Millisecond, "noncurrent v1 must be expired")
 
-	// v2 must still be addressable as the current version.
+	// v2 must still be addressable BY VERSION ID — pinning that the
+	// noncurrent dispatch didn't accidentally remove the current
+	// version's file.
+	directHead, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(v2),
+	})
+	require.NoError(t, err, "current version v2 (versionId=%s) must still be addressable directly", v2)
+
+	// And HEAD without versionId (i.e., the latest) must hit v2 — pinning
+	// that the bare-key pointer wasn't removed and a delete marker
+	// wasn't fabricated as a side effect of the noncurrent delete. On
+	// failure we dump ListObjectVersions so the failure log shows
+	// exactly what's there (versions vs delete markers vs bare).
 	currentHead, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
 		Bucket: aws.String(bucket), Key: aws.String(key),
 	})
-	require.NoError(t, err, "current version (v2) must remain")
-	require.Equal(t, v2, aws.ToString(currentHead.VersionId))
+	if err != nil {
+		listOut, listErr := c.ListObjectVersions(context.Background(), &s3.ListObjectVersionsInput{
+			Bucket: aws.String(bucket), Prefix: aws.String(key),
+		})
+		t.Logf("HeadObject(latest) failed: %v\nListObjectVersions err=%v versions=%d markers=%d", err, listErr, len(listOut.Versions), len(listOut.DeleteMarkers))
+		for _, v := range listOut.Versions {
+			t.Logf("  version key=%s id=%s isLatest=%v", aws.ToString(v.Key), aws.ToString(v.VersionId), aws.ToBool(v.IsLatest))
+		}
+		for _, m := range listOut.DeleteMarkers {
+			t.Logf("  marker  key=%s id=%s isLatest=%v", aws.ToString(m.Key), aws.ToString(m.VersionId), aws.ToBool(m.IsLatest))
+		}
+		require.NoError(t, err, "HEAD(latest) on %s/%s must succeed; v2 (%s) must remain current", bucket, key, v2)
+	}
+	require.Equal(t, v2, aws.ToString(currentHead.VersionId), "latest pointer must still resolve to v2")
+	_ = directHead
 }
 
 // TestLifecycleExpiredDeleteMarkerCleanup: a sole-survivor delete marker
