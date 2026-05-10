@@ -121,7 +121,7 @@ func TestLifecycleVersionedBucketCreatesDeleteMarker(t *testing.T) {
 		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
 			Bucket: aws.String(bucket), Key: aws.String(key),
 		})
-		return err != nil
+		return isS3NotFound(err)
 	}, 30*time.Second, 500*time.Millisecond, "expected delete marker to become latest for %s/%s", bucket, key)
 
 	// The original version must still be addressable directly — Expiration
@@ -194,7 +194,7 @@ func TestLifecycleNoncurrentVersionExpiration(t *testing.T) {
 		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
 			Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(v1),
 		})
-		return err != nil
+		return isS3NotFound(err)
 	}, 30*time.Second, 500*time.Millisecond, "noncurrent v1 must be expired")
 
 	// v2 must still be addressable BY VERSION ID — pinning that the
@@ -427,7 +427,7 @@ func TestLifecycleTagFilter(t *testing.T) {
 		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
 			Bucket: aws.String(bucket), Key: aws.String(taggedKey),
 		})
-		return err != nil
+		return isS3NotFound(err)
 	}, 30*time.Second, 500*time.Millisecond, "tagged object must be expired")
 
 	_, err = c.HeadObject(context.Background(), &s3.HeadObjectInput{
