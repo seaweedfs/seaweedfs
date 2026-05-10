@@ -145,13 +145,18 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 		if !info.IsMPUInit && key.ActionKind == s3lifecycle.ActionKindAbortMPU {
 			continue
 		}
-		// Schedule from ModTime, not the meta-log event time: a backdated
-		// or out-of-band entry update has eventTime ≈ now but ModTime far
-		// in the past, so eventTime+Delay would push the dispatch into the
-		// future even though the rule fires immediately. ModTime+Delay is
-		// the correct fire moment; the dispatcher's identity-CAS catches
-		// drift if the object changes meanwhile.
-		dueTime := info.ModTime.Add(action.Delay)
+		// Schedule from the per-kind due moment. ExpirationDate is
+		// rule-relative (the date IS the moment); other kinds are
+		// ModTime-relative. Using ModTime+Delay for ExpirationDate
+		// (Delay=0) puts dueTime at the entry's mtime — a backdated
+		// object's mtime is BEFORE the rule's date, so the eligibility
+		// check below would skip it. ComputeDueAt encapsulates both
+		// shapes; the dispatcher's identity-CAS catches drift if the
+		// object changes meanwhile.
+		dueTime := s3lifecycle.ComputeDueAt(action.Rule, key.ActionKind, info)
+		if dueTime.IsZero() {
+			continue
+		}
 		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
 		if res.Action == s3lifecycle.ActionNone {
 			continue
