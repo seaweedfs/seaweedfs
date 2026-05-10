@@ -101,9 +101,12 @@ func TestTick_InitializesRetriesMapOnFirstCall(t *testing.T) {
 }
 
 func TestTick_CtxShutdownMidLoopRequeuesAndReturnsZero(t *testing.T) {
-	// If ctx is canceled between popping a Match and dispatching it,
-	// Tick must re-queue the popped Match and return 0 — otherwise the
-	// Match would be lost across worker restart.
+	// If ctx is canceled before Tick starts dispatching, the entire
+	// drained batch must be re-queued. Drain pops ALL due matches at
+	// once, so a naive "re-add the current Match only" would silently
+	// lose every Match past the cancellation point. Three matches
+	// here exercises that the loop re-queues the current AND every
+	// remaining drained entry.
 	calls := 0
 	client := &fakeClient{
 		respond: func(int) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
@@ -113,17 +116,19 @@ func TestTick_CtxShutdownMidLoopRequeuesAndReturnsZero(t *testing.T) {
 	}
 	d, sched := newDispatcher(client)
 	t0 := time.Now()
-	sched.Add(router.Match{
-		Key:       s3lifecycle.ActionKey{Bucket: "bk", ActionKind: s3lifecycle.ActionKindExpirationDays},
-		ObjectKey: "k1",
-		DueTime:   t0,
-	})
+	for _, k := range []string{"k1", "k2", "k3"} {
+		sched.Add(router.Match{
+			Key:       s3lifecycle.ActionKey{Bucket: "bk", ActionKind: s3lifecycle.ActionKindExpirationDays},
+			ObjectKey: k,
+			DueTime:   t0,
+		})
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // shutdown before Tick even starts dispatching
 
 	processed := d.Tick(ctx, t0.Add(time.Hour))
 	assert.Equal(t, 0, processed, "shutdown must report zero processed")
-	assert.Equal(t, 0, calls, "shutdown must skip the dispatch call")
-	assert.Equal(t, 1, sched.Len(), "the popped Match must be re-queued")
+	assert.Equal(t, 0, calls, "shutdown must skip every dispatch call")
+	assert.Equal(t, 3, sched.Len(), "every drained Match must be re-queued — none lost")
 }

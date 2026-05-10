@@ -98,10 +98,16 @@ func (d *Dispatcher) Tick(ctx context.Context, now time.Time) int {
 		d.retries = map[retryKey]int{}
 	}
 	due := d.Schedule.Drain(now)
-	for _, m := range due {
+	for i, m := range due {
 		if err := ctx.Err(); err != nil {
-			// Re-queue and return; the caller is shutting down.
-			d.Schedule.Add(m)
+			// Caller is shutting down. Re-queue every remaining drained
+			// Match (current and any not yet visited) so they're not
+			// lost across the worker restart — the schedule already
+			// popped them all out, so the dispatcher owns putting them
+			// back.
+			for _, rem := range due[i:] {
+				d.Schedule.Add(rem)
+			}
 			return 0
 		}
 		d.dispatchOne(ctx, m, now)
