@@ -60,6 +60,15 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 	if size > int64(math.MaxInt32) {
 		return fmt.Errorf("chunk size %d exceeds maximum int32 size", size)
 	}
+	// Child context so a terminal error here unblocks the producer
+	// goroutine immediately. Without this, a failed POST closes
+	// pipeReader (which only fails the producer's writes), but
+	// ReadUrlAsStream can keep draining the source body in its read
+	// loop until EOF before noticing — wasting source-volume bandwidth
+	// and CPU. Cancelling streamCtx makes ReadUrlAsStream's per-tick
+	// ctx.Done() check return on the next iteration.
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
 	dstJwt := security.EncodedJwt(assignResult.Auth)
 	srcJwt := filer.JwtForVolumeServer(srcFileId)
@@ -101,7 +110,7 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 		// HTTP transport picks it up — no per-chunk buffering on either
 		// side of the pipe.
 		var writeErr error
-		shouldRetry, readErr := util_http.ReadUrlAsStream(ctx, srcUrl, srcJwt, nil, false, false, offset, int(size), func(data []byte) {
+		shouldRetry, readErr := util_http.ReadUrlAsStream(streamCtx, srcUrl, srcJwt, nil, false, false, offset, int(size), func(data []byte) {
 			if writeErr != nil {
 				return
 			}
@@ -138,7 +147,7 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 		}
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dstUrl, pipeReader)
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodPost, dstUrl, pipeReader)
 	if err != nil {
 		// Drain the pipe so the producer goroutine doesn't leak waiting
 		// on a never-read writer.
@@ -152,7 +161,8 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 
 	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
-		// Closing the reader unblocks the producer if it was still mid-write.
+		// Closing the reader unblocks the producer if it was still mid-write;
+		// the deferred cancel above also stops any in-flight source read.
 		pipeReader.CloseWithError(err)
 		return fmt.Errorf("POST: %w", err)
 	}
