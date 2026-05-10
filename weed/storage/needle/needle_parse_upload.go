@@ -35,6 +35,16 @@ type ParsedUpload struct {
 
 func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (pu *ParsedUpload, e error) {
 	bytesBuffer.Reset()
+	// Pre-size the buffer to the announced request body so the
+	// bytes.Buffer.ReadFrom calls below don't geometric-grow on every upload.
+	// Without this, a 64 MiB chunk (e.g. the s3 chunk-copy path under
+	// concurrent UploadPartCopy load — see #6541) allocates the geometric
+	// series 0 → cap → 2*cap → ... ≈ 2x the chunk size for every byte
+	// transferred. Bound by sizeLimit so a misreported Content-Length can't
+	// over-allocate.
+	if r.ContentLength > 0 && r.ContentLength <= sizeLimit {
+		bytesBuffer.Grow(int(r.ContentLength))
+	}
 	pu = &ParsedUpload{bytesBuffer: bytesBuffer}
 	pu.PairMap = make(map[string]string)
 	for k, v := range r.Header {
