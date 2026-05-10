@@ -266,3 +266,104 @@ func TestDetect_PropagatesCompleteSendError(t *testing.T) {
 	assert.Len(t, r.proposals, 1, "proposals send before complete and remain recorded")
 	assert.Empty(t, r.completes)
 }
+
+// ---------- Execute ----------
+
+// recordingExecSender captures Execute-side messages. The Execute path
+// dials gRPC after passing validation, so these tests only exercise
+// the validation surface that errors out before any dial — proving
+// the handler refuses malformed jobs early instead of waiting on a
+// 30s dial timeout.
+type recordingExecSender struct {
+	progress  []*plugin_pb.JobProgressUpdate
+	completed []*plugin_pb.JobCompleted
+}
+
+func (r *recordingExecSender) SendProgress(p *plugin_pb.JobProgressUpdate) error {
+	r.progress = append(r.progress, p)
+	return nil
+}
+func (r *recordingExecSender) SendCompleted(c *plugin_pb.JobCompleted) error {
+	r.completed = append(r.completed, c)
+	return nil
+}
+
+func TestExecute_NilRequestErrors(t *testing.T) {
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), nil, &recordingExecSender{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil")
+}
+
+func TestExecute_NilJobErrors(t *testing.T) {
+	// A non-nil request with nil Job is a writer-side bug; refuse it
+	// rather than panic dereferencing request.Job.JobType.
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{}, &recordingExecSender{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil")
+}
+
+func TestExecute_NilSenderErrors(t *testing.T) {
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job: &plugin_pb.JobSpec{JobType: jobType},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil")
+}
+
+func TestExecute_WrongJobTypeErrors(t *testing.T) {
+	// A foreign job type routed to this handler is the admin's bug;
+	// surface as an error rather than running a bogus scheduler.
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job: &plugin_pb.JobSpec{JobType: "different_job"},
+	}, &recordingExecSender{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different_job")
+}
+
+func TestExecute_NoS3EndpointsErrors(t *testing.T) {
+	// Detect emits a "skipped" activity for this case; Execute is
+	// stricter — the admin shouldn't have routed an Execute request
+	// without S3 endpoints, so error out instead of silently no-oping.
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job:            &plugin_pb.JobSpec{JobType: jobType},
+		ClusterContext: &plugin_pb.ClusterContext{}, // no S3GrpcAddresses
+	}, &recordingExecSender{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no s3 servers")
+}
+
+func TestExecute_MissingFilerAddressErrors(t *testing.T) {
+	// filer_grpc_address is set by Detect when it builds the proposal;
+	// missing it means the proposal was tampered with or the admin
+	// dropped the parameter. Refuse rather than dial nothing.
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job: &plugin_pb.JobSpec{
+			JobType:    jobType,
+			Parameters: map[string]*plugin_pb.ConfigValue{}, // no filer_grpc_address
+		},
+		ClusterContext: &plugin_pb.ClusterContext{
+			S3GrpcAddresses: []string{"s3a:8333"},
+		},
+	}, &recordingExecSender{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "filer_grpc_address")
+}
+
+func TestExecute_EmptyJobTypeAccepted(t *testing.T) {
+	// Same convention as Detect: an empty JobType is broadcast routing
+	// and must be accepted. The handler then errors at the next
+	// validation step (no S3 endpoints) rather than at the type check.
+	h := NewHandler(nil)
+	err := h.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job:            &plugin_pb.JobSpec{}, // empty JobType
+		ClusterContext: &plugin_pb.ClusterContext{},
+	}, &recordingExecSender{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no s3 servers", "validation flowed past the type check")
+}
