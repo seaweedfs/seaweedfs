@@ -30,7 +30,19 @@ func TestHashExtended_DirectFromLifecyclePackage(t *testing.T) {
 	assert.Empty(t, HashExtended(map[string][]byte{}))
 	got := HashExtended(map[string][]byte{"a": []byte("1")})
 	assert.NotEmpty(t, got)
-	// Same content, different map iteration: hash must be stable.
-	again := HashExtended(map[string][]byte{"a": []byte("1")})
-	assert.Equal(t, got, again)
+	// Same content, different literal/insertion order across multiple
+	// keys: hash must be stable. A single-key check can't catch an
+	// iteration-order regression — multiple keys force the helper's
+	// sort path to actually do work.
+	first := HashExtended(map[string][]byte{
+		"a": []byte("1"),
+		"b": []byte("2"),
+		"c": []byte("3"),
+	})
+	second := HashExtended(map[string][]byte{
+		"c": []byte("3"),
+		"a": []byte("1"),
+		"b": []byte("2"),
+	})
+	assert.Equal(t, first, second, "hash must be insensitive to map iteration order")
 }

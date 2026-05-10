@@ -79,10 +79,13 @@ func TestEventOption_WithBootstrapVersion(t *testing.T) {
 	require.Same(t, bv, update.BootstrapVersion)
 }
 
-func TestEventOption_AllAreNoOpsOnEmptyEvent(t *testing.T) {
+func TestEventOption_NoPanicOnEmptyEvent(t *testing.T) {
 	// Defense: an event with neither NewEntry nor OldEntry must not
 	// panic on any With* option, even though no constructor produces
-	// this shape today.
+	// this shape today. Entry-targeting options fall through silently
+	// (NewEntry/OldEntry stay nil); WithBootstrapVersion targets the
+	// event itself, not an entry, so it does set BootstrapVersion —
+	// included here for panic safety.
 	e := &reader.Event{}
 	WithModTime(time.Unix(1, 0))(e)
 	WithTtlSec(60)(e)
@@ -90,7 +93,10 @@ func TestEventOption_AllAreNoOpsOnEmptyEvent(t *testing.T) {
 	WithExtended("k", []byte("v"))(e)
 	WithChunks(&filer_pb.FileChunk{FileId: "x"})(e)
 	WithSize(1024)(e)
-	// All fall through silently.
-	assert.Nil(t, e.NewEntry)
-	assert.Nil(t, e.OldEntry)
+	bv := &reader.BootstrapVersion{VersionID: "v"}
+	WithBootstrapVersion(bv)(e)
+
+	assert.Nil(t, e.NewEntry, "entry-targeting options must not allocate NewEntry")
+	assert.Nil(t, e.OldEntry, "entry-targeting options must not allocate OldEntry")
+	assert.Same(t, bv, e.BootstrapVersion, "WithBootstrapVersion sets the field regardless of entry state")
 }

@@ -11,11 +11,23 @@ import (
 // a prefix check. Trivial but at 0% coverage — pin it.
 
 func TestHasPrefix(t *testing.T) {
-	assert.True(t, HasPrefix("logs/2026/01/01", "logs/"))
-	assert.True(t, HasPrefix("logs/", "logs/"))
-	assert.False(t, HasPrefix("metrics/x", "logs/"))
-	assert.False(t, HasPrefix("logs", "logs/")) // shorter than prefix
-	assert.True(t, HasPrefix("anything", ""))   // empty prefix matches all
-	assert.True(t, HasPrefix("", ""))
-	assert.False(t, HasPrefix("", "x"))
+	cases := []struct {
+		name   string
+		path   string
+		prefix string
+		want   bool
+	}{
+		{"matching prefix", "logs/2026/01/01", "logs/", true},
+		{"exact match", "logs/", "logs/", true},
+		{"non-matching prefix", "metrics/x", "logs/", false},
+		{"shorter than prefix", "logs", "logs/", false},
+		{"empty prefix matches all", "anything", "", true},
+		{"both empty", "", "", true},
+		{"empty input non-empty prefix", "", "x", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, HasPrefix(c.path, c.prefix))
+		})
+	}
 }
