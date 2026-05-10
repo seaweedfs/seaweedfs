@@ -34,6 +34,10 @@ func TestObserveScheduleDepth_ReportsScheduleLen(t *testing.T) {
 	const shard = 137
 	d := &Dispatcher{ShardID: shard, Schedule: router.NewSchedule()}
 	g := stats_collect.S3LifecycleScheduleDepthGauge.WithLabelValues(strconv.Itoa(shard))
+	// Drop the label series at end of test so the global registry
+	// doesn't accumulate stale entries across test runs in the same
+	// process.
+	defer stats_collect.S3LifecycleScheduleDepthGauge.DeleteLabelValues(strconv.Itoa(shard))
 
 	// Empty schedule -> 0.
 	d.observeScheduleDepth()
