@@ -40,9 +40,12 @@ func (c *commandMqTopicConfigure) Help() string {
 
 	-retention accepts any Go duration string ("24h", "168h", "30m"). Use
 	-retentionSeconds for raw seconds when scripting. Specifying both is an
-	error. Setting -retention or -retentionSeconds without -retentionEnabled
-	stages the value but leaves enforcement off; pass -retentionEnabled=true
-	(or just -retentionEnabled) to actually enable expiry.
+	error.
+
+	When you set only some retention flags (for example, -retentionEnabled
+	without -retention), the unspecified field is read from the current
+	server-side configuration so it isn't accidentally zeroed. Omitting all
+	retention flags leaves the existing retention configuration alone.
 `
 }
 
@@ -64,12 +67,30 @@ func (c *commandMqTopicConfigure) Do(args []string, commandEnv *CommandEnv, writ
 		return err
 	}
 
-	if *retention != 0 && *retentionSeconds != 0 {
+	// Detect which retention flags the user actually provided. Using Visit
+	// (rather than value comparison) means an explicit `-retention=0` is
+	// treated as "user provided" and still triggers the mutual-exclusion
+	// check or partial-merge with current state.
+	var userSetRetention, userSetSeconds, userSetEnabled bool
+	mqCommand.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "retention":
+			userSetRetention = true
+		case "retentionSeconds":
+			userSetSeconds = true
+		case "retentionEnabled":
+			userSetEnabled = true
+		}
+	})
+
+	if userSetRetention && userSetSeconds {
 		return fmt.Errorf("-retention and -retentionSeconds are mutually exclusive")
 	}
 	if *retention < 0 || *retentionSeconds < 0 {
 		return fmt.Errorf("retention duration must be >= 0")
 	}
+
+	retentionTouched := userSetRetention || userSetSeconds || userSetEnabled
 
 	// find the broker balancer
 	brokerBalancer, err := findBrokerBalancer(commandEnv)
@@ -78,29 +99,51 @@ func (c *commandMqTopicConfigure) Do(args []string, commandEnv *CommandEnv, writ
 	}
 	fmt.Fprintf(writer, "current balancer: %s\n", brokerBalancer)
 
-	// build retention proto only when the user touched a retention flag, so
-	// existing callers that don't care about retention keep the prior
-	// "leave server-side state alone" behavior.
+	// Build the retention proto. When the user touches any retention flag we
+	// must send a fully-populated TopicRetention so partial flags don't zero
+	// the other field server-side: fetch the current configuration and use
+	// its values for whatever the user didn't specify.
 	var retentionProto *mq_pb.TopicRetention
-	retentionTouched := false
-	mqCommand.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "retention", "retentionSeconds", "retentionEnabled":
-			retentionTouched = true
-		}
-	})
 	if retentionTouched {
-		seconds := *retentionSeconds
-		if *retention != 0 {
+		var currentRetention *mq_pb.TopicRetention
+		if err := pb.WithBrokerGrpcClient(false, brokerBalancer, commandEnv.option.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			cur, getErr := client.GetTopicConfiguration(context.Background(), &mq_pb.GetTopicConfigurationRequest{
+				Topic: &schema_pb.Topic{Namespace: *namespace, Name: *topicName},
+			})
+			if getErr != nil {
+				// Topic may not exist yet — that's fine, we'll create it with
+				// the user-supplied retention only.
+				return nil
+			}
+			if cur != nil {
+				currentRetention = cur.Retention
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		var seconds int64
+		var enabled bool
+		if currentRetention != nil {
+			seconds = currentRetention.RetentionSeconds
+			enabled = currentRetention.Enabled
+		}
+		if userSetRetention {
 			seconds = int64((*retention) / time.Second)
+		} else if userSetSeconds {
+			seconds = *retentionSeconds
+		}
+		if userSetEnabled {
+			enabled = *retentionEnabled
 		}
 		retentionProto = &mq_pb.TopicRetention{
 			RetentionSeconds: seconds,
-			Enabled:          *retentionEnabled,
+			Enabled:          enabled,
 		}
 	}
 
-	// create topic
+	// create / update topic
 	return pb.WithBrokerGrpcClient(false, brokerBalancer, commandEnv.option.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		resp, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 			Topic: &schema_pb.Topic{
