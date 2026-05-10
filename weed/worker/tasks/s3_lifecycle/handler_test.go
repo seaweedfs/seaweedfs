@@ -335,15 +335,20 @@ func TestDescriptor_WorkerConfigFormCadenceDefaultsMatchParseConfig(t *testing.T
 		})
 	}
 	// And the form fields themselves: every default must be paired with
-	// a field of matching name so the admin can render and edit it.
-	declared := map[string]bool{}
+	// a field of matching name AND INT64 type so the admin can render +
+	// edit it and ParseConfig's readInt64 reads it correctly. Drift to
+	// e.g. STRING here would silently make the worker fall back to the
+	// hardcoded default and ignore admin edits.
+	declared := map[string]plugin_pb.ConfigFieldType{}
 	for _, sec := range d.WorkerConfigForm.Sections {
 		for _, f := range sec.Fields {
-			declared[f.Name] = true
+			declared[f.Name] = f.FieldType
 		}
 	}
 	for name := range wantDefaults {
-		assert.True(t, declared[name], "WorkerConfigForm has no field named %q", name)
+		ft, ok := declared[name]
+		assert.True(t, ok, "WorkerConfigForm has no field named %q", name)
+		assert.Equal(t, plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64, ft, "field %q must be INT64 to match readInt64", name)
 	}
 }
 
@@ -356,7 +361,7 @@ func TestDescriptor_AdminRuntimeDefaultsDailyCadence(t *testing.T) {
 	d := h.Descriptor()
 	require.NotNil(t, d.AdminRuntimeDefaults)
 	assert.Equal(t, int32(24*60), d.AdminRuntimeDefaults.DetectionIntervalMinutes)
-	assert.Greater(t, d.AdminRuntimeDefaults.DetectionTimeoutSeconds, int32(0))
+	assert.Equal(t, int32(60), d.AdminRuntimeDefaults.DetectionTimeoutSeconds, "60s timeout caps a stuck detect at one minute")
 	assert.Equal(t, int32(1), d.AdminRuntimeDefaults.MaxJobsPerDetection)
 }
 
