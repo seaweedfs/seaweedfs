@@ -34,7 +34,7 @@ func TestLifecycleSizeFilterGreaterThan(t *testing.T) {
 				Status: types.ExpirationStatusEnabled,
 				Filter: &types.LifecycleRuleFilter{
 					And: &types.LifecycleRuleAndOperator{
-						Prefix:                  aws.String("sz/"),
+						Prefix:                aws.String("sz/"),
 						ObjectSizeGreaterThan: aws.Int64(threshold),
 					},
 				},
@@ -44,8 +44,8 @@ func TestLifecycleSizeFilterGreaterThan(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	const smallKey = "sz/small.txt"  // size <= threshold → must remain
-	const largeKey = "sz/large.txt"  // size > threshold → must expire
+	const smallKey = "sz/small.txt"                                   // size <= threshold → must remain
+	const largeKey = "sz/large.txt"                                   // size > threshold → must expire
 	putObject(t, c, bucket, smallKey, strings.Repeat("a", threshold)) // exactly at boundary; gate is strictly >, so rejects
 	putObject(t, c, bucket, largeKey, strings.Repeat("a", threshold+50))
 
