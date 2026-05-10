@@ -58,8 +58,8 @@ func TestInMemoryPersister_SaveCopiesInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(100), got[key("a", s3lifecycle.ActionKindExpirationDays)],
 		"caller-side mutation must not bleed into stored state")
-	_, hasZ := got[key("z", s3lifecycle.ActionKindAbortMPU)]
-	assert.False(t, hasZ, "caller-side insertion must not bleed into stored state")
+	assert.NotContains(t, got, key("z", s3lifecycle.ActionKindAbortMPU),
+		"caller-side insertion must not bleed into stored state")
 }
 
 func TestInMemoryPersister_LoadReturnsACopy(t *testing.T) {
@@ -80,8 +80,8 @@ func TestInMemoryPersister_LoadReturnsACopy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(100), second[key("a", s3lifecycle.ActionKindExpirationDays)],
 		"caller-side mutation of the first snapshot must not bleed back")
-	_, hasZ := second[key("z", s3lifecycle.ActionKindAbortMPU)]
-	assert.False(t, hasZ, "caller-side insertion into the first snapshot must not bleed back")
+	assert.NotContains(t, second, key("z", s3lifecycle.ActionKindAbortMPU),
+		"caller-side insertion into the first snapshot must not bleed back")
 }
 
 func TestInMemoryPersister_SaveReplacesNotMerges(t *testing.T) {
@@ -118,9 +118,9 @@ func TestInMemoryPersister_DifferentShardsIsolated(t *testing.T) {
 	got2, err := p.Load(context.Background(), 2)
 	require.NoError(t, err)
 	assert.Equal(t, int64(100), got1[key("a", s3lifecycle.ActionKindExpirationDays)])
-	assert.Empty(t, got1[key("b", s3lifecycle.ActionKindNoncurrentDays)])
+	assert.NotContains(t, got1, key("b", s3lifecycle.ActionKindNoncurrentDays))
 	assert.Equal(t, int64(200), got2[key("b", s3lifecycle.ActionKindNoncurrentDays)])
-	assert.Empty(t, got2[key("a", s3lifecycle.ActionKindExpirationDays)])
+	assert.NotContains(t, got2, key("a", s3lifecycle.ActionKindExpirationDays))
 }
 
 func TestInMemoryPersister_SaveEmptyMapClearsState(t *testing.T) {
