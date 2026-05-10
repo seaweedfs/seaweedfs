@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"path"
@@ -41,8 +42,10 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	// concurrent UploadPartCopy load — see #6541) allocates the geometric
 	// series 0 → cap → 2*cap → ... ≈ 2x the chunk size for every byte
 	// transferred. Bound by sizeLimit so a misreported Content-Length can't
-	// over-allocate.
-	if r.ContentLength > 0 && r.ContentLength <= sizeLimit {
+	// over-allocate, and by math.MaxInt so the int conversion below can't
+	// overflow on 32-bit platforms (where it would wrap negative and panic
+	// inside bytes.Buffer.Grow).
+	if r.ContentLength > 0 && r.ContentLength <= sizeLimit && r.ContentLength <= math.MaxInt {
 		bytesBuffer.Grow(int(r.ContentLength))
 	}
 	pu = &ParsedUpload{bytesBuffer: bytesBuffer}
