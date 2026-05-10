@@ -44,6 +44,12 @@ func TestNewUpdate_PopulatesBothEntries(t *testing.T) {
 	require.NotNil(t, e.NewEntry)
 	assert.False(t, e.IsCreate())
 	assert.False(t, e.IsDelete())
+	// OldEntry's Mtime defaults to the event ts so its mirror of pre-
+	// update state reflects the same wall-clock origin as NewEntry —
+	// a downstream router that compares mtimes won't see a synthetic
+	// 1970 epoch.
+	assert.Equal(t, t0.Unix(), e.OldEntry.Attributes.Mtime)
+	assert.Equal(t, t0.Unix(), e.NewEntry.Attributes.Mtime)
 }
 
 func TestNewCreate_NestedKeyUsesLeafName(t *testing.T) {
@@ -51,6 +57,23 @@ func TestNewCreate_NestedKeyUsesLeafName(t *testing.T) {
 	// fixture keeps router/dispatcher tests realistic.
 	e := NewCreate("bk", "a/b/c.txt", time.Unix(0, 0))
 	assert.Equal(t, "c.txt", e.NewEntry.Name)
+}
+
+func TestNewCreate_DirectoryKeyUsesSlashlessLeaf(t *testing.T) {
+	// Directory-marker objects (S3 keys ending in "/") store the leaf
+	// name without the trailing slash on the filer side. A pre-fix
+	// regression returned "" here.
+	e := NewCreate("bk", "folder/", time.Unix(0, 0))
+	assert.Equal(t, "folder", e.NewEntry.Name)
+
+	// Nested directory key strips both the trailing slash AND the
+	// parent prefix.
+	e2 := NewCreate("bk", "a/b/folder/", time.Unix(0, 0))
+	assert.Equal(t, "folder", e2.NewEntry.Name)
+
+	// Multiple trailing slashes collapse.
+	e3 := NewCreate("bk", "folder///", time.Unix(0, 0))
+	assert.Equal(t, "folder", e3.NewEntry.Name)
 }
 
 func TestNewCreate_ShardIDDerivedFromKey(t *testing.T) {
@@ -110,6 +133,54 @@ func TestEventOption_WithChunks(t *testing.T) {
 func TestEventOption_WithShardIDOverrides(t *testing.T) {
 	e := NewCreate("bk", "obj.txt", time.Unix(0, 0), WithShardID(7))
 	assert.Equal(t, 7, e.ShardID)
+}
+
+func TestEventOption_WithOldSizeTargetsOldEntryOnUpdate(t *testing.T) {
+	// On Update events, WithSize lands on NewEntry; WithOldSize lets
+	// the caller configure pre-update state independently. Both options
+	// in a single call should produce distinct sizes on the two entries.
+	t0 := time.Unix(1700000000, 0)
+	e := NewUpdate("bk", "k", t0, WithSize(200), WithOldSize(100))
+	assert.Equal(t, uint64(200), e.NewEntry.Attributes.FileSize, "WithSize lands on NewEntry")
+	assert.Equal(t, uint64(100), e.OldEntry.Attributes.FileSize, "WithOldSize lands on OldEntry")
+}
+
+func TestEventOption_WithOldChunksTargetsOldEntryOnUpdate(t *testing.T) {
+	newChunk := &filer_pb.FileChunk{FileId: "1,new"}
+	oldChunk := &filer_pb.FileChunk{FileId: "1,old"}
+	t0 := time.Unix(1700000000, 0)
+	e := NewUpdate("bk", "k", t0, WithChunks(newChunk), WithOldChunks(oldChunk))
+	require.Len(t, e.NewEntry.Chunks, 1)
+	require.Len(t, e.OldEntry.Chunks, 1)
+	assert.Equal(t, "1,new", e.NewEntry.Chunks[0].FileId)
+	assert.Equal(t, "1,old", e.OldEntry.Chunks[0].FileId)
+}
+
+func TestEventOption_WithOldModTimeTargetsOldEntryOnUpdate(t *testing.T) {
+	// Pre-update mtime can lag the event timestamp; WithOldModTime lets
+	// a router test pin the noncurrent-clock origin.
+	t0 := time.Unix(1700000000, 0)
+	older := time.Unix(1699000000, 500)
+	e := NewUpdate("bk", "k", t0, WithOldModTime(older))
+	assert.Equal(t, older.Unix(), e.OldEntry.Attributes.Mtime)
+	assert.Equal(t, int32(500), e.OldEntry.Attributes.MtimeNs)
+	// NewEntry's mtime stays at the default ts.
+	assert.Equal(t, t0.Unix(), e.NewEntry.Attributes.Mtime)
+}
+
+func TestEventOption_WithOldOptionsAreNoOpsOnCreate(t *testing.T) {
+	// Create events have no OldEntry; the WithOld* options must not
+	// panic and must not leak fields into NewEntry.
+	t0 := time.Unix(1700000000, 0)
+	e := NewCreate("bk", "k", t0,
+		WithOldSize(999),
+		WithOldChunks(&filer_pb.FileChunk{FileId: "phantom"}),
+		WithOldModTime(time.Unix(1, 0)),
+	)
+	assert.Nil(t, e.OldEntry)
+	assert.Equal(t, uint64(0), e.NewEntry.Attributes.FileSize, "WithOldSize must not bleed to NewEntry")
+	assert.Empty(t, e.NewEntry.Chunks, "WithOldChunks must not bleed to NewEntry")
+	assert.Equal(t, t0.Unix(), e.NewEntry.Attributes.Mtime, "WithOldModTime must not bleed to NewEntry")
 }
 
 func TestEventOption_LaterOverridesEarlier(t *testing.T) {

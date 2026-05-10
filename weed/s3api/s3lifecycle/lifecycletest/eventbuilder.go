@@ -96,13 +96,48 @@ func WithExtended(key string, value []byte) EventOption {
 
 // WithChunks attaches FileChunks to the populated entry. Identity-CAS in
 // LifecycleDelete uses the head chunk's FID, so tests that exercise CAS
-// drift need at least one chunk.
+// drift need at least one chunk. For Update events the chunks land on
+// NewEntry; use WithOldChunks to target the pre-update state.
 func WithChunks(chunks ...*filer_pb.FileChunk) EventOption {
 	return func(e *reader.Event) {
 		if e.NewEntry != nil {
 			e.NewEntry.Chunks = append(e.NewEntry.Chunks, chunks...)
 		} else if e.OldEntry != nil {
 			e.OldEntry.Chunks = append(e.OldEntry.Chunks, chunks...)
+		}
+	}
+}
+
+// WithOldSize sets FileSize on OldEntry specifically. Use on Update
+// events to configure the pre-update size (the WithSize default lands
+// on NewEntry when both are populated).
+func WithOldSize(bytes int64) EventOption {
+	return func(e *reader.Event) {
+		if e.OldEntry != nil && e.OldEntry.Attributes != nil {
+			e.OldEntry.Attributes.FileSize = uint64(bytes)
+		}
+	}
+}
+
+// WithOldChunks attaches FileChunks to OldEntry specifically. Use on
+// Update events to configure the pre-update chunk list (WithChunks
+// targets NewEntry when both are populated).
+func WithOldChunks(chunks ...*filer_pb.FileChunk) EventOption {
+	return func(e *reader.Event) {
+		if e.OldEntry != nil {
+			e.OldEntry.Chunks = append(e.OldEntry.Chunks, chunks...)
+		}
+	}
+}
+
+// WithOldModTime sets Mtime/MtimeNs on OldEntry specifically. Update
+// events whose pre-update mtime should differ from the event timestamp
+// use this to override the default.
+func WithOldModTime(t time.Time) EventOption {
+	return func(e *reader.Event) {
+		if e.OldEntry != nil && e.OldEntry.Attributes != nil {
+			e.OldEntry.Attributes.Mtime = t.Unix()
+			e.OldEntry.Attributes.MtimeNs = int32(t.Nanosecond())
 		}
 	}
 }
@@ -177,8 +212,11 @@ func NewUpdate(bucket, key string, ts time.Time, opts ...EventOption) *reader.Ev
 		Key:     key,
 		ShardID: s3lifecycle.ShardID(bucket, key),
 		OldEntry: &filer_pb.Entry{
-			Name:       leafOf(key),
-			Attributes: &filer_pb.FuseAttributes{},
+			Name: leafOf(key),
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:   ts.Unix(),
+				MtimeNs: int32(ts.Nanosecond()),
+			},
 		},
 		NewEntry: &filer_pb.Entry{
 			Name: leafOf(key),
@@ -231,8 +269,14 @@ func (c *MetaLogClock) Peek() time.Time {
 
 // leafOf returns the basename of a slash-separated key. Filer entries
 // store only the leaf name; tests that mirror production layout need
-// the same shape.
+// the same shape. Trailing slashes are stripped first so directory-key
+// fixtures (e.g. "folder/") get the slashless leaf "folder" — the
+// production directory-marker write path stores the name without the
+// trailing slash.
 func leafOf(key string) string {
+	for len(key) > 0 && key[len(key)-1] == '/' {
+		key = key[:len(key)-1]
+	}
 	for i := len(key) - 1; i >= 0; i-- {
 		if key[i] == '/' {
 			return key[i+1:]
