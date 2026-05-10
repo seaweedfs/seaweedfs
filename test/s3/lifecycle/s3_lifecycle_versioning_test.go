@@ -52,28 +52,6 @@ func putNoncurrentExpirationLifecycle(t *testing.T, c *s3.Client, bucket, prefix
 	require.NoError(t, err)
 }
 
-// putExpiredDeleteMarkerLifecycle: Expiration{ExpiredObjectDeleteMarker:
-// true} cleans up sole-survivor delete markers.
-func putExpiredDeleteMarkerLifecycle(t *testing.T, c *s3.Client, bucket, prefix string) {
-	t.Helper()
-	_, err := c.PutBucketLifecycleConfiguration(context.Background(), &s3.PutBucketLifecycleConfigurationInput{
-		Bucket: aws.String(bucket),
-		LifecycleConfiguration: &types.BucketLifecycleConfiguration{
-			Rules: []types.LifecycleRule{
-				{
-					ID:     aws.String("expire-marker"),
-					Status: types.ExpirationStatusEnabled,
-					Filter: &types.LifecycleRuleFilter{Prefix: aws.String(prefix)},
-					Expiration: &types.LifecycleExpiration{
-						ExpiredObjectDeleteMarker: aws.Bool(true),
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-}
-
 // backdateVersionedMtime ages a specific .versions/v_<id> entry. The
 // version files live under <buckets>/<bucket>/<key>.versions/v_<versionId>.
 func backdateVersionedMtime(t *testing.T, fc filer_pb.SeaweedFilerClient, bucket, key, versionID string, daysOld int) {
@@ -297,7 +275,6 @@ func TestLifecycleExpiredDeleteMarkerCleanup(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_ = putExpiredDeleteMarkerLifecycle // keep the helper referenced; it's used by other tests in this file
 
 	const key = "m/obj.txt"
 	put1, err := c.PutObject(context.Background(), &s3.PutObjectInput{
