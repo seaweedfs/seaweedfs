@@ -79,13 +79,23 @@ func TestLifecycleSkipsObjectLockedObjects(t *testing.T) {
 	require.NoError(t, err, "PUT with retention must succeed on a lock-enabled bucket")
 	require.NotEmpty(t, aws.ToString(lockedPut.VersionId))
 
-	// Free object: PUT without retention.
-	putObject(t, c, bucket, freeKey, "free")
+	// Free object: PUT without retention. Object Lock requires
+	// versioning, so the bucket is implicitly versioned and every PUT
+	// produces a versionId. Capture both for the version-aware
+	// backdate path.
+	freePut, err := c.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(freeKey), Body: strings.NewReader("free"),
+	})
+	require.NoError(t, err)
+	freeVersionID := aws.ToString(freePut.VersionId)
+	require.NotEmpty(t, freeVersionID)
 
 	// Backdate both so they would otherwise both expire under the
 	// 1-day rule. The lock check is what distinguishes them.
-	backdateMtime(t, fc, bucket, lockedKey, 30)
-	backdateMtime(t, fc, bucket, freeKey, 30)
+	// Versioning-enabled buckets store entries under .versions/v_<id>,
+	// not at the bare key path, so use backdateVersionedMtime.
+	backdateVersionedMtime(t, fc, bucket, lockedKey, aws.ToString(lockedPut.VersionId), 30)
+	backdateVersionedMtime(t, fc, bucket, freeKey, freeVersionID, 30)
 
 	out := runLifecycleShard(t)
 	t.Logf("shell output:\n%s", out)
