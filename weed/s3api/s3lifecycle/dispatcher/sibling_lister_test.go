@@ -324,8 +324,8 @@ func TestListVersions_FiltersOutDirectoriesAndMissingVersionId(t *testing.T) {
 	f.put(dir,
 		versionEntry("v_aaa", "aaa"),
 		&filer_pb.Entry{Name: "subdir", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
-		&filer_pb.Entry{Name: "v_no_attrs"},                                                         // nil Attributes
-		&filer_pb.Entry{Name: "v_no_ext", Attributes: &filer_pb.FuseAttributes{}},                   // missing Extended
+		&filer_pb.Entry{Name: "v_no_attrs"},                                       // nil Attributes
+		&filer_pb.Entry{Name: "v_no_ext", Attributes: &filer_pb.FuseAttributes{}}, // missing Extended
 		&filer_pb.Entry{Name: "v_empty_ext", Attributes: &filer_pb.FuseAttributes{}, Extended: map[string][]byte{s3_constants.ExtVersionIdKey: nil}}, // empty value
 		versionEntry("v_zzz", "zzz"),
 	)
