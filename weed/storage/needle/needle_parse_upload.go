@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"path"
@@ -56,6 +57,11 @@ type ParsedUpload struct {
 	IsChunkedFile    bool
 	UncompressedData []byte
 	ContentMd5       string
+	// originalSizeHint is the value parsed from OriginalSizeHeader on the
+	// multipart part. If positive and IsGzipped is true, ParseUpload skips
+	// the size-learning DecompressData pass — we already know the
+	// uncompressed length.
+	originalSizeHint int
 }
 
 func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (pu *ParsedUpload, e error) {
@@ -83,7 +89,23 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	pu.UncompressedData = pu.Data
 	// println("received data", len(pu.Data), "isGzipped", pu.IsGzipped, "mime", pu.MimeType, "name", pu.FileName)
 	if pu.IsGzipped {
-		if unzipped, e := util.DecompressData(pu.Data); e == nil {
+		// If the upstream sent X-Seaweedfs-Original-Size and we don't need
+		// the uncompressed bytes for a Content-MD5 check, skip the
+		// decompress-and-discard pass that would otherwise just re-derive
+		// the size we were already told. For a 64 MiB chunk that pass
+		// allocates ~128 MiB through bytes.Buffer.ReadFrom's geometric
+		// grow inside util.GunzipStream — see #6541.
+		expectedChecksum := r.Header.Get("Content-MD5")
+		if expectedChecksum == "" {
+			expectedChecksum = pu.ContentMd5
+		}
+		if pu.originalSizeHint > 0 && expectedChecksum == "" {
+			pu.OriginalDataSize = pu.originalSizeHint
+			// pu.UncompressedData stays as pu.Data (the gzipped bytes).
+			// Downstream consumers either don't read it (chunk-copy
+			// uploads don't) or fall back to decompress-on-demand if they
+			// need the raw bytes.
+		} else if unzipped, e := util.DecompressData(pu.Data); e == nil {
 			pu.OriginalDataSize = len(unzipped)
 			pu.UncompressedData = unzipped
 			// println("ungzipped data size", len(unzipped))
@@ -211,6 +233,17 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 		pu.IsGzipped = part.Header.Get("Content-Encoding") == "gzip"
 		// pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
+		if hint := part.Header.Get(OriginalSizeHeader); hint != "" {
+			// Bound the user-controlled value: it flows into needle
+			// metadata (OriginalDataSize, then uint32(originalSize) at the
+			// volume-server caller). Cap at sizeLimit (the largest needle
+			// this volume will accept anyway) and at math.MaxUint32 to
+			// keep the downstream cast safe even if a future deployment
+			// configures a multi-GiB sizeLimit.
+			if n, err := strconv.Atoi(hint); err == nil && n > 0 && int64(n) <= sizeLimit && n <= math.MaxUint32 {
+				pu.originalSizeHint = n
+			}
+		}
 
 	} else {
 		disposition := r.Header.Get("Content-Disposition")
