@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"path"
@@ -233,7 +234,13 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		pu.IsGzipped = part.Header.Get("Content-Encoding") == "gzip"
 		// pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
 		if hint := part.Header.Get(OriginalSizeHeader); hint != "" {
-			if n, err := strconv.Atoi(hint); err == nil && n > 0 {
+			// Bound the user-controlled value: it flows into needle
+			// metadata (OriginalDataSize, then uint32(originalSize) at the
+			// volume-server caller). Cap at sizeLimit (the largest needle
+			// this volume will accept anyway) and at math.MaxUint32 to
+			// keep the downstream cast safe even if a future deployment
+			// configures a multi-GiB sizeLimit.
+			if n, err := strconv.Atoi(hint); err == nil && n > 0 && int64(n) <= sizeLimit && n <= math.MaxUint32 {
 				pu.originalSizeHint = n
 			}
 		}
