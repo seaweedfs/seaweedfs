@@ -217,12 +217,16 @@ func TestLifecycleNoncurrentVersionExpiration(t *testing.T) {
 		listOut, listErr := c.ListObjectVersions(context.Background(), &s3.ListObjectVersionsInput{
 			Bucket: aws.String(bucket), Prefix: aws.String(key),
 		})
-		t.Logf("HeadObject(latest) failed: %v\nListObjectVersions err=%v versions=%d markers=%d", err, listErr, len(listOut.Versions), len(listOut.DeleteMarkers))
-		for _, v := range listOut.Versions {
-			t.Logf("  version key=%s id=%s isLatest=%v", aws.ToString(v.Key), aws.ToString(v.VersionId), aws.ToBool(v.IsLatest))
-		}
-		for _, m := range listOut.DeleteMarkers {
-			t.Logf("  marker  key=%s id=%s isLatest=%v", aws.ToString(m.Key), aws.ToString(m.VersionId), aws.ToBool(m.IsLatest))
+		if listErr != nil || listOut == nil {
+			t.Logf("HeadObject(latest) failed: %v\nListObjectVersions err=%v", err, listErr)
+		} else {
+			t.Logf("HeadObject(latest) failed: %v\nListObjectVersions err=%v versions=%d markers=%d", err, listErr, len(listOut.Versions), len(listOut.DeleteMarkers))
+			for _, v := range listOut.Versions {
+				t.Logf("  version key=%s id=%s isLatest=%v", aws.ToString(v.Key), aws.ToString(v.VersionId), aws.ToBool(v.IsLatest))
+			}
+			for _, m := range listOut.DeleteMarkers {
+				t.Logf("  marker  key=%s id=%s isLatest=%v", aws.ToString(m.Key), aws.ToString(m.VersionId), aws.ToBool(m.IsLatest))
+			}
 		}
 		require.NoError(t, err, "HEAD(latest) on %s/%s must succeed; v2 (%s) must remain current", bucket, key, v2)
 	}
