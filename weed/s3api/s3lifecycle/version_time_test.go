@@ -64,17 +64,16 @@ func TestCompareVersionIds_MixedFormatComparesByTimestamp(t *testing.T) {
 	// value is also small. Whichever is numerically larger wins.
 	at := getVersionTimestamp(newFormatPrefix1)
 	bt := getVersionTimestamp(oldFormatPrefix1)
-	require := assert.New(t)
 	if at == bt {
-		require.Equal(0, CompareVersionIds(newFormatPrefix1, oldFormatPrefix1))
+		assert.Equal(t, 0, CompareVersionIds(newFormatPrefix1, oldFormatPrefix1))
 		return
 	}
 	if at > bt {
-		require.Equal(-1, CompareVersionIds(newFormatPrefix1, oldFormatPrefix1))
-		require.Equal(1, CompareVersionIds(oldFormatPrefix1, newFormatPrefix1))
+		assert.Equal(t, -1, CompareVersionIds(newFormatPrefix1, oldFormatPrefix1))
+		assert.Equal(t, 1, CompareVersionIds(oldFormatPrefix1, newFormatPrefix1))
 	} else {
-		require.Equal(1, CompareVersionIds(newFormatPrefix1, oldFormatPrefix1))
-		require.Equal(-1, CompareVersionIds(oldFormatPrefix1, newFormatPrefix1))
+		assert.Equal(t, 1, CompareVersionIds(newFormatPrefix1, oldFormatPrefix1))
+		assert.Equal(t, -1, CompareVersionIds(oldFormatPrefix1, newFormatPrefix1))
 	}
 }
 
