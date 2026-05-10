@@ -241,6 +241,47 @@ func contains(haystack, needle string) bool {
 	return false
 }
 
+func TestEntryUsesMetadataOnlyDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry *filer_pb.Entry
+		want  bool
+	}{
+		{
+			name:  "nil entry",
+			entry: nil,
+			want:  false,
+		},
+		{
+			name:  "nil attributes",
+			entry: &filer_pb.Entry{},
+			want:  false,
+		},
+		{
+			name:  "TtlSec=0 (no per-write stamp)",
+			entry: &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{TtlSec: 0}},
+			want:  false,
+		},
+		{
+			name:  "TtlSec>0 (PR 9377 stamped a fast-path TTL)",
+			entry: &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{TtlSec: 86400}},
+			want:  true,
+		},
+		{
+			name:  "TtlSec<0 should not happen but must not flip the path on",
+			entry: &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{TtlSec: -1}},
+			want:  false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := entryUsesMetadataOnlyDelete(c.entry); got != c.want {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
 func TestRecordMetadataOnlyIf_OnlyFiresWhenOn(t *testing.T) {
 	// Counter must increment exactly once per (bucket, hex(rule_hash))
 	// when on=true, and not at all when on=false. Other lifecycle paths

@@ -56,12 +56,7 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 }
 
 func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
-	// metadataOnly: skip per-chunk DeleteFile RPCs because the volume's TTL
-	// will reclaim chunks on its own. Per-write TTL stamping (PR 9377) sets
-	// Attributes.TtlSec on every entry whose lifecycle rule fits within
-	// volume TTL — observing a non-zero TtlSec on the live entry is the
-	// authoritative signal.
-	metadataOnly := entry != nil && entry.Attributes != nil && entry.Attributes.TtlSec > 0
+	metadataOnly := entryUsesMetadataOnlyDelete(entry)
 	switch req.ActionKind {
 	case s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, s3_lifecycle_pb.ActionKind_EXPIRATION_DATE:
 		// Current-version expiration: Enabled -> delete marker; Suspended
@@ -345,6 +340,17 @@ func identityMatches(live, want *s3_lifecycle_pb.EntryIdentity) bool {
 		return false
 	}
 	return bytes.Equal(live.ExtendedHash, want.ExtendedHash)
+}
+
+// entryUsesMetadataOnlyDelete reports whether the lifecycle delete path
+// can skip per-chunk DeleteFile RPCs and rely on the volume's TTL to
+// reclaim chunks. Per-write TTL stamping (PR 9377) sets Attributes.TtlSec
+// on every entry whose lifecycle rule fits within volume TTL — observing
+// a non-zero TtlSec on the live entry is the authoritative signal.
+// Defensive nil-checks because the caller may be racing a concurrent
+// rewrite that nil-ed Attributes briefly during meta-log replay.
+func entryUsesMetadataOnlyDelete(entry *filer_pb.Entry) bool {
+	return entry != nil && entry.Attributes != nil && entry.Attributes.TtlSec > 0
 }
 
 // recordMetadataOnlyIf bumps the metadata-only counter when on=true.
