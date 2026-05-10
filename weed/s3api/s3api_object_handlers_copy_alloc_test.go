@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -79,12 +80,17 @@ func TestDownloadChunkData_AllocationBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadChunkData: %v", err)
 	}
-	if len(data) != chunkSize {
-		t.Fatalf("got %d bytes, want %d", len(data), chunkSize)
-	}
 
 	runtime.ReadMemStats(&after)
 	allocated := after.TotalAlloc - before.TotalAlloc
+
+	// Correctness check happens after the alloc measurement so bytes.Equal
+	// doesn't pollute the window. A pre-sized buffer that silently truncates
+	// or corrupts the chunk would still pass the bound — assert content too.
+	if !bytes.Equal(data, payload) {
+		t.Fatalf("downloaded data does not match payload (len got=%d want=%d)",
+			len(data), len(payload))
+	}
 
 	// The output slice itself is chunkSize bytes; the streaming pump uses a
 	// pooled 256 KiB read buffer and doesn't otherwise accumulate. A 1.5x
