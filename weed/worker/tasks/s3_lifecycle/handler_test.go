@@ -246,3 +246,23 @@ func TestDetect_PropagatesProposalsSendError(t *testing.T) {
 	assert.Empty(t, r.proposals)
 	assert.Empty(t, r.completes, "complete must not fire when proposals fail")
 }
+
+func TestDetect_PropagatesCompleteSendError(t *testing.T) {
+	// SendComplete failing must propagate; otherwise the worker would
+	// report success to the admin despite the completion signal never
+	// landing. Proposals went out before the failure, so they remain in
+	// the recorder.
+	h := NewHandler(nil)
+	want := errors.New("transport down")
+	r := &recordingSender{errOn: map[string]error{"complete": want}}
+	err := h.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType: jobType,
+		ClusterContext: &plugin_pb.ClusterContext{
+			S3GrpcAddresses:    []string{"s3a:8333"},
+			FilerGrpcAddresses: []string{"f:18888"},
+		},
+	}, r)
+	assert.ErrorIs(t, err, want)
+	assert.Len(t, r.proposals, 1, "proposals send before complete and remain recorded")
+	assert.Empty(t, r.completes)
+}
