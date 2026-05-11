@@ -264,7 +264,6 @@ func drainShardEvents(ctx context.Context, cfg Config, now func() time.Time, sha
 
 	lastOK := startTsNs
 	halted := false
-	done := make(map[s3lifecycle.ActionKey]bool)
 
 drain:
 	for {
@@ -286,12 +285,8 @@ drain:
 				cancelReader()
 				break drain
 			}
-			if allDone(done, snap) {
-				cancelReader()
-				break drain
-			}
 			matches := router.Route(ctx, snap, ev, now(), cfg.Lister)
-			eventHalted, eventErr := processMatches(ctx, cfg, now, ev, matches, done)
+			eventHalted, eventErr := processMatches(ctx, cfg, now, ev, matches)
 			if eventErr != nil {
 				// A non-dispatch error (e.g. limiter wait cancelled by
 				// shutdown). Propagate so caller treats it as a halt.
@@ -313,38 +308,32 @@ drain:
 	return lastOK, halted, nil
 }
 
-// allDone returns true when every replay-eligible active action on
-// snap has flipped to done. With Phase 2's snapshot consisting only of
-// replay-eligible kinds, this is the "all rules have hit a not-yet-due
-// event, no more work this run" exit.
-func allDone(done map[s3lifecycle.ActionKey]bool, snap *engine.Snapshot) bool {
-	for _, a := range snap.AllActions() {
-		if a == nil || !a.IsActive() {
-			continue
-		}
-		if !done[a.Key] {
-			return false
-		}
-	}
-	return true
-}
-
 // processMatches dispatches every match emitted from one event. Returns
 // (halted, error). halted=true on any unresolved outcome
 // (RETRY_LATER / BLOCKED / transport error after in-run retries). The
 // caller exits the drain loop without advancing the cursor past this
 // event.
 //
-// Matches whose due_time is past now flip done[key] = true and are not
-// dispatched — the monotonic-TsNs invariant guarantees no later event
-// can make them due again for the same key on this run.
-func processMatches(ctx context.Context, cfg Config, now func() time.Time, ev *reader.Event, matches []router.Match, done map[s3lifecycle.ActionKey]bool) (bool, error) {
+// A match whose DueTime is in the future is simply skipped — it does
+// NOT terminate the loop or get cached as "done for this rule." A
+// single event can produce multiple matches for the same ActionKey
+// against different objects (e.g., routePointerTransitionExpand emits
+// one match per noncurrent sibling, each with its own SuccessorModTime
+// derived from a different demoting event), so a not-yet-due sibling
+// must never gate a sibling that's already past its DueTime. Without
+// per-object state the only safe behavior is per-match independence.
+//
+// Phase 2's perf cost from skipping the per-rule early-stop is small:
+// each daily run is bounded by the meta-log window and we already
+// invoke the rate limiter per match. Future work can revisit a
+// per-(rule, object) memoization if profiling shows it's worth the
+// state — the current shape errs on the side of correctness.
+func processMatches(ctx context.Context, cfg Config, now func() time.Time, ev *reader.Event, matches []router.Match) (bool, error) {
 	for _, m := range matches {
-		if done[m.Key] {
-			continue
-		}
 		if m.DueTime.After(now()) {
-			done[m.Key] = true
+			// Not yet due — skip this match, keep iterating. Other
+			// matches in the same event (different objects under the
+			// same rule) may still be due.
 			continue
 		}
 		if cfg.Limiter != nil {
@@ -369,8 +358,8 @@ func processMatches(ctx context.Context, cfg Config, now func() time.Time, ev *r
 			// metric-quiet to avoid double-counting.
 		case s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED:
-			glog.V(1).Infof("daily_run: %s on %s/%s %s: %s",
-				outcome, m.Bucket, m.ObjectKey, m.Key.ActionKind, /* reason */ "")
+			glog.V(1).Infof("daily_run: %s on %s/%s %s",
+				outcome, m.Bucket, m.ObjectKey, m.Key.ActionKind)
 			return true, nil
 		default:
 			glog.V(1).Infof("daily_run: unknown outcome %v on %s/%s", outcome, m.Bucket, m.ObjectKey)
