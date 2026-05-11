@@ -1274,17 +1274,23 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// Upload the file using putToFiler - this will create the file with version metadata.
 	// Versioned/suspended bucket → resolver returns 0 by construction;
 	// pass 0 directly so the path is explicit at the call site.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, nil)
+	//
+	// Clear the prior latest-version pointer (and stamp the displaced
+	// entry with NoncurrentSinceNs) inside the afterCreate callback so
+	// it runs while withObjectWriteLock is still held in putToFiler.
+	// Doing it after putToFiler returns would race a concurrent PUT
+	// promoting a newer latest, which we'd then incorrectly wipe.
+	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, func(_ *filer_pb.Entry) s3err.ErrorCode {
+		if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
+			// Best-effort: a stale IsLatest flag is recoverable on the
+			// next list-versions resync, so don't fail the PUT.
+			glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
+		}
+		return s3err.ErrNone
+	})
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
-	}
-
-	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
-	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject)
-	if err != nil {
-		glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
-		// Don't fail the request, but log the warning
 	}
 
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)

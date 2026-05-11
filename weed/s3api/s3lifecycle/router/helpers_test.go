@@ -1,7 +1,6 @@
 package router
 
 import (
-	"strconv"
 	"testing"
 	"time"
 
@@ -61,68 +60,6 @@ func TestSuccessorModTimeFromContainer_PositiveSecondsRoundTrip(t *testing.T) {
 		Extended: map[string][]byte{s3_constants.ExtLatestVersionMtimeKey: []byte("1700000000")},
 	})
 	assert.Equal(t, time.Unix(1700000000, 0).UTC(), got.UTC())
-}
-
-// ---------- successorFromEntryStamp ----------
-
-func TestSuccessorFromEntryStamp_NilOrMissingReturnsZero(t *testing.T) {
-	assert.True(t, successorFromEntryStamp(nil).IsZero())
-	assert.True(t, successorFromEntryStamp(&filer_pb.Entry{}).IsZero())
-	assert.True(t, successorFromEntryStamp(&filer_pb.Entry{
-		Extended: map[string][]byte{},
-	}).IsZero())
-}
-
-func TestSuccessorFromEntryStamp_EmptyOrInvalidReturnsZero(t *testing.T) {
-	for _, raw := range [][]byte{nil, []byte(""), []byte("nope")} {
-		got := successorFromEntryStamp(&filer_pb.Entry{
-			Extended: map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: raw},
-		})
-		assert.True(t, got.IsZero(), "value %q must produce zero time", string(raw))
-	}
-}
-
-func TestSuccessorFromEntryStamp_NonPositiveReturnsZero(t *testing.T) {
-	// Stamps are wall-clock UnixNano captured at demotion time; <=0
-	// signals "not set" — caller falls back to derived sibling mtime.
-	for _, raw := range []string{"0", "-1"} {
-		got := successorFromEntryStamp(&filer_pb.Entry{
-			Extended: map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: []byte(raw)},
-		})
-		assert.True(t, got.IsZero(), "value %q must produce zero time", raw)
-	}
-}
-
-func TestSuccessorFromEntryStamp_PositiveNanosRoundTrip(t *testing.T) {
-	const ns int64 = 1700000000_123456789
-	got := successorFromEntryStamp(&filer_pb.Entry{
-		Extended: map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: []byte("1700000000123456789")},
-	})
-	assert.Equal(t, time.Unix(0, ns).UTC(), got.UTC())
-}
-
-func TestSuccessorFromEntryStamp_MonotonicReadsAreOrdered(t *testing.T) {
-	// Property test for the same-node monotonicity guarantee: two
-	// demotions performed in sequence on a single S3 handler write
-	// non-decreasing stamps. With Phase 1's time.Now().UnixNano()
-	// fallback, this is a property of the OS clock — pinning it here
-	// catches future regressions where someone might mistakenly source
-	// the stamp from a non-monotonic clock (e.g., a header value).
-	// Cross-node monotonicity is NOT guaranteed in Phase 1; that
-	// strengthens only once the demoting filer write surfaces its
-	// own TsNs to the S3 handler.
-	earlier := time.Now().UnixNano()
-	later := time.Now().UnixNano()
-	require.GreaterOrEqual(t, later, earlier)
-
-	earlierEntry := &filer_pb.Entry{
-		Extended: map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: []byte(strconv.FormatInt(earlier, 10))},
-	}
-	laterEntry := &filer_pb.Entry{
-		Extended: map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: []byte(strconv.FormatInt(later, 10))},
-	}
-	assert.True(t, !successorFromEntryStamp(earlierEntry).After(successorFromEntryStamp(laterEntry)),
-		"reader must preserve write-order monotonicity")
 }
 
 // ---------- logicalKeyFromVersionPath ----------

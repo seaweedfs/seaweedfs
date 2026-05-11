@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -328,16 +327,11 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 	}
 	count := 0
 	for i, it := range items {
-		var successor time.Time
 		// Prefer the explicit demotion stamp written by the S3 PUT
-		// handler (ExtNoncurrentSinceNsKey). Falling back to the
-		// next-newer sibling's mtime is the legacy derivation and
-		// stays in place for entries written before Phase 1 shipped.
-		if stamp := it.entry.GetExtended()[s3_constants.ExtNoncurrentSinceNsKey]; len(stamp) > 0 {
-			if ns, parseErr := strconv.ParseInt(string(stamp), 10, 64); parseErr == nil && ns > 0 {
-				successor = time.Unix(0, ns)
-			}
-		}
+		// handler. Falling back to the next-newer sibling's mtime is
+		// the legacy derivation and stays in place for entries written
+		// before the stamp was introduced.
+		successor := s3lifecycle.SuccessorFromEntryStamp(it.entry)
 		if successor.IsZero() && i > 0 {
 			prev := items[i-1].entry.Attributes
 			successor = time.Unix(prev.Mtime, int64(prev.MtimeNs))

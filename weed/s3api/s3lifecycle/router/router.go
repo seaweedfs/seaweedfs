@@ -280,27 +280,6 @@ func successorModTimeFromContainer(entry *filer_pb.Entry) time.Time {
 	return time.Unix(secs, 0)
 }
 
-// successorFromEntryStamp returns the explicit noncurrent-since timestamp
-// written by the S3 PUT handler at demotion time
-// (s3_constants.ExtNoncurrentSinceNsKey). Returns zero time if the stamp
-// is missing or unparseable — the caller falls back to derived values
-// (sibling mtime or entry mtime) for legacy entries written before the
-// stamp existed.
-func successorFromEntryStamp(entry *filer_pb.Entry) time.Time {
-	if entry == nil {
-		return time.Time{}
-	}
-	raw, ok := entry.Extended[s3_constants.ExtNoncurrentSinceNsKey]
-	if !ok || len(raw) == 0 {
-		return time.Time{}
-	}
-	ns, err := strconv.ParseInt(string(raw), 10, 64)
-	if err != nil || ns <= 0 {
-		return time.Time{}
-	}
-	return time.Unix(0, ns)
-}
-
 // routePointerTransitionDisplaced is the single-lookup path: only the
 // displaced version's noncurrent eligibility could have changed, so
 // fetching just its file is enough. oldID == "" routes the bare null
@@ -336,7 +315,7 @@ func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot,
 	// at the moment the pointer flipped; container value is derived from
 	// the new latest's mtime and may drift across retries.
 	effectiveSuccessor := successor
-	if stamp := successorFromEntryStamp(displaced); !stamp.IsZero() {
+	if stamp := s3lifecycle.SuccessorFromEntryStamp(displaced); !stamp.IsZero() {
 		effectiveSuccessor = stamp
 	}
 	idx := 0
@@ -477,7 +456,7 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 		// Override with the explicit demotion stamp when present —
 		// PUT-time wall clock beats derived sibling mtime for accuracy
 		// and is immune to mtime edits on the sibling itself.
-		if stamp := successorFromEntryStamp(s.entry); !stamp.IsZero() {
+		if stamp := s3lifecycle.SuccessorFromEntryStamp(s.entry); !stamp.IsZero() {
 			thisSuccessor = stamp
 		}
 		idx := rank
