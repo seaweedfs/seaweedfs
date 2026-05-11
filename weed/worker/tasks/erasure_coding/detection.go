@@ -391,7 +391,7 @@ func newECPlacementPlanner(activeTopology *topology.ActiveTopology, preferredTag
 	}
 }
 
-func (p *ecPlacementPlanner) selectDestinations(sourceRack, sourceDC string, shardsNeeded int) ([]*placement.DiskCandidate, error) {
+func (p *ecPlacementPlanner) selectDestinations(sourceRack, sourceDC, sourceDiskType string, shardsNeeded int) ([]*placement.DiskCandidate, error) {
 	if p == nil || p.activeTopology == nil {
 		return nil, fmt.Errorf("ec placement planner is not initialized")
 	}
@@ -406,6 +406,10 @@ func (p *ecPlacementPlanner) selectDestinations(sourceRack, sourceDC string, sha
 		MaxTaskLoad:            topology.MaxTaskLoadForECPlacement,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
+		// Bias placement toward disks matching the source volume's disk
+		// type; placement spills to other types only if the preferred
+		// pool can't satisfy ShardsNeeded (#9423).
+		PreferredDiskType: sourceDiskType,
 	}
 
 	var lastErr error
@@ -415,6 +419,10 @@ func (p *ecPlacementPlanner) selectDestinations(sourceRack, sourceDC string, sha
 		}
 		result, err := placement.SelectDestinations(candidates, config)
 		if err == nil {
+			if result.SpilledToOtherDiskType {
+				glog.Warningf("EC placement spilled to disks outside preferred disk type %q to reach %d shards (source rack=%s dc=%s)",
+					sourceDiskType, shardsNeeded, sourceRack, sourceDC)
+			}
 			return result.SelectedDisks, nil
 		}
 		lastErr = err
@@ -633,8 +641,9 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 		}
 	}
 
-	// Select best disks for EC placement with rack/DC diversity using the cached planner
-	selectedDisks, err := planner.selectDestinations(sourceRack, sourceDC, totalShards)
+	// Select best disks for EC placement with rack/DC diversity using the cached planner.
+	// Pass source disk type so placement prefers matching-type disks (#9423).
+	selectedDisks, err := planner.selectDestinations(sourceRack, sourceDC, metric.DiskType, totalShards)
 	if err != nil {
 		return nil, err
 	}
@@ -827,6 +836,7 @@ func diskInfosToCandidates(disks []*topology.DiskInfo) []*placement.DiskCandidat
 			DiskID:         disk.DiskID,
 			DataCenter:     disk.DataCenter,
 			Rack:           disk.Rack,
+			DiskType:       disk.DiskType,
 			VolumeCount:    disk.DiskInfo.VolumeCount,
 			MaxVolumeCount: disk.DiskInfo.MaxVolumeCount,
 			ShardCount:     ecShardCount,
