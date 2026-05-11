@@ -102,8 +102,17 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
 				}
+				// A single EC volume's shards can live on multiple disks of
+				// one DataNode, so GetEcShards returns per-(vid,disk) entries.
+				// Dedupe so the snapshot carries each vid once.
+				seenEcVids := make(map[uint32]struct{})
 				for _, s := range dn.GetEcShards() {
-					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(s.VolumeId))
+					vid := uint32(s.VolumeId)
+					if _, ok := seenEcVids[vid]; ok {
+						continue
+					}
+					seenEcVids[vid] = struct{}{}
+					volumeLocation.NewEcVids = append(volumeLocation.NewEcVids, vid)
 				}
 				volumeLocations = append(volumeLocations, volumeLocation)
 			}
