@@ -27,30 +27,33 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.BootstrapInterval != 0 {
 		t.Errorf("BootstrapInterval default=%v, want 0 (walk-once-per-process)", cfg.BootstrapInterval)
 	}
-	if cfg.Algorithm != AlgorithmStreaming {
-		t.Errorf("Algorithm default=%q, want %q", cfg.Algorithm, AlgorithmStreaming)
+	if cfg.Algorithm != AlgorithmDailyReplay {
+		t.Errorf("Algorithm default=%q, want %q", cfg.Algorithm, AlgorithmDailyReplay)
 	}
 }
 
-func TestParseConfig_AlgorithmDailyReplay(t *testing.T) {
+func TestParseConfig_AlgorithmStreamingExplicit(t *testing.T) {
+	// Streaming stays available as a rollout escape hatch until Phase 5
+	// deletes it. Operators must be able to opt back into it explicitly.
 	admin := map[string]*plugin_pb.ConfigValue{
-		"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: AlgorithmDailyReplay}},
+		"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: AlgorithmStreaming}},
 	}
 	cfg := ParseConfig(admin, nil)
-	if cfg.Algorithm != AlgorithmDailyReplay {
-		t.Errorf("Algorithm=%q, want %q", cfg.Algorithm, AlgorithmDailyReplay)
+	if cfg.Algorithm != AlgorithmStreaming {
+		t.Errorf("Algorithm=%q, want %q", cfg.Algorithm, AlgorithmStreaming)
 	}
 }
 
-func TestParseConfig_AlgorithmUnknownValueFallsBackToStreaming(t *testing.T) {
+func TestParseConfig_AlgorithmUnknownValueFallsBackToDefault(t *testing.T) {
 	// Operators should not be able to silently activate a future
-	// algorithm value by typo. Anything not in the enum falls back.
+	// algorithm value by typo. Anything not in the enum falls back to
+	// the default (daily_replay).
 	admin := map[string]*plugin_pb.ConfigValue{
 		"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "future_algo"}},
 	}
 	cfg := ParseConfig(admin, nil)
-	if cfg.Algorithm != AlgorithmStreaming {
-		t.Errorf("unknown algorithm=%q must fall back to %q, got %q", "future_algo", AlgorithmStreaming, cfg.Algorithm)
+	if cfg.Algorithm != AlgorithmDailyReplay {
+		t.Errorf("unknown algorithm=%q must fall back to %q, got %q", "future_algo", AlgorithmDailyReplay, cfg.Algorithm)
 	}
 }
 

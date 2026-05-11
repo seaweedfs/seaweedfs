@@ -16,16 +16,18 @@ const (
 	defaultMaxRuntimeMinutes        = int64(60)
 	defaultBootstrapIntervalMinutes = int64(0) // 0 = walk once per process
 
-	// AlgorithmStreaming is the legacy event-driven dispatcher path
-	// (reader + heap + per-shard pipeline). Default until Phase 5.
-	AlgorithmStreaming = "streaming"
 	// AlgorithmDailyReplay routes the worker through dailyrun.Run for
 	// one bounded pass per Execute. Currently Phase 2 / replay-only:
 	// buckets with walker-bound action kinds are refused. Phase 4
-	// extends this to handle every kind.
+	// extends this to handle every kind. Default — the streaming path
+	// stays in the tree as a runtime escape hatch only.
 	AlgorithmDailyReplay = "daily_replay"
+	// AlgorithmStreaming is the legacy event-driven dispatcher path
+	// (reader + heap + per-shard pipeline). Kept as a fallback knob for
+	// rollout; deleted by Phase 5 once Phase 4 walker integration ships.
+	AlgorithmStreaming = "streaming"
 
-	defaultAlgorithm = AlgorithmStreaming
+	defaultAlgorithm = AlgorithmDailyReplay
 )
 
 // Config is the parsed AdminConfigForm + WorkerConfigForm view.

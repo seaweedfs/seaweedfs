@@ -86,12 +86,12 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "algorithm",
 							Label:       "Algorithm",
-							Description: "Streaming = legacy reader+heap dispatcher. Daily Replay = bounded daily meta-log scan (Phase 2, replay-only — buckets using ExpirationDate, ExpiredDeleteMarker, NewerNoncurrent, or scan_only rules will fail the run until Phase 4 ships). Default streaming.",
+							Description: "Daily Replay = bounded daily meta-log scan (Phase 2, replay-only — buckets using ExpirationDate, ExpiredDeleteMarker, NewerNoncurrent, or scan_only rules will fail the run until Phase 4 ships). Streaming = legacy reader+heap path, kept as a runtime escape hatch during the Phase 4 rollout; Phase 5 deletes it.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
 							Options: []*plugin_pb.ConfigOption{
-								{Value: AlgorithmStreaming, Label: "Streaming (legacy)", Description: "Long-running reader + per-shard heap + tick dispatcher. Default."},
-								{Value: AlgorithmDailyReplay, Label: "Daily Replay (Phase 2)", Description: "Bounded daily meta-log scan. Replay-only; buckets with walker-bound rules are refused."},
+								{Value: AlgorithmDailyReplay, Label: "Daily Replay (default)", Description: "Bounded daily meta-log scan. Replay-only in Phase 2; buckets with walker-bound rules fail the run."},
+								{Value: AlgorithmStreaming, Label: "Streaming (legacy fallback)", Description: "Long-running reader + per-shard heap + tick dispatcher. Pre-cutover behavior; removed in Phase 5."},
 							},
 						},
 					},
