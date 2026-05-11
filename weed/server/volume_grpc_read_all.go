@@ -11,6 +11,10 @@ import (
 
 func (vs *VolumeServer) ReadAllNeedles(req *volume_server_pb.ReadAllNeedlesRequest, stream volume_server_pb.VolumeServer_ReadAllNeedlesServer) (err error) {
 
+	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
+		return err
+	}
+
 	for _, vid := range req.VolumeIds {
 		if err := vs.streamReadOneVolume(needle.VolumeId(vid), stream); err != nil {
 			stats.VolumeServerFileReadFailures.Inc()

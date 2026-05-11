@@ -398,6 +398,10 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VolumeNeedleStatusResponse{}
 
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
 	volumeId := needle.VolumeId(req.VolumeId)
 
 	n := &needle.Needle{
