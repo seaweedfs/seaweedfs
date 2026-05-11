@@ -146,13 +146,22 @@ func effectiveTTL(a *CompiledAction) time.Duration {
 }
 
 // RulesForShard partitions the base snapshot's compiled actions into a
-// replay view and a walk view for the given shard. shardID is accepted for
-// signature symmetry with the eventual per-shard walker call site but is
-// not used here today — the action partition is shard-independent (the
-// walker filters by ShardID at the entry-iteration site, not at view
-// construction). retentionWindow is the only window input the engine sees;
-// the daily_run caller computes it as `now - earliest_available` and passes
-// it in so the partition is stable across one daily_run invocation.
+// replay view and a walk view.
+//
+// shardID is **reserved for forward-compatibility** and not consumed by
+// this implementation. Every shard sees every rule today because the
+// shard filter runs at the entry-iteration site (meta-log subscription
+// per shard, walker entry-loop ShardID check) rather than at view
+// construction. Keeping the parameter in the signature preserves the
+// API surface for a future move to per-shard rule sets (e.g. when
+// bucket-shard ownership is added) — removing it now would be a
+// breaking change at that future point. See DESIGN.md "open questions
+// → per-shard rule snapshots vs. global."
+//
+// retentionWindow is the only window input the engine sees; the
+// daily_run caller computes it as `now - earliest_available` and
+// passes it in so the partition is stable across one daily_run
+// invocation.
 //
 // Membership:
 //   - replay: clones of ExpirationDays / NoncurrentDays / AbortMPU actions

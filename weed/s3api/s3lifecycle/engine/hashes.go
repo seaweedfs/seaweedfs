@@ -4,11 +4,72 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"hash"
 	"sort"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
+
+// hashItem pairs a ruleset member with its parent action so the
+// sort+hash helpers below can be type-agnostic. Internal type — every
+// hash callsite collects items into a slice, then hands it off.
+type hashItem struct {
+	key    s3lifecycle.ActionKey
+	action *CompiledAction
+}
+
+// sortHashItems orders items by (RuleHash, ActionKind, Bucket). The
+// composition matches the ActionKey identity model: RuleHash is the
+// primary content-derived identifier, ActionKind disambiguates siblings
+// of one rule, Bucket scopes by bucket so the same XML in two buckets
+// hashes distinctly. Shared between ReplayContentHash and PromotedHash
+// so the two helpers agree on the on-wire ordering — if one drifted,
+// the cursor could see "rule changed" on a no-op snapshot rebuild.
+func sortHashItems(items []hashItem) {
+	sort.Slice(items, func(i, j int) bool {
+		if c := bytes.Compare(items[i].key.RuleHash[:], items[j].key.RuleHash[:]); c != 0 {
+			return c < 0
+		}
+		if items[i].key.ActionKind != items[j].key.ActionKind {
+			return items[i].key.ActionKind < items[j].key.ActionKind
+		}
+		return items[i].key.Bucket < items[j].key.Bucket
+	})
+}
+
+// hashWriter is the small varint-tagged writer the hash helpers use.
+// Each field gets a one-byte tag so a future schema change (new field)
+// can extend the on-wire format without colliding with existing values.
+type hashWriter struct {
+	h      hash.Hash
+	lenbuf [binary.MaxVarintLen64]byte
+}
+
+func newHashWriter() *hashWriter {
+	return &hashWriter{h: sha256.New()}
+}
+
+// writeField writes a length-prefixed byte field under tag.
+func (w *hashWriter) writeField(tag byte, b []byte) {
+	_, _ = w.h.Write([]byte{tag})
+	n := binary.PutUvarint(w.lenbuf[:], uint64(len(b)))
+	_, _ = w.h.Write(w.lenbuf[:n])
+	_, _ = w.h.Write(b)
+}
+
+// writeInt writes a varint-encoded signed integer under tag.
+func (w *hashWriter) writeInt(tag byte, v int64) {
+	_, _ = w.h.Write([]byte{tag})
+	n := binary.PutVarint(w.lenbuf[:], v)
+	_, _ = w.h.Write(w.lenbuf[:n])
+}
+
+func (w *hashWriter) sum() [32]byte {
+	var out [32]byte
+	copy(out[:], w.h.Sum(nil))
+	return out
+}
 
 // ReplayContentHash hashes the content (action kind, predicate, TTL value)
 // of every replay-eligible compiled action in the base snapshot, returning
@@ -30,11 +91,7 @@ func ReplayContentHash(s *Snapshot) [32]byte {
 	if s == nil {
 		return empty
 	}
-	type item struct {
-		key    s3lifecycle.ActionKey
-		action *CompiledAction
-	}
-	var items []item
+	var items []hashItem
 	for k, a := range s.actions {
 		if a == nil || a.Mode == ModeDisabled {
 			continue
@@ -42,54 +99,27 @@ func ReplayContentHash(s *Snapshot) [32]byte {
 		if !isReplayKind(k.ActionKind) {
 			continue
 		}
-		items = append(items, item{key: k, action: a})
+		items = append(items, hashItem{key: k, action: a})
 	}
 	if len(items) == 0 {
 		return empty
 	}
-	// Sort by RuleHash, then ActionKind, then Bucket. RuleHash is already a
-	// content-derived identifier, but we don't rely on it alone — including
-	// the bucket scope means two buckets carrying the same XML still hash
-	// distinctly (matches the ActionKey identity model). ActionKind
-	// disambiguates siblings that share a RuleHash.
-	sort.Slice(items, func(i, j int) bool {
-		if c := bytes.Compare(items[i].key.RuleHash[:], items[j].key.RuleHash[:]); c != 0 {
-			return c < 0
-		}
-		if items[i].key.ActionKind != items[j].key.ActionKind {
-			return items[i].key.ActionKind < items[j].key.ActionKind
-		}
-		return items[i].key.Bucket < items[j].key.Bucket
-	})
+	sortHashItems(items)
 
-	h := sha256.New()
-	var lenbuf [binary.MaxVarintLen64]byte
-	writeField := func(tag byte, b []byte) {
-		h.Write([]byte{tag})
-		n := binary.PutUvarint(lenbuf[:], uint64(len(b)))
-		h.Write(lenbuf[:n])
-		h.Write(b)
-	}
-	writeInt := func(tag byte, v int64) {
-		h.Write([]byte{tag})
-		n := binary.PutVarint(lenbuf[:], v)
-		h.Write(lenbuf[:n])
-	}
+	w := newHashWriter()
 	for _, it := range items {
-		writeField(0x01, []byte(it.key.Bucket))
-		writeField(0x02, it.key.RuleHash[:])
-		writeInt(0x03, int64(it.key.ActionKind))
+		w.writeField(0x01, []byte(it.key.Bucket))
+		w.writeField(0x02, it.key.RuleHash[:])
+		w.writeInt(0x03, int64(it.key.ActionKind))
 		// RuleHash already covers the predicate (Prefix + FilterTags + size
 		// filters) and per-kind TTLs, so we don't need to re-canonicalise
 		// the *Rule. But we also include the action's effective TTL
 		// directly so that an "effective TTL of 0" (a malformed rule where
 		// the kind doesn't match the populated field) is distinguishable
 		// from a valid one.
-		writeInt(0x04, int64(effectiveTTL(it.action)))
+		w.writeInt(0x04, int64(effectiveTTL(it.action)))
 	}
-	var sum [32]byte
-	copy(sum[:], h.Sum(nil))
-	return sum
+	return w.sum()
 }
 
 // PromotedHash hashes the set of replay-eligible actions that *would* land
@@ -103,6 +133,7 @@ func ReplayContentHash(s *Snapshot) [32]byte {
 //     didn't before.
 //   - walk → replay (retention recovered): rule used to appear here but no
 //     longer does.
+//
 // In both cases the persisted hash differs from the freshly computed one,
 // firing the recovery branch.
 //
@@ -113,11 +144,7 @@ func PromotedHash(s *Snapshot, retentionWindow time.Duration) [32]byte {
 	if s == nil {
 		return empty
 	}
-	type item struct {
-		key    s3lifecycle.ActionKey
-		action *CompiledAction
-	}
-	var items []item
+	var items []hashItem
 	for k, a := range s.actions {
 		if a == nil || a.Mode == ModeDisabled {
 			continue
@@ -132,42 +159,20 @@ func PromotedHash(s *Snapshot, retentionWindow time.Duration) [32]byte {
 		if ttl > 0 && ttl <= retentionWindow {
 			continue
 		}
-		items = append(items, item{key: k, action: a})
+		items = append(items, hashItem{key: k, action: a})
 	}
 	if len(items) == 0 {
 		return empty
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if c := bytes.Compare(items[i].key.RuleHash[:], items[j].key.RuleHash[:]); c != 0 {
-			return c < 0
-		}
-		if items[i].key.ActionKind != items[j].key.ActionKind {
-			return items[i].key.ActionKind < items[j].key.ActionKind
-		}
-		return items[i].key.Bucket < items[j].key.Bucket
-	})
+	sortHashItems(items)
 
-	h := sha256.New()
-	var lenbuf [binary.MaxVarintLen64]byte
-	writeField := func(tag byte, b []byte) {
-		h.Write([]byte{tag})
-		n := binary.PutUvarint(lenbuf[:], uint64(len(b)))
-		h.Write(lenbuf[:n])
-		h.Write(b)
-	}
-	writeInt := func(tag byte, v int64) {
-		h.Write([]byte{tag})
-		n := binary.PutVarint(lenbuf[:], v)
-		h.Write(lenbuf[:n])
-	}
+	w := newHashWriter()
 	for _, it := range items {
-		writeField(0x01, []byte(it.key.Bucket))
-		writeField(0x02, it.key.RuleHash[:])
-		writeInt(0x03, int64(it.key.ActionKind))
+		w.writeField(0x01, []byte(it.key.Bucket))
+		w.writeField(0x02, it.key.RuleHash[:])
+		w.writeInt(0x03, int64(it.key.ActionKind))
 	}
-	var sum [32]byte
-	copy(sum[:], h.Sum(nil))
-	return sum
+	return w.sum()
 }
 
 // MaxEffectiveTTL returns the maximum effective TTL across the *active*
