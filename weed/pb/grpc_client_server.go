@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,7 +82,15 @@ func init() {
 // GrpcDial to host:grpcPort (or to a loopback alias of host on the same
 // port) is routed through the Unix socket. Dials to any other host on the
 // same port still go over TCP.
+//
+// No-op on Windows: the /tmp/...sock paths callers pass are POSIX-only and
+// the listen/dial would fail at runtime, taking gRPC down with it (#9430).
+// Skipping registration leaves the maps empty, so ServeGrpcOnLocalSocket
+// and resolveLocalGrpcSocket short-circuit and same-host RPCs go over TCP.
 func RegisterLocalGrpcSocket(host string, grpcPort int, socketPath string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
 	localGrpcSocketsLock.Lock()
 	defer localGrpcSocketsLock.Unlock()
 	localGrpcSockets[grpcPort] = socketPath
