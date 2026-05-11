@@ -1347,9 +1347,20 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 	// Clear the latest version metadata from .versions directory since "null" is now latest
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err == nil && versionsEntry.Extended != nil {
-		// Capture previously-latest filename before clearing the pointer
-		// so the demoted version can be stamped with NoncurrentSinceNs.
+		// Capture previously-latest filename before clearing the pointer.
 		prevLatestFileName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+
+		// Stamp the demoted version BEFORE the .versions/ pointer
+		// clear. The pointer clear emits a meta-log event the lifecycle
+		// router consumes, then looks up the demoted version. If the
+		// stamp isn't already on the entry, the router falls back to a
+		// sibling-mtime derivation that can be wrong (versioned COPY
+		// in particular keeps the source's mtime). Best-effort:
+		// transient stamp-write failures are logged, lifecycle then
+		// falls back to the legacy derivation.
+		if prevLatestFileName != "" {
+			s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, prevLatestFileName, time.Now().UnixNano())
+		}
 
 		// Remove latest version metadata so all versions show IsLatest=false.
 		// Also wipe cached list-metadata (size/mtime/etag/owner/delete-marker):
@@ -1368,12 +1379,6 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
-		}
-
-		// Stamp the demoted version. Best-effort; lifecycle falls back
-		// to entry mtime if the stamp is missing.
-		if prevLatestFileName != "" {
-			s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, prevLatestFileName, time.Now().UnixNano())
 		}
 
 		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s/%s", bucket, object)
@@ -1501,6 +1506,23 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	// the demoted entry. Same-file overwrites (idempotent retries) are
 	// detected by filename equality and skip the stamp.
 	prevLatestFileName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+
+	// Stamp the demoted entry BEFORE updating the .versions/ directory
+	// pointer. The pointer-flip emits a meta-log event that the
+	// lifecycle router consumes; that router then looks up the demoted
+	// version. If the stamp isn't on the entry yet, the router falls
+	// back to a sibling-mtime derivation that can be arbitrarily wrong
+	// — versioned COPY is the clean break, since the new latest keeps
+	// the source object's mtime instead of recording the demotion
+	// moment. Stamping first closes that race.
+	//
+	// Best-effort: a transient stamp-write failure is logged but not
+	// fatal; the lifecycle engine still falls back to the legacy
+	// derivation in that case.
+	if prevLatestFileName != "" && prevLatestFileName != versionFileName {
+		s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, prevLatestFileName, time.Now().UnixNano())
+	}
+
 	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
 
@@ -1516,14 +1538,6 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
 		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
-	}
-
-	// Stamp the demoted entry so noncurrent lifecycle rules have an
-	// explicit clock start. Best-effort: failures are logged but not
-	// fatal — the lifecycle engine still falls back to entry mtime
-	// when this key is missing.
-	if prevLatestFileName != "" && prevLatestFileName != versionFileName {
-		s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, prevLatestFileName, time.Now().UnixNano())
 	}
 
 	return nil
