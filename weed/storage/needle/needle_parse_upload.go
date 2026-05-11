@@ -83,10 +83,16 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	pu.UncompressedData = pu.Data
 	// println("received data", len(pu.Data), "isGzipped", pu.IsGzipped, "mime", pu.MimeType, "name", pu.FileName)
 	if pu.IsGzipped {
-		if unzipped, e := util.DecompressData(pu.Data); e == nil {
-			pu.OriginalDataSize = len(unzipped)
-			pu.UncompressedData = unzipped
-			// println("ungzipped data size", len(unzipped))
+		// MD5 check needs the uncompressed bytes; otherwise just count
+		// the gunzip stream — see #6541.
+		needMD5 := r.Header.Get("Content-MD5") != "" || pu.ContentMd5 != ""
+		if needMD5 {
+			if unzipped, err := util.DecompressData(pu.Data); err == nil {
+				pu.OriginalDataSize = len(unzipped)
+				pu.UncompressedData = unzipped
+			}
+		} else if n, err := util.GunzipStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
+			pu.OriginalDataSize = int(n)
 		}
 	} else {
 		ext := filepath.Base(pu.FileName)
