@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -646,6 +647,111 @@ func TestExpandVersionsDir_LatestAndNoncurrentsByMtime(t *testing.T) {
 	assert.False(t, byID["v1"].IsLatest)
 	assert.Equal(t, 1, byID["v1"].NoncurrentIndex)
 	assert.Equal(t, v2mt.Unix(), byID["v1"].SuccessorModTime.Unix())
+}
+
+func TestExpandVersionsDir_NoncurrentSinceStampOverridesSiblingMtime(t *testing.T) {
+	// When a version entry carries an explicit ExtNoncurrentSinceNsKey
+	// stamp written by the S3 PUT handler at demotion time, that stamp
+	// must take precedence over the legacy "use the next-newer sibling's
+	// mtime" derivation. The stamp records exactly when the version
+	// became noncurrent, which the sibling mtime only approximates.
+	now := time.Now()
+	v1mt := now.Add(-10 * time.Hour) // entry mtime, very old
+	v2mt := now.Add(-1 * time.Hour)  // sibling that would normally drive successor
+	// Stamp v1's demotion at a fixed wall-clock that doesn't match v2.mt.
+	v1demotion := now.Add(-3 * time.Hour)
+
+	v1 := versionFile("v1", v1mt, false)
+	v1.Extended[s3_constants.ExtNoncurrentSinceNsKey] = []byte(
+		strconv.FormatInt(v1demotion.UnixNano(), 10),
+	)
+	v2 := versionFile("v2", v2mt, false)
+
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v2"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {v1, v2},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		require.NotNil(t, ev.BootstrapVersion)
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	require.Contains(t, byID, "v1")
+	// SuccessorModTime must come from the stamp, not from v2's mtime.
+	assert.Equal(t, v1demotion.UnixNano(), byID["v1"].SuccessorModTime.UnixNano(),
+		"stamp must win over sibling mtime; got %v want %v",
+		byID["v1"].SuccessorModTime, v1demotion)
+	assert.NotEqual(t, v2mt.Unix(), byID["v1"].SuccessorModTime.Unix(),
+		"sibling mtime must not be the SuccessorModTime source when stamp is present")
+}
+
+func TestExpandVersionsDir_MissingStampFallsBackToSiblingMtime(t *testing.T) {
+	// Legacy/pre-Phase-1 entries have no stamp. Behavior must be
+	// unchanged: SuccessorModTime falls back to the next-newer sibling's
+	// mtime. This pins the backward-compat path the design promises.
+	now := time.Now()
+	v1mt := now.Add(-3 * time.Hour)
+	v2mt := now.Add(-1 * time.Hour)
+	v1 := versionFile("v1", v1mt, false) // no stamp
+	v2 := versionFile("v2", v2mt, false)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v2"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {v1, v2},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.Equal(t, v2mt.Unix(), byID["v1"].SuccessorModTime.Unix(),
+		"missing stamp must fall through to sibling mtime")
+}
+
+func TestExpandVersionsDir_InvalidStampFallsBackToSiblingMtime(t *testing.T) {
+	// A malformed stamp value is the writer's bug — the reader must
+	// ignore it and fall back to the legacy derivation rather than
+	// blowing up or surfacing a nonsense time.
+	now := time.Now()
+	v1mt := now.Add(-3 * time.Hour)
+	v2mt := now.Add(-1 * time.Hour)
+	v1 := versionFile("v1", v1mt, false)
+	v1.Extended[s3_constants.ExtNoncurrentSinceNsKey] = []byte("not-a-number")
+	v2 := versionFile("v2", v2mt, false)
+	versionsDir := dirEntry("foo"+s3_constants.VersionsFolder, map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey: []byte("v2"),
+	})
+	client := &fakeFilerClient{
+		tree: map[string][]*filer_pb.Entry{
+			testBucketRoot + "/foo" + s3_constants.VersionsFolder: {v1, v2},
+		},
+	}
+	inj := &recordingInjector{}
+	b := &BucketBootstrapper{FilerClient: client, BucketsPath: "/buckets", Injector: inj}
+	_, err := b.expandVersionsDir(context.Background(), "b1", testBucketRoot, "foo"+s3_constants.VersionsFolder, versionsDir, nil, nil)
+	require.NoError(t, err)
+	byID := map[string]*reader.BootstrapVersion{}
+	for _, ev := range inj.snapshot() {
+		byID[ev.BootstrapVersion.VersionID] = ev.BootstrapVersion
+	}
+	assert.Equal(t, v2mt.Unix(), byID["v1"].SuccessorModTime.Unix(),
+		"unparseable stamp must fall through to sibling mtime")
 }
 
 func TestExpandVersionsDir_LatestPointerOutOfOrderByMtime(t *testing.T) {

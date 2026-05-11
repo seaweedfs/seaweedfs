@@ -38,6 +38,37 @@ func clearCachedVersionMetadata(extended map[string][]byte) {
 	delete(extended, s3_constants.ExtLatestVersionIsDeleteMarker)
 }
 
+// markVersionNoncurrent stamps ExtNoncurrentSinceNsKey on the named entry
+// inside .versions/. Called when a PUT or delete-marker demotes that entry
+// from current to noncurrent so the s3 lifecycle engine can compute
+// NoncurrentDays due time directly from the stamp instead of deriving it
+// from the next-newer sibling's mtime. demotionNs is captured once per
+// demotion event by the caller (typically time.Now().UnixNano()) and
+// passed in so concurrent demotions on the same object don't race for
+// a wall-clock read inside the helper.
+//
+// Idempotent on retries: if the key is already present, it is overwritten
+// with the new value. Out-of-order overwrites are bounded by the caller's
+// single-timestamp-per-event contract.
+func (s3a *S3ApiServer) markVersionNoncurrent(bucketDir, versionsObjectPath, fileName string, demotionNs int64) {
+	if fileName == "" || demotionNs <= 0 {
+		return
+	}
+	versionsDir := bucketDir + "/" + versionsObjectPath
+	entry, err := s3a.getEntry(versionsDir, fileName)
+	if err != nil {
+		glog.V(2).Infof("markVersionNoncurrent: skip %s/%s: %v", versionsDir, fileName, err)
+		return
+	}
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	entry.Extended[s3_constants.ExtNoncurrentSinceNsKey] = []byte(strconv.FormatInt(demotionNs, 10))
+	if err := s3a.updateEntry(versionsDir, entry); err != nil {
+		glog.V(2).Infof("markVersionNoncurrent: update %s/%s: %v", versionsDir, fileName, err)
+	}
+}
+
 // setCachedListMetadata caches list metadata in the .versions directory entry for single-scan efficiency
 func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
 	if versionEntry == nil || versionsEntry == nil {

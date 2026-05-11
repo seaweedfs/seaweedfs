@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +55,15 @@ func putNoncurrentExpirationLifecycle(t *testing.T, c *s3.Client, bucket, prefix
 
 // backdateVersionedMtime ages a specific .versions/v_<id> entry. The
 // version files live under <buckets>/<bucket>/<key>.versions/v_<versionId>.
+//
+// Also clears the ExtNoncurrentSinceNsKey stamp if present. The stamp
+// records when this version was demoted by its successor's PUT; tests
+// that backdate a version's own mtime aren't expressing a coherent claim
+// about the demotion moment, so leaving a real-now stamp would let it
+// dominate the backdated mtime and stop the rule from firing. Clearing
+// makes the lifecycle engine fall back to the sibling-mtime derivation,
+// which is what these tests were originally written against. Production
+// PUTs always write a stamp; this is a test-only escape hatch.
 func backdateVersionedMtime(t *testing.T, fc filer_pb.SeaweedFilerClient, bucket, key, versionID string, daysOld int) {
 	t.Helper()
 	dir := bucketsPath + "/" + bucket + "/" + key + ".versions"
@@ -67,6 +77,7 @@ func backdateVersionedMtime(t *testing.T, fc filer_pb.SeaweedFilerClient, bucket
 
 	resp.Entry.Attributes.Mtime = time.Now().Add(-time.Duration(daysOld) * 24 * time.Hour).Unix()
 	resp.Entry.Attributes.MtimeNs = 0
+	delete(resp.Entry.Extended, s3_constants.ExtNoncurrentSinceNsKey)
 	_, err = fc.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 		Directory: dir, Entry: resp.Entry,
 	})

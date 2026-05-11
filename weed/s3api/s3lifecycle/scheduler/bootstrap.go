@@ -327,8 +327,12 @@ func (b *BucketBootstrapper) expandVersionsDir(ctx context.Context, bucket, root
 	}
 	count := 0
 	for i, it := range items {
-		var successor time.Time
-		if i > 0 {
+		// Prefer the explicit demotion stamp written by the S3 PUT
+		// handler. Falling back to the next-newer sibling's mtime is
+		// the legacy derivation and stays in place for entries written
+		// before the stamp was introduced.
+		successor := s3lifecycle.SuccessorFromEntryStamp(it.entry)
+		if successor.IsZero() && i > 0 {
 			prev := items[i-1].entry.Attributes
 			successor = time.Unix(prev.Mtime, int64(prev.MtimeNs))
 		}

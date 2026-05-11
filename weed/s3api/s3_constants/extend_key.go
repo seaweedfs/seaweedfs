@@ -19,6 +19,12 @@ const (
 	ExtLatestVersionOwnerKey       = "Seaweed-X-Amz-Latest-Version-Owner"
 	ExtLatestVersionIsDeleteMarker = "Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"
 	ExtMultipartObjectKey          = "key"
+	// Wall-clock nanoseconds (int64 as decimal string) captured at the
+	// moment a versioned entry was demoted from current to noncurrent
+	// by a later PUT or delete marker. Read by the s3 lifecycle engine
+	// to compute NoncurrentDays due time; zero/missing falls back to
+	// the entry's own mtime so legacy data still expires.
+	ExtNoncurrentSinceNsKey = "Seaweed-X-Amz-Noncurrent-Since-Ns"
 
 	// S3 checksum storage keys (use x-seaweedfs- prefix to avoid leaking in generic header loop)
 	ExtChecksumAlgorithm = "x-seaweedfs-checksum-algorithm"
