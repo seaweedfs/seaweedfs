@@ -431,11 +431,22 @@ func (fo *FilerOptions) startFiler() {
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 
-	// Register IAM gRPC service if credential manager is available
+	// Register IAM gRPC service only when both a credential manager and an
+	// admin signing key are configured. The IAM RPCs can create users and
+	// mint access keys; mounting them on an unauthenticated listener would
+	// hand any caller that can reach the gRPC port S3-admin equivalent power.
+	// Operators who relied on the unauthenticated path must now set
+	// jwt.filer_signing.key in security.toml and attach a Bearer token signed
+	// with that key on every IAM call.
 	if credentialManager != nil {
-		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager)
-		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
-		glog.V(0).Info("Registered IAM gRPC service on filer")
+		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
+		if len(adminSigningKey) == 0 {
+			glog.Warningf("IAM gRPC service NOT registered on filer: jwt.filer_signing.key is empty in security.toml; configure it to enable IAM administration")
+		} else {
+			iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+			iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
+			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")
+		}
 	}
 
 	reflection.Register(grpcS)
