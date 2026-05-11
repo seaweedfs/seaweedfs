@@ -81,6 +81,16 @@ pub struct VolumeServerState {
     pub master_url: String,
     /// Seed master addresses for UI rendering.
     pub master_urls: Vec<String>,
+    /// Canonical http `host:port` form of every configured seed master.
+    /// Built once at construction so Ping admission stays O(1). Mirrors
+    /// Go's `seedMasterSet` on `VolumeServer`.
+    pub seed_master_set: std::collections::HashSet<String>,
+    /// Current master this server is heartbeating with, in canonical http
+    /// `host:port` form. Empty when no heartbeat connection is active. The
+    /// heartbeat goroutine writes; admission reads — the lock keeps them
+    /// from racing on a leader change. Mirrors Go's `currentMaster` plus
+    /// `currentMasterLock`.
+    pub current_master_url: tokio::sync::RwLock<String>,
     /// This server's own address (ip:port) for filtering self from lookup results.
     pub self_url: String,
     /// HTTP client for proxy requests and master lookups.
@@ -116,6 +126,35 @@ impl VolumeServerState {
             )));
         }
         Ok(())
+    }
+
+    /// Build the seed master set from a list of raw `host:port[.grpcPort]`
+    /// addresses, normalised the same way Go's `pb.ServerAddress.ToHttpAddress`
+    /// does (drop the `.grpcPort` suffix, preserve everything else).
+    pub fn build_seed_master_set(master_urls: &[String]) -> std::collections::HashSet<String> {
+        master_urls
+            .iter()
+            .map(|m| to_http_address(m).into_owned())
+            .collect()
+    }
+
+    /// Returns true iff `target` (normalised to canonical http `host:port`)
+    /// is a master this server already knows about. Volume servers do not
+    /// keep a peer-volume or peer-filer list, so Ping is scoped to masters.
+    /// Mirrors Go's `VolumeServer.isKnownPingTarget`.
+    pub async fn is_known_ping_target(&self, target: &str, target_type: &str) -> bool {
+        if target_type != "master" {
+            return false;
+        }
+        let key = to_http_address(target).into_owned();
+        if key.is_empty() {
+            return false;
+        }
+        let current = self.current_master_url.read().await.clone();
+        if !current.is_empty() && current == key {
+            return true;
+        }
+        self.seed_master_set.contains(&key)
     }
 }
 
