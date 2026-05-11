@@ -16,7 +16,7 @@ import (
 )
 
 // recordingClient captures every LifecycleDelete request the
-// daily-run path emits. The default outcome is DONE; tests that need
+// daily-run path emits. Default outcome is DONE; tests that need
 // other outcomes set responses by index.
 type recordingClient struct {
 	mu        sync.Mutex
@@ -54,9 +54,7 @@ func (c *recordingClient) seenObjects() []string {
 // sibling must never gate a sibling that's already past its DueTime.
 // Pin that here.
 func TestProcessMatches_NotYetDueDoesNotSuppressDueOnSameRule(t *testing.T) {
-	now := time.Now()
-	clock := func() time.Time { return now }
-
+	runNow := time.Now()
 	rh := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
 	rule := s3lifecycle.ActionKey{
 		Bucket:     "b",
@@ -67,54 +65,49 @@ func TestProcessMatches_NotYetDueDoesNotSuppressDueOnSameRule(t *testing.T) {
 	// due-times. Order intentionally puts the not-yet-due match first
 	// so a buggy per-rule done flag would suppress the others.
 	matches := []router.Match{
-		{Key: rule, Bucket: "b", ObjectKey: "future-sibling", DueTime: now.Add(48 * time.Hour)},
-		{Key: rule, Bucket: "b", ObjectKey: "due-sibling-a", DueTime: now.Add(-48 * time.Hour)},
-		{Key: rule, Bucket: "b", ObjectKey: "due-sibling-b", DueTime: now.Add(-24 * time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "future-sibling", DueTime: runNow.Add(48 * time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "due-sibling-a", DueTime: runNow.Add(-48 * time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "due-sibling-b", DueTime: runNow.Add(-24 * time.Hour)},
 	}
 	client := &recordingClient{}
 	cfg := Config{Client: client}
-	halted, err := processMatches(context.Background(), cfg, clock, &reader.Event{TsNs: now.UnixNano()}, matches)
+	skipped, halted, err := processMatches(context.Background(), cfg, runNow, &reader.Event{TsNs: runNow.UnixNano()}, matches)
 	require.NoError(t, err)
 	require.False(t, halted)
+	require.True(t, skipped, "at least one future-DueTime match must flag skippedAny")
 
-	// Both due siblings must have been dispatched. The future one is
-	// skipped — but it does NOT gate the others.
+	// Both due siblings must have been dispatched.
 	seen := client.seenObjects()
 	assert.ElementsMatch(t, []string{"due-sibling-a", "due-sibling-b"}, seen,
 		"due matches must dispatch regardless of where the future-sibling sits in the slice")
 }
 
 func TestProcessMatches_OrderingDoesNotMatter(t *testing.T) {
-	// Reverse the previous test's order: put future LAST. Result must
-	// be identical — neither position should affect dispatch.
-	now := time.Now()
-	clock := func() time.Time { return now }
+	runNow := time.Now()
 	rh := [8]byte{0xaa}
 	rule := s3lifecycle.ActionKey{Bucket: "b", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
 	matches := []router.Match{
-		{Key: rule, Bucket: "b", ObjectKey: "a", DueTime: now.Add(-2 * time.Hour)},
-		{Key: rule, Bucket: "b", ObjectKey: "b", DueTime: now.Add(-1 * time.Hour)},
-		{Key: rule, Bucket: "b", ObjectKey: "future", DueTime: now.Add(time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "a", DueTime: runNow.Add(-2 * time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "b", DueTime: runNow.Add(-1 * time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "future", DueTime: runNow.Add(time.Hour)},
 	}
 	client := &recordingClient{}
 	cfg := Config{Client: client}
-	halted, err := processMatches(context.Background(), cfg, clock, &reader.Event{}, matches)
+	skipped, halted, err := processMatches(context.Background(), cfg, runNow, &reader.Event{}, matches)
 	require.NoError(t, err)
 	require.False(t, halted)
+	require.True(t, skipped)
 	assert.ElementsMatch(t, []string{"a", "b"}, client.seenObjects())
 }
 
 func TestProcessMatches_HaltOnServerOutcomeStopsRemaining(t *testing.T) {
-	// A halt-on-failure outcome on match[1] must stop dispatch on
-	// match[2]. The cursor stays where the caller left it.
-	now := time.Now()
-	clock := func() time.Time { return now }
+	runNow := time.Now()
 	rh := [8]byte{0xbb}
 	rule := s3lifecycle.ActionKey{Bucket: "b", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
 	matches := []router.Match{
-		{Key: rule, Bucket: "b", ObjectKey: "ok", DueTime: now.Add(-time.Hour)},
-		{Key: rule, Bucket: "b", ObjectKey: "blocked", DueTime: now.Add(-time.Hour)},
-		{Key: rule, Bucket: "b", ObjectKey: "would-be-next", DueTime: now.Add(-time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "ok", DueTime: runNow.Add(-time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "blocked", DueTime: runNow.Add(-time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "would-be-next", DueTime: runNow.Add(-time.Hour)},
 	}
 	client := &recordingClient{responses: []s3_lifecycle_pb.LifecycleDeleteOutcome{
 		s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
@@ -122,7 +115,7 @@ func TestProcessMatches_HaltOnServerOutcomeStopsRemaining(t *testing.T) {
 		s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, // would be a bug if reached
 	}}
 	cfg := Config{Client: client}
-	halted, err := processMatches(context.Background(), cfg, clock, &reader.Event{}, matches)
+	_, halted, err := processMatches(context.Background(), cfg, runNow, &reader.Event{}, matches)
 	require.NoError(t, err)
 	require.True(t, halted, "BLOCKED outcome must halt the event loop")
 	assert.Equal(t, []string{"ok", "blocked"}, client.seenObjects(),
@@ -130,10 +123,30 @@ func TestProcessMatches_HaltOnServerOutcomeStopsRemaining(t *testing.T) {
 }
 
 func TestProcessMatches_EmptyMatchesIsNoop(t *testing.T) {
+	runNow := time.Now()
 	client := &recordingClient{}
 	cfg := Config{Client: client}
-	halted, err := processMatches(context.Background(), cfg, time.Now, &reader.Event{}, nil)
+	skipped, halted, err := processMatches(context.Background(), cfg, runNow, &reader.Event{}, nil)
 	require.NoError(t, err)
 	require.False(t, halted)
+	require.False(t, skipped)
 	assert.Empty(t, client.seenObjects())
+}
+
+func TestProcessMatches_AllDueNoSkippedFlag(t *testing.T) {
+	// All matches past their DueTime — skippedAny must be false so the
+	// caller can advance the cursor past this event.
+	runNow := time.Now()
+	rh := [8]byte{0xcc}
+	rule := s3lifecycle.ActionKey{Bucket: "b", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	matches := []router.Match{
+		{Key: rule, Bucket: "b", ObjectKey: "a", DueTime: runNow.Add(-time.Hour)},
+		{Key: rule, Bucket: "b", ObjectKey: "b", DueTime: runNow.Add(-30 * time.Minute)},
+	}
+	client := &recordingClient{}
+	cfg := Config{Client: client}
+	skipped, halted, err := processMatches(context.Background(), cfg, runNow, &reader.Event{}, matches)
+	require.NoError(t, err)
+	require.False(t, halted)
+	require.False(t, skipped, "every match was past DueTime; skippedAny must be false")
 }

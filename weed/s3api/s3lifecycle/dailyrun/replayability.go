@@ -48,10 +48,14 @@ func isReplayEligibleKind(k s3lifecycle.ActionKind) bool {
 }
 
 // checkSnapshotForUnsupported walks every active CompiledAction in snap
-// and returns the first kind that isn't replay-eligible. Phase 2 uses
-// this gate before invoking the replay loop. Phase 4 partitions these
-// into walk-bound actions and runs them through the walker, removing
-// the gate.
+// and returns the first kind that isn't replay-eligible OR is in a Mode
+// other than ModeEventDriven. router.Route gates dispatch on
+// `Mode == ModeEventDriven` (see weed/s3api/s3lifecycle/router/router.go),
+// so a replay-kind action that's been promoted to ModeScanOnly would
+// silently get no matches at all — the daily run must reject it loudly
+// so admin sees the failure in the activity log. Phase 4 partitions
+// these into walk-bound actions and runs them through the walker,
+// removing the gate.
 func checkSnapshotForUnsupported(snap *engine.Snapshot) *UnsupportedRuleError {
 	if snap == nil {
 		return nil
@@ -60,13 +64,19 @@ func checkSnapshotForUnsupported(snap *engine.Snapshot) *UnsupportedRuleError {
 		if a == nil || !a.IsActive() {
 			continue
 		}
-		if isReplayEligibleKind(a.Key.ActionKind) {
-			continue
+		if !isReplayEligibleKind(a.Key.ActionKind) {
+			return &UnsupportedRuleError{
+				Bucket: a.Bucket,
+				Kind:   a.Key.ActionKind,
+				Reason: "Phase 2 only routes ExpirationDays / NoncurrentDays / AbortMPU; ExpirationDate, ExpiredDeleteMarker, NewerNoncurrent land in Phase 4",
+			}
 		}
-		return &UnsupportedRuleError{
-			Bucket: a.Bucket,
-			Kind:   a.Key.ActionKind,
-			Reason: "Phase 2 only routes ExpirationDays / NoncurrentDays / AbortMPU; ExpirationDate, ExpiredDeleteMarker, NewerNoncurrent, and scan_only land in Phase 4",
+		if a.Mode != engine.ModeEventDriven {
+			return &UnsupportedRuleError{
+				Bucket: a.Bucket,
+				Kind:   a.Key.ActionKind,
+				Reason: fmt.Sprintf("action is in Mode=%v (router.Route only dispatches ModeEventDriven); scan_only promotions land in Phase 4", a.Mode),
+			}
 		}
 	}
 	return nil

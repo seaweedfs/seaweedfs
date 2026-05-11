@@ -88,6 +88,31 @@ func TestCheckSnapshotForUnsupported_ExpiredDeleteMarkerRejected(t *testing.T) {
 	assert.Equal(t, s3lifecycle.ActionKindExpiredDeleteMarker, err.Kind)
 }
 
+func TestCheckSnapshotForUnsupported_NonEventDrivenModeRejected(t *testing.T) {
+	// A replay-eligible action whose Mode isn't ModeEventDriven (e.g.
+	// promoted to ModeScanOnly by retention checks) is silently
+	// ignored by router.Route. Phase 2 must catch this loudly. Build a
+	// snapshot with one ExpirationDays action and mutate its Mode to
+	// ModeScanOnly directly — there's no production path that produces
+	// this without retention plumbing we don't have here, but the gate
+	// must still reject it.
+	snap := newSnapshotWith(t, []engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{ruleExpirationDays(30)}},
+	})
+	// Mutate the compiled action to ModeScanOnly. AllActions returns
+	// the live snapshot's actions; this is safe in a test where no
+	// concurrent worker is reading.
+	for _, a := range snap.AllActions() {
+		if a.Key.ActionKind == s3lifecycle.ActionKindExpirationDays {
+			a.Mode = engine.ModeScanOnly
+		}
+	}
+	err := checkSnapshotForUnsupported(snap)
+	require.NotNil(t, err, "ModeScanOnly on a replay-kind action must be rejected")
+	assert.Equal(t, s3lifecycle.ActionKindExpirationDays, err.Kind)
+	assert.Contains(t, err.Reason, "ModeEventDriven")
+}
+
 func TestIsUnsupportedRule_TypeCheck(t *testing.T) {
 	var u error = &UnsupportedRuleError{Bucket: "b", Kind: s3lifecycle.ActionKindExpirationDate, Reason: "x"}
 	assert.True(t, IsUnsupportedRule(u))

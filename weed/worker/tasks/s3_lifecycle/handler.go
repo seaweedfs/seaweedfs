@@ -324,6 +324,7 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Client:      lifecycleRPCAdapter{c: rpc},
 		Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
 		Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+		Workers:     cfg.Workers,
 		ClientName:  "worker-s3-lifecycle-daily",
 		// Limiter is wired in Phase 3 from ClusterContext.Metadata.
 	})

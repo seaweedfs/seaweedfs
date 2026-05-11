@@ -10,7 +10,7 @@ For each bucket lifecycle rule with TTL `D` days, delete every object whose age 
 
 One pass per day, per shard:
 
-```
+```text
 daily_run(shardID):
     persisted             = load_cursor(shardID)                // { TsNs, rule_set_hash, promoted_hash }
     earliest_available    = metalog.EarliestAvailableTsNs(shardID)
@@ -343,14 +343,14 @@ Four triggers route into the same **recovery branch** (cold-start, replay-rule e
 
 The admin and worker forms collapse significantly. New worker config:
 
-```
+```text
 deletes_per_run_concurrency    // optional, in-pass parallelism (default 1)
 max_runtime_minutes            // safety cap; default 1440 (24h)
 ```
 
 Removed worker config (no longer meaningful):
 
-```
+```text
 dispatch_tick_minutes
 checkpoint_tick_seconds
 refresh_interval_minutes
@@ -359,7 +359,7 @@ bootstrap_interval_minutes
 
 New admin config (added to the existing form):
 
-```
+```text
 cluster_deletes_per_second     // 0 = unlimited
 cluster_deletes_burst          // 0 = 2× rps
 ```

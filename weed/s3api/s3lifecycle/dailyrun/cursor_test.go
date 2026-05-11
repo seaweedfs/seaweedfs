@@ -89,11 +89,59 @@ func TestFilerCursorPersister_CorruptDataReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestFilerCursorPersister_EmptyFileReturnsError(t *testing.T) {
+	// A cursor file that exists but is empty signals a partial write
+	// or external truncation. Treating it as "cold start" would silently
+	// re-scan from time zero and burn through a meta-log window for no
+	// reason. Pin that we error instead.
+	store := newFakeStore()
+	store.files[store.key(CursorDir, "shard-00.json")] = []byte{}
+	p := &FilerCursorPersister{Store: store}
+	_, _, err := p.Load(context.Background(), 0)
+	require.Error(t, err)
+}
+
 func TestFilerCursorPersister_WrongVersionReturnsError(t *testing.T) {
 	// Future schema bumps must not silently overwrite a cursor written
 	// by a newer worker. Pin that contract here.
 	store := newFakeStore()
-	store.files[store.key(CursorDir, "shard-00.json")] = []byte(`{"version":42,"shard_id":0,"ts_ns":0,"rule_set_hash":null,"promoted_hash":null}`)
+	store.files[store.key(CursorDir, "shard-00.json")] = []byte(`{"version":42,"shard_id":0,"ts_ns":0,"rule_set_hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","promoted_hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+	p := &FilerCursorPersister{Store: store}
+	_, _, err := p.Load(context.Background(), 0)
+	require.Error(t, err)
+}
+
+func TestFilerCursorPersister_ShardIDMismatchReturnsError(t *testing.T) {
+	// A file declaring shard=1 read by a shard=0 caller is corruption
+	// (or a misroute); applying that cursor would advance the wrong
+	// shard's state. Reject loudly.
+	store := newFakeStore()
+	// Build a valid v1 payload but with shard_id=1 in the body.
+	in := Cursor{TsNs: 42}
+	for i := range in.RuleSetHash {
+		in.RuleSetHash[i] = byte(i + 1)
+	}
+	for i := range in.PromotedHash {
+		in.PromotedHash[i] = byte(i)
+	}
+	p := &FilerCursorPersister{Store: store}
+	require.NoError(t, p.Save(context.Background(), 1, in))
+	// Reparent that file as if it lived at shard 0 — the test's fake
+	// store only keys by name, so we copy the bytes manually.
+	store.mu.Lock()
+	store.files[store.key(CursorDir, "shard-00.json")] = store.files[store.key(CursorDir, "shard-01.json")]
+	store.mu.Unlock()
+	_, _, err := p.Load(context.Background(), 0)
+	require.Error(t, err)
+}
+
+func TestFilerCursorPersister_HashLengthMismatchReturnsError(t *testing.T) {
+	// Hand-rolled JSON with hashes shorter than 32 bytes. copy() would
+	// silently zero-pad which makes the hash comparison match a value
+	// that doesn't actually exist on disk. Reject loudly so an operator
+	// fixes the persisted state.
+	store := newFakeStore()
+	store.files[store.key(CursorDir, "shard-00.json")] = []byte(`{"version":1,"shard_id":0,"ts_ns":0,"rule_set_hash":"AA==","promoted_hash":"AA=="}`)
 	p := &FilerCursorPersister{Store: store}
 	_, _, err := p.Load(context.Background(), 0)
 	require.Error(t, err)

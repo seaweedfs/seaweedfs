@@ -79,9 +79,16 @@ func cursorFileName(shardID int) string {
 	return fmt.Sprintf("shard-%02d.json", shardID)
 }
 
-// Load returns (zero-Cursor, false, nil) when no cursor exists yet.
-// A corrupt file is returned as an error — the daily run halts rather
-// than silently re-scanning from time zero.
+// Load returns (zero-Cursor, false, nil) only when the cursor file
+// does not exist yet (cold start). Every other failure mode — empty
+// file, malformed JSON, wrong version, wrong shard, hash slices not
+// exactly 32 bytes — returns an error so the daily run halts and is
+// fixed by an operator rather than silently re-scanning from time zero.
+//
+// Strict shape validation is load-bearing because the cursor is
+// load → mutate → save in a single run: a partial-truncate that
+// silently zero-padded the rule_set_hash would be persisted back as a
+// real-looking hash, masking the corruption forever.
 func (p *FilerCursorPersister) Load(ctx context.Context, shardID int) (Cursor, bool, error) {
 	if p.Store == nil {
 		return Cursor{}, false, errors.New("FilerCursorPersister: nil Store")
@@ -94,7 +101,7 @@ func (p *FilerCursorPersister) Load(ctx context.Context, shardID int) (Cursor, b
 		return Cursor{}, false, fmt.Errorf("cursor read shard=%d: %w", shardID, err)
 	}
 	if len(content) == 0 {
-		return Cursor{}, false, nil
+		return Cursor{}, false, fmt.Errorf("cursor shard=%d: file exists but is empty (partial write or external truncation)", shardID)
 	}
 	var cf cursorFile
 	if err := json.Unmarshal(content, &cf); err != nil {
@@ -102,6 +109,15 @@ func (p *FilerCursorPersister) Load(ctx context.Context, shardID int) (Cursor, b
 	}
 	if cf.Version != cursorFileVersion {
 		return Cursor{}, false, fmt.Errorf("cursor version shard=%d: got %d, want %d", shardID, cf.Version, cursorFileVersion)
+	}
+	if cf.ShardID != shardID {
+		return Cursor{}, false, fmt.Errorf("cursor shard mismatch: file declares shard=%d, requested shard=%d", cf.ShardID, shardID)
+	}
+	if len(cf.RuleSetHash) != 32 {
+		return Cursor{}, false, fmt.Errorf("cursor rule_set_hash shard=%d: got %d bytes, want 32", shardID, len(cf.RuleSetHash))
+	}
+	if len(cf.PromotedHash) != 32 {
+		return Cursor{}, false, fmt.Errorf("cursor promoted_hash shard=%d: got %d bytes, want 32", shardID, len(cf.PromotedHash))
 	}
 	c := Cursor{TsNs: cf.TsNs}
 	copy(c.RuleSetHash[:], cf.RuleSetHash)
