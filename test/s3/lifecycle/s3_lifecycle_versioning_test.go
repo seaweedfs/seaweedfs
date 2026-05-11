@@ -7,7 +7,6 @@ package lifecycle
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,15 +56,14 @@ func putNoncurrentExpirationLifecycle(t *testing.T, c *s3.Client, bucket, prefix
 // backdateVersionedMtime ages a specific .versions/v_<id> entry. The
 // version files live under <buckets>/<bucket>/<key>.versions/v_<versionId>.
 //
-// If the entry already carries an ExtNoncurrentSinceNsKey stamp (written
-// by the S3 PUT handler at demotion time), the stamp is rewritten to the
-// same backdated instant so the lifecycle engine's noncurrent clock —
-// which prefers the explicit stamp over the legacy sibling-mtime
-// derivation — also moves backward. Without this the tests would see a
-// real-now stamp dominate a backdated mtime and the rule would never
-// fire. A test simplification: production stamps record when the
-// successor was written, not the demoted version's own mtime; the test
-// only needs the resulting clock to be old enough.
+// Also clears the ExtNoncurrentSinceNsKey stamp if present. The stamp
+// records when this version was demoted by its successor's PUT; tests
+// that backdate a version's own mtime aren't expressing a coherent claim
+// about the demotion moment, so leaving a real-now stamp would let it
+// dominate the backdated mtime and stop the rule from firing. Clearing
+// makes the lifecycle engine fall back to the sibling-mtime derivation,
+// which is what these tests were originally written against. Production
+// PUTs always write a stamp; this is a test-only escape hatch.
 func backdateVersionedMtime(t *testing.T, fc filer_pb.SeaweedFilerClient, bucket, key, versionID string, daysOld int) {
 	t.Helper()
 	dir := bucketsPath + "/" + bucket + "/" + key + ".versions"
@@ -77,14 +75,9 @@ func backdateVersionedMtime(t *testing.T, fc filer_pb.SeaweedFilerClient, bucket
 	require.NotNil(t, resp.Entry)
 	require.NotNil(t, resp.Entry.Attributes)
 
-	backdated := time.Now().Add(-time.Duration(daysOld) * 24 * time.Hour)
-	resp.Entry.Attributes.Mtime = backdated.Unix()
+	resp.Entry.Attributes.Mtime = time.Now().Add(-time.Duration(daysOld) * 24 * time.Hour).Unix()
 	resp.Entry.Attributes.MtimeNs = 0
-	if _, hasStamp := resp.Entry.Extended[s3_constants.ExtNoncurrentSinceNsKey]; hasStamp {
-		resp.Entry.Extended[s3_constants.ExtNoncurrentSinceNsKey] = []byte(
-			strconv.FormatInt(backdated.UnixNano(), 10),
-		)
-	}
+	delete(resp.Entry.Extended, s3_constants.ExtNoncurrentSinceNsKey)
 	_, err = fc.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 		Directory: dir, Entry: resp.Entry,
 	})
