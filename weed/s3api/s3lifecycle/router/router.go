@@ -280,6 +280,27 @@ func successorModTimeFromContainer(entry *filer_pb.Entry) time.Time {
 	return time.Unix(secs, 0)
 }
 
+// successorFromEntryStamp returns the explicit noncurrent-since timestamp
+// written by the S3 PUT handler at demotion time
+// (s3_constants.ExtNoncurrentSinceNsKey). Returns zero time if the stamp
+// is missing or unparseable — the caller falls back to derived values
+// (sibling mtime or entry mtime) for legacy entries written before the
+// stamp existed.
+func successorFromEntryStamp(entry *filer_pb.Entry) time.Time {
+	if entry == nil {
+		return time.Time{}
+	}
+	raw, ok := entry.Extended[s3_constants.ExtNoncurrentSinceNsKey]
+	if !ok || len(raw) == 0 {
+		return time.Time{}
+	}
+	ns, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil || ns <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
 // routePointerTransitionDisplaced is the single-lookup path: only the
 // displaced version's noncurrent eligibility could have changed, so
 // fetching just its file is enough. oldID == "" routes the bare null
@@ -310,6 +331,14 @@ func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot,
 	if displaced == nil || displaced.Attributes == nil {
 		return nil
 	}
+	// Prefer the explicit demotion stamp on the displaced entry over the
+	// container-derived successor. Stamp is written by the S3 PUT handler
+	// at the moment the pointer flipped; container value is derived from
+	// the new latest's mtime and may drift across retries.
+	effectiveSuccessor := successor
+	if stamp := successorFromEntryStamp(displaced); !stamp.IsZero() {
+		effectiveSuccessor = stamp
+	}
 	idx := 0
 	info := &s3lifecycle.ObjectInfo{
 		Key:              logical,
@@ -318,12 +347,12 @@ func routePointerTransitionDisplaced(ctx context.Context, snap *engine.Snapshot,
 		IsLatest:         false,
 		IsDeleteMarker:   string(displaced.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
 		NoncurrentIndex:  &idx,
-		SuccessorModTime: successor,
+		SuccessorModTime: effectiveSuccessor,
 	}
 	if tags := extractTags(displaced.Extended); len(tags) > 0 {
 		info.Tags = tags
 	}
-	return emitNoncurrentMatches(snap, ev, keys, info, displaced, displacedID, successor)
+	return emitNoncurrentMatches(snap, ev, keys, info, displaced, displacedID, effectiveSuccessor)
 }
 
 // routePointerTransitionExpand routes only the versions that newly
@@ -444,6 +473,12 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 			thisSuccessor = time.Unix(siblings[i-1].entry.Attributes.Mtime, int64(siblings[i-1].entry.Attributes.MtimeNs))
 		} else {
 			thisSuccessor = successor
+		}
+		// Override with the explicit demotion stamp when present —
+		// PUT-time wall clock beats derived sibling mtime for accuracy
+		// and is immune to mtime edits on the sibling itself.
+		if stamp := successorFromEntryStamp(s.entry); !stamp.IsZero() {
+			thisSuccessor = stamp
 		}
 		idx := rank
 		info := &s3lifecycle.ObjectInfo{

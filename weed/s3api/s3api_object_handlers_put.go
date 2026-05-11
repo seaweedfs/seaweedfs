@@ -1341,6 +1341,10 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 	// Clear the latest version metadata from .versions directory since "null" is now latest
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err == nil && versionsEntry.Extended != nil {
+		// Capture previously-latest filename before clearing the pointer
+		// so the demoted version can be stamped with NoncurrentSinceNs.
+		prevLatestFileName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+
 		// Remove latest version metadata so all versions show IsLatest=false.
 		// Also wipe cached list-metadata (size/mtime/etag/owner/delete-marker):
 		// they were stamped from the prior latest, and stale cached mtime
@@ -1358,6 +1362,12 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		}
+
+		// Stamp the demoted version. Best-effort; lifecycle falls back
+		// to entry mtime if the stamp is missing.
+		if prevLatestFileName != "" {
+			s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, prevLatestFileName, time.Now().UnixNano())
 		}
 
 		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s/%s", bucket, object)
@@ -1480,6 +1490,11 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	if versionsEntry.Extended == nil {
 		versionsEntry.Extended = make(map[string][]byte)
 	}
+	// Capture the previously-latest version's filename before overwriting
+	// the pointer so the lifecycle engine can stamp NoncurrentSinceNs on
+	// the demoted entry. Same-file overwrites (idempotent retries) are
+	// detected by filename equality and skip the stamp.
+	prevLatestFileName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
 	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
 
@@ -1495,6 +1510,14 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
 		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
+	}
+
+	// Stamp the demoted entry so noncurrent lifecycle rules have an
+	// explicit clock start. Best-effort: failures are logged but not
+	// fatal — the lifecycle engine still falls back to entry mtime
+	// when this key is missing.
+	if prevLatestFileName != "" && prevLatestFileName != versionFileName {
+		s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, prevLatestFileName, time.Now().UnixNano())
 	}
 
 	return nil
