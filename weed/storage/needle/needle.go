@@ -16,15 +16,6 @@ import (
 const (
 	NeedleChecksumSize = 4
 	PairNamePrefix     = "Seaweed-"
-
-	// OriginalSizeHeader is set on multipart parts whose body is already
-	// gzip-encoded by an upstream component (e.g. the s3 chunk-copy fast
-	// path forwarding compressed bytes). It declares the uncompressed
-	// length so parseUpload can record OriginalDataSize without paying a
-	// decompress-then-discard pass just to learn the size — see #6541.
-	// The prefix is X-* (not Seaweed-*) so PairNamePrefix's auto-record
-	// of Seaweed-prefixed headers as needle pairs doesn't pick this up.
-	OriginalSizeHeader = "X-Seaweedfs-Original-Size"
 )
 
 /*
