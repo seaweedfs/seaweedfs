@@ -2,6 +2,7 @@ package pb
 
 import (
 	"fmt"
+	"runtime"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -74,6 +75,9 @@ func TestIsClientSideMarshalError_RequiresGrpcStatus(t *testing.T) {
 // continue out over TCP — they must NOT be hijacked into host A's local
 // socket on the basis of port match alone.
 func TestResolveLocalGrpcSocket_RemotePortCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+	}
 	// Snapshot and restore global state so the test does not leak into others.
 	localGrpcSocketsLock.Lock()
 	prevSockets := localGrpcSockets
