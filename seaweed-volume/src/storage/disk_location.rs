@@ -600,14 +600,22 @@ impl DiskLocation {
     }
 
     /// Mount EC shards for a volume on this location.
+    ///
+    /// `source_disk_type` is the source volume's disk type carried on the
+    /// `VolumeEcShardsMount` RPC. When non-empty it overrides the in-memory
+    /// EC volume's reported disk type so heartbeats keep reporting under
+    /// the source's disk type after EC encoding (#9423). Empty means "use
+    /// this location's disk type" — used by disk-scan reload paths that
+    /// have no orchestrator context.
     pub fn mount_ec_shards(
         &mut self,
         vid: VolumeId,
         collection: &str,
         shard_ids: &[u32],
+        source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         let idx_dir = self.idx_directory.clone();
-        self.mount_ec_shards_with_idx_dir(vid, collection, shard_ids, &idx_dir)
+        self.mount_ec_shards_with_idx_dir(vid, collection, shard_ids, &idx_dir, source_disk_type)
     }
 
     /// Mount EC shards but explicitly specify the idx directory the
@@ -627,6 +635,7 @@ impl DiskLocation {
         collection: &str,
         shard_ids: &[u32],
         idx_dir: &str,
+        source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         let dir = self.directory.clone();
         // Avoid the entry().or_insert_with() pattern here: that closure
@@ -643,10 +652,20 @@ impl DiskLocation {
             .ec_volumes
             .get_mut(&vid)
             .expect("just inserted above");
-        ec_vol.disk_type = self.disk_type.clone();
+        // Default the EC volume's reported disk type to this location's.
+        // When the orchestrator supplied a source disk type on the Mount
+        // RPC, use that instead so heartbeats report under the source
+        // volume's disk type (#9423).
+        let effective_disk_type = if source_disk_type.is_empty() {
+            self.disk_type.clone()
+        } else {
+            DiskType::from_string(source_disk_type)
+        };
+        ec_vol.set_disk_type(effective_disk_type);
 
         for &shard_id in shard_ids {
-            let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            shard.disk_type = ec_vol.disk_type.clone();
             ec_vol.add_shard(shard).map_err(VolumeError::Io)?;
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[collection, "ec_shards"])
@@ -804,7 +823,7 @@ impl DiskLocation {
         }
 
         let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
-        if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids) {
+        if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids, "") {
             // mount_ec_shards adds shards one at a time and increments
             // the per-shard metric for each. If it fails halfway, plain
             // ec_volumes.remove(vid) would leak metric increments for
@@ -1237,7 +1256,7 @@ mod tests {
         let shard_path = format!("{}/pics_7.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
 
-        loc.mount_ec_shards(VolumeId(7), "pics", &[0]).unwrap();
+        loc.mount_ec_shards(VolumeId(7), "pics", &[0], "").unwrap();
         assert!(loc.has_ec_volume(VolumeId(7)));
         assert!(std::path::Path::new(&shard_path).exists());
         assert!(std::path::Path::new(&format!("{}/pics_7.ecj", dir)).exists());

@@ -1241,7 +1241,7 @@ mod tests {
         let shard_path = format!("{}/ec_metrics_case_27.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(27), "ec_metrics_case", &[0])
+            .mount_ec_shards(VolumeId(27), "ec_metrics_case", &[0], "")
             .unwrap();
 
         let state = test_state_with_store(store);
@@ -1283,7 +1283,7 @@ mod tests {
 
         std::fs::write(format!("{}/expired_heartbeat_ec_31.ec00", dir), b"expired").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0])
+            .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0], "")
             .unwrap();
         store
             .find_ec_volume_mut(VolumeId(31))
@@ -1586,7 +1586,7 @@ mod tests {
 
         std::fs::write(format!("{}/ec_delta_case_81.ec00", dir), b"delta").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0])
+            .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0], "")
             .unwrap();
         let current = collect_ec_shard_delta_messages(&store);
         let (new_ec_shards, deleted_ec_shards) =

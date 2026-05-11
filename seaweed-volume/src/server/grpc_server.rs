@@ -2612,7 +2612,7 @@ impl VolumeServer for VolumeGrpcService {
         let mut store = self.state.store.write().unwrap();
         for &shard_id in &req.shard_ids {
             store
-                .mount_ec_shard(vid, &req.collection, shard_id)
+                .mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
                 .map_err(|e| {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;

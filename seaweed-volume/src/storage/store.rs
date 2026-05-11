@@ -636,22 +636,25 @@ impl Store {
             ))
         })?;
 
-        self.locations[loc_idx].mount_ec_shards(vid, collection, shard_ids)
+        self.locations[loc_idx].mount_ec_shards(vid, collection, shard_ids, "")
     }
 
     /// Mount a single EC shard, searching all locations for the shard file.
     /// Matches Go's Store.MountEcShards which mounts one shard at a time.
+    /// `source_disk_type` is the source volume's disk type from the
+    /// `VolumeEcShardsMount` RPC (#9423); pass `""` for non-RPC paths.
     pub fn mount_ec_shard(
         &mut self,
         vid: VolumeId,
         collection: &str,
         shard_id: u32,
+        source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
             // Check if the shard file exists on this location
             let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
             if std::path::Path::new(&shard.file_name()).exists() {
-                loc.mount_ec_shards(vid, collection, &[shard_id])?;
+                loc.mount_ec_shards(vid, collection, &[shard_id], source_disk_type)?;
                 return Ok(());
             }
         }
@@ -1481,7 +1484,7 @@ mod tests {
 
         std::fs::write(format!("{}/expired_ec_case_9.ec00", dir), b"expired").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(9), "expired_ec_case", &[0])
+            .mount_ec_shards(VolumeId(9), "expired_ec_case", &[0], "")
             .unwrap();
         store.find_ec_volume_mut(VolumeId(9)).unwrap().expire_at_sec = 1;
 
@@ -1576,7 +1579,7 @@ mod tests {
         )
         .unwrap();
         store.locations[1]
-            .mount_ec_shards(vid, collection, &[0])
+            .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
 
         // Stray .ecx on disk 2 must not win.
@@ -1643,7 +1646,7 @@ mod tests {
         )
         .unwrap();
         store.locations[1]
-            .mount_ec_shards(vid, collection, &[0])
+            .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
 
         let got = store.find_ec_shard_target_location(collection, vid, 10);
