@@ -27,6 +27,31 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.BootstrapInterval != 0 {
 		t.Errorf("BootstrapInterval default=%v, want 0 (walk-once-per-process)", cfg.BootstrapInterval)
 	}
+	if cfg.Algorithm != AlgorithmStreaming {
+		t.Errorf("Algorithm default=%q, want %q", cfg.Algorithm, AlgorithmStreaming)
+	}
+}
+
+func TestParseConfig_AlgorithmDailyReplay(t *testing.T) {
+	admin := map[string]*plugin_pb.ConfigValue{
+		"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: AlgorithmDailyReplay}},
+	}
+	cfg := ParseConfig(admin, nil)
+	if cfg.Algorithm != AlgorithmDailyReplay {
+		t.Errorf("Algorithm=%q, want %q", cfg.Algorithm, AlgorithmDailyReplay)
+	}
+}
+
+func TestParseConfig_AlgorithmUnknownValueFallsBackToStreaming(t *testing.T) {
+	// Operators should not be able to silently activate a future
+	// algorithm value by typo. Anything not in the enum falls back.
+	admin := map[string]*plugin_pb.ConfigValue{
+		"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "future_algo"}},
+	}
+	cfg := ParseConfig(admin, nil)
+	if cfg.Algorithm != AlgorithmStreaming {
+		t.Errorf("unknown algorithm=%q must fall back to %q, got %q", "future_algo", AlgorithmStreaming, cfg.Algorithm)
+	}
 }
 
 func TestParseConfigOverrides(t *testing.T) {
