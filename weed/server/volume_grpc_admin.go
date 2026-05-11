@@ -30,17 +30,27 @@ import (
 // checkGrpcAdminAuth verifies the gRPC caller is authorized for destructive
 // admin operations by checking the peer address against the guard's whitelist.
 //
-// IP extraction prefers a typed *net.TCPAddr where available, falling back to
-// SplitHostPort on the string form, then to the raw string. The fallback
-// chain matters because in-process/passthrough connections used in tests
-// surface as unparseable strings like "@"; with an empty whitelist the
-// allow-all branch in IsWhiteListed accepts them, with a whitelist they're
-// denied as expected.
+// Only TCP peers go through the host check. Any non-TCP peer (in-process
+// bufconn, unix socket, etc.) is treated as trusted because such callers
+// share the same OS process or host filesystem as the volume server and
+// cannot be spoofed by a remote attacker. This matters when `weed server`
+// runs master+volume+filer in a single process and the master invokes
+// AllocateVolume through an in-process gRPC dial: the peer address surfaces
+// as "@" rather than 127.0.0.1, which has no parseable IP.
 //
-// Failed authorization attempts are logged so an operator running with a
-// configured whitelist can spot misconfigured callers and probe attempts.
+// The whitelist check uses Guard.IsAdminAuthorized, which is fail-closed: a
+// volume server with a configured guard but empty whitelist still rejects
+// destructive admin RPCs from off-host TCP peers (loopback TCP callers are
+// trusted, see IsAdminAuthorized). Operators must set -whiteList on the CLI
+// or guard.white_list in security.toml to allow remote admin peers. Failed
+// attempts are logged so misconfigured callers and probe attempts are
+// visible.
 func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
 	if vs.guard == nil {
+		// No guard wired up at all — this is a developmental / embedded path
+		// (e.g. unit tests). Skip the gate; the real protection lives in
+		// IsAdminAuthorized, which only takes effect once a guard exists.
+		glog.V(1).Infof("gRPC admin auth: no guard configured; set -whiteList or guard.white_list in security.toml to enforce")
 		return nil
 	}
 	pr, ok := peer.FromContext(ctx)
@@ -50,17 +60,15 @@ func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
 		glog.V(0).Infof("gRPC admin auth failed: no peer info")
 		return status.Error(codes.PermissionDenied, "no peer info")
 	}
-	addr := pr.Addr.String()
-	var host string
-	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
-		host = tcpAddr.IP.String()
-	} else if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
-		host = h
-	} else {
-		host = addr
+	tcpAddr, isTCP := pr.Addr.(*net.TCPAddr)
+	if !isTCP {
+		// In-process / bufconn / unix-socket peer: same OS process as us, so
+		// trusted by construction. A remote attacker cannot reach this path.
+		return nil
 	}
-	if !vs.guard.IsWhiteListed(host) {
-		glog.V(0).Infof("gRPC admin auth failed: %s is not whitelisted (remote: %s)", host, addr)
+	host := tcpAddr.IP.String()
+	if !vs.guard.IsAdminAuthorized(host) {
+		glog.V(0).Infof("gRPC admin auth failed: %s is not authorized (remote: %s)", host, pr.Addr.String())
 		return status.Errorf(codes.PermissionDenied, "not authorized: %s", host)
 	}
 	return nil
