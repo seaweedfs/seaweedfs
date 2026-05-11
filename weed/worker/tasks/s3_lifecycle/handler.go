@@ -96,11 +96,11 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				{
 					SectionId:   "cadence",
 					Title:       "Cadence",
-					Description: "Tick intervals for the dispatch loop, durable checkpoint, and engine refresh; plus the wall-clock cap on each daily run.",
+					Description: "How often the worker checks its schedule, saves progress, reloads bucket lifecycle configs, and how long each run may take.",
 					Fields: []*plugin_pb.ConfigField{
 						{
 							Name:        "dispatch_tick_minutes",
-							Label:       "Dispatch Tick (minutes)",
+							Label:       "Schedule Check Interval (minutes)",
 							Description: "How often each pipeline drains its schedule.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
@@ -108,7 +108,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 						{
 							Name:        "checkpoint_tick_seconds",
-							Label:       "Cursor Checkpoint Tick (seconds)",
+							Label:       "Progress Save Interval (seconds)",
 							Description: "How often each pipeline persists its cursor map to the filer.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
@@ -116,7 +116,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 						{
 							Name:        "refresh_interval_minutes",
-							Label:       "Engine Refresh Interval (minutes)",
+							Label:       "Lifecycle Config Reload (minutes)",
 							Description: "How often the scheduler rebuilds the engine snapshot from bucket lifecycle configs.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
@@ -124,7 +124,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 						{
 							Name:        "bootstrap_interval_minutes",
-							Label:       "Bootstrap Re-walk Interval (minutes)",
+							Label:       "Full Bucket Rescan Interval (minutes)",
 							Description: "How often each bucket is re-walked. scan_only rules — those whose retention horizon exceeds meta-log retention — only fire from the bootstrap walk, so a non-zero value is required to enforce them on a long-running worker. 0 keeps the legacy walk-once-per-process behavior.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
@@ -132,7 +132,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 						{
 							Name:        "max_runtime_minutes",
-							Label:       "Max Runtime (minutes)",
+							Label:       "Per-Run Time Limit (minutes)",
 							Description: "Wall-clock cap on each run. Each daily run processes events for one day; the cursor persists across runs.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
