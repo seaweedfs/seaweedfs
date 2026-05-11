@@ -13,6 +13,10 @@ import (
 func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
 	resp := &volume_server_pb.BatchDeleteResponse{}
 
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return resp, err
 	}
