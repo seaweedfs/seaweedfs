@@ -170,12 +170,14 @@ message VacuumTaskParams {
 
 // ErasureCodingTaskParams for EC encoding operations
 message ErasureCodingTaskParams {
+  reserved 7;
   uint64 estimated_shard_size = 1;        // Estimated size per shard
   int32 data_shards = 2;                  // Number of data shards (default: 10)
   int32 parity_shards = 3;                // Number of parity shards (default: 4)
   string working_dir = 4;                 // Working directory for EC processing
   string master_client = 5;               // Master server address
   bool cleanup_source = 6;                // Whether to cleanup source volume after EC
+  string source_disk_type = 8;            // Source volume's disk type, passed to VolumeEcShardsMount so shards report under it (#9423)
 }
 
 // TaskSource represents a unified source location for any task type

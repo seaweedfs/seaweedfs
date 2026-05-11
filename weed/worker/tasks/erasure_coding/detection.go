@@ -286,7 +286,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 					Targets: createECTargets(multiPlan, dataShards, parityShards),
 
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
-						ErasureCodingParams: createECTaskParams(dataShards, parityShards),
+						ErasureCodingParams: createECTaskParams(dataShards, parityShards, metric.DiskType),
 					},
 				}
 
@@ -786,11 +786,14 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 	return protobufSources, nil
 }
 
-// createECTaskParams creates clean EC task parameters (destinations now in unified targets)
-func createECTaskParams(dataShards, parityShards int) *worker_pb.ErasureCodingTaskParams {
+// createECTaskParams creates clean EC task parameters (destinations now in unified targets).
+// sourceDiskType is forwarded to VolumeEcShardsMount so the resulting EC volume
+// reports under the source's disk type rather than the target location's (#9423).
+func createECTaskParams(dataShards, parityShards int, sourceDiskType string) *worker_pb.ErasureCodingTaskParams {
 	return &worker_pb.ErasureCodingTaskParams{
-		DataShards:   int32(dataShards),
-		ParityShards: int32(parityShards),
+		DataShards:     int32(dataShards),
+		ParityShards:   int32(parityShards),
+		SourceDiskType: sourceDiskType,
 	}
 }
 
