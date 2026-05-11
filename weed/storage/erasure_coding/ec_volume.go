@@ -246,6 +246,24 @@ func (ev *EcVolume) Destroy() {
 	os.Remove(ev.FileName(".vif"))
 }
 
+// DiskType returns the disk type the EC volume currently reports under.
+// Defaults to the physical location's disk type; orchestrators can override
+// it via SetDiskType so the volume keeps reporting under the source
+// volume's disk type after encoding (#9423).
+func (ev *EcVolume) DiskType() types.DiskType {
+	return ev.diskType
+}
+
+// SetDiskType overrides the EC volume's reported disk type and propagates
+// to its mounted shards. Intended for the orchestrator-driven mount path
+// (VolumeEcShardsMount); not persisted across restarts.
+func (ev *EcVolume) SetDiskType(d types.DiskType) {
+	ev.diskType = d
+	for _, s := range ev.Shards {
+		s.DiskType = d
+	}
+}
+
 func (ev *EcVolume) FileName(ext string) string {
 	switch ext {
 	case ".ecx", ".ecj":
