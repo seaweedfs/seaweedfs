@@ -19,17 +19,12 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// LifecycleClient is the same RPC contract the streaming dispatcher
-// uses. Replicated here to avoid an import cycle with dispatcher; both
-// shapes target s3_lifecycle_pb.SeaweedS3LifecycleInternalClient and
-// neither owns the protobuf interface.
+// LifecycleClient mirrors dispatcher's contract; duplicated to avoid an
+// import cycle.
 type LifecycleClient interface {
 	LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error)
 }
 
-// Config bundles everything daily_run needs to make one shard-fan-out
-// pass over the meta-log. Fields with zero values use documented
-// defaults; required fields are checked at the top of Run.
 type Config struct {
 	Shards      []int
 	BucketsPath string
@@ -39,43 +34,27 @@ type Config struct {
 	Persister   CursorPersister
 	Lister      router.SiblingLister
 
-	// Workers caps how many shards run in parallel. Each shard owns its
-	// own meta-log subscription and rate limiter is shared across all
-	// of them, so the cap is about filer-side concurrency rather than
-	// throughput. Zero or negative → 1 (serial, the legacy default).
+	// Workers <= 0 -> 1 (serial).
 	Workers int
 
-	// Limiter is the optional per-worker rate.Limiter shared across all
-	// shard goroutines on this worker. nil = no rate limit (the legacy
-	// "drain as fast as the filer can" behavior). Phase 3 wires the
-	// per-worker share from ClusterContext.Metadata into this field.
+	// nil -> no rate limit. Shared across all shard goroutines.
 	Limiter *rate.Limiter
 
-	// ClientName / ClientID identify this worker on the meta-log
-	// subscription. ClientID 0 randomizes per-run.
 	ClientName string
-	ClientID   int32
+	// 0 -> randomized per-run.
+	ClientID int32
 
-	// Now overrides time.Now for tests. nil = production wall clock.
+	// nil -> time.Now.
 	Now func() time.Time
 
-	// EventBudget caps how many meta-log events each shard's reader
-	// consumes before returning. Zero = unbounded (the run-until-now
-	// behavior — see "stop condition" below). Tests set a small value
-	// to bound deterministic runs.
+	// 0 -> unbounded.
 	EventBudget int
 }
 
 // Run executes the daily replay for every shard in cfg.Shards
-// concurrently. Returns the first non-nil error from any shard; other
-// shards still run to completion so a transient filer error on one
-// shard doesn't lose progress on the others.
-//
-// Phase 2 scope: replay only. A bucket whose compiled rules require
-// walker-bound dispatch (ExpirationDate, ExpiredDeleteMarker,
-// NewerNoncurrent) or any rule promoted to scan_only fails the whole
-// run with an UnsupportedRuleError — the handler reports this so admin
-// can either revert algorithm=streaming or wait for Phase 4.
+// concurrently. Returns the first shard error; the rest log and run to
+// completion so one shard's transient failure doesn't lose other shards'
+// progress.
 func Run(ctx context.Context, cfg Config) error {
 	if err := validate(cfg); err != nil {
 		return err
@@ -84,25 +63,15 @@ func Run(ctx context.Context, cfg Config) error {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	// Freeze "now" at the start of the run. Every shard, every match's
-	// DueTime comparison, and every cursor-floor calculation uses the
-	// same instant so a long-running shard doesn't see the boundary
-	// drift relative to a short-running peer.
+	// Freeze "now" so shards agree on the boundary.
 	runNow := now()
 
-	// Refuse runs whose snapshot includes a walker-bound action kind
-	// or any rule the router won't route. Done once against an
-	// immutable snapshot — every shard reuses this exact value so a
-	// mid-execution Compile can't make shards disagree about the rule
-	// set or the hash.
+	// Capture once so a mid-run Compile can't make shards disagree.
 	snap := cfg.Engine.Snapshot()
 	if unsupported := checkSnapshotForUnsupported(snap); unsupported != nil {
 		return unsupported
 	}
 
-	// Concurrency cap. cfg.Workers controls how many shards run in
-	// parallel; the rate limiter (Phase 3) governs throughput. With
-	// Workers=1 (the legacy default) the 16 shards process serially.
 	workers := cfg.Workers
 	if workers <= 0 {
 		workers = 1
@@ -128,8 +97,6 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	wg.Wait()
 	close(errCh)
-	// Return the first error; the rest are logged at glog level so
-	// they're recoverable in the operational stream.
 	var first error
 	for err := range errCh {
 		if first == nil {
@@ -168,63 +135,50 @@ func validate(cfg Config) error {
 	return nil
 }
 
-// runShard executes the daily replay loop for a single shard. The
-// algorithm is documented in DESIGN.md ("Algorithm" section).
-//
-// Phase 2 omissions vs. the full design:
-//   - No walker invocation on rule-change / cold-start / retention
-//     loss. The cursor is rewritten and the worker exits; Phase 4
-//     wires the walker over engine.RecoveryView(snap) on these
-//     branches.
-//   - PromotedHash is always the empty hash. The partition-flip
-//     trigger is dormant until Phase 4.
-//   - All walker-bound action kinds and scan_only-promoted rules are
-//     refused at validate-time (see checkSnapshotForUnsupported), so
-//     replay only ever sees ExpirationDays / NoncurrentDays / AbortMPU.
-//
-// snap is the engine snapshot captured at the top of Run; reusing the
-// same value across shards guarantees they observe identical rules and
-// hashes. runNow is the frozen instant for due-time comparisons.
+// runShard executes one daily-replay pass; see DESIGN.md for algorithm.
+// Phase 2: no walker on rule-change / cold-start; PromotedHash trigger
+// is dormant until Phase 4b wires real retention.
+// checkSnapshotForUnsupported already rejected walker-bound and
+// scan_only rules.
 func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int) error {
 	persisted, found, err := cfg.Persister.Load(ctx, shardID)
 	if err != nil {
 		return fmt.Errorf("shard=%d: load cursor: %w", shardID, err)
 	}
 
-	rsh := localReplayContentHash(snap)
-	maxTTL := localMaxEffectiveTTL(snap)
+	// engine.ReplayContentHash has a different byte layout than the
+	// Phase-2 local helper. First post-upgrade run mismatches every
+	// cursor and drops into the rule-change branch below — bounded
+	// one-time rewind to runNow - maxTTL, self-healing on save.
+	rsh := engine.ReplayContentHash(snap)
+	maxTTL := engine.MaxEffectiveTTL(snap)
+	// retentionWindow=maxTTL keeps promoted empty (no rule's TTL
+	// exceeds the max). Phase 4b plumbs real meta-log retention.
+	promoted := engine.PromotedHash(snap, maxTTL)
 
-	// Empty-replay sentinel: no replay-eligible active rules in the
-	// snapshot. We persist the hash so a future rule addition is
-	// detected as a content change. Use the hash rather than maxTTL
-	// here as the explicit "no replay state" signal — both fire on
-	// the same set in practice (action_kind.go only emits actions
-	// when their Days field is > 0), but the hash captures intent.
 	if rsh == [32]byte{} {
 		return cfg.Persister.Save(ctx, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
-			PromotedHash: [32]byte{}, // Phase 2: always empty
+			PromotedHash: promoted,
 		})
 	}
 
-	// Rule-change branch: hash mismatch (and a persisted cursor exists)
-	// rewinds to now - max_ttl. Phase 4 adds the walker call here.
-	if found && persisted.RuleSetHash != rsh {
+	// Recovery: rule-content edit (RuleSetHash mismatch) or partition
+	// flip (PromotedHash mismatch — dormant until real retention).
+	// Phase 4b adds the walker here; until then we rewind and let the
+	// sliding meta-log replay catch up.
+	if found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted) {
 		next := Cursor{
-			TsNs:        runNow.Add(-maxTTL).UnixNano(),
-			RuleSetHash: rsh,
-			// PromotedHash stays empty in Phase 2.
+			TsNs:         runNow.Add(-maxTTL).UnixNano(),
+			RuleSetHash:  rsh,
+			PromotedHash: promoted,
 		}
 		return cfg.Persister.Save(ctx, shardID, next)
 	}
 
-	// Cold start with no prior cursor: start scanning from now - max_ttl
-	// so a freshly-installed worker still expires already-due objects
-	// whose PUT events sit within meta-log retention. Phase 4 would
-	// invoke the walker here for the longer-than-retention case; Phase 2
-	// trusts that retention >= max_ttl in the deployments this code is
-	// enabled on.
+	// Cold start: scan from now-maxTTL so already-due objects within
+	// meta-log retention still expire.
 	startTsNs := persisted.TsNs
 	floor := runNow.Add(-maxTTL).UnixNano()
 	if startTsNs < floor {
@@ -233,43 +187,22 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs)
 	if drainErr != nil {
-		// Drain failed (transport, ctx cancel, or limiter shutdown):
-		// persist whatever progress we have so subsequent runs don't
-		// re-process the events we already dispatched, then propagate
-		// the error. Cursor save uses ctx — if ctx is already cancelled
-		// the save will fail too; that's fine, we still surface the
-		// underlying drain error.
-		_ = cfg.Persister.Save(ctx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh})
+		_ = cfg.Persister.Save(ctx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
 	}
 
-	// drainShardEvents stops advancing lastOK at the first event with a
-	// skipped (not-yet-due) match. Persisting that value means the next
-	// run resumes from before the skipped event and re-scans it —
-	// without that, future-DueTime matches would be lost. halted=true
-	// adds nothing here because lastOK already reflects the
-	// stuck-at-failure boundary.
 	return cfg.Persister.Save(ctx, shardID, Cursor{
-		TsNs:        lastOK,
-		RuleSetHash: rsh,
-		// PromotedHash stays empty in Phase 2.
+		TsNs:         lastOK,
+		RuleSetHash:  rsh,
+		PromotedHash: promoted,
 	})
 }
 
-// drainShardEvents subscribes to the meta-log starting at startTsNs,
-// routes every event through router.Route, and dispatches each Match
-// whose due_time is past runNow. Returns (cursorAdvanceTo, halted, error):
-//   - cursorAdvanceTo: the highest TsNs the persisted cursor may safely
-//     advance to. Equals the TsNs of the last event whose matches were
-//     ALL dispatched (DONE/NOOP_RESOLVED/SKIPPED_OBJECT_LOCK) AND every
-//     prior event was likewise fully processed. Once an event with a
-//     not-yet-due match is encountered, cursorAdvanceTo stops growing —
-//     so subsequent runs re-scan that event and any after it.
-//   - halted: true when an unresolved dispatch outcome (RETRY_LATER /
-//     BLOCKED / transport error after in-run retries) stopped the loop.
-//   - error: stream/setup failure or context cancellation; caller
-//     persists cursorAdvanceTo and propagates the error so the run is
-//     marked as interrupted rather than successful.
+// drainShardEvents subscribes to the meta-log from startTsNs and
+// dispatches matches whose due_time is past runNow. cursorAdvanceTo
+// stops growing at the first event with a not-yet-due match so that
+// event is re-scanned in a later run. halted=true marks an unresolved
+// dispatch outcome.
 func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID int, snap *engine.Snapshot, startTsNs int64) (int64, bool, error) {
 	clientName := cfg.ClientName
 	if clientName == "" {
@@ -281,7 +214,6 @@ func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID
 	}
 	runUpTo := runNow.UnixNano()
 	if startTsNs >= runUpTo {
-		// Nothing to do — cursor already at or past the run boundary.
 		return startTsNs, false, nil
 	}
 
@@ -303,10 +235,6 @@ func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID
 	}()
 
 	cursorAdvanceTo := startTsNs
-	// stuck flips to true at the first event with a skipped (not-yet-due)
-	// match. From that event onward, cursorAdvanceTo no longer rises —
-	// future runs must re-scan everything from cursorAdvanceTo + 1 onward
-	// so the future-due matches get re-evaluated when they age in.
 	stuck := false
 	halted := false
 
@@ -314,9 +242,6 @@ drain:
 	for {
 		select {
 		case <-ctx.Done():
-			// Parent context cancellation (worker shutdown, MaxRuntime).
-			// Return whatever progress was made so far and propagate the
-			// error so the caller marks the run as interrupted.
 			cancelReader()
 			<-readerDone
 			return cursorAdvanceTo, true, ctx.Err()
@@ -328,19 +253,12 @@ drain:
 				continue
 			}
 			if ev.TsNs > runUpTo {
-				// Reached the run boundary: events past now belong to
-				// tomorrow's pass. Cancel the reader so it doesn't keep
-				// pulling live events, then exit.
 				cancelReader()
 				break drain
 			}
 			matches := router.Route(ctx, snap, ev, runNow, cfg.Lister)
 			eventSkipped, eventHalted, eventErr := processMatches(ctx, cfg, runNow, ev, matches)
 			if eventErr != nil {
-				// A non-dispatch error (e.g. limiter wait cancelled by
-				// shutdown). Cursor stays at the last fully-processed
-				// event; surface the error so the caller treats it as
-				// an interrupt.
 				cancelReader()
 				<-readerDone
 				return cursorAdvanceTo, true, eventErr
@@ -350,11 +268,6 @@ drain:
 				break drain
 			}
 			if eventSkipped {
-				// First event with a not-yet-due match. Don't advance
-				// the cursor past it; keep processing later events to
-				// dispatch any due ones, but the persisted cursor stays
-				// at the previous cursorAdvanceTo so this event is
-				// re-scanned tomorrow.
 				stuck = true
 				continue
 			}
@@ -364,7 +277,6 @@ drain:
 		}
 	}
 
-	// Wait for reader to drain so its goroutine doesn't outlive us.
 	cancelReader()
 	if rerr := <-readerDone; rerr != nil && !errors.Is(rerr, context.Canceled) {
 		glog.V(2).Infof("daily_run shard=%d: reader returned: %v", shardID, rerr)
@@ -372,29 +284,11 @@ drain:
 	return cursorAdvanceTo, halted, nil
 }
 
-// processMatches dispatches every match emitted from one event. Returns
-// (skippedAny, halted, error):
-//   - skippedAny=true if at least one match had a DueTime past runNow.
-//     The caller must NOT advance the persisted cursor past this event
-//     so the skipped match gets re-scanned in a later run.
-//   - halted=true on an unresolved outcome (RETRY_LATER / BLOCKED /
-//     transport error after in-run retries). Caller exits the drain
-//     loop.
-//   - error: propagated from limiter.Wait when ctx is cancelled.
-//
-// A future-DueTime match is silently skipped — it does NOT terminate
-// the loop or get cached as "done for this rule." A single event can
-// produce multiple matches for the same ActionKey against different
-// objects (routePointerTransitionExpand emits one match per noncurrent
-// sibling, each with its own SuccessorModTime derived from a different
-// demoting event), so a not-yet-due sibling must never gate a sibling
-// that's already past its DueTime. Without per-object state the only
-// safe behavior is per-match independence; the cursor-advance gate
-// upstream handles re-scanning the skipped events tomorrow.
-//
-// runNow is the frozen run-start instant. Using it (rather than a
-// fresh now() per call) keeps the boundary stable across all matches
-// in this run.
+// processMatches dispatches matches from one event. A future-DueTime
+// match is silently skipped (per-match, not per-rule): one event can
+// emit multiple matches for the same ActionKey across noncurrent
+// siblings, so a not-yet-due sibling must not gate a due one. The
+// cursor-advance gate upstream re-scans skipped events tomorrow.
 func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reader.Event, matches []router.Match) (skippedAny, halted bool, err error) {
 	for _, m := range matches {
 		if m.DueTime.After(runNow) {
@@ -410,8 +304,6 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 		}
 		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, m)
 		if dispatchErr != nil {
-			// Exhausted in-run transport retries: halt; tomorrow retries
-			// from the same cursor.
 			glog.V(1).Infof("daily_run: transport error on %s/%s %s: %v",
 				m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)
 			return skippedAny, true, nil
@@ -420,9 +312,6 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 		case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_SKIPPED_OBJECT_LOCK:
-			// Cursor advances. The dispatch's own metric (in the RPC
-			// server) records the outcome; the daily-run side stays
-			// metric-quiet to avoid double-counting.
 		case s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED:
 			glog.V(1).Infof("daily_run: %s on %s/%s %s",
@@ -432,7 +321,7 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			glog.V(1).Infof("daily_run: unknown outcome %v on %s/%s", outcome, m.Bucket, m.ObjectKey)
 			return skippedAny, true, nil
 		}
-		_ = ev // ev kept available for future per-event logging
+		_ = ev
 	}
 	return skippedAny, false, nil
 }
