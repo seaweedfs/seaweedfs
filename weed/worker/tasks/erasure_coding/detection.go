@@ -102,22 +102,28 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 			continue
 		}
 
-		// Skip when EC shards for this (volume, collection) already exist in the
-		// topology. metric.IsECVolume above is set only for the EC-side metric
-		// path, so when the master heartbeats BOTH a regular replica AND its
-		// EC shards in parallel — the "stuck source" state from #9448 — the
-		// canonical metric we picked is the regular replica with
+		// Handle the "stuck source" state from #9448: a previous encode
+		// succeeded but the post-encode source-delete left a regular replica
+		// behind, so the master heartbeats BOTH the replica AND its EC shards.
+		// metric.IsECVolume above is set only for the EC-side metric path, so
+		// the canonical metric we picked is the regular replica with
 		// IsECVolume=false. Re-proposing an encode in that state collides with
-		// the already-mounted shards on the targets (the volume server returns
-		// "ec volume %d is mounted; refusing overwrite") and the detector
-		// re-queues forever. Skip and surface the orphaned source replica so
-		// an admin can clean it up.
+		// the mounted shards on the targets ("ec volume %d is mounted; refusing
+		// overwrite") and the detector re-queues forever.
+		//
+		// We only act when the EC shard set is COMPLETE — fewer than
+		// totalShards present means the existing recovery branch below
+		// (around the `existingECShards` block) should keep its chance to
+		// fold the partial shards into the new task. Counting walks
+		// EcIndexBits to handle a single info entry carrying multiple shards.
 		if clusterInfo.ActiveTopology != nil {
-			if existingShards := findExistingECShards(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection); len(existingShards) > 0 {
-				glog.Warningf("EC Detection: Volume %d already has EC shards on %d location(s) in the topology; "+
+			shardCount := countExistingEcShardsForVolume(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+			totalShards := erasure_coding.DataShardsCount + erasure_coding.ParityShardsCount
+			if shardCount >= totalShards {
+				glog.Warningf("EC Detection: Volume %d already has all %d EC shards in topology; "+
 					"skipping re-encode. Source replica on %s appears orphaned (issue #9448). "+
 					"To clean up, run `volume.delete -volumeId=%d` on the source server after verifying the EC shards are healthy.",
-					metric.VolumeID, len(existingShards), metric.Server, metric.VolumeID)
+					metric.VolumeID, totalShards, metric.Server, metric.VolumeID)
 				skippedAlreadyEC++
 				continue
 			}
@@ -905,4 +911,36 @@ func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint
 		return nil
 	}
 	return activeTopology.GetECShardLocations(volumeID, collection)
+}
+
+// countExistingEcShardsForVolume returns the number of distinct EC shard IDs
+// for (volumeID, collection) present in the topology. Walks every disk's
+// EcIndexBits bitmap rather than trusting len(EcShardInfos), because a single
+// info entry can carry multiple shards. Used by the #9448 guard to decide
+// whether the EC shard set is complete enough that the orphaned regular
+// replica is safe to delete.
+func countExistingEcShardsForVolume(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) int {
+	if activeTopology == nil {
+		return 0
+	}
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return 0
+	}
+	var seen erasure_coding.ShardBits
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, node := range rack.DataNodeInfos {
+				for _, diskInfo := range node.DiskInfos {
+					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
+							continue
+						}
+						seen |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+					}
+				}
+			}
+		}
+	}
+	return seen.Count()
 }
