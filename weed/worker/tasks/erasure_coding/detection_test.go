@@ -127,6 +127,75 @@ func TestECPlacementPlannerFallsBackWhenTagsInsufficient(t *testing.T) {
 	assert.Less(t, taggedCount, len(selected))
 }
 
+// TestDetectionSkipsWhenECShardsAlreadyExist guards against issue #9448: a
+// regular replica that survived a previous successful EC encode (source
+// delete didn't clean it up for some reason) gets re-proposed for encoding,
+// the new encode collides with the already-mounted shards on the targets
+// ("ec volume %d is mounted; refusing overwrite"), and detection loops
+// forever on the same volume. Detection must see the existing shards and
+// skip the volume so an admin can clean it up out-of-band.
+func TestDetectionSkipsWhenECShardsAlreadyExist(t *testing.T) {
+	const volumeID uint32 = 42
+	const collection = ""
+
+	activeTopology := topology.NewActiveTopology(10)
+	nodes := make([]*master_pb.DataNodeInfo, 0, erasure_coding.TotalShardsCount)
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+		nodeID := fmt.Sprintf("127.0.0.1:%d", 8080+i)
+		diskInfo := &master_pb.DiskInfo{
+			DiskId:         0,
+			VolumeCount:    1,
+			MaxVolumeCount: 100,
+			EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+				Id:          volumeID,
+				Collection:  collection,
+				EcIndexBits: uint32(1) << uint(i),
+				DiskId:      0,
+			}},
+		}
+		if i == 0 {
+			// The orphaned source replica that the previous encode's source
+			// delete didn't remove.
+			diskInfo.VolumeInfos = []*master_pb.VolumeInformationMessage{{
+				Id:         volumeID,
+				Collection: collection,
+				DiskId:     0,
+				DiskType:   "hdd",
+				Size:       200 * 1024 * 1024,
+			}}
+		}
+		nodes = append(nodes, &master_pb.DataNodeInfo{
+			Id:        nodeID,
+			DiskInfos: map[string]*master_pb.DiskInfo{"hdd": diskInfo},
+		})
+	}
+	require.NoError(t, activeTopology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id:            "rack1",
+				DataNodeInfos: nodes,
+			}},
+		}},
+	}))
+
+	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
+	metrics := []*types.VolumeHealthMetrics{{
+		VolumeID:      volumeID,
+		Server:        nodes[0].Id,
+		Size:          200 * 1024 * 1024,
+		Collection:    collection,
+		FullnessRatio: 0.9,
+		LastModified:  time.Now().Add(-time.Hour),
+		Age:           10 * time.Minute,
+	}}
+
+	results, hasMore, err := Detection(context.Background(), metrics, clusterInfo, NewDefaultConfig(), 0)
+	require.NoError(t, err)
+	require.False(t, hasMore)
+	require.Empty(t, results, "stuck source replica must not produce a new EC encoding proposal")
+}
+
 func TestDetectionContextCancellation(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 5, []string{"hdd", "ssd"}, 50, 0)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}

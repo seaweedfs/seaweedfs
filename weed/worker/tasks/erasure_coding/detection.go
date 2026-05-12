@@ -102,6 +102,27 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 			continue
 		}
 
+		// Skip when EC shards for this (volume, collection) already exist in the
+		// topology. metric.IsECVolume above is set only for the EC-side metric
+		// path, so when the master heartbeats BOTH a regular replica AND its
+		// EC shards in parallel — the "stuck source" state from #9448 — the
+		// canonical metric we picked is the regular replica with
+		// IsECVolume=false. Re-proposing an encode in that state collides with
+		// the already-mounted shards on the targets (the volume server returns
+		// "ec volume %d is mounted; refusing overwrite") and the detector
+		// re-queues forever. Skip and surface the orphaned source replica so
+		// an admin can clean it up.
+		if clusterInfo.ActiveTopology != nil {
+			if existingShards := findExistingECShards(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection); len(existingShards) > 0 {
+				glog.Warningf("EC Detection: Volume %d already has EC shards on %d location(s) in the topology; "+
+					"skipping re-encode. Source replica on %s appears orphaned (issue #9448). "+
+					"To clean up, run `volume.delete -volumeId=%d` on the source server after verifying the EC shards are healthy.",
+					metric.VolumeID, len(existingShards), metric.Server, metric.VolumeID)
+				skippedAlreadyEC++
+				continue
+			}
+		}
+
 		// Check minimum size requirement
 		if metric.Size < minSizeBytes {
 			skippedTooSmall++
