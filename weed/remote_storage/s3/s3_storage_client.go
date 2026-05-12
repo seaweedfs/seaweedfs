@@ -36,6 +36,14 @@ func (s s3RemoteStorageMaker) HasBucket() bool {
 }
 
 func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+	return MakeWithHTTPClient(conf, nil)
+}
+
+// MakeWithHTTPClient builds an s3 remote storage client using the supplied
+// *http.Client (or the AWS SDK default when nil). Callers that need to pin
+// the dial path against DNS rebinding can pass a client whose transport has
+// a guarded DialContext.
+func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		supportTagging: true,
 		conf:           conf,
@@ -45,6 +53,9 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 		Endpoint:                      aws.String(conf.S3Endpoint),
 		S3ForcePathStyle:              aws.Bool(conf.S3ForcePathStyle),
 		S3DisableContentMD5Validation: aws.Bool(true),
+	}
+	if httpClient != nil {
+		config.HTTPClient = httpClient
 	}
 	if conf.S3AccessKey != "" && conf.S3SecretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.S3AccessKey, conf.S3SecretKey, "")

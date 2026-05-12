@@ -127,6 +127,7 @@ start-primary: check-deps
 		-webdav.port=$(PRIMARY_WEBDAV_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=s3_config.json \
+		-volume.allowUntrustedRemoteEndpoints \
 		-dir=$(PRIMARY_DIR) \
 		-ip=127.0.0.1 \
 		-ip.bind=127.0.0.1 \
