@@ -40,6 +40,13 @@ type Config struct {
 	// nil -> no rate limit. Shared across all shard goroutines.
 	Limiter *rate.Limiter
 
+	// Meta-log retention boundary. Rules whose effective TTL exceeds
+	// this can't be serviced by replay alone and get partitioned into
+	// the walk view (engine.PromotedHash). 0 falls back to maxTTL,
+	// which keeps PromotedHash empty and the partition-flip recovery
+	// trigger dormant.
+	RetentionWindow time.Duration
+
 	ClientName string
 	// 0 -> randomized per-run.
 	ClientID int32
@@ -152,9 +159,16 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// one-time rewind to runNow - maxTTL, self-healing on save.
 	rsh := engine.ReplayContentHash(snap)
 	maxTTL := engine.MaxEffectiveTTL(snap)
-	// retentionWindow=maxTTL keeps promoted empty (no rule's TTL
-	// exceeds the max). Phase 4b plumbs real meta-log retention.
-	promoted := engine.PromotedHash(snap, maxTTL)
+	// Operator-supplied retention falls back to maxTTL, which forces
+	// promoted-empty (no rule's TTL can exceed the max). Once the
+	// walker handles walk-bound rules, the handler will pass the real
+	// meta-log retention here and PromotedHash starts catching
+	// partition flips.
+	retentionWindow := cfg.RetentionWindow
+	if retentionWindow <= 0 {
+		retentionWindow = maxTTL
+	}
+	promoted := engine.PromotedHash(snap, retentionWindow)
 
 	if rsh == [32]byte{} {
 		return cfg.Persister.Save(ctx, shardID, Cursor{
