@@ -37,6 +37,7 @@ type ErasureCodingTask struct {
 	// EC parameters
 	dataShards      int32
 	parityShards    int32
+	sourceDiskType  string                  // source volume's disk type, forwarded to Mount RPC (#9423)
 	targets         []*worker_pb.TaskTarget // Unified targets for EC shards
 	sources         []*worker_pb.TaskSource // Unified sources for cleanup
 	shardAssignment map[string][]string     // destination -> assigned shard types
@@ -68,6 +69,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 
 	t.dataShards = ecParams.DataShards
 	t.parityShards = ecParams.ParityShards
+	t.sourceDiskType = ecParams.SourceDiskType
 	t.workDir = ecParams.WorkingDir
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
@@ -540,7 +542,7 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 
 // mountEcShards mounts EC shards on destination servers
 func (t *ErasureCodingTask) mountEcShards() error {
-	return erasure_coding.MountEcShards(t.volumeID, t.collection, t.shardAssignment, t.grpcDialOption, t.GetLogger())
+	return erasure_coding.MountEcShards(t.volumeID, t.collection, t.shardAssignment, t.sourceDiskType, t.grpcDialOption, t.GetLogger())
 }
 
 // deleteOriginalVolume deletes the original volume and all its replicas from all servers

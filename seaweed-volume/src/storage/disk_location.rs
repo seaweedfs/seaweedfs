@@ -600,14 +600,22 @@ impl DiskLocation {
     }
 
     /// Mount EC shards for a volume on this location.
+    ///
+    /// `source_disk_type` is the source volume's disk type carried on the
+    /// `VolumeEcShardsMount` RPC. When non-empty it overrides the in-memory
+    /// EC volume's reported disk type so heartbeats keep reporting under
+    /// the source's disk type after EC encoding (#9423). Empty means "use
+    /// this location's disk type" — used by disk-scan reload paths that
+    /// have no orchestrator context.
     pub fn mount_ec_shards(
         &mut self,
         vid: VolumeId,
         collection: &str,
         shard_ids: &[u32],
+        source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         let idx_dir = self.idx_directory.clone();
-        self.mount_ec_shards_with_idx_dir(vid, collection, shard_ids, &idx_dir)
+        self.mount_ec_shards_with_idx_dir(vid, collection, shard_ids, &idx_dir, source_disk_type)
     }
 
     /// Mount EC shards but explicitly specify the idx directory the
@@ -627,6 +635,7 @@ impl DiskLocation {
         collection: &str,
         shard_ids: &[u32],
         idx_dir: &str,
+        source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         let dir = self.directory.clone();
         // Avoid the entry().or_insert_with() pattern here: that closure
@@ -643,10 +652,22 @@ impl DiskLocation {
             .ec_volumes
             .get_mut(&vid)
             .expect("just inserted above");
-        ec_vol.disk_type = self.disk_type.clone();
+        // When the orchestrator supplied a source disk type on the Mount
+        // RPC, override the EC volume's disk type so heartbeats report
+        // under the source volume's disk type (#9423). When the caller
+        // passed "" (disk-scan reload, orphan-shard reconcile, restart)
+        // we only default to this location's disk type for a fresh EC
+        // volume; otherwise we leave whatever a prior RPC mount set in
+        // place, so empty-source reloads don't reintroduce the drift.
+        if !source_disk_type.is_empty() {
+            ec_vol.set_disk_type(DiskType::from_string(source_disk_type));
+        } else if ec_vol.shard_count() == 0 {
+            ec_vol.set_disk_type(self.disk_type.clone());
+        }
 
         for &shard_id in shard_ids {
-            let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            shard.disk_type = ec_vol.disk_type.clone();
             ec_vol.add_shard(shard).map_err(VolumeError::Io)?;
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[collection, "ec_shards"])
@@ -804,7 +825,7 @@ impl DiskLocation {
         }
 
         let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
-        if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids) {
+        if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids, "") {
             // mount_ec_shards adds shards one at a time and increments
             // the per-shard metric for each. If it fails halfway, plain
             // ec_volumes.remove(vid) would leak metric increments for
@@ -1237,7 +1258,7 @@ mod tests {
         let shard_path = format!("{}/pics_7.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
 
-        loc.mount_ec_shards(VolumeId(7), "pics", &[0]).unwrap();
+        loc.mount_ec_shards(VolumeId(7), "pics", &[0], "").unwrap();
         assert!(loc.has_ec_volume(VolumeId(7)));
         assert!(std::path::Path::new(&shard_path).exists());
         assert!(std::path::Path::new(&format!("{}/pics_7.ecj", dir)).exists());
@@ -1247,6 +1268,56 @@ mod tests {
         assert!(!loc.has_ec_volume(VolumeId(7)));
         assert!(!std::path::Path::new(&shard_path).exists());
         assert!(!std::path::Path::new(&format!("{}/pics_7.ecj", dir)).exists());
+    }
+
+    /// #9423: after an RPC `VolumeEcShardsMount` records the source
+    /// volume's disk type on the EcVolume, a later empty-source mount
+    /// call (disk-scan reload, orphan-shard reconcile, restart) must
+    /// not clobber that override back to the physical location's disk
+    /// type — otherwise heartbeat reporting drifts back to "hdd" on
+    /// every reload.
+    #[test]
+    fn test_mount_ec_shards_empty_source_preserves_existing_disk_type() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        // Plant the first shard so the EC volume can mount, then call
+        // mount_ec_shards with source_disk_type="ssd" — simulating the
+        // VolumeEcShardsMount RPC path.
+        std::fs::write(format!("{}/pics_7.ec00", dir), b"ec-shard").unwrap();
+        loc.mount_ec_shards(VolumeId(7), "pics", &[0], "ssd").unwrap();
+        {
+            let ec_vol = loc.find_ec_volume(VolumeId(7)).expect("ec volume mounted");
+            assert_eq!(
+                ec_vol.disk_type,
+                DiskType::Ssd,
+                "first RPC mount should have set disk type to source's value",
+            );
+        }
+
+        // Plant another shard and re-mount with an empty source —
+        // matching what a disk-scan reload or orphan-shard reconcile
+        // would pass. The previously-recorded "ssd" override must
+        // survive.
+        std::fs::write(format!("{}/pics_7.ec01", dir), b"ec-shard").unwrap();
+        loc.mount_ec_shards(VolumeId(7), "pics", &[1], "").unwrap();
+        {
+            let ec_vol = loc.find_ec_volume(VolumeId(7)).expect("ec volume still mounted");
+            assert_eq!(
+                ec_vol.disk_type,
+                DiskType::Ssd,
+                "empty-source remount must not reset disk type to the physical location's",
+            );
+        }
     }
 
     #[test]

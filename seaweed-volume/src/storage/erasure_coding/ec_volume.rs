@@ -327,6 +327,20 @@ impl EcVolume {
         Ok(())
     }
 
+    /// Override the disk type the EC volume (and its already-mounted
+    /// shards) reports under. Used by the `VolumeEcShardsMount` handler
+    /// so the source volume's disk type is preserved across encoding
+    /// (#9423). Not persisted across restarts — disk-scan reload paths
+    /// default to the physical location's disk type.
+    pub fn set_disk_type(&mut self, d: DiskType) {
+        self.disk_type = d.clone();
+        for slot in self.shards.iter_mut() {
+            if let Some(shard) = slot {
+                shard.disk_type = d.clone();
+            }
+        }
+    }
+
     /// Remove and close a shard.
     pub fn remove_shard(&mut self, shard_id: ShardId) {
         if let Some(ref mut shard) = self.shards[shard_id as usize] {

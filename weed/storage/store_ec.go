@@ -159,10 +159,17 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 
 }
 
-func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) error {
+func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
 	for diskId, location := range s.Locations {
 		if ecVolume, err := location.LoadEcShard(collection, vid, shardId); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
+
+			// Apply the orchestrator-supplied source disk type so the EC
+			// volume reports under it instead of the location's. Empty means
+			// "fall back to location's disk type" (#9423).
+			if sourceDiskType != "" {
+				ecVolume.SetDiskType(types.ToDiskType(sourceDiskType))
+			}
 
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
@@ -171,7 +178,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				Collection:  collection,
 				EcIndexBits: uint32(si.Bitmap()),
 				ShardSizes:  si.SizesInt64(),
-				DiskType:    string(location.DiskType),
+				DiskType:    string(ecVolume.DiskType()),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      uint32(diskId),
 			}

@@ -3632,12 +3632,13 @@ func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) {
 }
 
 type VolumeEcShardsMountRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId       uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection     string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	ShardIds       []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	SourceDiskType string                 `protobuf:"bytes,4,opt,name=source_disk_type,json=sourceDiskType,proto3" json:"source_disk_type,omitempty"` // disk type of the source volume, applied to the in-memory EC volume so heartbeats report under it (#9423)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *VolumeEcShardsMountRequest) Reset() {
@@ -3689,6 +3690,13 @@ func (x *VolumeEcShardsMountRequest) GetShardIds() []uint32 {
 		return x.ShardIds
 	}
 	return nil
+}
+
+func (x *VolumeEcShardsMountRequest) GetSourceDiskType() string {
+	if x != nil {
+		return x.SourceDiskType
+	}
+	return ""
 }
 
 type VolumeEcShardsMountResponse struct {
@@ -7004,13 +7012,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
 	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1e\n" +
-	"\x1cVolumeEcShardsDeleteResponse\"v\n" +
+	"\x1cVolumeEcShardsDeleteResponse\"\xa0\x01\n" +
 	"\x1aVolumeEcShardsMountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1d\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12(\n" +
+	"\x10source_disk_type\x18\x04 \x01(\tR\x0esourceDiskType\"\x1d\n" +
 	"\x1bVolumeEcShardsMountResponse\"X\n" +
 	"\x1cVolumeEcShardsUnmountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1b\n" +

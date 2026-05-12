@@ -84,7 +84,7 @@ func TestECPlacementPlannerPrefersTaggedDisks(t *testing.T) {
 	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
 	require.NotNil(t, planner)
 
-	selected, err := planner.selectDestinations("", "", 2)
+	selected, err := planner.selectDestinations("", "", "", 2)
 	require.NoError(t, err)
 	require.Len(t, selected, 2)
 
@@ -113,7 +113,7 @@ func TestECPlacementPlannerFallsBackWhenTagsInsufficient(t *testing.T) {
 	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
 	require.NotNil(t, planner)
 
-	selected, err := planner.selectDestinations("", "", 3)
+	selected, err := planner.selectDestinations("", "", "", 3)
 	require.NoError(t, err)
 	require.Len(t, selected, 3)
 

@@ -115,6 +115,7 @@ impl Store {
                 &key.collection,
                 &shard_ids,
                 &owner_idx_dir,
+                "",
             ) {
                 // mount_ec_shards_with_idx_dir adds shards one at a
                 // time and increments the `ec_shards` gauge per shard
