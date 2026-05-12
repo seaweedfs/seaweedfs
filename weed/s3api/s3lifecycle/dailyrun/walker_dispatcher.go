@@ -59,14 +59,16 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 	kindLabel := action.Key.ActionKind.String()
 	resp, err := d.Client.LifecycleDelete(ctx, req)
 	if err != nil {
-		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "TRANSPORT_ERROR").Inc()
+		// "RPC_ERROR" matches the streaming dispatcher and processMatches
+		// labels so transport-class failures aggregate under one key.
+		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
 		return fmt.Errorf("walker dispatch %s/%s %s: %w", action.Bucket, objectPath, action.Key.ActionKind, err)
 	}
 	if resp == nil {
 		// A misbehaving server stub returning (nil, nil) would panic on
-		// the switch below. Surface as an error so the walk halts at
-		// this entry, preserving the in-flight cursor's correctness.
-		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "NIL_RESPONSE").Inc()
+		// the switch below. Bucket under RPC_ERROR rather than a new
+		// label — operationally it's the same class of failure.
+		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
 		return fmt.Errorf("walker dispatch %s/%s %s: nil response", action.Bucket, objectPath, action.Key.ActionKind)
 	}
 	stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, resp.Outcome.String()).Inc()
