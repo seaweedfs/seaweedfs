@@ -183,7 +183,7 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 }
 
 func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
-	if Logger == nil {
+	if r == nil || Logger == nil {
 		return
 	}
 	markAuditLogged(r)
@@ -211,7 +211,10 @@ type auditLogCtxKey struct{}
 // if one is not already present. Safe to call when no fluent logger is
 // configured; the flag is harmless in that case.
 func EnsureAuditTracking(r *http.Request) *http.Request {
-	if _, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok {
+	if r == nil {
+		return nil
+	}
+	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok && v != nil {
 		return r
 	}
 	flag := new(atomic.Bool)
@@ -229,14 +232,17 @@ func markAuditLogged(r *http.Request) {
 	if r == nil {
 		return
 	}
-	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok {
+	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok && v != nil {
 		v.Store(true)
 	}
 }
 
 // AuditAlreadyLogged reports whether PostLog (or MarkAuditLogged) has run for r.
 func AuditAlreadyLogged(r *http.Request) bool {
-	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok {
+	if r == nil {
+		return false
+	}
+	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok && v != nil {
 		return v.Load()
 	}
 	return false
