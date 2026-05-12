@@ -297,10 +297,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	return nil
 }
 
-// executeDailyReplay runs the bounded daily-replay path. Reuses the
-// streaming path's filer / s3 / engine setup but routes the per-shard
-// loop through dailyrun.Run instead of scheduler.Scheduler. Phase 2:
-// replay-only, refuses walker-bound action kinds with a typed error.
+// executeDailyReplay is the bounded daily-replay path (Phase 2:
+// replay-only, refuses walker-bound action kinds).
 func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
 	eng := engine.New()
 	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
@@ -337,12 +335,6 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Limiter:     limiter,
 		ClientName:  "worker-s3-lifecycle-daily",
 	})
-	if dailyrun.IsUnsupportedRule(runErr) {
-		// Surface the typed error verbatim so admin marks the run as
-		// failed with the user-facing reason in the activity log.
-		glog.Warningf("daily_replay: %v", runErr)
-		return runErr
-	}
 	if runErr != nil {
 		glog.Warningf("daily_replay: %v", runErr)
 		return runErr
@@ -350,17 +342,9 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	return nil
 }
 
-// buildLimiterFromClusterContext parses the per-worker share the admin
-// wrote into ClusterContext.Metadata (see weed/admin/plugin/plugin.go's
-// s3_lifecycle injection) and returns a rate.Limiter, or nil when no
-// rate cap applies. The description string is for the JobProgressUpdate
-// so operators can see "rate=unlimited" / "rate=12.5/s burst=25" in
-// the activity log.
-//
-// Tolerant of missing keys, empty strings, malformed numbers, and
-// non-positive values — all treated as "no limit" rather than failing
-// the run. The admin allocator is the single point that decides whether
-// to populate these keys; the worker doesn't second-guess.
+// buildLimiterFromClusterContext returns (nil, "unlimited") for any
+// missing/malformed/non-positive value. The admin allocator owns the
+// "should there be a cap" decision; the worker doesn't second-guess.
 func buildLimiterFromClusterContext(cc *plugin_pb.ClusterContext) (*rate.Limiter, string) {
 	if cc == nil || cc.Metadata == nil {
 		return nil, "unlimited"
@@ -371,8 +355,6 @@ func buildLimiterFromClusterContext(cc *plugin_pb.ClusterContext) (*rate.Limiter
 	}
 	burst, _ := parsePositiveInt(cc.Metadata[MetadataKeyDeletesBurst])
 	if burst <= 0 {
-		// Sensible default: enough headroom for one tick's worth of
-		// throughput. Caller may also supply 0 to opt into this default.
 		burst = int(rps * 2)
 		if burst < 1 {
 			burst = 1

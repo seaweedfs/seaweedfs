@@ -29,9 +29,7 @@ func TestBuildLimiterFromClusterContext_MissingRateKey(t *testing.T) {
 }
 
 func TestBuildLimiterFromClusterContext_NonPositiveRate(t *testing.T) {
-	// 0 or negative rate means the admin didn't allocate; the worker
-	// must NOT construct a limiter that throttles every request to
-	// zero-throughput.
+	// rate<=0 must yield nil, not a zero-throughput limiter.
 	for _, raw := range []string{"0", "-1", "0.0", "not-a-number", ""} {
 		l, desc := buildLimiterFromClusterContext(&plugin_pb.ClusterContext{
 			Metadata: map[string]string{MetadataKeyDeletesPerSecond: raw},
@@ -56,8 +54,6 @@ func TestBuildLimiterFromClusterContext_PositiveRateBuildsLimiter(t *testing.T) 
 }
 
 func TestBuildLimiterFromClusterContext_BurstMissingDefaultsTo2xRate(t *testing.T) {
-	// burst omitted (admin allocator wrote nothing) → worker computes
-	// 2 × rps so a single tick has headroom for two refills.
 	l, _ := buildLimiterFromClusterContext(&plugin_pb.ClusterContext{
 		Metadata: map[string]string{MetadataKeyDeletesPerSecond: "10"},
 	})
@@ -67,9 +63,7 @@ func TestBuildLimiterFromClusterContext_BurstMissingDefaultsTo2xRate(t *testing.
 }
 
 func TestBuildLimiterFromClusterContext_TinyRateClampsBurstToOne(t *testing.T) {
-	// A sub-1-rps allocation (e.g. 0.5/s across few workers) would
-	// compute 2 × 0.5 = 1, but if the int truncation produced 0 the
-	// limiter would never refill. Clamp to at least 1.
+	// rate.Limiter with burst<1 never refills; floor.
 	l, _ := buildLimiterFromClusterContext(&plugin_pb.ClusterContext{
 		Metadata: map[string]string{MetadataKeyDeletesPerSecond: "0.1"},
 	})

@@ -1,34 +1,18 @@
 package s3_lifecycle
 
-// Cluster-wide rate-limit configuration plumbing for the daily-replay
-// worker. The admin holds a single "cluster delete budget" knob, divides
-// it by the number of execute-capable s3_lifecycle workers at job-dispatch
-// time, and ships the per-worker share to the worker via
-// ExecuteJobRequest.ClusterContext.Metadata. The worker reads the share,
-// constructs a rate.Limiter, and passes it to dailyrun.Run.
-//
-// These constants are the contract between admin (weed/admin/plugin/plugin.go
-// computes the share and writes the keys) and worker (this package's
-// handler.go reads them). Changing a name on one side without the other
-// would silently disable rate limiting — both sides must read these
-// exact values.
+// Contract with weed/admin/plugin/cluster_rate_limit.go: admin computes
+// the per-worker share from the *AdminKey fields and writes it to
+// ExecuteJobRequest.ClusterContext.Metadata under the MetadataKey* keys.
+// Changing a name on one side without the other silently disables rate
+// limiting.
 
 const (
-	// ClusterDeletesPerSecondAdminKey is the admin-config field that
-	// holds the cluster-wide budget in delete RPCs per second. 0 means
-	// unlimited (legacy behavior). Set via the AdminConfigForm in
-	// handler.go's "Scope" section.
+	// 0 = unlimited.
 	ClusterDeletesPerSecondAdminKey = "cluster_deletes_per_second"
-	// ClusterDeletesBurstAdminKey holds the token-bucket burst. 0 means
-	// "2 × rps" (computed by the admin allocator).
+	// 0 = 2 * rps.
 	ClusterDeletesBurstAdminKey = "cluster_deletes_burst"
 
-	// MetadataKeyDeletesPerSecond is the per-worker share value the
-	// admin writes into ClusterContext.Metadata at ExecuteJob time.
-	// Stored as a string of a non-negative float64; empty/missing/zero
-	// means "no rate limit on this run" (cfg.Limiter stays nil).
+	// Per-worker share. Missing/empty/zero -> cfg.Limiter stays nil.
 	MetadataKeyDeletesPerSecond = "s3_lifecycle.deletes_per_second"
-	// MetadataKeyDeletesBurst is the per-worker burst share. Stored as
-	// a string of a non-negative integer.
-	MetadataKeyDeletesBurst = "s3_lifecycle.deletes_burst"
+	MetadataKeyDeletesBurst     = "s3_lifecycle.deletes_burst"
 )

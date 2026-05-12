@@ -593,13 +593,6 @@ var (
 			Help:      "Counter of LifecycleDelete completions that skipped per-chunk delete (volume TTL reclaim).",
 		}, []string{"bucket", "rule_hash"})
 
-	// S3LifecycleDispatchLimiterWaitSeconds is the cluster-wide rate
-	// limiter's per-dispatch wait time on the daily-replay path. The
-	// limiter blocks just before each LifecycleDelete RPC; near-zero
-	// observations mean the cluster cap isn't binding, a long-tail at
-	// the configured 1/rate ceiling means the cluster cap is the
-	// active throttle. Operators tune cluster_deletes_per_second by
-	// reading p95/p99 on this histogram.
 	S3LifecycleDispatchLimiterWaitSeconds = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,

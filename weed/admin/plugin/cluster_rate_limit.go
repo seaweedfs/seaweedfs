@@ -7,23 +7,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
 
-// Job types whose ExecuteJobRequest needs per-worker rate-allocation
-// metadata injected. Keyed by the job-type string so plugin.go's
-// generic dispatch path stays job-agnostic.
-//
-// To add a new job type to the share-allocation pipeline: register an
-// entry here that knows how to read its admin-config field(s) and
-// produce the metadata keys/values the worker reads.
-
-// s3LifecycleClusterDeletesPerSecondKey, s3LifecycleClusterDeletesBurstKey,
-// s3LifecycleMetadataDeletesPerSecond, and s3LifecycleMetadataDeletesBurst
-// are the contract between admin and worker. The values must match the
-// constants exported from weed/worker/tasks/s3_lifecycle/cluster_rate_limit.go
-// — duplicated here as plain strings rather than imported so the admin
-// plugin package doesn't pull a dependency on the worker handler
-// package. A mismatch on either side would silently disable rate
-// limiting; tests pin the constants in both packages against the same
-// values.
+// String constants must match weed/worker/tasks/s3_lifecycle/cluster_rate_limit.go.
+// Duplicated rather than imported so the admin package doesn't depend
+// on the worker handler package; tests pin both sides to the same values.
 const (
 	s3LifecycleJobType                    = "s3_lifecycle"
 	s3LifecycleClusterDeletesPerSecondKey = "cluster_deletes_per_second"
@@ -32,23 +18,10 @@ const (
 	s3LifecycleMetadataDeletesBurst       = "s3_lifecycle.deletes_burst"
 )
 
-// decorateClusterContextForJob returns a new ClusterContext with any
-// per-job-type metadata the admin needs to inject before the
-// ExecuteJobRequest is sent. Returns the input cc unchanged when no
-// decoration applies.
-//
-// Today only s3_lifecycle decorates; the function exists so a future
-// job type's plumbing slots in alongside without touching
-// executeJobWithExecutor.
-//
-// maxJobsPerDetection is the job-type's AdminRuntimeConfig.MaxJobsPerDetection
-// — the cap on how many parallel instances of this job the scheduler will
-// dispatch per detection cycle. For singleton jobs (s3_lifecycle has
-// MaxJobsPerDetection=1) only one worker is ever active, so the cluster
-// budget must go to that worker undivided. For parallel-dispatch jobs the
-// budget divides across the actually-running set, not across every
-// capable worker. The divisor is min(executors, maxJobsPerDetection),
-// clamped to ≥1.
+// decorateClusterContextForJob injects per-job rate-allocation metadata
+// when the job type opts in. Divisor is min(executors, maxJobsPerDetection)
+// so singleton jobs (maxJobs=1) get the full cluster budget on the
+// single active worker.
 func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobType string, adminConfigValues map[string]*plugin_pb.ConfigValue, maxJobsPerDetection int) *plugin_pb.ClusterContext {
 	if cc == nil {
 		return cc
@@ -59,21 +32,13 @@ func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobT
 	rps := readNonNegativeInt(adminConfigValues, s3LifecycleClusterDeletesPerSecondKey)
 	burst := readNonNegativeInt(adminConfigValues, s3LifecycleClusterDeletesBurstKey)
 	if rps <= 0 {
-		// Operator hasn't configured a cluster cap; nothing to allocate.
-		// The worker treats missing metadata keys as "unlimited," which
-		// is the legacy behavior.
 		return cc
 	}
 	executors := r.registry.CountCapableExecutors(jobType)
 	if executors <= 0 {
-		// No executors means the job won't dispatch at all; metadata
-		// would be discarded. Log so the case is visible in ops.
 		glog.V(2).Infof("decorateClusterContext: %s rps=%d but no execute-capable workers; skipping allocation", jobType, rps)
 		return cc
 	}
-	// Divide by the number of *concurrently-running* workers, not the
-	// number of capable ones. A singleton job (maxJobs=1) gets the full
-	// budget on its single active worker.
 	activeWorkers := executors
 	if maxJobsPerDetection > 0 && maxJobsPerDetection < activeWorkers {
 		activeWorkers = maxJobsPerDetection
@@ -83,12 +48,11 @@ func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobT
 	if burst > 0 {
 		perWorkerBurst = burst / activeWorkers
 		if perWorkerBurst < 1 {
+			// rate.Limiter with burst<1 never refills; floor.
 			perWorkerBurst = 1
 		}
 	}
 
-	// Clone so we don't mutate the shared base context. The metadata
-	// map is small; a fresh allocation per ExecuteJob is fine.
 	out := cloneClusterContext(cc)
 	if out.Metadata == nil {
 		out.Metadata = map[string]string{}
@@ -102,11 +66,8 @@ func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobT
 	return out
 }
 
-// cloneClusterContext returns a shallow-but-safe copy: the top-level
-// fields are reassigned, and the Metadata map is duplicated so the
-// caller can mutate it without racing other consumers of the input.
-// Slices of strings (master/filer/volume/s3 addresses) are copied by
-// reference — those are treated as immutable elsewhere in the codebase.
+// cloneClusterContext duplicates the Metadata map so callers can mutate
+// it without racing the shared base context. Address slices are aliased.
 func cloneClusterContext(in *plugin_pb.ClusterContext) *plugin_pb.ClusterContext {
 	if in == nil {
 		return nil
@@ -126,9 +87,6 @@ func cloneClusterContext(in *plugin_pb.ClusterContext) *plugin_pb.ClusterContext
 	return out
 }
 
-// readNonNegativeInt reads an int64 admin config value, treating
-// missing fields and non-int kinds as 0. Negative values are clamped
-// to 0 since the AdminConfigForm declares MinValue=0 on both fields.
 func readNonNegativeInt(values map[string]*plugin_pb.ConfigValue, field string) int {
 	v, ok := values[field]
 	if !ok || v == nil {
