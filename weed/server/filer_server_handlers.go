@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -256,7 +257,7 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	if len(claims.AllowedPrefixes) > 0 {
 		hasPrefix := false
 		for _, prefix := range claims.AllowedPrefixes {
-			if strings.HasPrefix(r.URL.Path, prefix) {
+			if pathHasComponentPrefix(r.URL.Path, prefix) {
 				hasPrefix = true
 				break
 			}
@@ -281,6 +282,32 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	}
 
 	return true
+}
+
+// pathHasComponentPrefix reports whether reqPath is contained within the
+// directory subtree denoted by prefix, treating both as "/"-separated
+// path components. Both inputs are normalised with path.Clean to neutralise
+// "." and ".." segments and collapse duplicate slashes. A prefix of "/"
+// matches any path.
+func pathHasComponentPrefix(reqPath, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	cleanedPath := path.Clean(reqPath)
+	if cleanedPath == "." {
+		cleanedPath = "/"
+	}
+	cleanedPrefix := path.Clean(prefix)
+	if cleanedPrefix == "." {
+		cleanedPrefix = "/"
+	}
+	if cleanedPrefix == "/" {
+		return true
+	}
+	if cleanedPath == cleanedPrefix {
+		return true
+	}
+	return strings.HasPrefix(cleanedPath, cleanedPrefix+"/")
 }
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
