@@ -40,7 +40,16 @@ const (
 // Today only s3_lifecycle decorates; the function exists so a future
 // job type's plumbing slots in alongside without touching
 // executeJobWithExecutor.
-func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobType string, adminConfigValues map[string]*plugin_pb.ConfigValue) *plugin_pb.ClusterContext {
+//
+// maxJobsPerDetection is the job-type's AdminRuntimeConfig.MaxJobsPerDetection
+// — the cap on how many parallel instances of this job the scheduler will
+// dispatch per detection cycle. For singleton jobs (s3_lifecycle has
+// MaxJobsPerDetection=1) only one worker is ever active, so the cluster
+// budget must go to that worker undivided. For parallel-dispatch jobs the
+// budget divides across the actually-running set, not across every
+// capable worker. The divisor is min(executors, maxJobsPerDetection),
+// clamped to ≥1.
+func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobType string, adminConfigValues map[string]*plugin_pb.ConfigValue, maxJobsPerDetection int) *plugin_pb.ClusterContext {
 	if cc == nil {
 		return cc
 	}
@@ -62,10 +71,17 @@ func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobT
 		glog.V(2).Infof("decorateClusterContext: %s rps=%d but no execute-capable workers; skipping allocation", jobType, rps)
 		return cc
 	}
-	perWorkerRps := float64(rps) / float64(executors)
+	// Divide by the number of *concurrently-running* workers, not the
+	// number of capable ones. A singleton job (maxJobs=1) gets the full
+	// budget on its single active worker.
+	activeWorkers := executors
+	if maxJobsPerDetection > 0 && maxJobsPerDetection < activeWorkers {
+		activeWorkers = maxJobsPerDetection
+	}
+	perWorkerRps := float64(rps) / float64(activeWorkers)
 	perWorkerBurst := 0
 	if burst > 0 {
-		perWorkerBurst = burst / executors
+		perWorkerBurst = burst / activeWorkers
 		if perWorkerBurst < 1 {
 			perWorkerBurst = 1
 		}
@@ -81,8 +97,8 @@ func (r *Plugin) decorateClusterContextForJob(cc *plugin_pb.ClusterContext, jobT
 	if perWorkerBurst > 0 {
 		out.Metadata[s3LifecycleMetadataDeletesBurst] = strconv.Itoa(perWorkerBurst)
 	}
-	glog.V(3).Infof("decorateClusterContext: %s rps=%d burst=%d executors=%d -> per-worker rps=%g burst=%d",
-		jobType, rps, burst, executors, perWorkerRps, perWorkerBurst)
+	glog.V(3).Infof("decorateClusterContext: %s rps=%d burst=%d executors=%d maxJobs=%d active=%d -> per-worker rps=%g burst=%d",
+		jobType, rps, burst, executors, maxJobsPerDetection, activeWorkers, perWorkerRps, perWorkerBurst)
 	return out
 }
 
