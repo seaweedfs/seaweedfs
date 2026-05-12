@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dailyrun"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
@@ -81,11 +83,23 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 16}},
 						},
+						{
+							Name:        "algorithm",
+							Label:       "Algorithm",
+							Description: "Daily Replay = bounded daily meta-log scan (Phase 2, replay-only — buckets using ExpirationDate, ExpiredDeleteMarker, NewerNoncurrent, or scan_only rules will fail the run until Phase 4 ships). Streaming = legacy reader+heap path, kept as a runtime escape hatch during the Phase 4 rollout; Phase 5 deletes it.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
+							Options: []*plugin_pb.ConfigOption{
+								{Value: AlgorithmDailyReplay, Label: "Daily Replay (default)", Description: "Bounded daily meta-log scan. Replay-only in Phase 2; buckets with walker-bound rules fail the run."},
+								{Value: AlgorithmStreaming, Label: "Streaming (legacy fallback)", Description: "Long-running reader + per-shard heap + tick dispatcher. Pre-cutover behavior; removed in Phase 5."},
+							},
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"workers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
+				"workers":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
+				"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAlgorithm}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -248,6 +262,10 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
+	if cfg.Algorithm == AlgorithmDailyReplay {
+		return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
+	}
+
 	sched := &scheduler.Scheduler{
 		BucketsPath:       bucketsPath,
 		Engine:            engine.New(),
@@ -265,6 +283,60 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	if err := sched.Run(runCtx); err != nil {
 		glog.Warningf("s3 lifecycle execute: %v", err)
 		return err
+	}
+	return nil
+}
+
+// executeDailyReplay runs the bounded daily-replay path. Reuses the
+// streaming path's filer / s3 / engine setup but routes the per-shard
+// loop through dailyrun.Run instead of scheduler.Scheduler. Phase 2:
+// replay-only, refuses walker-bound action kinds with a typed error.
+func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
+	eng := engine.New()
+	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
+	if err != nil {
+		return fmt.Errorf("daily_replay: load lifecycle inputs: %w", err)
+	}
+	for _, pe := range parseErrors {
+		glog.V(1).Infof("daily_replay: %s: %v", pe.Bucket, pe.Err)
+	}
+	eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
+
+	shards := make([]int, 0, cfg.Workers)
+	// One pass per shard ID across [0, ShardCount). cfg.Workers governs
+	// concurrency, not partitioning — every shard gets exactly one
+	// goroutine and the rate.Limiter is the throughput governor.
+	for i := 0; i < s3lifecycle.ShardCount; i++ {
+		shards = append(shards, i)
+	}
+
+	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		JobId: request.Job.JobId, JobType: jobType,
+		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
+		Message: fmt.Sprintf("daily_replay shards=%d runtime=%s", len(shards), cfg.MaxRuntime),
+	})
+
+	runErr := dailyrun.Run(ctx, dailyrun.Config{
+		Shards:      shards,
+		BucketsPath: bucketsPath,
+		Engine:      eng,
+		FilerClient: filerClient,
+		Client:      lifecycleRPCAdapter{c: rpc},
+		Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+		Workers:     cfg.Workers,
+		ClientName:  "worker-s3-lifecycle-daily",
+		// Limiter is wired in Phase 3 from ClusterContext.Metadata.
+	})
+	if dailyrun.IsUnsupportedRule(runErr) {
+		// Surface the typed error verbatim so admin marks the run as
+		// failed with the user-facing reason in the activity log.
+		glog.Warningf("daily_replay: %v", runErr)
+		return runErr
+	}
+	if runErr != nil {
+		glog.Warningf("daily_replay: %v", runErr)
+		return runErr
 	}
 	return nil
 }

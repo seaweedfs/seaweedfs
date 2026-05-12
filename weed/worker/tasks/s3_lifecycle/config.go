@@ -15,6 +15,19 @@ const (
 	defaultRefreshIntervalMinutes   = int64(5)
 	defaultMaxRuntimeMinutes        = int64(60)
 	defaultBootstrapIntervalMinutes = int64(0) // 0 = walk once per process
+
+	// AlgorithmDailyReplay routes the worker through dailyrun.Run for
+	// one bounded pass per Execute. Currently Phase 2 / replay-only:
+	// buckets with walker-bound action kinds are refused. Phase 4
+	// extends this to handle every kind. Default — the streaming path
+	// stays in the tree as a runtime escape hatch only.
+	AlgorithmDailyReplay = "daily_replay"
+	// AlgorithmStreaming is the legacy event-driven dispatcher path
+	// (reader + heap + per-shard pipeline). Kept as a fallback knob for
+	// rollout; deleted by Phase 5 once Phase 4 walker integration ships.
+	AlgorithmStreaming = "streaming"
+
+	defaultAlgorithm = AlgorithmDailyReplay
 )
 
 // Config is the parsed AdminConfigForm + WorkerConfigForm view.
@@ -25,6 +38,7 @@ type Config struct {
 	RefreshInterval   time.Duration
 	BootstrapInterval time.Duration
 	MaxRuntime        time.Duration
+	Algorithm         string
 }
 
 // ParseConfig pulls the lifecycle Handler config from the merged
@@ -37,6 +51,7 @@ func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Co
 		RefreshInterval:   time.Duration(readInt64(workerValues, "refresh_interval_minutes", defaultRefreshIntervalMinutes)) * time.Minute,
 		BootstrapInterval: time.Duration(readInt64(workerValues, "bootstrap_interval_minutes", defaultBootstrapIntervalMinutes)) * time.Minute,
 		MaxRuntime:        time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
+		Algorithm:         readString(adminValues, "algorithm", defaultAlgorithm),
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = defaultWorkers
@@ -59,6 +74,12 @@ func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Co
 	}
 	if cfg.MaxRuntime <= 0 {
 		cfg.MaxRuntime = time.Duration(defaultMaxRuntimeMinutes) * time.Minute
+	}
+	switch cfg.Algorithm {
+	case AlgorithmStreaming, AlgorithmDailyReplay:
+		// valid
+	default:
+		cfg.Algorithm = defaultAlgorithm
 	}
 	return cfg
 }

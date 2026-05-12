@@ -18,6 +18,15 @@ type filerSiblingLister struct {
 	bucketsPath string
 }
 
+// NewFilerSiblingLister returns a router.SiblingLister backed by the
+// filer client. Exported so the daily-replay worker (and any future
+// non-dispatcher caller) can reuse the same .versions/ + null-bare
+// lookup logic without re-implementing it. Phase 5 deletes the
+// dispatcher's internal use; this constructor stays.
+func NewFilerSiblingLister(client filer_pb.SeaweedFilerClient, bucketsPath string) router.SiblingLister {
+	return &filerSiblingLister{client: client, bucketsPath: bucketsPath}
+}
+
 func (l *filerSiblingLister) Survivors(ctx context.Context, bucket, objectKey string) (router.Survivors, error) {
 	bucketPath := strings.TrimSuffix(l.bucketsPath, "/") + "/" + bucket
 	versionsDir := bucketPath + "/" + objectKey + s3_constants.VersionsFolder
