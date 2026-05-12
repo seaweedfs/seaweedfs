@@ -74,17 +74,8 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				{
 					SectionId:   "scope",
 					Title:       "Scope",
-					Description: "How many pipeline goroutines split the 16-shard space.",
+					Description: "Cluster-wide algorithm choice and delete-throughput cap.",
 					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "workers",
-							Label:       "Worker Count",
-							Description: "Number of pipeline goroutines per executing worker. Each owns a contiguous slice of [0, 16) shards. Default 1 = one goroutine handles all 16 shards.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 16}},
-						},
 						{
 							Name:        "algorithm",
 							Label:       "Algorithm",
@@ -116,7 +107,6 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"workers":                       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
 				"algorithm":                     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAlgorithm}},
 				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},

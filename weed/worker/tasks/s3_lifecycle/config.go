@@ -9,7 +9,12 @@ import (
 const (
 	jobType = "s3_lifecycle"
 
-	defaultWorkers                  = 1
+	// shardPipelineGoroutines is the in-process fan-out across the
+	// 16-shard space. Kept as a hardcoded internal default — formerly
+	// an admin form field, removed because it's a per-worker tuning
+	// knob, not a cluster-coordination concern.
+	shardPipelineGoroutines = 1
+
 	defaultDispatchTickMinutes      = int64(1)
 	defaultCheckpointTickSeconds    = int64(30)
 	defaultRefreshIntervalMinutes   = int64(5)
@@ -45,16 +50,13 @@ type Config struct {
 // admin+worker config values. Missing fields fall back to defaults.
 func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		Workers:           int(readInt64(adminValues, "workers", defaultWorkers)),
+		Workers:           shardPipelineGoroutines,
 		DispatchTick:      time.Duration(readInt64(workerValues, "dispatch_tick_minutes", defaultDispatchTickMinutes)) * time.Minute,
 		CheckpointTick:    time.Duration(readInt64(workerValues, "checkpoint_tick_seconds", defaultCheckpointTickSeconds)) * time.Second,
 		RefreshInterval:   time.Duration(readInt64(workerValues, "refresh_interval_minutes", defaultRefreshIntervalMinutes)) * time.Minute,
 		BootstrapInterval: time.Duration(readInt64(workerValues, "bootstrap_interval_minutes", defaultBootstrapIntervalMinutes)) * time.Minute,
 		MaxRuntime:        time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
 		Algorithm:         readString(adminValues, "algorithm", defaultAlgorithm),
-	}
-	if cfg.Workers <= 0 {
-		cfg.Workers = defaultWorkers
 	}
 	if cfg.DispatchTick <= 0 {
 		cfg.DispatchTick = time.Duration(defaultDispatchTickMinutes) * time.Minute

@@ -284,31 +284,21 @@ func TestDescriptor_BasicShape(t *testing.T) {
 	assert.Greater(t, d.DescriptorVersion, uint32(0), "descriptor version must be positive (admins use it for compat)")
 }
 
-func TestDescriptor_AdminConfigFormHasWorkersField(t *testing.T) {
-	// Workers is the only admin-side knob today; if it disappears, the
-	// admin form would render empty and operators couldn't tune
-	// concurrency.
+func TestDescriptor_AdminConfigFormHasNoWorkersField(t *testing.T) {
+	// "workers" used to be an admin form field controlling in-process
+	// pipeline goroutines. It's per-worker tuning, not a cluster-wide
+	// scope concern, so it was removed from the form. ParseConfig hard-
+	// codes cfg.Workers from shardPipelineGoroutines instead.
 	h := NewHandler(nil)
 	d := h.Descriptor()
 	require.NotNil(t, d.AdminConfigForm)
-	assert.Equal(t, "s3-lifecycle-admin", d.AdminConfigForm.FormId)
-
-	// Walk every section's fields and find "workers".
-	var found bool
 	for _, sec := range d.AdminConfigForm.Sections {
 		for _, f := range sec.Fields {
-			if f.Name == "workers" {
-				found = true
-				assert.Equal(t, plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64, f.FieldType)
-			}
+			assert.NotEqual(t, "workers", f.Name, "admin form must NOT expose the in-memory pipeline-goroutine knob")
 		}
 	}
-	assert.True(t, found, "admin form must expose 'workers' field")
-
-	// Default value matches the constant used by ParseConfig.
-	dv, ok := d.AdminConfigForm.DefaultValues["workers"]
-	require.True(t, ok, "workers must have a default in AdminConfigForm")
-	assert.Equal(t, int64(defaultWorkers), dv.GetInt64Value())
+	_, hasDefault := d.AdminConfigForm.DefaultValues["workers"]
+	assert.False(t, hasDefault, "DefaultValues must NOT include 'workers' (form field removed)")
 }
 
 func TestDescriptor_WorkerConfigFormCadenceDefaultsMatchParseConfig(t *testing.T) {
