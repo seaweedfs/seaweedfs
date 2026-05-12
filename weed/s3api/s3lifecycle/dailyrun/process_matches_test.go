@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,4 +151,38 @@ func TestProcessMatches_AllDueNoSkippedFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, halted)
 	require.False(t, skipped, "every match was past DueTime; skippedAny must be false")
+}
+
+func TestProcessMatches_DispatchCounterIncrements(t *testing.T) {
+	// Pin that dispatched matches increment S3LifecycleDispatchCounter
+	// with the outcome label so a refactor doesn't silently drop the
+	// observability hook. Use a bucket/kind no other test touches to
+	// keep the read-after-write stable.
+	runNow := time.Now()
+	rh := [8]byte{0xfe}
+	rule := s3lifecycle.ActionKey{Bucket: "metrics-pin-bkt", RuleHash: rh, ActionKind: s3lifecycle.ActionKindExpirationDays}
+	matches := []router.Match{
+		{Key: rule, Bucket: "metrics-pin-bkt", ObjectKey: "obj", DueTime: runNow.Add(-time.Hour)},
+	}
+	client := &recordingClient{} // default DONE
+	before := dispatchCounterValue("metrics-pin-bkt", "expiration_days", "DONE")
+	cfg := Config{Client: client}
+	_, _, err := processMatches(context.Background(), cfg, runNow, &reader.Event{}, matches)
+	require.NoError(t, err)
+	after := dispatchCounterValue("metrics-pin-bkt", "expiration_days", "DONE")
+	assert.Equal(t, before+1, after, "DONE outcome must increment the dispatch counter")
+}
+
+// dispatchCounterValue reads the current value of the shared
+// S3LifecycleDispatchCounter for the given (bucket, kind, outcome).
+func dispatchCounterValue(bucket, kind, outcome string) float64 {
+	m := stats.S3LifecycleDispatchCounter.WithLabelValues(bucket, kind, outcome)
+	var pm dto.Metric
+	if err := m.Write(&pm); err != nil {
+		return 0
+	}
+	if pm.Counter == nil {
+		return 0
+	}
+	return pm.Counter.GetValue()
 }
