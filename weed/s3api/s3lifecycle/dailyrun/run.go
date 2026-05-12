@@ -191,15 +191,17 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		return fmt.Errorf("shard=%d: load cursor: %w", shardID, err)
 	}
 
+	// engine.ReplayContentHash produces a different byte layout than the
+	// local helper Phase 2 used (sort order + tagged-field encoding).
+	// On the first run after upgrade, every Phase-2 cursor mismatches and
+	// drops into the rule-change branch below — bounded one-time rewind
+	// to runNow - maxTTL, self-healing on save. Acceptable because (a)
+	// daily_replay is off by default so the population is small, (b) the
+	// rewind window is bounded by maxTTL, not full time-zero.
 	rsh := engine.ReplayContentHash(snap)
 	maxTTL := engine.MaxEffectiveTTL(snap)
-	// retentionWindow drives engine.PromotedHash. For now we use maxTTL
-	// as the window, which makes PromotedHash always empty (no rule's
-	// TTL can exceed the max). Phase 4b will replace this with the
-	// actual meta-log retention boundary (computed from the reader's
-	// earliest-available TsNs) so true scan_only promotions are
-	// detected. Until then the field is a forward-compatible no-op:
-	// cursor schema is final, just the values stay zero.
+	// retentionWindow=maxTTL keeps PromotedHash empty until Phase 4b
+	// wires the real meta-log retention boundary.
 	promoted := engine.PromotedHash(snap, maxTTL)
 
 	// Empty-replay sentinel: no replay-eligible active rules in the
