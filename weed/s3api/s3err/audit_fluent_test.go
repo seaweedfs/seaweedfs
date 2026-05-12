@@ -85,3 +85,18 @@ func TestGetAccessLogRemoteIP(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditTrackingFlag(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+	assert.False(t, AuditAlreadyLogged(req), "untracked request reports not logged")
+
+	tracked := EnsureAuditTracking(req)
+	assert.NotSame(t, req, tracked, "EnsureAuditTracking returns a new request when no flag is present")
+	assert.False(t, AuditAlreadyLogged(tracked), "tracked request starts unlogged")
+
+	again := EnsureAuditTracking(tracked)
+	assert.Same(t, tracked, again, "EnsureAuditTracking is idempotent when flag already present")
+
+	MarkAuditLogged(tracked)
+	assert.True(t, AuditAlreadyLogged(tracked), "flag flips after MarkAuditLogged")
+}

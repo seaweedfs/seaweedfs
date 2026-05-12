@@ -1,12 +1,14 @@
 package s3err
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fluent/fluent-logger-golang/fluent"
@@ -184,6 +186,7 @@ func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
 	if Logger == nil {
 		return
 	}
+	markAuditLogged(r)
 	if err := Logger.Post(tag, *GetAccessLog(r, HTTPStatusCode, errorCode)); err != nil {
 		glog.Warning("Error while posting log: ", err)
 	}
@@ -196,4 +199,45 @@ func PostAccessLog(log AccessLog) {
 	if err := Logger.Post(tag, log); err != nil {
 		glog.Warning("Error while posting log: ", err)
 	}
+}
+
+// auditLogCtxKey identifies the per-request flag used to detect whether an
+// audit entry has already been emitted, so middleware can supply a fallback
+// log for handlers that don't call PostLog themselves without double-logging
+// the ones that do.
+type auditLogCtxKey struct{}
+
+// EnsureAuditTracking attaches an audit-tracking flag to the request context
+// if one is not already present. Safe to call when no fluent logger is
+// configured; the flag is harmless in that case.
+func EnsureAuditTracking(r *http.Request) *http.Request {
+	if _, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok {
+		return r
+	}
+	flag := new(atomic.Bool)
+	return r.WithContext(context.WithValue(r.Context(), auditLogCtxKey{}, flag))
+}
+
+// MarkAuditLogged signals that an audit entry has already been emitted for r.
+// Callers that emit logs via paths other than PostLog (e.g. PostAccessLog in
+// batch delete) should invoke this so the middleware fallback skips r.
+func MarkAuditLogged(r *http.Request) {
+	markAuditLogged(r)
+}
+
+func markAuditLogged(r *http.Request) {
+	if r == nil {
+		return
+	}
+	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok {
+		v.Store(true)
+	}
+}
+
+// AuditAlreadyLogged reports whether PostLog (or MarkAuditLogged) has run for r.
+func AuditAlreadyLogged(r *http.Request) bool {
+	if v, ok := r.Context().Value(auditLogCtxKey{}).(*atomic.Bool); ok {
+		return v.Load()
+	}
+	return false
 }

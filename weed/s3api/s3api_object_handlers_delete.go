@@ -256,6 +256,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	if auditLog != nil {
 		auditLog.Key = strings.TrimPrefix(object, "/")
 		s3err.PostAccessLog(*auditLog)
+		s3err.MarkAuditLogged(r)
 	}
 
 	stats_collect.RecordBucketActiveTime(bucket)
@@ -404,6 +405,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			if auditLog != nil {
 				auditLog.Key = object.Key
 				s3err.PostAccessLog(*auditLog)
+				s3err.MarkAuditLogged(r)
 			}
 		}
 
