@@ -36,13 +36,6 @@ Generating JWT:
  2. optionally set "exp", "nbf" fields, in Unix time,
     the number of seconds elapsed since January 1, 1970 UTC.
 
-There are two whitelist check entry points with different defaults:
-  - IsWhiteListed: allow-all when the whitelist is empty. Kept for HTTP
-    compatibility (e.g. Guard.WhiteList middleware on read-mostly routes).
-  - IsAdminAuthorized: fail-closed when the whitelist is empty. Used to gate
-    destructive admin endpoints so an unconfigured deployment does not
-    accept them from arbitrary peers.
-
 Referenced:
 https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 */
@@ -115,10 +108,6 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 
 // IsWhiteListed returns true if the given host IP is allowed by the guard.
 // When no whitelist is configured (security inactive), all hosts are allowed.
-// This allow-all-when-empty behaviour is kept for HTTP compatibility: many
-// non-write HTTP routes wrap themselves with Guard.WhiteList and must remain
-// reachable on default deployments. Callers gating destructive endpoints must
-// use IsAdminAuthorized instead.
 func (g *Guard) IsWhiteListed(host string) bool {
 	if !g.isWriteActive {
 		return true
@@ -140,25 +129,6 @@ func (g *Guard) IsWhiteListed(host string) bool {
 	return false
 }
 
-// IsAdminAuthorized is the explicit, fail-closed equivalent of IsWhiteListed
-// for destructive admin endpoints. Unlike IsWhiteListed, it returns false
-// when no whitelist is configured, so callers must opt in by populating the
-// whitelist (CLI -whiteList or guard.white_list in security.toml).
-//
-// Loopback peers are trusted even when the whitelist is empty: a volume
-// server commonly cohabits with the master/filer on a single host (and on
-// every integration-test cluster), and an in-process loopback caller is
-// equivalent to local-host trust. Off-host callers remain denied.
-func (g *Guard) IsAdminAuthorized(host string) bool {
-	if g.isEmptyWhiteList {
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			return true
-		}
-		return false
-	}
-	return g.IsWhiteListed(host)
-}
-
 func (g *Guard) UpdateWhiteList(whiteList []string) {
 	whiteListIp := make(map[string]struct{})
 	whiteListCIDR := make(map[string]*net.IPNet)
@@ -167,7 +137,6 @@ func (g *Guard) UpdateWhiteList(whiteList []string) {
 			_, cidrnet, err := net.ParseCIDR(ip)
 			if err != nil {
 				glog.Errorf("Parse CIDR %s in whitelist failed: %v", ip, err)
-				continue
 			}
 			whiteListCIDR[ip] = cidrnet
 		} else {
