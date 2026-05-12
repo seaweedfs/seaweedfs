@@ -9,8 +9,8 @@ import (
 
 func TestParseConfigDefaults(t *testing.T) {
 	cfg := ParseConfig(nil, nil)
-	if cfg.Workers != defaultWorkers {
-		t.Errorf("Workers default=%d, want %d", cfg.Workers, defaultWorkers)
+	if cfg.Workers != shardPipelineGoroutines {
+		t.Errorf("Workers default=%d, want %d", cfg.Workers, shardPipelineGoroutines)
 	}
 	if cfg.DispatchTick != 1*time.Minute {
 		t.Errorf("DispatchTick default=%v, want 1m", cfg.DispatchTick)
@@ -58,9 +58,6 @@ func TestParseConfig_AlgorithmUnknownValueFallsBackToDefault(t *testing.T) {
 }
 
 func TestParseConfigOverrides(t *testing.T) {
-	admin := map[string]*plugin_pb.ConfigValue{
-		"workers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 4}},
-	}
 	worker := map[string]*plugin_pb.ConfigValue{
 		"dispatch_tick_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
 		"checkpoint_tick_seconds":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 15}},
@@ -68,10 +65,7 @@ func TestParseConfigOverrides(t *testing.T) {
 		"bootstrap_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 120}},
 		"max_runtime_minutes":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 120}},
 	}
-	cfg := ParseConfig(admin, worker)
-	if cfg.Workers != 4 {
-		t.Errorf("Workers=%d, want 4", cfg.Workers)
-	}
+	cfg := ParseConfig(nil, worker)
 	if cfg.DispatchTick != 2*time.Minute {
 		t.Errorf("DispatchTick=%v, want 2m", cfg.DispatchTick)
 	}

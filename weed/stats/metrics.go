@@ -592,6 +592,22 @@ var (
 			Name:      "metadata_only_total",
 			Help:      "Counter of LifecycleDelete completions that skipped per-chunk delete (volume TTL reclaim).",
 		}, []string{"bucket", "rule_hash"})
+
+	// S3LifecycleDispatchLimiterWaitSeconds is the cluster-wide rate
+	// limiter's per-dispatch wait time on the daily-replay path. The
+	// limiter blocks just before each LifecycleDelete RPC; near-zero
+	// observations mean the cluster cap isn't binding, a long-tail at
+	// the configured 1/rate ceiling means the cluster cap is the
+	// active throttle. Operators tune cluster_deletes_per_second by
+	// reading p95/p99 on this histogram.
+	S3LifecycleDispatchLimiterWaitSeconds = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "dispatch_limiter_wait_seconds",
+			Help:      "Time spent waiting on the cluster rate limiter before issuing a LifecycleDelete RPC. Non-zero values indicate the cluster cap is binding.",
+			Buckets:   []float64{0.0001, 0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		})
 )
 
 func init() {
@@ -668,6 +684,7 @@ func init() {
 	Gather.MustRegister(S3LifecycleEventCounter)
 	Gather.MustRegister(S3LifecycleBootstrapDispatchCounter)
 	Gather.MustRegister(S3LifecycleMetadataOnlyCounter)
+	Gather.MustRegister(S3LifecycleDispatchLimiterWaitSeconds)
 
 	Gather.MustRegister(UploadErrorCounter)
 

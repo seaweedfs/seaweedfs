@@ -142,6 +142,31 @@ func (r *Registry) HasCapableWorker(jobType string) bool {
 	return false
 }
 
+// CountCapableExecutors returns the number of non-stale workers that
+// can EXECUTE the given job type. Used by per-job-type cluster
+// allocators (e.g. the s3_lifecycle delete-rate divider) to compute a
+// per-worker share at dispatch time. Returns 0 when no executor is
+// available — callers should treat that as "skip allocation" rather
+// than dividing by zero.
+func (r *Registry) CountCapableExecutors(jobType string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	now := time.Now()
+	n := 0
+	for _, session := range r.sessions {
+		if r.isSessionStaleLocked(session, now) {
+			continue
+		}
+		capability := session.Capabilities[jobType]
+		if capability == nil || !capability.CanExecute {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 // DetectableJobTypes returns sorted job types that currently have at least one detect-capable worker.
 func (r *Registry) DetectableJobTypes() []string {
 	r.mu.RLock()
