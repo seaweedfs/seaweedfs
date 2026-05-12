@@ -191,40 +191,53 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		return fmt.Errorf("shard=%d: load cursor: %w", shardID, err)
 	}
 
-	rsh := localReplayContentHash(snap)
-	maxTTL := localMaxEffectiveTTL(snap)
+	rsh := engine.ReplayContentHash(snap)
+	maxTTL := engine.MaxEffectiveTTL(snap)
+	// retentionWindow drives engine.PromotedHash. For now we use maxTTL
+	// as the window, which makes PromotedHash always empty (no rule's
+	// TTL can exceed the max). Phase 4b will replace this with the
+	// actual meta-log retention boundary (computed from the reader's
+	// earliest-available TsNs) so true scan_only promotions are
+	// detected. Until then the field is a forward-compatible no-op:
+	// cursor schema is final, just the values stay zero.
+	promoted := engine.PromotedHash(snap, maxTTL)
 
 	// Empty-replay sentinel: no replay-eligible active rules in the
 	// snapshot. We persist the hash so a future rule addition is
-	// detected as a content change. Use the hash rather than maxTTL
-	// here as the explicit "no replay state" signal — both fire on
-	// the same set in practice (action_kind.go only emits actions
-	// when their Days field is > 0), but the hash captures intent.
+	// detected as a content change.
 	if rsh == [32]byte{} {
 		return cfg.Persister.Save(ctx, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
-			PromotedHash: [32]byte{}, // Phase 2: always empty
+			PromotedHash: promoted,
 		})
 	}
 
-	// Rule-change branch: hash mismatch (and a persisted cursor exists)
-	// rewinds to now - max_ttl. Phase 4 adds the walker call here.
-	if found && persisted.RuleSetHash != rsh {
+	// Recovery triggers (any one fires the rule-change branch below):
+	//   - replay-rule edit: RuleSetHash mismatch (content change).
+	//   - partition flip: PromotedHash mismatch (rule moved between
+	//     replay and walk due to retention shift). Today PromotedHash
+	//     is computed against maxTTL so it's always empty and this
+	//     trigger is dormant; Phase 4b wires the real retentionWindow.
+	//
+	// Phase 4b adds the walker invocation here so already-due objects
+	// across the full rule set get caught before the rewind. Until then
+	// we just rewind the cursor — anything that aged in during the
+	// stale-cursor window will be re-scanned by the sliding meta-log
+	// replay since startTsNs is bumped to runNow - maxTTL.
+	if found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted) {
 		next := Cursor{
-			TsNs:        runNow.Add(-maxTTL).UnixNano(),
-			RuleSetHash: rsh,
-			// PromotedHash stays empty in Phase 2.
+			TsNs:         runNow.Add(-maxTTL).UnixNano(),
+			RuleSetHash:  rsh,
+			PromotedHash: promoted,
 		}
 		return cfg.Persister.Save(ctx, shardID, next)
 	}
 
 	// Cold start with no prior cursor: start scanning from now - max_ttl
 	// so a freshly-installed worker still expires already-due objects
-	// whose PUT events sit within meta-log retention. Phase 4 would
-	// invoke the walker here for the longer-than-retention case; Phase 2
-	// trusts that retention >= max_ttl in the deployments this code is
-	// enabled on.
+	// whose PUT events sit within meta-log retention. Phase 4b will
+	// invoke the walker here for the longer-than-retention case.
 	startTsNs := persisted.TsNs
 	floor := runNow.Add(-maxTTL).UnixNano()
 	if startTsNs < floor {
@@ -239,7 +252,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		// the error. Cursor save uses ctx — if ctx is already cancelled
 		// the save will fail too; that's fine, we still surface the
 		// underlying drain error.
-		_ = cfg.Persister.Save(ctx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh})
+		_ = cfg.Persister.Save(ctx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
 	}
 
