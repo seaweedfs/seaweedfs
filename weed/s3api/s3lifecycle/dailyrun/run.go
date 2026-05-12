@@ -25,6 +25,12 @@ type LifecycleClient interface {
 	LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error)
 }
 
+// WalkerFunc handles the per-shard bucket walk for a given engine view.
+// Phase 4b uses it on the recovery branch (rule-content edit / partition
+// flip) so already-due objects across the rewritten rule set get caught
+// before the cursor rewinds.
+type WalkerFunc func(ctx context.Context, view *engine.Snapshot, shardID int) error
+
 type Config struct {
 	Shards      []int
 	BucketsPath string
@@ -39,6 +45,21 @@ type Config struct {
 
 	// nil -> no rate limit. Shared across all shard goroutines.
 	Limiter *rate.Limiter
+
+	// Meta-log retention boundary. Rules whose effective TTL exceeds
+	// this can't be serviced by replay alone and get partitioned into
+	// the walk view (engine.PromotedHash). 0 falls back to maxTTL,
+	// which keeps PromotedHash empty and the partition-flip recovery
+	// trigger dormant.
+	RetentionWindow time.Duration
+
+	// Walker is invoked on the recovery branch (rule-content edit or
+	// partition flip) before the cursor rewind. It receives the
+	// engine.RecoveryView so only the rules that need bulk re-evaluation
+	// are walked, and the per-shard ID so the implementation can filter
+	// entries. nil disables walker invocation entirely — the cursor
+	// still rewinds, matching Phase 4a behavior.
+	Walker WalkerFunc
 
 	ClientName string
 	// 0 -> randomized per-run.
@@ -68,9 +89,6 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Capture once so a mid-run Compile can't make shards disagree.
 	snap := cfg.Engine.Snapshot()
-	if unsupported := checkSnapshotForUnsupported(snap); unsupported != nil {
-		return unsupported
-	}
 
 	workers := cfg.Workers
 	if workers <= 0 {
@@ -136,10 +154,12 @@ func validate(cfg Config) error {
 }
 
 // runShard executes one daily-replay pass; see DESIGN.md for algorithm.
-// Phase 2: no walker on rule-change / cold-start; PromotedHash trigger
-// is dormant until Phase 4b wires real retention.
-// checkSnapshotForUnsupported already rejected walker-bound and
-// scan_only rules.
+// Two walker invocations under cfg.Walker (when set):
+//   - recovery branch: RecoveryView, so already-due objects across the
+//     rewritten rule set fire before the cursor rewinds.
+//   - steady state: RulesForShard's walk view, so walker-bound and
+//     scan_only-promoted rules fire every day even when replay rules
+//     are unchanged.
 func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int) error {
 	persisted, found, err := cfg.Persister.Load(ctx, shardID)
 	if err != nil {
@@ -152,9 +172,21 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// one-time rewind to runNow - maxTTL, self-healing on save.
 	rsh := engine.ReplayContentHash(snap)
 	maxTTL := engine.MaxEffectiveTTL(snap)
-	// retentionWindow=maxTTL keeps promoted empty (no rule's TTL
-	// exceeds the max). Phase 4b plumbs real meta-log retention.
-	promoted := engine.PromotedHash(snap, maxTTL)
+	// Operator-supplied retention falls back to maxTTL. In steady
+	// state every active replay rule has TTL <= maxTTL by construction,
+	// so promoted is empty and the partition-flip trigger is dormant.
+	// During bootstrap (rules compiled but not yet active) maxTTL is
+	// 0, retentionWindow is 0, and every rule with TTL > 0 lands in
+	// the walk partition; the resulting non-empty promoted forces a
+	// recovery walk on the first run after rules activate, which is
+	// the intended bootstrap behavior. Once the handler plumbs the
+	// real meta-log retention here, PromotedHash starts catching
+	// retention-driven partition flips in addition.
+	retentionWindow := cfg.RetentionWindow
+	if retentionWindow <= 0 {
+		retentionWindow = maxTTL
+	}
+	promoted := engine.PromotedHash(snap, retentionWindow)
 
 	if rsh == [32]byte{} {
 		return cfg.Persister.Save(ctx, shardID, Cursor{
@@ -165,16 +197,35 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	// Recovery: rule-content edit (RuleSetHash mismatch) or partition
-	// flip (PromotedHash mismatch — dormant until real retention).
-	// Phase 4b adds the walker here; until then we rewind and let the
-	// sliding meta-log replay catch up.
+	// flip (PromotedHash mismatch). Walk the rewritten rule set so
+	// already-due objects fire before the cursor rewinds; then rewind
+	// and let the sliding meta-log replay catch up steady state.
 	if found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted) {
+		if cfg.Walker != nil {
+			if werr := cfg.Walker(ctx, engine.RecoveryView(snap), shardID); werr != nil {
+				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
+			}
+		}
 		next := Cursor{
 			TsNs:         runNow.Add(-maxTTL).UnixNano(),
 			RuleSetHash:  rsh,
 			PromotedHash: promoted,
 		}
 		return cfg.Persister.Save(ctx, shardID, next)
+	}
+
+	// Steady-state walker for walker-bound and scan_only-promoted rules.
+	// RulesForShard splits the snapshot using the same retentionWindow
+	// PromotedHash used, so the walk view is exactly the partition the
+	// hash already accounted for. Empty walk view (no rules need walking
+	// today) skips the call so non-versioned, replay-only deployments
+	// don't pay an O(N) bucket-walk per run.
+	if cfg.Walker != nil {
+		if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
+			if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
+				return fmt.Errorf("shard=%d: steady walk: %w", shardID, werr)
+			}
+		}
 	}
 
 	// Cold start: scan from now-maxTTL so already-due objects within
