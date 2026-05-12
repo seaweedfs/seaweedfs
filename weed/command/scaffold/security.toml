@@ -198,5 +198,11 @@ kek = ""
 key = ""
 
 # white list. It's checking request ip address.
+# Destructive volume admin gRPCs (DeleteCollection, VolumeDelete,
+# VolumeMarkReadonly, VolumeMarkWritable, VolumeUnmount, VolumeMount,
+# VolumeServerLeave, AllocateVolume, VolumeConfigure, EC/vacuum) require a
+# populated white_list. If left empty, the volume server rejects those RPCs
+# from off-host peers (loopback callers are still trusted); either list the
+# admin IPs/CIDRs here or pass them via the -whiteList CLI flag.
 [guard]
 white_list = ""
