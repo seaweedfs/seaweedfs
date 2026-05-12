@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -321,15 +324,18 @@ func TestPingVolumeTargetAndLeaveAffectsHealthz(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Volume servers only track their masters as ping peers, so drive the
+	// success path through the master target and rely on the master->volume
+	// admission for cross-type coverage.
 	pingResp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
-		TargetType: cluster.VolumeServerType,
-		Target:     clusterHarness.VolumeServerAddress(),
+		TargetType: cluster.MasterType,
+		Target:     clusterHarness.MasterAddress(),
 	})
 	if err != nil {
-		t.Fatalf("Ping target volume server failed: %v", err)
+		t.Fatalf("Ping master from volume server failed: %v", err)
 	}
 	if pingResp.GetRemoteTimeNs() == 0 {
-		t.Fatalf("expected remote timestamp from ping target volume server")
+		t.Fatalf("expected remote timestamp from ping master")
 	}
 
 	if _, err = grpcClient.VolumeServerLeave(ctx, &volume_server_pb.VolumeServerLeaveRequest{}); err != nil {
@@ -399,20 +405,21 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	unknownResp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
+	// The volume server gates Ping on a known peer list. Unknown target types
+	// and addresses outside that list are rejected with InvalidArgument
+	// before any outbound dial is attempted.
+	_, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
 		TargetType: "unknown-type",
 		Target:     "127.0.0.1:12345",
 	})
-	if err != nil {
-		t.Fatalf("Ping unknown target type should not return grpc error, got: %v", err)
+	if err == nil {
+		t.Fatalf("Ping unknown target type should be rejected by admission")
 	}
-	if unknownResp.GetRemoteTimeNs() != 0 {
-		t.Fatalf("Ping unknown target type expected remote_time_ns=0, got %d", unknownResp.GetRemoteTimeNs())
-	}
-	if unknownResp.GetStopTimeNs() < unknownResp.GetStartTimeNs() {
-		t.Fatalf("Ping unknown target type expected stop_time_ns >= start_time_ns")
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("Ping unknown target type expected InvalidArgument, got %s: %v", got, err)
 	}
 
+	// Empty target stays as an unauthenticated self-liveness probe.
 	emptyTargetResp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{})
 	if err != nil {
 		t.Fatalf("Ping empty target should not return grpc error, got: %v", err)
@@ -424,26 +431,30 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 		t.Fatalf("Ping empty target expected stop_time_ns >= start_time_ns")
 	}
 
+	// 127.0.0.1:1 is not in the seed/current master set, so admission rejects
+	// the call before it can reach the network.
 	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
 		TargetType: cluster.MasterType,
 		Target:     "127.0.0.1:1",
 	})
 	if err == nil {
-		t.Fatalf("Ping master target should fail when target is unreachable")
+		t.Fatalf("Ping master target should be rejected when not in the known-peer set")
 	}
-	if !strings.Contains(err.Error(), "ping master") {
-		t.Fatalf("Ping master unreachable error mismatch: %v", err)
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("Ping unknown master expected InvalidArgument, got %s: %v", got, err)
 	}
 
+	// Volume servers do not carry a peer-filer list at all; any filer target
+	// is rejected at admission regardless of reachability.
 	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
 		TargetType: cluster.FilerType,
 		Target:     "127.0.0.1:1",
 	})
 	if err == nil {
-		t.Fatalf("Ping filer target should fail when target is unreachable")
+		t.Fatalf("Ping filer target should be rejected by admission")
 	}
-	if !strings.Contains(err.Error(), "ping filer") {
-		t.Fatalf("Ping filer unreachable error mismatch: %v", err)
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("Ping filer expected InvalidArgument, got %s: %v", got, err)
 	}
 }
 
@@ -479,6 +490,10 @@ func TestPingFilerTargetSuccess(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
+	// Volume servers do not maintain a peer-filer index, so drive the
+	// filer-presence success path through the volume server's master peer:
+	// reaching that master in a filer-bearing cluster is sufficient signal
+	// that filer joined the cluster without breaking volume-server ping.
 	clusterHarness := framework.StartSingleVolumeClusterWithFiler(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
@@ -487,16 +502,16 @@ func TestPingFilerTargetSuccess(t *testing.T) {
 	defer cancel()
 
 	resp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
-		TargetType: cluster.FilerType,
-		Target:     clusterHarness.FilerServerAddress(),
+		TargetType: cluster.MasterType,
+		Target:     clusterHarness.MasterAddress(),
 	})
 	if err != nil {
-		t.Fatalf("Ping filer target success path failed: %v", err)
+		t.Fatalf("Ping master from filer-bearing cluster failed: %v", err)
 	}
 	if resp.GetRemoteTimeNs() == 0 {
-		t.Fatalf("Ping filer target expected non-zero remote time")
+		t.Fatalf("Ping master expected non-zero remote time")
 	}
 	if resp.GetStopTimeNs() < resp.GetStartTimeNs() {
-		t.Fatalf("Ping filer target expected stop >= start, got start=%d stop=%d", resp.GetStartTimeNs(), resp.GetStopTimeNs())
+		t.Fatalf("Ping master expected stop >= start, got start=%d stop=%d", resp.GetStartTimeNs(), resp.GetStopTimeNs())
 	}
 }

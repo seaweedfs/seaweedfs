@@ -34,9 +34,14 @@ type VolumeServer struct {
 	readBufferSizeMB              int
 
 	SeedMasterNodes []pb.ServerAddress
-	whiteList       []string
-	currentMaster   pb.ServerAddress
-	pulsePeriod     time.Duration
+	// seedMasterSet mirrors SeedMasterNodes keyed by the canonical http
+	// form. It is computed once in NewVolumeServer so admission paths can
+	// answer is-this-a-seed-master in O(1).
+	seedMasterSet     map[string]struct{}
+	whiteList         []string
+	currentMaster     pb.ServerAddress
+	currentMasterLock sync.RWMutex
+	pulsePeriod       time.Duration
 	dataCenter      string
 	rack            string
 	store           *storage.Store
@@ -117,7 +122,15 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 
 	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)
-	vs.SeedMasterNodes = masterNodes
+	// Copy the caller's slice so subsequent external mutation cannot desync
+	// SeedMasterNodes from the frozen lookup set built below.
+	seedMasters := make([]pb.ServerAddress, len(masterNodes))
+	copy(seedMasters, masterNodes)
+	vs.SeedMasterNodes = seedMasters
+	vs.seedMasterSet = make(map[string]struct{}, len(seedMasters))
+	for _, m := range seedMasters {
+		vs.seedMasterSet[m.ToHttpAddress()] = struct{}{}
+	}
 
 	vs.checkWithMaster()
 

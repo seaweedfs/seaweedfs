@@ -447,9 +447,36 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 
 }
 
+// isKnownPingTarget reports whether target is a master this volume server
+// already knows about. Volume servers do not maintain a peer-volume or
+// peer-filer list, so Ping is scoped to the masters they heartbeat with.
+// The current-master read is taken under a lock to avoid racing with the
+// heartbeat goroutine that rewrites it on leader changes, and the seed
+// list is consulted via a pre-built set so the check stays O(1).
+func (vs *VolumeServer) isKnownPingTarget(target string, targetType string) bool {
+	if targetType != cluster.MasterType {
+		return false
+	}
+	addr := pb.ServerAddress(target)
+	key := addr.ToHttpAddress()
+	if key == "" {
+		return false
+	}
+	if current := vs.getCurrentMaster(); current != "" && current.ToHttpAddress() == key {
+		return true
+	}
+	_, ok := vs.seedMasterSet[key]
+	return ok
+}
+
 func (vs *VolumeServer) Ping(ctx context.Context, req *volume_server_pb.PingRequest) (resp *volume_server_pb.PingResponse, pingErr error) {
 	resp = &volume_server_pb.PingResponse{
 		StartTimeNs: time.Now().UnixNano(),
+	}
+	// Empty target is a self-liveness probe and stays unauthenticated.
+	if req.Target != "" && !vs.isKnownPingTarget(req.Target, req.TargetType) {
+		resp.StopTimeNs = time.Now().UnixNano()
+		return resp, status.Errorf(codes.InvalidArgument, "unknown ping target %s of type %s", req.Target, req.TargetType)
 	}
 	if req.TargetType == cluster.FilerType {
 		pingErr = pb.WithFilerClient(false, 0, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
