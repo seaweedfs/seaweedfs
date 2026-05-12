@@ -40,6 +40,13 @@ type Entry struct {
 
 	SuccessorModTime time.Time
 	NoncurrentIndex  *int
+
+	// VersionID is the S3 version id of this entry, empty for
+	// non-versioned buckets. Populated by the ListFunc adapter when
+	// the entry came from a `.versions/` directory; the walker itself
+	// doesn't use it, but the Dispatcher needs it to address the
+	// right version on LifecycleDelete.
+	VersionID string
 }
 
 // ListFunc must skip entries with Path <= start so kill-resume picks up
