@@ -120,10 +120,11 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 			shardCount := countExistingEcShardsForVolume(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
 			totalShards := erasure_coding.DataShardsCount + erasure_coding.ParityShardsCount
 			if shardCount >= totalShards {
-				glog.Warningf("EC Detection: Volume %d already has all %d EC shards in topology; "+
-					"skipping re-encode. Source replica on %s appears orphaned (issue #9448). "+
-					"To clean up, run `volume.delete -volumeId=%d` on the source server after verifying the EC shards are healthy.",
-					metric.VolumeID, totalShards, metric.Server, metric.VolumeID)
+				glog.Warningf("EC Detection: Volume %d has all %d EC shards in topology; "+
+					"source replica on %s is orphaned (#9448). "+
+					"To clean up by hand, send a targeted VolumeDelete RPC to %s only — "+
+					"DO NOT use the cluster-wide `volume.delete` shell command, which would also delete the EC shards.",
+					metric.VolumeID, totalShards, metric.Server, metric.Server)
 				skippedAlreadyEC++
 				continue
 			}
