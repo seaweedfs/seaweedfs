@@ -1051,15 +1051,19 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	// instead of a dangling pointer (which forces every subsequent GET
 	// through the 10-retry self-heal path and returns NoSuchKey for
 	// objects whose latest version was singleton).
-	prePointerRolled := false
+	var (
+		prePointerRolled bool
+		preWasSingleton  bool
+	)
 	if isLatestVersion {
-		rolled, prepErr := s3a.repointLatestBeforeDeletion(bucket, normalizedObject, versionId)
+		rolled, singleton, prepErr := s3a.repointLatestBeforeDeletion(bucket, normalizedObject, versionId)
 		if prepErr != nil {
 			// Surface to the client so they can retry the DELETE. The
 			// blob has NOT been removed yet, so retrying is safe.
 			return fmt.Errorf("failed to repoint latest version before deleting %s: %w", versionId, prepErr)
 		}
 		prePointerRolled = rolled
+		preWasSingleton = singleton
 	}
 
 	// Attempt to delete the version file
@@ -1077,12 +1081,21 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
 	}
 
-	// If we deleted the latest version and didn't already repoint above
-	// (multi-version case where another version still exists), run the
-	// post-deletion reconciliation. This both updates the pointer to
-	// the new latest and tears down the .versions/ directory when the
-	// last version is gone.
-	if isLatestVersion && !prePointerRolled {
+	switch {
+	case isLatestVersion && prePointerRolled && preWasSingleton:
+		// Pre-roll cleared a singleton pointer. The blob is now gone,
+		// so the .versions/ directory should be empty — try to tear it
+		// down. Non-recursive: any orphan from older code paths leaves
+		// the directory in place for the empty-folder cleaner or our
+		// reconciler to handle.
+		if rmErr := s3a.rm(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder, true, false); rmErr != nil {
+			glog.V(2).Infof("deleteSpecificObjectVersion: deferring .versions/ teardown for %s/%s: %v", bucket, normalizedObject, rmErr)
+		}
+	case isLatestVersion && !prePointerRolled:
+		// Multi-version case where another version still exists, or the
+		// pre-step decided the pointer was no longer ours to roll. Run
+		// the post-deletion reconciliation: it updates the pointer to
+		// the new latest and tears down .versions/ when nothing remains.
 		if err := s3a.updateLatestVersionAfterDeletion(bucket, normalizedObject); err != nil {
 			// Option 2: surface this so the operator sees the load-bearing
 			// failure, and queue the path for the reconciler to retry off
@@ -1091,7 +1104,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 			// DELETE as a hard storage error) — but we MUST drive the
 			// pointer to consistency, otherwise the next read pays the
 			// self-heal cost.
-			glog.Errorf("deleteSpecificObjectVersion: failed to update latest version after deletion for %s/%s (queued for reconciler): %v", bucket, object, err)
+			glog.Errorf("deleteSpecificObjectVersion: failed to update latest version after deletion for %s/%s (queued for reconciler): %v", bucket, normalizedObject, err)
 			if s3a.versionsHealQueue != nil {
 				s3a.versionsHealQueue.Enqueue(bucket, normalizedObject)
 			}
@@ -1109,12 +1122,24 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 // = true the caller should NOT run updateLatestVersionAfterDeletion
 // after the blob rm — the pointer is already consistent.
 //
+// wasSingleton = true indicates the caller cleared a singleton pointer.
+// After the caller's blob rm completes, deleteSpecificObjectVersion is
+// expected to run the post-deletion .versions/ teardown so the now-empty
+// directory entry is removed; doing that teardown inside this function
+// (i.e. before the blob rm) always fails with "non-empty folder" because
+// the blob is still present.
+//
 // When this returns rolled = false the .versions/ pointer was not in
 // sync with the caller's view (some concurrent writer changed it) and
 // the current deletion is no longer touching the latest; the caller
 // proceeds with the historical multi-step path which will re-snapshot
 // the state inside updateLatestVersionAfterDeletion.
-func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, versionIdToDelete string) (rolled bool, err error) {
+//
+// All load-bearing filer ops here are wrapped in retryFilerOp so the
+// pre-roll matches the resilience of the post-roll path; without this,
+// a transient filer hiccup during the pre-step would cause the caller
+// to fall back to the legacy non-atomic flow.
+func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, versionIdToDelete string) (rolled bool, wasSingleton bool, err error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1130,9 +1155,16 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 		startFrom             string
 	)
 	for {
-		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
-		if listErr != nil {
-			return false, fmt.Errorf("list %s: %w", versionsDir, listErr)
+		var (
+			entries []*filer_pb.Entry
+			isLast  bool
+		)
+		if listErr := retryFilerOp("repointLatestBeforeDeletion.list", func() error {
+			var lerr error
+			entries, isLast, lerr = s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+			return lerr
+		}); listErr != nil {
+			return false, false, fmt.Errorf("list %s: %w", versionsDir, listErr)
 		}
 		for _, entry := range entries {
 			if entry == nil || entry.Extended == nil {
@@ -1160,21 +1192,31 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 	}
 
 	// Re-fetch the .versions/ entry so the CAS persist below sees the
-	// most recent Extended state.
-	versionsEntry, getErr := s3a.getEntry(bucketDir, versionsObjectPath)
-	if getErr != nil {
-		// Directory already gone (concurrent cleanup). Treat as
-		// already-consistent so the caller skips the post-step.
-		return true, nil
+	// most recent Extended state. Distinguish NotFound (directory
+	// already gone — vacuous consistency, skip the post-step) from
+	// transient errors (must surface so the caller aborts before the
+	// blob rm — otherwise we'd remove the blob without having updated
+	// the pointer, reproducing the very dangling-state this PR fixes).
+	var versionsEntry *filer_pb.Entry
+	if getErr := retryFilerOp("repointLatestBeforeDeletion.getEntry", func() error {
+		var gerr error
+		versionsEntry, gerr = s3a.getEntry(bucketDir, versionsObjectPath)
+		return gerr
+	}); getErr != nil {
+		if errors.Is(getErr, filer_pb.ErrNotFound) || status.Code(getErr) == codes.NotFound {
+			// Directory already gone. Pointer is vacuously consistent.
+			return true, false, nil
+		}
+		return false, false, fmt.Errorf("read .versions entry: %w", getErr)
 	}
 	if versionsEntry.Extended == nil {
-		return false, nil
+		return false, false, nil
 	}
 	currentLatestIdBytes, hasCurrent := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	if !hasCurrent || string(currentLatestIdBytes) != versionIdToDelete {
 		// A concurrent writer already moved the pointer; our delete is
 		// no longer the latest. Caller falls back to the existing path.
-		return false, nil
+		return false, false, nil
 	}
 
 	if newLatestEntry != nil {
@@ -1184,10 +1226,10 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 		setCachedListMetadata(versionsEntry, newLatestEntry)
 		glog.V(2).Infof("repointLatestBeforeDeletion: %s/%s pre-roll to %s (deleteMarker=%v) before deleting %s", bucket, normalizedObject, newLatestVersionId, newLatestIsDeleteMark, versionIdToDelete)
 	} else {
-		// Singleton: clear the pointer fields. The blob rm and any
-		// subsequent .versions/ dir teardown follow; if those fail
-		// halfway through, the pointer is already absent so reads
-		// fall through to a clean NoSuchKey without entering the
+		// Singleton: clear the pointer fields. The blob rm and the
+		// post-rm .versions/ teardown follow in the caller; if those
+		// fail halfway through, the pointer is already absent so
+		// reads fall through to a clean NoSuchKey without entering the
 		// 10-retry stale-pointer self-heal path.
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
@@ -1195,24 +1237,17 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 		glog.V(2).Infof("repointLatestBeforeDeletion: %s/%s clearing singleton pointer before deleting %s", bucket, normalizedObject, versionIdToDelete)
 	}
 
-	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = versionsEntry.Extended
-		updatedEntry.Attributes = versionsEntry.Attributes
-		updatedEntry.Chunks = versionsEntry.Chunks
+	if mkErr := retryFilerOp("repointLatestBeforeDeletion.mkFile", func() error {
+		return s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+			updatedEntry.Extended = versionsEntry.Extended
+			updatedEntry.Attributes = versionsEntry.Attributes
+			updatedEntry.Chunks = versionsEntry.Chunks
+		})
 	}); mkErr != nil {
-		return false, fmt.Errorf("persist repointed pointer: %w", mkErr)
+		return false, false, fmt.Errorf("persist repointed pointer: %w", mkErr)
 	}
 
-	// If we cleared the pointer (singleton case), opportunistically try
-	// to remove the now-stale .versions/ directory. Non-recursive: if
-	// it isn't empty (orphan files from older code paths), leave the
-	// teardown to the reconciler / empty-folder cleaner.
-	if newLatestEntry == nil {
-		if rmErr := s3a.rm(bucketDir, versionsObjectPath, true, false); rmErr != nil {
-			glog.V(2).Infof("repointLatestBeforeDeletion: deferring .versions/ teardown for %s/%s: %v", bucket, normalizedObject, rmErr)
-		}
-	}
-	return true, nil
+	return true, newLatestEntry == nil, nil
 }
 
 // retryAttempts and retryStep tune the bounded retries used when the

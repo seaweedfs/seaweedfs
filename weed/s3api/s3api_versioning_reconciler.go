@@ -2,11 +2,16 @@ package s3api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Background reconciler for .versions/ directories whose latest-version
@@ -158,16 +163,24 @@ func (s3a *S3ApiServer) drainVersionsHealQueue() {
 // healVersionsPointer reads the .versions directory entry for the given
 // object and, if its latest-version pointer references a file that does
 // not exist, invokes the same self-heal path used by the read flow. A
-// nil .versions directory or an already-consistent pointer is treated as
-// success — the candidate either healed itself via another path or was
-// never in trouble.
+// genuinely-missing .versions directory or an already-consistent pointer
+// is treated as success — the candidate either healed itself via another
+// path or was never in trouble.
+//
+// Transient errors from the filer (timeout, brief unreachability) are
+// returned so the reconciler retries with backoff rather than silently
+// evicting the candidate. Swallowing them as "no stranded state" would
+// defeat the reconciler for exactly the failure modes the PR targets.
 func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		// Directory is gone — no stranded state to heal.
-		return nil
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+			// Directory is gone — no stranded state to heal.
+			return nil
+		}
+		return fmt.Errorf("read .versions entry %s/%s: %w", bucket, object, err)
 	}
 	if versionsEntry == nil || versionsEntry.Extended == nil {
 		return nil
@@ -178,9 +191,14 @@ func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 		return nil
 	}
 	latestFile := string(fileBytes)
-	if _, err := s3a.getEntry(bucketDir+"/"+versionsObjectPath, latestFile); err == nil {
+	if _, probeErr := s3a.getEntry(bucketDir+"/"+versionsObjectPath, latestFile); probeErr == nil {
 		// Pointer is consistent.
 		return nil
+	} else if !errors.Is(probeErr, filer_pb.ErrNotFound) && status.Code(probeErr) != codes.NotFound {
+		// Transient — surface so the reconciler retries with backoff
+		// rather than invoking heal on a possibly-incomplete listing
+		// (which could rewrite the pointer to an older version).
+		return fmt.Errorf("probe latest version %s/%s/%s: %w", bucket, object, latestFile, probeErr)
 	}
 	// Reuse the read-path heal so behaviour stays identical: it will
 	// repair the pointer to the newest remaining version, or clear it
