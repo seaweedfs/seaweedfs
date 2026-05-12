@@ -15,10 +15,6 @@ func newSnapshotWith(t *testing.T, inputs []engine.CompileInput) *engine.Snapsho
 	e := engine.New()
 	e.Compile(inputs, engine.CompileOptions{})
 	snap := e.Snapshot()
-	// Mark every action active so isActive checks fire as expected; the
-	// production compile path also marks them active for replay-eligible
-	// kinds when prior.BootstrapComplete is true. Tests just need them
-	// visible to AllActions().
 	for _, a := range snap.AllActions() {
 		snap.MarkActive(a.Key)
 	}
@@ -89,26 +85,18 @@ func TestCheckSnapshotForUnsupported_ExpiredDeleteMarkerRejected(t *testing.T) {
 }
 
 func TestCheckSnapshotForUnsupported_NonEventDrivenModeRejected(t *testing.T) {
-	// A replay-eligible action whose Mode isn't ModeEventDriven (e.g.
-	// promoted to ModeScanOnly by retention checks) is silently
-	// ignored by router.Route. Phase 2 must catch this loudly. Build a
-	// snapshot with one ExpirationDays action and mutate its Mode to
-	// ModeScanOnly directly — there's no production path that produces
-	// this without retention plumbing we don't have here, but the gate
-	// must still reject it.
+	// router.Route silently drops non-ModeEventDriven actions; gate
+	// must reject loudly.
 	snap := newSnapshotWith(t, []engine.CompileInput{
 		{Bucket: "b1", Rules: []*s3lifecycle.Rule{ruleExpirationDays(30)}},
 	})
-	// Mutate the compiled action to ModeScanOnly. AllActions returns
-	// the live snapshot's actions; this is safe in a test where no
-	// concurrent worker is reading.
 	for _, a := range snap.AllActions() {
 		if a.Key.ActionKind == s3lifecycle.ActionKindExpirationDays {
 			a.Mode = engine.ModeScanOnly
 		}
 	}
 	err := checkSnapshotForUnsupported(snap)
-	require.NotNil(t, err, "ModeScanOnly on a replay-kind action must be rejected")
+	require.NotNil(t, err)
 	assert.Equal(t, s3lifecycle.ActionKindExpirationDays, err.Kind)
 	assert.Contains(t, err.Reason, "ModeEventDriven")
 }
@@ -120,8 +108,6 @@ func TestIsUnsupportedRule_TypeCheck(t *testing.T) {
 	assert.False(t, IsUnsupportedRule(assertNonNilError()))
 }
 
-// assertNonNilError returns a plain non-nil error of a different type
-// so IsUnsupportedRule's errors.As check has a negative case to refuse.
 func assertNonNilError() error { return errPlain }
 
 type plainErr struct{}

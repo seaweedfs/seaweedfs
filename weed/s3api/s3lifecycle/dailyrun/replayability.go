@@ -8,11 +8,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 )
 
-// UnsupportedRuleError is returned by Run when the bucket's compiled
-// rules include any action kind Phase 2 cannot service. The handler
-// surfaces this so admin marks the run failed in the activity log;
-// flipping the algorithm flag to daily_replay on a bucket with these
-// rules is a loud failure rather than a silent dropped rule.
+// UnsupportedRuleError fails the run loudly when the snapshot contains
+// a rule the Phase 2 replay path can't service. Surfaced verbatim to
+// the activity log so flipping algorithm=daily_replay on an
+// incompatible bucket isn't a silent dropped rule.
 type UnsupportedRuleError struct {
 	Bucket string
 	Kind   s3lifecycle.ActionKind
@@ -23,16 +22,11 @@ func (e *UnsupportedRuleError) Error() string {
 	return fmt.Sprintf("daily_replay: unsupported action kind %s on bucket %q: %s", e.Kind, e.Bucket, e.Reason)
 }
 
-// IsUnsupportedRule reports whether err is or wraps an
-// UnsupportedRuleError. Callers (the worker handler) use this to
-// classify the run outcome.
 func IsUnsupportedRule(err error) bool {
 	var u *UnsupportedRuleError
 	return errors.As(err, &u)
 }
 
-// isReplayEligibleKind reports whether the engine's daily-replay path
-// can service action kind k. Mirror this list when adding new kinds.
 func isReplayEligibleKind(k s3lifecycle.ActionKind) bool {
 	switch k {
 	case s3lifecycle.ActionKindExpirationDays,
@@ -43,15 +37,11 @@ func isReplayEligibleKind(k s3lifecycle.ActionKind) bool {
 	return false
 }
 
-// checkSnapshotForUnsupported walks every active CompiledAction in snap
-// and returns the first kind that isn't replay-eligible OR is in a Mode
-// other than ModeEventDriven. router.Route gates dispatch on
-// `Mode == ModeEventDriven` (see weed/s3api/s3lifecycle/router/router.go),
-// so a replay-kind action that's been promoted to ModeScanOnly would
-// silently get no matches at all — the daily run must reject it loudly
-// so admin sees the failure in the activity log. Phase 4 partitions
-// these into walk-bound actions and runs them through the walker,
-// removing the gate.
+// checkSnapshotForUnsupported rejects (a) walker-bound action kinds and
+// (b) replay-kind actions in any Mode other than ModeEventDriven.
+// router.Route silently drops non-ModeEventDriven actions; rejecting
+// them here turns the silent drop into a loud failure. Phase 4
+// partitions these into walk-bound actions and removes the gate.
 func checkSnapshotForUnsupported(snap *engine.Snapshot) *UnsupportedRuleError {
 	if snap == nil {
 		return nil
