@@ -31,8 +31,10 @@ func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map
 	}
 	// Operator-declared meta-log retention. Negative or zero values stay
 	// zero so runShard falls back to maxTTL (PromotedHash dormant).
+	// Convert days->hours in int64 space before lifting to time.Duration
+	// so the unit is unambiguous.
 	if days := readInt64(adminValues, MetaLogRetentionDaysAdminKey, 0); days > 0 {
-		cfg.MetaLogRetention = time.Duration(days) * 24 * time.Hour
+		cfg.MetaLogRetention = time.Duration(days*24) * time.Hour
 	}
 	return cfg
 }
