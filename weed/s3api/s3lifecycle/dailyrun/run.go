@@ -89,9 +89,6 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Capture once so a mid-run Compile can't make shards disagree.
 	snap := cfg.Engine.Snapshot()
-	if unsupported := checkSnapshotForUnsupported(snap); unsupported != nil {
-		return unsupported
-	}
 
 	workers := cfg.Workers
 	if workers <= 0 {
@@ -157,10 +154,12 @@ func validate(cfg Config) error {
 }
 
 // runShard executes one daily-replay pass; see DESIGN.md for algorithm.
-// Phase 2: no walker on rule-change / cold-start; PromotedHash trigger
-// is dormant until Phase 4b wires real retention.
-// checkSnapshotForUnsupported already rejected walker-bound and
-// scan_only rules.
+// Two walker invocations under cfg.Walker (when set):
+//   - recovery branch: RecoveryView, so already-due objects across the
+//     rewritten rule set fire before the cursor rewinds.
+//   - steady state: RulesForShard's walk view, so walker-bound and
+//     scan_only-promoted rules fire every day even when replay rules
+//     are unchanged.
 func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int) error {
 	persisted, found, err := cfg.Persister.Load(ctx, shardID)
 	if err != nil {
@@ -208,6 +207,20 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			PromotedHash: promoted,
 		}
 		return cfg.Persister.Save(ctx, shardID, next)
+	}
+
+	// Steady-state walker for walker-bound and scan_only-promoted rules.
+	// RulesForShard splits the snapshot using the same retentionWindow
+	// PromotedHash used, so the walk view is exactly the partition the
+	// hash already accounted for. Empty walk view (no rules need walking
+	// today) skips the call so non-versioned, replay-only deployments
+	// don't pay an O(N) bucket-walk per run.
+	if cfg.Walker != nil {
+		if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
+			if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
+				return fmt.Errorf("shard=%d: steady walk: %w", shardID, werr)
+			}
+		}
 	}
 
 	// Cold start: scan from now-maxTTL so already-due objects within

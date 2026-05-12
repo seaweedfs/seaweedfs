@@ -357,12 +357,6 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Walker:      walker,
 		ClientName:  "worker-s3-lifecycle-daily",
 	})
-	if dailyrun.IsUnsupportedRule(runErr) {
-		// Surface the typed error verbatim so admin marks the run as
-		// failed with the user-facing reason in the activity log.
-		glog.Warningf("daily_replay: %v", runErr)
-		return runErr
-	}
 	if runErr != nil {
 		glog.Warningf("daily_replay: %v", runErr)
 		return runErr
