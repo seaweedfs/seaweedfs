@@ -1,12 +1,17 @@
 package s3api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestVersionsHealQueue_DedupOnEnqueue ensures multiple enqueues of the
@@ -105,4 +110,35 @@ func TestRetryFilerOp_PropagatesAfterExhaustion(t *testing.T) {
 	assert.Equal(t, updateLatestRetryAttempts, calls, "ran the full retry budget")
 	assert.Contains(t, err.Error(), "exhausted")
 	assert.Contains(t, err.Error(), "permanent", "underlying error preserved")
+}
+
+// TestRetryFilerOp_TerminalErrorsShortCircuit confirms that errors which
+// won't change on retry (NotFound, context cancellation) are returned
+// immediately and unwrapped, without burning the retry budget.
+func TestRetryFilerOp_TerminalErrorsShortCircuit(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"filer_pb.ErrNotFound", filer_pb.ErrNotFound},
+		{"wrapped filer_pb.ErrNotFound", fmt.Errorf("wrap: %w", filer_pb.ErrNotFound)},
+		{"grpc NotFound status", status.Error(codes.NotFound, "missing")},
+		{"context canceled", context.Canceled},
+		{"context deadline exceeded", context.DeadlineExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			calls := 0
+			err := retryFilerOp("test", func() error {
+				calls++
+				return tc.err
+			})
+			elapsed := time.Since(start)
+			require.Error(t, err)
+			assert.Equal(t, 1, calls, "terminal error must not be retried")
+			assert.Less(t, elapsed, 50*time.Millisecond, "terminal error must not delay")
+			assert.NotContains(t, err.Error(), "exhausted", "terminal error must not be wrapped with retry-budget prefix")
+		})
+	}
 }

@@ -5,6 +5,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
@@ -1260,18 +1261,51 @@ const (
 	updateLatestRetryCap      = 2 * time.Second
 )
 
+// isRetryableFilerErr reports whether err is worth retrying through
+// retryFilerOp. Terminal conditions return false so the caller surfaces
+// them immediately without the backoff delay or the retry-budget
+// wrapper:
+//
+//   - NotFound: the entry genuinely doesn't exist. Retrying won't make
+//     it appear, and callers (e.g. repointLatestBeforeDeletion) want
+//     to act on this directly.
+//   - context.Canceled / DeadlineExceeded: the request was aborted by
+//     the client or hit a deadline. Continuing to retry just delays
+//     the failure return.
+//
+// Everything else (gRPC Unavailable, transient network errors, filer
+// overload signals, etc.) is treated as retryable.
+func isRetryableFilerErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return true
+}
+
 func retryFilerOp(name string, fn func() error) error {
 	var lastErr error
 	backoff := updateLatestRetryStep
 	for attempt := 1; attempt <= updateLatestRetryAttempts; attempt++ {
-		if err := fn(); err == nil {
+		err := fn()
+		if err == nil {
 			if attempt > 1 {
 				glog.V(1).Infof("retryFilerOp: %s succeeded on attempt %d", name, attempt)
 			}
 			return nil
-		} else {
-			lastErr = err
 		}
+		if !isRetryableFilerErr(err) {
+			// Terminal — return raw so callers can errors.Is /
+			// status.Code on the unwrapped error and avoid the
+			// retry-budget delay.
+			return err
+		}
+		lastErr = err
 		if attempt == updateLatestRetryAttempts {
 			break
 		}
