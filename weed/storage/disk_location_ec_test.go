@@ -661,3 +661,78 @@ func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
 
 	t.Logf("SUCCESS: Distributed EC volume files preserved (not deleted)")
 }
+
+// TestLoadExistingVolumeSkipsVifWhenEcxPresent pins the skip behavior on
+// the LoadVolume / MountVolume path (skipIfEcVolumesExists=false) for the
+// .vif + .ecx disk layout without .dat. Two variants cover both
+// IdxDirectory==Directory and the split-idx-dir fallback.
+func TestLoadExistingVolumeSkipsVifWhenEcxPresent(t *testing.T) {
+	const vid needle.VolumeId = 42
+
+	cases := []struct {
+		name      string
+		splitDirs bool
+	}{
+		{name: "same-idx-dir", splitDirs: false},
+		{name: "split-idx-dir", splitDirs: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			idxDir := dataDir
+			if tc.splitDirs {
+				idxDir = t.TempDir()
+			}
+
+			minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
+			diskLocation := &DiskLocation{
+				Directory:              dataDir,
+				DirectoryUuid:          "test-uuid",
+				IdxDirectory:           idxDir,
+				DiskType:               types.HddType,
+				MaxVolumeCount:         100,
+				OriginalMaxVolumeCount: 100,
+				MinFreeSpace:           minFreeSpace,
+			}
+			diskLocation.volumes = make(map[needle.VolumeId]*Volume)
+			diskLocation.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+
+			vifPath := erasure_coding.EcShardFileName("", dataDir, int(vid)) + ".vif"
+			ecxPath := erasure_coding.EcShardFileName("", idxDir, int(vid)) + ".ecx"
+			if err := os.WriteFile(vifPath, []byte{}, 0644); err != nil {
+				t.Fatalf("write .vif: %v", err)
+			}
+			if err := os.WriteFile(ecxPath, []byte{}, 0644); err != nil {
+				t.Fatalf("write .ecx: %v", err)
+			}
+
+			entries, err := os.ReadDir(dataDir)
+			if err != nil {
+				t.Fatalf("read dir: %v", err)
+			}
+			var vifEntry os.DirEntry
+			for _, e := range entries {
+				if filepath.Ext(e.Name()) == ".vif" {
+					vifEntry = e
+					break
+				}
+			}
+			if vifEntry == nil {
+				t.Fatalf(".vif entry missing from dir listing")
+			}
+
+			loaded := diskLocation.loadExistingVolume(vifEntry, NeedleMapInMemory, false, 0, 0)
+			if loaded {
+				t.Fatalf("loadExistingVolume should refuse to load a .vif-only entry when .ecx is present (volume %d)", vid)
+			}
+			if _, exists := diskLocation.volumes[vid]; exists {
+				t.Fatalf("volume %d should not be registered in l.volumes (would create phantom regular volume)", vid)
+			}
+			datPath := erasure_coding.EcShardFileName("", dataDir, int(vid)) + ".dat"
+			if util.FileExists(datPath) {
+				t.Fatalf("guard must not create a placeholder .dat for volume %d", vid)
+			}
+		})
+	}
+}
