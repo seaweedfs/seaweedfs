@@ -182,18 +182,28 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 
 	// Resolve latest:
 	//   1. Pointer names a real id -> that wins.
-	//   2. Pointer absent + items[0] is an EXPLICIT null -> null is latest.
-	//   3. Pointer absent otherwise -> newest sibling.
+	//   2. Pointer absent (or stale: set but no sibling carries it)
+	//      + items[0] is an EXPLICIT null -> null is latest.
+	//   3. Otherwise -> newest sibling (latestPos = 0 by default).
+	//
+	// A stale pointer falls through to the no-pointer fallback rather
+	// than silently leaving latestPos at 0 with no documented intent;
+	// the value happens to be the same today (newest sibling wins
+	// either way) but the explicit branching protects against future
+	// fallback refinements diverging by accident.
 	latestID := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	latestPos := 0
+	pointerResolved := false
 	if latestID != "" {
 		for i, it := range items {
 			if it.versionID == latestID {
 				latestPos = i
+				pointerResolved = true
 				break
 			}
 		}
-	} else if len(items) > 0 && items[0].versionID == "null" && items[0].isExplicitNull {
+	}
+	if !pointerResolved && len(items) > 0 && items[0].versionID == "null" && items[0].isExplicitNull {
 		latestPos = 0
 	}
 

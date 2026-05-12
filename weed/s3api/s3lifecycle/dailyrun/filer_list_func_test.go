@@ -256,6 +256,37 @@ func TestFilerListFunc_VersionedExpansionMarksLatestByPointer(t *testing.T) {
 	require.NotNil(t, byID["v1"].NoncurrentIndex, "noncurrent siblings get a rank")
 }
 
+func TestFilerListFunc_VersionedExpansionStalePointerFallsBackToNewestSibling(t *testing.T) {
+	// ExtLatestVersionIdKey names a version that no sibling carries
+	// (stale pointer left behind by a write whose update was lost or
+	// raced). The fallback must NOT silently treat items[0] as latest
+	// via the default; structurally it must drop into the no-pointer
+	// path so the explicit-null bare check still runs.
+	tOld := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tNew := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	versions := []*filer_pb.Entry{
+		fileWithExt("v_old", tOld, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("vold")}),
+		fileWithExt("v_new", tNew, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("vnew")}),
+	}
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "v_GHOST")},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got []*bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = append(got, e)
+		return nil
+	}))
+	require.Len(t, got, 2)
+	byID := map[string]*bootstrap.Entry{}
+	for _, e := range got {
+		byID[e.VersionID] = e
+	}
+	assert.True(t, byID["vnew"].IsLatest, "stale pointer must fall back to newest sibling")
+	assert.False(t, byID["vold"].IsLatest)
+}
+
 func TestFilerListFunc_VersionedExpansionNoPointerNewestSiblingWins(t *testing.T) {
 	// Parent has no ExtLatestVersionIdKey. With no explicit-null bare
 	// version, the newest-by-mtime sibling becomes latest.
