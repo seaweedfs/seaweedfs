@@ -101,6 +101,9 @@ type S3ApiServer struct {
 	// teardown waits on context.Background() fetches. The chunkCache field
 	// is nil in this commit; a follow-up wires in an in-memory chunk cache.
 	readerCache *filer.ReaderCache
+
+	versionsHealQueue       *versionsHealQueue
+	versionsReconcilerStop  func()
 }
 
 type objectWriteLock interface {
@@ -381,10 +384,17 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
 
+	// Start the versioning reconciler that drains stranded .versions/
+	// pointer-to-missing-file states without waiting for a client GET.
+	s3ApiServer.versionsReconcilerStop = s3ApiServer.startVersioningReconciler()
+
 	return s3ApiServer, nil
 }
 
 func (s3a *S3ApiServer) Shutdown() {
+	if s3a.versionsReconcilerStop != nil {
+		s3a.versionsReconcilerStop()
+	}
 	if s3a.iam != nil {
 		s3a.iam.Shutdown()
 	}
