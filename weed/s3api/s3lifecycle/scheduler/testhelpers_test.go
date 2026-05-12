@@ -70,10 +70,10 @@ func (c *fakeFilerClient) LookupDirectoryEntry(_ context.Context, in *filer_pb.L
 func (c *fakeFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	c.mu.Lock()
 	c.listed = append(c.listed, in.Directory)
+	src := c.tree[in.Directory]
 	c.mu.Unlock()
 	atomic.AddInt32(&c.listedN, 1)
 
-	src := c.tree[in.Directory]
 	filtered := make([]*filer_pb.Entry, 0, len(src))
 	for _, e := range src {
 		if e == nil {
