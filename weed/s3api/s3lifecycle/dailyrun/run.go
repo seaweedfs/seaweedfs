@@ -322,7 +322,10 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 		if dispatchErr != nil {
 			glog.V(1).Infof("daily_run: transport error on %s/%s %s: %v",
 				m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)
-			stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "TRANSPORT_ERROR").Inc()
+			// "RPC_ERROR" matches the streaming dispatcher's label
+			// (dispatcher/dispatcher.go) so transport failures
+			// aggregate under one outcome key across paths.
+			stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR").Inc()
 			return skippedAny, true, nil
 		}
 		stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), outcome.String()).Inc()

@@ -166,6 +166,9 @@ func TestProcessMatches_DispatchCounterIncrements(t *testing.T) {
 	}
 	client := &recordingClient{} // default DONE
 	before := dispatchCounterValue("metrics-pin-bkt", "expiration_days", "DONE")
+	// Delete the label row on exit so this test doesn't leak into the
+	// in-process Prometheus registry that other tests share.
+	defer stats.S3LifecycleDispatchCounter.DeleteLabelValues("metrics-pin-bkt", "expiration_days", "DONE")
 	cfg := Config{Client: client}
 	_, _, err := processMatches(context.Background(), cfg, runNow, &reader.Event{}, matches)
 	require.NoError(t, err)
