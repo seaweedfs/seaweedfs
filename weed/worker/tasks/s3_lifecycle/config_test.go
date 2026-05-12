@@ -36,3 +36,34 @@ func TestParseConfigNegativeMaxRuntimeClampsToDefault(t *testing.T) {
 		t.Errorf("negative MaxRuntime should clamp to default, got %v", cfg.MaxRuntime)
 	}
 }
+
+func TestParseConfigMetaLogRetentionDefaultsToZero(t *testing.T) {
+	// Unset key keeps MetaLogRetention at 0, which runShard treats as
+	// "no retention info supplied" and falls back to maxTTL.
+	cfg := ParseConfig(nil, nil)
+	if cfg.MetaLogRetention != 0 {
+		t.Errorf("MetaLogRetention default=%v, want 0", cfg.MetaLogRetention)
+	}
+}
+
+func TestParseConfigMetaLogRetentionDaysConvertsToDuration(t *testing.T) {
+	admin := map[string]*plugin_pb.ConfigValue{
+		MetaLogRetentionDaysAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 7}},
+	}
+	cfg := ParseConfig(admin, nil)
+	if want := 7 * 24 * time.Hour; cfg.MetaLogRetention != want {
+		t.Errorf("MetaLogRetention=%v, want %v (7 days)", cfg.MetaLogRetention, want)
+	}
+}
+
+func TestParseConfigMetaLogRetentionNegativeStaysZero(t *testing.T) {
+	// A negative declaration is nonsense; stay at 0 so runShard's
+	// fallback applies rather than producing a negative window.
+	admin := map[string]*plugin_pb.ConfigValue{
+		MetaLogRetentionDaysAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -3}},
+	}
+	cfg := ParseConfig(admin, nil)
+	if cfg.MetaLogRetention != 0 {
+		t.Errorf("negative MetaLogRetention should stay 0, got %v", cfg.MetaLogRetention)
+	}
+}

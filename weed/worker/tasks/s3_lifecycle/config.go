@@ -16,17 +16,23 @@ const (
 )
 
 type Config struct {
-	Workers    int
-	MaxRuntime time.Duration
+	Workers          int
+	MaxRuntime       time.Duration
+	MetaLogRetention time.Duration
 }
 
-func ParseConfig(_ map[string]*plugin_pb.ConfigValue, workerValues map[string]*plugin_pb.ConfigValue) Config {
+func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
 		Workers:    shardPipelineGoroutines,
 		MaxRuntime: time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
 	}
 	if cfg.MaxRuntime <= 0 {
 		cfg.MaxRuntime = time.Duration(defaultMaxRuntimeMinutes) * time.Minute
+	}
+	// Operator-declared meta-log retention. Negative or zero values stay
+	// zero so runShard falls back to maxTTL (PromotedHash dormant).
+	if days := readInt64(adminValues, MetaLogRetentionDaysAdminKey, 0); days > 0 {
+		cfg.MetaLogRetention = time.Duration(days) * 24 * time.Hour
 	}
 	return cfg
 }
