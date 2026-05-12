@@ -9,7 +9,10 @@ import (
 const (
 	jobType = "s3_lifecycle"
 
-	// In-process fan-out across the 16 shards.
+	// shardPipelineGoroutines is the in-process fan-out across the
+	// 16-shard space. Kept as a hardcoded internal default — formerly
+	// an admin form field, removed because it's a per-worker tuning
+	// knob, not a cluster-coordination concern.
 	shardPipelineGoroutines = 1
 
 	defaultDispatchTickMinutes      = int64(1)
@@ -18,12 +21,21 @@ const (
 	defaultMaxRuntimeMinutes        = int64(60)
 	defaultBootstrapIntervalMinutes = int64(0) // 0 = walk once per process
 
+	// AlgorithmDailyReplay routes the worker through dailyrun.Run for
+	// one bounded pass per Execute. Currently Phase 2 / replay-only:
+	// buckets with walker-bound action kinds are refused. Phase 4
+	// extends this to handle every kind. Default — the streaming path
+	// stays in the tree as a runtime escape hatch only.
 	AlgorithmDailyReplay = "daily_replay"
-	AlgorithmStreaming   = "streaming"
+	// AlgorithmStreaming is the legacy event-driven dispatcher path
+	// (reader + heap + per-shard pipeline). Kept as a fallback knob for
+	// rollout; deleted by Phase 5 once Phase 4 walker integration ships.
+	AlgorithmStreaming = "streaming"
 
 	defaultAlgorithm = AlgorithmDailyReplay
 )
 
+// Config is the parsed AdminConfigForm + WorkerConfigForm view.
 type Config struct {
 	Workers           int
 	DispatchTick      time.Duration
@@ -34,6 +46,8 @@ type Config struct {
 	Algorithm         string
 }
 
+// ParseConfig pulls the lifecycle Handler config from the merged
+// admin+worker config values. Missing fields fall back to defaults.
 func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
 		Workers:           shardPipelineGoroutines,
@@ -53,7 +67,10 @@ func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Co
 	if cfg.RefreshInterval <= 0 {
 		cfg.RefreshInterval = time.Duration(defaultRefreshIntervalMinutes) * time.Minute
 	}
-	// Zero means walk-once-per-process; clamp negatives only.
+	// BootstrapInterval is intentionally NOT clamped — zero means
+	// "walk once per process", which is the legacy default for any
+	// deployment that hasn't opted into a cadence yet. Negative values
+	// fall back to zero.
 	if cfg.BootstrapInterval < 0 {
 		cfg.BootstrapInterval = 0
 	}
@@ -62,6 +79,7 @@ func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Co
 	}
 	switch cfg.Algorithm {
 	case AlgorithmStreaming, AlgorithmDailyReplay:
+		// valid
 	default:
 		cfg.Algorithm = defaultAlgorithm
 	}

@@ -9,8 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pluginWithExecutors builds a Plugin with n execute-capable workers
-// for jobType, bypassing UpsertFromHello.
+// pluginWithExecutors returns a Plugin whose registry contains n
+// non-stale execute-capable workers for jobType. Helper for the
+// allocator tests. Bypasses UpsertFromHello so tests don't have to
+// build a full Hello message.
 func pluginWithExecutors(t *testing.T, jobType string, n int) *Plugin {
 	t.Helper()
 	reg := NewRegistry()
@@ -29,6 +31,7 @@ func pluginWithExecutors(t *testing.T, jobType string, n int) *Plugin {
 	return &Plugin{registry: reg}
 }
 
+// adminConfig builds an int64 admin config map for the given fields.
 func adminConfig(pairs ...interface{}) map[string]*plugin_pb.ConfigValue {
 	if len(pairs)%2 != 0 {
 		panic("adminConfig expects key/value pairs")
@@ -51,6 +54,9 @@ func adminConfig(pairs ...interface{}) map[string]*plugin_pb.ConfigValue {
 }
 
 func TestDecorateClusterContext_NonS3LifecycleIsPassThrough(t *testing.T) {
+	// Any job type other than s3_lifecycle gets the input cc back
+	// unchanged. Future allocators add their own branch; the default
+	// is pass-through.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{Metadata: map[string]string{"unrelated": "v"}}
 	out := r.decorateClusterContextForJob(in, "some_other_job", adminConfig(s3LifecycleClusterDeletesPerSecondKey, 100), 1)
@@ -58,7 +64,10 @@ func TestDecorateClusterContext_NonS3LifecycleIsPassThrough(t *testing.T) {
 }
 
 func TestDecorateClusterContext_RpsZeroSkipsAllocation(t *testing.T) {
-	// rps=0 must NOT write "0" — worker would read it as zero-throughput.
+	// rps=0 means "operator hasn't configured a cap"; the worker
+	// treats missing keys as unlimited. We must NOT inject any
+	// metadata (in particular, not "0") because that would force the
+	// worker into a no-throughput state on a misconfigured cluster.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{}
 	out := r.decorateClusterContextForJob(in, s3LifecycleJobType, adminConfig(s3LifecycleClusterDeletesPerSecondKey, 0), 1)
@@ -79,26 +88,34 @@ func TestDecorateClusterContext_NoExecutorsSkipsAllocation(t *testing.T) {
 }
 
 func TestDecorateClusterContext_SingletonJobGetsFullBudget(t *testing.T) {
-	// maxJobs=1: budget must go undivided to the single active worker.
+	// s3_lifecycle has MaxJobsPerDetection=1: only ONE worker runs the
+	// job at a time. The cluster budget must go to that worker undivided
+	// — dividing by N capable executors would starve the active worker
+	// to 1/N of the configured rps. Pin the singleton behavior.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{}
 	out := r.decorateClusterContextForJob(in, s3LifecycleJobType,
 		adminConfig(s3LifecycleClusterDeletesPerSecondKey, 100), 1)
 	require.NotNil(t, out.Metadata)
-	assert.Equal(t, "100", out.Metadata[s3LifecycleMetadataDeletesPerSecond])
+	assert.Equal(t, "100", out.Metadata[s3LifecycleMetadataDeletesPerSecond], "singleton job: full budget to the single active worker")
 }
 
 func TestDecorateClusterContext_SharedEvenlyWhenParallelLimited(t *testing.T) {
+	// Hypothetical parallel-dispatch job type (maxJobs=4): budget
+	// divides across the running-set, which equals min(executors,
+	// maxJobs)=4. 100/4=25.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{}
 	out := r.decorateClusterContextForJob(in, s3LifecycleJobType,
 		adminConfig(s3LifecycleClusterDeletesPerSecondKey, 100), 4)
 	require.NotNil(t, out.Metadata)
-	assert.Equal(t, "25", out.Metadata[s3LifecycleMetadataDeletesPerSecond])
+	assert.Equal(t, "25", out.Metadata[s3LifecycleMetadataDeletesPerSecond], "maxJobs=4 across 4 executors = 25/worker")
 }
 
 func TestDecorateClusterContext_MaxJobsExceedsExecutors(t *testing.T) {
-	// divisor = min(executors=4, maxJobs=10).
+	// maxJobs=10 but only 4 executors exist — the divisor is the
+	// smaller value (executors) since you can't run more jobs in
+	// parallel than there are workers to run them.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{}
 	out := r.decorateClusterContextForJob(in, s3LifecycleJobType,
@@ -118,7 +135,9 @@ func TestDecorateClusterContext_BurstSharedWhenParallel(t *testing.T) {
 }
 
 func TestDecorateClusterContext_BurstZeroOmitsKey(t *testing.T) {
-	// burst=0 means "let the worker default to 2*rps" — omit the key.
+	// burst=0 means "let the worker default it." Don't write the key —
+	// the worker's parsePositiveInt would then take the unset path
+	// and compute 2 × rps automatically.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{}
 	out := r.decorateClusterContextForJob(in, s3LifecycleJobType,
@@ -128,7 +147,8 @@ func TestDecorateClusterContext_BurstZeroOmitsKey(t *testing.T) {
 }
 
 func TestDecorateClusterContext_BurstFloorIsOneWhenDividesBelowOne(t *testing.T) {
-	// rate.Limiter with burst<1 never refills.
+	// burst=1 across 4 active workers would round to 0; clamp to 1 so
+	// the limiter doesn't become "single-token bucket that never refills."
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	in := &plugin_pb.ClusterContext{}
 	out := r.decorateClusterContextForJob(in, s3LifecycleJobType,
@@ -137,7 +157,9 @@ func TestDecorateClusterContext_BurstFloorIsOneWhenDividesBelowOne(t *testing.T)
 }
 
 func TestDecorateClusterContext_DoesNotMutateInput(t *testing.T) {
-	// Base ClusterContext is shared across parallel ExecuteJob calls.
+	// The same base ClusterContext is shared across many parallel
+	// ExecuteJob calls. The decorator must produce a fresh map so it
+	// can't race / leak per-job metadata into the base.
 	r := pluginWithExecutors(t, s3LifecycleJobType, 4)
 	baseMeta := map[string]string{"existing": "value"}
 	in := &plugin_pb.ClusterContext{Metadata: baseMeta}
