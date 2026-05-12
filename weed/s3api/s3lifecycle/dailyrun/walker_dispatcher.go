@@ -59,6 +59,12 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 	if err != nil {
 		return fmt.Errorf("walker dispatch %s/%s %s: %w", action.Bucket, objectPath, action.Key.ActionKind, err)
 	}
+	if resp == nil {
+		// A misbehaving server stub returning (nil, nil) would panic on
+		// the switch below. Surface as an error so the walk halts at
+		// this entry, preserving the in-flight cursor's correctness.
+		return fmt.Errorf("walker dispatch %s/%s %s: nil response", action.Bucket, objectPath, action.Key.ActionKind)
+	}
 	switch resp.Outcome {
 	case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 		s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,

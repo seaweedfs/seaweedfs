@@ -20,12 +20,16 @@ type walkerStubClient struct {
 	outcome s3_lifecycle_pb.LifecycleDeleteOutcome
 	err     error
 	reason  string
+	nilResp bool // return (nil, nil) — pin the dispatcher's defensive guard
 }
 
 func (c *walkerStubClient) LifecycleDelete(_ context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	c.lastReq = req
 	if c.err != nil {
 		return nil, c.err
+	}
+	if c.nilResp {
+		return nil, nil
 	}
 	return &s3_lifecycle_pb.LifecycleDeleteResponse{Outcome: c.outcome, Reason: c.reason}, nil
 }
@@ -133,6 +137,16 @@ func TestWalkerDispatcher_TransportErrorReturnsWrappedError(t *testing.T) {
 	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transport boom")
+}
+
+func TestWalkerDispatcher_NilResponseReturnsError(t *testing.T) {
+	// A server returning (nil, nil) would otherwise panic on the
+	// outcome switch.
+	c := &walkerStubClient{nilResp: true}
+	d := &WalkerDispatcher{Client: c}
+	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil response")
 }
 
 func TestWalkerDispatcher_NilGuardsReturnError(t *testing.T) {

@@ -172,11 +172,16 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// one-time rewind to runNow - maxTTL, self-healing on save.
 	rsh := engine.ReplayContentHash(snap)
 	maxTTL := engine.MaxEffectiveTTL(snap)
-	// Operator-supplied retention falls back to maxTTL, which forces
-	// promoted-empty (no rule's TTL can exceed the max). Once the
-	// walker handles walk-bound rules, the handler will pass the real
-	// meta-log retention here and PromotedHash starts catching
-	// partition flips.
+	// Operator-supplied retention falls back to maxTTL. In steady
+	// state every active replay rule has TTL <= maxTTL by construction,
+	// so promoted is empty and the partition-flip trigger is dormant.
+	// During bootstrap (rules compiled but not yet active) maxTTL is
+	// 0, retentionWindow is 0, and every rule with TTL > 0 lands in
+	// the walk partition; the resulting non-empty promoted forces a
+	// recovery walk on the first run after rules activate, which is
+	// the intended bootstrap behavior. Once the handler plumbs the
+	// real meta-log retention here, PromotedHash starts catching
+	// retention-driven partition flips in addition.
 	retentionWindow := cfg.RetentionWindow
 	if retentionWindow <= 0 {
 		retentionWindow = maxTTL
