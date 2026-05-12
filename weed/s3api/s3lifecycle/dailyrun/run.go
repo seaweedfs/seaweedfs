@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/time/rate"
 )
@@ -401,9 +402,11 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			continue
 		}
 		if cfg.Limiter != nil {
+			waitStart := time.Now()
 			if waitErr := cfg.Limiter.Wait(ctx); waitErr != nil {
 				return skippedAny, true, waitErr
 			}
+			stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
 		}
 		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, m)
 		if dispatchErr != nil {

@@ -3,6 +3,7 @@ package s3_lifecycle
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -17,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
 
@@ -94,12 +96,30 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 								{Value: AlgorithmStreaming, Label: "Streaming (legacy fallback)", Description: "Long-running reader + per-shard heap + tick dispatcher. Pre-cutover behavior; removed in Phase 5."},
 							},
 						},
+						{
+							Name:        ClusterDeletesPerSecondAdminKey,
+							Label:       "Cluster Delete Rate (per second)",
+							Description: "Cluster-wide ceiling on lifecycle delete RPCs per second, divided evenly across active s3_lifecycle workers at job-dispatch time. 0 = unlimited (legacy behavior). Only honored by the Daily Replay algorithm; streaming ignores it.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+						{
+							Name:        ClusterDeletesBurstAdminKey,
+							Label:       "Cluster Delete Burst",
+							Description: "Token-bucket burst capacity across the cluster (max simultaneous deletes). 0 = 2 × rate. Same allocation rule as the rate.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"workers":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
-				"algorithm": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAlgorithm}},
+				"workers":                       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
+				"algorithm":                     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAlgorithm}},
+				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -302,18 +322,17 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	}
 	eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
 
-	shards := make([]int, 0, cfg.Workers)
-	// One pass per shard ID across [0, ShardCount). cfg.Workers governs
-	// concurrency, not partitioning — every shard gets exactly one
-	// goroutine and the rate.Limiter is the throughput governor.
+	shards := make([]int, 0, s3lifecycle.ShardCount)
 	for i := 0; i < s3lifecycle.ShardCount; i++ {
 		shards = append(shards, i)
 	}
 
+	limiter, limiterDesc := buildLimiterFromClusterContext(request.GetClusterContext())
+
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("daily_replay shards=%d runtime=%s", len(shards), cfg.MaxRuntime),
+		Message: fmt.Sprintf("daily_replay shards=%d workers=%d runtime=%s rate=%s", len(shards), cfg.Workers, cfg.MaxRuntime, limiterDesc),
 	})
 
 	runErr := dailyrun.Run(ctx, dailyrun.Config{
@@ -325,8 +344,8 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
 		Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
 		Workers:     cfg.Workers,
+		Limiter:     limiter,
 		ClientName:  "worker-s3-lifecycle-daily",
-		// Limiter is wired in Phase 3 from ClusterContext.Metadata.
 	})
 	if dailyrun.IsUnsupportedRule(runErr) {
 		// Surface the typed error verbatim so admin marks the run as
@@ -339,6 +358,59 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		return runErr
 	}
 	return nil
+}
+
+// buildLimiterFromClusterContext parses the per-worker share the admin
+// wrote into ClusterContext.Metadata (see weed/admin/plugin/plugin.go's
+// s3_lifecycle injection) and returns a rate.Limiter, or nil when no
+// rate cap applies. The description string is for the JobProgressUpdate
+// so operators can see "rate=unlimited" / "rate=12.5/s burst=25" in
+// the activity log.
+//
+// Tolerant of missing keys, empty strings, malformed numbers, and
+// non-positive values — all treated as "no limit" rather than failing
+// the run. The admin allocator is the single point that decides whether
+// to populate these keys; the worker doesn't second-guess.
+func buildLimiterFromClusterContext(cc *plugin_pb.ClusterContext) (*rate.Limiter, string) {
+	if cc == nil || cc.Metadata == nil {
+		return nil, "unlimited"
+	}
+	rps, ok := parsePositiveFloat(cc.Metadata[MetadataKeyDeletesPerSecond])
+	if !ok {
+		return nil, "unlimited"
+	}
+	burst, _ := parsePositiveInt(cc.Metadata[MetadataKeyDeletesBurst])
+	if burst <= 0 {
+		// Sensible default: enough headroom for one tick's worth of
+		// throughput. Caller may also supply 0 to opt into this default.
+		burst = int(rps * 2)
+		if burst < 1 {
+			burst = 1
+		}
+	}
+	return rate.NewLimiter(rate.Limit(rps), burst), fmt.Sprintf("%.3g/s burst=%d", rps, burst)
+}
+
+func parsePositiveFloat(s string) (float64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+func parsePositiveInt(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 // clusterS3Endpoints returns the master-discovered S3 gRPC addresses for the
