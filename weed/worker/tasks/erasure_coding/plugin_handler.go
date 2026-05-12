@@ -217,7 +217,7 @@ func (h *ErasureCodingHandler) Detect(
 		return err
 	}
 
-	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
+	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology, GrpcDialOption: h.grpcDialOption}
 	maxResults := int(request.MaxResults)
 	if maxResults < 0 {
 		maxResults = 0
