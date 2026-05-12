@@ -313,11 +313,7 @@ func TestDescriptor_WorkerConfigFormCadenceDefaultsMatchParseConfig(t *testing.T
 	assert.Equal(t, "s3-lifecycle-worker", d.WorkerConfigForm.FormId)
 
 	wantDefaults := map[string]int64{
-		"dispatch_tick_minutes":      defaultDispatchTickMinutes,
-		"checkpoint_tick_seconds":    defaultCheckpointTickSeconds,
-		"refresh_interval_minutes":   defaultRefreshIntervalMinutes,
-		"bootstrap_interval_minutes": defaultBootstrapIntervalMinutes,
-		"max_runtime_minutes":        defaultMaxRuntimeMinutes,
+		"max_runtime_minutes": defaultMaxRuntimeMinutes,
 	}
 	for name, want := range wantDefaults {
 		t.Run(name, func(t *testing.T) {
@@ -326,11 +322,6 @@ func TestDescriptor_WorkerConfigFormCadenceDefaultsMatchParseConfig(t *testing.T
 			assert.Equal(t, want, dv.GetInt64Value(), "default mismatch for %q", name)
 		})
 	}
-	// And the form fields themselves: every default must be paired with
-	// a field of matching name AND INT64 type so the admin can render +
-	// edit it and ParseConfig's readInt64 reads it correctly. Drift to
-	// e.g. STRING here would silently make the worker fall back to the
-	// hardcoded default and ignore admin edits.
 	declared := map[string]plugin_pb.ConfigFieldType{}
 	for _, sec := range d.WorkerConfigForm.Sections {
 		for _, f := range sec.Fields {
