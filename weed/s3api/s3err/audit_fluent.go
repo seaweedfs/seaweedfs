@@ -183,10 +183,17 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 }
 
 func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
-	if r == nil || Logger == nil {
+	if r == nil {
 		return
 	}
+	// Mark before the Logger nil-check so the middleware fallback in track()
+	// still sees that audit was handled by the caller in deployments that
+	// haven't configured fluent — keeps the flag behavior consistent and
+	// makes wiring testable without standing up a fluent server.
 	markAuditLogged(r)
+	if Logger == nil {
+		return
+	}
 	if err := Logger.Post(tag, *GetAccessLog(r, HTTPStatusCode, errorCode)); err != nil {
 		glog.Warning("Error while posting log: ", err)
 	}
