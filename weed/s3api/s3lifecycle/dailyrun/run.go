@@ -192,8 +192,9 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	return cfg.Persister.Save(ctx, shardID, Cursor{
-		TsNs:        lastOK,
-		RuleSetHash: rsh,
+		TsNs:         lastOK,
+		RuleSetHash:  rsh,
+		PromotedHash: promoted,
 	})
 }
 
