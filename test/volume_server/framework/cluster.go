@@ -232,6 +232,10 @@ func (c *Cluster) startVolume(dataDirs []string) error {
 		"-readMode=" + c.profile.ReadMode,
 		"-concurrentUploadLimitMB=" + strconv.Itoa(c.profile.ConcurrentUploadLimitMB),
 		"-concurrentDownloadLimitMB=" + strconv.Itoa(c.profile.ConcurrentDownloadLimitMB),
+		// Integration tests deliberately exercise loopback S3 endpoints
+		// (the test rig boots weed-mini next to the volume server); allow
+		// the SSRF guard to be bypassed for them.
+		"-volume.allowUntrustedRemoteEndpoints",
 	}
 	if c.profile.InflightUploadTimeout > 0 {
 		args = append(args, "-inflightUploadDataTimeout="+c.profile.InflightUploadTimeout.String())

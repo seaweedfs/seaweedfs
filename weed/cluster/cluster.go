@@ -138,6 +138,38 @@ func (cluster *Cluster) ListClusterNode(filerGroup FilerGroupName, nodeType stri
 	return
 }
 
+// IsKnownNode reports whether address is currently registered under nodeType
+// in any filer group. The lookup is intentionally group-agnostic because callers
+// (e.g. Ping admission) only know the target address, not the group it joined.
+func (cluster *Cluster) IsKnownNode(nodeType string, address pb.ServerAddress) bool {
+	var groups *ClusterNodeGroups
+	switch nodeType {
+	case FilerType:
+		groups = cluster.filerGroups
+	case BrokerType:
+		groups = cluster.brokerGroups
+	case S3Type:
+		groups = cluster.s3Groups
+	default:
+		return false
+	}
+	groups.RLock()
+	defer groups.RUnlock()
+	for _, members := range groups.groupMembers {
+		if _, found := members.members[address]; found {
+			return true
+		}
+		// fall back to a port-tolerant comparison so callers that omit the
+		// grpc-port suffix still match a registered peer
+		for stored := range members.members {
+			if stored.Equals(address) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func buildClusterNodeUpdateMessage(isAdd bool, filerGroup FilerGroupName, nodeType string, address pb.ServerAddress) (result []*master_pb.KeepConnectedResponse) {
 	result = append(result, &master_pb.KeepConnectedResponse{
 		ClusterNodeUpdate: &master_pb.ClusterNodeUpdate{

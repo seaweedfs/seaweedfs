@@ -74,6 +74,10 @@ type MasterOptions struct {
 	telemetryEnabled   *bool
 	debug              *bool
 	debugPort          *int
+	// allowUntrustedHeartbeat disables the source-ip binding check on
+	// SendHeartbeat. Required for deployments where a NAT or proxy sits
+	// between volume servers and the master.
+	allowUntrustedHeartbeat *bool
 	// shutdownCtx, when non-nil, tells startMaster to shut down once the ctx
 	// is cancelled. Used by integration tests and by weed mini; nil for
 	// standalone weed master.
@@ -109,6 +113,7 @@ func init() {
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
 	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
+	m.allowUntrustedHeartbeat = cmdMaster.Flag.Bool("master.allowUntrustedHeartbeat", false, "accept volume server heartbeats whose advertised ip does not match the gRPC peer address (required behind NAT/proxy)")
 }
 
 var cmdMaster = &Command{
@@ -463,5 +468,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		MetricsIntervalSec:      *m.metricsIntervalSec,
 		TelemetryUrl:            *m.telemetryUrl,
 		TelemetryEnabled:        *m.telemetryEnabled,
+		AllowUntrustedHeartbeat: m.allowUntrustedHeartbeat != nil && *m.allowUntrustedHeartbeat,
 	}
 }

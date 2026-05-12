@@ -70,13 +70,14 @@ type VolumeServerOptions struct {
 	metricsHttpPort           *int
 	metricsHttpIp             *string
 	// pulseSeconds          *int
-	inflightUploadDataTimeout   *time.Duration
-	inflightDownloadDataTimeout *time.Duration
-	hasSlowRead                 *bool
-	readBufferSizeMB            *int
-	ldbTimeout                  *int64
-	debug                       *bool
-	debugPort                   *int
+	inflightUploadDataTimeout     *time.Duration
+	inflightDownloadDataTimeout   *time.Duration
+	hasSlowRead                   *bool
+	readBufferSizeMB              *int
+	ldbTimeout                    *int64
+	allowUntrustedRemoteEndpoints *bool
+	debug                         *bool
+	debugPort                     *int
 	// shutdownCtx, when non-nil, tells startVolumeServer to shut down once the
 	// ctx is cancelled. Used by integration tests and by weed mini; nil for
 	// standalone weed volume.
@@ -120,6 +121,7 @@ func init() {
 	v.inflightDownloadDataTimeout = cmdVolume.Flag.Duration("inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
+	v.allowUntrustedRemoteEndpoints = cmdVolume.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
 }
@@ -302,6 +304,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.hasSlowRead,
 		*v.readBufferSizeMB,
 		*v.ldbTimeout,
+		*v.allowUntrustedRemoteEndpoints,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

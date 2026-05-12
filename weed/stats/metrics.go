@@ -608,6 +608,23 @@ var (
 			Help:      "Time spent waiting on the cluster rate limiter before issuing a LifecycleDelete RPC. Non-zero values indicate the cluster cap is binding.",
 			Buckets:   []float64{0.0001, 0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 		})
+
+	S3LifecycleDailyRunShardDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "daily_run_shard_duration_seconds",
+			Help:      "Wall-clock seconds spent in one shard's daily_replay pass. p95 climbing toward MaxRuntime means the shard is brushing its budget.",
+			Buckets:   []float64{0.1, 0.5, 1, 5, 15, 60, 300, 900, 1800, 3600},
+		}, []string{"shard"})
+
+	S3LifecycleDailyRunEventsScanned = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "daily_run_events_scanned_total",
+			Help:      "Counter of meta-log events drainShardEvents processed on the daily_replay path, partitioned by shard.",
+		}, []string{"shard"})
 )
 
 func init() {
@@ -685,6 +702,8 @@ func init() {
 	Gather.MustRegister(S3LifecycleBootstrapDispatchCounter)
 	Gather.MustRegister(S3LifecycleMetadataOnlyCounter)
 	Gather.MustRegister(S3LifecycleDispatchLimiterWaitSeconds)
+	Gather.MustRegister(S3LifecycleDailyRunShardDurationSeconds)
+	Gather.MustRegister(S3LifecycleDailyRunEventsScanned)
 
 	Gather.MustRegister(UploadErrorCounter)
 

@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
@@ -100,6 +104,51 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		if metric.IsECVolume {
 			skippedAlreadyEC++
 			continue
+		}
+
+		// Handle the "stuck source" state from #9448: a previous encode
+		// succeeded but the post-encode source-delete left a regular replica
+		// behind, so the master heartbeats BOTH the replica AND its EC shards.
+		// metric.IsECVolume above is set only for the EC-side metric path, so
+		// the canonical metric we picked is the regular replica with
+		// IsECVolume=false. Re-proposing an encode in that state collides with
+		// the mounted shards on the targets ("ec volume %d is mounted; refusing
+		// overwrite") and the detector re-queues forever.
+		//
+		// We only act when the EC shard set is COMPLETE — fewer than
+		// totalShards present means the existing recovery branch below
+		// (around the `existingECShards` block) should keep its chance to
+		// fold the partial shards into the new task. Counting walks
+		// EcIndexBits to handle a single info entry carrying multiple shards.
+		if clusterInfo.ActiveTopology != nil {
+			shardCount := countExistingEcShardsForVolume(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+			totalShards := erasure_coding.DataShardsCount + erasure_coding.ParityShardsCount
+			if shardCount >= totalShards {
+				glog.Warningf("EC Detection: Volume %d has all %d EC shards in topology; "+
+					"source replica on %s is orphaned (#9448).",
+					metric.VolumeID, totalShards, metric.Server)
+				if clusterInfo.GrpcDialOption != nil {
+					deleted, cleanupErr := cleanupOrphanSourceReplicas(ctx, clusterInfo, metric, totalShards)
+					switch {
+					case cleanupErr != nil:
+						// Don't fall through to a re-encode — that would just
+						// collide with the mounted shards again. Surface the
+						// failure and wait for the next cycle; the source is
+						// still safe.
+						glog.Warningf("EC Detection: failed to auto-clean orphaned source for volume %d: %v", metric.VolumeID, cleanupErr)
+					case deleted > 0:
+						glog.Infof("EC Detection: auto-cleaned %d orphaned source replica(s) for volume %d after verifying all %d EC shards present", deleted, metric.VolumeID, totalShards)
+					default:
+						glog.V(1).Infof("EC Detection: no orphaned regular replicas found in topology for volume %d (collection %q)", metric.VolumeID, metric.Collection)
+					}
+				} else {
+					glog.Warningf("EC Detection: no gRPC dial option available to auto-clean orphaned source for volume %d; "+
+						"to clean up by hand, send a targeted VolumeDelete RPC to %s only — DO NOT use the cluster-wide `volume.delete` shell command, which would also delete the EC shards.",
+						metric.VolumeID, metric.Server)
+				}
+				skippedAlreadyEC++
+				continue
+			}
 		}
 
 		// Check minimum size requirement
@@ -884,4 +933,95 @@ func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint
 		return nil
 	}
 	return activeTopology.GetECShardLocations(volumeID, collection)
+}
+
+// cleanupOrphanSourceReplicas deletes any regular volume replicas still
+// present in the topology for (volumeID, collection) after re-verifying that
+// the full EC shard set is intact. Caller must hold expectedShards equal to
+// the configured totalShards count. Issues VolumeDelete RPC to each replica
+// server's address — that endpoint only touches the regular volume on the
+// targeted server, never EC shards (those live in a separate store path).
+// The cluster-wide `volume.delete` shell command is what would have nuked
+// the EC shards too; the targeted RPC used here is safe by construction.
+// Returns the count of replicas successfully deleted plus any error.
+func cleanupOrphanSourceReplicas(ctx context.Context, clusterInfo *types.ClusterInfo, metric *types.VolumeHealthMetrics, expectedShards int) (int, error) {
+	if clusterInfo == nil || clusterInfo.ActiveTopology == nil {
+		return 0, fmt.Errorf("active topology unavailable")
+	}
+	if clusterInfo.GrpcDialOption == nil {
+		return 0, fmt.Errorf("grpc dial option unavailable")
+	}
+
+	// Re-verify shard completeness right before acting. Defensive: detection
+	// processes many volumes sequentially and the topology snapshot we built
+	// at start-of-detection could have lost shards in between (a volume
+	// server going down between iterations). Refusing to delete the source
+	// when we can no longer prove the shards are complete is the safer
+	// failure mode — the source replica is the only complete copy.
+	actualShards := countExistingEcShardsForVolume(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+	if actualShards < expectedShards {
+		return 0, fmt.Errorf("EC shard set shrank between detection and cleanup (%d < %d); refusing to delete source replica", actualShards, expectedShards)
+	}
+
+	replicas := findVolumeReplicaLocations(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+	if len(replicas) == 0 {
+		return 0, nil
+	}
+
+	deleted := 0
+	var deleteErrors []string
+	for _, replica := range replicas {
+		serverAddress := replica.ServerID
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(serverAddress), clusterInfo.GrpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, deleteErr := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
+					VolumeId:  metric.VolumeID,
+					OnlyEmpty: false,
+				})
+				return deleteErr
+			})
+		if err != nil {
+			deleteErrors = append(deleteErrors, fmt.Sprintf("server %s: %v", serverAddress, err))
+			continue
+		}
+		deleted++
+		glog.V(1).Infof("EC Detection: deleted orphan regular replica for volume %d on %s", metric.VolumeID, serverAddress)
+	}
+
+	if len(deleteErrors) > 0 {
+		return deleted, fmt.Errorf("%d of %d replica delete(s) failed: %s", len(deleteErrors), len(replicas), strings.Join(deleteErrors, "; "))
+	}
+	return deleted, nil
+}
+
+// countExistingEcShardsForVolume returns the number of distinct EC shard IDs
+// for (volumeID, collection) present in the topology. Walks every disk's
+// EcIndexBits bitmap rather than trusting len(EcShardInfos), because a single
+// info entry can carry multiple shards. Used by the #9448 guard to decide
+// whether the EC shard set is complete enough that the orphaned regular
+// replica is safe to delete.
+func countExistingEcShardsForVolume(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) int {
+	if activeTopology == nil {
+		return 0
+	}
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return 0
+	}
+	var seen erasure_coding.ShardBits
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, node := range rack.DataNodeInfos {
+				for _, diskInfo := range node.DiskInfos {
+					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
+							continue
+						}
+						seen |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+					}
+				}
+			}
+		}
+	}
+	return seen.Count()
 }

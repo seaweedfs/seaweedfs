@@ -17,7 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
@@ -34,8 +33,8 @@ func init() {
 }
 
 // Handler is the worker-side runner for S3 object lifecycle expiration.
-// One Execute call drives a long-running scheduler.Scheduler against the
-// S3 endpoints discovered from the master; admin caps concurrency at one
+// One Execute call drives one bounded dailyrun.Run pass against the S3
+// endpoints discovered from the master; admin caps concurrency at one
 // job per worker so a fresh proposal only spawns a new run after the
 // prior one exits.
 type Handler struct {
@@ -69,28 +68,17 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		AdminConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "s3-lifecycle-admin",
 			Title:       "S3 Lifecycle",
-			Description: "Cluster-wide controls for the lifecycle scheduler.",
+			Description: "Cluster-wide delete-throughput cap.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "scope",
 					Title:       "Scope",
-					Description: "Cluster-wide algorithm choice and delete-throughput cap.",
+					Description: "Cluster-wide delete-throughput cap.",
 					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "algorithm",
-							Label:       "Algorithm",
-							Description: "Daily Replay = bounded daily meta-log scan (Phase 2, replay-only — buckets using ExpirationDate, ExpiredDeleteMarker, NewerNoncurrent, or scan_only rules will fail the run until Phase 4 ships). Streaming = legacy reader+heap path, kept as a runtime escape hatch during the Phase 4 rollout; Phase 5 deletes it.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
-							Options: []*plugin_pb.ConfigOption{
-								{Value: AlgorithmDailyReplay, Label: "Daily Replay (default)", Description: "Bounded daily meta-log scan. Replay-only in Phase 2; buckets with walker-bound rules fail the run."},
-								{Value: AlgorithmStreaming, Label: "Streaming (legacy fallback)", Description: "Long-running reader + per-shard heap + tick dispatcher. Pre-cutover behavior; removed in Phase 5."},
-							},
-						},
 						{
 							Name:        ClusterDeletesPerSecondAdminKey,
 							Label:       "Cluster Delete Rate (per second)",
-							Description: "Cluster-wide ceiling on lifecycle delete RPCs per second, divided evenly across active s3_lifecycle workers at job-dispatch time. 0 = unlimited (legacy behavior). Only honored by the Daily Replay algorithm; streaming ignores it.",
+							Description: "Cluster-wide ceiling on lifecycle delete RPCs per second, divided evenly across active s3_lifecycle workers at job-dispatch time. 0 = unlimited.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
@@ -107,7 +95,6 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"algorithm":                     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAlgorithm}},
 				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
@@ -115,49 +102,17 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "s3-lifecycle-worker",
 			Title:       "S3 Lifecycle Worker",
-			Description: "Operational tuning for the lifecycle pipeline.",
+			Description: "Operational tuning for the daily lifecycle run.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "cadence",
 					Title:       "Cadence",
-					Description: "How often the worker checks its schedule, saves progress, reloads bucket lifecycle configs, and how long each run may take.",
+					Description: "Per-run wall-clock budget.",
 					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "dispatch_tick_minutes",
-							Label:       "Schedule Check Interval (minutes)",
-							Description: "How often each pipeline drains its schedule.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "checkpoint_tick_seconds",
-							Label:       "Progress Save Interval (seconds)",
-							Description: "How often each pipeline persists its cursor map to the filer.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "refresh_interval_minutes",
-							Label:       "Lifecycle Config Reload (minutes)",
-							Description: "How often the scheduler rebuilds the engine snapshot from bucket lifecycle configs.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "bootstrap_interval_minutes",
-							Label:       "Full Bucket Rescan Interval (minutes)",
-							Description: "How often each bucket is re-walked. scan_only rules — those whose retention horizon exceeds meta-log retention — only fire from the bootstrap walk, so a non-zero value is required to enforce them on a long-running worker. 0 keeps the legacy walk-once-per-process behavior.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-						},
 						{
 							Name:        "max_runtime_minutes",
 							Label:       "Per-Run Time Limit (minutes)",
-							Description: "Wall-clock cap on each run. Each daily run processes events for one day; the cursor persists across runs.",
+							Description: "Wall-clock cap on each run. Each daily run processes one day of meta-log events plus the walker pass over the current rule set; the cursor persists across runs.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
@@ -166,11 +121,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"dispatch_tick_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDispatchTickMinutes}},
-				"checkpoint_tick_seconds":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultCheckpointTickSeconds}},
-				"refresh_interval_minutes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultRefreshIntervalMinutes}},
-				"bootstrap_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultBootstrapIntervalMinutes}},
-				"max_runtime_minutes":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
+				"max_runtime_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -272,35 +223,12 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
-	if cfg.Algorithm == AlgorithmDailyReplay {
-		return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
-	}
-
-	sched := &scheduler.Scheduler{
-		BucketsPath:       bucketsPath,
-		Engine:            engine.New(),
-		Persister:         &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-		Client:            lifecycleRPCAdapter{c: rpc},
-		FilerClient:       filerClient,
-		ClientID:          util.RandomInt32(),
-		ClientName:        "worker-s3-lifecycle",
-		Workers:           cfg.Workers,
-		DispatchTick:      cfg.DispatchTick,
-		CheckpointTick:    cfg.CheckpointTick,
-		RefreshInterval:   cfg.RefreshInterval,
-		BootstrapInterval: cfg.BootstrapInterval,
-	}
-	if err := sched.Run(runCtx); err != nil {
-		glog.Warningf("s3 lifecycle execute: %v", err)
-		return err
-	}
-	return nil
+	return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
 }
 
-// executeDailyReplay runs the bounded daily-replay path. Reuses the
-// streaming path's filer / s3 / engine setup but routes the per-shard
-// loop through dailyrun.Run instead of scheduler.Scheduler. Phase 2:
-// replay-only, refuses walker-bound action kinds with a typed error.
+// executeDailyReplay runs one bounded daily-replay pass via
+// dailyrun.Run. The walker fires inside runShard on rule-content edits
+// and against the steady-state walk view; all rule kinds are serviced.
 func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
 	eng := engine.New()
 	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
@@ -319,10 +247,29 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 
 	limiter, limiterDesc := buildLimiterFromClusterContext(request.GetClusterContext())
 
+	// Reuse one LifecycleClient across the replay drain and the
+	// walker's per-entry dispatch.
+	client := lifecycleRPCAdapter{c: rpc}
+
+	// Bucket list for the walker — derived from inputs so it matches
+	// the snapshot the engine compiled.
+	buckets := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		if in.Bucket != "" {
+			buckets = append(buckets, in.Bucket)
+		}
+	}
+	walkerListFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
+	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client}
+	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
+		return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, walkerListFn, walkerDispatch)
+	})
+
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("daily_replay shards=%d workers=%d runtime=%s rate=%s", len(shards), cfg.Workers, cfg.MaxRuntime, limiterDesc),
+		Message: fmt.Sprintf("daily_replay shards=%d workers=%d runtime=%s rate=%s buckets=%d walker=on",
+			len(shards), cfg.Workers, cfg.MaxRuntime, limiterDesc, len(buckets)),
 	})
 
 	runErr := dailyrun.Run(ctx, dailyrun.Config{
@@ -330,19 +277,14 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		BucketsPath: bucketsPath,
 		Engine:      eng,
 		FilerClient: filerClient,
-		Client:      lifecycleRPCAdapter{c: rpc},
+		Client:      client,
 		Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
 		Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
 		Workers:     cfg.Workers,
 		Limiter:     limiter,
+		Walker:      walker,
 		ClientName:  "worker-s3-lifecycle-daily",
 	})
-	if dailyrun.IsUnsupportedRule(runErr) {
-		// Surface the typed error verbatim so admin marks the run as
-		// failed with the user-facing reason in the activity log.
-		glog.Warningf("daily_replay: %v", runErr)
-		return runErr
-	}
 	if runErr != nil {
 		glog.Warningf("daily_replay: %v", runErr)
 		return runErr

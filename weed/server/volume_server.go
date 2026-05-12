@@ -34,26 +34,32 @@ type VolumeServer struct {
 	readBufferSizeMB              int
 
 	SeedMasterNodes []pb.ServerAddress
-	whiteList       []string
-	currentMaster   pb.ServerAddress
-	pulsePeriod     time.Duration
+	// seedMasterSet mirrors SeedMasterNodes keyed by the canonical http
+	// form. It is computed once in NewVolumeServer so admission paths can
+	// answer is-this-a-seed-master in O(1).
+	seedMasterSet     map[string]struct{}
+	whiteList         []string
+	currentMaster     pb.ServerAddress
+	currentMasterLock sync.RWMutex
+	pulsePeriod       time.Duration
 	dataCenter      string
 	rack            string
 	store           *storage.Store
 	guard           *security.Guard
 	grpcDialOption  grpc.DialOption
 
-	needleMapKind            storage.NeedleMapKind
-	ldbTimout                int64
-	FixJpgOrientation        bool
-	ReadMode                 string
-	compactionBytePerSecond  int64
-	maintenanceBytePerSecond int64
-	metricsAddress           string
-	metricsIntervalSec       int
-	fileSizeLimitBytes       int64
-	isHeartbeating           bool
-	stopChan                 chan bool
+	needleMapKind                 storage.NeedleMapKind
+	ldbTimout                     int64
+	FixJpgOrientation             bool
+	ReadMode                      string
+	AllowUntrustedRemoteEndpoints bool
+	compactionBytePerSecond       int64
+	maintenanceBytePerSecond      int64
+	metricsAddress                string
+	metricsIntervalSec            int
+	fileSizeLimitBytes            int64
+	isHeartbeating                bool
+	stopChan                      chan bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -76,6 +82,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	hasSlowRead bool,
 	readBufferSizeMB int,
 	ldbTimeout int64,
+	allowUntrustedRemoteEndpoints bool,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -111,10 +118,19 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		readBufferSizeMB:              readBufferSizeMB,
 		ldbTimout:                     ldbTimeout,
 		whiteList:                     whiteList,
+		AllowUntrustedRemoteEndpoints: allowUntrustedRemoteEndpoints,
 	}
 
 	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)
-	vs.SeedMasterNodes = masterNodes
+	// Copy the caller's slice so subsequent external mutation cannot desync
+	// SeedMasterNodes from the frozen lookup set built below.
+	seedMasters := make([]pb.ServerAddress, len(masterNodes))
+	copy(seedMasters, masterNodes)
+	vs.SeedMasterNodes = seedMasters
+	vs.seedMasterSet = make(map[string]struct{}, len(seedMasters))
+	for _, m := range seedMasters {
+		vs.seedMasterSet[m.ToHttpAddress()] = struct{}{}
+	}
 
 	vs.checkWithMaster()
 

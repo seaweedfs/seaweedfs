@@ -137,6 +137,7 @@ func (g *Guard) UpdateWhiteList(whiteList []string) {
 			_, cidrnet, err := net.ParseCIDR(ip)
 			if err != nil {
 				glog.Errorf("Parse CIDR %s in whitelist failed: %v", ip, err)
+				continue
 			}
 			whiteListCIDR[ip] = cidrnet
 		} else {

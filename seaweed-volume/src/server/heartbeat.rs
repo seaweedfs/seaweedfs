@@ -397,6 +397,15 @@ async fn do_heartbeat(
     let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
 
     info!("Heartbeat stream established with {}", grpc_addr);
+    // Publish the master we're now talking to in canonical http host:port
+    // form so Ping admission can recognise it once a leader change moves us
+    // off the seed list. Mirrors Go's vs.setCurrentMaster(masterAddress).
+    {
+        let normalised =
+            super::volume_server::to_http_address(current_master).into_owned();
+        let mut guard = state.current_master_url.write().await;
+        *guard = normalised;
+    }
     if is_stopping(state) {
         state.is_heartbeating.store(false, Ordering::Relaxed);
         send_deregister_heartbeat(config, state, &tx).await;
@@ -1033,6 +1042,8 @@ mod tests {
             read_mode: ReadMode::Local,
             master_url: String::new(),
             master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
             outgoing_http_scheme: "http".to_string(),
