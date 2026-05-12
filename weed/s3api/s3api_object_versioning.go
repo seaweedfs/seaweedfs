@@ -1105,7 +1105,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 			// DELETE as a hard storage error) — but we MUST drive the
 			// pointer to consistency, otherwise the next read pays the
 			// self-heal cost.
-			glog.Errorf("deleteSpecificObjectVersion: failed to update latest version after deletion for %s/%s (queued for reconciler): %v", bucket, normalizedObject, err)
+			versioningHealErrorf("produced", "bucket=%s key=%s reason=update_after_delete_failed err=%v queued_for_reconciler=true", bucket, normalizedObject, err)
 			if s3a.versionsHealQueue != nil {
 				s3a.versionsHealQueue.Enqueue(bucket, normalizedObject)
 			}
@@ -1341,12 +1341,21 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	// A single-shot list would miss the true latest for old-format (raw
 	// timestamp) version ids when the directory exceeds one page, since filer
 	// order is lexicographic-ascending = oldest-first for that format.
+	//
+	// orphanSamples captures up to orphanSampleCap names that DID appear in
+	// the listing but lacked the version-id extended attribute. These are
+	// the smoking-gun diagnostic for the "scanned N>0 but no valid latest"
+	// anomaly — they're either filer-listing stale entries (just-deleted
+	// records still indexed) or residual stubs from interrupted writes.
+	const orphanSampleCap = 8
 	var (
 		latestVersionEntry    *filer_pb.Entry
 		latestVersionId       string
 		latestVersionFileName string
 		latestIsDeleteMarker  bool
 		totalEntries          int
+		orphanCount           int
+		orphanSamples         []string
 		startFrom             string
 	)
 	for {
@@ -1371,13 +1380,46 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 				latestIsDeleteMarker = pageDM
 			}
 		}
+		// Sample orphan entries (those without ExtVersionIdKey) for
+		// post-scan diagnostics. selectLatestVersion already filters them
+		// out for the latest-pick; we collect names separately so the
+		// anomaly warning has something concrete to point at.
+		for _, e := range entries {
+			if e == nil {
+				continue
+			}
+			if e.Extended != nil {
+				if _, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok {
+					continue
+				}
+			}
+			orphanCount++
+			if len(orphanSamples) < orphanSampleCap {
+				orphanSamples = append(orphanSamples, e.Name)
+			}
+		}
 		if isLast || len(entries) == 0 {
 			break
 		}
 		startFrom = entries[len(entries)-1].Name
 	}
 
-	glog.V(1).Infof("updateLatestVersionAfterDeletion: scanned %d entries in %s", totalEntries, versionsDir)
+	if totalEntries > 0 && latestVersionEntry == nil {
+		// The scan saw entries but none were valid version blobs. This is
+		// the listing-after-rm timing anomaly: a just-deleted record is
+		// still indexed in the parent's listing but its extended attrs
+		// either weren't loaded or the entry itself is mid-removal. The
+		// caller will now fall through to the .versions/ teardown +
+		// pointer clear, but operators tracking stranded-state production
+		// should see this event.
+		samplesSummary := "(none)"
+		if len(orphanSamples) > 0 {
+			samplesSummary = strings.Join(orphanSamples, ",")
+		}
+		versioningHealWarningf("anomaly", "bucket=%s key=%s scanned=%d orphan_count=%d orphan_samples=%s reason=listing_has_entries_but_none_have_version_id", bucket, object, totalEntries, orphanCount, samplesSummary)
+	} else {
+		glog.V(1).Infof("updateLatestVersionAfterDeletion: scanned %d entries in %s", totalEntries, versionsDir)
+	}
 
 	// Update the .versions directory metadata
 	var versionsEntry *filer_pb.Entry
@@ -1453,7 +1495,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 			return nil
 		}
-		glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s after retries: %v", bucket, object, retryErr)
+		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, retryErr)
 		s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 		return fmt.Errorf("delete .versions directory: %w", retryErr)
 	}
@@ -1532,10 +1574,10 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		updatedEntry.Attributes = liveEntry.Attributes
 		updatedEntry.Chunks = liveEntry.Chunks
 	}); mkErr != nil {
-		glog.Warningf("%s: failed to clear stale pointer for %s/%s: %v", caller, bucket, object, mkErr)
+		versioningHealWarningf("clear_failed", "bucket=%s key=%s caller=%s err=%v", bucket, object, caller, mkErr)
 		return
 	}
-	glog.V(1).Infof("%s: cleared stale latest-version pointer for %s/%s (orphan entries remain in .versions directory)", caller, bucket, object)
+	versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_cleared caller=%s (orphan entries remain in .versions directory)", bucket, object, caller)
 }
 
 // ListObjectVersionsHandler handles the list object versions request
@@ -1746,7 +1788,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
-	glog.Warningf("healStaleLatestVersionPointer: stale pointer for %s/%s - version file %q missing, rescanning %s", bucket, normalizedObject, stalePointerFile, versionsDir)
+	versioningHealWarningf("surfaced", "bucket=%s key=%s missing_file=%s rescanning=%s", bucket, normalizedObject, stalePointerFile, versionsDir)
 
 	// Paginate through all version entries and keep a running best candidate.
 	// A single-shot list would miss the true latest when old-format (raw
@@ -1813,9 +1855,9 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		// Persisting the repair is best-effort. Surface a warning but still
 		// return the rescanned entry so the read succeeds; a subsequent write
 		// on the object will persist a fresh pointer.
-		glog.Warningf("healStaleLatestVersionPointer: failed to persist repaired pointer for %s/%s: %v (returning rescanned entry)", bucket, normalizedObject, mkErr)
+		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, mkErr)
 	} else {
-		glog.V(1).Infof("healStaleLatestVersionPointer: repaired pointer for %s/%s to version %s (file %s, deleteMarker=%v)", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
+		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
 	}
 	return latestEntry, nil
 }

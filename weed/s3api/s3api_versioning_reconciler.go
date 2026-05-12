@@ -14,6 +14,38 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// versioningHealLogPrefix is the grep-able tag every line in the .versions/
+// pointer recovery lifecycle carries. Operators correlating produced /
+// surfaced / drained / gave-up events can pull a single stream across
+// hosts with `grep '\[versioning-heal\]'`. Keep this constant — log
+// aggregators (Loki, Splunk, journalctl filters) may match on it.
+const versioningHealLogPrefix = "[versioning-heal]"
+
+// versioningHealInfof / Warningf / Errorf emit a log line stamped with
+// the grep prefix and an event tag. Use event names from a small fixed
+// vocabulary so dashboards can aggregate by event:
+//
+//	event=produced  — stranded state was created (or would have been before this PR's fixes)
+//	event=surfaced  — read-path heal triggered for an already-stranded key
+//	event=healed    — pointer was successfully repaired or cleared
+//	event=enqueue   — reconciler queued a candidate
+//	event=drain     — reconciler successfully drained a candidate
+//	event=retry     — reconciler attempt failed, will retry
+//	event=gave_up   — reconciler exhausted retries on a candidate
+//	event=anomaly   — listing-after-rm inconsistency detected
+//	event=summary   — periodic heartbeat (counters + queue depth)
+func versioningHealInfof(event, format string, args ...interface{}) {
+	glog.Infof("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, args...))
+}
+
+func versioningHealWarningf(event, format string, args ...interface{}) {
+	glog.Warningf("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, args...))
+}
+
+func versioningHealErrorf(event, format string, args ...interface{}) {
+	glog.Errorf("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, args...))
+}
+
 // Background reconciler for .versions/ directories whose latest-version
 // pointer references a missing file. The inline delete path
 // (deleteSpecificObjectVersion -> updateLatestVersionAfterDeletion) can
@@ -67,7 +99,7 @@ func (q *versionsHealQueue) Enqueue(bucket, object string) {
 		return
 	}
 	if len(q.pending) >= versionsHealQueueCapacity {
-		glog.V(1).Infof("versionsHealQueue: capacity reached, dropping %s/%s", bucket, object)
+		versioningHealWarningf("queue_full", "bucket=%s key=%s capacity=%d (candidate dropped; read-path heal still covers it)", bucket, object, versionsHealQueueCapacity)
 		return
 	}
 	q.pending[key] = &versionsHealCandidate{
@@ -76,6 +108,7 @@ func (q *versionsHealQueue) Enqueue(bucket, object string) {
 		enqueued:  time.Now(),
 		nextRetry: time.Now(),
 	}
+	versioningHealInfof("enqueue", "bucket=%s key=%s queue_depth=%d", bucket, object, len(q.pending))
 }
 
 // popReady returns candidates whose nextRetry is in the past, removing
@@ -99,7 +132,7 @@ func (q *versionsHealQueue) popReady(now time.Time) []*versionsHealCandidate {
 // as a last-resort safety net.
 func (q *versionsHealQueue) requeue(c *versionsHealCandidate, backoff time.Duration) {
 	if c.attempts >= versionsHealMaxRetries {
-		glog.Warningf("versionsHealQueue: giving up on %s/%s after %d attempts (read-path heal will still recover)", c.bucket, c.object, c.attempts)
+		versioningHealWarningf("gave_up", "bucket=%s key=%s attempts=%d (read-path heal will still recover)", c.bucket, c.object, c.attempts)
 		return
 	}
 	q.mu.Lock()
@@ -152,11 +185,11 @@ func (s3a *S3ApiServer) drainVersionsHealQueue() {
 			if backoff > versionsHealMaxBackoff {
 				backoff = versionsHealMaxBackoff
 			}
-			glog.V(1).Infof("versionsHealQueue: heal failed for %s/%s (attempt %d): %v; retry in %v", c.bucket, c.object, c.attempts, err, backoff)
+			versioningHealInfof("retry", "bucket=%s key=%s attempt=%d retry_in=%v err=%v", c.bucket, c.object, c.attempts, backoff, err)
 			q.requeue(c, backoff)
 			continue
 		}
-		glog.V(1).Infof("versionsHealQueue: healed %s/%s after %d attempt(s) (queued for %v)", c.bucket, c.object, c.attempts, time.Since(c.enqueued))
+		versioningHealInfof("drain", "bucket=%s key=%s attempts=%d queued_for=%v", c.bucket, c.object, c.attempts, time.Since(c.enqueued))
 	}
 }
 
