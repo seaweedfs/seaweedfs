@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // WalkerDispatcher adapts LifecycleClient to bootstrap.Dispatcher so
@@ -55,16 +56,20 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 		// ExpectedIdentity intentionally nil; server bootstraps from
 		// the live entry on this code path.
 	}
+	kindLabel := action.Key.ActionKind.String()
 	resp, err := d.Client.LifecycleDelete(ctx, req)
 	if err != nil {
+		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "TRANSPORT_ERROR").Inc()
 		return fmt.Errorf("walker dispatch %s/%s %s: %w", action.Bucket, objectPath, action.Key.ActionKind, err)
 	}
 	if resp == nil {
 		// A misbehaving server stub returning (nil, nil) would panic on
 		// the switch below. Surface as an error so the walk halts at
 		// this entry, preserving the in-flight cursor's correctness.
+		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "NIL_RESPONSE").Inc()
 		return fmt.Errorf("walker dispatch %s/%s %s: nil response", action.Bucket, objectPath, action.Key.ActionKind)
 	}
+	stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, resp.Outcome.String()).Inc()
 	switch resp.Outcome {
 	case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 		s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,
