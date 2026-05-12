@@ -59,6 +59,17 @@ type fakeFiler struct {
 	tree map[string][]*filer_pb.Entry
 }
 
+func (c *fakeFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.tree[in.Directory] {
+		if e != nil && e.Name == in.Name {
+			return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
+		}
+	}
+	return nil, filer_pb.ErrNotFound
+}
+
 func (c *fakeFiler) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -132,19 +143,14 @@ func TestFilerListFunc_RecursesIntoSubdirs(t *testing.T) {
 	assert.Equal(t, []string{"logs/2026/b.log", "logs/a.log", "root.txt"}, paths)
 }
 
-func TestFilerListFunc_SkipsVersionsAndUploadsDirsForNow(t *testing.T) {
-	// Phase 4b-pre: `.versions/<key>/` and `.uploads/<id>/` are not yet
-	// expanded. Pin that they don't leak raw children into the dispatch
-	// path; the follow-up commit adds the proper sibling/MPU expansion.
+func TestFilerListFunc_SkipsUploadsDirsForNow(t *testing.T) {
+	// Phase 4b-pre: `.uploads/<id>/` MPU init records are skipped
+	// here. The follow-up commit emits one IsMPUInit Entry per init.
 	mtime := time.Now()
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {
 			file("regular.txt", mtime, 1),
-			dir("foo" + s3_constants.VersionsFolder),
 			dir(s3_constants.MultipartUploadsFolder),
-		},
-		"/buckets/bkt/foo" + s3_constants.VersionsFolder: {
-			file("v_001", mtime, 1),
 		},
 		"/buckets/bkt/" + s3_constants.MultipartUploadsFolder: {
 			dir("upload-id-1"),
@@ -156,7 +162,176 @@ func TestFilerListFunc_SkipsVersionsAndUploadsDirsForNow(t *testing.T) {
 		paths = append(paths, e.Path)
 		return nil
 	}))
-	assert.Equal(t, []string{"regular.txt"}, paths, ".versions/ and .uploads/ must not surface raw children")
+	assert.Equal(t, []string{"regular.txt"}, paths, ".uploads/ must not surface raw children")
+}
+
+// fileWithExt is a versioned-file entry helper.
+func fileWithExt(name string, mtime time.Time, size int64, ext map[string][]byte) *filer_pb.Entry {
+	e := file(name, mtime, size)
+	e.Extended = ext
+	return e
+}
+
+func versionsDir(name string, latestID string) *filer_pb.Entry {
+	d := dir(name)
+	d.Extended = map[string][]byte{}
+	if latestID != "" {
+		d.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestID)
+	}
+	return d
+}
+
+func TestFilerListFunc_VersionedExpansionMarksLatestByPointer(t *testing.T) {
+	// .versions/<key>/ with three real versions; parent's
+	// ExtLatestVersionIdKey points to v2 → IsLatest set on v2; the
+	// other two get NoncurrentIndex computed against the latest's
+	// position in the sorted (newest-first) list.
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	versions := []*filer_pb.Entry{
+		fileWithExt("v1", t1, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
+		fileWithExt("v2", t2, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v2")}),
+		fileWithExt("v3", t3, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v3")}),
+	}
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "v2")},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got []*bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = append(got, e)
+		return nil
+	}))
+	require.Len(t, got, 3)
+
+	byID := map[string]*bootstrap.Entry{}
+	for _, e := range got {
+		byID[e.VersionID] = e
+		assert.Equal(t, "foo", e.Path, "every sibling's Path is the logical key")
+		assert.Equal(t, 3, e.NumVersions)
+	}
+	assert.True(t, byID["v2"].IsLatest, "pointer wins regardless of mtime order")
+	assert.False(t, byID["v1"].IsLatest)
+	assert.False(t, byID["v3"].IsLatest)
+	require.NotNil(t, byID["v3"].NoncurrentIndex, "noncurrent siblings get a rank")
+	require.NotNil(t, byID["v1"].NoncurrentIndex, "noncurrent siblings get a rank")
+}
+
+func TestFilerListFunc_VersionedExpansionNoPointerNewestSiblingWins(t *testing.T) {
+	// Parent has no ExtLatestVersionIdKey. With no explicit-null bare
+	// version, the newest-by-mtime sibling becomes latest.
+	tNew := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	tOld := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	versions := []*filer_pb.Entry{
+		fileWithExt("v_old", tOld, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("vold")}),
+		fileWithExt("v_new", tNew, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("vnew")}),
+	}
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "")},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got []*bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = append(got, e)
+		return nil
+	}))
+	require.Len(t, got, 2)
+	byID := map[string]*bootstrap.Entry{}
+	for _, e := range got {
+		byID[e.VersionID] = e
+	}
+	assert.True(t, byID["vnew"].IsLatest, "newest sibling wins when pointer is absent")
+	assert.False(t, byID["vold"].IsLatest)
+}
+
+func TestFilerListFunc_VersionedExpansionExplicitNullIsLatestWhenPointerMissing(t *testing.T) {
+	// Suspended-versioning shape: bare object marked with
+	// ExtVersionIdKey="null", parent has no pointer. null is latest.
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tNull := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC) // newest
+	bareNull := fileWithExt("foo", tNull, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")})
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {
+			bareNull,
+			versionsDir("foo"+s3_constants.VersionsFolder, ""),
+		},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: {
+			fileWithExt("v1", t1, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
+		},
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got []*bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = append(got, e)
+		return nil
+	}))
+	// 2 sibling entries from expansion (null + v1). The bare "foo"
+	// MUST be suppressed in pass 2 via skipBare.
+	require.Len(t, got, 2)
+	byID := map[string]*bootstrap.Entry{}
+	for _, e := range got {
+		byID[e.VersionID] = e
+	}
+	require.NotNil(t, byID["null"])
+	require.NotNil(t, byID["v1"])
+	assert.True(t, byID["null"].IsLatest)
+	assert.False(t, byID["v1"].IsLatest)
+
+	// Walk again, verify no duplicate emission of the bare "foo".
+	count := 0
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		if e.Path == "foo" && e.VersionID == "" {
+			t.Errorf("bare foo should be suppressed by skipBare, got %+v", e)
+		}
+		count++
+		return nil
+	}))
+	assert.Equal(t, 2, count)
+}
+
+func TestFilerListFunc_VersionsDirWithoutMarkersRecursesAsRegular(t *testing.T) {
+	// A `.versions`-named folder whose children have no
+	// ExtVersionIdKey is a coincidence (user folder). Recurse into
+	// it; the file inside should surface as a regular entry.
+	mtime := time.Now()
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {versionsDir("looksLikeUserFolder"+s3_constants.VersionsFolder, "")},
+		"/buckets/bkt/looksLikeUserFolder" + s3_constants.VersionsFolder: {
+			file("inner.txt", mtime, 1),
+		},
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var paths []string
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	assert.Equal(t, []string{"looksLikeUserFolder" + s3_constants.VersionsFolder + "/inner.txt"}, paths)
+}
+
+func TestFilerListFunc_VersionedDeleteMarkerPropagates(t *testing.T) {
+	mtime := time.Now()
+	versions := []*filer_pb.Entry{
+		fileWithExt("v1", mtime, 0, map[string][]byte{
+			s3_constants.ExtVersionIdKey:    []byte("v1"),
+			s3_constants.ExtDeleteMarkerKey: []byte("true"),
+		}),
+	}
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "v1")},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got *bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = e
+		return nil
+	}))
+	require.NotNil(t, got)
+	assert.True(t, got.IsDeleteMarker, "ExtDeleteMarkerKey='true' must surface as IsDeleteMarker")
 }
 
 func TestFilerListFunc_HonorsStart(t *testing.T) {
