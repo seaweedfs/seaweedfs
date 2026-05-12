@@ -33,8 +33,8 @@ func init() {
 }
 
 // Handler is the worker-side runner for S3 object lifecycle expiration.
-// One Execute call drives a long-running scheduler.Scheduler against the
-// S3 endpoints discovered from the master; admin caps concurrency at one
+// One Execute call drives one bounded dailyrun.Run pass against the S3
+// endpoints discovered from the master; admin caps concurrency at one
 // job per worker so a fresh proposal only spawns a new run after the
 // prior one exits.
 type Handler struct {
@@ -226,10 +226,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
 }
 
-// executeDailyReplay runs the bounded daily-replay path. Reuses the
-// streaming path's filer / s3 / engine setup but routes the per-shard
-// loop through dailyrun.Run instead of scheduler.Scheduler. Phase 2:
-// replay-only, refuses walker-bound action kinds with a typed error.
+// executeDailyReplay runs one bounded daily-replay pass via
+// dailyrun.Run. The walker fires inside runShard on rule-content edits
+// and against the steady-state walk view; all rule kinds are serviced.
 func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
 	eng := engine.New()
 	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
