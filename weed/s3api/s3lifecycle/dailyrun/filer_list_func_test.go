@@ -143,17 +143,54 @@ func TestFilerListFunc_RecursesIntoSubdirs(t *testing.T) {
 	assert.Equal(t, []string{"logs/2026/b.log", "logs/a.log", "root.txt"}, paths)
 }
 
-func TestFilerListFunc_SkipsUploadsDirsForNow(t *testing.T) {
-	// Phase 4b-pre: `.uploads/<id>/` MPU init records are skipped
-	// here. The follow-up commit emits one IsMPUInit Entry per init.
+func TestFilerListFunc_MPUInitEmitsWithDestKey(t *testing.T) {
+	// .uploads/<id>/ with ExtMultipartObjectKey is the MPU init record.
+	// One Entry per init, IsMPUInit=true, DestKey = the user's path.
 	mtime := time.Now()
+	mpuDir := dir("upload-id-1")
+	mpuDir.Extended = map[string][]byte{
+		s3_constants.ExtMultipartObjectKey: []byte("user/path/object"),
+	}
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {
 			file("regular.txt", mtime, 1),
 			dir(s3_constants.MultipartUploadsFolder),
 		},
 		"/buckets/bkt/" + s3_constants.MultipartUploadsFolder: {
-			dir("upload-id-1"),
+			mpuDir,
+		},
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got []*bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = append(got, e)
+		return nil
+	}))
+	require.Len(t, got, 2)
+	byPath := map[string]*bootstrap.Entry{}
+	for _, e := range got {
+		byPath[e.Path] = e
+	}
+	require.NotNil(t, byPath["regular.txt"])
+	require.NotNil(t, byPath[s3_constants.MultipartUploadsFolder+"/upload-id-1"])
+	mpu := byPath[s3_constants.MultipartUploadsFolder+"/upload-id-1"]
+	assert.True(t, mpu.IsMPUInit)
+	assert.Equal(t, "user/path/object", mpu.DestKey)
+}
+
+func TestFilerListFunc_MPUInitWithoutDestKeyIsSkipped(t *testing.T) {
+	// A `.uploads/<id>` directory missing ExtMultipartObjectKey is
+	// mid-write before metadata landed; the dispatcher would error
+	// on empty DestKey. Skip it so the walk doesn't halt.
+	mtime := time.Now()
+	mpuDir := dir("upload-id-2") // no Extended
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {
+			file("regular.txt", mtime, 1),
+			dir(s3_constants.MultipartUploadsFolder),
+		},
+		"/buckets/bkt/" + s3_constants.MultipartUploadsFolder: {
+			mpuDir,
 		},
 	}}
 	listFn := FilerListFunc(client, "/buckets")
@@ -162,7 +199,7 @@ func TestFilerListFunc_SkipsUploadsDirsForNow(t *testing.T) {
 		paths = append(paths, e.Path)
 		return nil
 	}))
-	assert.Equal(t, []string{"regular.txt"}, paths, ".uploads/ must not surface raw children")
+	assert.Equal(t, []string{"regular.txt"}, paths)
 }
 
 // fileWithExt is a versioned-file entry helper.

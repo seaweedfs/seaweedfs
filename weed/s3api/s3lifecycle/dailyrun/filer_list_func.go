@@ -28,9 +28,9 @@ func init() { listPageSize.Store(1024) }
 // IsLatest / NumVersions / NoncurrentIndex / SuccessorModTime so the
 // walker's NoncurrentDays evaluation has the same per-version state
 // the streaming bootstrap injects via reader.Event.BootstrapVersion.
-//
-// MPU init records at .uploads/<id> are skipped here; the follow-up
-// commit emits one Entry per init with IsMPUInit and DestKey set.
+// MPU init records at .uploads/<id> with ExtMultipartObjectKey set
+// are emitted whole with IsMPUInit=true and DestKey carrying the
+// user's intended path.
 func FilerListFunc(client filer_pb.SeaweedFilerClient, bucketsPath string) bootstrap.ListFunc {
 	return func(ctx context.Context, bucket, start string, cb func(*bootstrap.Entry) error) error {
 		if client == nil {
@@ -78,9 +78,18 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 		full := dir + "/" + e.Name
 		key := strings.TrimPrefix(full, bucketRoot+"/")
 		if e.IsDirectory {
-			if isMPUInitDirShape(key) {
-				// TODO(phase4b): emit MPU init as a single Entry.
-				return nil
+			if isMPUInitDir(key, e) {
+				if start != "" && key <= start {
+					return nil
+				}
+				destKey := string(e.Extended[s3_constants.ExtMultipartObjectKey])
+				return cb(&bootstrap.Entry{
+					Path:      key,
+					DestKey:   destKey,
+					IsMPUInit: true,
+					ModTime:   time.Unix(e.Attributes.Mtime, int64(e.Attributes.MtimeNs)),
+					Size:      int64(e.Attributes.FileSize),
+				})
 			}
 			return walkBucketTree(ctx, client, full, bucketRoot, start, cb)
 		}
@@ -282,14 +291,20 @@ func isVersionsDir(entry *filer_pb.Entry) bool {
 	return entry.IsDirectory && strings.HasSuffix(entry.Name, s3_constants.VersionsFolder)
 }
 
-// isMPUInitDirShape mirrors scheduler/bootstrap.go's isMPUInitDir but
-// checks the path shape only; the Extended-attr verification lives in
-// the eventual full-MPU emission path.
-func isMPUInitDirShape(key string) bool {
+// isMPUInitDir mirrors router.mpuInitInfo: a directory at
+// .uploads/<id> carrying the destination key in Extended is the MPU
+// init record. Verified shape + presence of ExtMultipartObjectKey;
+// directories at .uploads/<id> without the key are mid-write before
+// metadata landed and stay out of the dispatch path.
+func isMPUInitDir(key string, entry *filer_pb.Entry) bool {
 	uploadsPrefix := s3_constants.MultipartUploadsFolder + "/"
 	if !strings.HasPrefix(key, uploadsPrefix) {
 		return false
 	}
 	rest := key[len(uploadsPrefix):]
-	return rest != "" && !strings.ContainsRune(rest, '/')
+	if rest == "" || strings.ContainsRune(rest, '/') {
+		return false
+	}
+	v, ok := entry.Extended[s3_constants.ExtMultipartObjectKey]
+	return ok && len(v) > 0
 }
