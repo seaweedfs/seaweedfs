@@ -90,6 +90,36 @@ func TestSelectDestinations_SpillsWhenPreferredScarce(t *testing.T) {
 	}
 }
 
+// PreferredDiskType="hdd" must match disks whose DiskType is "" (the
+// HardDriveType sentinel) — otherwise EC encoding of an HDD source would
+// always spill onto HDDs that happen to report disk_type="" even though
+// the cluster has plenty of matching capacity.
+func TestSelectDestinations_PreferredHddMatchesEmptyDiskType(t *testing.T) {
+	disks := []*DiskCandidate{
+		makeDisk("hdd-0", "r0", "", 0),  // HardDriveType sentinel
+		makeDisk("hdd-1", "r1", "", 0),  // HardDriveType sentinel
+		makeDisk("ssd-0", "r2", "ssd", 0),
+	}
+
+	result, err := SelectDestinations(disks, newRequest(2, "hdd"))
+	if err != nil {
+		t.Fatalf("SelectDestinations: %v", err)
+	}
+	if got := len(result.SelectedDisks); got != 2 {
+		t.Fatalf("selected %d disks, want 2", got)
+	}
+	// Both selected disks must be HDD-reporting (i.e. DiskType == ""),
+	// and no spillover should have been required.
+	for _, d := range result.SelectedDisks {
+		if d.DiskType != "" {
+			t.Errorf("selected disk %s has DiskType=%q, want \"\" (HardDriveType)", d.NodeID, d.DiskType)
+		}
+	}
+	if result.SpilledToOtherDiskType {
+		t.Fatalf("SpilledToOtherDiskType should be false when HDD pool matches preferred=hdd")
+	}
+}
+
 // Empty PreferredDiskType: pre-#9423 behavior, single pool, no spillover
 // flag regardless of disk-type mix.
 func TestSelectDestinations_EmptyPreferredDiskTypeKeepsPriorBehavior(t *testing.T) {

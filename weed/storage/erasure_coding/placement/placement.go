@@ -10,6 +10,7 @@ package placement
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // DiskCandidate represents a disk that can receive EC shards
@@ -160,18 +161,35 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 // partitionByDiskType splits disks into (matching, fallback) based on the
 // preferred disk type. If preferred is empty, everything goes into the
 // matching tier and fallback is empty — i.e. existing single-pool behavior.
+//
+// Empty DiskCandidate.DiskType is treated as HardDriveType ("hdd") to
+// mirror weed/storage/types.ToDiskType's normalization, so a
+// PreferredDiskType of "hdd" matches disks reporting "" — otherwise EC
+// shards from an HDD source would always spill onto disks that happen to
+// report their type as "" (HardDriveType).
 func partitionByDiskType(disks []*DiskCandidate, preferred string) (matching, fallback []*DiskCandidate) {
 	if preferred == "" {
 		return disks, nil
 	}
+	pref := normalizeDiskType(preferred)
 	for _, d := range disks {
-		if d.DiskType == preferred {
+		if normalizeDiskType(d.DiskType) == pref {
 			matching = append(matching, d)
 		} else {
 			fallback = append(fallback, d)
 		}
 	}
 	return matching, fallback
+}
+
+// normalizeDiskType lower-cases the input and folds "" to "hdd" so the
+// HardDriveType sentinel ("") and explicit "hdd"/"HDD" all compare equal.
+func normalizeDiskType(t string) string {
+	t = strings.ToLower(t)
+	if t == "" {
+		return "hdd"
+	}
+	return t
 }
 
 // selectFromTier runs the three diversity passes against `tier`, mutating
@@ -188,13 +206,19 @@ func selectFromTier(tier []*DiskCandidate, result *PlacementResult,
 
 	rackToDisks := groupDisksByRack(tier)
 
-	// Pass 1: Select one disk from each rack (maximize rack diversity)
+	// Pass 1: Select one disk from each rack (maximize rack diversity).
+	// When this is the fallback tier (preferred tier already populated
+	// usedRacks), skip those racks so the spillover still spreads onto
+	// new racks instead of doubling up on ones already picked.
 	if config.PreferDifferentRacks {
 		// Sort racks by number of available servers (descending) to prioritize racks with more options
 		sortedRacks := sortRacksByServerCount(rackToDisks)
 		for _, rackKey := range sortedRacks {
 			if len(result.SelectedDisks) >= config.ShardsNeeded {
 				break
+			}
+			if usedRacks[rackKey] {
+				continue
 			}
 			rackDisks := rackToDisks[rackKey]
 			// Select best disk from this rack, preferring a new server
