@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 // walkerStubClient captures the last LifecycleDeleteRequest so tests
@@ -147,6 +149,38 @@ func TestWalkerDispatcher_NilResponseReturnsError(t *testing.T) {
 	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil response")
+}
+
+func TestWalkerDispatcher_LimiterWaitsBeforeDispatch(t *testing.T) {
+	// Build a tiny limiter (1 token, slow refill) and pre-drain it so
+	// the next Wait blocks until the deadline. Dispatcher must respect
+	// the limiter — without the wait the test passes trivially.
+	c := &walkerStubClient{outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE}
+	lim := rate.NewLimiter(rate.Every(50*time.Millisecond), 1)
+	_ = lim.AllowN(time.Now(), 1) // burn the burst token
+	d := &WalkerDispatcher{Client: c, Limiter: lim}
+
+	start := time.Now()
+	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, elapsed, 30*time.Millisecond,
+		"limiter must throttle the dispatch; elapsed=%v", elapsed)
+}
+
+func TestWalkerDispatcher_LimiterContextCancelHaltsWalker(t *testing.T) {
+	// Pre-drained limiter + canceled ctx. Limiter.Wait returns the
+	// cancel error; walker must surface it (not silently dispatch).
+	c := &walkerStubClient{outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE}
+	lim := rate.NewLimiter(rate.Every(time.Hour), 1)
+	_ = lim.AllowN(time.Now(), 1)
+	d := &WalkerDispatcher{Client: c, Limiter: lim}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := d.Delete(ctx, sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
+	require.Error(t, err)
+	assert.Nil(t, c.lastReq, "no RPC should be sent when ctx was cancelled in Wait")
 }
 
 func TestWalkerDispatcher_NilGuardsReturnError(t *testing.T) {

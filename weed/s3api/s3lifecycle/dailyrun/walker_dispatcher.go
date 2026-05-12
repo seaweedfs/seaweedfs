@@ -3,11 +3,13 @@ package dailyrun
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"golang.org/x/time/rate"
 )
 
 // WalkerDispatcher adapts LifecycleClient to bootstrap.Dispatcher so
@@ -18,6 +20,11 @@ import (
 // right contract for a full-tree walk that has just observed the entry.
 type WalkerDispatcher struct {
 	Client LifecycleClient
+	// Limiter throttles LifecycleDelete dispatch under the cluster's
+	// shared deletes/sec budget. Should be the same *rate.Limiter the
+	// daily-run's processMatches uses so the walker and replay paths
+	// can't combine to burst past the cap. nil disables throttling.
+	Limiter *rate.Limiter
 }
 
 // Compile-time check.
@@ -57,6 +64,13 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 		// the live entry on this code path.
 	}
 	kindLabel := action.Key.ActionKind.String()
+	if d.Limiter != nil {
+		waitStart := time.Now()
+		if waitErr := d.Limiter.Wait(ctx); waitErr != nil {
+			return fmt.Errorf("walker dispatch %s/%s %s: limiter: %w", action.Bucket, objectPath, action.Key.ActionKind, waitErr)
+		}
+		stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
+	}
 	resp, err := d.Client.LifecycleDelete(ctx, req)
 	if err != nil {
 		// "RPC_ERROR" matches the streaming dispatcher and processMatches
