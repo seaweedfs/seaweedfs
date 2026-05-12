@@ -25,6 +25,12 @@ type LifecycleClient interface {
 	LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error)
 }
 
+// WalkerFunc handles the per-shard bucket walk for a given engine view.
+// Phase 4b uses it on the recovery branch (rule-content edit / partition
+// flip) so already-due objects across the rewritten rule set get caught
+// before the cursor rewinds.
+type WalkerFunc func(ctx context.Context, view *engine.Snapshot, shardID int) error
+
 type Config struct {
 	Shards      []int
 	BucketsPath string
@@ -46,6 +52,14 @@ type Config struct {
 	// which keeps PromotedHash empty and the partition-flip recovery
 	// trigger dormant.
 	RetentionWindow time.Duration
+
+	// Walker is invoked on the recovery branch (rule-content edit or
+	// partition flip) before the cursor rewind. It receives the
+	// engine.RecoveryView so only the rules that need bulk re-evaluation
+	// are walked, and the per-shard ID so the implementation can filter
+	// entries. nil disables walker invocation entirely — the cursor
+	// still rewinds, matching Phase 4a behavior.
+	Walker WalkerFunc
 
 	ClientName string
 	// 0 -> randomized per-run.
@@ -179,10 +193,15 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	// Recovery: rule-content edit (RuleSetHash mismatch) or partition
-	// flip (PromotedHash mismatch — dormant until real retention).
-	// Phase 4b adds the walker here; until then we rewind and let the
-	// sliding meta-log replay catch up.
+	// flip (PromotedHash mismatch). Walk the rewritten rule set so
+	// already-due objects fire before the cursor rewinds; then rewind
+	// and let the sliding meta-log replay catch up steady state.
 	if found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted) {
+		if cfg.Walker != nil {
+			if werr := cfg.Walker(ctx, engine.RecoveryView(snap), shardID); werr != nil {
+				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
+			}
+		}
 		next := Cursor{
 			TsNs:         runNow.Add(-maxTTL).UnixNano(),
 			RuleSetHash:  rsh,
