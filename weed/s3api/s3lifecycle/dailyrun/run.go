@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -86,6 +87,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// Freeze "now" so shards agree on the boundary.
 	runNow := now()
+	startedAt := time.Now()
 
 	// Capture once so a mid-run Compile can't make shards disagree.
 	snap := cfg.Engine.Snapshot()
@@ -116,13 +118,21 @@ func Run(ctx context.Context, cfg Config) error {
 	wg.Wait()
 	close(errCh)
 	var first error
+	errCount := 0
 	for err := range errCh {
+		errCount++
 		if first == nil {
 			first = err
 		} else {
 			glog.V(1).Infof("daily_run: additional shard error: %v", err)
 		}
 	}
+	status := "ok"
+	if first != nil {
+		status = "error"
+	}
+	glog.V(0).Infof("daily_run: status=%s shards=%d errors=%d duration=%s",
+		status, len(cfg.Shards), errCount, time.Since(startedAt).Round(time.Millisecond))
 	return first
 }
 
@@ -161,6 +171,11 @@ func validate(cfg Config) error {
 //     scan_only-promoted rules fire every day even when replay rules
 //     are unchanged.
 func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int) error {
+	shardLabel := strconv.Itoa(shardID)
+	shardStart := time.Now()
+	defer func() {
+		stats.S3LifecycleDailyRunShardDurationSeconds.WithLabelValues(shardLabel).Observe(time.Since(shardStart).Seconds())
+	}()
 	persisted, found, err := cfg.Persister.Load(ctx, shardID)
 	if err != nil {
 		return fmt.Errorf("shard=%d: load cursor: %w", shardID, err)
@@ -307,6 +322,7 @@ drain:
 				cancelReader()
 				break drain
 			}
+			stats.S3LifecycleDailyRunEventsScanned.WithLabelValues(strconv.Itoa(shardID)).Inc()
 			matches := router.Route(ctx, snap, ev, runNow, cfg.Lister)
 			eventSkipped, eventHalted, eventErr := processMatches(ctx, cfg, runNow, ev, matches)
 			if eventErr != nil {
@@ -357,8 +373,13 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 		if dispatchErr != nil {
 			glog.V(1).Infof("daily_run: transport error on %s/%s %s: %v",
 				m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)
+			// "RPC_ERROR" matches the streaming dispatcher's label
+			// (dispatcher/dispatcher.go) so transport failures
+			// aggregate under one outcome key across paths.
+			stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR").Inc()
 			return skippedAny, true, nil
 		}
+		stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), outcome.String()).Inc()
 		switch outcome {
 		case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,
