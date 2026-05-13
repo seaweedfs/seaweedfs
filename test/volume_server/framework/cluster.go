@@ -184,6 +184,38 @@ func (c *Cluster) Stop() {
 	})
 }
 
+// RestartVolumeServer kills the volume server and starts a new one against
+// the same data dirs and ports. The master keeps running. The previous run's
+// volume.log is moved to volume.log.previous so the first run's logs survive
+// a second-run startup failure.
+func (c *Cluster) RestartVolumeServer() {
+	c.testingTB.Helper()
+	stopProcess(c.volumeCmd)
+	c.volumeCmd = nil
+	// Rotate the log; absent on the first call after a clean start, which
+	// is fine — startVolume will create it. Any real filesystem failure
+	// surfaces immediately on the next os.Create in startVolume.
+	oldLog := filepath.Join(c.logsDir, "volume.log")
+	_ = os.Rename(oldLog, filepath.Join(c.logsDir, "volume.log.previous"))
+	if err := c.startVolume(c.volumeDataDirs); err != nil {
+		c.testingTB.Fatalf("restart volume server: %v", err)
+	}
+	if err := c.waitForHTTP(c.VolumeAdminURL() + "/status"); err != nil {
+		c.testingTB.Fatalf("wait for volume admin readiness after restart: %v\nvolume log tail:\n%s", err, c.tailLog("volume.log"))
+	}
+	if err := c.waitForTCP(c.VolumeGRPCAddress()); err != nil {
+		c.testingTB.Fatalf("wait for volume grpc readiness after restart: %v\nvolume log tail:\n%s", err, c.tailLog("volume.log"))
+	}
+}
+
+// StopVolumeServer kills the volume server but leaves the master and data
+// dirs alone. Pair with RestartVolumeServer or Stop.
+func (c *Cluster) StopVolumeServer() {
+	c.testingTB.Helper()
+	stopProcess(c.volumeCmd)
+	c.volumeCmd = nil
+}
+
 func (c *Cluster) startMaster(dataDir string) error {
 	logFile, err := os.Create(filepath.Join(c.logsDir, "master.log"))
 	if err != nil {

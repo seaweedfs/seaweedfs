@@ -230,6 +230,12 @@ func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId)
 	return 0, nil, false
 }
 
+// FindEcShard returns the shard if any DiskLocation on this server holds it,
+// along with that disk's id.
+func (s *Store) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
+	return s.findEcShard(vid, shardId)
+}
+
 func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
 		if s, found := location.FindEcVolume(vid); found {
@@ -412,7 +418,9 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 }
 
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
-	shard, found := ecVolume.FindEcVolumeShard(shardId)
+	// findEcShard walks every DiskLocation under ecVolumesLock; the
+	// shard may live on a sibling disk of this server.
+	_, shard, found := s.findEcShard(ecVolume.VolumeId, shardId)
 	if !found {
 		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
 	}

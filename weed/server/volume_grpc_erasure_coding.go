@@ -482,7 +482,9 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	if !found {
 		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
 	}
-	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
+	// shard may live on a sibling disk of this server; walk all of them
+	// under ecVolumesLock.
+	_, ecShard, found := vs.store.FindEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId))
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}
