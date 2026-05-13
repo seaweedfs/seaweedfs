@@ -86,7 +86,7 @@ func TestVersionsHealQueue_GiveUpAfterMaxAttempts(t *testing.T) {
 // errors.
 func TestRetryFilerOp_SucceedsBeforeExhaustion(t *testing.T) {
 	calls := 0
-	err := retryFilerOp("test", func() error {
+	err := retryFilerOp(context.Background(), "test", func() error {
 		calls++
 		if calls < 3 {
 			return errors.New("transient")
@@ -102,7 +102,7 @@ func TestRetryFilerOp_SucceedsBeforeExhaustion(t *testing.T) {
 // a glance whether the underlying issue is transient.
 func TestRetryFilerOp_PropagatesAfterExhaustion(t *testing.T) {
 	calls := 0
-	err := retryFilerOp("test", func() error {
+	err := retryFilerOp(context.Background(), "test", func() error {
 		calls++
 		return errors.New("permanent")
 	})
@@ -110,6 +110,32 @@ func TestRetryFilerOp_PropagatesAfterExhaustion(t *testing.T) {
 	assert.Equal(t, updateLatestRetryAttempts, calls, "ran the full retry budget")
 	assert.Contains(t, err.Error(), "exhausted")
 	assert.Contains(t, err.Error(), "permanent", "underlying error preserved")
+}
+
+// TestRetryFilerOp_ContextCancelInterruptsBackoff confirms that a ctx
+// canceled mid-backoff returns ctx.Err() immediately instead of
+// blocking until the worst-case ~6.3s retry budget elapses. Server
+// shutdown / client disconnect relies on this to drain in-flight
+// retries promptly.
+func TestRetryFilerOp_ContextCancelInterruptsBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel after the first failed attempt has scheduled its backoff
+	// but well before the timer fires.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+	calls := 0
+	start := time.Now()
+	err := retryFilerOp(ctx, "test", func() error {
+		calls++
+		return errors.New("transient")
+	})
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "must surface ctx.Err verbatim")
+	assert.Less(t, elapsed, 500*time.Millisecond, "ctx cancel must interrupt the backoff sleep")
+	assert.Less(t, calls, updateLatestRetryAttempts, "ctx cancel must short-circuit before exhausting the retry budget")
 }
 
 // TestRetryFilerOp_TerminalErrorsShortCircuit confirms that errors which
@@ -130,7 +156,7 @@ func TestRetryFilerOp_TerminalErrorsShortCircuit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			start := time.Now()
 			calls := 0
-			err := retryFilerOp("test", func() error {
+			err := retryFilerOp(context.Background(), "test", func() error {
 				calls++
 				return tc.err
 			})

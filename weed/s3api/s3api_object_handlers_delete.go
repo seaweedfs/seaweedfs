@@ -125,7 +125,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s version %s: %v", bucket, object, versionId, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(bucket, object, versionId, false); err != nil {
+		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, versionId, false); err != nil {
 			glog.Errorf("deleteVersionedObject: failed to delete specific version %s for %s/%s: %v", versionId, bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
@@ -148,7 +148,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s null version: %v", bucket, object, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(bucket, object, "null", false); err != nil {
+		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, "null", false); err != nil {
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}

@@ -77,7 +77,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		case s3_constants.VersioningSuspended:
 			// Best-effort null delete; NotFound is benign.
-			if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
+			if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
 				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
 					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
 				}
@@ -133,7 +133,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return outcome, err
 			}
 		}
-		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId, metadataOnly); err != nil {
+		if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, req.VersionId, metadataOnly); err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
 			}

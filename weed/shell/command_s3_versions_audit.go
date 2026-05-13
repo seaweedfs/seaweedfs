@@ -110,39 +110,57 @@ func (c *commandS3VersionsAudit) Do(args []string, commandEnv *CommandEnv, write
 
 			// List the children to see if the pointer's file exists and to
 			// count entries without an ExtVersionIdKey (orphans that block
-			// non-recursive teardown).
+			// non-recursive teardown). filer_pb.List returns one 1024-entry
+			// page; walk all pages so a large .versions/ directory doesn't
+			// produce a false positive "stranded" report from only seeing
+			// the first page.
 			versionsPath := string(parentPath) + "/" + entry.Name
 			pointerSeen := false
 			hasOrphan := false
-			lookupErr := filer_pb.List(ctx, &filerClientWrapper{client: client}, versionsPath, "", func(child *filer_pb.Entry, isLast bool) error {
-				if child == nil {
+			const auditPageSize = 1024
+			var startName string
+			for {
+				pageEntries := 0
+				var lastEntryName string
+				lookupErr := filer_pb.List(ctx, &filerClientWrapper{client: client}, versionsPath, "", func(child *filer_pb.Entry, isLast bool) error {
+					if child == nil {
+						return nil
+					}
+					pageEntries++
+					lastEntryName = child.Name
+					hasVersionId := false
+					if child.Extended != nil {
+						if _, ok := child.Extended[s3_constants.ExtVersionIdKey]; ok {
+							hasVersionId = true
+						}
+					}
+					if pointerFile != "" && child.Name == pointerFile {
+						pointerSeen = true
+					}
+					if !hasVersionId {
+						hasOrphan = true
+					}
+					return nil
+				}, startName, startName != "", auditPageSize)
+				if lookupErr != nil {
+					fmt.Fprintf(writer, "list %s: %v\n", versionsPath, lookupErr)
 					return nil
 				}
-				hasVersionId := false
-				if child.Extended != nil {
-					if _, ok := child.Extended[s3_constants.ExtVersionIdKey]; ok {
-						hasVersionId = true
-					}
+				if pageEntries < auditPageSize {
+					break
 				}
-				if pointerFile != "" && child.Name == pointerFile {
-					pointerSeen = true
-				}
-				if !hasVersionId {
-					hasOrphan = true
-				}
-				return nil
-			}, "", false, 1024)
-			if lookupErr != nil {
-				fmt.Fprintf(writer, "list %s: %v\n", versionsPath, lookupErr)
-				return nil
+				startName = lastEntryName
 			}
 
 			switch {
 			case pointerFile == "":
-				// No pointer set — neither stranded nor blocking.
-				atomic.AddUint64(&clean, 1)
+				// No pointer set. Orphan-only and clean are now mutually
+				// exclusive so the final report's category counts sum to
+				// versionsDirs.
 				if hasOrphan {
 					atomic.AddUint64(&orphanOnly, 1)
+				} else {
+					atomic.AddUint64(&clean, 1)
 				}
 			case pointerSeen:
 				atomic.AddUint64(&clean, 1)

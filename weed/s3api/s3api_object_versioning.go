@@ -1000,7 +1000,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 // metadataOnly=true skips per-chunk DeleteFile RPCs at the filer; only
 // pass true when the live entry's Attributes.TtlSec > 0 so the volume
 // reclaims chunks on its own.
-func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string, metadataOnly bool) error {
+func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket, object, versionId string, metadataOnly bool) error {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
@@ -1057,7 +1057,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		preWasSingleton  bool
 	)
 	if isLatestVersion {
-		rolled, singleton, prepErr := s3a.repointLatestBeforeDeletion(bucket, normalizedObject, versionId)
+		rolled, singleton, prepErr := s3a.repointLatestBeforeDeletion(ctx, bucket, normalizedObject, versionId)
 		if prepErr != nil {
 			// Surface to the client so they can retry the DELETE. The
 			// blob has NOT been removed yet, so retrying is safe.
@@ -1097,7 +1097,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		// pre-step decided the pointer was no longer ours to roll. Run
 		// the post-deletion reconciliation: it updates the pointer to
 		// the new latest and tears down .versions/ when nothing remains.
-		if err := s3a.updateLatestVersionAfterDeletion(bucket, normalizedObject); err != nil {
+		if err := s3a.updateLatestVersionAfterDeletion(ctx, bucket, normalizedObject); err != nil {
 			// Option 2: surface this so the operator sees the load-bearing
 			// failure, and queue the path for the reconciler to retry off
 			// the hot path. The blob delete already succeeded, so we don't
@@ -1140,7 +1140,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 // pre-roll matches the resilience of the post-roll path; without this,
 // a transient filer hiccup during the pre-step would cause the caller
 // to fall back to the legacy non-atomic flow.
-func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, versionIdToDelete string) (rolled bool, wasSingleton bool, err error) {
+func (s3a *S3ApiServer) repointLatestBeforeDeletion(ctx context.Context, bucket, normalizedObject, versionIdToDelete string) (rolled bool, wasSingleton bool, err error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1160,7 +1160,7 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 			entries []*filer_pb.Entry
 			isLast  bool
 		)
-		if listErr := retryFilerOp("repointLatestBeforeDeletion.list", func() error {
+		if listErr := retryFilerOp(ctx, "repointLatestBeforeDeletion.list", func() error {
 			var lerr error
 			entries, isLast, lerr = s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
 			return lerr
@@ -1199,7 +1199,7 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 	// blob rm — otherwise we'd remove the blob without having updated
 	// the pointer, reproducing the very dangling-state this PR fixes).
 	var versionsEntry *filer_pb.Entry
-	if getErr := retryFilerOp("repointLatestBeforeDeletion.getEntry", func() error {
+	if getErr := retryFilerOp(ctx, "repointLatestBeforeDeletion.getEntry", func() error {
 		var gerr error
 		versionsEntry, gerr = s3a.getEntry(bucketDir, versionsObjectPath)
 		return gerr
@@ -1238,7 +1238,7 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 		glog.V(2).Infof("repointLatestBeforeDeletion: %s/%s clearing singleton pointer before deleting %s", bucket, normalizedObject, versionIdToDelete)
 	}
 
-	if mkErr := retryFilerOp("repointLatestBeforeDeletion.mkFile", func() error {
+	if mkErr := retryFilerOp(ctx, "repointLatestBeforeDeletion.mkFile", func() error {
 		return s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
 			updatedEntry.Extended = versionsEntry.Extended
 			updatedEntry.Attributes = versionsEntry.Attributes
@@ -1288,7 +1288,7 @@ func isRetryableFilerErr(err error) bool {
 	return true
 }
 
-func retryFilerOp(name string, fn func() error) error {
+func retryFilerOp(ctx context.Context, name string, fn func() error) error {
 	var lastErr error
 	backoff := updateLatestRetryStep
 	for attempt := 1; attempt <= updateLatestRetryAttempts; attempt++ {
@@ -1309,7 +1309,16 @@ func retryFilerOp(name string, fn func() error) error {
 		if attempt == updateLatestRetryAttempts {
 			break
 		}
-		time.Sleep(backoff)
+		// Context-aware backoff so a server shutdown / client
+		// disconnect cancels the worst-case ~6.3s retry budget
+		// immediately instead of blocking the goroutine.
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 		backoff *= 2
 		if backoff > updateLatestRetryCap {
 			backoff = updateLatestRetryCap
@@ -1330,7 +1339,7 @@ func retryFilerOp(name string, fn func() error) error {
 // when those retries are exhausted; the caller is expected to surface the
 // failure (log + enqueue for the reconciler) instead of swallowing it,
 // which was the historic behaviour that left dangling pointers in place.
-func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
+func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bucket, object string) error {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1363,7 +1372,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			entries []*filer_pb.Entry
 			isLast  bool
 		)
-		if err := retryFilerOp("updateLatestVersionAfterDeletion.list", func() error {
+		if err := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.list", func() error {
 			var listErr error
 			entries, isLast, listErr = s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
 			return listErr
@@ -1423,7 +1432,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 
 	// Update the .versions directory metadata
 	var versionsEntry *filer_pb.Entry
-	if err := retryFilerOp("updateLatestVersionAfterDeletion.getEntry", func() error {
+	if err := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.getEntry", func() error {
 		var getErr error
 		versionsEntry, getErr = s3a.getEntry(bucketDir, versionsObjectPath)
 		return getErr
@@ -1443,7 +1452,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		setCachedListMetadata(versionsEntry, latestVersionEntry)
 
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s (deleteMarker=%v)", bucket, object, latestVersionId, latestIsDeleteMarker)
-		if err := retryFilerOp("updateLatestVersionAfterDeletion.mkFile", func() error {
+		if err := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.mkFile", func() error {
 			return s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
 				updatedEntry.Extended = versionsEntry.Extended
 				updatedEntry.Attributes = versionsEntry.Attributes
@@ -1485,7 +1494,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		// if it ultimately fails, we still clear the stale pointer so
 		// readers get a clean miss; the directory can be tidied by the
 		// reconciler later.
-		retryErr := retryFilerOp("updateLatestVersionAfterDeletion.rm", func() error {
+		retryErr := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.rm", func() error {
 			return s3a.rm(bucketDir, versionsObjectPath, true, false)
 		})
 		if retryErr == nil {
