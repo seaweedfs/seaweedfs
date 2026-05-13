@@ -1000,7 +1000,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 // metadataOnly=true skips per-chunk DeleteFile RPCs at the filer; only
 // pass true when the live entry's Attributes.TtlSec > 0 so the volume
 // reclaims chunks on its own.
-func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string, metadataOnly bool) error {
+func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket, object, versionId string, metadataOnly bool) error {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
@@ -1057,7 +1057,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		preWasSingleton  bool
 	)
 	if isLatestVersion {
-		rolled, singleton, prepErr := s3a.repointLatestBeforeDeletion(bucket, normalizedObject, versionId)
+		rolled, singleton, prepErr := s3a.repointLatestBeforeDeletion(ctx, bucket, normalizedObject, versionId)
 		if prepErr != nil {
 			// Surface to the client so they can retry the DELETE. The
 			// blob has NOT been removed yet, so retrying is safe.
@@ -1097,7 +1097,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		// pre-step decided the pointer was no longer ours to roll. Run
 		// the post-deletion reconciliation: it updates the pointer to
 		// the new latest and tears down .versions/ when nothing remains.
-		if err := s3a.updateLatestVersionAfterDeletion(bucket, normalizedObject); err != nil {
+		if err := s3a.updateLatestVersionAfterDeletion(ctx, bucket, normalizedObject); err != nil {
 			// Option 2: surface this so the operator sees the load-bearing
 			// failure, and queue the path for the reconciler to retry off
 			// the hot path. The blob delete already succeeded, so we don't
@@ -1105,7 +1105,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 			// DELETE as a hard storage error) — but we MUST drive the
 			// pointer to consistency, otherwise the next read pays the
 			// self-heal cost.
-			glog.Errorf("deleteSpecificObjectVersion: failed to update latest version after deletion for %s/%s (queued for reconciler): %v", bucket, normalizedObject, err)
+			versioningHealErrorf("produced", "bucket=%s key=%s reason=update_after_delete_failed err=%v queued_for_reconciler=true", bucket, normalizedObject, err)
 			if s3a.versionsHealQueue != nil {
 				s3a.versionsHealQueue.Enqueue(bucket, normalizedObject)
 			}
@@ -1140,7 +1140,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 // pre-roll matches the resilience of the post-roll path; without this,
 // a transient filer hiccup during the pre-step would cause the caller
 // to fall back to the legacy non-atomic flow.
-func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, versionIdToDelete string) (rolled bool, wasSingleton bool, err error) {
+func (s3a *S3ApiServer) repointLatestBeforeDeletion(ctx context.Context, bucket, normalizedObject, versionIdToDelete string) (rolled bool, wasSingleton bool, err error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1160,7 +1160,7 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 			entries []*filer_pb.Entry
 			isLast  bool
 		)
-		if listErr := retryFilerOp("repointLatestBeforeDeletion.list", func() error {
+		if listErr := retryFilerOp(ctx, "repointLatestBeforeDeletion.list", func() error {
 			var lerr error
 			entries, isLast, lerr = s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
 			return lerr
@@ -1199,7 +1199,7 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 	// blob rm — otherwise we'd remove the blob without having updated
 	// the pointer, reproducing the very dangling-state this PR fixes).
 	var versionsEntry *filer_pb.Entry
-	if getErr := retryFilerOp("repointLatestBeforeDeletion.getEntry", func() error {
+	if getErr := retryFilerOp(ctx, "repointLatestBeforeDeletion.getEntry", func() error {
 		var gerr error
 		versionsEntry, gerr = s3a.getEntry(bucketDir, versionsObjectPath)
 		return gerr
@@ -1238,7 +1238,7 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(bucket, normalizedObject, ve
 		glog.V(2).Infof("repointLatestBeforeDeletion: %s/%s clearing singleton pointer before deleting %s", bucket, normalizedObject, versionIdToDelete)
 	}
 
-	if mkErr := retryFilerOp("repointLatestBeforeDeletion.mkFile", func() error {
+	if mkErr := retryFilerOp(ctx, "repointLatestBeforeDeletion.mkFile", func() error {
 		return s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
 			updatedEntry.Extended = versionsEntry.Extended
 			updatedEntry.Attributes = versionsEntry.Attributes
@@ -1288,7 +1288,7 @@ func isRetryableFilerErr(err error) bool {
 	return true
 }
 
-func retryFilerOp(name string, fn func() error) error {
+func retryFilerOp(ctx context.Context, name string, fn func() error) error {
 	var lastErr error
 	backoff := updateLatestRetryStep
 	for attempt := 1; attempt <= updateLatestRetryAttempts; attempt++ {
@@ -1309,7 +1309,16 @@ func retryFilerOp(name string, fn func() error) error {
 		if attempt == updateLatestRetryAttempts {
 			break
 		}
-		time.Sleep(backoff)
+		// Context-aware backoff so a server shutdown / client
+		// disconnect cancels the worst-case ~6.3s retry budget
+		// immediately instead of blocking the goroutine.
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 		backoff *= 2
 		if backoff > updateLatestRetryCap {
 			backoff = updateLatestRetryCap
@@ -1330,7 +1339,7 @@ func retryFilerOp(name string, fn func() error) error {
 // when those retries are exhausted; the caller is expected to surface the
 // failure (log + enqueue for the reconciler) instead of swallowing it,
 // which was the historic behaviour that left dangling pointers in place.
-func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
+func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bucket, object string) error {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1341,12 +1350,21 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	// A single-shot list would miss the true latest for old-format (raw
 	// timestamp) version ids when the directory exceeds one page, since filer
 	// order is lexicographic-ascending = oldest-first for that format.
+	//
+	// orphanSamples captures up to orphanSampleCap names that DID appear in
+	// the listing but lacked the version-id extended attribute. These are
+	// the smoking-gun diagnostic for the "scanned N>0 but no valid latest"
+	// anomaly — they're either filer-listing stale entries (just-deleted
+	// records still indexed) or residual stubs from interrupted writes.
+	const orphanSampleCap = 8
 	var (
 		latestVersionEntry    *filer_pb.Entry
 		latestVersionId       string
 		latestVersionFileName string
 		latestIsDeleteMarker  bool
 		totalEntries          int
+		orphanCount           int
+		orphanSamples         []string
 		startFrom             string
 	)
 	for {
@@ -1354,7 +1372,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			entries []*filer_pb.Entry
 			isLast  bool
 		)
-		if err := retryFilerOp("updateLatestVersionAfterDeletion.list", func() error {
+		if err := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.list", func() error {
 			var listErr error
 			entries, isLast, listErr = s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
 			return listErr
@@ -1371,17 +1389,50 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 				latestIsDeleteMarker = pageDM
 			}
 		}
+		// Sample orphan entries (those without ExtVersionIdKey) for
+		// post-scan diagnostics. selectLatestVersion already filters them
+		// out for the latest-pick; we collect names separately so the
+		// anomaly warning has something concrete to point at.
+		for _, e := range entries {
+			if e == nil {
+				continue
+			}
+			if e.Extended != nil {
+				if _, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok {
+					continue
+				}
+			}
+			orphanCount++
+			if len(orphanSamples) < orphanSampleCap {
+				orphanSamples = append(orphanSamples, e.Name)
+			}
+		}
 		if isLast || len(entries) == 0 {
 			break
 		}
 		startFrom = entries[len(entries)-1].Name
 	}
 
-	glog.V(1).Infof("updateLatestVersionAfterDeletion: scanned %d entries in %s", totalEntries, versionsDir)
+	if totalEntries > 0 && latestVersionEntry == nil {
+		// The scan saw entries but none were valid version blobs. This is
+		// the listing-after-rm timing anomaly: a just-deleted record is
+		// still indexed in the parent's listing but its extended attrs
+		// either weren't loaded or the entry itself is mid-removal. The
+		// caller will now fall through to the .versions/ teardown +
+		// pointer clear, but operators tracking stranded-state production
+		// should see this event.
+		samplesSummary := "(none)"
+		if len(orphanSamples) > 0 {
+			samplesSummary = strings.Join(orphanSamples, ",")
+		}
+		versioningHealWarningf("anomaly", "bucket=%s key=%s scanned=%d orphan_count=%d orphan_samples=%s reason=listing_has_entries_but_none_have_version_id", bucket, object, totalEntries, orphanCount, samplesSummary)
+	} else {
+		glog.V(1).Infof("updateLatestVersionAfterDeletion: scanned %d entries in %s", totalEntries, versionsDir)
+	}
 
 	// Update the .versions directory metadata
 	var versionsEntry *filer_pb.Entry
-	if err := retryFilerOp("updateLatestVersionAfterDeletion.getEntry", func() error {
+	if err := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.getEntry", func() error {
 		var getErr error
 		versionsEntry, getErr = s3a.getEntry(bucketDir, versionsObjectPath)
 		return getErr
@@ -1401,7 +1452,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		setCachedListMetadata(versionsEntry, latestVersionEntry)
 
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s (deleteMarker=%v)", bucket, object, latestVersionId, latestIsDeleteMarker)
-		if err := retryFilerOp("updateLatestVersionAfterDeletion.mkFile", func() error {
+		if err := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.mkFile", func() error {
 			return s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
 				updatedEntry.Extended = versionsEntry.Extended
 				updatedEntry.Attributes = versionsEntry.Attributes
@@ -1443,7 +1494,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		// if it ultimately fails, we still clear the stale pointer so
 		// readers get a clean miss; the directory can be tidied by the
 		// reconciler later.
-		retryErr := retryFilerOp("updateLatestVersionAfterDeletion.rm", func() error {
+		retryErr := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.rm", func() error {
 			return s3a.rm(bucketDir, versionsObjectPath, true, false)
 		})
 		if retryErr == nil {
@@ -1453,8 +1504,13 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 			return nil
 		}
-		glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s after retries: %v", bucket, object, retryErr)
-		s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
+		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, retryErr)
+		if s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion") {
+			// Pointer is consistent again; reader will get NoSuchKey via
+			// the clean-miss path. Don't emit `produced` or enqueue the
+			// reconciler — there's no stranded state left to heal.
+			return nil
+		}
 		return fmt.Errorf("delete .versions directory: %w", retryErr)
 	}
 
@@ -1482,9 +1538,19 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 //
 // caller is the source-function name used in log lines so operators can
 // trace which path ran the clear.
-func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath string, versionsEntry *filer_pb.Entry, caller string) {
+//
+// Returns cleared=true ONLY when this function successfully removed the
+// pointer (or the second branch — pointer no longer present — left the
+// directory in the intended clean-miss state, which counts as
+// already-clear). Concurrent-writer aborts, re-scan errors, and CAS
+// mismatches return false so callers that hit a transient teardown
+// failure still emit `produced` and enqueue for the reconciler; a
+// successful clear lets the caller short-circuit and return nil since
+// the pointer is consistent and the next reader gets NoSuchKey via the
+// clean-miss path.
+func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath string, versionsEntry *filer_pb.Entry, caller string) (cleared bool) {
 	if versionsEntry == nil || versionsEntry.Extended == nil {
-		return
+		return false
 	}
 	observedStaleId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1494,11 +1560,11 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
 		if listErr != nil {
 			glog.Warningf("%s: re-scan failed for %s/%s, leaving pointer untouched: %v", caller, bucket, object, listErr)
-			return
+			return false
 		}
 		if pageEntry, _, _, _ := selectLatestVersion(entries); pageEntry != nil {
 			glog.V(1).Infof("%s: skipping pointer clear for %s/%s, concurrent writer added a tagged version", caller, bucket, object)
-			return
+			return false
 		}
 		if isLast || len(entries) == 0 {
 			break
@@ -1508,20 +1574,22 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 
 	liveEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		// Directory was concurrently removed - nothing to clear.
-		return
+		// Directory was concurrently removed - reader will get NoSuchKey
+		// via the clean-miss path; pointer is effectively cleared.
+		return true
 	}
 	if liveEntry.Extended == nil {
-		return
+		return true
 	}
 	currentIdBytes, hasId := liveEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	_, hasFile := liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 	if !hasId && !hasFile {
-		return
+		// Already cleared by another path.
+		return true
 	}
 	if observedStaleId != "" && string(currentIdBytes) != observedStaleId {
 		glog.V(1).Infof("%s: skipping pointer clear for %s/%s, live pointer changed (observed=%s, current=%s)", caller, bucket, object, observedStaleId, string(currentIdBytes))
-		return
+		return false
 	}
 
 	delete(liveEntry.Extended, s3_constants.ExtLatestVersionIdKey)
@@ -1532,10 +1600,11 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		updatedEntry.Attributes = liveEntry.Attributes
 		updatedEntry.Chunks = liveEntry.Chunks
 	}); mkErr != nil {
-		glog.Warningf("%s: failed to clear stale pointer for %s/%s: %v", caller, bucket, object, mkErr)
-		return
+		versioningHealWarningf("clear_failed", "bucket=%s key=%s caller=%s err=%v", bucket, object, caller, mkErr)
+		return false
 	}
-	glog.V(1).Infof("%s: cleared stale latest-version pointer for %s/%s (orphan entries remain in .versions directory)", caller, bucket, object)
+	versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_cleared caller=%s (orphan entries remain in .versions directory)", bucket, object, caller)
+	return true
 }
 
 // ListObjectVersionsHandler handles the list object versions request
@@ -1746,7 +1815,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
-	glog.Warningf("healStaleLatestVersionPointer: stale pointer for %s/%s - version file %q missing, rescanning %s", bucket, normalizedObject, stalePointerFile, versionsDir)
+	versioningHealWarningf("surfaced", "bucket=%s key=%s missing_file=%s rescanning=%s", bucket, normalizedObject, stalePointerFile, versionsDir)
 
 	// Paginate through all version entries and keep a running best candidate.
 	// A single-shot list would miss the true latest when old-format (raw
@@ -1813,9 +1882,9 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		// Persisting the repair is best-effort. Surface a warning but still
 		// return the rescanned entry so the read succeeds; a subsequent write
 		// on the object will persist a fresh pointer.
-		glog.Warningf("healStaleLatestVersionPointer: failed to persist repaired pointer for %s/%s: %v (returning rescanned entry)", bucket, normalizedObject, mkErr)
+		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, mkErr)
 	} else {
-		glog.V(1).Infof("healStaleLatestVersionPointer: repaired pointer for %s/%s to version %s (file %s, deleteMarker=%v)", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
+		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
 	}
 	return latestEntry, nil
 }
