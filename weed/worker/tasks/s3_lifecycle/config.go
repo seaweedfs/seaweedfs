@@ -19,6 +19,11 @@ type Config struct {
 	Workers          int
 	MaxRuntime       time.Duration
 	MetaLogRetention time.Duration
+	// WalkerInterval is the minimum time between steady-state walker
+	// fires per shard. 0 means "fire on every run", preserving prior
+	// behavior; positive values gate the walker via Cursor.LastWalkedNs
+	// inside dailyrun.runShard.
+	WalkerInterval time.Duration
 }
 
 func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map[string]*plugin_pb.ConfigValue) Config {
@@ -35,6 +40,13 @@ func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map
 	// so the unit is unambiguous.
 	if days := readInt64(adminValues, MetaLogRetentionDaysAdminKey, 0); days > 0 {
 		cfg.MetaLogRetention = time.Duration(days*24) * time.Hour
+	}
+	// Walker throttle. Negative / zero stay zero so dailyrun.runShard
+	// keeps the prior "fire every pass" semantics — important for in-
+	// repo integration tests and s3tests's sub-minute driver. Positive
+	// values throttle the steady-state walker per shard.
+	if mins := readInt64(adminValues, WalkerIntervalMinutesAdminKey, 0); mins > 0 {
+		cfg.WalkerInterval = time.Duration(mins) * time.Minute
 	}
 	return cfg
 }

@@ -30,6 +30,18 @@ const (
 	// recovery branch on the next run. 0 = unbounded (current behavior,
 	// falls back to maxTTL in runShard so PromotedHash stays empty).
 	MetaLogRetentionDaysAdminKey = "meta_log_retention_days"
+	// WalkerIntervalMinutesAdminKey throttles the per-shard steady-state
+	// and empty-replay walker fires. dailyrun.runShard checks the time
+	// since the persisted Cursor.LastWalkedNs and skips the walk when
+	// less than this interval has elapsed; cold-start and recovery walker
+	// fires (RecoveryView) stay unconditional. 0 means "fire on every
+	// run" (the prior behavior — appropriate when the worker is driven
+	// at the operator's intended walk cadence, e.g. once per hour).
+	// Production deployments running the worker at multi-second cadence
+	// (CI ticks, sub-minute admin schedules) should set this to roughly
+	// the per-shard walk budget — typically 60 (1h) for small clusters,
+	// 360+ (6h+) for large ones.
+	WalkerIntervalMinutesAdminKey = "walker_interval_minutes"
 
 	// MetadataKeyDeletesPerSecond is the per-worker share value the
 	// admin writes into ClusterContext.Metadata at ExecuteJob time.

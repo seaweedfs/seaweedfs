@@ -67,3 +67,37 @@ func TestParseConfigMetaLogRetentionNegativeStaysZero(t *testing.T) {
 		t.Errorf("negative MetaLogRetention should stay 0, got %v", cfg.MetaLogRetention)
 	}
 }
+
+func TestParseConfigWalkerIntervalDefaultsToZero(t *testing.T) {
+	// Unset key keeps WalkerInterval at 0 so dailyrun.runShard fires the
+	// walker every pass (the pre-throttle behavior the s3tests fast
+	// driver and the in-repo integration tests rely on).
+	cfg := ParseConfig(nil, nil)
+	if cfg.WalkerInterval != 0 {
+		t.Errorf("WalkerInterval default=%v, want 0", cfg.WalkerInterval)
+	}
+}
+
+func TestParseConfigWalkerIntervalMinutesConvertsToDuration(t *testing.T) {
+	admin := map[string]*plugin_pb.ConfigValue{
+		WalkerIntervalMinutesAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 90}},
+	}
+	cfg := ParseConfig(admin, nil)
+	if want := 90 * time.Minute; cfg.WalkerInterval != want {
+		t.Errorf("WalkerInterval=%v, want %v", cfg.WalkerInterval, want)
+	}
+}
+
+func TestParseConfigWalkerIntervalNegativeStaysZero(t *testing.T) {
+	// Negative declarations stay at 0 so the worker keeps "fire every
+	// pass" rather than treating the negative as past-due (which would
+	// fire every pass anyway — but via a less obvious code path that
+	// future readers would have to trace).
+	admin := map[string]*plugin_pb.ConfigValue{
+		WalkerIntervalMinutesAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -10}},
+	}
+	cfg := ParseConfig(admin, nil)
+	if cfg.WalkerInterval != 0 {
+		t.Errorf("negative WalkerInterval should stay 0, got %v", cfg.WalkerInterval)
+	}
+}

@@ -99,6 +99,14 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
+						{
+							Name:        WalkerIntervalMinutesAdminKey,
+							Label:       "Walker Interval (minutes)",
+							Description: "Minimum time between steady-state walker fires per shard. Cold-start and rule-change recovery walks ignore this — they run unconditionally. 0 = fire on every run (use when the worker is scheduled at the desired walk cadence, e.g. hourly). Set to a positive value when the worker runs at a tighter cadence than the desired walk frequency, to avoid hammering filer with a full subtree scan per run.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 			},
@@ -106,6 +114,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				MetaLogRetentionDaysAdminKey:    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				WalkerIntervalMinutesAdminKey:   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -295,6 +304,7 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Limiter:         limiter,
 		RetentionWindow: cfg.MetaLogRetention,
 		Walker:          walker,
+		WalkerInterval:  cfg.WalkerInterval,
 		ClientName:      "worker-s3-lifecycle-daily",
 	})
 	if runErr != nil {
