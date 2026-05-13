@@ -230,6 +230,15 @@ func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId)
 	return 0, nil, false
 }
 
+// FindEcShard walks every DiskLocation looking for the requested (vid, shardId)
+// pair and returns it together with the diskId that holds it on this server.
+// Multi-disk same-server EC (issue 9212) is the reason callers cannot rely on
+// FindEcVolume's chosen EcVolume alone — the shard the request is asking for
+// can sit on a sibling disk.
+func (s *Store) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
+	return s.findEcShard(vid, shardId)
+}
+
 func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
 		if s, found := location.FindEcVolume(vid); found {
@@ -412,9 +421,18 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 }
 
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
+	// ecVolume is whichever per-disk EcVolume FindEcVolume picked for the
+	// vid; on a multi-disk server (issue 9212) the .ec?? for shardId can
+	// live on a sibling DiskLocation that surfaces as its own EcVolume.
+	// Probe the picked one first, then fall through to every other disk
+	// before reporting the shard as "not local".
 	shard, found := ecVolume.FindEcVolumeShard(shardId)
 	if !found {
-		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
+		if _, sibling, ok := s.findEcShard(ecVolume.VolumeId, shardId); ok {
+			shard = sibling
+		} else {
+			return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
+		}
 	}
 
 	readBytes, err := shard.ReadAt(buf, offset)
