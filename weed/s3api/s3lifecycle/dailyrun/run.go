@@ -204,6 +204,20 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	promoted := engine.PromotedHash(snap, retentionWindow)
 
 	if rsh == [32]byte{} {
+		// No replay-eligible rules. Walker-only rules
+		// (ExpirationDate / ExpiredDeleteMarker / NewerNoncurrent)
+		// or scan_only-promoted rules might still need a walk; run
+		// the steady-state walker before persisting the empty
+		// cursor and returning. Without this, a bucket whose only
+		// rule is walker-bound would never have it dispatched —
+		// the bug TestLifecycleExpirationDateInThePast caught.
+		if cfg.Walker != nil {
+			if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
+				if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
+					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
+				}
+			}
+		}
 		return cfg.Persister.Save(ctx, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
@@ -211,22 +225,36 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		})
 	}
 
-	// Recovery: rule-content edit (RuleSetHash mismatch) or partition
-	// flip (PromotedHash mismatch). Walk the rewritten rule set so
-	// already-due objects fire before the cursor rewinds; then rewind
-	// and let the sliding meta-log replay catch up steady state.
-	if found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted) {
+	// Recovery / cold-start walker:
+	//   - found && hashes mismatch: rule edit or partition flip — walk
+	//     the rewritten rule set so already-due objects fire before the
+	//     cursor rewinds, then rewind for meta-log replay.
+	//   - !found: first run for this shard. Pre-existing objects PUT
+	//     before the rule was added live OUTSIDE the meta-log scan
+	//     window (TsNs > runNow - maxTTL) and would never replay; the
+	//     walker has to discover them. The streaming worker did this
+	//     via BucketBootstrapper; daily-replay needs the same.
+	mustWalkRecovery := found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted)
+	mustWalkColdStart := !found
+	if mustWalkRecovery || mustWalkColdStart {
 		if cfg.Walker != nil {
 			if werr := cfg.Walker(ctx, engine.RecoveryView(snap), shardID); werr != nil {
 				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
 			}
 		}
-		next := Cursor{
-			TsNs:         runNow.Add(-maxTTL).UnixNano(),
-			RuleSetHash:  rsh,
-			PromotedHash: promoted,
+		if mustWalkRecovery {
+			// Rule changed: rewind cursor so the sliding replay re-scans
+			// the new max-TTL window and the persisted hashes match the
+			// new rule set.
+			next := Cursor{
+				TsNs:         runNow.Add(-maxTTL).UnixNano(),
+				RuleSetHash:  rsh,
+				PromotedHash: promoted,
+			}
+			return cfg.Persister.Save(ctx, shardID, next)
 		}
-		return cfg.Persister.Save(ctx, shardID, next)
+		// Cold start: keep TsNs=0 so the drain below floors to
+		// runNow - maxTTL and the cursor is saved fresh after the run.
 	}
 
 	// Steady-state walker for walker-bound and scan_only-promoted rules.
@@ -244,20 +272,39 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	// Cold start: scan from now-maxTTL so already-due objects within
-	// meta-log retention still expire.
+	// meta-log retention still expire. In steady state honor the
+	// cursor as-is: the drain freezes the cursor at the last pre-skip
+	// event so pending matches with DueTime == TsNs+maxTTL stay in
+	// scope across passes. Bumping forward to runNow-maxTTL would
+	// orphan exactly those events (the test_lifecyclev2_expiration
+	// regression: cursor saved at the no-match event right before
+	// the not-yet-due expire3 PUT, then floor at runNow=PUT+maxTTL
+	// equals PUT — bumping past the expire3 event itself).
 	startTsNs := persisted.TsNs
-	floor := runNow.Add(-maxTTL).UnixNano()
-	if startTsNs < floor {
-		startTsNs = floor
+	if !found {
+		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs)
+	// Cursor save uses a fresh ctx because the steady-state drain exits
+	// via passCtx cancellation (the only signal the filer subscription
+	// gets when no new events arrive). Saving with the canceled passCtx
+	// would silently drop the cursor and the next pass would re-replay
+	// from the same floor — defeating advancement entirely.
+	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer saveCancel()
 	if drainErr != nil {
-		_ = cfg.Persister.Save(ctx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
+		_ = cfg.Persister.Save(saveCtx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
+		// passCtx timeout is the expected end-of-pass for an idle
+		// subscription; not a real error. Other drain errors still
+		// propagate.
+		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
+			return nil
+		}
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
 	}
 
-	return cfg.Persister.Save(ctx, shardID, Cursor{
+	return cfg.Persister.Save(saveCtx, shardID, Cursor{
 		TsNs:         lastOK,
 		RuleSetHash:  rsh,
 		PromotedHash: promoted,

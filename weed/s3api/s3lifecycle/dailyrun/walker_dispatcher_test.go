@@ -72,9 +72,11 @@ func TestWalkerDispatcher_VersionedPassesVersionID(t *testing.T) {
 	assert.Equal(t, "v-abc", c.lastReq.VersionId)
 }
 
-func TestWalkerDispatcher_MPUInitUsesDestKey(t *testing.T) {
-	// Rule-prefix matching used DestKey; the RPC ObjectPath must match
-	// so the server resolves the upload from the user's intended key.
+func TestWalkerDispatcher_MPUInitUsesUploadsPath(t *testing.T) {
+	// Rule-prefix matching uses DestKey to decide IF this MPU init
+	// matches; dispatch uses Path (.uploads/<id>) because the server's
+	// ABORT_MPU handler strips the .uploads/ prefix to get the upload
+	// id. Sending DestKey here would BLOCK with FATAL_EVENT_ERROR.
 	c := &walkerStubClient{outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE}
 	d := &WalkerDispatcher{Client: c}
 	a := sampleAction(t, s3lifecycle.ActionKindAbortMPU)
@@ -84,7 +86,7 @@ func TestWalkerDispatcher_MPUInitUsesDestKey(t *testing.T) {
 		IsMPUInit: true,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "user/path/object", c.lastReq.ObjectPath)
+	assert.Equal(t, ".uploads/abc123", c.lastReq.ObjectPath)
 }
 
 func TestWalkerDispatcher_MPUInitEmptyDestKeyErrors(t *testing.T) {

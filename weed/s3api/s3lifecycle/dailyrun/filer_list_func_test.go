@@ -126,6 +126,25 @@ func TestFilerListFunc_EmitsFlatFiles(t *testing.T) {
 	assert.Equal(t, []string{"a.txt", "b.txt"}, got)
 }
 
+func TestFilerListFunc_PropagatesTagsOnFlatFiles(t *testing.T) {
+	mtime := time.Now().Add(-7 * 24 * time.Hour)
+	tagged := fileWithExt("tagged.txt", mtime, 10, map[string][]byte{
+		s3_constants.AmzObjectTagging + "-env":  []byte("temp"),
+		s3_constants.AmzObjectTagging + "-tier": []byte("cold"),
+	})
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {tagged},
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got *bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = e
+		return nil
+	}))
+	require.NotNil(t, got)
+	assert.Equal(t, map[string]string{"env": "temp", "tier": "cold"}, got.Tags)
+}
+
 func TestFilerListFunc_RecursesIntoSubdirs(t *testing.T) {
 	mtime := time.Now()
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
@@ -358,6 +377,40 @@ func TestFilerListFunc_VersionedExpansionExplicitNullIsLatestWhenPointerMissing(
 		return nil
 	}))
 	assert.Equal(t, 2, count)
+}
+
+func TestFilerListFunc_VersionedExpansionExplicitNullBeatsNewerSiblingWhenPointerMissing(t *testing.T) {
+	// Suspended-versioning current-ness is carried by the explicit bare
+	// null, not by mtime ordering. Backdating the null to make it due
+	// must not demote it behind a newer noncurrent sibling when the
+	// .versions pointer is absent.
+	tNull := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) // older
+	tV1 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)   // newer
+	bareNull := fileWithExt("foo", tNull, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")})
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {
+			bareNull,
+			versionsDir("foo"+s3_constants.VersionsFolder, ""),
+		},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: {
+			fileWithExt("v1", tV1, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
+		},
+	}}
+	listFn := FilerListFunc(client, "/buckets")
+	var got []*bootstrap.Entry
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		got = append(got, e)
+		return nil
+	}))
+	require.Len(t, got, 2)
+	byID := map[string]*bootstrap.Entry{}
+	for _, e := range got {
+		byID[e.VersionID] = e
+	}
+	require.NotNil(t, byID["null"])
+	require.NotNil(t, byID["v1"])
+	assert.True(t, byID["null"].IsLatest, "explicit null must stay latest even when older than noncurrent siblings")
+	assert.False(t, byID["v1"].IsLatest)
 }
 
 func TestFilerListFunc_VersionsDirWithoutMarkersRecursesAsRegular(t *testing.T) {

@@ -122,9 +122,24 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n",
 			formatShardLabel(shards), *eventBudget, *runtime, *cadence)
 
+		announcedLoad := false
 		runPass := func() error {
+			// When -refresh is set we MUST cap each pass; otherwise
+			// drainShardEvents blocks until the outer runtime ctx
+			// expires and the loop's ticker never fires. With cadence=0
+			// (one-shot) the pass uses the full ctx and returns when
+			// the runtime cap hits.
+			passCtx := ctx
+			if *cadence > 0 {
+				var passCancel context.CancelFunc
+				// Pass budget = cadence + grace. Grace gives the
+				// drain time to actually process events that arrived
+				// during the cadence window.
+				passCtx, passCancel = context.WithTimeout(ctx, *cadence+5*time.Second)
+				defer passCancel()
+			}
 			eng := engine.New()
-			inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
+			inputs, parseErrors, err := scheduler.LoadCompileInputs(passCtx, filerClient, bucketsPath)
 			if err != nil {
 				return fmt.Errorf("load lifecycle configs: %w", err)
 			}
@@ -140,6 +155,10 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			if len(inputs) == 0 {
 				return nil
 			}
+			if !announcedLoad {
+				fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
+				announcedLoad = true
+			}
 			buckets := make([]string, 0, len(inputs))
 			for _, in := range inputs {
 				if in.Bucket != "" {
@@ -149,7 +168,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
 				return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, listFn, walkerDispatch)
 			})
-			return dailyrun.Run(ctx, dailyrun.Config{
+			return dailyrun.Run(passCtx, dailyrun.Config{
 				Shards:      shards,
 				BucketsPath: bucketsPath,
 				Engine:      eng,
@@ -157,6 +176,11 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				Client:      client,
 				Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
 				Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+				// The shell command is used for bounded one-shot sweeps in
+				// integration tests and CI. Fan out across the selected shards
+				// so recovery walks do not serialize 16 shard scans into a 10s
+				// timeout budget.
+				Workers: len(shards),
 				Walker:      walker,
 				EventBudget: *eventBudget,
 				ClientName:  fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
