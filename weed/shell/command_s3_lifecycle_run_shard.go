@@ -124,8 +124,22 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 
 		announcedLoad := false
 		runPass := func() error {
+			// When -refresh is set we MUST cap each pass; otherwise
+			// drainShardEvents blocks until the outer runtime ctx
+			// expires and the loop's ticker never fires. With cadence=0
+			// (one-shot) the pass uses the full ctx and returns when
+			// the runtime cap hits.
+			passCtx := ctx
+			if *cadence > 0 {
+				var passCancel context.CancelFunc
+				// Pass budget = cadence + grace. Grace gives the
+				// drain time to actually process events that arrived
+				// during the cadence window.
+				passCtx, passCancel = context.WithTimeout(ctx, *cadence+5*time.Second)
+				defer passCancel()
+			}
 			eng := engine.New()
-			inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
+			inputs, parseErrors, err := scheduler.LoadCompileInputs(passCtx, filerClient, bucketsPath)
 			if err != nil {
 				return fmt.Errorf("load lifecycle configs: %w", err)
 			}
@@ -154,7 +168,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
 				return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, listFn, walkerDispatch)
 			})
-			return dailyrun.Run(ctx, dailyrun.Config{
+			return dailyrun.Run(passCtx, dailyrun.Config{
 				Shards:      shards,
 				BucketsPath: bucketsPath,
 				Engine:      eng,
