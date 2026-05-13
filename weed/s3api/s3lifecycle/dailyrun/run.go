@@ -204,6 +204,20 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	promoted := engine.PromotedHash(snap, retentionWindow)
 
 	if rsh == [32]byte{} {
+		// No replay-eligible rules. Walker-only rules
+		// (ExpirationDate / ExpiredDeleteMarker / NewerNoncurrent)
+		// or scan_only-promoted rules might still need a walk; run
+		// the steady-state walker before persisting the empty
+		// cursor and returning. Without this, a bucket whose only
+		// rule is walker-bound would never have it dispatched —
+		// the bug TestLifecycleExpirationDateInThePast caught.
+		if cfg.Walker != nil {
+			if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
+				if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
+					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
+				}
+			}
+		}
 		return cfg.Persister.Save(ctx, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
