@@ -28,8 +28,13 @@ func TestWalkerDue(t *testing.T) {
 		// interval=0 keeps the prior "fire every pass" semantics — the
 		// in-repo integration tests and the s3tests fast driver rely on
 		// this so the rule-change-then-walk behavior surfaces within a
-		// single test runtime.
-		{"interval zero always due", runNow.UnixNano(), 0, true},
+		// single test runtime. "Pass" is the unit: a lastWalkedNs
+		// stamped at runNow already saw a walk THIS pass (from the
+		// cold-start or recovery branch), and a second fire from the
+		// steady-state branch in the same pass would double-walk over
+		// what RecoveryView already covered.
+		{"interval zero not due if already walked this pass", runNow.UnixNano(), 0, false},
+		{"interval zero due when last walk was earlier", runNow.Add(-time.Nanosecond).UnixNano(), 0, true},
 		// LastWalkedNs=0 marks "never walked steady-state" — the post-
 		// upgrade cold-start case for cursor files that predate the
 		// LastWalkedNs field. Fire so the throttle anchor gets seeded.
@@ -141,6 +146,37 @@ func TestRunShard_WalkerThrottle(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRunShard_ColdStartDoesNotDoubleWalk pins the within-pass guard
+// in walkerDue. Before the guard, a cold-start pass with
+// WalkerInterval=0 fired the walker twice in one pass: once via the
+// mustWalkColdStart branch (with RecoveryView) and again immediately
+// via the steady-state branch (with the per-shard walk view, which is
+// a subset of RecoveryView). The second walk added no coverage and
+// burned a full bucket scan. Guard against regression.
+func TestRunShard_ColdStartDoesNotDoubleWalk(t *testing.T) {
+	snap := snapshotWithRule(t, 30)
+	p := newMemPersister()
+	// No persisted cursor → mustWalkColdStart=true. WalkerInterval=0
+	// would, before the fix, allow the steady-state branch to fire
+	// again with no time elapsed.
+	calls := 0
+	cfg := Config{
+		Persister: p,
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ int) error {
+			calls++
+			return nil
+		},
+		WalkerInterval: 0,
+	}
+	runNow := time.Unix(1_700_000_000, 0).UTC()
+
+	closedEvents := make(chan *readerEventAlias)
+	close(closedEvents)
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, closedEvents))
+
+	assert.Equal(t, 1, calls, "cold-start walker must fire exactly once per pass even with interval=0")
 }
 
 // TestRunShard_RecoveryWalkerSetsLastWalkedAnchor pins that the

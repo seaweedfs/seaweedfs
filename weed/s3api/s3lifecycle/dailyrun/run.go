@@ -397,7 +397,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		// the empty cursor and returning. Without this, a bucket whose
 		// only rule is walker-bound would never have it dispatched —
 		// the bug TestLifecycleExpirationDateInThePast caught.
-		if cfg.Walker != nil && walkerDue(persisted.LastWalkedNs, runNow, cfg.WalkerInterval) {
+		if cfg.Walker != nil && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 			if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
 				if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
 					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
@@ -509,11 +509,26 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 }
 
 // walkerDue reports whether the steady-state / empty-replay walker
-// should fire on this pass. interval == 0 means "fire every pass"
+// should fire on this pass.
+//
+// Order of checks matters. The within-pass guard (lastWalkedNs equals
+// runNow's UnixNano) runs first because the cold-start and recovery
+// branches both fire the walker unconditionally and stamp
+// lastWalkedNs=runNow.UnixNano(); the steady-state branch then falls
+// through and would otherwise double-walk under interval=0 even though
+// the recovery walker already used RecoveryView (a superset of every
+// per-shard partition). Returning false here suppresses that second
+// walk and keeps the "interval=0 means walk every pass" contract
+// stated by the next branch coherent — pass is the unit, not call site.
+//
+// interval == 0 (after the within-pass guard) means "fire every pass"
 // (the prior, unconditional behavior). lastWalkedNs == 0 means "never
 // walked steady-state" — fire to establish the anchor. Otherwise gate
 // on (runNow - lastWalkedNs) >= interval.
 func walkerDue(lastWalkedNs int64, runNow time.Time, interval time.Duration) bool {
+	if lastWalkedNs == runNow.UnixNano() {
+		return false
+	}
 	if interval <= 0 || lastWalkedNs == 0 {
 		return true
 	}
