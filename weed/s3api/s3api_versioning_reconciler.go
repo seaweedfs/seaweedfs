@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,16 +35,62 @@ const versioningHealLogPrefix = "[versioning-heal]"
 //	event=gave_up   — reconciler exhausted retries on a candidate
 //	event=anomaly   — listing-after-rm inconsistency detected
 //	event=summary   — periodic heartbeat (counters + queue depth)
+//
+// All string/error arguments are sanitized so user-controlled bucket
+// names, object keys, filenames, and error text can't split the line
+// into multiple grep tokens or inject fake event=/bucket=/key= fields.
+// Safe values pass through unchanged; anything containing whitespace,
+// quotes, control chars, or backslashes is replaced with its
+// strconv.Quote form so the field boundary stays one space.
 func versioningHealInfof(event, format string, args ...interface{}) {
-	glog.Infof("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, args...))
+	glog.Infof("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, sanitizeHealArgs(args)...))
 }
 
 func versioningHealWarningf(event, format string, args ...interface{}) {
-	glog.Warningf("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, args...))
+	glog.Warningf("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, sanitizeHealArgs(args)...))
 }
 
 func versioningHealErrorf(event, format string, args ...interface{}) {
-	glog.Errorf("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, args...))
+	glog.Errorf("%s event=%s %s", versioningHealLogPrefix, event, fmt.Sprintf(format, sanitizeHealArgs(args)...))
+}
+
+// sanitizeHealArgs walks args and replaces string/error values that
+// would break the single-space field separator (whitespace, newlines,
+// control chars, quotes, backslashes) with their strconv.Quote form.
+// Non-string args are returned untouched.
+func sanitizeHealArgs(args []interface{}) []interface{} {
+	out := make([]interface{}, len(args))
+	for i, v := range args {
+		out[i] = sanitizeHealArg(v)
+	}
+	return out
+}
+
+func sanitizeHealArg(v interface{}) interface{} {
+	var s string
+	switch t := v.(type) {
+	case nil:
+		return v
+	case string:
+		s = t
+	case error:
+		s = t.Error()
+	default:
+		return v
+	}
+	if !needsHealQuote(s) {
+		return s
+	}
+	return strconv.Quote(s)
+}
+
+func needsHealQuote(s string) bool {
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '"' || r == '\\' || r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // Background reconciler for .versions/ directories whose latest-version

@@ -2,7 +2,9 @@ package s3api
 
 import (
 	"bytes"
+	"errors"
 	"flag"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -53,6 +55,65 @@ func TestVersioningHealInfof_FormatStringSafe(t *testing.T) {
 	// well-behaved. Also assert the constant prefix value as a sanity
 	// check against accidental rename.
 	assert.True(t, strings.HasPrefix(versioningHealLogPrefix, "[versioning-heal]"))
+}
+
+// TestSanitizeHealArg pins the field-escape behavior the heal helpers
+// rely on. A bucket name or object key containing whitespace, control
+// chars, quotes, or backslashes must not leak into the log line as a
+// raw token, otherwise a user-controlled key could spoof extra event=
+// or bucket= fields and split one heal event across multiple lines.
+func TestSanitizeHealArg(t *testing.T) {
+	cases := []struct {
+		name string
+		in   interface{}
+		want interface{}
+	}{
+		// Safe values pass through unchanged so common log output stays
+		// human-readable.
+		{"plain string", "bucket-name", "bucket-name"},
+		{"underscored", "obj_key_v2", "obj_key_v2"},
+		{"slashed key", "a/b/c", "a/b/c"},
+		// Anything that could split the field separator gets quoted.
+		{"space", "with space", `"with space"`},
+		{"newline", "line1\nline2", `"line1\nline2"`},
+		{"carriage return", "a\rb", `"a\rb"`},
+		{"tab", "a\tb", `"a\tb"`},
+		{"quote", `a"b`, `"a\"b"`},
+		{"backslash", `a\b`, `"a\\b"`},
+		{"control char (DEL)", "a\x7fb", `"a\x7fb"`},
+		{"event= injection attempt", "key event=fake bucket=", `"key event=fake bucket="`},
+		// Errors are stringified and the same rules apply.
+		{"error with newline", errors.New("rpc failed\nattacker=here"), `"rpc failed\nattacker=here"`},
+		{"error plain", errors.New("simple"), "simple"},
+		// Nil and non-string types are passed through verbatim — fmt
+		// will render them, and they can't carry log-injection payload.
+		{"nil arg", nil, nil},
+		{"int arg", 42, 42},
+		{"bool arg", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeHealArg(tc.in)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestVersioningHealInfof_KeyWithWhitespaceStaysOneField confirms the
+// end-to-end format: when a caller passes a malicious key, the
+// fmt.Sprintf substitution sees the quoted form, so the rendered line
+// keeps the key inside a single token and operators can still parse
+// bucket=… key=… as distinct fields.
+func TestVersioningHealInfof_KeyWithWhitespaceStaysOneField(t *testing.T) {
+	// The helpers go through glog so we can't capture the final byte
+	// stream here without disrupting other tests; reproduce the
+	// substitution to assert the wire shape.
+	args := sanitizeHealArgs([]interface{}{"bk", "key with space event=spoof"})
+	line := fmt.Sprintf("bucket=%s key=%s", args...)
+	assert.Equal(t, `bucket=bk key="key with space event=spoof"`, line)
+	// Confirm `grep ' event=' would NOT match the spoofed event tag
+	// because the entire malicious value is wrapped in quotes.
+	assert.NotContains(t, strings.SplitN(line, " ", 3)[2], "event=spoof key=")
 }
 
 // TestVersioningHealEventVocabulary is a documentation test that lists

@@ -1505,7 +1505,12 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 			return nil
 		}
 		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, retryErr)
-		s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
+		if s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion") {
+			// Pointer is consistent again; reader will get NoSuchKey via
+			// the clean-miss path. Don't emit `produced` or enqueue the
+			// reconciler — there's no stranded state left to heal.
+			return nil
+		}
 		return fmt.Errorf("delete .versions directory: %w", retryErr)
 	}
 
@@ -1533,9 +1538,19 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 //
 // caller is the source-function name used in log lines so operators can
 // trace which path ran the clear.
-func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath string, versionsEntry *filer_pb.Entry, caller string) {
+//
+// Returns cleared=true ONLY when this function successfully removed the
+// pointer (or the second branch — pointer no longer present — left the
+// directory in the intended clean-miss state, which counts as
+// already-clear). Concurrent-writer aborts, re-scan errors, and CAS
+// mismatches return false so callers that hit a transient teardown
+// failure still emit `produced` and enqueue for the reconciler; a
+// successful clear lets the caller short-circuit and return nil since
+// the pointer is consistent and the next reader gets NoSuchKey via the
+// clean-miss path.
+func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath string, versionsEntry *filer_pb.Entry, caller string) (cleared bool) {
 	if versionsEntry == nil || versionsEntry.Extended == nil {
-		return
+		return false
 	}
 	observedStaleId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	versionsDir := bucketDir + "/" + versionsObjectPath
@@ -1545,11 +1560,11 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
 		if listErr != nil {
 			glog.Warningf("%s: re-scan failed for %s/%s, leaving pointer untouched: %v", caller, bucket, object, listErr)
-			return
+			return false
 		}
 		if pageEntry, _, _, _ := selectLatestVersion(entries); pageEntry != nil {
 			glog.V(1).Infof("%s: skipping pointer clear for %s/%s, concurrent writer added a tagged version", caller, bucket, object)
-			return
+			return false
 		}
 		if isLast || len(entries) == 0 {
 			break
@@ -1559,20 +1574,22 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 
 	liveEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		// Directory was concurrently removed - nothing to clear.
-		return
+		// Directory was concurrently removed - reader will get NoSuchKey
+		// via the clean-miss path; pointer is effectively cleared.
+		return true
 	}
 	if liveEntry.Extended == nil {
-		return
+		return true
 	}
 	currentIdBytes, hasId := liveEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	_, hasFile := liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 	if !hasId && !hasFile {
-		return
+		// Already cleared by another path.
+		return true
 	}
 	if observedStaleId != "" && string(currentIdBytes) != observedStaleId {
 		glog.V(1).Infof("%s: skipping pointer clear for %s/%s, live pointer changed (observed=%s, current=%s)", caller, bucket, object, observedStaleId, string(currentIdBytes))
-		return
+		return false
 	}
 
 	delete(liveEntry.Extended, s3_constants.ExtLatestVersionIdKey)
@@ -1584,9 +1601,10 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		updatedEntry.Chunks = liveEntry.Chunks
 	}); mkErr != nil {
 		versioningHealWarningf("clear_failed", "bucket=%s key=%s caller=%s err=%v", bucket, object, caller, mkErr)
-		return
+		return false
 	}
 	versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_cleared caller=%s (orphan entries remain in .versions directory)", bucket, object, caller)
+	return true
 }
 
 // ListObjectVersionsHandler handles the list object versions request
