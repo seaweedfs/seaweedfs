@@ -304,7 +304,11 @@ impl DiskLocation {
     }
 
     /// Remove all EC-related files for a volume.
-    fn remove_ec_volume_files(&self, collection: &str, vid: VolumeId) {
+    /// `pub(crate)` so the Store-level cross-disk passes in
+    /// `store_ec_reconcile.rs` can call it to scrub partial EC artefacts
+    /// when a healthy `.dat` for the same vid lives on a sibling disk
+    /// (seaweedfs/seaweedfs#9478).
+    pub(crate) fn remove_ec_volume_files(&self, collection: &str, vid: VolumeId) {
         let base = volume_file_name(&self.directory, collection, vid);
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
