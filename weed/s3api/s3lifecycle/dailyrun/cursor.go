@@ -39,7 +39,12 @@ const cursorFileVersion = 1
 // meta-log event whose Matches all dispatched successfully (or as
 // NOOP_RESOLVED); RuleSetHash is the content hash of the replay-eligible
 // rules from the run that wrote this cursor; PromotedHash is the hash
-// of replay-eligible rules currently in scan_only.
+// of replay-eligible rules currently in scan_only. LastWalkedNs is the
+// runNow of the most recent successful steady-state / empty-replay
+// walker fire on this shard — runShard uses it together with
+// cfg.WalkerInterval to throttle the walker independently of Run()
+// invocation frequency (so a worker driven by a 2s test ticker doesn't
+// crush filer with a full bucket walk per tick).
 //
 // In Phase 2 PromotedHash is always the empty hash because the walker
 // path isn't wired yet — any rule that would land in walk causes the
@@ -48,16 +53,24 @@ type Cursor struct {
 	TsNs         int64
 	RuleSetHash  [32]byte
 	PromotedHash [32]byte
+	LastWalkedNs int64
 }
 
 // cursorFile is the on-disk JSON shape. Bytes are base64-encoded by
 // encoding/json automatically.
+//
+// last_walked_ns is omitempty so cursor files written before the field
+// existed still decode cleanly: an older file has no last_walked_ns,
+// which marshals back into LastWalkedNs=0, which runShard treats as
+// "never walked steady-state" and so the next pass fires the walker
+// (the same path a cold-start cursor takes). No version bump needed.
 type cursorFile struct {
 	Version      int    `json:"version"`
 	ShardID      int    `json:"shard_id"`
 	TsNs         int64  `json:"ts_ns"`
 	RuleSetHash  []byte `json:"rule_set_hash"`
 	PromotedHash []byte `json:"promoted_hash"`
+	LastWalkedNs int64  `json:"last_walked_ns,omitempty"`
 }
 
 // CursorPersister loads and saves daily-replay cursors. The Phase 2
@@ -119,7 +132,7 @@ func (p *FilerCursorPersister) Load(ctx context.Context, shardID int) (Cursor, b
 	if len(cf.PromotedHash) != 32 {
 		return Cursor{}, false, fmt.Errorf("cursor promoted_hash shard=%d: got %d bytes, want 32", shardID, len(cf.PromotedHash))
 	}
-	c := Cursor{TsNs: cf.TsNs}
+	c := Cursor{TsNs: cf.TsNs, LastWalkedNs: cf.LastWalkedNs}
 	copy(c.RuleSetHash[:], cf.RuleSetHash)
 	copy(c.PromotedHash[:], cf.PromotedHash)
 	return c, true, nil
@@ -135,6 +148,7 @@ func (p *FilerCursorPersister) Save(ctx context.Context, shardID int, c Cursor) 
 		TsNs:         c.TsNs,
 		RuleSetHash:  c.RuleSetHash[:],
 		PromotedHash: c.PromotedHash[:],
+		LastWalkedNs: c.LastWalkedNs,
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
