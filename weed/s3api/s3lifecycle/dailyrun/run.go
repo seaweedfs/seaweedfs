@@ -62,6 +62,23 @@ type Config struct {
 	// still rewinds, matching Phase 4a behavior.
 	Walker WalkerFunc
 
+	// WalkerInterval throttles the steady-state and empty-replay walker
+	// invocations: the walker fires only when the time since the
+	// per-shard cursor's LastWalkedNs exceeds this value. Cold-start
+	// and recovery walker fires (RecoveryView) are unconditional —
+	// those are bounded events that must run once when the trigger
+	// condition is met. 0 means "fire on every pass" (the prior
+	// behavior, suitable for s3tests-style rapid-cadence drivers and
+	// for in-repo integration tests).
+	//
+	// Production deployments should set this to roughly the walk cost
+	// budget per shard per cluster: e.g., 1h for a small cluster, 6h
+	// for a large one. The walker reads the whole bucket subtree it
+	// covers, so a too-short interval crushes the filer; a too-long
+	// interval delays ExpirationDate and ExpiredObjectDeleteMarker
+	// dispatches.
+	WalkerInterval time.Duration
+
 	ClientName string
 	// 0 -> randomized per-run.
 	ClientID int32
@@ -322,12 +339,16 @@ func validate(cfg Config) error {
 }
 
 // runShard executes one daily-replay pass; see DESIGN.md for algorithm.
-// Two walker invocations under cfg.Walker (when set):
-//   - recovery branch: RecoveryView, so already-due objects across the
-//     rewritten rule set fire before the cursor rewinds.
-//   - steady state: RulesForShard's walk view, so walker-bound and
-//     scan_only-promoted rules fire every day even when replay rules
-//     are unchanged.
+// Three walker invocation paths under cfg.Walker (when set):
+//   - cold start / recovery: RecoveryView. Unconditional — these are
+//     bounded events (first run for a shard, or rule-content edit / partition
+//     flip) and the walker must run once when the trigger condition is met.
+//   - steady state: RulesForShard's walk view, throttled by cfg.WalkerInterval
+//     against persisted.LastWalkedNs so the walker fires on its own cadence
+//     independently of how often Run() is invoked.
+//   - empty replay: same throttling — buckets with only walker-bound rules
+//     use the walk view, and a too-fast Run() driver would otherwise burn
+//     the filer with a full subtree scan per tick.
 func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int, events <-chan *reader.Event) error {
 	shardLabel := strconv.Itoa(shardID)
 	shardStart := time.Now()
@@ -361,25 +382,34 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 	promoted := engine.PromotedHash(snap, retentionWindow)
 
+	// lastWalkedNs threads the steady-state walker's clock through the
+	// cursor saves below. Start with the persisted value; only update
+	// it when a steady-state / empty-replay walker fire actually
+	// happens. Cold-start and recovery walker fires also bump it so
+	// the next pass's throttle has a fresh anchor.
+	lastWalkedNs := persisted.LastWalkedNs
+
 	if rsh == [32]byte{} {
 		// No replay-eligible rules. Walker-only rules
 		// (ExpirationDate / ExpiredDeleteMarker / NewerNoncurrent)
 		// or scan_only-promoted rules might still need a walk; run
-		// the steady-state walker before persisting the empty
-		// cursor and returning. Without this, a bucket whose only
-		// rule is walker-bound would never have it dispatched —
+		// the walker (throttled by WalkerInterval) before persisting
+		// the empty cursor and returning. Without this, a bucket whose
+		// only rule is walker-bound would never have it dispatched —
 		// the bug TestLifecycleExpirationDateInThePast caught.
-		if cfg.Walker != nil {
+		if cfg.Walker != nil && walkerDue(persisted.LastWalkedNs, runNow, cfg.WalkerInterval) {
 			if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
 				if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
 					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
 				}
+				lastWalkedNs = runNow.UnixNano()
 			}
 		}
 		return cfg.Persister.Save(ctx, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
 			PromotedHash: promoted,
+			LastWalkedNs: lastWalkedNs,
 		})
 	}
 
@@ -399,6 +429,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			if werr := cfg.Walker(ctx, engine.RecoveryView(snap), shardID); werr != nil {
 				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
 			}
+			lastWalkedNs = runNow.UnixNano()
 		}
 		if mustWalkRecovery {
 			// Rule changed: rewind cursor so the sliding replay re-scans
@@ -408,6 +439,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 				TsNs:         runNow.Add(-maxTTL).UnixNano(),
 				RuleSetHash:  rsh,
 				PromotedHash: promoted,
+				LastWalkedNs: lastWalkedNs,
 			}
 			return cfg.Persister.Save(ctx, shardID, next)
 		}
@@ -421,11 +453,17 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// hash already accounted for. Empty walk view (no rules need walking
 	// today) skips the call so non-versioned, replay-only deployments
 	// don't pay an O(N) bucket-walk per run.
-	if cfg.Walker != nil {
+	//
+	// Throttle: skip when (runNow - lastWalkedNs) <= WalkerInterval.
+	// A cold-start or recovery walker fire above already advanced
+	// lastWalkedNs, so back-to-back walks within one pass are avoided
+	// naturally.
+	if cfg.Walker != nil && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 		if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
 			if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
 				return fmt.Errorf("shard=%d: steady walk: %w", shardID, werr)
 			}
+			lastWalkedNs = runNow.UnixNano()
 		}
 	}
 
@@ -452,7 +490,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer saveCancel()
 	if drainErr != nil {
-		_ = cfg.Persister.Save(saveCtx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
+		_ = cfg.Persister.Save(saveCtx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
 		// passCtx timeout is the expected end-of-pass for an idle
 		// subscription; not a real error. Other drain errors still
 		// propagate.
@@ -466,7 +504,20 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		TsNs:         lastOK,
 		RuleSetHash:  rsh,
 		PromotedHash: promoted,
+		LastWalkedNs: lastWalkedNs,
 	})
+}
+
+// walkerDue reports whether the steady-state / empty-replay walker
+// should fire on this pass. interval == 0 means "fire every pass"
+// (the prior, unconditional behavior). lastWalkedNs == 0 means "never
+// walked steady-state" — fire to establish the anchor. Otherwise gate
+// on (runNow - lastWalkedNs) >= interval.
+func walkerDue(lastWalkedNs int64, runNow time.Time, interval time.Duration) bool {
+	if interval <= 0 || lastWalkedNs == 0 {
+		return true
+	}
+	return runNow.UnixNano()-lastWalkedNs >= int64(interval)
 }
 
 // drainShardEvents reads pre-fanned-out events for this shard from the
