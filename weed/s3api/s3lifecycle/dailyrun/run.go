@@ -110,13 +110,21 @@ func Run(ctx context.Context, cfg Config) error {
 	// rsh==[32]byte{} means no replay-eligible rules — runShard's
 	// walker-only branch fires and saves; no subscription needed.
 	var (
-		shardEvents map[int]chan *reader.Event
-		readerDone  chan error
-		fanoutDone  chan struct{}
-		cancelRead  context.CancelFunc
+		shardEvents     map[int]chan *reader.Event
+		readerDone      chan error
+		fanoutDone      chan struct{}
+		cancelRead      context.CancelFunc
+		globalStartTsNs int64
 	)
 	if rsh != [32]byte{} {
-		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, maxTTL)
+		// Pre-load all per-shard cursors so the shared subscription
+		// can start from min(per-shard startTsNs). Using the cold-start
+		// floor (runNow - maxTTL) globally would skip past pending
+		// events on shards whose cursor is older than the floor —
+		// exactly the case where a rule's TTL equals maxTTL and an
+		// older event still has DueTime <= runNow.
+		globalStartTsNs = computeGlobalStartTsNs(ctx, cfg, runNow, maxTTL)
+		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs)
 		defer cancelRead()
 	}
 
@@ -169,14 +177,44 @@ func Run(ctx context.Context, cfg Config) error {
 	return first
 }
 
+// computeGlobalStartTsNs scans every shard's persisted cursor and
+// returns the minimum startTsNs the shared subscription must cover.
+// For each shard the start point is the persisted cursor (steady state)
+// or runNow - maxTTL (cold start, when no cursor exists). Load errors
+// downgrade to the cold-start floor for that shard — failing closed
+// would be worse than re-scanning maxTTL of events.
+func computeGlobalStartTsNs(ctx context.Context, cfg Config, runNow time.Time, maxTTL time.Duration) int64 {
+	floor := runNow.Add(-maxTTL).UnixNano()
+	min := int64(0)
+	first := true
+	for _, sh := range cfg.Shards {
+		var start int64
+		if persisted, found, err := cfg.Persister.Load(ctx, sh); err == nil && found {
+			start = persisted.TsNs
+		} else {
+			start = floor
+		}
+		if first || start < min {
+			min = start
+			first = false
+		}
+	}
+	if first {
+		// No shards (validate() should have caught this, but defensive).
+		return floor
+	}
+	return min
+}
+
 // startSharedSubscription opens one SubscribeMetadata stream covering
 // every shard in cfg.Shards and fans events out to per-shard channels.
-// Subscription floor is runNow - maxTTL — the cold-start floor — so any
-// shard whose persisted cursor is fresher than the floor filters out
-// already-past events itself inside drainShardEvents. Events arriving
-// with TsNs > runNow (the pass boundary) cause the fan-out to cancel
-// the reader and close all per-shard channels, ending the pass.
-func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, maxTTL time.Duration) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
+// Subscription floor is the caller-supplied globalStartTsNs (typically
+// min over per-shard cursors). Shards whose own startTsNs is fresher
+// filter out already-past events themselves inside drainShardEvents.
+// Events arriving with TsNs > runUpTo (the pass boundary) cause the
+// fan-out to cancel the reader and close all per-shard channels,
+// ending the pass.
+func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
 	shardSet := make(map[int]bool, len(cfg.Shards))
 	shardEvents := make(map[int]chan *reader.Event, len(cfg.Shards))
 	for _, sh := range cfg.Shards {
@@ -197,7 +235,6 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 		clientID = int32(util.RandomInt32())
 	}
 
-	globalStartTsNs := runNow.Add(-maxTTL).UnixNano()
 	events := make(chan *reader.Event, 4*len(cfg.Shards))
 	rd := &reader.Reader{
 		ShardPredicate: func(id int) bool { return shardSet[id] },
