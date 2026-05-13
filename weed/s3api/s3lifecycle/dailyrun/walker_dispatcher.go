@@ -35,16 +35,18 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 	}
 	objectPath := entry.Path
 	if entry.IsMPUInit {
-		// Rule-prefix matching used DestKey; the server takes the
-		// canonical object path for the LifecycleDelete RPC, which
-		// is also DestKey. The walker hits the .uploads/<id>
-		// directory itself only when ActionKind=ABORT_MPU, and the
-		// server resolves the upload from (bucket, object_path) +
-		// the init record's metadata.
+		// Rule-prefix matching uses DestKey (the user's intended
+		// object key); dispatch uses entry.Path (.uploads/<id>),
+		// which is what the server's ABORT_MPU handler expects in
+		// req.ObjectPath — it strips the .uploads/ prefix to get
+		// the upload id and reads the init record from that
+		// directory. DestKey is the dispatch ANTI-pattern here: it
+		// looks like a regular object path, the server's check for
+		// the .uploads/ prefix fails, and the dispatch comes back
+		// as BLOCKED FATAL_EVENT_ERROR.
 		if entry.DestKey == "" {
 			return fmt.Errorf("walker dispatch: MPU init entry with empty DestKey: %s", entry.Path)
 		}
-		objectPath = entry.DestKey
 	}
 	rh := action.Key.RuleHash
 	req := &s3_lifecycle_pb.LifecycleDeleteRequest{

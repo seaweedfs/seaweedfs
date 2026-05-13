@@ -122,6 +122,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n",
 			formatShardLabel(shards), *eventBudget, *runtime, *cadence)
 
+		announcedLoad := false
 		runPass := func() error {
 			eng := engine.New()
 			inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
@@ -139,6 +140,10 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
 			if len(inputs) == 0 {
 				return nil
+			}
+			if !announcedLoad {
+				fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
+				announcedLoad = true
 			}
 			buckets := make([]string, 0, len(inputs))
 			for _, in := range inputs {
