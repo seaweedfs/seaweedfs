@@ -154,6 +154,16 @@ func NewStore(
 	}
 	wg.Wait()
 
+	// First, scrub partial EC artefacts left on one disk by an interrupted
+	// encode while the source .dat still lives on a sibling disk of the
+	// same store. The per-disk loader cannot see the sibling .dat and so
+	// loads the partial shards as if they were a distributed-EC layout,
+	// which makes the volume server heartbeat both a regular replica and
+	// an EC shard set for the same vid (issue #9478). Running before the
+	// cross-disk reconcile keeps that pass from later re-loading shards
+	// we just cleaned up.
+	s.pruneIncompleteEcWithSiblingDat()
+
 	// After every DiskLocation has finished its per-disk EC scan, sweep the
 	// store for shards that live on a disk without local index files and
 	// load them by reaching across to a sibling disk's .ecx / .ecj / .vif.
