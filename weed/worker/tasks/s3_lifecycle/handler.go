@@ -269,7 +269,9 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		}
 	}
 	walkerListFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
-	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client}
+	// Share the limiter with processMatches so walker + replay can't
+	// combine to burst past the cluster cap.
+	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter}
 	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
 		return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, walkerListFn, walkerDispatch)
 	})
