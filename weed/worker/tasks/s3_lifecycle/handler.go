@@ -91,12 +91,21 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
+						{
+							Name:        MetaLogRetentionDaysAdminKey,
+							Label:       "Meta-Log Retention (days)",
+							Description: "How far back the filer's meta-log subscription can reach. Rules whose TTL exceeds this run via the walker; shrinking this value will trigger a one-time recovery walk on the next run for any rule that's now too old to replay. 0 = unbounded (no partition; every rule serviced by replay).",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				MetaLogRetentionDaysAdminKey:    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -275,17 +284,18 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	})
 
 	runErr := dailyrun.Run(ctx, dailyrun.Config{
-		Shards:      shards,
-		BucketsPath: bucketsPath,
-		Engine:      eng,
-		FilerClient: filerClient,
-		Client:      client,
-		Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-		Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
-		Workers:     cfg.Workers,
-		Limiter:     limiter,
-		Walker:      walker,
-		ClientName:  "worker-s3-lifecycle-daily",
+		Shards:          shards,
+		BucketsPath:     bucketsPath,
+		Engine:          eng,
+		FilerClient:     filerClient,
+		Client:          client,
+		Persister:       &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Lister:          dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+		Workers:         cfg.Workers,
+		Limiter:         limiter,
+		RetentionWindow: cfg.MetaLogRetention,
+		Walker:          walker,
+		ClientName:      "worker-s3-lifecycle-daily",
 	})
 	if runErr != nil {
 		glog.Warningf("daily_replay: %v", runErr)
