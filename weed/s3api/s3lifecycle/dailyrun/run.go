@@ -280,12 +280,25 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs)
+	// Cursor save uses a fresh ctx because the steady-state drain exits
+	// via passCtx cancellation (the only signal the filer subscription
+	// gets when no new events arrive). Saving with the canceled passCtx
+	// would silently drop the cursor and the next pass would re-replay
+	// from the same floor — defeating advancement entirely.
+	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer saveCancel()
 	if drainErr != nil {
-		_ = cfg.Persister.Save(ctx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
+		_ = cfg.Persister.Save(saveCtx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted})
+		// passCtx timeout is the expected end-of-pass for an idle
+		// subscription; not a real error. Other drain errors still
+		// propagate.
+		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
+			return nil
+		}
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
 	}
 
-	return cfg.Persister.Save(ctx, shardID, Cursor{
+	return cfg.Persister.Save(saveCtx, shardID, Cursor{
 		TsNs:         lastOK,
 		RuleSetHash:  rsh,
 		PromotedHash: promoted,
