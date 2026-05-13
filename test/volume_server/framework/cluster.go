@@ -184,12 +184,10 @@ func (c *Cluster) Stop() {
 	})
 }
 
-// RestartVolumeServer stops the volume server process and starts a new one
-// against the same data directories and ports. The master keeps running, and
-// on the second start the volume server replays its on-disk state from the
-// data dirs — useful for tests that mutate files between the two runs. The
-// previous run's volume.log is preserved as volume.log.previous so a startup
-// failure on the second run does not lose the first run's diagnostics.
+// RestartVolumeServer kills the volume server and starts a new one against
+// the same data dirs and ports. The master keeps running. The previous run's
+// volume.log is moved to volume.log.previous so the first run's logs survive
+// a second-run startup failure.
 func (c *Cluster) RestartVolumeServer() {
 	c.testingTB.Helper()
 	stopProcess(c.volumeCmd)
@@ -207,9 +205,8 @@ func (c *Cluster) RestartVolumeServer() {
 	}
 }
 
-// StopVolumeServer stops only the volume server process while keeping the
-// master and data directories untouched. Pair with a follow-up call to
-// RestartVolumeServer to bring it back, or with Stop to tear everything down.
+// StopVolumeServer kills the volume server but leaves the master and data
+// dirs alone. Pair with RestartVolumeServer or Stop.
 func (c *Cluster) StopVolumeServer() {
 	c.testingTB.Helper()
 	stopProcess(c.volumeCmd)

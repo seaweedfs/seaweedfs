@@ -274,11 +274,7 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 				Url:        dn.Url(),
 				PublicUrl:  dn.PublicUrl,
 				DataCenter: dn.GetDataCenterId(),
-				// Mirror LookupVolume: callers fall back to
-				// ServerToGrpcAddress (httpPort + 10000) when GrpcPort is
-				// zero, which silently breaks EC reads on any deployment
-				// where the convention does not hold (multi-disk
-				// integration tests, custom port layouts).
+				// without this, clients derive grpc as httpPort+10000
 				GrpcPort: uint32(dn.GrpcPort),
 			})
 		}

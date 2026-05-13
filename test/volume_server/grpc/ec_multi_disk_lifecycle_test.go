@@ -16,34 +16,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
-// TestEcLifecycleAcrossMultipleDisks drives the full EC lifecycle on a volume
-// server that owns multiple data directories, mirroring how the production
-// loader / reconciler / pruner interact across DiskLocations:
-//
-//  1. encode    — VolumeEcShardsGenerate writes every .ec?? + .ecx + .ecj +
-//     .vif next to the source .dat on disk 0.
-//  2. mount + read — VolumeEcShardsMount loads the data shards in memory and
-//     HTTP GETs against the volume admin port now serve from the EC path.
-//  3. drop .dat — VolumeDelete tears down the regular volume so the EC shards
-//     are the only on-disk source of truth, matching the steady state after
-//     the shell `ec.encode` pipeline completes its cleanup phase.
-//  4. redistribute — between volume-server restarts, half the shard files are
-//     moved from disk 0 to disk 1, leaving .ecx / .ecj / .vif on disk 0. On
-//     restart the per-disk EC loader sees orphan shards on disk 1, then the
-//     Store-level reconcileEcShardsAcrossDisks pass attaches them using
-//     disk 0's index files (issue #9212).
-//  5. verify    — VolumeEcShardsInfo reports all 14 shards and every needle is
-//     still readable through the EC path with the shards spread across disks.
-//  6. blob delete — VolumeEcBlobDelete marks one needle deleted; subsequent
-//     HTTP GETs from EC return 404, exercising deletion handling on a
-//     cross-disk layout.
-//  7. repair    — one shard file is physically removed from disk 1 between
-//     restarts. After restart VolumeEcShardsRebuild regenerates the missing
-//     shard, reading input shards from BOTH disks via the additionalDirs
-//     fan-out the multi-disk rebuild path was designed for.
-//
-// The test cleans nothing up until t.Cleanup runs — assertions report
-// per-disk layouts so failures pinpoint which lifecycle step regressed.
+// TestEcLifecycleAcrossMultipleDisks drives encode, mount, read, drop-dat,
+// cross-disk redistribute + restart + reconcile, blob delete, and rebuild on
+// a 2-disk volume server.
 func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -69,7 +44,7 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 
 	framework.AllocateVolume(t, grpcClient, volumeID, collection)
 
-	// ── step 1: populate the volume ───────────────────────────────────────
+	// populate
 	type needleSpec struct {
 		fid     string
 		payload []byte
@@ -90,16 +65,13 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 		}
 	}
 
-	// ── step 2: encode ────────────────────────────────────────────────────
+	// encode — every shard lands on the .dat's disk
 	if _, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
 		VolumeId:   volumeID,
 		Collection: collection,
 	}); err != nil {
 		t.Fatalf("VolumeEcShardsGenerate: %v", err)
 	}
-
-	// After generation every shard file plus .ecx / .ecj / .vif should sit
-	// on the disk that owns the .dat (disk 0 for the first allocation).
 	postGenerateLayout := scanShardLayout(t, dataDirs, collection, volumeID)
 	if len(postGenerateLayout[0]) != erasure_coding.TotalShardsCount {
 		t.Fatalf("post-generate: expected all %d shards on disk 0, got per-disk layout %v",
@@ -108,14 +80,14 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	if len(postGenerateLayout[1]) != 0 {
 		t.Fatalf("post-generate: disk 1 should be empty, got %v", postGenerateLayout[1])
 	}
-	// .ecj is created lazily on first EC delete, so it is not asserted here.
+	// .ecj is created lazily on first EC delete
 	for _, side := range []string{".ecx", ".vif"} {
 		if !fileExistsIn(dataDirs[0], collection, volumeID, side) {
 			t.Fatalf("post-generate: expected %s on disk 0", side)
 		}
 	}
 
-	// ── step 3: mount + verify HTTP reads go through the EC path ─────────
+	// mount + read via EC
 	if _, err := grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
 		VolumeId:   volumeID,
 		Collection: collection,
@@ -127,7 +99,7 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 		verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload, "after-mount")
 	}
 
-	// ── step 4: drop the original .dat so the EC shards are authoritative ─
+	// drop the original volume so EC shards are the only source
 	if _, err := grpcClient.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
 		VolumeId: volumeID,
 	}); err != nil {
@@ -140,12 +112,8 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 		verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload, "after-dat-delete")
 	}
 
-	// ── step 5: redistribute shards 0..6 onto disk 1, restart, reconcile ──
+	// move half the shards onto disk 1, leaving .ecx on disk 0
 	clusterHarness.StopVolumeServer()
-
-	// keep the upper-half shards on disk 0 (alongside .ecx / .ecj / .vif);
-	// move the lower-half shards to disk 1, which becomes the orphan-shard
-	// disk that reconcileEcShardsAcrossDisks must pick up on next start.
 	const splitAt = 7
 	for shard := 0; shard < splitAt; shard++ {
 		movedFile(t, dataDirs[0], dataDirs[1], collection, volumeID, erasure_coding.ToExt(shard))
@@ -165,17 +133,11 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	}
 
 	clusterHarness.RestartVolumeServer()
-
-	// Re-dial — the previous gRPC connection is dead after the restart.
 	conn2, grpcClient2 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn2.Close()
 
-	// The filesystem layout is the ground-truth check that the cross-disk
-	// load happened correctly: shard files must still be where we put them
-	// and no disk should have spuriously deleted any. (VolumeEcShardsInfo
-	// only walks one DiskLocation's ecVolumes map, so it cannot be used to
-	// count shards across the whole store — issue #9212's point is that the
-	// master must aggregate the heartbeats from both per-disk EcVolumes.)
+	// VolumeEcShardsInfo only sees one disk's EcVolume; filesystem layout is
+	// the ground truth for the whole-store shard count.
 	postReconcileLayout := scanShardLayout(t, dataDirs, collection, volumeID)
 	if got, want := totalShardsInLayout(postReconcileLayout), erasure_coding.TotalShardsCount; got != want {
 		t.Fatalf("post-reconcile: total shards on disk mismatch: got %d, want %d (layout=%v)", got, want, postReconcileLayout)
@@ -186,28 +148,16 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	if got, want := len(postReconcileLayout[1]), splitAt; got != want {
 		t.Fatalf("post-reconcile: disk 1 shard count drift: got %d, want %d (layout=%v)", got, want, postReconcileLayout)
 	}
-
-	// Each per-disk EcVolume the reconcile path produced should show up
-	// via FindEcVolume on its own DiskLocation. We probe disk 1's view
-	// indirectly through VolumeEcShardsInfo against the (already loaded)
-	// shards on disk 0 — the call must succeed because at least one
-	// DiskLocation has an EcVolume for this vid.
 	if _, err := grpcClient2.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
 		VolumeId: volumeID,
 	}); err != nil {
 		t.Fatalf("VolumeEcShardsInfo after redistribute restart: %v", err)
 	}
-
-	// Reads must still work — shards 0..6 are now served by the orphan-disk
-	// EcVolume bound to disk 0's .ecx via cross-disk reconcile, while shards
-	// 7..13 stay native to disk 0. The volume server's read path consults
-	// the master for shard locations and falls back to remote/loopback +
-	// parity recovery, so every needle should still come back intact.
 	for _, n := range needles {
 		verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload, "after-cross-disk-reconcile")
 	}
 
-	// ── step 6: blob delete on a cross-disk layout ────────────────────────
+	// blob delete on a cross-disk layout
 	deletedNeedle := needles[2]
 	deleteReq, err := http.NewRequest(http.MethodDelete, clusterHarness.VolumeAdminURL()+"/"+deletedNeedle.fid, nil)
 	if err != nil {
@@ -223,8 +173,6 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	if readResp.StatusCode == http.StatusOK {
 		t.Fatalf("HTTP GET on deleted EC needle expected non-200, got %d", readResp.StatusCode)
 	}
-	// All other needles must still come back intact, confirming deletion
-	// did not corrupt the cross-disk index.
 	for _, n := range needles {
 		if n.fid == deletedNeedle.fid {
 			continue
@@ -232,12 +180,9 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 		verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload, "after-blob-delete")
 	}
 
-	// ── step 7: repair a shard whose neighbours live on a sibling disk ────
+	// rebuild a shard whose inputs are split across two disks
 	clusterHarness.StopVolumeServer()
-	// shard 9 sits on disk 0 after the split; deleting it forces rebuild
-	// to read input shards from BOTH disks (disk 1 holds 0..6, disk 0
-	// holds the remaining 7..13).
-	const repairTargetShard = 9
+	const repairTargetShard = 9 // sits on disk 0 after the split
 	shardPath := filepath.Join(dataDirs[0], shardFileName(collection, volumeID, repairTargetShard))
 	if _, statErr := os.Stat(shardPath); statErr != nil {
 		t.Fatalf("repair setup: shard %d not on disk 0 (%s): %v", repairTargetShard, shardPath, statErr)
@@ -264,8 +209,6 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 		t.Fatalf("rebuild did not restore shard %d on disk 0 (%s): %v", repairTargetShard, shardPath, statErr)
 	}
 
-	// The remaining (non-deleted) needles must still be readable now that
-	// the shard inventory is whole again.
 	if _, err := grpcClient3.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
 		VolumeId:   volumeID,
 		Collection: collection,
@@ -281,22 +224,10 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	}
 }
 
-// TestEcPartialShardsOnSiblingDiskCleanedUpOnRestart is the end-to-end
-// reproducer for issue #9478. The unit test in
-// weed/storage/store_ec_hybrid_repro_test.go covers the per-disk loader and
-// the Store-level prune call directly. This test drives the same scenario
-// through a real volume server restart:
-//
-//   - encode a regular volume on disk 0 so a healthy .dat / .idx pair lives
-//     on disk 0;
-//   - stop the volume server, plant the on-disk artefacts of an interrupted
-//     EC encode on disk 1 (one shard file plus .ecx / .ecj / .vif, NO .dat
-//     next to them);
-//   - restart the volume server and verify that the per-disk loader's
-//     partial-shard mount is undone by pruneIncompleteEcWithSiblingDat —
-//     the partial files on disk 1 are removed, the healthy .dat on disk 0
-//     is untouched, and the volume can still serve every needle uploaded
-//     before the encode mishap.
+// TestEcPartialShardsOnSiblingDiskCleanedUpOnRestart seeds a healthy .dat on
+// disk 0, plants the on-disk footprint of an interrupted EC encode on disk 1
+// (one shard plus .ecx / .ecj / .vif, no .dat), and asserts the startup prune
+// wipes disk 1 without touching disk 0.
 func TestEcPartialShardsOnSiblingDiskCleanedUpOnRestart(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -332,22 +263,17 @@ func TestEcPartialShardsOnSiblingDiskCleanedUpOnRestart(t *testing.T) {
 		t.Fatalf("seed upload expected 201, got %d", upResp.StatusCode)
 	}
 
-	// Verify .dat is on disk 0 — the planted partial EC will go on disk 1
-	// so the prune path is triggered by a sibling-disk healthy .dat.
 	datPath := filepath.Join(dataDirs[0], datFileName(collection, volumeID))
 	datInfo, err := os.Stat(datPath)
 	if err != nil {
 		t.Fatalf("seed setup: .dat must exist on disk 0 (%s): %v", datPath, err)
 	}
+	// prune's size guard refuses cleanup if the sibling .dat looks truncated
 	if datInfo.Size() == 0 {
-		t.Fatalf("seed setup: .dat on disk 0 is zero bytes — the prune safety guard would refuse to cleanup")
+		t.Fatalf("seed setup: .dat on disk 0 is zero bytes")
 	}
 
 	clusterHarness.StopVolumeServer()
-
-	// Plant a partial EC encode on disk 1: one shard (sized as if a real
-	// encode had produced it for the actual .dat on disk 0) plus .ecx /
-	// .ecj / .vif. No .dat on disk 1, mirroring the issue 9478 layout.
 	plantPartialEc(t, dataDirs[1], collection, volumeID, partialShard, datInfo.Size())
 
 	preRestartLayout := scanShardLayout(t, dataDirs, collection, volumeID)
@@ -363,52 +289,34 @@ func TestEcPartialShardsOnSiblingDiskCleanedUpOnRestart(t *testing.T) {
 	conn2, grpcClient2 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn2.Close()
 
-	// Give the volume server a beat to finish its startup passes (per-disk
-	// loader, prune, cross-disk reconcile). Status responds before all
-	// passes finish, so probe with a polled gRPC check.
+	// the volume admin port answers before the startup prune finishes
 	postPruneLayout := waitForLayout(t, dataDirs, collection, volumeID, func(layout map[int][]int) bool {
 		return len(layout[1]) == 0
 	}, 10*time.Second)
 
-	// The partial shard, .ecx and .ecj on disk 1 must be wiped.
-	// (.vif is intentionally left behind by removeEcVolumeFiles — it has
-	// no index files to anchor it so the next startup simply ignores it,
-	// and the existing unit test in store_ec_hybrid_repro_test.go matches
-	// that scope.)
 	if len(postPruneLayout[1]) != 0 {
-		t.Fatalf("issue 9478: partial EC shards survived restart on disk 1: %v", postPruneLayout[1])
+		t.Fatalf("partial EC shards survived restart on disk 1: %v", postPruneLayout[1])
 	}
+	// .vif is intentionally left behind: with no .ecx / shard to anchor it,
+	// the next startup ignores it.
 	for _, side := range []string{".ecx", ".ecj"} {
 		if fileExistsIn(dataDirs[1], collection, volumeID, side) {
-			t.Fatalf("issue 9478: %s survived prune on disk 1", side)
+			t.Fatalf("%s survived prune on disk 1", side)
 		}
 	}
-
-	// And the healthy .dat on disk 0 must be untouched.
 	if !fileExistsIn(dataDirs[0], collection, volumeID, ".dat") {
-		t.Fatalf("issue 9478: prune wiped the healthy .dat on disk 0")
+		t.Fatalf("prune wiped the healthy .dat on disk 0")
 	}
 	if !fileExistsIn(dataDirs[0], collection, volumeID, ".idx") {
-		t.Fatalf("issue 9478: prune wiped the healthy .idx on disk 0")
+		t.Fatalf("prune wiped the healthy .idx on disk 0")
 	}
-
-	// The volume must not be reported as an EC volume anymore — that was
-	// the master-side symptom in issue 9478 (a regular replica and an EC
-	// shard set for the same vid heartbeated at the same time). With the
-	// prune working, FindEcVolume returns "not found".
-	_, err = grpcClient2.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
+	if _, err = grpcClient2.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
 		VolumeId: volumeID,
-	})
-	if err == nil {
-		t.Fatalf("issue 9478: VolumeEcShardsInfo unexpectedly returned success after prune; the partial EC mount should have been undone")
+	}); err == nil {
+		t.Fatalf("VolumeEcShardsInfo returned success after prune; the partial EC mount should be gone")
 	}
-
-	// And the original needle must still be readable through the regular
-	// volume on disk 0.
-	verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), needleFid, needlePayload, "after-9478-prune")
+	verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), needleFid, needlePayload, "after-prune")
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────
 
 func bytesOfLen(n int, seed byte) []byte {
 	out := make([]byte, n)
@@ -452,7 +360,6 @@ func fileExistsIn(dir, collection string, volumeID uint32, ext string) bool {
 	return err == nil
 }
 
-// scanShardLayout returns a per-disk map of shard IDs found on each data dir.
 func scanShardLayout(t testing.TB, dataDirs []string, collection string, volumeID uint32) map[int][]int {
 	t.Helper()
 	out := make(map[int][]int, len(dataDirs))
@@ -482,8 +389,6 @@ func waitForLayout(t testing.TB, dataDirs []string, collection string, volumeID 
 	return layout
 }
 
-// movedFile relocates one file between two data directories so the next
-// volume-server startup observes the new layout.
 func movedFile(t testing.TB, fromDir, toDir, collection string, volumeID uint32, ext string) {
 	t.Helper()
 	name := sideFileName(collection, volumeID, ext)
@@ -492,14 +397,6 @@ func movedFile(t testing.TB, fromDir, toDir, collection string, volumeID uint32,
 	if err := os.Rename(src, dst); err != nil {
 		t.Fatalf("move %s → %s: %v", src, dst, err)
 	}
-}
-
-func shardIDsFromInfo(resp *volume_server_pb.VolumeEcShardsInfoResponse) map[uint32]struct{} {
-	out := make(map[uint32]struct{})
-	for _, s := range resp.GetEcShardInfos() {
-		out[s.GetShardId()] = struct{}{}
-	}
-	return out
 }
 
 func totalShardsInLayout(layout map[int][]int) int {
@@ -536,13 +433,8 @@ func verifyHTTPRead(t testing.TB, client *http.Client, base, fid string, want []
 	}
 }
 
-// plantPartialEc creates the file footprint of an interrupted EC encode in
-// dir — exactly one shard file (sized to match the planted datFileSize so
-// pruneIncompleteEcWithSiblingDat's size guard treats the sibling .dat as
-// credible) plus the .ecx / .ecj / .vif side files. No .dat is written here,
-// which is what makes the layout look like a distributed EC volume to the
-// per-disk loader. Mirrors the layout produced by the unit test in
-// weed/storage/store_ec_hybrid_repro_test.go.
+// plantPartialEc writes the footprint of an interrupted EC encode (one shard
+// sized for datFileSize, plus .ecx / .ecj / .vif, no .dat) into dir.
 func plantPartialEc(t testing.TB, dir, collection string, volumeID uint32, shardID int, datFileSize int64) {
 	t.Helper()
 	shardPath := filepath.Join(dir, shardFileName(collection, volumeID, shardID))
@@ -579,10 +471,7 @@ func plantPartialEc(t testing.TB, dir, collection string, volumeID uint32, shard
 	}
 }
 
-// plantedShardSize duplicates the small subset of calculateExpectedShardSize
-// (weed/storage/disk_location_ec.go) the planter needs, using the public
-// constants from erasure_coding so we do not reach into unexported package
-// internals from this integration test.
+// mirrors calculateExpectedShardSize in weed/storage/disk_location_ec.go
 func plantedShardSize(datFileSize int64) int64 {
 	const dataShards = int64(erasure_coding.DataShardsCount)
 	largeBatch := int64(erasure_coding.ErasureCodingLargeBlockSize) * dataShards
