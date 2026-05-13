@@ -519,23 +519,6 @@ func (h *Handler) parseLeaveGroupRequest(data []byte, apiVersion uint16) (*Leave
 	return req, nil
 }
 
-func (h *Handler) buildHeartbeatResponse(response HeartbeatResponse) []byte {
-	result := make([]byte, 0, 12)
-
-	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
-	// Do NOT include it in the response body
-
-	// Error code (2 bytes)
-	errorCodeBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
-	result = append(result, errorCodeBytes...)
-
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
-
-	return result
-}
-
 func (h *Handler) buildHeartbeatResponseV(response HeartbeatResponse, apiVersion uint16) []byte {
 	isFlexible := IsFlexibleVersion(12, apiVersion) // Heartbeat API key = 12
 	result := make([]byte, 0, 16)
@@ -715,15 +698,6 @@ func (h *Handler) buildLeaveGroupFullResponse(response LeaveGroupResponse) []byt
 	}
 
 	return result
-}
-
-func (h *Handler) buildHeartbeatErrorResponse(correlationID uint32, errorCode int16) []byte {
-	response := HeartbeatResponse{
-		CorrelationID: correlationID,
-		ErrorCode:     errorCode,
-	}
-
-	return h.buildHeartbeatResponse(response)
 }
 
 func (h *Handler) buildHeartbeatErrorResponseV(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
