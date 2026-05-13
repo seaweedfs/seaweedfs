@@ -348,6 +348,20 @@ func TestDescriptor_AdminRuntimeDefaultsDailyCadence(t *testing.T) {
 	assert.Equal(t, int32(1), d.AdminRuntimeDefaults.MaxJobsPerDetection)
 }
 
+func TestDescriptor_AdminRuntimeDefaultsEnabledByDefault(t *testing.T) {
+	// S3 lifecycle is a standard bucket feature — operators set
+	// PutBucketLifecycleConfiguration expecting it to actually fire.
+	// Default-off would silently retain data past declared expiration
+	// until an operator notices and flips it on. Document the choice
+	// here so a future change to disabled-by-default fails the test
+	// and surfaces a conscious revisit.
+	h := NewHandler(nil)
+	d := h.Descriptor()
+	require.NotNil(t, d.AdminRuntimeDefaults)
+	assert.True(t, d.AdminRuntimeDefaults.Enabled,
+		"s3_lifecycle defaults must enable the scheduler so configured rules fire without operator opt-in")
+}
+
 // ---------- Execute ----------
 
 // recordingExecSender captures Execute-side messages. The Execute path
