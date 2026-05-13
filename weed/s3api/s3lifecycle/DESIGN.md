@@ -260,22 +260,6 @@ Worker config:
 - **Identity drift** (object overwritten between event and delete). Handled by `LifecycleDelete` RPC's identity-CAS, which returns `NOOP_RESOLVED` for stale events. The algorithm dispatches optimistically and lets the server filter.
 - **Cold start, rule edit, partition flip.** All route into the recovery branch. The walker over `engine.RecoveryView(snap)` catches already-due objects across the full rule set, then the cursor rewinds (rule edit) or stays at the cold-start floor.
 
-## Implementation history
-
-Phases were sequenced so each could ship independently. All five phases are merged; the codebase reflects the as-built model above.
-
-| Phase | What | Tracking |
-|---|---|---|
-| 1 | `noncurrent_since` on version entries | `feat(s3): stamp noncurrent_since on versioned demotions` |
-| 2 | Daily-replay worker (parallel to streaming, behind flag) | Initial dailyrun package |
-| 3 | Cluster rate limit allocation | PR #9456 |
-| 4 | Walker + recovery branch + engine surface | PR #9457, #9471 |
-| 5 | Switch default, delete streaming | PR #9466 |
-| 5a | Walker dispatch fix (ABORT_MPU + cursor saves + floor bug) | PR #9477 |
-| 5b | Single meta-log subscription per pass | PR #9481 |
-| 5c | Walker throttle via `WalkerInterval` | PR #9484, #9485 |
-| 5d | Operator visibility gauges + heartbeat | PR #9486 |
-
 ## Future work
 
 Tracked as optimizations rather than blockers:
