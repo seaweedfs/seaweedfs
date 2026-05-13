@@ -189,9 +189,58 @@ func Run(ctx context.Context, cfg Config) error {
 	if first != nil {
 		status = "error"
 	}
-	glog.V(0).Infof("daily_run: status=%s shards=%d errors=%d duration=%s",
-		status, len(cfg.Shards), errCount, time.Since(startedAt).Round(time.Millisecond))
+	// Summary line is parsed by operator scripts and CI log greps; keep
+	// the existing key=value tokens stable and append new ones at the
+	// end. cursor_lag_max / walked_max_age are the per-pass observability
+	// floor — for finer detail, scrape the per-shard gauges.
+	lagSummary := summarizeShardCursorLag(ctx, cfg, runNow)
+	glog.V(0).Infof("daily_run: status=%s shards=%d errors=%d duration=%s %s",
+		status, len(cfg.Shards), errCount, time.Since(startedAt).Round(time.Millisecond), lagSummary)
 	return first
+}
+
+// summarizeShardCursorLag walks the persisted cursors one more time
+// after the run, computes the worst (largest) lag and walker-age across
+// the cfg.Shards set, and renders them as key=value tokens. Returns
+// a string suitable for appending to the heartbeat line. Load errors
+// short-circuit to a marker token so the heartbeat doesn't lie about
+// the state.
+func summarizeShardCursorLag(ctx context.Context, cfg Config, runNow time.Time) string {
+	var (
+		maxLag     time.Duration
+		maxAge     time.Duration
+		anyCursor  bool
+		anyWalked  bool
+	)
+	for _, sh := range cfg.Shards {
+		c, found, err := cfg.Persister.Load(ctx, sh)
+		if err != nil || !found {
+			continue
+		}
+		if c.TsNs > 0 {
+			lag := runNow.Sub(time.Unix(0, c.TsNs))
+			if !anyCursor || lag > maxLag {
+				maxLag = lag
+				anyCursor = true
+			}
+		}
+		if c.LastWalkedNs > 0 {
+			age := runNow.Sub(time.Unix(0, c.LastWalkedNs))
+			if !anyWalked || age > maxAge {
+				maxAge = age
+				anyWalked = true
+			}
+		}
+	}
+	lagStr := "cursor_lag_max=cold"
+	if anyCursor {
+		lagStr = fmt.Sprintf("cursor_lag_max=%s", maxLag.Round(time.Second))
+	}
+	ageStr := "walked_max_age=cold"
+	if anyWalked {
+		ageStr = fmt.Sprintf("walked_max_age=%s", maxAge.Round(time.Second))
+	}
+	return lagStr + " " + ageStr
 }
 
 // computeGlobalStartTsNs scans every shard's persisted cursor and
@@ -427,7 +476,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			}
 		}
 		_ = walkedThisPass // empty-replay branch returns; no downstream walker.
-		return cfg.Persister.Save(ctx, shardID, Cursor{
+		return saveCursorAndPublish(ctx, cfg.Persister, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
 			PromotedHash: promoted,
@@ -464,7 +513,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 				PromotedHash: promoted,
 				LastWalkedNs: lastWalkedNs,
 			}
-			return cfg.Persister.Save(ctx, shardID, next)
+			return saveCursorAndPublish(ctx, cfg.Persister, shardID, next)
 		}
 		// Cold start: keep TsNs=0 so the drain below floors to
 		// runNow - maxTTL and the cursor is saved fresh after the run.
@@ -513,7 +562,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer saveCancel()
 	if drainErr != nil {
-		_ = cfg.Persister.Save(saveCtx, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
+		_ = saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
 		// passCtx timeout is the expected end-of-pass for an idle
 		// subscription; not a real error. Other drain errors still
 		// propagate.
@@ -523,12 +572,28 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
 	}
 
-	return cfg.Persister.Save(saveCtx, shardID, Cursor{
+	return saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{
 		TsNs:         lastOK,
 		RuleSetHash:  rsh,
 		PromotedHash: promoted,
 		LastWalkedNs: lastWalkedNs,
 	})
+}
+
+// saveCursorAndPublish persists the cursor and, on success, updates the
+// per-shard Prometheus gauges so operators can read cursor lag
+// (now - cursor_min_ts_ns) and walker freshness (now - last_walked_ns)
+// without having to read the cursor file directly. On save failure the
+// gauges are left untouched: their last successful-save value is more
+// useful than a value that doesn't match what's on the filer.
+func saveCursorAndPublish(ctx context.Context, p CursorPersister, shardID int, c Cursor) error {
+	if err := p.Save(ctx, shardID, c); err != nil {
+		return err
+	}
+	label := strconv.Itoa(shardID)
+	stats.S3LifecycleCursorMinTsNs.WithLabelValues(label).Set(float64(c.TsNs))
+	stats.S3LifecycleDailyRunLastWalkedNs.WithLabelValues(label).Set(float64(c.LastWalkedNs))
+	return nil
 }
 
 // walkerDue answers the persisted-state throttle: has enough time
