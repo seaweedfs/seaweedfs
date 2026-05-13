@@ -6,7 +6,7 @@ High-level overview of the lifecycle worker. For implementation detail, see [`we
 
 The lifecycle worker runs as a scheduled job. Each invocation:
 
-```
+```text
                 ┌──────────────────────────────────────────┐
                 │   dailyrun.Run (one filer subscription)  │
                 │                                          │
@@ -34,8 +34,8 @@ Once every shard's goroutine returns, the worker tears down the subscription, em
 
 Each shard owns a cursor file on the filer at `/etc/s3/lifecycle/daily-cursors/shard-NN.json`:
 
-```
-TsNs          — last meta-log event whose matches all dispatched successfully
+```text
+TsNs          — last meta-log event for which all matches dispatched successfully
 RuleSetHash   — ReplayContentHash of the rule set when this cursor was written
 PromotedHash  — PromotedHash(retentionWindow) at write time
 LastWalkedNs  — wall-clock of the last successful walker fire
@@ -79,7 +79,7 @@ The walker throttle decouples walker firing from invocation rate. CI invokes the
 
 Cluster-wide cap allocated per worker at job dispatch:
 
-```
+```text
 per_worker_rate = cluster_deletes_per_second / count(active_s3_lifecycle_workers)
 ```
 

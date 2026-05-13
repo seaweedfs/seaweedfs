@@ -18,7 +18,10 @@ These pages are the source of truth for the [SeaweedFS GitHub wiki](https://gith
 # one-time
 git clone https://github.com/seaweedfs/seaweedfs.wiki.git ~/seaweedfs-wiki
 
-# after editing files here
+# After editing files here, run the cp commands from the repository
+# root (paths below are repo-root-relative). cd up first if you're
+# editing in docs/wiki/s3-lifecycle/.
+cd "$(git rev-parse --show-toplevel)"
 cp docs/wiki/s3-lifecycle/Home.md            ~/seaweedfs-wiki/S3-Lifecycle.md
 cp docs/wiki/s3-lifecycle/Operator-Guide.md  ~/seaweedfs-wiki/S3-Lifecycle-Operator-Guide.md
 cp docs/wiki/s3-lifecycle/Monitoring.md      ~/seaweedfs-wiki/S3-Lifecycle-Monitoring.md

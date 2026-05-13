@@ -97,8 +97,8 @@ After applying a rule:
 
 For testing without waiting, the `weed shell` command supports manual invocation:
 
-```
-weed shell -master <addr>
+```text
+weed shell -master <host:http_port.grpc_port>
 > s3.lifecycle.run-shard -shards 0-15 -s3 <s3-host:port> -refresh 1s -runtime 30s
 ```
 
@@ -108,7 +108,7 @@ This is exactly what the CI integration suite uses. See [test/s3/lifecycle/](htt
 
 The cluster delete cap is allocated per-worker at job dispatch:
 
-```
+```text
 per_worker_rate = cluster_deletes_per_second / count(active_s3_lifecycle_workers)
 ```
 

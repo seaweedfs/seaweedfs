@@ -10,7 +10,7 @@ All labels are in `weed/stats/metrics.go` under the `s3_lifecycle` subsystem.
 
 | Metric | Labels | What |
 |---|---|---|
-| `s3_lifecycle_cursor_min_ts_ns` | `shard` | UnixNano of the last meta-log event whose matches all dispatched successfully on this shard |
+| `s3_lifecycle_cursor_min_ts_ns` | `shard` | UnixNano of the last meta-log event on this shard for which all matches dispatched successfully |
 | `s3_lifecycle_daily_run_last_walked_ns` | `shard` | UnixNano of the most recent successful walker fire |
 
 Derived queries:
@@ -37,7 +37,7 @@ Zero values mean "not started yet" — distinct from "0s caught up". The heartbe
 | `s3_lifecycle_bootstrap_dispatch_total` | `bucket`, `kind` | Walker dispatch counter |
 | `s3_lifecycle_metadata_only_total` | `bucket`, `rule_hash` | Successful deletes that took the metadata-only path |
 
-`outcome` values: `DONE`, `NOOP_RESOLVED`, `SKIPPED_OBJECT_LOCK`, `RETRY_LATER`, `BLOCKED`, `LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED`, `RPC_ERROR`. The first three are success outcomes that advance the cursor; the others halt the run.
+`outcome` values: `DONE`, `NOOP_RESOLVED`, `SKIPPED_OBJECT_LOCK`, `RETRY_LATER`, `BLOCKED`, `LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED`, `RPC_ERROR`. The first three are success outcomes that advance the cursor; the others halt the run. `LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED` is the proto zero-value — a healthy worker / server pair should never emit it; a non-zero count there indicates an internal error or a version mismatch between worker and server.
 
 ### Histograms
 
@@ -50,7 +50,7 @@ Zero values mean "not started yet" — distinct from "0s caught up". The heartbe
 
 Emitted at the end of every `dailyrun.Run` invocation, at `glog.V(0)` (default verbosity):
 
-```
+```text
 daily_run: status=ok shards=16 errors=0 duration=7s cursor_lag_max=2m walked_max_age=3m
 ```
 
@@ -67,7 +67,7 @@ Tokens are space-separated `key=value` for grep / log-aggregator filtering. Stab
 
 A healthy production heartbeat looks like:
 
-```
+```text
 daily_run: status=ok shards=16 errors=0 duration=12.3s cursor_lag_max=45s walked_max_age=58m
 ```
 
@@ -87,15 +87,17 @@ Read it as: 16 shards finished cleanly in 12 seconds; the worst-case replay lag 
 ## Suggested alerts
 
 ```yaml
+# `> 0` filters out shards whose gauge is still the proto zero (never
+# started); without it, every fresh-install heartbeat triggers the alert.
 - alert: S3LifecycleCursorLagHigh
-  expr: max(time() * 1e9 - s3_lifecycle_cursor_min_ts_ns) / 1e9 > 3600
+  expr: max(time() * 1e9 - (s3_lifecycle_cursor_min_ts_ns > 0)) / 1e9 > 3600
   for: 30m
   annotations:
     summary: "S3 lifecycle replay lag > 1h on shard {{ $labels.shard }}"
     runbook: https://github.com/seaweedfs/seaweedfs/wiki/S3-Lifecycle-Troubleshooting#stuck-cursor
 
 - alert: S3LifecycleWalkerStuck
-  expr: max(time() * 1e9 - s3_lifecycle_daily_run_last_walked_ns) / 1e9 > 86400
+  expr: max(time() * 1e9 - (s3_lifecycle_daily_run_last_walked_ns > 0)) / 1e9 > 86400
   for: 1h
   annotations:
     summary: "S3 lifecycle walker hasn't run in > 24h"

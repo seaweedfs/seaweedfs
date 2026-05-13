@@ -112,16 +112,18 @@ Fan-out cancels the reader on the first `ev.TsNs > runNow` (meta-log events arri
 
 ## Action kinds and dispatch paths
 
+Table uses the S3-spec rule names (what operators type in lifecycle XML). The corresponding engine constants in `weed/s3api/s3lifecycle/action_kind.go` are `ActionKindExpirationDays`, `ActionKindNoncurrentDays`, `ActionKindAbortMPU`, `ActionKindExpirationDate`, `ActionKindExpiredDeleteMarker`, `ActionKindNewerNoncurrent` — same one-to-one mapping, shorter spelling.
+
 | ActionKind | Trigger | Due time | Path | Early-stop in replay? |
 |---|---|---|---|---|
 | `ExpirationDays` | Latest-version PUT | `ev.TsNs + r.ExpirationDays` | Replay | Yes |
 | `NoncurrentDays` | Demotion (next PUT for same key) | `entry.NoncurrentSince + r.NoncurrentDays` | Replay | Yes |
-| `AbortMPU` | MPU init | `mpu_init.TsNs + r.AbortMPUDaysAfterInitiation` | Replay | Yes |
+| `AbortIncompleteMultipartUpload` | MPU init | `mpu_init.TsNs + r.AbortMPUDaysAfterInitiation` | Replay | Yes |
 | `ExpirationDate` | Latest-version PUT, fires on `now >= r.ExpirationDate` | `r.ExpirationDate` (constant) | Walker | n/a |
-| `ExpiredDeleteMarker` | Delete marker with `NumVersions == 1` | "now if orphaned, else never" | Walker | n/a |
-| `NewerNoncurrent` | Version becomes noncurrent AND total noncurrents > `r.NewerNoncurrentVersions` | "now if over the cap, else never" | Walker | n/a |
+| `ExpiredObjectDeleteMarker` | Delete marker with `NumVersions == 1` | "now if orphaned, else never" | Walker | n/a |
+| `NewerNoncurrentVersions` | Version becomes noncurrent AND total noncurrents > `r.NewerNoncurrentVersions` | "now if over the cap, else never" | Walker | n/a |
 
-`ExpiredDeleteMarker` and `NewerNoncurrent` are walker-only because their due-time depends on current sibling state, not on any event's TsNs. The `done` early-stop in replay can't engage — there's nothing event-time-monotonic to early-stop on.
+`ExpiredObjectDeleteMarker` and `NewerNoncurrentVersions` are walker-only because their due-time depends on current sibling state, not on any event's TsNs. The `done` early-stop in replay can't engage — there's nothing event-time-monotonic to early-stop on.
 
 ## Cursor
 
@@ -204,7 +206,7 @@ Per-shard Prometheus gauges (`weed/stats/metrics.go`):
 
 Heartbeat log line, emitted once per `Run()`:
 
-```
+```text
 daily_run: status=ok shards=16 errors=0 duration=7s cursor_lag_max=2h walked_max_age=3m
 ```
 

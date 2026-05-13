@@ -20,7 +20,7 @@ sum by (outcome) (rate(s3_lifecycle_dispatch_total[5m]))
 
 Look at worker log for the offending event. The dispatcher logs at `glog.V(1)`:
 
-```
+```text
 daily_run: RETRY_LATER on <bucket>/<key> EXPIRATION_DAYS
 daily_run: BLOCKED on <bucket>/<key> NONCURRENT_DAYS
 daily_run: transport error on <bucket>/<key> ABORT_MPU: <err>
@@ -35,7 +35,7 @@ daily_run: transport error on <bucket>/<key> ABORT_MPU: <err>
 | `BLOCKED SKIPPED_OBJECT_LOCK` | Object is locked (legal hold, retention) | Wait for lock to expire, or remove lock manually. Cursor advances normally — this isn't stuck. |
 | `RPC_ERROR` (sustained) | Transport / network issue | Check S3 server health and filer reachability |
 
-The worker doesn't auto-skip past a stuck event. If you've verified the event is malformed and want to skip it, edit the cursor file directly (`/etc/s3/lifecycle/daily-cursors/shard-NN.json`), advancing `ts_ns` past the bad event's TsNs. Restart the worker.
+The worker doesn't auto-skip past a stuck event. If you've verified the event is malformed and want to skip it: first **pause the `s3_lifecycle` job in the admin UI** so the worker isn't running mid-edit, then edit the cursor file directly (`/etc/s3/lifecycle/daily-cursors/shard-NN.json`), advancing `ts_ns` past the bad event's TsNs. Resume the job. Editing while the worker is active would race with the worker's own save and either lose your change or overwrite the persisted progress.
 
 ## Walker stuck (no progress on walker-only rules)
 
@@ -66,8 +66,8 @@ For testing, the in-repo integration suite uses a trick: backdate the entry's `M
 
 For ad-hoc verification, invoke the worker manually:
 
-```
-weed shell -master <addr>
+```text
+weed shell -master <host:http_port.grpc_port>
 > s3.lifecycle.run-shard -shards 0-15 -s3 <s3-host:port> -refresh 1s -runtime 30s
 ```
 
@@ -98,8 +98,8 @@ This runs the same code path as the scheduled worker, but driven from your shell
 
 Cursors live at `/etc/s3/lifecycle/daily-cursors/shard-NN.json` on the filer. Read with the filer's `read` API or `weed shell`:
 
-```
-weed shell -master <addr>
+```text
+weed shell -master <host:http_port.grpc_port>
 > fs.cat /etc/s3/lifecycle/daily-cursors/shard-00.json
 ```
 
@@ -125,8 +125,8 @@ Manually editing the cursor is supported as an escape hatch but obviously breaks
 
 If a shard's cursor is corrupted or wedged in an unrecoverable state:
 
-```
-weed shell -master <addr>
+```text
+weed shell -master <host:http_port.grpc_port>
 > fs.rm /etc/s3/lifecycle/daily-cursors/shard-07.json
 ```
 
