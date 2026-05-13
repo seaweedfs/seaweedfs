@@ -225,22 +225,36 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		})
 	}
 
-	// Recovery: rule-content edit (RuleSetHash mismatch) or partition
-	// flip (PromotedHash mismatch). Walk the rewritten rule set so
-	// already-due objects fire before the cursor rewinds; then rewind
-	// and let the sliding meta-log replay catch up steady state.
-	if found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted) {
+	// Recovery / cold-start walker:
+	//   - found && hashes mismatch: rule edit or partition flip — walk
+	//     the rewritten rule set so already-due objects fire before the
+	//     cursor rewinds, then rewind for meta-log replay.
+	//   - !found: first run for this shard. Pre-existing objects PUT
+	//     before the rule was added live OUTSIDE the meta-log scan
+	//     window (TsNs > runNow - maxTTL) and would never replay; the
+	//     walker has to discover them. The streaming worker did this
+	//     via BucketBootstrapper; daily-replay needs the same.
+	mustWalkRecovery := found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted)
+	mustWalkColdStart := !found
+	if mustWalkRecovery || mustWalkColdStart {
 		if cfg.Walker != nil {
 			if werr := cfg.Walker(ctx, engine.RecoveryView(snap), shardID); werr != nil {
 				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
 			}
 		}
-		next := Cursor{
-			TsNs:         runNow.Add(-maxTTL).UnixNano(),
-			RuleSetHash:  rsh,
-			PromotedHash: promoted,
+		if mustWalkRecovery {
+			// Rule changed: rewind cursor so the sliding replay re-scans
+			// the new max-TTL window and the persisted hashes match the
+			// new rule set.
+			next := Cursor{
+				TsNs:         runNow.Add(-maxTTL).UnixNano(),
+				RuleSetHash:  rsh,
+				PromotedHash: promoted,
+			}
+			return cfg.Persister.Save(ctx, shardID, next)
 		}
-		return cfg.Persister.Save(ctx, shardID, next)
+		// Cold start: keep TsNs=0 so the drain below floors to
+		// runNow - maxTTL and the cursor is saved fresh after the run.
 	}
 
 	// Steady-state walker for walker-bound and scan_only-promoted rules.
