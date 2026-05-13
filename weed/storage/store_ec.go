@@ -418,14 +418,11 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 }
 
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
-	// shard may live on a sibling disk of this server
-	shard, found := ecVolume.FindEcVolumeShard(shardId)
+	// findEcShard walks every DiskLocation under ecVolumesLock; the
+	// shard may live on a sibling disk of this server.
+	_, shard, found := s.findEcShard(ecVolume.VolumeId, shardId)
 	if !found {
-		if _, sibling, ok := s.findEcShard(ecVolume.VolumeId, shardId); ok {
-			shard = sibling
-		} else {
-			return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
-		}
+		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
 	}
 
 	readBytes, err := shard.ReadAt(buf, offset)

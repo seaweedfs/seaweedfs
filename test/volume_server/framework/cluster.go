@@ -192,6 +192,9 @@ func (c *Cluster) RestartVolumeServer() {
 	c.testingTB.Helper()
 	stopProcess(c.volumeCmd)
 	c.volumeCmd = nil
+	// Rotate the log; absent on the first call after a clean start, which
+	// is fine — startVolume will create it. Any real filesystem failure
+	// surfaces immediately on the next os.Create in startVolume.
 	oldLog := filepath.Join(c.logsDir, "volume.log")
 	_ = os.Rename(oldLog, filepath.Join(c.logsDir, "volume.log.previous"))
 	if err := c.startVolume(c.volumeDataDirs); err != nil {
