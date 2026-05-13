@@ -120,10 +120,15 @@ impl EcVolume {
             shards.push(None);
         }
 
-        // Read expire_at_sec and version from .vif if present (matches Go's MaybeLoadVolumeInfo).
-        // Prefer the data dir; fall back to the idx dir for the
-        // cross-disk reconcile case (#9212 / #9244).
-        let (expire_at_sec, vif_version) = {
+        // Read expire_at_sec, version, and dat_file_size from .vif if
+        // present (matches Go's MaybeLoadVolumeInfo). Prefer the data
+        // dir; fall back to the idx dir for the cross-disk reconcile
+        // case (#9212 / #9244). `dat_file_size` is the source .dat
+        // size at encode time, used both by `locate_ec_shard_needle`
+        // for shard-size math and by the Store-level prune in
+        // `store_ec_reconcile.rs` to verify a sibling-disk .dat is
+        // plausibly the encoding source (#9478).
+        let (expire_at_sec, vif_version, vif_dat_file_size) = {
             let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
             if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
                 if let Ok(vif_info) =
@@ -134,12 +139,12 @@ impl EcVolume {
                     } else {
                         Version::current()
                     };
-                    (vif_info.expire_at_sec, ver)
+                    (vif_info.expire_at_sec, ver, vif_info.dat_file_size)
                 } else {
-                    (0, Version::current())
+                    (0, Version::current(), 0)
                 }
             } else {
-                (0, Version::current())
+                (0, Version::current(), 0)
             }
         };
 
@@ -150,7 +155,7 @@ impl EcVolume {
             dir_idx: dir_idx.to_string(),
             version: vif_version,
             shards,
-            dat_file_size: 0,
+            dat_file_size: vif_dat_file_size,
             data_shards,
             parity_shards,
             ecx_file: None,

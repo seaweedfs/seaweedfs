@@ -23,7 +23,19 @@ use tracing::{info, warn};
 use crate::storage::disk_location::{is_ec_shard_extension, parse_collection_volume_id_pub};
 use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::store::Store;
+use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::VolumeId;
+
+/// Sibling-disk `.dat` candidate for `prune_incomplete_ec_with_sibling_dat`.
+/// We record both the disk index and the file's size: the size is
+/// consulted before deleting any EC artefacts. A zero-byte or truncated
+/// `.dat` is not a credible fallback, and we'd rather leave the partial
+/// EC in place than wipe it based on garbage.
+#[derive(Clone, Copy, Debug)]
+struct DatOwnerInfo {
+    location: usize,
+    size: u64,
+}
 
 /// Key for orphan-shard reconciliation: collection + volume id. Two
 /// collections can re-use the same volume id, and we must only pair
@@ -160,9 +172,18 @@ impl Store {
     /// this server) also fall through unchanged because the `.dat`
     /// index never matches.
     ///
-    /// We don't have to push anything to a deleted-shards channel here:
-    /// the Rust heartbeat path in `server/heartbeat.rs` diffs the
-    /// current `ec_volumes` snapshot against the previous one each
+    /// Before deleting any EC files we also check that the sibling
+    /// `.dat` is plausibly the encoding source: at least
+    /// `SUPER_BLOCK_SIZE` bytes long, and — when the EC's `.vif`
+    /// recorded a non-zero source size in `dat_file_size` — at least
+    /// that many bytes. A zero-byte shell or a truncated `.dat` does
+    /// not justify wiping the partial EC, because that EC shard may
+    /// still combine usefully with shards on other servers in a
+    /// recoverable distributed-EC layout.
+    ///
+    /// We don't have to push anything to a deleted-shards channel
+    /// here: the Rust heartbeat path in `server/heartbeat.rs` diffs
+    /// the current `ec_volumes` snapshot against the previous one each
     /// tick, so the first heartbeat after the prune naturally emits a
     /// delete delta for whatever the per-disk pass had already
     /// reported.
@@ -196,20 +217,42 @@ impl Store {
                     collection: ev.collection.clone(),
                     vid: *vid,
                 };
-                let Some(owner_idx) = dat_owners.get(&key) else {
+                let Some(owner) = dat_owners.get(&key) else {
                     continue;
                 };
-                if *owner_idx == loc_idx {
+                if owner.location == loc_idx {
                     // Same-disk .dat is the job of
                     // DiskLocation::validate_ec_volume during the
                     // per-disk pass; don't second-guess it here.
+                    continue;
+                }
+                // Decide whether the sibling .dat is credible. Prefer
+                // the size baked into .vif at encode time; fall back
+                // to "at least a superblock" for old EC volumes whose
+                // .vif predates the field.
+                let required = if ev.dat_file_size > 0 {
+                    ev.dat_file_size as u64
+                } else {
+                    SUPER_BLOCK_SIZE as u64
+                };
+                if owner.size < required {
+                    warn!(
+                        volume_id = vid.0,
+                        collection = %ev.collection,
+                        directory = %loc.directory,
+                        shard_count,
+                        sibling_dir = %self.locations[owner.location].directory,
+                        sibling_dat_size = owner.size,
+                        required,
+                        "sibling .dat is smaller than the EC source size; leaving partial EC in place so distributed reconstruction is still possible (issue 9478)",
+                    );
                     continue;
                 }
                 victims.push(Victim {
                     loc_idx,
                     collection: ev.collection.clone(),
                     vid: *vid,
-                    dat_dir: self.locations[*owner_idx].directory.clone(),
+                    dat_dir: self.locations[owner.location].directory.clone(),
                     shard_count,
                 });
             }
@@ -244,18 +287,20 @@ impl Store {
     }
 
     /// Returns, for every `(collection, vid)`, the index of the first
-    /// disk on this store that holds a `.dat` for it. Used by
-    /// `prune_incomplete_ec_with_sibling_dat` so it can decide whether
-    /// partial EC artefacts on another disk are leftovers of an
-    /// interrupted encode.
+    /// disk on this store that holds a `.dat` for it plus the file's
+    /// size. Used by `prune_incomplete_ec_with_sibling_dat` so it can
+    /// decide whether partial EC artefacts on another disk are
+    /// leftovers of an interrupted encode AND whether the sibling
+    /// `.dat` is large enough to be a credible fallback.
     ///
-    /// Any `.dat` os::read_dir can see counts — including zero-byte
+    /// Any `.dat` `read_dir` can see is recorded — including zero-byte
     /// shells. Their mere presence means this volume was a regular
     /// volume on this server at some point, which rules out the
-    /// "distributed EC, no .dat anywhere" reading that would justify
-    /// keeping the partial shards.
-    fn index_dat_owners(&self) -> HashMap<EcKey, usize> {
-        let mut owners: HashMap<EcKey, usize> = HashMap::new();
+    /// "distributed EC, no .dat anywhere" reading. Whether the file is
+    /// actually usable is the caller's call, made by comparing this
+    /// size to the EC's recorded source size in `.vif`.
+    fn index_dat_owners(&self) -> HashMap<EcKey, DatOwnerInfo> {
+        let mut owners: HashMap<EcKey, DatOwnerInfo> = HashMap::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let Ok(read) = fs::read_dir(&loc.directory) else {
                 continue;
@@ -271,7 +316,15 @@ impl Store {
                 let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
                     continue;
                 };
-                owners.entry(EcKey { collection, vid }).or_insert(loc_idx);
+                let Ok(meta) = ent.metadata() else {
+                    continue;
+                };
+                owners
+                    .entry(EcKey { collection, vid })
+                    .or_insert(DatOwnerInfo {
+                        location: loc_idx,
+                        size: meta.len(),
+                    });
             }
         }
         owners
@@ -950,6 +1003,111 @@ mod tests {
         assert!(
             dat_path.exists(),
             "healthy .dat on sibling disk should be left alone",
+        );
+    }
+
+    /// Safety guard for `prune_incomplete_ec_with_sibling_dat`: when
+    /// the sibling `.dat` is smaller than the source size recorded in
+    /// the EC's `.vif`, the `.dat` is clearly truncated and is not a
+    /// credible fallback. The partial shard may still combine with
+    /// shards on other servers in a recoverable distributed-EC layout,
+    /// so we leave the EC files in place.
+    #[test]
+    fn test_prune_keeps_partial_ec_when_sibling_dat_is_smaller_than_vif_source_size() {
+        let tmp = TempDir::new().unwrap();
+        let dat_dir = tmp.path().join("sdd");
+        let ec_dir = tmp.path().join("sdf");
+        std::fs::create_dir_all(&dat_dir).unwrap();
+        std::fs::create_dir_all(&ec_dir).unwrap();
+
+        let collection = "logs";
+        let vid = 122u32;
+
+        // Tiny but loadable .dat on sdd: a valid 8-byte version-3
+        // superblock so Volume::new succeeds, padded out to a few
+        // hundred bytes so we have something well below the .vif-
+        // recorded source size below. Anything smaller would let
+        // Volume::new's auto-write extend the file to SUPER_BLOCK_SIZE
+        // and obscure the truncation we're trying to model.
+        let dat_path = dat_dir.join(format!("{}_{}.dat", collection, vid));
+        let mut dat_bytes = crate::storage::super_block::SuperBlock::default().to_bytes();
+        dat_bytes.resize(256, 0u8);
+        std::fs::write(&dat_path, &dat_bytes).unwrap();
+        let sibling_dat_size = dat_bytes.len() as u64;
+        let source_size = 10 * 1024 * 1024u64; // 10 MiB recorded in .vif
+        assert!(sibling_dat_size < source_size);
+
+        // Partial EC: one shard plus .ecx / .ecj / .vif. The .vif
+        // records the source .dat size at encode time; the safety
+        // check compares the sibling .dat against this value.
+        write_shard(ec_dir.to_str().unwrap(), collection, vid, 1);
+        let vif = VifVolumeInfo {
+            version: 3,
+            dat_file_size: source_size as i64,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+            }),
+            ..Default::default()
+        };
+        std::fs::write(
+            ec_dir.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            ec_dir.join(format!("{}_{}.ecx", collection, vid)),
+            vec![0u8; 20],
+        )
+        .unwrap();
+        std::fs::write(
+            ec_dir.join(format!("{}_{}.ecj", collection, vid)),
+            b"",
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dat_dir.to_str().unwrap(),
+                dat_dir.to_str().unwrap(),
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_location(
+                ec_dir.to_str().unwrap(),
+                ec_dir.to_str().unwrap(),
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        // Prune ran as part of add_location's epilogue. Confirm the
+        // partial EC was left alone because the sibling .dat is too
+        // small to be the encoding source.
+        let ec_loc = &store.locations[1];
+        let ev = ec_loc
+            .find_ec_volume(VolumeId(vid))
+            .expect("partial EC volume must remain mounted when the sibling .dat is smaller than the .vif source size");
+        assert_eq!(ev.shard_count(), 1);
+
+        let ec_base = ec_dir
+            .join(format!("{}_{}", collection, vid))
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            std::path::Path::new(&format!("{}.ec01", ec_base)).exists(),
+            "partial shard file must survive when the sibling .dat is truncated",
+        );
+        assert!(
+            std::path::Path::new(&format!("{}.ecx", ec_base)).exists(),
+            ".ecx must survive when the sibling .dat is truncated",
         );
     }
 

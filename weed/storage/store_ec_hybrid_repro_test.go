@@ -163,3 +163,95 @@ func TestIssue9478_PartialEcOnSiblingDiskOfHealthyDat(t *testing.T) {
 		t.Fatalf("healthy .dat on sibling disk was removed by the prune; only the partial EC files should be cleaned up")
 	}
 }
+
+// TestIssue9478_ZeroByteSiblingDatKeepsPartialEc is the safety guard for
+// pruneIncompleteEcWithSiblingDat: when the sibling .dat is zero bytes
+// (or smaller than what .vif recorded as the encoding source), we'd
+// rather keep the partial EC than delete it based on garbage. The
+// partial shard may still combine with shards on other servers in a
+// recoverable distributed-EC layout.
+func TestIssue9478_ZeroByteSiblingDatKeepsPartialEc(t *testing.T) {
+	collection := ""
+	vid := needle.VolumeId(122)
+
+	root := t.TempDir()
+	datDir := root + "/sdd"
+	ecDir := root + "/sdf"
+	if err := os.MkdirAll(datDir, 0o755); err != nil {
+		t.Fatalf("mkdir datDir: %v", err)
+	}
+	if err := os.MkdirAll(ecDir, 0o755); err != nil {
+		t.Fatalf("mkdir ecDir: %v", err)
+	}
+
+	// Sibling .dat is a zero-byte shell — the kind volume servers 3
+	// and 5 in the issue 9478 report have.
+	datBase := erasure_coding.EcShardFileName(collection, datDir, int(vid))
+	if f, err := os.Create(datBase + ".dat"); err == nil {
+		f.Close()
+	} else {
+		t.Fatalf("create zero-byte dat: %v", err)
+	}
+
+	ecBase := erasure_coding.EcShardFileName(collection, ecDir, int(vid))
+	datFileSizeForShard := int64(10 * 1024 * 1024)
+	expectedShardSize := calculateExpectedShardSize(datFileSizeForShard, erasure_coding.DataShardsCount)
+	if f, err := os.Create(ecBase + erasure_coding.ToExt(1)); err == nil {
+		if err := f.Truncate(expectedShardSize); err != nil {
+			t.Fatalf("truncate shard: %v", err)
+		}
+		f.Close()
+	}
+	if f, err := os.Create(ecBase + ".ecx"); err == nil {
+		f.WriteString("dummy ecx")
+		f.Close()
+	}
+	if f, err := os.Create(ecBase + ".ecj"); err == nil {
+		f.Close()
+	}
+	if f, err := os.Create(ecBase + ".vif"); err == nil {
+		f.Close()
+	}
+
+	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
+	makeDisk := func(dir string) *DiskLocation {
+		dl := &DiskLocation{
+			Directory:     dir,
+			DirectoryUuid: "test-uuid-" + dir,
+			IdxDirectory:  dir,
+			DiskType:      types.HddType,
+			MinFreeSpace:  minFreeSpace,
+		}
+		dl.volumes = make(map[needle.VolumeId]*Volume)
+		dl.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+		return dl
+	}
+	datLoc := makeDisk(datDir)
+	ecLoc := makeDisk(ecDir)
+
+	store := &Store{
+		Locations:           []*DiskLocation{datLoc, ecLoc},
+		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, 16),
+		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, 16),
+	}
+
+	if err := ecLoc.loadAllEcShards(nil); err != nil {
+		t.Logf("loadAllEcShards on ecDir returned: %v", err)
+	}
+	t.Cleanup(func() { closeEcVolumes(ecLoc) })
+	if ecLoc.EcShardCount() == 0 {
+		t.Fatalf("test setup is not reproducing the layout: per-disk EC load did not mount the partial shard")
+	}
+
+	store.pruneIncompleteEcWithSiblingDat()
+
+	if ecLoc.EcShardCount() == 0 {
+		t.Fatalf("prune deleted partial EC based on a zero-byte sibling .dat; the shard should have been left in place so distributed reconstruction is still possible")
+	}
+	if !util.FileExists(ecBase + erasure_coding.ToExt(1)) {
+		t.Fatalf("prune deleted the partial shard file based on a zero-byte sibling .dat")
+	}
+	if len(store.DeletedEcShardsChan) != 0 {
+		t.Errorf("prune pushed a DeletedEcShardsChan message despite skipping cleanup; nothing was actually deleted")
+	}
+}

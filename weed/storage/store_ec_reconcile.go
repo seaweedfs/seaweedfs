@@ -10,7 +10,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
+
+// datOwnerInfo records both the disk that holds a .dat for a given
+// (collection, vid) and the size on disk. The size is consulted by
+// pruneIncompleteEcWithSiblingDat before deleting any EC artefacts:
+// a zero-byte or truncated .dat is not a credible fallback, and we'd
+// rather leave the partial EC in place than wipe it based on garbage.
+type datOwnerInfo struct {
+	location *DiskLocation
+	size     int64
+}
 
 // ecKeyForReconcile keys orphan-shard reconciliation by collection + volume
 // id. Per-collection grouping matters because two collections can re-use the
@@ -149,6 +160,14 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 // also fall through unchanged because the lookup in the .dat index below
 // will simply not find a match.
 //
+// Before deleting any EC files we also check that the sibling .dat is
+// plausibly the encoding source: at least super_block.SuperBlockSize
+// bytes long, and — when the EC's .vif recorded a non-zero source size
+// in datFileSize — at least that many bytes. A zero-byte shell or a
+// truncated .dat does not justify wiping the partial EC, because that
+// EC shard may still combine usefully with shards on other servers in
+// a recoverable distributed-EC layout.
+//
 // We push DeletedEcShardsChan for every pruned shard so the master is told
 // to forget the registrations the per-disk pass already emitted on
 // NewEcShardsChan during startup, instead of waiting for the first
@@ -181,15 +200,28 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 				continue
 			}
 			key := ecKeyForReconcile{collection: ev.Collection, vid: vid}
-			datOwner, hasDat := datOwners[key]
-			if !hasDat || datOwner == loc {
+			owner, hasDat := datOwners[key]
+			if !hasDat || owner.location == loc {
+				continue
+			}
+			// Decide whether the sibling .dat is a credible source.
+			// Prefer the size baked into .vif at encode time; fall
+			// back to "at least a superblock" for old EC volumes
+			// whose .vif predates the field.
+			requiredDatSize := ev.DatFileSize()
+			if requiredDatSize <= 0 {
+				requiredDatSize = int64(super_block.SuperBlockSize)
+			}
+			if owner.size < requiredDatSize {
+				glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards but sibling .dat on %s is %d bytes (need >= %d); leaving partial EC in place so distributed reconstruction is still possible",
+					vid, ev.Collection, loc.Directory, shardCount, owner.location.Directory, owner.size, requiredDatSize)
 				continue
 			}
 			victims = append(victims, victim{
 				collection: ev.Collection,
 				vid:        vid,
 				messages:   ev.ToVolumeEcShardInformationMessage(uint32(diskId)),
-				datDir:     datOwner.Directory,
+				datDir:     owner.location.Directory,
 				shardCount: shardCount,
 			})
 		}
@@ -215,18 +247,19 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 }
 
 // indexDatOwners returns, for every (collection, vid), the first disk on
-// this store that holds a .dat file for it. Used by
+// this store that holds a .dat file for it plus the file's size. Used by
 // pruneIncompleteEcWithSiblingDat so it can decide whether partial EC
-// artefacts on another disk are leftovers of an interrupted encode.
+// artefacts on another disk are leftovers of an interrupted encode AND
+// whether the sibling .dat is large enough to be a credible fallback.
 //
-// We accept any .dat that os.Stat can see — including the zero-byte
-// shells the issue 9478 reporter shows on volume servers 3 and 5 — for
-// the same reason checkDatFileExists in disk_location_ec.go does: the
-// mere presence of a .dat means this volume was a regular volume on this
-// server at some point, which rules out the "distributed EC, no .dat
-// anywhere" reading that would justify keeping the partial shards.
-func (s *Store) indexDatOwners() map[ecKeyForReconcile]*DiskLocation {
-	owners := make(map[ecKeyForReconcile]*DiskLocation)
+// We record any .dat os.ReadDir can see — including zero-byte shells.
+// The mere presence of a .dat means this volume was a regular volume on
+// this server at some point, which rules out the "distributed EC, no
+// .dat anywhere" reading. Whether that .dat is actually usable is the
+// caller's call, made by comparing this size to the EC's recorded
+// source size in .vif.
+func (s *Store) indexDatOwners() map[ecKeyForReconcile]datOwnerInfo {
+	owners := make(map[ecKeyForReconcile]datOwnerInfo)
 	for _, loc := range s.Locations {
 		entries, err := os.ReadDir(loc.Directory)
 		if err != nil {
@@ -245,9 +278,13 @@ func (s *Store) indexDatOwners() map[ecKeyForReconcile]*DiskLocation {
 			if err != nil {
 				continue
 			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
 			key := ecKeyForReconcile{collection: collection, vid: vid}
 			if _, exists := owners[key]; !exists {
-				owners[key] = loc
+				owners[key] = datOwnerInfo{location: loc, size: info.Size()}
 			}
 		}
 	}

@@ -288,6 +288,15 @@ func (ev *EcVolume) ShardSize() uint64 {
 	return 0
 }
 
+// DatFileSize returns the source .dat file size as recorded in .vif at
+// EC encoding time. Zero for old EC volumes whose .vif predates the
+// field, or for .vif files we failed to parse. Used by the Store-level
+// prune in store_ec_reconcile.go to validate that a sibling-disk .dat
+// is plausibly the encoding source before deleting the partial EC.
+func (ev *EcVolume) DatFileSize() int64 {
+	return ev.datFileSize
+}
+
 func (ev *EcVolume) Size() (size uint64) {
 	for _, shard := range ev.Shards {
 		if shardSize := shard.Size(); shardSize > 0 {
