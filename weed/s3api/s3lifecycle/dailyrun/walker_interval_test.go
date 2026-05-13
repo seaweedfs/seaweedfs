@@ -5,9 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,13 +31,10 @@ func TestWalkerDue(t *testing.T) {
 		// interval=0 keeps the prior "fire every pass" semantics — the
 		// in-repo integration tests and the s3tests fast driver rely on
 		// this so the rule-change-then-walk behavior surfaces within a
-		// single test runtime. "Pass" is the unit: a lastWalkedNs
-		// stamped at runNow already saw a walk THIS pass (from the
-		// cold-start or recovery branch), and a second fire from the
-		// steady-state branch in the same pass would double-walk over
-		// what RecoveryView already covered.
-		{"interval zero not due if already walked this pass", runNow.UnixNano(), 0, false},
-		{"interval zero due when last walk was earlier", runNow.Add(-time.Nanosecond).UnixNano(), 0, true},
+		// single test runtime. Within-pass double-fire suppression
+		// lives in runShard's walkedThisPass local; walkerDue answers
+		// the persisted-state question only.
+		{"interval zero always due", runNow.UnixNano(), 0, true},
 		// LastWalkedNs=0 marks "never walked steady-state" — the post-
 		// upgrade cold-start case for cursor files that predate the
 		// LastWalkedNs field. Fire so the throttle anchor gets seeded.
@@ -148,13 +148,70 @@ func TestRunShard_WalkerThrottle(t *testing.T) {
 	}
 }
 
+// TestValidate_RejectsNegativeWalkerInterval pins the loud-failure
+// contract for an embedder or test that constructs dailyrun.Config
+// directly with a negative WalkerInterval. The admin-config parser
+// clamps negative input to zero (worker/tasks/s3_lifecycle/config.go),
+// but a caller bypassing that parser would otherwise get the silent
+// fall-through-to-walk-every-pass behavior the throttle is trying to
+// prevent.
+func TestValidate_RejectsNegativeWalkerInterval(t *testing.T) {
+	// validate only checks for nil fields, not behavior — type-assert
+	// each interface to its zero value via a stub. The stubs never run.
+	cfg := validatableConfig()
+	cfg.WalkerInterval = -time.Hour
+	err := validate(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "WalkerInterval")
+	// And the zero sentinel still passes.
+	cfg.WalkerInterval = 0
+	require.NoError(t, validate(cfg))
+}
+
+// validatableConfig builds a minimal dailyrun.Config that passes the
+// nil checks in validate() so individual fields can be poked. The
+// stubs intentionally don't implement any meaningful behavior — they
+// only need to be non-nil interface values.
+func validatableConfig() Config {
+	return Config{
+		Engine:      engine.New(),
+		FilerClient: stubFilerClient{},
+		Client:      stubLifecycleClient{},
+		Persister:   newMemPersister(),
+		Lister:      stubSiblingLister{},
+		BucketsPath: "/buckets",
+	}
+}
+
+type stubFilerClient struct{ filer_pb.SeaweedFilerClient }
+type stubLifecycleClient struct{}
+
+func (stubLifecycleClient) LifecycleDelete(_ context.Context, _ *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	return nil, nil
+}
+
+type stubSiblingLister struct{}
+
+func (stubSiblingLister) Survivors(_ context.Context, _, _ string) (router.Survivors, error) {
+	return router.Survivors{}, nil
+}
+func (stubSiblingLister) LookupVersion(_ context.Context, _, _, _ string) (*filer_pb.Entry, error) {
+	return nil, nil
+}
+func (stubSiblingLister) ListVersions(_ context.Context, _, _ string) ([]*filer_pb.Entry, error) {
+	return nil, nil
+}
+func (stubSiblingLister) LookupNullVersion(_ context.Context, _, _ string) (*filer_pb.Entry, bool, error) {
+	return nil, false, nil
+}
+
 // TestRunShard_ColdStartDoesNotDoubleWalk pins the within-pass guard
-// in walkerDue. Before the guard, a cold-start pass with
-// WalkerInterval=0 fired the walker twice in one pass: once via the
-// mustWalkColdStart branch (with RecoveryView) and again immediately
-// via the steady-state branch (with the per-shard walk view, which is
-// a subset of RecoveryView). The second walk added no coverage and
-// burned a full bucket scan. Guard against regression.
+// in runShard's walkedThisPass local. Before the guard, a cold-start
+// pass with WalkerInterval=0 fired the walker twice in one pass:
+// once via the mustWalkColdStart branch (with RecoveryView) and again
+// immediately via the steady-state branch (with the per-shard walk
+// view, which is a subset of RecoveryView). The second walk added no
+// coverage and burned a full bucket scan. Guard against regression.
 func TestRunShard_ColdStartDoesNotDoubleWalk(t *testing.T) {
 	snap := snapshotWithRule(t, 30)
 	p := newMemPersister()

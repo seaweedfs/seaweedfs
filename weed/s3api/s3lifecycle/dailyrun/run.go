@@ -330,6 +330,16 @@ func validate(cfg Config) error {
 	if cfg.BucketsPath == "" {
 		return errors.New("daily_run: empty BucketsPath")
 	}
+	// A negative WalkerInterval would silently fall through walkerDue's
+	// `interval <= 0` branch and re-enable "walk every pass", defeating
+	// the throttle whose whole point is bounding filer load. The
+	// admin-config parser already clamps negative input to zero
+	// (worker/tasks/s3_lifecycle/config.go), but callers using
+	// dailyrun.Config directly (tests, embedders, future drivers) get
+	// a loud failure instead.
+	if cfg.WalkerInterval < 0 {
+		return fmt.Errorf("daily_run: negative WalkerInterval %v (0 = unthrottled, positive values throttle)", cfg.WalkerInterval)
+	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {
 			return fmt.Errorf("daily_run: shard %d out of [0, %d)", sh, s3lifecycle.ShardCount)
@@ -387,7 +397,17 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// it when a steady-state / empty-replay walker fire actually
 	// happens. Cold-start and recovery walker fires also bump it so
 	// the next pass's throttle has a fresh anchor.
+	//
+	// walkedThisPass is the in-pass guard: walkerDue answers the
+	// persisted-state question ("has enough time elapsed?"), but a
+	// cold-start or recovery branch above the steady-state check
+	// already fired the walker with RecoveryView, which is a superset
+	// of every per-shard partition. Keeping the within-pass guard out
+	// of walkerDue lets that function stay pure (interval/never-walked
+	// logic only) and side-steps the test-injectable-runNow ambiguity
+	// where two distinct passes happen to share a UnixNano.
 	lastWalkedNs := persisted.LastWalkedNs
+	walkedThisPass := false
 
 	if rsh == [32]byte{} {
 		// No replay-eligible rules. Walker-only rules
@@ -403,8 +423,10 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
 				}
 				lastWalkedNs = runNow.UnixNano()
+				walkedThisPass = true
 			}
 		}
+		_ = walkedThisPass // empty-replay branch returns; no downstream walker.
 		return cfg.Persister.Save(ctx, shardID, Cursor{
 			TsNs:         0,
 			RuleSetHash:  rsh,
@@ -430,6 +452,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
 			}
 			lastWalkedNs = runNow.UnixNano()
+			walkedThisPass = true
 		}
 		if mustWalkRecovery {
 			// Rule changed: rewind cursor so the sliding replay re-scans
@@ -454,11 +477,11 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// today) skips the call so non-versioned, replay-only deployments
 	// don't pay an O(N) bucket-walk per run.
 	//
-	// Throttle: skip when (runNow - lastWalkedNs) <= WalkerInterval.
-	// A cold-start or recovery walker fire above already advanced
-	// lastWalkedNs, so back-to-back walks within one pass are avoided
-	// naturally.
-	if cfg.Walker != nil && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
+	// Two-stage gate: walkedThisPass suppresses a double walk when the
+	// cold-start branch above already fired (RecoveryView covered it).
+	// walkerDue applies the persisted-state throttle for the case
+	// where this is a normal pass that didn't trigger cold-start.
+	if cfg.Walker != nil && !walkedThisPass && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 		if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
 			if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
 				return fmt.Errorf("shard=%d: steady walk: %w", shardID, werr)
@@ -508,27 +531,20 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	})
 }
 
-// walkerDue reports whether the steady-state / empty-replay walker
-// should fire on this pass.
+// walkerDue answers the persisted-state throttle: has enough time
+// elapsed since the last walker fire on this shard? interval == 0
+// means "fire every pass" (the prior, unconditional behavior).
+// lastWalkedNs == 0 means "never walked steady-state" — fire to
+// establish the throttle anchor. Otherwise gate on
+// (runNow - lastWalkedNs) >= interval.
 //
-// Order of checks matters. The within-pass guard (lastWalkedNs equals
-// runNow's UnixNano) runs first because the cold-start and recovery
-// branches both fire the walker unconditionally and stamp
-// lastWalkedNs=runNow.UnixNano(); the steady-state branch then falls
-// through and would otherwise double-walk under interval=0 even though
-// the recovery walker already used RecoveryView (a superset of every
-// per-shard partition). Returning false here suppresses that second
-// walk and keeps the "interval=0 means walk every pass" contract
-// stated by the next branch coherent — pass is the unit, not call site.
-//
-// interval == 0 (after the within-pass guard) means "fire every pass"
-// (the prior, unconditional behavior). lastWalkedNs == 0 means "never
-// walked steady-state" — fire to establish the anchor. Otherwise gate
-// on (runNow - lastWalkedNs) >= interval.
+// Within-pass double-fire suppression (cold-start / recovery walker
+// already ran this pass; steady-state branch must not re-walk a
+// superset partition) lives in runShard's walkedThisPass local flag
+// rather than here. Keeping walkerDue pure means the function answers
+// one question and a test that injects two distinct passes with the
+// same runNow doesn't get falsely throttled.
 func walkerDue(lastWalkedNs int64, runNow time.Time, interval time.Duration) bool {
-	if lastWalkedNs == runNow.UnixNano() {
-		return false
-	}
 	if interval <= 0 || lastWalkedNs == 0 {
 		return true
 	}
