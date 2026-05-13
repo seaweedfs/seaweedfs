@@ -272,11 +272,17 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	// Cold start: scan from now-maxTTL so already-due objects within
-	// meta-log retention still expire.
+	// meta-log retention still expire. In steady state honor the
+	// cursor as-is: the drain freezes the cursor at the last pre-skip
+	// event so pending matches with DueTime == TsNs+maxTTL stay in
+	// scope across passes. Bumping forward to runNow-maxTTL would
+	// orphan exactly those events (the test_lifecyclev2_expiration
+	// regression: cursor saved at the no-match event right before
+	// the not-yet-due expire3 PUT, then floor at runNow=PUT+maxTTL
+	// equals PUT — bumping past the expire3 event itself).
 	startTsNs := persisted.TsNs
-	floor := runNow.Add(-maxTTL).UnixNano()
-	if startTsNs < floor {
-		startTsNs = floor
+	if !found {
+		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs)
