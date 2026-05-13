@@ -143,6 +143,15 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
+			// On by default: S3 lifecycle is a standard bucket feature
+			// (PutBucketLifecycleConfiguration is part of the S3 API),
+			// and a bucket with rules set but no worker running silently
+			// retains data past its declared expiration. Operators who
+			// want the worker off can still disable it in the admin UI;
+			// the default error is "data lingers" not "worker burns CPU
+			// on empty rule sets" (the worker fast-exits with no
+			// configured rules).
+			Enabled:                  true,
 			DetectionIntervalMinutes: 24 * 60, // daily
 			DetectionTimeoutSeconds:  60,
 			MaxJobsPerDetection:      1,
