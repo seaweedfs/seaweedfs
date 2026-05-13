@@ -424,6 +424,13 @@ func (n *NodeImpl) doLinkChildNode(node Node) {
 		}
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		node.SetParent(n)
+		// Maintain the topology's address index so Ping admission and other
+		// callers can resolve a data node from its address in O(1).
+		if dn, ok := node.GetValue().(*DataNode); ok {
+			if topo := n.GetTopology(); topo != nil {
+				topo.registerDataNodeAddress(dn)
+			}
+		}
 		glog.V(0).Infoln(n, "adds child", node.Id())
 	}
 }
@@ -433,6 +440,13 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	defer n.Unlock()
 	node := n.children[nodeId]
 	if node != nil {
+		// Drop the topology address index before clearing the parent pointer
+		// so GetTopology() can still walk up to the root.
+		if dn, ok := node.GetValue().(*DataNode); ok {
+			if topo := n.GetTopology(); topo != nil {
+				topo.unregisterDataNodeAddress(dn.ServerAddress(), dn)
+			}
+		}
 		node.SetParent(nil)
 		delete(n.children, node.Id())
 		for dt, du := range node.GetDiskUsages().negative().usages {
@@ -484,10 +498,13 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHoldUnixTime int64, 
 }
 
 func (n *NodeImpl) GetTopology() *Topology {
-	var p Node
-	p = n
+	var p Node = n
 	for p.Parent() != nil {
 		p = p.Parent()
 	}
-	return p.GetValue().(*Topology)
+	// A detached subtree (no Topology root in scope) must not panic; the
+	// callers above check the returned value for nil and skip the
+	// address-index maintenance in that case.
+	topo, _ := p.GetValue().(*Topology)
+	return topo
 }

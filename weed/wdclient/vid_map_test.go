@@ -117,3 +117,50 @@ func TestConcurrentGetLocations(t *testing.T) {
 	cancel()
 	wg.Wait()
 }
+
+func TestHasVolumeServer(t *testing.T) {
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", pb.ServerDiscovery{})
+
+	regular := Location{Url: "10.0.0.1:8080", GrpcPort: 18080}
+	ecOnly := Location{Url: "10.0.0.2:8080", GrpcPort: 18080}
+
+	mc.addLocation(7, regular)
+	mc.addEcLocation(9, ecOnly)
+
+	addr := func(u string) pb.ServerAddress { return pb.ServerAddress(u) }
+
+	if !mc.HasVolumeServer(addr("10.0.0.1:8080")) {
+		t.Fatalf("regular volume server must be known by http address")
+	}
+	if !mc.HasVolumeServer(addr("10.0.0.1:8080.18080")) {
+		t.Fatalf("regular volume server must be known by grpc-suffix address")
+	}
+	if !mc.HasVolumeServer(addr("10.0.0.2:8080")) {
+		t.Fatalf("ec-only volume server must be known")
+	}
+	if mc.HasVolumeServer(addr("127.0.0.1:1")) {
+		t.Fatalf("unknown address must not be known")
+	}
+
+	// Adding the same location twice must not double-count:
+	// deleting once should evict the server.
+	mc.addLocation(7, regular)
+	mc.deleteLocation(7, regular)
+	if mc.HasVolumeServer(addr("10.0.0.1:8080")) {
+		t.Fatalf("server should be evicted after deleteLocation")
+	}
+
+	// Removing the EC entry must also drop the index entry.
+	mc.deleteEcLocation(9, ecOnly)
+	if mc.HasVolumeServer(addr("10.0.0.2:8080")) {
+		t.Fatalf("server should be evicted after deleteEcLocation")
+	}
+
+	// deleteVid removes every reference held by that vid in one call.
+	mc.addLocation(11, regular)
+	mc.addEcLocation(11, regular)
+	mc.InvalidateCache("11,abc")
+	if mc.HasVolumeServer(addr("10.0.0.1:8080")) {
+		t.Fatalf("server should be evicted after InvalidateCache")
+	}
+}

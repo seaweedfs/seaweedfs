@@ -101,6 +101,8 @@ fn test_state_with_guard(
         read_mode: seaweed_volume::config::ReadMode::Local,
         master_url: String::new(),
         master_urls: Vec::new(),
+        seed_master_set: std::collections::HashSet::new(),
+        current_master_url: tokio::sync::RwLock::new(String::new()),
         self_url: String::new(),
         http_client: reqwest::Client::new(),
         outgoing_http_scheme: "http".to_string(),

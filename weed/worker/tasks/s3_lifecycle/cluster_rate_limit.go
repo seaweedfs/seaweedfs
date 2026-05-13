@@ -22,6 +22,14 @@ const (
 	// ClusterDeletesBurstAdminKey holds the token-bucket burst. 0 means
 	// "2 × rps" (computed by the admin allocator).
 	ClusterDeletesBurstAdminKey = "cluster_deletes_burst"
+	// MetaLogRetentionDaysAdminKey holds the operator's declaration of
+	// how far back the filer's meta-log subscription can reliably reach.
+	// Rules whose effective TTL exceeds this window can't be serviced by
+	// replay alone and get partitioned into engine.PromotedHash's walk
+	// set; a partition flip (operator shrinks retention) then trips the
+	// recovery branch on the next run. 0 = unbounded (current behavior,
+	// falls back to maxTTL in runShard so PromotedHash stays empty).
+	MetaLogRetentionDaysAdminKey = "meta_log_retention_days"
 
 	// MetadataKeyDeletesPerSecond is the per-worker share value the
 	// admin writes into ClusterContext.Metadata at ExecuteJob time.

@@ -87,6 +87,23 @@ func (ma *MetaAggregator) HasRemotePeers() bool {
 	return false
 }
 
+// HasPeer reports whether address is currently a tracked filer peer (or this
+// filer's own address). Callers use this to gate operations on known cluster
+// members.
+func (ma *MetaAggregator) HasPeer(address pb.ServerAddress) bool {
+	if address == ma.self || address.Equals(ma.self) {
+		return true
+	}
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	for peer := range ma.peerChans {
+		if peer == address || peer.Equals(address) {
+			return true
+		}
+	}
+	return false
+}
+
 func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
 	lastTsNs := startFrom.UnixNano()
 	for {

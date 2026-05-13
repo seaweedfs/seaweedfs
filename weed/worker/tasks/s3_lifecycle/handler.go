@@ -33,8 +33,8 @@ func init() {
 }
 
 // Handler is the worker-side runner for S3 object lifecycle expiration.
-// One Execute call drives a long-running scheduler.Scheduler against the
-// S3 endpoints discovered from the master; admin caps concurrency at one
+// One Execute call drives one bounded dailyrun.Run pass against the S3
+// endpoints discovered from the master; admin caps concurrency at one
 // job per worker so a fresh proposal only spawns a new run after the
 // prior one exits.
 type Handler struct {
@@ -91,12 +91,21 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
+						{
+							Name:        MetaLogRetentionDaysAdminKey,
+							Label:       "Meta-Log Retention (days)",
+							Description: "How far back the filer's meta-log subscription can reach. Rules whose TTL exceeds this run via the walker; shrinking this value will trigger a one-time recovery walk on the next run for any rule that's now too old to replay. 0 = unbounded (no partition; every rule serviced by replay).",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				MetaLogRetentionDaysAdminKey:    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -226,10 +235,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
 }
 
-// executeDailyReplay runs the bounded daily-replay path. Reuses the
-// streaming path's filer / s3 / engine setup but routes the per-shard
-// loop through dailyrun.Run instead of scheduler.Scheduler. Phase 2:
-// replay-only, refuses walker-bound action kinds with a typed error.
+// executeDailyReplay runs one bounded daily-replay pass via
+// dailyrun.Run. The walker fires inside runShard on rule-content edits
+// and against the steady-state walk view; all rule kinds are serviced.
 func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
 	eng := engine.New()
 	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
@@ -274,17 +282,18 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	})
 
 	runErr := dailyrun.Run(ctx, dailyrun.Config{
-		Shards:      shards,
-		BucketsPath: bucketsPath,
-		Engine:      eng,
-		FilerClient: filerClient,
-		Client:      client,
-		Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-		Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
-		Workers:     cfg.Workers,
-		Limiter:     limiter,
-		Walker:      walker,
-		ClientName:  "worker-s3-lifecycle-daily",
+		Shards:          shards,
+		BucketsPath:     bucketsPath,
+		Engine:          eng,
+		FilerClient:     filerClient,
+		Client:          client,
+		Persister:       &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Lister:          dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+		Workers:         cfg.Workers,
+		Limiter:         limiter,
+		RetentionWindow: cfg.MetaLogRetention,
+		Walker:          walker,
+		ClientName:      "worker-s3-lifecycle-daily",
 	})
 	if runErr != nil {
 		glog.Warningf("daily_replay: %v", runErr)

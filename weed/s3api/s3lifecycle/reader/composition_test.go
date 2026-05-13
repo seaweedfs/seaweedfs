@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Layer 2 contracts the dispatcher pipeline relies on. These augment
+// Layer 2 contracts the daily-replay drain relies on. These augment
 // reader_test.go (extract + dispatch) and cursor_test.go (Advance +
-// Freeze) by pinning the cursor composition surface that
-// dispatcher.Pipeline depends on for resume-point selection,
-// checkpoint persistence, and Run-time input validation.
+// Freeze) by pinning the cursor composition surface that the daily-run
+// drain depends on for resume-point selection, checkpoint persistence,
+// and Run-time input validation.
 
 func TestCursorMinTsNsWithFrozenKeysIncluded(t *testing.T) {
 	// MinTsNs is the resume point Reader.Run feeds to SubscribeMetadata

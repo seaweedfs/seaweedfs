@@ -36,16 +36,30 @@ type vidMap struct {
 	sync.RWMutex
 	vid2Locations   map[uint32][]Location
 	ecVid2Locations map[uint32][]Location
-	DataCenter      string
-	cache           atomic.Pointer[vidMap]
+	// serverRefCount tracks how many vid locations (regular + EC) currently
+	// reference each volume server address. Maintaining it incrementally lets
+	// hasVolumeServer answer in O(1) instead of walking every volume entry.
+	// Keys are the canonical http form of pb.ServerAddress, so callers that
+	// pass either "host:port" or "host:port.grpc" find the same entry.
+	serverRefCount map[string]int
+	DataCenter     string
+	cache          atomic.Pointer[vidMap]
 }
 
 func newVidMap(dataCenter string) *vidMap {
 	return &vidMap{
 		vid2Locations:   make(map[uint32][]Location),
 		ecVid2Locations: make(map[uint32][]Location),
+		serverRefCount:  make(map[string]int),
 		DataCenter:      dataCenter,
 	}
+}
+
+// locationServerKey returns the index key used by serverRefCount for a
+// Location. The key normalises away the optional grpc-port suffix so the
+// counter stays consistent with hasVolumeServer's lookup.
+func locationServerKey(loc Location) string {
+	return loc.ServerAddress().ToHttpAddress()
 }
 
 func (vc *vidMap) isSameDataCenter(loc *Location) bool {
@@ -152,6 +166,28 @@ func (vc *vidMap) getLocations(vid uint32) (locations []Location, found bool) {
 	return
 }
 
+// hasVolumeServer reports whether any tracked volume (regular or EC) is hosted
+// on addr. It walks the cache chain so recently expired maps are still
+// considered. Used to gate admission of operations targeting a volume server.
+// The lookup is O(1) thanks to serverRefCount; we still consult the cache
+// chain to keep covering volume servers that just rolled out of the live map.
+func (vc *vidMap) hasVolumeServer(addr pb.ServerAddress) bool {
+	key := addr.ToHttpAddress()
+	if key == "" {
+		return false
+	}
+	vc.RLock()
+	count := vc.serverRefCount[key]
+	vc.RUnlock()
+	if count > 0 {
+		return true
+	}
+	if cachedMap := vc.cache.Load(); cachedMap != nil {
+		return cachedMap.hasVolumeServer(addr)
+	}
+	return false
+}
+
 func (vc *vidMap) addLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
@@ -161,6 +197,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 	locations, found := vc.vid2Locations[vid]
 	if !found {
 		vc.vid2Locations[vid] = []Location{location}
+		vc.incrementServerRef(locationServerKey(location))
 		return
 	}
 
@@ -171,6 +208,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 	}
 
 	vc.vid2Locations[vid] = append(locations, location)
+	vc.incrementServerRef(locationServerKey(location))
 
 }
 
@@ -183,6 +221,7 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 	locations, found := vc.ecVid2Locations[vid]
 	if !found {
 		vc.ecVid2Locations[vid] = []Location{location}
+		vc.incrementServerRef(locationServerKey(location))
 		return
 	}
 
@@ -193,6 +232,7 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 	}
 
 	vc.ecVid2Locations[vid] = append(locations, location)
+	vc.incrementServerRef(locationServerKey(location))
 
 }
 
@@ -214,6 +254,7 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 	for i, loc := range locations {
 		if loc.Url == location.Url {
 			vc.vid2Locations[vid] = append(locations[0:i], locations[i+1:]...)
+			vc.decrementServerRef(locationServerKey(loc))
 			break
 		}
 	}
@@ -237,6 +278,7 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 	for i, loc := range locations {
 		if loc.Url == location.Url {
 			vc.ecVid2Locations[vid] = append(locations[0:i], locations[i+1:]...)
+			vc.decrementServerRef(locationServerKey(loc))
 			break
 		}
 	}
@@ -250,6 +292,38 @@ func (vc *vidMap) deleteVid(vid uint32) {
 	vc.Lock()
 	defer vc.Unlock()
 
+	for _, loc := range vc.vid2Locations[vid] {
+		vc.decrementServerRef(locationServerKey(loc))
+	}
+	for _, loc := range vc.ecVid2Locations[vid] {
+		vc.decrementServerRef(locationServerKey(loc))
+	}
 	delete(vc.vid2Locations, vid)
 	delete(vc.ecVid2Locations, vid)
+}
+
+// incrementServerRef increases the refcount for key. Empty keys are skipped
+// so a zero-value Location (which serialises to "") does not leak a permanent
+// bucket that hasVolumeServer and decrementServerRef both ignore. Callers
+// must hold vc's write lock.
+func (vc *vidMap) incrementServerRef(key string) {
+	if key == "" {
+		return
+	}
+	vc.serverRefCount[key]++
+}
+
+// decrementServerRef decreases the refcount for key and removes the entry
+// once it falls to zero. Callers must hold vc's write lock.
+func (vc *vidMap) decrementServerRef(key string) {
+	if key == "" {
+		return
+	}
+	if n, ok := vc.serverRefCount[key]; ok {
+		if n <= 1 {
+			delete(vc.serverRefCount, key)
+		} else {
+			vc.serverRefCount[key] = n - 1
+		}
+	}
 }
