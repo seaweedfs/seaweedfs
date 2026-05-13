@@ -85,6 +85,17 @@ impl Store {
 
         self.locations.push(loc);
 
+        // First scrub partial EC artefacts left on one disk by an
+        // interrupted encode while the source .dat still lives on a
+        // sibling disk of the same store. The per-disk loader cannot
+        // see the sibling .dat and so loads the partial shards as if
+        // they were a distributed-EC layout, which makes the volume
+        // server heartbeat both a regular replica and an EC shard set
+        // for the same vid (seaweedfs/seaweedfs#9478). Running before
+        // the cross-disk reconcile keeps that pass from later
+        // re-loading shards we just cleaned up.
+        self.prune_incomplete_ec_with_sibling_dat();
+
         // After every disk has finished its per-disk EC scan, sweep
         // the store for shards that live on a disk without local index
         // files and load them by reaching across to a sibling disk's
@@ -106,6 +117,7 @@ impl Store {
                 tracing::error!("load_new_volumes error in {}: {}", loc.directory, e);
             }
         }
+        self.prune_incomplete_ec_with_sibling_dat();
         self.reconcile_ec_shards_across_disks();
     }
 
