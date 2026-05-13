@@ -86,8 +86,12 @@ func backdateVersionedMtime(t *testing.T, fc filer_pb.SeaweedFilerClient, bucket
 
 func runLifecycleShard(t *testing.T) string {
 	t.Helper()
+	// -refresh 1s drives an inter-pass loop inside the 10s runtime so
+	// rules that need two passes to settle (e.g.
+	// TestLifecycleExpiredDeleteMarkerCleanup: pass 1 removes v1, pass 2
+	// removes the now-orphaned marker) get the second pass.
 	out := runShellCommand(t, fmt.Sprintf(
-		"s3.lifecycle.run-shard -shards 0-15 -s3 %s -events 0 -dispatch 200ms -checkpoint 5s -runtime 10s",
+		"s3.lifecycle.run-shard -shards 0-15 -s3 %s -events 0 -refresh 1s -runtime 10s",
 		envOr("S3_GRPC_ENDPOINT", defaultS3GrpcEndpoint),
 	))
 	require.NotContains(t, out, "FATAL", "shell output:\n%s", out)
