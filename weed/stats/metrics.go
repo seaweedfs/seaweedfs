@@ -625,6 +625,24 @@ var (
 			Name:      "daily_run_events_scanned_total",
 			Help:      "Counter of meta-log events drainShardEvents processed on the daily_replay path, partitioned by shard.",
 		}, []string{"shard"})
+
+	// S3LifecycleDailyRunLastWalkedNs is the per-shard wall-clock
+	// timestamp (UnixNano) of the most recent successful steady-state /
+	// empty-replay walker fire. Set by dailyrun.runShard after each
+	// cursor save. Zero means the shard hasn't completed a walk yet
+	// (either cold start, or the walker never fired because the bucket
+	// has only replay-eligible rules and the throttle hasn't elapsed).
+	// Operators read (now - last_walked_ns) to confirm the walker
+	// cadence matches WalkerInterval; a stuck value means the
+	// scheduler isn't invoking the worker, the throttle is too long,
+	// or the walker is failing.
+	S3LifecycleDailyRunLastWalkedNs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "daily_run_last_walked_ns",
+			Help:      "Per-shard timestamp (UnixNano) of the most recent successful walker fire. 0 means the shard hasn't completed a walk yet.",
+		}, []string{"shard"})
 )
 
 func init() {
@@ -704,6 +722,7 @@ func init() {
 	Gather.MustRegister(S3LifecycleDispatchLimiterWaitSeconds)
 	Gather.MustRegister(S3LifecycleDailyRunShardDurationSeconds)
 	Gather.MustRegister(S3LifecycleDailyRunEventsScanned)
+	Gather.MustRegister(S3LifecycleDailyRunLastWalkedNs)
 
 	Gather.MustRegister(UploadErrorCounter)
 
