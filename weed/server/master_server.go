@@ -61,10 +61,6 @@ type MasterOption struct {
 	TelemetryUrl            string
 	TelemetryEnabled        bool
 	VolumeGrowthDisabled    bool
-	// AllowUntrustedHeartbeat skips the source-ip check that binds a
-	// heartbeat's claimed Ip to the gRPC peer address. Operators with a
-	// NAT/proxy between volume servers and the master must enable this.
-	AllowUntrustedHeartbeat bool
 }
 
 type MasterServer struct {
@@ -93,11 +89,6 @@ type MasterServer struct {
 	Cluster *cluster.Cluster
 
 	LockRingManager *cluster.LockRingManager
-
-	// heartbeatOwnership binds volume / ec shard ids to the peer that first
-	// claimed them in a heartbeat, so a later attacker cannot hijack lookups
-	// by re-announcing the same ids from a different host.
-	heartbeatOwnership *heartbeatOwnership
 
 	// telemetry
 	telemetryCollector *telemetry.Collector
@@ -147,7 +138,6 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		MasterClient:            wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", *pb.NewServiceDiscoveryFromMap(peers)),
 		adminLocks:              NewAdminLocks(),
 		Cluster:                 cluster.NewCluster(),
-		heartbeatOwnership:      newHeartbeatOwnership(),
 	}
 
 	ms.LockRingManager = cluster.NewLockRingManager(ms.broadcastToClients)
