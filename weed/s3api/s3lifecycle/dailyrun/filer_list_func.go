@@ -104,6 +104,7 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 			ModTime:  time.Unix(e.Attributes.Mtime, int64(e.Attributes.MtimeNs)),
 			Size:     int64(e.Attributes.FileSize),
 			IsLatest: true, // Non-versioned default.
+			Tags:     extractTags(e.Extended),
 		}
 		return cb(entry)
 	})
@@ -183,7 +184,7 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 	// Resolve latest:
 	//   1. Pointer names a real id -> that wins.
 	//   2. Pointer absent (or stale: set but no sibling carries it)
-	//      + items[0] is an EXPLICIT null -> null is latest.
+	//      + any EXPLICIT null bare exists -> null is latest.
 	//   3. Otherwise -> newest sibling (latestPos = 0 by default).
 	//
 	// A stale pointer falls through to the no-pointer fallback rather
@@ -203,8 +204,13 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			}
 		}
 	}
-	if !pointerResolved && len(items) > 0 && items[0].versionID == "null" && items[0].isExplicitNull {
-		latestPos = 0
+	if !pointerResolved {
+		for i, it := range items {
+			if it.versionID == "null" && it.isExplicitNull {
+				latestPos = i
+				break
+			}
+		}
 	}
 
 	if start != "" && logical <= start {
@@ -228,6 +234,7 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			IsDeleteMarker:   string(it.entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true",
 			NumVersions:      len(items),
 			SuccessorModTime: successor,
+			Tags:             extractTags(it.entry.Extended),
 		}
 		if !isLatest {
 			rank := i
@@ -317,4 +324,22 @@ func isMPUInitDir(key string, entry *filer_pb.Entry) bool {
 	}
 	v, ok := entry.Extended[s3_constants.ExtMultipartObjectKey]
 	return ok && len(v) > 0
+}
+
+func extractTags(ext map[string][]byte) map[string]string {
+	if len(ext) == 0 {
+		return nil
+	}
+	prefix := s3_constants.AmzObjectTagging + "-"
+	var tags map[string]string
+	for k, v := range ext {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if tags == nil {
+			tags = make(map[string]string)
+		}
+		tags[k[len(prefix):]] = string(v)
+	}
+	return tags
 }
