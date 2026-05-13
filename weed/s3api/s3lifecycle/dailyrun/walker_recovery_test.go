@@ -71,7 +71,7 @@ func TestRunShard_WalkerInvokedOnRecoveryBranch(t *testing.T) {
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 3))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 3, nil))
 
 	assert.Equal(t, 1, calls, "walker must fire exactly once on recovery")
 	require.NotNil(t, gotView, "walker received the RecoveryView")
@@ -99,7 +99,7 @@ func TestRunShard_NilWalkerOnRecoveryIsNoop(t *testing.T) {
 
 	cfg := Config{Persister: p} // Walker nil
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, nil))
 
 	got, ok, err := p.Load(context.Background(), 0)
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestRunShard_WalkerErrorPropagates(t *testing.T) {
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	err := runShard(context.Background(), cfg, snap, runNow, 7)
+	err := runShard(context.Background(), cfg, snap, runNow, 7, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "walker boom")
 

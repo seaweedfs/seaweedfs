@@ -77,6 +77,12 @@ type Config struct {
 // concurrently. Returns the first shard error; the rest log and run to
 // completion so one shard's transient failure doesn't lose other shards'
 // progress.
+//
+// All cfg.Shards share one meta-log subscription. The Reader's
+// ShardPredicate accepts any shard in cfg.Shards, and a fan-out
+// goroutine routes events to per-shard channels by ev.ShardID. This
+// replaces the earlier per-shard Reader that opened 16 SubscribeMetadata
+// streams to filer per pass.
 func Run(ctx context.Context, cfg Config) error {
 	if err := validate(cfg); err != nil {
 		return err
@@ -91,32 +97,67 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Capture once so a mid-run Compile can't make shards disagree.
 	snap := cfg.Engine.Snapshot()
+	rsh := engine.ReplayContentHash(snap)
+	maxTTL := engine.MaxEffectiveTTL(snap)
 
-	workers := cfg.Workers
-	if workers <= 0 {
-		workers = 1
+	// Since all shards share one subscription, every shard goroutine
+	// must be live to drain its channel — capping concurrency would
+	// stall the fan-out. cfg.Workers no longer gates shard concurrency
+	// (dispatch is throttled via cfg.Limiter); accepted for backwards
+	// compatibility but otherwise inert.
+	_ = cfg.Workers
+
+	// rsh==[32]byte{} means no replay-eligible rules — runShard's
+	// walker-only branch fires and saves; no subscription needed.
+	var (
+		shardEvents     map[int]chan *reader.Event
+		readerDone      chan error
+		fanoutDone      chan struct{}
+		cancelRead      context.CancelFunc
+		globalStartTsNs int64
+	)
+	if rsh != [32]byte{} {
+		// Pre-load all per-shard cursors so the shared subscription
+		// can start from min(per-shard startTsNs). Using the cold-start
+		// floor (runNow - maxTTL) globally would skip past pending
+		// events on shards whose cursor is older than the floor —
+		// exactly the case where a rule's TTL equals maxTTL and an
+		// older event still has DueTime <= runNow.
+		globalStartTsNs = computeGlobalStartTsNs(ctx, cfg, runNow, maxTTL)
+		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs)
+		defer cancelRead()
 	}
-	if workers > len(cfg.Shards) {
-		workers = len(cfg.Shards)
-	}
-	sem := make(chan struct{}, workers)
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(cfg.Shards))
 	for _, sh := range cfg.Shards {
 		sh := sh
 		wg.Add(1)
-		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
-			defer func() { <-sem }()
-			if err := runShard(ctx, cfg, snap, runNow, sh); err != nil {
+			var ch <-chan *reader.Event
+			if shardEvents != nil {
+				ch = shardEvents[sh]
+			}
+			if err := runShard(ctx, cfg, snap, runNow, sh, ch); err != nil {
 				errCh <- err
 			}
 		}()
 	}
 	wg.Wait()
 	close(errCh)
+
+	// Tear down the shared subscription. cancelRead unblocks both the
+	// reader's gRPC stream and the fan-out's send loop; we wait on both
+	// so their goroutines don't outlive Run.
+	if cancelRead != nil {
+		cancelRead()
+		<-fanoutDone
+		if rerr := <-readerDone; rerr != nil && !errors.Is(rerr, context.Canceled) && !errors.Is(rerr, context.DeadlineExceeded) {
+			glog.V(2).Infof("daily_run: shared reader returned: %v", rerr)
+		}
+	}
+
 	var first error
 	errCount := 0
 	for err := range errCh {
@@ -134,6 +175,123 @@ func Run(ctx context.Context, cfg Config) error {
 	glog.V(0).Infof("daily_run: status=%s shards=%d errors=%d duration=%s",
 		status, len(cfg.Shards), errCount, time.Since(startedAt).Round(time.Millisecond))
 	return first
+}
+
+// computeGlobalStartTsNs scans every shard's persisted cursor and
+// returns the minimum startTsNs the shared subscription must cover.
+// For each shard the start point is the persisted cursor (steady state)
+// or runNow - maxTTL (cold start, when no cursor exists). Load errors
+// downgrade to the cold-start floor for that shard — failing closed
+// would be worse than re-scanning maxTTL of events.
+func computeGlobalStartTsNs(ctx context.Context, cfg Config, runNow time.Time, maxTTL time.Duration) int64 {
+	floor := runNow.Add(-maxTTL).UnixNano()
+	min := int64(0)
+	first := true
+	for _, sh := range cfg.Shards {
+		var start int64
+		if persisted, found, err := cfg.Persister.Load(ctx, sh); err == nil && found {
+			start = persisted.TsNs
+		} else {
+			start = floor
+		}
+		if first || start < min {
+			min = start
+			first = false
+		}
+	}
+	if first {
+		// No shards (validate() should have caught this, but defensive).
+		return floor
+	}
+	return min
+}
+
+// startSharedSubscription opens one SubscribeMetadata stream covering
+// every shard in cfg.Shards and fans events out to per-shard channels.
+// Subscription floor is the caller-supplied globalStartTsNs (typically
+// min over per-shard cursors). Shards whose own startTsNs is fresher
+// filter out already-past events themselves inside drainShardEvents.
+// Events arriving with TsNs > runUpTo (the pass boundary) cause the
+// fan-out to cancel the reader and close all per-shard channels,
+// ending the pass.
+func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
+	shardSet := make(map[int]bool, len(cfg.Shards))
+	shardEvents := make(map[int]chan *reader.Event, len(cfg.Shards))
+	for _, sh := range cfg.Shards {
+		shardSet[sh] = true
+		// Per-shard channel size has to absorb event bursts between
+		// drains' iterations without backpressuring the fan-out.
+		// 256 covers a busy test bucket; production tuning can lift
+		// this further.
+		shardEvents[sh] = make(chan *reader.Event, 256)
+	}
+
+	clientName := cfg.ClientName
+	if clientName == "" {
+		clientName = "worker-s3-lifecycle-daily"
+	}
+	clientID := cfg.ClientID
+	if clientID == 0 {
+		clientID = int32(util.RandomInt32())
+	}
+
+	events := make(chan *reader.Event, 4*len(cfg.Shards))
+	rd := &reader.Reader{
+		ShardPredicate: func(id int) bool { return shardSet[id] },
+		BucketsPath:    cfg.BucketsPath,
+		StartTsNs:      globalStartTsNs,
+		Events:         events,
+		EventBudget:    cfg.EventBudget,
+	}
+
+	readerCtx, cancelReader := context.WithCancel(ctx)
+	readerDone := make(chan error, 1)
+	go func() {
+		readerDone <- rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
+	}()
+
+	runUpTo := runNow.UnixNano()
+	fanoutDone := make(chan struct{})
+	go func() {
+		defer close(fanoutDone)
+		defer func() {
+			for _, ch := range shardEvents {
+				close(ch)
+			}
+		}()
+		for {
+			select {
+			case <-readerCtx.Done():
+				return
+			case ev, ok := <-events:
+				if !ok {
+					return
+				}
+				if ev == nil {
+					continue
+				}
+				// Meta-log events arrive in TsNs order; the first
+				// event past runUpTo means everything after is past
+				// too. Cancel the reader so subsequent passes don't
+				// pay for stream tail we'd drop anyway.
+				if ev.TsNs > runUpTo {
+					cancelReader()
+					return
+				}
+				ch := shardEvents[ev.ShardID]
+				if ch == nil {
+					continue
+				}
+				select {
+				case <-readerCtx.Done():
+					return
+				case ch <- ev:
+				}
+			}
+		}
+	}()
+
+	return shardEvents, readerDone, fanoutDone, cancelReader
 }
 
 func validate(cfg Config) error {
@@ -170,7 +328,7 @@ func validate(cfg Config) error {
 //   - steady state: RulesForShard's walk view, so walker-bound and
 //     scan_only-promoted rules fire every day even when replay rules
 //     are unchanged.
-func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int) error {
+func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int, events <-chan *reader.Event) error {
 	shardLabel := strconv.Itoa(shardID)
 	shardStart := time.Now()
 	defer func() {
@@ -285,7 +443,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
-	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs)
+	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
 	// Cursor save uses a fresh ctx because the steady-state drain exits
 	// via passCtx cancellation (the only signal the filer subscription
 	// gets when no new events arrive). Saving with the canceled passCtx
@@ -311,42 +469,18 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	})
 }
 
-// drainShardEvents subscribes to the meta-log from startTsNs and
-// dispatches matches whose due_time is past runNow. cursorAdvanceTo
-// stops growing at the first event with a not-yet-due match so that
-// event is re-scanned in a later run. halted=true marks an unresolved
-// dispatch outcome.
-func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID int, snap *engine.Snapshot, startTsNs int64) (int64, bool, error) {
-	clientName := cfg.ClientName
-	if clientName == "" {
-		clientName = "worker-s3-lifecycle-daily"
-	}
-	clientID := cfg.ClientID
-	if clientID == 0 {
-		clientID = int32(util.RandomInt32())
-	}
-	runUpTo := runNow.UnixNano()
-	if startTsNs >= runUpTo {
-		return startTsNs, false, nil
-	}
-
-	events := make(chan *reader.Event, 64)
-	rd := &reader.Reader{
-		ShardID:     shardID,
-		BucketsPath: cfg.BucketsPath,
-		StartTsNs:   startTsNs,
-		Events:      events,
-		EventBudget: cfg.EventBudget,
-	}
-
-	readerCtx, cancelReader := context.WithCancel(ctx)
-	defer cancelReader()
-
-	readerDone := make(chan error, 1)
-	go func() {
-		readerDone <- rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
-	}()
-
+// drainShardEvents reads pre-fanned-out events for this shard from the
+// shared meta-log subscription and dispatches matches whose due_time is
+// past runNow. cursorAdvanceTo stops growing at the first event with a
+// not-yet-due match so that event is re-scanned in a later run.
+// halted=true marks an unresolved dispatch outcome.
+//
+// The subscription itself lives at the Run() level — one filer stream
+// fans out to per-shard channels via shardEventDispatcher. Each shard
+// drains its own channel and advances its own cursor; future-TsNs
+// events (relative to this pass's runNow) are filtered out by the
+// dispatcher before they reach this channel.
+func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID int, snap *engine.Snapshot, startTsNs int64, events <-chan *reader.Event) (int64, bool, error) {
 	cursorAdvanceTo := startTsNs
 	stuck := false
 	halted := false
@@ -355,8 +489,6 @@ drain:
 	for {
 		select {
 		case <-ctx.Done():
-			cancelReader()
-			<-readerDone
 			return cursorAdvanceTo, true, ctx.Err()
 		case ev, ok := <-events:
 			if !ok {
@@ -365,16 +497,16 @@ drain:
 			if ev == nil {
 				continue
 			}
-			if ev.TsNs > runUpTo {
-				cancelReader()
-				break drain
+			// The global subscription starts at min(per-shard startTsNs),
+			// so this shard may receive events that are already past its
+			// own cursor. Skip them rather than re-dispatching.
+			if ev.TsNs <= startTsNs {
+				continue
 			}
 			stats.S3LifecycleDailyRunEventsScanned.WithLabelValues(strconv.Itoa(shardID)).Inc()
 			matches := router.Route(ctx, snap, ev, runNow, cfg.Lister)
 			eventSkipped, eventHalted, eventErr := processMatches(ctx, cfg, runNow, ev, matches)
 			if eventErr != nil {
-				cancelReader()
-				<-readerDone
 				return cursorAdvanceTo, true, eventErr
 			}
 			if eventHalted {
@@ -391,10 +523,6 @@ drain:
 		}
 	}
 
-	cancelReader()
-	if rerr := <-readerDone; rerr != nil && !errors.Is(rerr, context.Canceled) {
-		glog.V(2).Infof("daily_run shard=%d: reader returned: %v", shardID, rerr)
-	}
 	return cursorAdvanceTo, halted, nil
 }
 
