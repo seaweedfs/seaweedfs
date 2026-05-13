@@ -30,6 +30,7 @@ func TestSortedFileNeedleMap_DeleteAppendsTombstone(t *testing.T) {
 		key := Uint64ToNeedleId(uint64(i + 1))
 		off := Uint32ToOffset(uint32((i + 1) * 8))
 		if err := writer.Put(key, off, Size(1024)); err != nil {
+			writer.Close()
 			t.Fatalf("put %d: %v", i, err)
 		}
 	}
@@ -76,8 +77,16 @@ func TestSortedFileNeedleMap_DeleteAppendsTombstone(t *testing.T) {
 	}
 	for i := 0; i < putCount; i++ {
 		wantKey := Uint64ToNeedleId(uint64(i + 1))
+		wantOff := Uint32ToOffset(uint32((i + 1) * 8))
+		wantSize := Size(1024)
 		if entries[i].key != wantKey {
 			t.Fatalf("entry[%d].key: got %d, want %d (front of idx was overwritten)", i, entries[i].key, wantKey)
+		}
+		if entries[i].offset != wantOff {
+			t.Fatalf("entry[%d].offset: got %s, want %s", i, entries[i].offset, wantOff)
+		}
+		if entries[i].size != wantSize {
+			t.Fatalf("entry[%d].size: got %d, want %d", i, entries[i].size, wantSize)
 		}
 		if entries[i].size.IsDeleted() {
 			t.Fatalf("entry[%d] is unexpectedly a tombstone (front-overwrite regression)", i)
