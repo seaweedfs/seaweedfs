@@ -90,9 +90,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			ms.Topo.UnRegisterDataNode(dn)
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
 			ms.UnRegisterUuids(dn.Ip, dn.Port)
-			if ms.heartbeatOwnership != nil {
-				ms.heartbeatOwnership.release(dn.Ip, uint32(dn.Port))
-			}
 
 			if ms.Topo.IsLeader() && (len(message.DeletedVids) > 0 || len(message.DeletedEcVids) > 0) {
 				ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
@@ -138,11 +135,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			if heartbeat.Ip == "" {
 				continue
 			} // ToDo must be removed after update major version
-			if err := ms.authorizeHeartbeatPeer(stream.Context(), heartbeat); err != nil {
-				glog.Errorf("SendHeartbeat refused: %v", err)
-				stats.MasterReceivedHeartbeatCounter.WithLabelValues("rejected").Inc()
-				return err
-			}
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
@@ -172,13 +164,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
 		dn.UpdateDiskTags(heartbeat.DiskTags)
-
-		// Reject claims on volume / ec shard ids that another peer already owns.
-		// Replica-slot semantics (one owner per replica) are approximated by the
-		// declared copy count; the strict per-slot mapping is a follow-up.
-		if ms.heartbeatOwnership != nil {
-			ms.filterVolumeOwnership(dn, heartbeat)
-		}
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
