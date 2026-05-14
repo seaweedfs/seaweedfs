@@ -3203,11 +3203,17 @@ fn get_append_at_ns(last: u64) -> u64 {
 }
 
 /// Remove all files associated with a volume.
+/// .dat/.idx removals log at info level so destructive calls are traceable.
 pub(crate) fn remove_volume_files(base: &str) {
     for ext in &[
         ".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb",
     ] {
-        let _ = fs::remove_file(format!("{}{}", base, ext));
+        let path = format!("{}{}", base, ext);
+        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let existed = fs::remove_file(&path).is_ok();
+        if existed && (*ext == ".dat" || *ext == ".idx") {
+            tracing::info!("removed volume file {} (size={})", path, size);
+        }
     }
     // leveldb uses a directory
     let _ = fs::remove_dir_all(format!("{}.ldb", base));

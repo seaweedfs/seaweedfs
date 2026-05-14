@@ -190,7 +190,15 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
 
-	// Step 6: Delete original volume
+	// Without this gate, a partial distribute/mount lets the next step
+	// zero the only intact .dat while the cluster is missing shards.
+	t.ReportProgressWithStage(85.0, "Verifying EC shards across destinations")
+	t.GetLogger().Info("Verifying EC shards across destinations")
+	if err := t.verifyEcShardsBeforeDelete(ctx); err != nil {
+		return fmt.Errorf("EC shard verification failed; refusing to delete source volume %d: %w", t.volumeID, err)
+	}
+
+	// Step 7: Delete original volume
 	t.ReportProgressWithStage(90.0, "Deleting original volume")
 	t.GetLogger().Info("Deleting original volume")
 	if err := t.deleteOriginalVolume(ctx); err != nil {
@@ -543,6 +551,37 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 // mountEcShards mounts EC shards on destination servers
 func (t *ErasureCodingTask) mountEcShards() error {
 	return erasure_coding.MountEcShards(t.volumeID, t.collection, t.shardAssignment, t.sourceDiskType, t.grpcDialOption, t.GetLogger())
+}
+
+func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) error {
+	servers := make([]string, 0, len(t.shardAssignment))
+	for node := range t.shardAssignment {
+		servers = append(servers, node)
+	}
+	if len(servers) == 0 {
+		return fmt.Errorf("no destinations to verify; shardAssignment is empty")
+	}
+
+	totalShards := int(t.dataShards + t.parityShards)
+	union, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, t.volumeID, servers, t.grpcDialOption)
+
+	summary := erasure_coding.SummarizeShardInventory(perServer)
+	t.GetLogger().WithFields(map[string]interface{}{
+		"volume_id":     t.volumeID,
+		"shards_seen":   union.Count(),
+		"shards_needed": totalShards,
+		"per_server":    summary,
+	}).Info("EC shard inventory before source deletion")
+
+	if err := erasure_coding.RequireFullShardSet(t.volumeID, union, totalShards); err != nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":  t.volumeID,
+			"per_server": summary,
+			"error":      err.Error(),
+		}).Error("EC shard verification failed — source volume will be kept")
+		return err
+	}
+	return nil
 }
 
 // deleteOriginalVolume deletes the original volume and all its replicas from all servers
