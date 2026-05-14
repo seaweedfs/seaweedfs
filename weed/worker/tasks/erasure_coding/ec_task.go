@@ -190,8 +190,8 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
 
-	// Without this gate, a partial distribute/mount lets Step 7 zero the
-	// only intact .dat while the cluster is missing shards (#9490).
+	// Without this gate, a partial distribute/mount lets the next step
+	// zero the only intact .dat while the cluster is missing shards.
 	t.ReportProgressWithStage(85.0, "Verifying EC shards across destinations")
 	t.GetLogger().Info("Verifying EC shards across destinations")
 	if err := t.verifyEcShardsBeforeDelete(ctx); err != nil {

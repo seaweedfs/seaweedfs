@@ -199,7 +199,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
-	// #9490: a partial encode followed by source deletion is unrecoverable.
+	// A partial encode followed by source deletion is unrecoverable.
 	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
 	}

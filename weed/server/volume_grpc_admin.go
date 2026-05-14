@@ -176,7 +176,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
 	} else {
-		// V(0) so destructive RPCs are always traceable (#9490).
+		// V(0) so destructive RPCs are always traceable.
 		glog.Infof("volume delete %v", req)
 	}
 
