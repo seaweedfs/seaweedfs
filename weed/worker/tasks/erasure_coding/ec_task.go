@@ -673,15 +673,19 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 
 // getReplicas extracts regular .dat replica servers from unified sources.
 // Sources with ShardIds set are EC-shard cleanup targets and must be skipped.
+// Per-disk source rows are deduped to one server entry — VolumeDelete is a
+// server-wide call.
 func (t *ErasureCodingTask) getReplicas() []string {
 	var replicas []string
+	seen := make(map[string]struct{})
 	for _, source := range t.sources {
-		if source.VolumeId == 0 {
+		if source.VolumeId == 0 || len(source.ShardIds) > 0 {
 			continue
 		}
-		if len(source.ShardIds) > 0 {
+		if _, ok := seen[source.Node]; ok {
 			continue
 		}
+		seen[source.Node] = struct{}{}
 		replicas = append(replicas, source.Node)
 	}
 	return replicas

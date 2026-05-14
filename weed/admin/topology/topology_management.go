@@ -354,6 +354,13 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 			continue
 		}
 		shardIds := collectShardIdsForDisk(disk, volumeID, collection)
+		if len(shardIds) == 0 {
+			// ecShardMatchesCollection saw an info entry but every
+			// EcIndexBits is zero — phantom shard record; emitting it
+			// would feed an EC-cleanup source with no shard ids and
+			// confuse the len(ShardIds) discriminator downstream.
+			continue
+		}
 		ecShards = append(ecShards, VolumeReplica{
 			ServerID:   disk.NodeID,
 			DiskID:     disk.DiskID,
