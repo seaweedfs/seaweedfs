@@ -291,6 +291,31 @@ func (v *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_serv
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
 }
 
+func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	for _, mr := range v.mountRequests {
+		if mr.VolumeId != req.VolumeId {
+			continue
+		}
+		for _, shardId := range mr.ShardIds {
+			var size int64
+			if info, err := os.Stat(v.filePath(mr.VolumeId, fmt.Sprintf(".ec%02d", shardId))); err == nil {
+				size = info.Size()
+			}
+			resp.EcShardInfos = append(resp.EcShardInfos, &volume_server_pb.EcShardInfo{
+				ShardId:    shardId,
+				Size:       size,
+				Collection: mr.Collection,
+				VolumeId:   mr.VolumeId,
+			})
+		}
+	}
+	return resp, nil
+}
+
 func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	v.mu.Lock()
 	v.deleteRequests = append(v.deleteRequests, req)
