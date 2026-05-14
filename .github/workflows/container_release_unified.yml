@@ -29,6 +29,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
@@ -357,7 +358,128 @@ jobs:
             ghcr.io/chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
             chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           
-          echo "✓ Successfully copied ${{ matrix.variant }} to Docker Hub"
+          echo "Successfully copied ${{ matrix.variant }} to Docker Hub"
+
+  # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
+  # Security for visibility, but never blocks the release. Releases (including
+  # `latest`) ship regardless — vulnerabilities are tracked, not gated, since
+  # we sometimes need to publish through known findings (e.g. unfixed upstream
+  # CVE, base-image lag).
+  trivy-scan:
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'push'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source_suffix: ""
+            variant: normal
+          - source_suffix: _large_disk
+            variant: large_disk
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Trivy report (${{ matrix.variant }})
+        # Pin to SHA - mutable tags were compromised (GHSA-69fq-xp46-6x23)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          # Scan the multi-arch tag on GHCR (already pushed by the build job).
+          # Trivy scans the runner's native platform; OS packages are identical
+          # across architectures since they all share the same alpine base.
+          image-ref: ghcr.io/chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.source_suffix }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '0'
+
+      - name: Upload Trivy scan results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-${{ matrix.variant }}
+
+  # Point `latest` (and `latest_large_disk`) at the just-released versioned
+  # image. crane tag adds an extra tag to an existing manifest — no rebuild,
+  # no QEMU, no separate workflow. Replaces the old container_latest.yml
+  # rebuild that often failed or lagged behind the release. Independent of
+  # trivy-scan: vuln findings are reported but do not block `latest`.
+  tag-latest:
+    runs-on: ubuntu-latest
+    needs: [copy-to-dockerhub]
+    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        include:
+          - source_suffix: ""
+            latest_tag: latest
+          - source_suffix: _large_disk
+            latest_tag: latest_large_disk
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4.1.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Install crane
+        run: |
+          cd $(mktemp -d)
+          curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
+          sudo mv crane /usr/local/bin/
+          crane version
+
+      - name: Re-tag ${{ env.RELEASE_TAG }}${{ matrix.source_suffix }} as ${{ matrix.latest_tag }}
+        run: |
+          retry_with_backoff() {
+            local max_attempts=5
+            local timeout=1
+            local attempt=1
+            local exit_code=0
+            while [ $attempt -le $max_attempts ]; do
+              if "$@"; then
+                return 0
+              else
+                exit_code=$?
+              fi
+              if [ $attempt -lt $max_attempts ]; then
+                echo "Attempt $attempt failed. Retrying in ${timeout}s..." >&2
+                sleep $timeout
+                timeout=$((timeout * 2))
+              fi
+              attempt=$((attempt + 1))
+            done
+            echo "Command failed after $max_attempts attempts" >&2
+            return $exit_code
+          }
+
+          SRC_TAG="${{ env.RELEASE_TAG }}${{ matrix.source_suffix }}"
+          DST_TAG="${{ matrix.latest_tag }}"
+
+          echo "Tagging ghcr.io/chrislusf/seaweedfs:${SRC_TAG} as ${DST_TAG}"
+          retry_with_backoff crane tag "ghcr.io/chrislusf/seaweedfs:${SRC_TAG}" "${DST_TAG}"
+
+          echo "Tagging chrislusf/seaweedfs:${SRC_TAG} as ${DST_TAG}"
+          retry_with_backoff crane tag "chrislusf/seaweedfs:${SRC_TAG}" "${DST_TAG}"
 
   helm-release:
     runs-on: ubuntu-latest
