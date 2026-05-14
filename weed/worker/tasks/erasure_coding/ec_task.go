@@ -190,10 +190,8 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
 
-	// Step 6: Verify all shards landed before destroying the source.
-	// Without this, a partial distribute/mount failure (see #9490) lets the
-	// next step zero the only intact .dat while the cluster is missing one
-	// or more shards — unrecoverable.
+	// Without this gate, a partial distribute/mount lets Step 7 zero the
+	// only intact .dat while the cluster is missing shards (#9490).
 	t.ReportProgressWithStage(85.0, "Verifying EC shards across destinations")
 	t.GetLogger().Info("Verifying EC shards across destinations")
 	if err := t.verifyEcShardsBeforeDelete(ctx); err != nil {
@@ -555,12 +553,6 @@ func (t *ErasureCodingTask) mountEcShards() error {
 	return erasure_coding.MountEcShards(t.volumeID, t.collection, t.shardAssignment, t.sourceDiskType, t.grpcDialOption, t.GetLogger())
 }
 
-// verifyEcShardsBeforeDelete queries every destination server for its EC
-// shard inventory and refuses to proceed unless the full shard set
-// (DataShardsCount + ParityShardsCount distinct ids) is observed.
-//
-// This is the safety gate that issue #9490 was asking for: a half-failed
-// distribute/mount must not be followed by source deletion.
 func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) error {
 	servers := make([]string, 0, len(t.shardAssignment))
 	for node := range t.shardAssignment {

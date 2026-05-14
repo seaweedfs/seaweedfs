@@ -199,9 +199,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
-	// ...verify every encoded volume has the full shard set across the
-	// cluster before destroying any source. See #9490: a partial encode
-	// followed by source deletion is unrecoverable.
+	// #9490: a partial encode followed by source deletion is unrecoverable.
 	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
 	}
@@ -341,10 +339,6 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	return nil
 }
 
-// verifyEcShardsBeforeDelete walks the master topology and refuses to proceed
-// unless every volume in volumeIds has all TotalShardsCount EC shards present
-// across the cluster on the target diskType. Issue #9490: a partial encode
-// must not be followed by source deletion.
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
 	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {

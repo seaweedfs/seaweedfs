@@ -101,12 +101,9 @@ func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 }
 
 func removeVolumeFiles(filename string) {
-	// basic
+	// .dat/.idx removals log at V(0) so destructive calls are traceable (#9490).
 	deleteAndLog := func(ext string) {
 		fullFilename := filename + "." + ext
-		// Log existence + size before removal so a destructive call is
-		// always traceable in production logs (#9490). Successful removal
-		// is logged for .dat/.idx; failures are logged for all extensions.
 		st, statErr := os.Stat(fullFilename)
 		err := os.RemoveAll(fullFilename)
 		if err != nil {

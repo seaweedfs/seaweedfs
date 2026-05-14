@@ -71,8 +71,6 @@ func TestSummarizeShardInventory_IncludesError(t *testing.T) {
 	}
 }
 
-// errStr is a tiny helper so test data can attach an error without pulling in
-// errors.New everywhere.
 type errStr string
 
 func (e errStr) Error() string { return string(e) }
