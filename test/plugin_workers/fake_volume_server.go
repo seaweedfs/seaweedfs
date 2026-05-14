@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -295,23 +296,49 @@ func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serve
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	// Report whichever shards exist on disk: seeded or mounted. Collection
+	// comes from the matching mount request when one exists.
+	collectionByShard := make(map[uint32]string)
 	for _, mr := range v.mountRequests {
 		if mr.VolumeId != req.VolumeId {
 			continue
 		}
 		for _, shardId := range mr.ShardIds {
-			var size int64
-			if info, err := os.Stat(v.filePath(mr.VolumeId, fmt.Sprintf(".ec%02d", shardId))); err == nil {
-				size = info.Size()
+			if _, ok := collectionByShard[shardId]; !ok {
+				collectionByShard[shardId] = mr.Collection
 			}
-			resp.EcShardInfos = append(resp.EcShardInfos, &volume_server_pb.EcShardInfo{
-				ShardId:    shardId,
-				Size:       size,
-				Collection: mr.Collection,
-				VolumeId:   mr.VolumeId,
-			})
 		}
+	}
+
+	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	prefix := fmt.Sprintf("%d.ec", req.VolumeId)
+	entries, _ := os.ReadDir(v.baseDir)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, prefix)
+		if len(suffix) < 2 {
+			continue
+		}
+		var shardId uint32
+		if _, err := fmt.Sscanf(suffix[:2], "%d", &shardId); err != nil {
+			continue
+		}
+		var size int64
+		if info, err := entry.Info(); err == nil {
+			size = info.Size()
+		}
+		resp.EcShardInfos = append(resp.EcShardInfos, &volume_server_pb.EcShardInfo{
+			ShardId:    shardId,
+			Size:       size,
+			Collection: collectionByShard[shardId],
+			VolumeId:   req.VolumeId,
+		})
 	}
 	return resp, nil
 }
