@@ -3,6 +3,7 @@ package s3_lifecycle
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -314,20 +315,23 @@ func TestDescriptor_WorkerConfigFormIsAbsent(t *testing.T) {
 		"WorkerConfigForm should be nil now that max_runtime_minutes is gone; if you re-add a worker-side knob, restore the form and pin it here")
 }
 
-func TestDescriptor_AdminRuntimeDefaultsBoundExecutionTimeout(t *testing.T) {
-	// The scheduler's global default Execution Timeout is 90s
-	// (defaultScheduledExecutionTimeout in weed/admin/plugin/plugin_scheduler.go).
-	// Lifecycle is a daily batch — minutes to hours per pass — so 90s
-	// would kill every real run. Declare 1h here so a fresh install
-	// has a workable cap; operators can raise it via the admin UI for
-	// very large buckets.
+func TestDescriptor_AdminRuntimeDefaultsHaveNoTimeoutInPractice(t *testing.T) {
+	// Lifecycle is a scheduled batch whose natural duration is "as
+	// long as today's events take." The scheduler's global 90s default
+	// would kill every real run, and a numeric cap operators have to
+	// estimate is a footgun (too low truncates a legitimate
+	// large-bucket pass; too high makes the value meaningless). Declare
+	// math.MaxInt32 seconds for both knobs to say "no timeout in
+	// practice" in a code-review-readable way. A future change that
+	// tightens the cap should fail this test so the choice is
+	// re-examined consciously.
 	h := NewHandler(nil)
 	d := h.Descriptor()
 	require.NotNil(t, d.AdminRuntimeDefaults)
-	assert.Equal(t, int32(3600), d.AdminRuntimeDefaults.ExecutionTimeoutSeconds,
-		"ExecutionTimeoutSeconds must cover a real lifecycle pass; the scheduler's 90s default would clobber the worker mid-run")
-	assert.Equal(t, int32(3600), d.AdminRuntimeDefaults.JobTypeMaxRuntimeSeconds,
-		"JobTypeMaxRuntimeSeconds gates the whole job-type's per-pass budget; align with ExecutionTimeoutSeconds")
+	assert.Equal(t, int32(math.MaxInt32), d.AdminRuntimeDefaults.ExecutionTimeoutSeconds,
+		"ExecutionTimeoutSeconds should be effectively unlimited; the scheduler's 90s default would otherwise clobber the worker mid-run")
+	assert.Equal(t, int32(math.MaxInt32), d.AdminRuntimeDefaults.JobTypeMaxRuntimeSeconds,
+		"JobTypeMaxRuntimeSeconds is the per-pass budget — keep aligned with ExecutionTimeoutSeconds")
 }
 
 func TestDescriptor_AdminRuntimeDefaultsDailyCadence(t *testing.T) {

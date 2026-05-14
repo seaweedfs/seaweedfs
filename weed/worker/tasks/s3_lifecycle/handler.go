@@ -3,6 +3,7 @@ package s3_lifecycle
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -136,14 +137,21 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			DetectionIntervalMinutes: 24 * 60, // daily
 			DetectionTimeoutSeconds:  60,
 			MaxJobsPerDetection:      1,
-			// Lifecycle is a daily batch — minutes to hours for a busy
-			// cluster. The plugin scheduler's global default Execution
-			// Timeout is 90s, which would clobber every real run before
-			// the worker's pass completes. Declare 1h here so a fresh
-			// install has a workable upper bound; operators can raise
-			// it via the admin UI for very large buckets.
-			ExecutionTimeoutSeconds: 3600,
-			JobTypeMaxRuntimeSeconds: 3600,
+			// Effectively no per-pass wall-clock cap. Lifecycle is a
+			// scheduled batch — its natural duration is "as long as it
+			// takes to process today's events." The scheduler's global
+			// 90s default would kill every real run, and a numeric
+			// cap operators have to estimate (1h? 8h?) is a recurring
+			// footgun: too low truncates a legitimate large-bucket
+			// pass; too high makes the value meaningless.
+			//
+			// Use math.MaxInt32 seconds (~68 years) for both knobs to
+			// say "no timeout in practice" in code-review-readable form.
+			// Operators who genuinely want a cap can set one in the
+			// admin UI; the underlying context.WithTimeout machinery
+			// is unchanged.
+			ExecutionTimeoutSeconds:  math.MaxInt32,
+			JobTypeMaxRuntimeSeconds: math.MaxInt32,
 		},
 	}
 }
