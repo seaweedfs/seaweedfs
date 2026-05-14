@@ -353,7 +353,8 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 			union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
 		}
 
-		if err := erasure_coding.RequireFullShardSet(uint32(vid), union); err != nil {
+		totalShards := erasure_coding.TotalShardsCount
+		if err := erasure_coding.RequireFullShardSet(uint32(vid), union, totalShards); err != nil {
 			summary := make([]string, 0, len(nodeShards))
 			for node, info := range nodeShards {
 				summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
@@ -365,7 +366,7 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 		}
 
 		glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
-			vid, diskType.ReadableString(), union.Count(), erasure_coding.TotalShardsCount, len(nodeShards))
+			vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
 	}
 
 	return nil

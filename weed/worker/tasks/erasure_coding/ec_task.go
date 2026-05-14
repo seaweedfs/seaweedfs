@@ -562,17 +562,18 @@ func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) erro
 		return fmt.Errorf("no destinations to verify; shardAssignment is empty")
 	}
 
+	totalShards := int(t.dataShards + t.parityShards)
 	union, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, t.volumeID, servers, t.grpcDialOption)
 
 	summary := erasure_coding.SummarizeShardInventory(perServer)
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":     t.volumeID,
 		"shards_seen":   union.Count(),
-		"shards_needed": erasure_coding.TotalShardsCount,
+		"shards_needed": totalShards,
 		"per_server":    summary,
 	}).Info("EC shard inventory before source deletion")
 
-	if err := erasure_coding.RequireFullShardSet(t.volumeID, union); err != nil {
+	if err := erasure_coding.RequireFullShardSet(t.volumeID, union, totalShards); err != nil {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":  t.volumeID,
 			"per_server": summary,

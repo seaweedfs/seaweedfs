@@ -66,9 +66,16 @@ func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 	return union, perServer
 }
 
-func RequireFullShardSet(volumeID uint32, shardsPresent ShardBits) error {
+// totalShards is the configured DataShards+ParityShards for this volume.
+// Passed as a parameter (not derived from TotalShardsCount) so enterprise
+// builds with custom EC ratios share this helper verbatim.
+func RequireFullShardSet(volumeID uint32, shardsPresent ShardBits, totalShards int) error {
+	if totalShards <= 0 || totalShards > MaxShardCount {
+		return fmt.Errorf("invalid totalShards %d for volume %d (must be in [1, %d])",
+			totalShards, volumeID, MaxShardCount)
+	}
 	var missing []int
-	for id := 0; id < TotalShardsCount; id++ {
+	for id := 0; id < totalShards; id++ {
 		if !shardsPresent.Has(ShardId(id)) {
 			missing = append(missing, id)
 		}
@@ -78,7 +85,7 @@ func RequireFullShardSet(volumeID uint32, shardsPresent ShardBits) error {
 	}
 	sort.Ints(missing)
 	return fmt.Errorf("EC shard set incomplete for volume %d: %d/%d shards present, missing shard ids %v",
-		volumeID, shardsPresent.Count(), TotalShardsCount, missing)
+		volumeID, shardsPresent.Count(), totalShards, missing)
 }
 
 func SummarizeShardInventory(perServer map[string]ServerShardInventory) string {

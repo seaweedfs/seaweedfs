@@ -10,7 +10,7 @@ func TestRequireFullShardSet_AllPresent(t *testing.T) {
 	for id := 0; id < TotalShardsCount; id++ {
 		bits = bits.Set(ShardId(id))
 	}
-	if err := RequireFullShardSet(42, bits); err != nil {
+	if err := RequireFullShardSet(42, bits, TotalShardsCount); err != nil {
 		t.Fatalf("unexpected error for full set: %v", err)
 	}
 }
@@ -23,7 +23,7 @@ func TestRequireFullShardSet_ReportsMissingIds(t *testing.T) {
 		}
 		bits = bits.Set(ShardId(id))
 	}
-	err := RequireFullShardSet(42, bits)
+	err := RequireFullShardSet(42, bits, TotalShardsCount)
 	if err == nil {
 		t.Fatal("expected error for incomplete set, got nil")
 	}
@@ -40,12 +40,45 @@ func TestRequireFullShardSet_ReportsMissingIds(t *testing.T) {
 }
 
 func TestRequireFullShardSet_EmptyBitmap(t *testing.T) {
-	err := RequireFullShardSet(1, 0)
+	err := RequireFullShardSet(1, 0, TotalShardsCount)
 	if err == nil {
 		t.Fatal("expected error for empty bitmap")
 	}
 	if !strings.Contains(err.Error(), "0/14") {
 		t.Errorf("error should report 0/14 shards: %s", err.Error())
+	}
+}
+
+func TestRequireFullShardSet_CustomRatio(t *testing.T) {
+	// 6+3 ratio: total=9, all present
+	var bits ShardBits
+	for id := 0; id < 9; id++ {
+		bits = bits.Set(ShardId(id))
+	}
+	if err := RequireFullShardSet(7, bits, 9); err != nil {
+		t.Fatalf("unexpected error for full 6+3 set: %v", err)
+	}
+
+	// 6+3, missing shard 5
+	bits = bits.Clear(5)
+	err := RequireFullShardSet(7, bits, 9)
+	if err == nil {
+		t.Fatal("expected error when shard 5 is missing in 6+3 ratio")
+	}
+	if !strings.Contains(err.Error(), "8/9") {
+		t.Errorf("error should report 8/9: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "[5]") {
+		t.Errorf("error should list missing id 5: %s", err.Error())
+	}
+}
+
+func TestRequireFullShardSet_RejectsInvalidTotal(t *testing.T) {
+	if err := RequireFullShardSet(1, 0, 0); err == nil {
+		t.Error("expected error for totalShards=0")
+	}
+	if err := RequireFullShardSet(1, 0, MaxShardCount+1); err == nil {
+		t.Errorf("expected error for totalShards > MaxShardCount")
 	}
 }
 
