@@ -519,3 +519,8 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
+
+// apache/thrift v0.23.0 uses math.MaxUint32 as an untyped int constant in
+// lib/go/thrift/framed_transport.go, which overflows int on 32-bit GOARCHes
+// (e.g. openbsd/arm, linux/arm). Pin to v0.22.0 until upstream fixes it.
+replace github.com/apache/thrift => github.com/apache/thrift v0.22.0
