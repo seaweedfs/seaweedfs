@@ -828,12 +828,9 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 			pbSource.EstimatedSize = uint64(*source.EstimatedSize)
 		}
 
-		// Set appropriate volume ID or shard IDs based on cleanup type.
-		// EC-shard sources carry the shard ids the worker must unmount + delete
-		// on the destination before re-distributing (#9478 follow-up); presence
-		// of ShardIds is the on-the-wire discriminator the worker uses to
-		// route a source to cleanupStaleEcShards rather than treat it as a
-		// regular volume replica to delete.
+		// Populated ShardIds is the wire-level marker that flags an
+		// EC-shard cleanup source; the worker routes it through
+		// cleanupStaleEcShards and skips it in getReplicas.
 		switch source.CleanupType {
 		case topology.CleanupVolumeReplica:
 			pbSource.VolumeId = volumeID

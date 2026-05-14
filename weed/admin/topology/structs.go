@@ -114,9 +114,8 @@ type MultiDestinationPlan struct {
 }
 
 // VolumeReplica represents a replica location with server and disk information.
-// For EC shard locations (returned by GetECShardLocations), ShardIds carries
-// the shard ids present on the disk so callers can drive shard-targeted RPCs
-// such as VolumeEcShardsUnmount / VolumeEcShardsDelete without re-querying.
+// ShardIds is populated only by GetECShardLocations — it lists the EC shards
+// the disk holds for the volume.
 type VolumeReplica struct {
 	ServerID   string   `json:"server_id"`
 	DiskID     uint32   `json:"disk_id"`

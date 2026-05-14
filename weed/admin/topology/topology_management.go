@@ -334,10 +334,7 @@ func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string)
 }
 
 // GetECShardLocations returns the disk locations for EC shards using O(1) lookup.
-// ShardIds on each returned VolumeReplica enumerates the shard ids present on
-// that disk for the volume — fed by the EC worker into VolumeEcShardsUnmount /
-// VolumeEcShardsDelete to clear stale shards from cross-server destinations
-// before a re-encode distributes fresh ones (#9478 follow-up).
+// Each VolumeReplica.ShardIds lists the shard ids on that disk.
 func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string) []VolumeReplica {
 	at.mutex.RLock()
 	defer at.mutex.RUnlock()
@@ -369,12 +366,9 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 	return ecShards
 }
 
-// collectShardIdsForDisk walks the disk's EcShardInfos for the given
-// (volumeID, collection) and expands each EcIndexBits bitmap into the
-// concrete shard ids present on the disk. A single info entry can carry
-// multiple shards, and the same volume can have several info entries (one
-// per DiskId on cross-disk layouts), so we union into a single bitmap
-// before expanding to avoid duplicates.
+// collectShardIdsForDisk unions every matching EcIndexBits on the disk and
+// expands the bitmap into shard ids, so multiple info entries for the same
+// volume don't produce duplicates.
 func collectShardIdsForDisk(disk *activeDisk, volumeID uint32, collection string) []uint32 {
 	if disk == nil || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
 		return nil
