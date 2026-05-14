@@ -341,6 +341,7 @@ type TaskSourceSpec struct {
 	DataCenter    string             // Data center of the source server
 	Rack          string             // Rack of the source server
 	CleanupType   SourceCleanupType  // For EC: volume replica vs existing shards
+	ShardIds      []uint32           // For CleanupECShards: shard ids on the source disk to clear before re-distributing
 	StorageImpact *StorageSlotChange // Optional: manual override
 	EstimatedSize *int64             // Optional: manual override
 }

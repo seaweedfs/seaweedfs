@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // splitDiskInfoByPhysicalDisk returns one master_pb.DiskInfo per physical
@@ -333,7 +334,8 @@ func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string)
 	return replicas
 }
 
-// GetECShardLocations returns the disk locations for EC shards using O(1) lookup
+// GetECShardLocations returns the disk locations for EC shards using O(1) lookup.
+// Each VolumeReplica.ShardIds lists the shard ids on that disk.
 func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string) []VolumeReplica {
 	at.mutex.RLock()
 	defer at.mutex.RUnlock()
@@ -345,20 +347,57 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 
 	var ecShards []VolumeReplica
 	for _, diskKey := range diskKeys {
-		if disk, diskExists := at.disks[diskKey]; diskExists {
-			// Verify collection matches (since index doesn't include collection)
-			if at.ecShardMatchesCollection(disk, volumeID, collection) {
-				ecShards = append(ecShards, VolumeReplica{
-					ServerID:   disk.NodeID,
-					DiskID:     disk.DiskID,
-					DataCenter: disk.DataCenter,
-					Rack:       disk.Rack,
-				})
-			}
+		disk, diskExists := at.disks[diskKey]
+		if !diskExists {
+			continue
 		}
+		if !at.ecShardMatchesCollection(disk, volumeID, collection) {
+			continue
+		}
+		shardIds := collectShardIdsForDisk(disk, volumeID, collection)
+		if len(shardIds) == 0 {
+			// ecShardMatchesCollection saw an info entry but every
+			// EcIndexBits is zero — phantom shard record; emitting it
+			// would feed an EC-cleanup source with no shard ids and
+			// confuse the len(ShardIds) discriminator downstream.
+			continue
+		}
+		ecShards = append(ecShards, VolumeReplica{
+			ServerID:   disk.NodeID,
+			DiskID:     disk.DiskID,
+			DataCenter: disk.DataCenter,
+			Rack:       disk.Rack,
+			ShardIds:   shardIds,
+		})
 	}
 
 	return ecShards
+}
+
+// collectShardIdsForDisk unions every matching EcIndexBits on the disk and
+// expands the bitmap into shard ids, so multiple info entries for the same
+// volume don't produce duplicates.
+func collectShardIdsForDisk(disk *activeDisk, volumeID uint32, collection string) []uint32 {
+	if disk == nil || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return nil
+	}
+	var bits erasure_coding.ShardBits
+	for _, ecShardInfo := range disk.DiskInfo.DiskInfo.EcShardInfos {
+		if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
+			continue
+		}
+		bits |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+	}
+	if bits == 0 {
+		return nil
+	}
+	ids := make([]uint32, 0, bits.Count())
+	for id := uint32(0); id < erasure_coding.MaxShardCount; id++ {
+		if uint32(bits)&(1<<id) != 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // volumeMatchesCollection checks if a volume on a disk matches the given collection
