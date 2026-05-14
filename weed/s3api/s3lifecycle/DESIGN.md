@@ -2,11 +2,11 @@
 
 The S3 lifecycle worker replaces the streaming + heap design with a daily meta-log replay. The worker runs as a scheduled job: "start, do today's work, stop" — no long-running per-shard goroutines, no future-buffered match heap.
 
-This document is the as-built reference. For operator-facing guides, see `docs/wiki/s3-lifecycle/`.
+This document is the as-built reference. For operator-facing guides, see the [SeaweedFS wiki](https://github.com/seaweedfs/seaweedfs/wiki).
 
 ## Goal
 
-For each bucket lifecycle rule with TTL `D` days, delete every object whose age exceeds `D`, exactly once per scheduled run, with the worker exiting when the pass completes. No future-buffered Matches in memory. Cluster-wide delete rate cap allocated per worker.
+For each bucket lifecycle rule with TTL `D` days, the worker processes every object whose age exceeds `D` during each scheduled run, dispatching deletes via `LifecycleDelete`. Events whose dispatch returned a retryable / blocked outcome are reprocessed from the persisted cursor on later runs — head-of-line blocking is intentional rather than a per-key retry queue. No future-buffered Matches in memory. Cluster-wide delete rate cap allocated per worker. The worker exits when the pass completes.
 
 ## Algorithm
 
