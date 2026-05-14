@@ -31,7 +31,7 @@ type IamGrpcStore struct {
 	// the filer side. Empty means no token is sent (the filer will reject).
 	adminSigningKey             security.SigningKey
 	adminSigningExpiresAfterSec int
-	mu                          sync.RWMutex // Protects filerAddressFunc, grpcDialOption, and adminSigningKey
+	mu                          sync.RWMutex // Protects filerAddressFunc, grpcDialOption, adminSigningKey, and adminSigningExpiresAfterSec
 }
 
 func (store *IamGrpcStore) GetName() credential.CredentialStoreTypeName {
