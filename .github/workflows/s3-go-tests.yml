@@ -248,7 +248,32 @@ jobs:
   s3-lifecycle-tests:
     name: S3 Lifecycle Tests
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per test so each gets a fresh `weed mini` server, avoiding
+        # the cross-test volume-pool exhaustion that surfaced when several
+        # TTL-pinned bucket collections piled up in a single run.
+        test:
+          - TestLifecycleAbortIncompleteMultipartUpload
+          - TestLifecycleBootstrapWalkOnExistingObjects
+          - TestLifecycleConfigUpdateBetweenSweeps
+          - TestLifecycleDeleteBucketLifecycleStopsDispatching
+          - TestLifecycleDisabledRuleSkipsObject
+          - TestLifecycleEmptyBucketSweepIsNoOp
+          - TestLifecycleExpirationDateInThePast
+          - TestLifecycleExpirationFiresOnBackdatedObject
+          - TestLifecycleExpiredDeleteMarkerCleanup
+          - TestLifecycleMultipleBucketsInOneSweep
+          - TestLifecycleMultipleRulesInOneBucket
+          - TestLifecycleNewerNoncurrentVersions
+          - TestLifecycleNoncurrentVersionExpiration
+          - TestLifecycleSizeFilterGreaterThan
+          - TestLifecycleSkipsObjectLockedObjects
+          - TestLifecycleSuspendedVersioningExpiration
+          - TestLifecycleTagFilter
+          - TestLifecycleVersionedBucketCreatesDeleteMarker
 
     steps:
       - name: Check out code
@@ -264,12 +289,12 @@ jobs:
         run: |
           go install -buildvcs=false
 
-      - name: Run S3 Lifecycle Tests
-        timeout-minutes: 12
+      - name: Run ${{ matrix.test }}
+        timeout-minutes: 8
         working-directory: test/s3/lifecycle
         run: |
           set -x
-          make test-with-server
+          make test-with-server TEST_PATTERN='^${{ matrix.test }}$$'
 
       - name: Show server logs on failure
         if: failure()
@@ -286,7 +311,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: s3-lifecycle-test-logs
+          name: s3-lifecycle-test-logs-${{ matrix.test }}
           path: test/s3/lifecycle/weed-test*.log
           retention-days: 3
 
