@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // splitDiskInfoByPhysicalDisk returns one master_pb.DiskInfo per physical
@@ -380,20 +381,20 @@ func collectShardIdsForDisk(disk *activeDisk, volumeID uint32, collection string
 	if disk == nil || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
 		return nil
 	}
-	var bits uint32
+	var bits erasure_coding.ShardBits
 	for _, ecShardInfo := range disk.DiskInfo.DiskInfo.EcShardInfos {
 		if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
 			continue
 		}
-		bits |= ecShardInfo.EcIndexBits
+		bits |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 	}
 	if bits == 0 {
 		return nil
 	}
-	var ids []uint32
-	for i := uint32(0); i < 32; i++ {
-		if bits&(1<<i) != 0 {
-			ids = append(ids, i)
+	ids := make([]uint32, 0, bits.Count())
+	for id := uint32(0); id < erasure_coding.MaxShardCount; id++ {
+		if uint32(bits)&(1<<id) != 0 {
+			ids = append(ids, id)
 		}
 	}
 	return ids
