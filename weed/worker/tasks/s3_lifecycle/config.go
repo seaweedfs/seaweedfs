@@ -11,13 +11,10 @@ const (
 
 	// In-process fan-out across the 16 shards.
 	shardPipelineGoroutines = 1
-
-	defaultMaxRuntimeMinutes = int64(60)
 )
 
 type Config struct {
 	Workers          int
-	MaxRuntime       time.Duration
 	MetaLogRetention time.Duration
 	// WalkerInterval is the minimum time between steady-state walker
 	// fires per shard. 0 means "fire on every run", preserving prior
@@ -28,12 +25,9 @@ type Config struct {
 
 func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		Workers:    shardPipelineGoroutines,
-		MaxRuntime: time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
+		Workers: shardPipelineGoroutines,
 	}
-	if cfg.MaxRuntime <= 0 {
-		cfg.MaxRuntime = time.Duration(defaultMaxRuntimeMinutes) * time.Minute
-	}
+	_ = workerValues // worker-side config form is currently empty; reserved for future per-worker tuning.
 	// Operator-declared meta-log retention. Negative or zero values stay
 	// zero so runShard falls back to maxTTL (PromotedHash dormant).
 	// Convert days->hours in int64 space before lifting to time.Duration
