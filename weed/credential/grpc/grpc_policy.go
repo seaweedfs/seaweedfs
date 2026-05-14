@@ -13,7 +13,7 @@ import (
 
 func (store *IamGrpcStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
 	policies := make(map[string]policy_engine.PolicyDocument)
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.ListPolicies(ctx, &iam_pb.ListPoliciesRequest{})
 		if err != nil {
 			return err
@@ -35,7 +35,7 @@ func (store *IamGrpcStore) PutPolicy(ctx context.Context, name string, document 
 	if err != nil {
 		return err
 	}
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.PutPolicy(ctx, &iam_pb.PutPolicyRequest{
 			Name:    name,
 			Content: string(content),
@@ -45,7 +45,7 @@ func (store *IamGrpcStore) PutPolicy(ctx context.Context, name string, document 
 }
 
 func (store *IamGrpcStore) DeletePolicy(ctx context.Context, name string) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{
 			Name: name,
 		})
@@ -55,7 +55,7 @@ func (store *IamGrpcStore) DeletePolicy(ctx context.Context, name string) error 
 
 func (store *IamGrpcStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	var doc policy_engine.PolicyDocument
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetPolicy(ctx, &iam_pb.GetPolicyRequest{
 			Name: name,
 		})
@@ -82,7 +82,7 @@ func (store *IamGrpcStore) CreatePolicy(ctx context.Context, name string, docume
 // ListPolicyNames retrieves names of all IAM policies via gRPC.
 func (store *IamGrpcStore) ListPolicyNames(ctx context.Context) ([]string, error) {
 	var names []string
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.ListPolicies(ctx, &iam_pb.ListPoliciesRequest{})
 		if err != nil {
 			return err
