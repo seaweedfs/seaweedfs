@@ -176,7 +176,10 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("volume delete %v", req)
+		// Log at V(0) so a destructive RPC is always traceable in production
+		// logs (#9490: a silent source delete after a partial EC encode
+		// destroyed the only intact replica).
+		glog.Infof("volume delete %v", req)
 	}
 
 	return resp, err

@@ -104,8 +104,17 @@ func removeVolumeFiles(filename string) {
 	// basic
 	deleteAndLog := func(ext string) {
 		fullFilename := filename + "." + ext
-		if err := os.RemoveAll(fullFilename); err != nil {
+		// Log existence + size before removal so a destructive call is
+		// always traceable in production logs (#9490). Successful removal
+		// is logged for .dat/.idx; failures are logged for all extensions.
+		st, statErr := os.Stat(fullFilename)
+		err := os.RemoveAll(fullFilename)
+		if err != nil {
 			glog.V(0).Infof("failed to remove volume file %s: %s", fullFilename, err)
+			return
+		}
+		if statErr == nil && (ext == "dat" || ext == "idx") {
+			glog.Infof("removed volume file %s (size=%d)", fullFilename, st.Size())
 		}
 	}
 	deleteAndLog("dat")
