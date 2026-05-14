@@ -293,6 +293,9 @@ func (v *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_serv
 }
 
 func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("VolumeEcShardsInfo request is nil")
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -300,7 +303,7 @@ func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serve
 	// comes from the matching mount request when one exists.
 	collectionByShard := make(map[uint32]string)
 	for _, mr := range v.mountRequests {
-		if mr.VolumeId != req.VolumeId {
+		if mr == nil || mr.VolumeId != req.VolumeId {
 			continue
 		}
 		for _, shardId := range mr.ShardIds {

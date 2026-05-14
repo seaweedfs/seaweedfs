@@ -13,7 +13,6 @@ import (
 
 type ServerShardInventory struct {
 	Bits       ShardBits
-	Sizes      map[ShardId]int64
 	QueryError error
 }
 
@@ -35,7 +34,7 @@ func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 			continue
 		}
 
-		inv := ServerShardInventory{Sizes: make(map[ShardId]int64)}
+		var inv ServerShardInventory
 
 		callErr := operation.WithVolumeServerClient(false, pb.ServerAddress(server), dialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
@@ -46,12 +45,10 @@ func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 					return e
 				}
 				for _, s := range resp.EcShardInfos {
-					if s.VolumeId != volumeID {
+					if s.VolumeId != volumeID || s.ShardId >= MaxShardCount {
 						continue
 					}
-					sid := ShardId(s.ShardId)
-					inv.Bits = inv.Bits.Set(sid)
-					inv.Sizes[sid] = s.Size
+					inv.Bits = inv.Bits.Set(ShardId(s.ShardId))
 				}
 				return nil
 			})
