@@ -301,38 +301,33 @@ func TestDescriptor_AdminConfigFormHasNoWorkersField(t *testing.T) {
 	assert.False(t, hasDefault, "DefaultValues must NOT include 'workers' (form field removed)")
 }
 
-func TestDescriptor_WorkerConfigFormCadenceDefaultsMatchParseConfig(t *testing.T) {
-	// Every default the parser reads must be exposed in the descriptor's
-	// DefaultValues; otherwise the admin UI would seed the form with a
-	// blank or zero value and the worker would silently clamp to the
-	// hardcoded fallback. Drift between the two is the bug this test
-	// catches.
+func TestDescriptor_WorkerConfigFormIsAbsent(t *testing.T) {
+	// "Per-Run Time Limit (minutes)" was the only worker-side knob and
+	// duplicated the admin scheduler's Execution Timeout (both are
+	// wall-clock caps on the same Execute call). Removed in favor of
+	// AdminRuntimeDefaults.ExecutionTimeoutSeconds — single source of
+	// truth. A WorkerConfigForm with no fields would render as an
+	// empty section in the admin UI; drop the form entirely.
 	h := NewHandler(nil)
 	d := h.Descriptor()
-	require.NotNil(t, d.WorkerConfigForm)
-	assert.Equal(t, "s3-lifecycle-worker", d.WorkerConfigForm.FormId)
+	assert.Nil(t, d.WorkerConfigForm,
+		"WorkerConfigForm should be nil now that max_runtime_minutes is gone; if you re-add a worker-side knob, restore the form and pin it here")
+}
 
-	wantDefaults := map[string]int64{
-		"max_runtime_minutes": defaultMaxRuntimeMinutes,
-	}
-	for name, want := range wantDefaults {
-		t.Run(name, func(t *testing.T) {
-			dv, ok := d.WorkerConfigForm.DefaultValues[name]
-			require.True(t, ok, "WorkerConfigForm.DefaultValues missing %q", name)
-			assert.Equal(t, want, dv.GetInt64Value(), "default mismatch for %q", name)
-		})
-	}
-	declared := map[string]plugin_pb.ConfigFieldType{}
-	for _, sec := range d.WorkerConfigForm.Sections {
-		for _, f := range sec.Fields {
-			declared[f.Name] = f.FieldType
-		}
-	}
-	for name := range wantDefaults {
-		ft, ok := declared[name]
-		assert.True(t, ok, "WorkerConfigForm has no field named %q", name)
-		assert.Equal(t, plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64, ft, "field %q must be INT64 to match readInt64", name)
-	}
+func TestDescriptor_AdminRuntimeDefaultsBoundExecutionTimeout(t *testing.T) {
+	// The scheduler's global default Execution Timeout is 90s
+	// (defaultScheduledExecutionTimeout in weed/admin/plugin/plugin_scheduler.go).
+	// Lifecycle is a daily batch — minutes to hours per pass — so 90s
+	// would kill every real run. Declare 1h here so a fresh install
+	// has a workable cap; operators can raise it via the admin UI for
+	// very large buckets.
+	h := NewHandler(nil)
+	d := h.Descriptor()
+	require.NotNil(t, d.AdminRuntimeDefaults)
+	assert.Equal(t, int32(3600), d.AdminRuntimeDefaults.ExecutionTimeoutSeconds,
+		"ExecutionTimeoutSeconds must cover a real lifecycle pass; the scheduler's 90s default would clobber the worker mid-run")
+	assert.Equal(t, int32(3600), d.AdminRuntimeDefaults.JobTypeMaxRuntimeSeconds,
+		"JobTypeMaxRuntimeSeconds gates the whole job-type's per-pass budget; align with ExecutionTimeoutSeconds")
 }
 
 func TestDescriptor_AdminRuntimeDefaultsDailyCadence(t *testing.T) {

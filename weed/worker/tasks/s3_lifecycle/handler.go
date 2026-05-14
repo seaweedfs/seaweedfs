@@ -117,31 +117,12 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				WalkerIntervalMinutesAdminKey:   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
-		WorkerConfigForm: &plugin_pb.ConfigForm{
-			FormId:      "s3-lifecycle-worker",
-			Title:       "S3 Lifecycle Worker",
-			Description: "Operational tuning for the daily lifecycle run.",
-			Sections: []*plugin_pb.ConfigSection{
-				{
-					SectionId:   "cadence",
-					Title:       "Cadence",
-					Description: "Per-run wall-clock budget.",
-					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "max_runtime_minutes",
-							Label:       "Per-Run Time Limit (minutes)",
-							Description: "Wall-clock cap on each run. Each daily run processes one day of meta-log events plus the walker pass over the current rule set; the cursor persists across runs.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-					},
-				},
-			},
-			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"max_runtime_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
-			},
-		},
+		// WorkerConfigForm intentionally absent — the prior
+		// "Per-Run Time Limit (minutes)" knob duplicated the admin
+		// scheduler's Execution Timeout (both wall-clock caps on the
+		// same Execute call), and operators had to keep the two values
+		// in agreement. Removed in favor of a single source of truth:
+		// AdminRuntimeDefaults.ExecutionTimeoutSeconds below.
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			// On by default: S3 lifecycle is a standard bucket feature
 			// (PutBucketLifecycleConfiguration is part of the S3 API),
@@ -155,6 +136,14 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			DetectionIntervalMinutes: 24 * 60, // daily
 			DetectionTimeoutSeconds:  60,
 			MaxJobsPerDetection:      1,
+			// Lifecycle is a daily batch — minutes to hours for a busy
+			// cluster. The plugin scheduler's global default Execution
+			// Timeout is 90s, which would clobber every real run before
+			// the worker's pass completes. Declare 1h here so a fresh
+			// install has a workable upper bound; operators can raise
+			// it via the admin UI for very large buckets.
+			ExecutionTimeoutSeconds: 3600,
+			JobTypeMaxRuntimeSeconds: 3600,
 		},
 	}
 }
@@ -218,13 +207,19 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return fmt.Errorf("execute: missing filer_grpc_address in job parameters")
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, cfg.MaxRuntime)
-	defer cancel()
+	// Run lifetime is bounded by the scheduler's Execution Timeout
+	// (admin UI). The handler used to wrap ctx in another
+	// context.WithTimeout(cfg.MaxRuntime), but that doubled the
+	// concept — both knobs were wall-clock caps on the same Execute
+	// call, and the smaller one always won (typically the 90s
+	// scheduler default would clobber a 60-min worker setting).
+	// Single source of truth is now AdminRuntimeDefaults.ExecutionTimeoutSeconds.
+	runCtx := ctx
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("scheduler workers=%d s3=%v runtime=%s", cfg.Workers, s3Endpoints, cfg.MaxRuntime),
+		Message: fmt.Sprintf("scheduler workers=%d s3=%v", cfg.Workers, s3Endpoints),
 	})
 
 	dialCtx, dialCancel := context.WithTimeout(runCtx, 30*time.Second)
@@ -297,8 +292,8 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("daily_replay shards=%d workers=%d runtime=%s rate=%s buckets=%d walker=on",
-			len(shards), cfg.Workers, cfg.MaxRuntime, limiterDesc, len(buckets)),
+		Message: fmt.Sprintf("daily_replay shards=%d workers=%d rate=%s buckets=%d walker=on",
+			len(shards), cfg.Workers, limiterDesc, len(buckets)),
 	})
 
 	runErr := dailyrun.Run(ctx, dailyrun.Config{
