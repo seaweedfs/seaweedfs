@@ -113,10 +113,14 @@ type MultiDestinationPlan struct {
 	SuccessfulDCs  int                `json:"successful_dcs"`
 }
 
-// VolumeReplica represents a replica location with server and disk information
+// VolumeReplica represents a replica location with server and disk information.
+// For EC shard locations (returned by GetECShardLocations), ShardIds carries
+// the shard ids present on the disk so callers can drive shard-targeted RPCs
+// such as VolumeEcShardsUnmount / VolumeEcShardsDelete without re-querying.
 type VolumeReplica struct {
-	ServerID   string `json:"server_id"`
-	DiskID     uint32 `json:"disk_id"`
-	DataCenter string `json:"data_center"`
-	Rack       string `json:"rack"`
+	ServerID   string   `json:"server_id"`
+	DiskID     uint32   `json:"disk_id"`
+	DataCenter string   `json:"data_center"`
+	Rack       string   `json:"rack"`
+	ShardIds   []uint32 `json:"shard_ids,omitempty"`
 }

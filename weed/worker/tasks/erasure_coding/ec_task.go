@@ -176,6 +176,20 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to generate EC shards: %v", err)
 	}
 
+	// Step 3b: Clear partial EC shards left over on destinations from a prior
+	// failed encode. Without this, ReceiveFile in distributeEcShards trips on
+	// volume_grpc_copy.go's mounted-volume guard ("ec volume %d is mounted;
+	// refusing overwrite for %s") and the scheduler retries forever. The
+	// same-store prune from #9480 only handles the .dat-and-partial-EC-on-
+	// sibling-disks layout; cross-server stale shards have to be cleaned by
+	// the worker driving the encode (#9478 follow-up).
+	t.ReportProgressWithStage(55.0, "Clearing stale EC shards on destinations")
+	t.GetLogger().Info("Clearing stale EC shards on destinations")
+	if err := t.cleanupStaleEcShards(ctx); err != nil {
+		t.rollbackReadonly(ctx)
+		return fmt.Errorf("failed to clear stale EC shards on destinations: %v", err)
+	}
+
 	// Step 4: Distribute shards to destinations
 	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
 	t.GetLogger().Info("Distributing EC shards to destinations")
@@ -661,18 +675,142 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 	return nil
 }
 
-// getReplicas extracts replica servers from unified sources
+// getReplicas extracts regular .dat replica servers from unified sources.
+// Sources with ShardIds populated are EC-shard cleanup targets (see
+// cleanupStaleEcShards) and must be skipped — running VolumeDelete against a
+// destination that only holds stale EC shards would be a no-op at best and a
+// misleading log line at worst.
 func (t *ErasureCodingTask) getReplicas() []string {
 	var replicas []string
 	for _, source := range t.sources {
-		// Only include volume replica sources (not EC shard sources)
-		// Assumption: VolumeId == 0 is considered invalid and should be excluded.
-		// If volume ID 0 is valid in some contexts, update this check accordingly.
-		if source.VolumeId > 0 {
-			replicas = append(replicas, source.Node)
+		if source.VolumeId == 0 {
+			continue
 		}
+		if len(source.ShardIds) > 0 {
+			continue
+		}
+		replicas = append(replicas, source.Node)
 	}
 	return replicas
+}
+
+// cleanupStaleEcShards unmounts and deletes partial EC shards left over on
+// destinations from a previous failed encode of the same volume. The shard
+// ids come from detection, populated from the topology's mounted view of
+// the cluster (TaskSource.ShardIds; collected in
+// ActiveTopology.GetECShardLocations and threaded through
+// convertTaskSourcesToProtobuf).
+//
+// The shape of the bug: an interrupted encode lands a handful of .ec?? files
+// on a destination volume server with no .dat on the same node. PR #9480's
+// pruneIncompleteEcWithSiblingDat only clears the partial EC when the .dat
+// is on a sibling disk of the SAME store; cross-server, those leftovers
+// stay mounted forever. The next encode attempt tries to ReceiveFile a
+// fresh shard to that destination and trips on volume_grpc_copy.go's "ec
+// volume %d is mounted; refusing overwrite" guard. Detection re-fires every
+// cycle and the cluster loops.
+//
+// Unmount + delete are safe here: this method runs after the worker has
+// already copied the .dat off the source and generated a full local shard
+// set, so the bytes being cleared on the destination are strictly redundant
+// — either they're stale duplicates of what's about to be re-distributed,
+// or they're remnants the cluster can't reconstruct without the source
+// (which the worker still has in workDir).
+//
+// Errors per destination are aggregated and returned together; we don't
+// short-circuit on the first failure because operators want to see the
+// full picture of which destinations are stuck.
+func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
+	if len(t.sources) == 0 {
+		return nil
+	}
+
+	// Group shard ids per destination node. Detection may emit one source
+	// row per (node, disk); volume server-side cleanup is keyed by node
+	// (deleteEcShardIdsForEachLocation walks every DiskLocation), so the
+	// per-disk granularity isn't useful here. Union to avoid duplicate
+	// shard ids in the RPC.
+	perNode := make(map[string]map[uint32]struct{})
+	for _, source := range t.sources {
+		if source == nil || len(source.ShardIds) == 0 {
+			continue
+		}
+		shardSet, ok := perNode[source.Node]
+		if !ok {
+			shardSet = make(map[uint32]struct{})
+			perNode[source.Node] = shardSet
+		}
+		for _, shardID := range source.ShardIds {
+			shardSet[shardID] = struct{}{}
+		}
+	}
+	if len(perNode) == 0 {
+		return nil
+	}
+
+	var cleanupErrors []string
+	for node, shardSet := range perNode {
+		shardIds := make([]uint32, 0, len(shardSet))
+		for id := range shardSet {
+			shardIds = append(shardIds, id)
+		}
+
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":   t.volumeID,
+			"destination": node,
+			"shard_ids":   shardIds,
+		}).Info("Clearing stale EC shards on destination before re-distribute")
+
+		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, shardIds); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
+			t.GetLogger().WithFields(map[string]interface{}{
+				"volume_id":   t.volumeID,
+				"destination": node,
+				"shard_ids":   shardIds,
+				"error":       err.Error(),
+			}).Error("Failed to clear stale EC shards on destination")
+		}
+	}
+
+	if len(cleanupErrors) > 0 {
+		return fmt.Errorf("stale EC shard cleanup failed on %d destination(s): %s",
+			len(cleanupErrors), strings.Join(cleanupErrors, "; "))
+	}
+	return nil
+}
+
+// unmountAndDeleteEcShards sends VolumeEcShardsUnmount followed by
+// VolumeEcShardsDelete on a single destination. Both RPCs are idempotent
+// against missing shards (UnmountEcShards in store_ec.go returns nil if the
+// shard isn't loaded; deleteEcShardIdsForEachLocation skips files that don't
+// exist), so passing shard ids that have already been cleaned is harmless.
+// The unmount has to land first — VolumeEcShardsDelete's contract is "the
+// shard should not be mounted before calling this".
+func unmountAndDeleteEcShards(
+	ctx context.Context,
+	dialOption grpc.DialOption,
+	destination string,
+	volumeID uint32,
+	collection string,
+	shardIds []uint32,
+) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(destination), dialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if _, err := client.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
+				VolumeId: volumeID,
+				ShardIds: shardIds,
+			}); err != nil {
+				return fmt.Errorf("unmount: %w", err)
+			}
+			if _, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+				VolumeId:   volumeID,
+				Collection: collection,
+				ShardIds:   shardIds,
+			}); err != nil {
+				return fmt.Errorf("delete: %w", err)
+			}
+			return nil
+		})
 }
 
 // verifyDatIdxConsistency checks that all .idx entries reference data within the

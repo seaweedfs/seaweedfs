@@ -333,7 +333,11 @@ func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string)
 	return replicas
 }
 
-// GetECShardLocations returns the disk locations for EC shards using O(1) lookup
+// GetECShardLocations returns the disk locations for EC shards using O(1) lookup.
+// ShardIds on each returned VolumeReplica enumerates the shard ids present on
+// that disk for the volume — fed by the EC worker into VolumeEcShardsUnmount /
+// VolumeEcShardsDelete to clear stale shards from cross-server destinations
+// before a re-encode distributes fresh ones (#9478 follow-up).
 func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string) []VolumeReplica {
 	at.mutex.RLock()
 	defer at.mutex.RUnlock()
@@ -345,20 +349,53 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 
 	var ecShards []VolumeReplica
 	for _, diskKey := range diskKeys {
-		if disk, diskExists := at.disks[diskKey]; diskExists {
-			// Verify collection matches (since index doesn't include collection)
-			if at.ecShardMatchesCollection(disk, volumeID, collection) {
-				ecShards = append(ecShards, VolumeReplica{
-					ServerID:   disk.NodeID,
-					DiskID:     disk.DiskID,
-					DataCenter: disk.DataCenter,
-					Rack:       disk.Rack,
-				})
-			}
+		disk, diskExists := at.disks[diskKey]
+		if !diskExists {
+			continue
 		}
+		if !at.ecShardMatchesCollection(disk, volumeID, collection) {
+			continue
+		}
+		shardIds := collectShardIdsForDisk(disk, volumeID, collection)
+		ecShards = append(ecShards, VolumeReplica{
+			ServerID:   disk.NodeID,
+			DiskID:     disk.DiskID,
+			DataCenter: disk.DataCenter,
+			Rack:       disk.Rack,
+			ShardIds:   shardIds,
+		})
 	}
 
 	return ecShards
+}
+
+// collectShardIdsForDisk walks the disk's EcShardInfos for the given
+// (volumeID, collection) and expands each EcIndexBits bitmap into the
+// concrete shard ids present on the disk. A single info entry can carry
+// multiple shards, and the same volume can have several info entries (one
+// per DiskId on cross-disk layouts), so we union into a single bitmap
+// before expanding to avoid duplicates.
+func collectShardIdsForDisk(disk *activeDisk, volumeID uint32, collection string) []uint32 {
+	if disk == nil || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return nil
+	}
+	var bits uint32
+	for _, ecShardInfo := range disk.DiskInfo.DiskInfo.EcShardInfos {
+		if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
+			continue
+		}
+		bits |= ecShardInfo.EcIndexBits
+	}
+	if bits == 0 {
+		return nil
+	}
+	var ids []uint32
+	for i := uint32(0); i < 32; i++ {
+		if bits&(1<<i) != 0 {
+			ids = append(ids, i)
+		}
+	}
+	return ids
 }
 
 // volumeMatchesCollection checks if a volume on a disk matches the given collection

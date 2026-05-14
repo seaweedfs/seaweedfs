@@ -273,6 +273,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 							DataCenter:  shard.DataCenter,
 							Rack:        shard.Rack,
 							CleanupType: topology.CleanupECShards,
+							ShardIds:    append([]uint32(nil), shard.ShardIds...),
 						})
 						duplicateCheck[key] = true
 					}
@@ -827,15 +828,18 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 			pbSource.EstimatedSize = uint64(*source.EstimatedSize)
 		}
 
-		// Set appropriate volume ID or shard IDs based on cleanup type
+		// Set appropriate volume ID or shard IDs based on cleanup type.
+		// EC-shard sources carry the shard ids the worker must unmount + delete
+		// on the destination before re-distributing (#9478 follow-up); presence
+		// of ShardIds is the on-the-wire discriminator the worker uses to
+		// route a source to cleanupStaleEcShards rather than treat it as a
+		// regular volume replica to delete.
 		switch source.CleanupType {
 		case topology.CleanupVolumeReplica:
-			// This is a volume replica, use the actual volume ID
 			pbSource.VolumeId = volumeID
 		case topology.CleanupECShards:
-			// This is EC shards, also use the volume ID for consistency
 			pbSource.VolumeId = volumeID
-			// Note: ShardIds would need to be passed separately if we need specific shard info
+			pbSource.ShardIds = append([]uint32(nil), source.ShardIds...)
 		}
 
 		protobufSources = append(protobufSources, pbSource)
