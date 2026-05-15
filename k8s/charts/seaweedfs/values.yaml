@@ -1288,6 +1288,13 @@ admin:
 
   extraEnvironmentVars: {}
 
+  # secret env variables (e.g. for injecting OIDC client secret from a Kubernetes Secret)
+  secretExtraEnvironmentVars: {}
+    # WEED_ADMIN_OIDC_CLIENT_SECRET:
+    #   secretKeyRef:
+    #     name: seaweedfs-admin-oidc
+    #     key: client_secret
+
   # Health checks
   livenessProbe:
     enabled: true
