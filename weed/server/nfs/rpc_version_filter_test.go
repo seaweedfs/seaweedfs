@@ -98,8 +98,9 @@ func TestVersionFilterRejectsNFSv4WithProgMismatch(t *testing.T) {
 	}
 
 	xid, low, high := readPROGMismatchReply(t, conn)
-	if xid != 0xdeadbeef {
-		t.Errorf("xid=%x want %x", xid, 0xdeadbeef)
+	const wantXID uint32 = 0xdeadbeef
+	if xid != wantXID {
+		t.Errorf("xid=%x want %x", xid, wantXID)
 	}
 	if low != supportedNFSVer || high != supportedNFSVer {
 		t.Errorf("supported range=(%d,%d) want (%d,%d)", low, high, supportedNFSVer, supportedNFSVer)
