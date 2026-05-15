@@ -135,6 +135,14 @@ spec:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
             {{- end }}
+            {{- $secretExtraEnvironmentVars := .Values.admin.secretExtraEnvironmentVars }}
+            {{- if $secretExtraEnvironmentVars }}
+            {{- range $key := keys $secretExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $secretExtraEnvironmentVars $key }}
+            - name: {{ $key }}
+              valueFrom: {{ toYaml $value | nindent 16 }}
+            {{- end }}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
