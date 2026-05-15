@@ -69,7 +69,7 @@ jobs:
           echo "✓ Security configuration renders correctly"
 
           echo ""
-          echo "=== Testing IAM gRPC opt-in path (issue #9506) ==="
+          echo "=== Testing IAM gRPC opt-in path ==="
           # Regression test: the filer registers the IAM gRPC service the
           # Admin UI Users tab calls only when jwt.filer_signing.key is in
           # security.toml. Operators must be able to enable that without
@@ -119,9 +119,10 @@ jobs:
           else:
               print("✓ defaults: no security-config ConfigMap (unchanged)")
 
-          # Case 2: filerWrite=true alone (the documented issue #9506
-          # workaround). Configmap must render with [jwt.filer_signing]
-          # and NO [grpc.*] sections (cert paths only exist with mTLS).
+          # Case 2: filerWrite=true alone is the documented opt-in for
+          # the Admin UI Users tab. Configmap must render with
+          # [jwt.filer_signing] and NO [grpc.*] sections (cert paths
+          # only exist with mTLS).
           out = render({
               "global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true",
               "admin.enabled": "true",
