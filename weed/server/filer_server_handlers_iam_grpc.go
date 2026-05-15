@@ -16,18 +16,20 @@ import (
 )
 
 // IamGrpcServer implements the IAM gRPC service on the filer.
-// Every RPC requires a Bearer token in the "authorization" metadata, signed
-// with the filer write-signing key (jwt.filer_signing.key in security.toml).
-// If no signing key is configured the service refuses to register at all; the
-// adminSigningKey check below is defensive in case that wiring is bypassed.
+// Auth is opt-in: when jwt.filer_signing.key is set in security.toml the
+// service requires a Bearer token in the "authorization" metadata signed with
+// that key; when it is empty every RPC is accepted unauthenticated, matching
+// the rest of SeaweedFS's gRPC surface. Operators who expose the filer gRPC
+// port beyond a trusted network should configure the key.
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager
 	adminSigningKey   security.SigningKey
 }
 
-// NewIamGrpcServer creates a new IAM gRPC server. adminSigningKey is required:
-// callers without a Bearer token signed by this key are rejected.
+// NewIamGrpcServer creates a new IAM gRPC server. If adminSigningKey is empty
+// the service runs unauthenticated; otherwise every RPC requires a Bearer
+// token signed with the key.
 func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSigningKey security.SigningKey) *IamGrpcServer {
 	return &IamGrpcServer{
 		credentialManager: credentialManager,
@@ -37,10 +39,11 @@ func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSign
 
 // checkAdminAuth verifies the caller presented a Bearer token signed by the
 // filer's write-signing key. It is invoked at the top of every IAM RPC.
+// When no signing key is configured the service runs unauthenticated and this
+// check is a no-op.
 func (s *IamGrpcServer) checkAdminAuth(ctx context.Context) error {
 	if len(s.adminSigningKey) == 0 {
-		// Service should not be registered without a key; fail closed.
-		return status.Error(codes.PermissionDenied, "iam admin auth not configured")
+		return nil
 	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
