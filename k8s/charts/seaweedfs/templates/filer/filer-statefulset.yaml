@@ -276,7 +276,8 @@ spec:
               name: swfs-s3-tls
             {{- end }}
             {{- end }}
-          {{- $isJwtEnabled := or .Values.global.seaweedfs.securityConfig.jwtSigning.filerWrite .Values.global.seaweedfs.securityConfig.jwtSigning.filerRead }}
+          {{- $jwt := (.Values.global.seaweedfs.securityConfig).jwtSigning | default dict }}
+          {{- $isJwtEnabled := or $jwt.filerWrite $jwt.filerRead }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
           {{- if or $isJwtEnabled .Values.filer.readinessProbe.tcpSocket }}

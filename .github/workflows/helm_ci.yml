@@ -68,6 +68,125 @@ jobs:
           grep -q "security-config" /tmp/security.yaml
           echo "✓ Security configuration renders correctly"
 
+          echo ""
+          echo "=== Testing IAM gRPC opt-in path (issue #9506) ==="
+          # Regression test: the filer registers the IAM gRPC service the
+          # Admin UI Users tab calls only when jwt.filer_signing.key is in
+          # security.toml. Operators must be able to enable that without
+          # the cert-manager mTLS bundle.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def configmap(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == name:
+                      return d
+              return None
+
+          def workload_mounts(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  if d["metadata"]["name"] != name:
+                      continue
+                  pod = d["spec"]["template"]["spec"]
+                  vols = {v["name"] for v in pod.get("volumes", [])}
+                  mounts = set()
+                  for c in pod.get("containers", []):
+                      for vm in c.get("volumeMounts", []):
+                          mounts.add(vm["name"])
+                  return vols, mounts
+              return None, None
+
+          failed = []
+
+          # Case 1: defaults. The chart historically rendered nothing
+          # security-related; preserve that so this PR is non-breaking on
+          # existing installs.
+          out = render({})
+          if configmap(out, "test-seaweedfs-security-config") is not None:
+              failed.append("defaults: security ConfigMap should not render")
+          else:
+              print("✓ defaults: no security-config ConfigMap (unchanged)")
+
+          # Case 2: filerWrite=true alone (the documented issue #9506
+          # workaround). Configmap must render with [jwt.filer_signing]
+          # and NO [grpc.*] sections (cert paths only exist with mTLS).
+          out = render({
+              "global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true",
+              "admin.enabled": "true",
+          })
+          cm = configmap(out, "test-seaweedfs-security-config")
+          if cm is None:
+              failed.append("filerWrite=true: security ConfigMap missing")
+          else:
+              toml = cm["data"]["security.toml"]
+              if "[jwt.filer_signing]" not in toml:
+                  failed.append("filerWrite=true: security.toml missing [jwt.filer_signing]")
+              if "[grpc" in toml:
+                  failed.append("filerWrite=true: security.toml unexpectedly has [grpc.*] (would need cert mounts)")
+              if "[jwt.filer_signing]" in toml and "[grpc" not in toml:
+                  print("✓ filerWrite=true: security.toml has [jwt.filer_signing], no [grpc.*]")
+
+          # Case 3: filer + admin pods must MOUNT the security ConfigMap
+          # under filerWrite=true so the JWT key reaches both processes.
+          # Cert volumes must NOT be present (no mTLS).
+          for wl in ("test-seaweedfs-filer", "test-seaweedfs-admin"):
+              vols, mounts = workload_mounts(out, wl)
+              if vols is None:
+                  failed.append(f"filerWrite=true: workload {wl} not found")
+                  continue
+              if "security-config" not in vols or "security-config" not in mounts:
+                  failed.append(f"filerWrite=true: {wl} does not mount security-config (IAM gRPC would still fail)")
+              else:
+                  print(f"✓ filerWrite=true: {wl} mounts security-config")
+              cert_vols = {v for v in vols if v.endswith("-cert")}
+              if cert_vols:
+                  failed.append(f"filerWrite=true: {wl} unexpectedly has cert volumes {sorted(cert_vols)}")
+
+          # Case 4: enableSecurity=true must still render the full toml
+          # with both [jwt.signing] and [grpc.*]. Guards against the
+          # decoupling change accidentally regressing the mTLS path.
+          out = render({"global.seaweedfs.enableSecurity": "true"})
+          cm = configmap(out, "test-seaweedfs-security-config")
+          if cm is None or "[grpc.master]" not in cm["data"]["security.toml"]:
+              failed.append("enableSecurity=true: full security.toml regressed")
+          else:
+              print("✓ enableSecurity=true: full security.toml with [grpc.*] preserved")
+
+          # Case 5: helper must tolerate explicit nulls (gemini-code-assist
+          # PR review). securityConfig=null was the parens-pattern crash
+          # the helper review caught.
+          for null_path in ("global.seaweedfs.securityConfig",
+                            "global.seaweedfs.securityConfig.jwtSigning"):
+              try:
+                  out = render({null_path: "null"})
+              except subprocess.CalledProcessError as e:
+                  failed.append(f"{null_path}=null: render failed: {e.output[:200] if e.output else e}")
+                  continue
+              if configmap(out, "test-seaweedfs-security-config") is not None:
+                  failed.append(f"{null_path}=null: should not render configmap")
+              else:
+                  print(f"✓ {null_path}=null: render tolerates explicit null")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "✓ IAM gRPC decoupling tests passed"
+
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
             --set global.seaweedfs.monitoring.enabled=true \
