@@ -149,11 +149,13 @@ spec:
             - name: worker-logs
               mountPath: /logs
             {{- end }}
-            {{- if .Values.global.seaweedfs.enableSecurity }}
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
               subPath: security.toml
+            {{- end }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
@@ -252,10 +254,12 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.worker.logs.claimName }}
         {{- end }}
-        {{- if .Values.global.seaweedfs.enableSecurity }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: ca-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
