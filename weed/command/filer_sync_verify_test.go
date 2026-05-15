@@ -48,20 +48,24 @@ func (c *verifyTestInnerClient) ListEntries(_ context.Context, in *filer_pb.List
 
 // verifyTestFilerClient implements filer_pb.FilerClient and tracks concurrent
 // WithFilerClient invocations to let tests verify the global concurrency bound.
+// inFlight/peakFlight use atomic.Int64 (not bare int64 + sync/atomic funcs) so
+// the fields are 8-byte aligned even on 32-bit platforms — bare int64 fields
+// after a pointer-sized field panic with "unaligned 64-bit atomic operation"
+// on 386/arm/mips.
 type verifyTestFilerClient struct {
 	entriesByDir map[string][]*filer_pb.Entry
-	inFlight     int64 // accessed via atomic
-	peakFlight   int64 // accessed via atomic
+	inFlight     atomic.Int64
+	peakFlight   atomic.Int64
 	delay        time.Duration
 }
 
 func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	// track peak concurrent in-flight listings
-	n := atomic.AddInt64(&c.inFlight, 1)
-	defer atomic.AddInt64(&c.inFlight, -1)
+	n := c.inFlight.Add(1)
+	defer c.inFlight.Add(-1)
 	for {
-		peak := atomic.LoadInt64(&c.peakFlight)
-		if n <= peak || atomic.CompareAndSwapInt64(&c.peakFlight, peak, n) {
+		peak := c.peakFlight.Load()
+		if n <= peak || c.peakFlight.CompareAndSwap(peak, n) {
 			break
 		}
 	}
@@ -219,11 +223,11 @@ func TestVerifySyncConcurrencyBound(t *testing.T) {
 		t.Errorf("unexpected diffs in identical tree")
 	}
 
-	if peak := atomic.LoadInt64(&clientA.peakFlight); peak > verifySyncConcurrency {
+	if peak := clientA.peakFlight.Load(); peak > verifySyncConcurrency {
 		t.Errorf("clientA peak concurrent listings = %d, want ≤ %d (verifySyncConcurrency)",
 			peak, verifySyncConcurrency)
 	}
-	if peak := atomic.LoadInt64(&clientB.peakFlight); peak > verifySyncConcurrency {
+	if peak := clientB.peakFlight.Load(); peak > verifySyncConcurrency {
 		t.Errorf("clientB peak concurrent listings = %d, want ≤ %d (verifySyncConcurrency)",
 			peak, verifySyncConcurrency)
 	}
