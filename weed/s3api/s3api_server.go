@@ -102,8 +102,8 @@ type S3ApiServer struct {
 	// is nil in this commit; a follow-up wires in an in-memory chunk cache.
 	readerCache *filer.ReaderCache
 
-	versionsHealQueue       *versionsHealQueue
-	versionsReconcilerStop  func()
+	versionsHealQueue      *versionsHealQueue
+	versionsReconcilerStop func()
 }
 
 type objectWriteLock interface {
@@ -673,6 +673,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// Register path-style domains
 		for _, domain := range pathStyleDomains {
 			routers = append(routers, apiRouter.Host(domain).PathPrefix("/{bucket}").Subrouter())
+			apiRouter.Host(domain).
+				Methods(http.MethodGet).
+				Path("/").
+				HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_LIST), "LIST"))
 		}
 
 		// Register virtual-host style domains
@@ -680,8 +684,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			routers = append(routers, apiRouter.Host(
 				fmt.Sprintf("%s.%s", "{bucket:.+}", virtualHost)).Subrouter())
 		}
+	} else {
+		routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 	}
-	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
 	// Get CORS middleware instance with caching
 	corsMiddleware := s3a.getCORSMiddleware()
