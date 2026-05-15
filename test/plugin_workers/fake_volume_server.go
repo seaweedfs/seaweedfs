@@ -292,6 +292,20 @@ func (v *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_serv
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
 }
 
+// VolumeEcShardsUnmount is a no-op stub: the worker's pre-distribute
+// cleanup calls it against every destination, and the fake server has no
+// mounted state to clear.
+func (v *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+	return &volume_server_pb.VolumeEcShardsUnmountResponse{}, nil
+}
+
+// VolumeEcShardsDelete is a no-op stub paired with VolumeEcShardsUnmount
+// above; the fake server doesn't persist shard files beyond what
+// ReceiveFile wrote, so there's nothing to remove.
+func (v *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
+	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+}
+
 func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("VolumeEcShardsInfo request is nil")
