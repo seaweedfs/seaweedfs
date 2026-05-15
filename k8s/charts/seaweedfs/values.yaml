@@ -18,15 +18,8 @@ global:
     loggingLevel: 1
     enableSecurity: false
     masterServer: null
-    # JWT signing keys rendered into security.toml. Setting volumeRead,
-    # filerWrite, or filerRead to true here will mount security.toml into the
-    # relevant pods even when enableSecurity is false (which only controls the
-    # cert-manager mTLS bundle). volumeWrite, which defaults to true, is only
-    # honored when security.toml is otherwise being rendered.
-    # The Admin UI Users tab needs the filer to register the IAM gRPC service,
-    # which requires jwt.filer_signing.key — set filerWrite: true to enable
-    # that without pulling in cert-manager. Note that turning on filerWrite
-    # also makes the filer require JWT-signed HTTP writes.
+    # filerWrite: true mounts security.toml on filer + admin without needing
+    # enableSecurity (mTLS); required for the Admin UI Users tab.
     securityConfig:
       jwtSigning:
         volumeWrite: true

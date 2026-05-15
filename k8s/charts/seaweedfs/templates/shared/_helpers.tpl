@@ -332,18 +332,8 @@ Create the name of the service account to use
 {{- .Values.global.seaweedfs.serviceAccountName | default "seaweedfs" -}}
 {{- end -}}
 
-{{/*
-True when security.toml should be rendered and mounted. enableSecurity covers
-the full mTLS bundle (cert-manager + [grpc.*] sections); the jwtSigning.*
-toggles render only the [jwt.*] sections, which the filer needs in order to
-register the IAM gRPC service the Admin UI talks to. Either path requires the
-ConfigMap to exist and be mounted into pods that read it.
-
-volumeWrite is intentionally excluded from the trigger because it defaults to
-true; including it here would make every fresh install start mounting
-security.toml regardless of intent. Users who want JWT signing without mTLS
-opt in via volumeRead, filerWrite, or filerRead.
-*/}}
+{{/* True when security.toml should be rendered and mounted. volumeWrite is
+     excluded since it defaults to true. */}}
 {{- define "seaweedfs.securityConfigEnabled" -}}
 {{- $jwt := (.Values.global.seaweedfs.securityConfig).jwtSigning | default dict -}}
 {{- if or .Values.global.seaweedfs.enableSecurity $jwt.volumeRead $jwt.filerWrite $jwt.filerRead -}}
