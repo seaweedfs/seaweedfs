@@ -335,7 +335,8 @@ Create the name of the service account to use
 {{/* True when security.toml should be rendered and mounted. volumeWrite is
      excluded since it defaults to true. */}}
 {{- define "seaweedfs.securityConfigEnabled" -}}
-{{- $jwt := (.Values.global.seaweedfs.securityConfig).jwtSigning | default dict -}}
+{{- $sec := (.Values.global.seaweedfs).securityConfig | default dict -}}
+{{- $jwt := $sec.jwtSigning | default dict -}}
 {{- if or .Values.global.seaweedfs.enableSecurity $jwt.volumeRead $jwt.filerWrite $jwt.filerRead -}}
 true
 {{- end -}}
