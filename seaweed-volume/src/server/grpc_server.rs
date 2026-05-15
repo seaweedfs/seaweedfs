@@ -1511,9 +1511,11 @@ impl VolumeServer for VolumeGrpcService {
                             // EcVolume holds fds on the same inodes, so overwriting
                             // corrupts live readers.
                             if store.has_ec_volume(VolumeId(info.volume_id)) {
+                                let mounted_disks =
+                                    store.find_ec_volume_disk_ids(VolumeId(info.volume_id));
                                 resp_error = Some(format!(
-                                    "ec volume {} is mounted; unmount before ReceiveFile",
-                                    info.volume_id
+                                    "ec volume {} is mounted on disk_ids:{:?}; unmount before ReceiveFile",
+                                    info.volume_id, mounted_disks
                                 ));
                                 break;
                             }

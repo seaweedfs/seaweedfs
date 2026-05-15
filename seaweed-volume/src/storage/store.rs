@@ -699,10 +699,20 @@ impl Store {
         // Walk all locations rather than stopping at the first with the
         // vid — split-disk reconciled volumes can have the same vid on
         // multiple disks, with the target shard on any of them.
-        for loc in &mut self.locations {
-            if loc.has_ec_volume(vid) {
-                loc.unmount_ec_shards(vid, &[shard_id]);
+        for disk_id in 0..self.locations.len() {
+            let has_shard = self.locations[disk_id]
+                .find_ec_volume(vid)
+                .is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
+            if !has_shard {
+                continue;
             }
+            tracing::info!(
+                volume_id = vid.0,
+                shard_id,
+                disk_id,
+                "UnmountEcShards"
+            );
+            self.locations[disk_id].unmount_ec_shards(vid, &[shard_id]);
         }
         // Go returns nil if shard not found (no error)
         Ok(())
@@ -731,6 +741,21 @@ impl Store {
     /// Check if any location has an EC volume.
     pub fn has_ec_volume(&self, vid: VolumeId) -> bool {
         self.locations.iter().any(|loc| loc.has_ec_volume(vid))
+    }
+
+    /// Returns every disk_id on this store that has an EcVolume entry
+    /// for `vid`. Useful for diagnostic logging when a single
+    /// `has_ec_volume` hit hides which disk is actually holding the
+    /// mount (e.g., the ReceiveFile mounted-volume guard).
+    /// Mirrors Go's `Store.FindEcVolumeDiskIds`.
+    pub fn find_ec_volume_disk_ids(&self, vid: VolumeId) -> Vec<u32> {
+        let mut ids = Vec::new();
+        for (idx, loc) in self.locations.iter().enumerate() {
+            if loc.has_ec_volume(vid) {
+                ids.push(idx as u32);
+            }
+        }
+        ids
     }
 
     /// Returns the index of the disk location that has `(vid, shard_id)`

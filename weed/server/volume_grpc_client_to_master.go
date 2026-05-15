@@ -300,7 +300,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				},
 			}
 			si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(&ecShardMessage)
-			glog.V(0).Infof("volume server %s:%d deletes ec shards from %d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, si.String())
+			glog.V(0).Infof("volume server %s:%d deletes ec shards from %d disk_id:%d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, ecShardMessage.DiskId, si.String())
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
