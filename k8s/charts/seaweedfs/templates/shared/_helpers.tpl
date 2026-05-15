@@ -332,6 +332,16 @@ Create the name of the service account to use
 {{- .Values.global.seaweedfs.serviceAccountName | default "seaweedfs" -}}
 {{- end -}}
 
+{{/* True when security.toml should be rendered and mounted. volumeWrite is
+     excluded since it defaults to true. */}}
+{{- define "seaweedfs.securityConfigEnabled" -}}
+{{- $sec := (.Values.global.seaweedfs).securityConfig | default dict -}}
+{{- $jwt := $sec.jwtSigning | default dict -}}
+{{- if or .Values.global.seaweedfs.enableSecurity $jwt.volumeRead $jwt.filerWrite $jwt.filerRead -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{/* S3 TLS cert/key arguments, using custom secret if s3.tlsSecret is set */}}
 {{- define "seaweedfs.s3.tlsArgs" -}}
 {{- $prefix := .prefix -}}

@@ -18,6 +18,8 @@ global:
     loggingLevel: 1
     enableSecurity: false
     masterServer: null
+    # filerWrite: true mounts security.toml on filer + admin without needing
+    # enableSecurity (mTLS); required for the Admin UI Users tab.
     securityConfig:
       jwtSigning:
         volumeWrite: true
