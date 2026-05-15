@@ -117,18 +117,31 @@ func TestIamGrpc_ValidToken_ReachesHandler(t *testing.T) {
 	}
 }
 
-func TestIamGrpc_NoSigningKey_PermissionDenied(t *testing.T) {
-	// Defensive path: even if the service is somehow registered without a
-	// key, every RPC must refuse.
+func TestIamGrpc_NoSigningKey_Unauthenticated_Allowed(t *testing.T) {
+	// Auth is opt-in: when the server is built without a signing key, every
+	// RPC is accepted regardless of (or in the absence of) metadata so the
+	// admin UI works against a filer that has no jwt.filer_signing.key set.
 	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
 	if err != nil {
 		t.Fatalf("NewCredentialManager: %v", err)
 	}
 	s := NewIamGrpcServer(cm, nil)
+	resp, err := s.ListUsers(context.Background(), &iam_pb.ListUsersRequest{})
+	if err != nil {
+		t.Fatalf("ListUsers without key: unexpected error %v", err)
+	}
+	if resp == nil {
+		t.Fatal("ListUsers without key: nil response")
+	}
+	if len(resp.Usernames) != 0 {
+		t.Fatalf("ListUsers: expected empty user list from fresh memory store, got %v", resp.Usernames)
+	}
+
+	// A token sent by a client that does configure a key is also accepted —
+	// the server just ignores it rather than rejecting on signature mismatch.
 	good := security.GenJwtForFilerAdmin(security.SigningKey(testIamSigningKey), 60)
-	_, err = s.ListUsers(ctxWithBearer(string(good)), &iam_pb.ListUsersRequest{})
-	if got, want := status.Code(err), codes.PermissionDenied; got != want {
-		t.Fatalf("ListUsers with no signing key: got code %v, want %v (err=%v)", got, want, err)
+	if _, err := s.ListUsers(ctxWithBearer(string(good)), &iam_pb.ListUsersRequest{}); err != nil {
+		t.Fatalf("ListUsers with stray token but no server key: unexpected error %v", err)
 	}
 }
 

@@ -194,12 +194,10 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
 
-			// The filer's IAM gRPC service rejects every RPC without an
-			// admin-signed Bearer token (PR #9442). Mirror the filer's
-			// jwt.filer_signing.key here so the admin UI's Users/Groups
-			// pages can talk to it; without this they fail with either
-			// Unimplemented (filer refuses to register the service) or
-			// Unauthenticated (missing authorization metadata).
+			// Mirror the filer's jwt.filer_signing.key so the admin UI's
+			// Users/Groups pages can present a valid Bearer token when the
+			// filer enforces IAM gRPC auth. When the key is empty, both
+			// sides run unauthenticated and no token is sent.
 			if signer, ok := store.(interface {
 				SetAdminSigning(security.SigningKey, int)
 			}); ok {
@@ -207,9 +205,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 				key := security.SigningKey(viper.GetString("jwt.filer_signing.key"))
 				expires := viper.GetInt("jwt.filer_signing.expires_after_seconds")
 				signer.SetAdminSigning(key, expires)
-				if len(key) == 0 {
-					glog.Warningf("jwt.filer_signing.key is empty in security.toml; the admin UI Users/Groups pages will fail until this is set on both the filer and the admin server")
-				} else {
+				if len(key) > 0 {
 					glog.V(0).Infof("Credential store configured with admin Bearer token signing")
 				}
 			}
