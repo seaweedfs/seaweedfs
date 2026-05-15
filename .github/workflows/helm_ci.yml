@@ -74,6 +74,10 @@ jobs:
           # Admin UI Users tab calls only when jwt.filer_signing.key is in
           # security.toml. Operators must be able to enable that without
           # the cert-manager mTLS bundle.
+          # Install PyYAML explicitly: this block runs before the later
+          # security+S3 block that does the same install, and we don't
+          # want to rely on the runner image shipping it.
+          pip install pyyaml -q
           python3 - "$CHART_DIR" <<'PYEOF'
           import subprocess, sys, yaml
           chart = sys.argv[1]
@@ -160,10 +164,15 @@ jobs:
           # decoupling change accidentally regressing the mTLS path.
           out = render({"global.seaweedfs.enableSecurity": "true"})
           cm = configmap(out, "test-seaweedfs-security-config")
-          if cm is None or "[grpc.master]" not in cm["data"]["security.toml"]:
-              failed.append("enableSecurity=true: full security.toml regressed")
+          if cm is None:
+              failed.append("enableSecurity=true: security ConfigMap missing")
           else:
-              print("✓ enableSecurity=true: full security.toml with [grpc.*] preserved")
+              toml = cm["data"]["security.toml"]
+              missing = [s for s in ("[jwt.signing]", "[grpc.master]") if s not in toml]
+              if missing:
+                  failed.append(f"enableSecurity=true: security.toml missing {missing}")
+              else:
+                  print("✓ enableSecurity=true: security.toml has [jwt.signing] + [grpc.*] preserved")
 
           # Case 5: helper must tolerate explicit nulls (gemini-code-assist
           # PR review). securityConfig=null was the parens-pattern crash
