@@ -1019,9 +1019,34 @@ async fn get_or_head_handler_inner(
 
     if has_ec_volume && !has_volume {
         // ---- EC volume read path (always full read, no streaming) ----
-        let store = state.store.read().unwrap();
-        match store.find_ec_volume(vid) {
-            Some(ecv) => match ecv.read_ec_shard_needle(needle_id) {
+        //
+        // Two-tier read: try the local-only fast path first (no async
+        // dispatch overhead when every shard interval lives on this
+        // server), and fall back to the distributed path that fans
+        // out to peer volume servers + reconstructs via Reed-Solomon
+        // when a shard interval is not held locally. Mirrors Go's
+        // `Store.readOneEcShardInterval` ordering in store_ec.go.
+        let local_attempt = {
+            let store = state.store.read().unwrap();
+            store
+                .find_ec_volume(vid)
+                .map(|ecv| ecv.read_ec_shard_needle(needle_id))
+        };
+        let use_distributed = match &local_attempt {
+            None => true,
+            Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => true,
+            _ => false,
+        };
+        if let Some(Ok(Some(ec_needle))) = local_attempt.as_ref() {
+            n = ec_needle.clone();
+        } else if use_distributed {
+            match crate::server::store_ec::read_ec_shard_needle_distributed(
+                &state,
+                vid,
+                needle_id,
+            )
+            .await
+            {
                 Ok(Some(ec_needle)) => {
                     n = ec_needle;
                 }
@@ -1032,12 +1057,25 @@ async fn get_or_head_handler_inner(
                     return StatusCode::NOT_FOUND.into_response();
                 }
                 Err(e) => {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        metrics::HANDLER_COUNTER
-                            .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
-                            .inc();
-                        return StatusCode::NOT_FOUND.into_response();
-                    }
+                    metrics::HANDLER_COUNTER
+                        .with_label_values(&[metrics::ERROR_GET_INTERNAL])
+                        .inc();
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("distributed ec read: {}", e),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            match local_attempt {
+                Some(Ok(None)) => {
+                    metrics::HANDLER_COUNTER
+                        .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
+                        .inc();
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+                Some(Err(e)) => {
                     metrics::HANDLER_COUNTER
                         .with_label_values(&[metrics::ERROR_GET_INTERNAL])
                         .inc();
@@ -1047,15 +1085,9 @@ async fn get_or_head_handler_inner(
                     )
                         .into_response();
                 }
-            },
-            None => {
-                metrics::HANDLER_COUNTER
-                    .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
-                    .inc();
-                return StatusCode::NOT_FOUND.into_response();
+                _ => unreachable!("covered by use_distributed branch"),
             }
         }
-        drop(store);
 
         // Validate cookie (matches Go behavior after ReadEcShardNeedle)
         if n.cookie != cookie {
