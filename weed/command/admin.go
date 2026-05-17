@@ -445,7 +445,11 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		server.TLSConfig.GetCertificate = getCert
 	}
 
-	// Start server
+	// Start server. Surface immediate failures (e.g. bind error) via
+	// serveErrCh so the caller doesn't block on ctx.Done() while no server
+	// is actually listening. http.ErrServerClosed after Shutdown is normal
+	// and not forwarded.
+	serveErrCh := make(chan error, 1)
 	go func() {
 		glog.Infof("Starting SeaweedFS Admin Server on port %d", *options.port)
 		var serveErr error
@@ -456,12 +460,16 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 			serveErr = server.ListenAndServe()
 		}
 		if serveErr != nil && serveErr != http.ErrServerClosed {
-			glog.Errorf("Failed to start server: %v", serveErr)
+			serveErrCh <- fmt.Errorf("admin server: %w", serveErr)
 		}
 	}()
 
-	// Wait for context cancellation
-	<-ctx.Done()
+	// Wait for context cancellation or an early serve failure.
+	select {
+	case <-ctx.Done():
+	case err := <-serveErrCh:
+		return err
+	}
 
 	// Graceful shutdown
 	glog.Infof("Shutting down admin server...")
