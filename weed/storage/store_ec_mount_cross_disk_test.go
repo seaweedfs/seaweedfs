@@ -14,21 +14,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// TestMountEcShards_LocatesEcxOnSiblingDisk reproduces issue #9519. A
-// multi-disk volume server receives a fresh EC shard via
-// VolumeEcShardsCopy on disk0, while the matching .ecx / .ecj / .vif live
-// on a sibling disk (disk1) — the on-the-wire situation after an
-// ec.balance distributes 14 shards across 6 disks. MountEcShards used to
-// pin idxDir to each disk's IdxDirectory, so NewEcVolume tried to open
-// /disk0/.ecx, failed with "cannot open ec volume index", and the mount
-// loop returned the error (the error is not os.ErrNotExist so the
-// per-disk continue branch did not engage). With the fix, the mount path
-// scans every DiskLocation for the .ecx owner and points NewEcVolume at
-// that directory.
+// TestMountEcShards_LocatesEcxOnSiblingDisk covers the cross-disk
+// .ecx lookup at mount time. A multi-disk volume server receives a
+// fresh EC shard via VolumeEcShardsCopy on disk0, while the matching
+// .ecx / .ecj / .vif live on a sibling disk (disk1) — the on-the-wire
+// situation after an ec.balance distributes shards across disks.
+// MountEcShards used to pin idxDir to each disk's IdxDirectory, so
+// NewEcVolume tried to open /disk0/.ecx, failed with "cannot open ec
+// volume index", and the mount loop returned the error (the error is
+// not os.ErrNotExist so the per-disk continue branch did not engage).
+// With the fix, the mount path scans every DiskLocation for the .ecx
+// owner and points NewEcVolume at that directory.
 //
 // The test plants files AFTER NewStore returns so the startup orphan-
 // shard reconcile is a no-op for this volume — the mount path is what's
-// under test, not the startup reconcile that #9212 already covers.
+// under test, not the startup reconcile that already covers this layout.
 func TestMountEcShards_LocatesEcxOnSiblingDisk(t *testing.T) {
 	tempDir := t.TempDir()
 	dir0 := filepath.Join(tempDir, "disk0")
@@ -112,9 +112,8 @@ func TestMountEcShards_LocatesEcxOnSiblingDisk(t *testing.T) {
 		// The pre-fix error reads
 		//   "/.../disk0 load ec shard 5.6: failed to create ec shard 5.6:
 		//    cannot open ec volume index /.../disk0/mybucket_5.ecx: ..."
-		// which is exactly what #9519 reports.
 		if strings.Contains(err.Error(), "cannot open ec volume index") {
-			t.Fatalf("issue #9519: mount fell back to local IdxDirectory; .ecx lives on a sibling disk: %v", err)
+			t.Fatalf("mount fell back to local IdxDirectory; .ecx lives on a sibling disk: %v", err)
 		}
 		t.Fatalf("MountEcShards: %v", err)
 	}

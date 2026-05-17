@@ -168,8 +168,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 	// with "cannot open ec volume index" instead of returning
 	// ErrNotExist, so the loop below would bail before trying other
 	// disks. Look up the .ecx owner across all DiskLocations once and
-	// route NewEcVolume at the directory that actually has the file
-	// (issue #9519).
+	// route NewEcVolume at the directory that actually has the file.
 	ecxIdxDir, ecxFound := s.findEcxIdxDirForVolume(collection, vid)
 
 	for diskId, location := range s.Locations {

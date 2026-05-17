@@ -99,7 +99,7 @@ func (s *Store) reconcileEcShardsAcrossDisks() {
 // IdxDirectory and (if different) Directory in turn. It is the single-
 // volume analogue of indexEcxOwners used by MountEcShards to bridge the
 // "shard lives on disk A, .ecx lives on disk B" case at mount time, which
-// the per-disk LoadEcShard does not handle on its own (issue #9519).
+// the per-disk LoadEcShard does not handle on its own.
 //
 // The first match wins; duplicates across disks are not expected on a
 // healthy store, but tolerated for the same reason as indexEcxOwners.
