@@ -160,8 +160,32 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 }
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	// The .ecx index file may live on a different disk than the one
+	// holding the .ec?? shard being mounted: ec.balance / ec.rebuild can
+	// place the .ecx on one local disk while later distributing shards
+	// across sibling disks of the same volume server. The per-disk
+	// IdxDirectory used by LoadEcShard would ENOENT the .ecx and fail
+	// with "cannot open ec volume index" instead of returning
+	// ErrNotExist, so the loop below would bail before trying other
+	// disks. Look up the .ecx owner across all DiskLocations once and
+	// route NewEcVolume at the directory that actually has the file.
+	ecxIdxDir, ecxFound := s.findEcxIdxDirForVolume(collection, vid)
+
 	for diskId, location := range s.Locations {
-		if ecVolume, err := location.LoadEcShard(collection, vid, shardId); err == nil {
+		idxDir := location.IdxDirectory
+		if ecxFound {
+			// Fast path: if findEcxIdxDirForVolume already pointed at
+			// one of this disk's directories, the disk owns the .ecx
+			// and the local IdxDirectory is the right answer — skip
+			// the HasEcxFileOnDisk stat. Only fall back to the sibling
+			// disk's idxDir when this disk's directories are neither.
+			if location.IdxDirectory != ecxIdxDir && location.Directory != ecxIdxDir {
+				if !location.HasEcxFileOnDisk(collection, vid) {
+					idxDir = ecxIdxDir
+				}
+			}
+		}
+		if ecVolume, err := location.loadEcShardWithIdxDir(collection, vid, shardId, idxDir); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 
 			// Apply the orchestrator-supplied source disk type so the EC
