@@ -193,3 +193,91 @@ func (store *MemoryStore) LoadInlinePolicies(ctx context.Context) (map[string]ma
 	}
 	return result, nil
 }
+
+// PutGroupInlinePolicy stores a per-group inline policy document.
+func (store *MemoryStore) PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	if store.groupInlinePolicies[groupName] == nil {
+		store.groupInlinePolicies[groupName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	store.groupInlinePolicies[groupName][policyName] = document
+	return nil
+}
+
+// GetGroupInlinePolicy retrieves a per-group inline policy document.
+func (store *MemoryStore) GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	if groupPolicies := store.groupInlinePolicies[groupName]; groupPolicies != nil {
+		if doc, exists := groupPolicies[policyName]; exists {
+			return &doc, nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteGroupInlinePolicy removes a per-group inline policy document.
+func (store *MemoryStore) DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	if groupPolicies := store.groupInlinePolicies[groupName]; groupPolicies != nil {
+		delete(groupPolicies, policyName)
+		if len(groupPolicies) == 0 {
+			delete(store.groupInlinePolicies, groupName)
+		}
+	}
+	return nil
+}
+
+// ListGroupInlinePolicies returns the names of all inline policies for a group.
+func (store *MemoryStore) ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	groupPolicies := store.groupInlinePolicies[groupName]
+	names := make([]string, 0, len(groupPolicies))
+	for name := range groupPolicies {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// LoadGroupInlinePolicies returns all group inline policies keyed by group name then policy name.
+func (store *MemoryStore) LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	result := make(map[string]map[string]policy_engine.PolicyDocument, len(store.groupInlinePolicies))
+	for groupName, groupPolicies := range store.groupInlinePolicies {
+		copied := make(map[string]policy_engine.PolicyDocument, len(groupPolicies))
+		for policyName, doc := range groupPolicies {
+			copied[policyName] = doc
+		}
+		result[groupName] = copied
+	}
+	return result, nil
+}
