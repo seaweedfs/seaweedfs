@@ -174,8 +174,17 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 
 	for diskId, location := range s.Locations {
 		idxDir := location.IdxDirectory
-		if ecxFound && !location.HasEcxFileOnDisk(collection, vid) {
-			idxDir = ecxIdxDir
+		if ecxFound {
+			// Fast path: if findEcxIdxDirForVolume already pointed at
+			// one of this disk's directories, the disk owns the .ecx
+			// and the local IdxDirectory is the right answer — skip
+			// the HasEcxFileOnDisk stat. Only fall back to the sibling
+			// disk's idxDir when this disk's directories are neither.
+			if location.IdxDirectory != ecxIdxDir && location.Directory != ecxIdxDir {
+				if !location.HasEcxFileOnDisk(collection, vid) {
+					idxDir = ecxIdxDir
+				}
+			}
 		}
 		if ecVolume, err := location.loadEcShardWithIdxDir(collection, vid, shardId, idxDir); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)

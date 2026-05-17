@@ -103,9 +103,13 @@ func (s *Store) reconcileEcShardsAcrossDisks() {
 //
 // The first match wins; duplicates across disks are not expected on a
 // healthy store, but tolerated for the same reason as indexEcxOwners.
+//
+// The seen map is hoisted across all locations so a shared IdxDirectory
+// (common when a single -dir.idx is paired with multiple -dir entries)
+// is only stat'd once per call.
 func (s *Store) findEcxIdxDirForVolume(collection string, vid needle.VolumeId) (string, bool) {
+	seen := map[string]bool{}
 	for _, loc := range s.Locations {
-		seen := map[string]bool{}
 		for _, scan := range []string{loc.IdxDirectory, loc.Directory} {
 			if scan == "" || seen[scan] {
 				continue
