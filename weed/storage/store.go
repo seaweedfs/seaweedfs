@@ -169,10 +169,10 @@ func NewStore(
 	// reconciler so the orphan pass can prefer the local IdxDirectory.
 	s.mirrorEcMetadataToShardDisks()
 
-	// Cross-disk fallback for orphan shards (issue #9212): ec.balance
-	// can land shards on one disk while leaving the index on another.
-	// Still needed after the mirror pass for volumes whose mirror
-	// failed (read-only target, out of space, partial copy).
+	// Cross-disk fallback for orphan shards — ec.balance can land
+	// shards on one disk while leaving the index on another. Still
+	// needed after the mirror pass for volumes whose mirror failed
+	// (read-only target, out of space, partial copy).
 	s.reconcileEcShardsAcrossDisks()
 
 	// Resolve state.pb's directory via the first disk location so it inherits

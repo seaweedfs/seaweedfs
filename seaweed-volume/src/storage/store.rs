@@ -102,10 +102,10 @@ impl Store {
         // local idx_directory.
         self.mirror_ec_metadata_to_shard_disks();
 
-        // Cross-disk fallback for orphan shards (seaweedfs/seaweedfs#9212):
-        // ec.balance can land shards on one disk while leaving the index
-        // on another. Still needed after the mirror pass for volumes
-        // whose mirror failed (read-only target, partial copy).
+        // Cross-disk fallback for orphan shards — ec.balance can land
+        // shards on one disk while leaving the index on another. Still
+        // needed after the mirror pass for volumes whose mirror failed
+        // (read-only target, partial copy).
         self.reconcile_ec_shards_across_disks();
 
         Ok(())
