@@ -96,6 +96,18 @@ impl Store {
         // re-loading shards we just cleaned up.
         self.prune_incomplete_ec_with_sibling_dat();
 
+        // Before the cross-disk virtual-mount fallback runs,
+        // physically copy EC sidecars (.ecx / .ecj / .vif) onto
+        // every disk that holds shards but is missing them. The EC
+        // lifecycle (encode / decode / balance / vacuum / repair)
+        // promises a same-disk layout: every shard lives alongside
+        // its own metadata. Mirroring at boot restores that
+        // invariant after ec.balance or ec.rebuild has split shards
+        // from their index across disks of the same volume server,
+        // so each disk can mount self-contained instead of reaching
+        // across.
+        self.mirror_ec_metadata_to_shard_disks();
+
         // After every disk has finished its per-disk EC scan, sweep
         // the store for shards that live on a disk without local index
         // files and load them by reaching across to a sibling disk's
@@ -103,7 +115,9 @@ impl Store {
         // ec.balance / ec.rebuild can move shards onto a destination
         // node's second disk while leaving the index on the disk that
         // already held the volume; without this pass those orphan
-        // shards stay invisible to the master.
+        // shards stay invisible to the master. Even after the mirror
+        // pass above, this stays as the fallback for volumes whose
+        // mirror failed (read-only target disk, partial copy, etc.).
         self.reconcile_ec_shards_across_disks();
 
         Ok(())
@@ -118,6 +132,7 @@ impl Store {
             }
         }
         self.prune_incomplete_ec_with_sibling_dat();
+        self.mirror_ec_metadata_to_shard_disks();
         self.reconcile_ec_shards_across_disks();
     }
 
