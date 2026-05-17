@@ -246,14 +246,14 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 		return filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf)
 	})
 	if rErr != nil && rErr != filer_pb.ErrNotFound {
-		return rErr
+		return fmt.Errorf("read legacy policies from filer: %w", rErr)
 	}
 	if rErr == filer_pb.ErrNotFound || buf.Len() == 0 {
 		return nil
 	}
 	var legacy Policies
 	if err := json.Unmarshal(buf.Bytes(), &legacy); err != nil {
-		return err
+		return fmt.Errorf("unmarshal legacy policies: %w", err)
 	}
 	for name, doc := range legacy.Policies {
 		if _, exists := policies.Policies[name]; !exists {
@@ -266,11 +266,15 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 }
 
 // PutPolicies persists managed, user-inline, and group-inline policies through
-// the credential store as deltas relative to its current contents. The legacy
-// /etc/iam/policies.json bundle is never written; it is only read by
-// GetPolicies as a one-way migration source. With no credential manager
-// available (a test path), the bundle is written so the in-memory state still
-// round-trips.
+// the credential store as deltas relative to its current contents. When the
+// credential store is something other than filer_etc (postgres, grpc, memory),
+// the legacy /etc/iam/policies.json bundle is cleared after a successful write
+// so that data merged in by the GetPolicies fallback during migration cannot
+// resurface — otherwise a later DeletePolicy would be undone by the next read.
+// For filer_etc the bundle is left alone because filer_etc owns it as its own
+// inline-policy backing store (see filer_etc.saveLegacyPoliciesCollection).
+// With no credential manager available (a test path), everything is written
+// back to the bundle, preserving the pre-refactor behavior.
 func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 	ctx := context.Background()
 
@@ -280,16 +284,7 @@ func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 			InlinePolicies:      policies.InlinePolicies,
 			GroupInlinePolicies: policies.GroupInlinePolicies,
 		}
-		if len(legacy.Policies) == 0 && len(legacy.InlinePolicies) == 0 && len(legacy.GroupInlinePolicies) == 0 {
-			return nil
-		}
-		b, mErr := json.Marshal(&legacy)
-		if mErr != nil {
-			return mErr
-		}
-		return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(ctx, client, filer.IamConfigDirectory, filer.IamPoliciesFile, b)
-		})
+		return iama.writeLegacyPolicies(ctx, &legacy)
 	}
 
 	// Managed delta.
@@ -375,7 +370,28 @@ func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 		}
 	}
 
-	return nil
+	// filer_etc owns the legacy bundle itself (it's how filer_etc persists
+	// inline policies). For every other store the bundle is at most a one-
+	// shot migration source — empty it so deleted legacy-only entries don't
+	// reappear via the GetPolicies fallback on the next read.
+	if iama.credentialManager.GetStoreName() == string(credential.StoreTypeFilerEtc) {
+		return nil
+	}
+	return iama.writeLegacyPolicies(ctx, &Policies{})
+}
+
+// writeLegacyPolicies serializes the given Policies struct to the legacy
+// /etc/iam/policies.json bundle. Called both for the no-credential-manager
+// fallback (full bundle) and for the credential-manager path (empty bundle,
+// to drain legacy data after migration).
+func (iama *IamS3ApiConfigure) writeLegacyPolicies(ctx context.Context, p *Policies) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("marshal legacy policies: %w", err)
+	}
+	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(ctx, client, filer.IamConfigDirectory, filer.IamPoliciesFile, b)
+	})
 }
 
 // mergeInline overwrites entries in dst with src (credential-store data taking

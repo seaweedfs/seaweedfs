@@ -205,6 +205,32 @@ func TestPutPoliciesDeletesRemovedGroupInline(t *testing.T) {
 	assert.ElementsMatch(t, []string{"keep"}, remaining)
 }
 
+// TestPutPoliciesIsAuthoritativeWhenStoreIsNotFilerEtc is the regression test
+// for the legacy-file resurrection bug: once the credential store is
+// authoritative, a delete must stick across the GetPolicies fallback. We
+// can't verify the legacy-file rewrite directly without a fake filer in
+// the test harness, but we can verify the cm-side delta behavior: a policy
+// that was deleted does not come back via cm on a subsequent fetch.
+func TestPutPoliciesIsAuthoritativeWhenStoreIsNotFilerEtc(t *testing.T) {
+	cfg, cm := newIamS3ApiConfigureForTest(t)
+	ctx := context.Background()
+
+	require.Equal(t, "memory", cm.GetStoreName(), "test depends on memory store name carveout")
+
+	doc := samplePolicyDocument("arn:aws:s3:::vanishing")
+	require.NoError(t, cfg.PutPolicies(&Policies{
+		Policies: map[string]policy_engine.PolicyDocument{"will-vanish": doc},
+	}))
+
+	require.NoError(t, cfg.PutPolicies(&Policies{
+		Policies: map[string]policy_engine.PolicyDocument{},
+	}))
+
+	remaining, err := cm.GetPolicies(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, remaining, "will-vanish")
+}
+
 // TestGetPoliciesReadsInlineAndGroupInlineFromCredentialStore confirms reads
 // pull user-inline and group-inline policies from the store too, so handlers
 // like ListUserPolicies / GetUserPolicy see Admin-UI writes.
