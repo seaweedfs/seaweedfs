@@ -94,6 +94,32 @@ func (s *Store) reconcileEcShardsAcrossDisks() {
 	}
 }
 
+// findEcxIdxDirForVolume returns the directory that holds the .ecx file
+// for (collection, vid) on this store, scanning every DiskLocation's
+// IdxDirectory and (if different) Directory in turn. It is the single-
+// volume analogue of indexEcxOwners used by MountEcShards to bridge the
+// "shard lives on disk A, .ecx lives on disk B" case at mount time, which
+// the per-disk LoadEcShard does not handle on its own (issue #9519).
+//
+// The first match wins; duplicates across disks are not expected on a
+// healthy store, but tolerated for the same reason as indexEcxOwners.
+func (s *Store) findEcxIdxDirForVolume(collection string, vid needle.VolumeId) (string, bool) {
+	for _, loc := range s.Locations {
+		seen := map[string]bool{}
+		for _, scan := range []string{loc.IdxDirectory, loc.Directory} {
+			if scan == "" || seen[scan] {
+				continue
+			}
+			seen[scan] = true
+			base := erasure_coding.EcShardFileName(collection, scan, int(vid))
+			if info, err := os.Stat(base + ".ecx"); err == nil && !info.IsDir() {
+				return scan, true
+			}
+		}
+	}
+	return "", false
+}
+
 // indexEcxOwners returns the disk and the actual directory that owns the
 // .ecx file for each (collection, vid) on this store. .ecx normally lives
 // in IdxDirectory but may have been written into the data directory before
