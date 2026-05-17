@@ -14,17 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars sets up the
-// same orphan-shard layout as TestLoadEcShardsWhenIndexFilesOnDifferentDisk
-// (shards on dir0, sidecars on dir1) and asserts the additional
-// guarantee: after NewStore returns, dir0 has its OWN copy of every EC
-// sidecar so the EcVolume mounts self-contained instead of reaching
-// across to dir1.
-//
-// The mirror is the load-bearing piece for the EC lifecycle (encode /
-// decode / balance / vacuum / repair) same-disk invariant. Without it,
-// a future failure of dir1 (the index owner) silently disables every
-// shard on dir0, even though those shards are physically fine.
+// Orphan layout: shards on dir0, sidecars on dir1. After NewStore,
+// dir0 must own a local copy of every sidecar.
 func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 	tempDir := t.TempDir()
 	dir0 := filepath.Join(tempDir, "data1")
@@ -55,17 +46,11 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 		f.Close()
 	}
 
-	// dir0: orphan shards 0 and 12; no sidecars locally yet.
 	writeShard(dir0, 0)
 	writeShard(dir0, 12)
-
-	// dir1: sidecars + shard 1.
 	writeShard(dir1, 1)
 	base1 := erasure_coding.EcShardFileName(collection, dir1, int(vid))
 
-	// Sentinel bytes in each sidecar so we can detect that the mirrored
-	// copy on dir0 is byte-for-byte identical and not, say, a stub
-	// created by NewEcVolume's "missing .vif" fallback.
 	ecxBytes := bytes.Repeat([]byte{0xA1}, 20)
 	ecjBytes := bytes.Repeat([]byte{0xB2}, 16)
 	if err := os.WriteFile(base1+".ecx", ecxBytes, 0o644); err != nil {
@@ -116,31 +101,23 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 
 	base0 := erasure_coding.EcShardFileName(collection, dir0, int(vid))
 
-	// dir0 must have received byte-identical copies of .ecx and .ecj.
-	// (.vif is checked separately below: NewEcVolume's version
-	// verification rewrites .vif when the mounted shard's header
-	// disagrees with the recorded version, so byte-equality is not the
-	// right invariant for .vif on synthetic-shard fixtures.)
+	// .vif drifts on first mount via version-correction, so byte
+	// equality is only the right invariant for .ecx and .ecj.
 	for _, ext := range []string{".ecx", ".ecj"} {
-		src := base1 + ext
-		dst := base0 + ext
-		gotBytes, err := os.ReadFile(dst)
+		gotBytes, err := os.ReadFile(base0 + ext)
 		if err != nil {
 			t.Errorf("sidecar %s not mirrored to dir0: %v", ext, err)
 			continue
 		}
-		wantBytes, err := os.ReadFile(src)
+		wantBytes, err := os.ReadFile(base1 + ext)
 		if err != nil {
-			t.Fatalf("read source %s: %v", src, err)
+			t.Fatalf("read source %s: %v", base1+ext, err)
 		}
 		if !bytes.Equal(gotBytes, wantBytes) {
 			t.Errorf("sidecar %s content mismatch between dir0 and dir1", ext)
 		}
 	}
 
-	// .vif must exist on dir0 and decode to the same EC ratio the
-	// source advertised; the exact bytes can drift due to
-	// version-correction on first mount.
 	dir0Info, _, found, err := volume_info.MaybeLoadVolumeInfo(base0 + ".vif")
 	if err != nil || !found {
 		t.Errorf("dir0 .vif missing or unreadable after mirror: err=%v found=%v", err, found)
@@ -151,9 +128,6 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 			dir0Info.EcShardConfig, dataShards, parityShards)
 	}
 
-	// The shards on dir0 must still be loaded — same guarantee as the
-	// pre-mirror orphan reconciler — and the EcVolume's index handle
-	// must resolve to dir0 itself, not to dir1.
 	loc0 := store.Locations[0]
 	ev0, found := loc0.FindEcVolume(vid)
 	if !found {
@@ -168,8 +142,6 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 		t.Errorf("dir0 EcVolume .ecx resolved at %q, want %q (local mirrored copy)", got, want)
 	}
 
-	// dir1 must keep its own self-contained mount for shard 1; the
-	// mirror does not touch the source.
 	loc1 := store.Locations[1]
 	ev1, found := loc1.FindEcVolume(vid)
 	if !found {
@@ -179,7 +151,6 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 		t.Errorf("dir1 shard 1 missing after mirror")
 	}
 
-	// Shards on dir0 must not have been destroyed by any cleanup path.
 	for _, sid := range []int{0, 12} {
 		shardPath := base0 + erasure_coding.ToExt(sid)
 		fi, err := os.Stat(shardPath)
@@ -193,11 +164,9 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 	}
 }
 
-// TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored guards against
-// the mirror pass rewriting sidecars that already match. Idempotency
-// matters because the pass runs on every startup; an unconditional
-// rewrite would slowly amplify into "fsync every EC volume's metadata
-// on boot," which is expensive on large clusters.
+// A pre-existing destination .ecx must not be overwritten — local
+// copies are authoritative because they may have absorbed delete
+// journal updates not yet on the owner.
 func TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored(t *testing.T) {
 	tempDir := t.TempDir()
 	dir0 := filepath.Join(tempDir, "data1")
@@ -251,11 +220,8 @@ func TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored(t *testing.T) {
 	plantShard(dir0, 12)
 	plantShard(dir1, 1)
 
-	// Both dirs already have sidecars; we plant deliberately different
-	// .ecx bytes so we can prove the mirror does NOT clobber the
-	// pre-existing destination with the owner's copy. .ecx is the
-	// strongest signal here — unlike .vif, EcVolume never rewrites
-	// .ecx at mount, so any drift would be the mirror's fault.
+	// Deliberately different .ecx bytes on each side so any overwrite
+	// shows up as a diff. .ecx never rewrites at mount, unlike .vif.
 	ecxOwner := bytes.Repeat([]byte{0xC3}, 20)
 	ecxLocal := bytes.Repeat([]byte{0x5A}, 20)
 	ecjBytes := bytes.Repeat([]byte{0xD4}, 16)
@@ -302,9 +268,6 @@ func TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored(t *testing.T) {
 			postEcx[:4], ecxLocal[:4])
 	}
 
-	// And the volume must still mount on both disks with its own
-	// local .ecx — the same-disk invariant the mirror is here to
-	// preserve.
 	if loc0 := store.Locations[0]; loc0 == nil {
 		t.Fatal("loc0 unexpectedly nil")
 	} else if ev, found := loc0.FindEcVolume(vid); !found {

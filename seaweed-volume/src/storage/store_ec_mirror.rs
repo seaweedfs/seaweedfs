@@ -1,24 +1,5 @@
-//! Physical EC sidecar mirroring across disks of the same volume server.
-//!
-//! Mirrors `weed/storage/store_ec_mirror.go`. The EC lifecycle
-//! (encode / decode / balance / vacuum / repair) promises a same-disk
-//! layout: every shard lives alongside its own `.ecx` / `.ecj` /
-//! `.vif` so the `EcVolume` can mount self-contained. Without this
-//! pass, a disk that received shards through `ec.balance` or
-//! `ec.rebuild` — where only the first shard carries
-//! `copy_ecx_file=true` and subsequent shards land via auto-select —
-//! can end up with the `.ec??` files but no local sidecars. The
-//! orphan reconcile then mounts the shards by pointing the EcVolume
-//! at the sibling disk's index files; reads work, but any failure on
-//! the index-owning disk (a removed drive, a corrupted fs, an
-//! operator who unmounted the wrong sled) takes the shards with it.
-//!
-//! This module physically replicates the sidecars onto each
-//! shard-bearing disk so the shards stay readable as long as their
-//! own disk is up. Runs before `reconcile_ec_shards_across_disks` at
-//! boot; the cross-disk fallback is preserved for cases where
-//! mirroring fails (read-only target, out of space, partial copy) so
-//! the volume stays available.
+//! Physical EC sidecar mirroring across disks of the same volume
+//! server. Mirrors `weed/storage/store_ec_mirror.go`.
 
 use std::collections::HashMap;
 use std::fs;
@@ -31,25 +12,15 @@ use crate::storage::disk_location::{parse_collection_volume_id_pub, DiskLocation
 use crate::storage::store::Store;
 use crate::storage::types::VolumeId;
 
-/// EC sidecars that must travel with the shards. Order matches
-/// `EcVolume::new`'s open sequence so a partial mirror is diagnosable
-/// by walking the list and stopping at the first destination that
-/// does not yet have its copy.
+// Listed in `EcVolume::new`'s open order.
 const EC_MIRRORED_SIDECARS: &[&str] = &[".ecx", ".ecj", ".vif"];
 
-/// Key for matching shard-bearing disks to their sidecar owners.
-/// Per-collection because two collections may share a volume id.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct EcKey {
     collection: String,
     vid: VolumeId,
 }
 
-/// Records both the disk index that owns the `.ecx` and the actual
-/// directory it lives in. The directory matters because
-/// `index_ecx_owners` scans both `idx_directory` and `directory` —
-/// when `.ecx` lives in `directory` (legacy pre-`-dir.idx` layout),
-/// we want to read the file from where it actually is.
 #[derive(Clone, Debug)]
 struct EcxOwner {
     location: usize,
@@ -58,14 +29,10 @@ struct EcxOwner {
 }
 
 impl Store {
-    /// Mirror EC sidecars onto every disk of this store that holds
-    /// shards but is missing the matching `.ecx` / `.ecj` / `.vif`.
-    /// Idempotent: a destination that already has the sidecar is
-    /// left untouched, and a missing source sidecar is not an error.
-    ///
-    /// Runs before `reconcile_ec_shards_across_disks` so the
-    /// downstream orphan-shard pass sees the freshly-mirrored layout
-    /// and can mount each disk against its own `idx_directory`.
+    /// Mirror EC sidecars onto every shard-bearing disk that lacks
+    /// them, so each disk mounts self-contained. Runs before
+    /// `reconcile_ec_shards_across_disks` so the orphan pass can
+    /// prefer the local idx_directory.
     pub fn mirror_ec_metadata_to_shard_disks(&mut self) {
         if self.locations.len() < 2 {
             return;
@@ -75,9 +42,8 @@ impl Store {
             return;
         }
 
-        // Two-pass to satisfy the borrow checker: gather work under
-        // an immutable borrow, then apply copies disk-by-disk under
-        // independent mutable borrows.
+        // Two-pass: gather work under an immutable borrow, then apply
+        // copies under independent mutable borrows.
         struct Mirror<'a> {
             target_idx: usize,
             owner: &'a EcxOwner,
@@ -142,13 +108,9 @@ impl Store {
         }
     }
 
-    /// Build a `(collection, vid) -> EcxOwner` map of which disk owns
-    /// the `.ecx` and which directory it actually lives in.
-    /// Counterpart to `index_ecx_owners` in `store_ec_reconcile.rs`;
-    /// kept private here so the mirror is self-contained and can
-    /// record both `idx_dir` and `data_dir` for source-side fallback
-    /// when `.vif` lives in the data dir but `.ecx` is in the idx
-    /// dir (or vice versa).
+    // Records both idx_dir (where .ecx was found) and data_dir, so
+    // the mirror can resolve .vif from data_dir even when .ecx lives
+    // in idx_directory.
     fn index_ecx_owners_for_mirror(&self) -> HashMap<EcKey, EcxOwner> {
         let mut owners: HashMap<EcKey, EcxOwner> = HashMap::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
@@ -186,14 +148,9 @@ impl Store {
     }
 }
 
-/// True iff the destination disk already has every EC sidecar that
-/// the mirror would otherwise install. Checks the modern routing
-/// first (idx_directory for .ecx/.ecj, directory for .vif) and then
-/// the opposite directory as a fallback — matching
-/// `EcVolume::new`'s own open-with-fallback contract. Without the
-/// fallback, a destination that still has a legacy pre-`-dir.idx`
-/// .ecx in its data dir would be re-mirrored into idx_directory and
-/// end up with two copies on disk.
+// Checks the modern routing and the opposite directory — without
+// that fallback, a destination with a legacy pre-`-dir.idx` .ecx in
+// its data dir would be re-mirrored into idx_directory.
 fn disk_has_all_sidecars(loc: &DiskLocation, collection: &str, vid: VolumeId) -> bool {
     for ext in EC_MIRRORED_SIDECARS {
         let primary = sidecar_dest_path(&loc.directory, &loc.idx_directory, collection, vid, ext);
@@ -201,9 +158,6 @@ fn disk_has_all_sidecars(loc: &DiskLocation, collection: &str, vid: VolumeId) ->
             continue;
         }
         if loc.idx_directory != loc.directory {
-            // .ecx/.ecj could be in directory (pre-`-dir.idx`), .vif
-            // could be in idx_directory (uncommon but allowed by
-            // EcVolume::new's .vif lookup).
             let (fallback_data, fallback_idx) = if *ext == ".vif" {
                 (loc.idx_directory.as_str(), loc.directory.as_str())
             } else {
@@ -219,15 +173,11 @@ fn disk_has_all_sidecars(loc: &DiskLocation, collection: &str, vid: VolumeId) ->
     true
 }
 
-/// Existence + regular-file check rolled into one boolean. Used by
-/// the sidecar-presence ladder above so the fallback logic stays
-/// readable.
 fn path_is_regular_file(path: &str) -> bool {
     fs::metadata(path).map(|m| !m.is_dir()).unwrap_or(false)
 }
 
-/// Routing: `.ecx` / `.ecj` go to `idx_directory`, `.vif` goes to
-/// `directory`. Matches `EcVolume::new`'s lookup order.
+// `.ecx`/`.ecj` route to idx_directory, `.vif` to directory.
 fn sidecar_dest_path(
     data_dir: &str,
     idx_dir: &str,
@@ -243,11 +193,6 @@ fn sidecar_dest_path(
     }
 }
 
-/// Mirror the three EC sidecars from one disk to another. Returns
-/// the count of files actually copied (skipping pre-existing
-/// destinations and missing optional sources). Errors abort on the
-/// first failure so the caller's warn-and-continue handles partial
-/// state.
 fn mirror_sidecars_for_volume(
     src_idx_dir: &str,
     src_data_dir: &str,
@@ -259,12 +204,15 @@ fn mirror_sidecars_for_volume(
     let mut copied = 0usize;
     for ext in EC_MIRRORED_SIDECARS {
         let dst = sidecar_dest_path(dst_data_dir, dst_idx_dir, collection, vid, ext);
+        // An existing local copy is authoritative — it may be newer
+        // than the owner's after a delete journal append.
         if fs::metadata(&dst).is_ok() {
             continue;
         }
+
         let candidates = [
             sidecar_dest_path(src_data_dir, src_idx_dir, collection, vid, ext),
-            sidecar_dest_path(src_idx_dir, src_data_dir, collection, vid, ext), // legacy swap
+            sidecar_dest_path(src_idx_dir, src_data_dir, collection, vid, ext),
         ];
         let mut src_path: Option<String> = None;
         for c in candidates.iter() {
@@ -282,10 +230,6 @@ fn mirror_sidecars_for_volume(
     Ok(copied)
 }
 
-/// Copy a single sidecar atomically: write to `<dst>.mirror.tmp`,
-/// fsync, rename. A pre-existing `<dst>.mirror.tmp` from a previous
-/// interrupted boot is removed first so `O_EXCL` doesn't refuse the
-/// open.
 fn copy_sidecar_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
@@ -318,9 +262,6 @@ fn copy_sidecar_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Walk this disk's data directory and return (collection, vid)
-/// groups that have any `.ec??` files on disk. Used by the mirror
-/// pass to find candidate destinations.
 fn collect_shard_disk_volumes(loc: &DiskLocation) -> HashMap<EcKey, Vec<String>> {
     let mut out: HashMap<EcKey, Vec<String>> = HashMap::new();
     let Ok(read) = fs::read_dir(&loc.directory) else {
@@ -406,9 +347,6 @@ mod tests {
             .unwrap();
     }
 
-    /// dir0: orphan shards. dir1: shard 1 + every sidecar. After
-    /// add_location finishes, dir0 must have its own copy of every
-    /// sidecar so the EcVolume there mounts self-contained.
     #[test]
     fn mirror_copies_sidecars_to_shard_only_disk() {
         let tmp = TempDir::new().unwrap();
@@ -448,8 +386,6 @@ mod tests {
         assert_eq!(ecj_dst, ecj, ".ecj mirrored bytes differ from source");
     }
 
-    /// dir0 already has its own sidecars (different .ecx bytes than
-    /// dir1's). The mirror must NOT overwrite them.
     #[test]
     fn mirror_preserves_existing_destination_sidecars() {
         let tmp = TempDir::new().unwrap();

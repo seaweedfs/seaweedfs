@@ -26,9 +26,6 @@ use crate::storage::store::Store;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::VolumeId;
 
-/// Where the local `.ecx` would live on `dir` for `(collection, vid)`.
-/// Helper for the post-mirror "is the local `.ecx` present?" check;
-/// shared between this module and `store_ec_mirror.rs`.
 pub(crate) fn ec_local_ecx_path(dir: &str, collection: &str, vid: VolumeId) -> String {
     if collection.is_empty() {
         format!("{}/{}.ecx", dir, vid.0)
@@ -87,13 +84,9 @@ impl Store {
             return;
         }
 
-        // Snapshot of orphan shards, keyed by (loc_idx, ec_key) so we
-        // can release the immutable borrow on self.locations before
-        // calling mount_ec_shards_with_idx_dir (which needs &mut).
         // `use_local_idx` is the post-mirror fast path: when the
-        // physical mirror in mirror_ec_metadata_to_shard_disks has
-        // already installed the sidecars on this disk, mount against
-        // `loc.idx_directory` so the EcVolume is self-contained.
+        // mirror already installed sidecars locally, mount against
+        // loc.idx_directory instead of the owner disk.
         let mut to_load: Vec<(usize, EcKey, Vec<(String, u32)>, EcxOwnerInfo, bool)> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let orphans = collect_orphan_ec_shards(loc, loc_idx);
@@ -108,10 +101,6 @@ impl Store {
                     );
                     continue;
                 };
-                // After the mirror pass runs, this disk may have its
-                // own local `.ecx`. Prefer the local idx so the
-                // EcVolume mounts self-contained; the cross-disk
-                // fallback only matters if the mirror failed.
                 let local_ecx = ec_local_ecx_path(&loc.idx_directory, &key.collection, key.vid);
                 let local_ecx_in_data = ec_local_ecx_path(&loc.directory, &key.collection, key.vid);
                 let use_local_idx = std::path::Path::new(&local_ecx).exists()
@@ -121,10 +110,8 @@ impl Store {
                     && owner.location == loc_idx
                     && owner.idx_dir == loc.idx_directory
                 {
-                    // Normal same-disk case: load_all_ec_shards already
-                    // attempted the mount via `loc.idx_directory` and
-                    // logged the underlying failure. No point retrying
-                    // the same call.
+                    // Same-disk no-op: load_all_ec_shards already
+                    // tried and logged the failure.
                     continue;
                 }
                 to_load.push((loc_idx, key, shards, owner.clone(), use_local_idx));

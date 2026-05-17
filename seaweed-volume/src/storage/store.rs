@@ -96,28 +96,16 @@ impl Store {
         // re-loading shards we just cleaned up.
         self.prune_incomplete_ec_with_sibling_dat();
 
-        // Before the cross-disk virtual-mount fallback runs,
-        // physically copy EC sidecars (.ecx / .ecj / .vif) onto
-        // every disk that holds shards but is missing them. The EC
-        // lifecycle (encode / decode / balance / vacuum / repair)
-        // promises a same-disk layout: every shard lives alongside
-        // its own metadata. Mirroring at boot restores that
-        // invariant after ec.balance or ec.rebuild has split shards
-        // from their index across disks of the same volume server,
-        // so each disk can mount self-contained instead of reaching
-        // across.
+        // Physically mirror EC sidecars onto every shard-bearing disk
+        // so each disk mounts self-contained. Must run before the
+        // cross-disk reconciler so the orphan pass can prefer the
+        // local idx_directory.
         self.mirror_ec_metadata_to_shard_disks();
 
-        // After every disk has finished its per-disk EC scan, sweep
-        // the store for shards that live on a disk without local index
-        // files and load them by reaching across to a sibling disk's
-        // .ecx / .ecj / .vif (seaweedfs/seaweedfs#9212 / #9244).
-        // ec.balance / ec.rebuild can move shards onto a destination
-        // node's second disk while leaving the index on the disk that
-        // already held the volume; without this pass those orphan
-        // shards stay invisible to the master. Even after the mirror
-        // pass above, this stays as the fallback for volumes whose
-        // mirror failed (read-only target disk, partial copy, etc.).
+        // Cross-disk fallback for orphan shards (seaweedfs/seaweedfs#9212):
+        // ec.balance can land shards on one disk while leaving the index
+        // on another. Still needed after the mirror pass for volumes
+        // whose mirror failed (read-only target, partial copy).
         self.reconcile_ec_shards_across_disks();
 
         Ok(())
