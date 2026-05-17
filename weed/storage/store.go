@@ -164,13 +164,26 @@ func NewStore(
 	// we just cleaned up.
 	s.pruneIncompleteEcWithSiblingDat()
 
+	// Before the cross-disk virtual-mount fallback runs, physically copy
+	// EC sidecars (.ecx / .ecj / .vif) onto every disk that holds shards
+	// but is missing them. The EC lifecycle (encode / decode / balance /
+	// vacuum / repair) promises a same-disk layout: every shard lives
+	// alongside its own metadata. Mirroring at boot restores that
+	// invariant after ec.balance or ec.rebuild has split shards from
+	// their index across disks of the same volume server, so each disk
+	// can mount self-contained instead of reaching across to a sibling.
+	s.mirrorEcMetadataToShardDisks()
+
 	// After every DiskLocation has finished its per-disk EC scan, sweep the
 	// store for shards that live on a disk without local index files and
 	// load them by reaching across to a sibling disk's .ecx / .ecj / .vif.
 	// This is the volume-server side of issue #9212: ec.balance can move
 	// shards onto a destination node's second disk while leaving the index
 	// on the disk that already held the volume, and without this pass those
-	// orphan shards stay invisible to the master.
+	// orphan shards stay invisible to the master. Even after the mirror
+	// pass above, this stays as the fallback for volumes whose mirror
+	// failed (read-only target disk, partial copy, etc.) so the cluster
+	// stays available.
 	s.reconcileEcShardsAcrossDisks()
 
 	// Resolve state.pb's directory via the first disk location so it inherits
