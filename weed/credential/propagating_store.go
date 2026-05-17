@@ -139,6 +139,81 @@ func (s *PropagatingCredentialStore) ListAttachedUserPolicies(ctx context.Contex
 	return s.CredentialStore.ListAttachedUserPolicies(ctx, username)
 }
 
+// SaveConfiguration overrides the embedded CredentialStore.SaveConfiguration
+// so bulk identity / group updates also push to running S3 caches. The IAM
+// API flow ends each handler with SaveConfiguration after recomputing
+// identity.Actions (the legacy authorization field), so reusing PutIdentity
+// here is what keeps inline-policy changes visible to S3 servers without
+// requiring a restart. We diff against the prior store state so deletions
+// also fan out (RemoveIdentity / RemoveGroup); without the diff a postgres
+// user who got pruned by SaveConfiguration would linger in the S3 cache.
+func (s *PropagatingCredentialStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	priorUsers, priorErr := s.CredentialStore.ListUsers(ctx)
+	if priorErr != nil {
+		glog.V(1).Infof("failed to list users before SaveConfiguration; skipping deletion propagation: %v", priorErr)
+		priorUsers = nil
+	}
+	priorGroups, gPriorErr := s.CredentialStore.ListGroups(ctx)
+	if gPriorErr != nil {
+		glog.V(1).Infof("failed to list groups before SaveConfiguration; skipping deletion propagation: %v", gPriorErr)
+		priorGroups = nil
+	}
+
+	if err := s.CredentialStore.SaveConfiguration(ctx, config); err != nil {
+		return err
+	}
+
+	keptUsers := make(map[string]struct{}, len(config.Identities))
+	for _, ident := range config.Identities {
+		if ident != nil {
+			keptUsers[ident.Name] = struct{}{}
+		}
+	}
+	keptGroups := make(map[string]struct{}, len(config.Groups))
+	for _, g := range config.Groups {
+		if g != nil {
+			keptGroups[g.Name] = struct{}{}
+		}
+	}
+
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		for _, ident := range config.Identities {
+			if ident == nil {
+				continue
+			}
+			if _, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: ident}); err != nil {
+				return err
+			}
+		}
+		for _, g := range config.Groups {
+			if g == nil {
+				continue
+			}
+			if _, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: g}); err != nil {
+				return err
+			}
+		}
+		for _, name := range priorUsers {
+			if _, kept := keptUsers[name]; kept {
+				continue
+			}
+			if _, err := client.RemoveIdentity(tx, &iam_pb.RemoveIdentityRequest{Username: name}); err != nil {
+				return err
+			}
+		}
+		for _, name := range priorGroups {
+			if _, kept := keptGroups[name]; kept {
+				continue
+			}
+			if _, err := client.RemoveGroup(tx, &iam_pb.RemoveGroupRequest{GroupName: name}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return nil
+}
+
 func (s *PropagatingCredentialStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
 	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateUser %s", identity.Name)
 	if err := s.CredentialStore.CreateUser(ctx, identity); err != nil {
