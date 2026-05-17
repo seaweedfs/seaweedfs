@@ -440,18 +440,34 @@ impl EcVolume {
 
     // ---- Shard locations (distributed tracking) ----
 
-    /// Set the list of server addresses for a given shard ID. Also
-    /// advances `shard_locations_refresh_time` so the distributed
-    /// read path's staleness check (needs_refresh) honors callers
-    /// that populate the cache directly without going through the
-    /// master `LookupEcVolume` RPC — otherwise the next read would
-    /// see an unset/old timestamp and trigger a redundant lookup
-    /// despite the cache being warm.
+    /// Set the list of server addresses for a single shard ID. Does
+    /// NOT touch `shard_locations_refresh_time` — a per-shard write
+    /// from inside a multi-shard population (e.g. iterating the
+    /// `LookupEcVolume` response shard-by-shard) would otherwise
+    /// flip the staleness flag while the map is still incomplete,
+    /// letting a concurrent reader observe `needs_refresh == false`
+    /// against a half-populated cache and return NotFound for the
+    /// not-yet-inserted shards.
+    ///
+    /// Callers populating the whole cache atomically should use
+    /// [`Self::replace_shard_locations`] instead — it swaps the
+    /// entire map under the write lock and advances the refresh
+    /// timestamp in one step.
     pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
         self.shard_locations
             .write()
             .unwrap()
             .insert(shard_id, locations);
+    }
+
+    /// Atomically replace the entire shard-locations map and stamp
+    /// the refresh time. Used by the distributed-read path's
+    /// post-`LookupEcVolume` write-back so the cache transitions
+    /// from old → fresh in a single observable step — concurrent
+    /// readers either see the full prior map or the full new map,
+    /// never an intermediate state with the freshness flag flipped.
+    pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
+        *self.shard_locations.write().unwrap() = locations;
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
     }
 

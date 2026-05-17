@@ -347,12 +347,11 @@ fn write_back_shard_locations(
 ) {
     let store = state.store.read().unwrap();
     if let Some(ecv) = store.find_ec_volume(vid) {
-        let mut sl = ecv.shard_locations.write().unwrap();
-        sl.clear();
-        for (k, v) in locations {
-            sl.insert(k, v);
-        }
-        *ecv.shard_locations_refresh_time.lock().unwrap() = Some(Instant::now());
+        // Atomic swap + freshness stamp so a concurrent reader sees
+        // either the prior cache or the fresh one — never an
+        // intermediate half-replaced map with the freshness flag
+        // already flipped.
+        ecv.replace_shard_locations(locations);
     }
 }
 
