@@ -107,6 +107,57 @@ pub fn build_grpc_endpoint(
     Ok(endpoint)
 }
 
+/// Parse a SeaweedFS server address (`"ip:port.grpcPort"` or
+/// `"ip:port"`) into the `host:grpcPort` form `build_grpc_endpoint`
+/// expects. With the trailing `.grpcPort` segment, that segment IS
+/// the gRPC port; without it, the gRPC port is `port + 10000`
+/// (SeaweedFS's HTTP↔gRPC port-offset convention).
+///
+/// Shared between `grpc_server.rs` and the distributed-EC-read path
+/// in `store_ec.rs` — keep this as the single source of truth so the
+/// HTTP↔gRPC port translation can't drift between callers.
+pub fn parse_grpc_address(source: &str) -> Result<String, String> {
+    let colon_idx = source
+        .rfind(':')
+        .ok_or_else(|| format!("cannot parse address: {}", source))?;
+    let host = &source[..colon_idx];
+    let port_part = &source[colon_idx + 1..];
+
+    if let Some(dot_idx) = port_part.rfind('.') {
+        // Format: "ip:port.grpcPort". Validate BOTH ports as u16
+        // so a malformed HTTP port (e.g. `host:abc.18080`) is
+        // rejected here rather than tripping a downstream
+        // `build_grpc_endpoint` URI parse failure with a less
+        // useful error.
+        let http_port = &port_part[..dot_idx];
+        let grpc_port = &port_part[dot_idx + 1..];
+        http_port
+            .parse::<u16>()
+            .map_err(|e| format!("invalid http port {:?}: {}", http_port, e))?;
+        grpc_port
+            .parse::<u16>()
+            .map_err(|e| format!("invalid grpc port {:?}: {}", grpc_port, e))?;
+        return Ok(format!("{}:{}", host, grpc_port));
+    }
+
+    // Format: "ip:port" → grpc = port + 10000. Reject inputs whose
+    // implicit grpc port would overflow the TCP port range (e.g.
+    // `host:60000` produces 70000 — invalid). Without this check
+    // the cast silently wraps and the endpoint call later fails
+    // with an opaque connection error.
+    let port: u16 = port_part
+        .parse()
+        .map_err(|e| format!("invalid port {:?}: {}", port_part, e))?;
+    let grpc_port = port as u32 + 10000;
+    if grpc_port > u16::MAX as u32 {
+        return Err(format!(
+            "implicit grpc port out of range: {} + 10000 = {}",
+            port, grpc_port
+        ));
+    }
+    Ok(format!("{}:{}", host, grpc_port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{build_grpc_endpoint, grpc_endpoint_uri, load_outgoing_grpc_tls};
@@ -202,5 +253,51 @@ mod tests {
     fn test_build_grpc_endpoint_without_tls_uses_http_scheme() {
         let endpoint = build_grpc_endpoint("127.0.0.1:19333", None).unwrap();
         assert_eq!(endpoint.uri().scheme_str(), Some("http"));
+    }
+
+    #[test]
+    fn test_parse_grpc_address_dotted_form() {
+        use super::parse_grpc_address;
+        assert_eq!(
+            parse_grpc_address("127.0.0.1:8080.18080").unwrap(),
+            "127.0.0.1:18080"
+        );
+    }
+
+    #[test]
+    fn test_parse_grpc_address_implicit_form_adds_10000() {
+        use super::parse_grpc_address;
+        assert_eq!(
+            parse_grpc_address("127.0.0.1:8080").unwrap(),
+            "127.0.0.1:18080"
+        );
+    }
+
+    #[test]
+    fn test_parse_grpc_address_rejects_non_numeric_http_port_in_dotted_form() {
+        use super::parse_grpc_address;
+        let err = parse_grpc_address("host:abc.18080").unwrap_err();
+        assert!(err.contains("invalid http port"), "{}", err);
+    }
+
+    #[test]
+    fn test_parse_grpc_address_rejects_non_numeric_grpc_port_in_dotted_form() {
+        use super::parse_grpc_address;
+        let err = parse_grpc_address("host:8080.xyz").unwrap_err();
+        assert!(err.contains("invalid grpc port"), "{}", err);
+    }
+
+    #[test]
+    fn test_parse_grpc_address_rejects_implicit_port_that_overflows() {
+        use super::parse_grpc_address;
+        let err = parse_grpc_address("127.0.0.1:60000").unwrap_err();
+        assert!(err.contains("out of range"), "{}", err);
+    }
+
+    #[test]
+    fn test_parse_grpc_address_rejects_input_without_colon() {
+        use super::parse_grpc_address;
+        let err = parse_grpc_address("hostname").unwrap_err();
+        assert!(err.contains("cannot parse"), "{}", err);
     }
 }

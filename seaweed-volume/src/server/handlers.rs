@@ -1019,43 +1019,44 @@ async fn get_or_head_handler_inner(
 
     if has_ec_volume && !has_volume {
         // ---- EC volume read path (always full read, no streaming) ----
-        let store = state.store.read().unwrap();
-        match store.find_ec_volume(vid) {
-            Some(ecv) => match ecv.read_ec_shard_needle(needle_id) {
-                Ok(Some(ec_needle)) => {
-                    n = ec_needle;
-                }
-                Ok(None) => {
-                    metrics::HANDLER_COUNTER
-                        .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
-                        .inc();
-                    return StatusCode::NOT_FOUND.into_response();
-                }
-                Err(e) => {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        metrics::HANDLER_COUNTER
-                            .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
-                            .inc();
-                        return StatusCode::NOT_FOUND.into_response();
-                    }
-                    metrics::HANDLER_COUNTER
-                        .with_label_values(&[metrics::ERROR_GET_INTERNAL])
-                        .inc();
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("read ec error: {}", e),
-                    )
-                        .into_response();
-                }
-            },
-            None => {
+        //
+        // The distributed read path already does a local-first pass
+        // in its Snapshot phase under the same store read lock the
+        // legacy code would have taken — so calling it directly
+        // serves both the "all shards local" fast case and the
+        // "some intervals need peer fetch + reconstruct" general
+        // case without paying for the local interval reads twice.
+        match crate::server::store_ec::read_ec_shard_needle_distributed(
+            &state, vid, needle_id,
+        )
+        .await
+        {
+            Ok(Some(ec_needle)) => {
+                n = ec_needle;
+            }
+            Ok(None) => {
                 metrics::HANDLER_COUNTER
                     .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
                     .inc();
                 return StatusCode::NOT_FOUND.into_response();
             }
+            Err(e) => {
+                let kind = if e.kind() == std::io::ErrorKind::NotFound {
+                    metrics::ERROR_GET_NOT_FOUND
+                } else {
+                    metrics::ERROR_GET_INTERNAL
+                };
+                metrics::HANDLER_COUNTER.with_label_values(&[kind]).inc();
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("ec read: {}", e),
+                )
+                    .into_response();
+            }
         }
-        drop(store);
 
         // Validate cookie (matches Go behavior after ReadEcShardNeedle)
         if n.cookie != cookie {

@@ -44,8 +44,17 @@ pub struct EcVolume {
     /// Directory where .ecx/.ecj were actually found (may differ from dir_idx after fallback).
     ecx_actual_dir: String,
     /// Maps shard ID -> list of server addresses where that shard exists.
-    /// Used for distributed EC reads across the cluster.
-    pub shard_locations: HashMap<ShardId, Vec<String>>,
+    /// Used for distributed EC reads across the cluster. Wrapped in
+    /// `RwLock` so the read path can refresh the map (under master
+    /// lookup) without holding the Store write lock — mirrors Go's
+    /// `ShardLocationsLock sync.RWMutex` in `weed/storage/erasure_coding/ec_volume.go`.
+    pub shard_locations: std::sync::RwLock<HashMap<ShardId, Vec<String>>>,
+    /// Wall-clock timestamp of the most recent successful
+    /// `LookupEcVolume` refresh of `shard_locations`. `None` until the
+    /// first refresh. Drives the staleness heuristic in
+    /// `cached_lookup_ec_shard_locations` (mirrors Go's
+    /// `ShardLocationsRefreshTime`).
+    pub shard_locations_refresh_time: std::sync::Mutex<Option<std::time::Instant>>,
     /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
     pub expire_at_sec: u64,
 }
@@ -165,7 +174,8 @@ impl EcVolume {
             deleted_needles: RwLock::new(HashSet::new()),
             disk_type: DiskType::default(),
             ecx_actual_dir: dir_idx.to_string(),
-            shard_locations: HashMap::new(),
+            shard_locations: std::sync::RwLock::new(HashMap::new()),
+            shard_locations_refresh_time: std::sync::Mutex::new(None),
             expire_at_sec,
         };
 
@@ -430,17 +440,45 @@ impl EcVolume {
 
     // ---- Shard locations (distributed tracking) ----
 
-    /// Set the list of server addresses for a given shard ID.
-    pub fn set_shard_locations(&mut self, shard_id: ShardId, locations: Vec<String>) {
-        self.shard_locations.insert(shard_id, locations);
+    /// Set the list of server addresses for a single shard ID. Does
+    /// NOT touch `shard_locations_refresh_time` — a per-shard write
+    /// from inside a multi-shard population (e.g. iterating the
+    /// `LookupEcVolume` response shard-by-shard) would otherwise
+    /// flip the staleness flag while the map is still incomplete,
+    /// letting a concurrent reader observe `needs_refresh == false`
+    /// against a half-populated cache and return NotFound for the
+    /// not-yet-inserted shards.
+    ///
+    /// Callers populating the whole cache atomically should use
+    /// [`Self::replace_shard_locations`] instead — it swaps the
+    /// entire map under the write lock and advances the refresh
+    /// timestamp in one step.
+    pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
+        self.shard_locations
+            .write()
+            .unwrap()
+            .insert(shard_id, locations);
     }
 
-    /// Get the list of server addresses for a given shard ID.
-    pub fn get_shard_locations(&self, shard_id: ShardId) -> &[String] {
+    /// Atomically replace the entire shard-locations map and stamp
+    /// the refresh time. Used by the distributed-read path's
+    /// post-`LookupEcVolume` write-back so the cache transitions
+    /// from old → fresh in a single observable step — concurrent
+    /// readers either see the full prior map or the full new map,
+    /// never an intermediate state with the freshness flag flipped.
+    pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
+        *self.shard_locations.write().unwrap() = locations;
+        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+    }
+
+    /// Get a cloned list of server addresses for a given shard ID.
+    pub fn get_shard_locations(&self, shard_id: ShardId) -> Vec<String> {
         self.shard_locations
+            .read()
+            .unwrap()
             .get(&shard_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .cloned()
+            .unwrap_or_default()
     }
 
     // ---- Index operations ----

@@ -4051,29 +4051,12 @@ async fn ping_filer_target(
     Ok(resp.into_inner().start_time_ns)
 }
 
-/// Parse a SeaweedFS server address ("ip:port.grpcPort" or "ip:port") into a gRPC address.
-fn parse_grpc_address(source: &str) -> Result<String, String> {
-    if let Some(colon_idx) = source.rfind(':') {
-        let port_part = &source[colon_idx + 1..];
-        if let Some(dot_idx) = port_part.rfind('.') {
-            // Format: "ip:port.grpcPort"
-            let host = &source[..colon_idx];
-            let grpc_port = &port_part[dot_idx + 1..];
-            grpc_port
-                .parse::<u16>()
-                .map_err(|e| format!("invalid grpc port: {}", e))?;
-            return Ok(format!("{}:{}", host, grpc_port));
-        }
-        // Format: "ip:port" → grpc = port + 10000
-        let port: u16 = port_part
-            .parse()
-            .map_err(|e| format!("invalid port: {}", e))?;
-        let grpc_port = port as u32 + 10000;
-        let host = &source[..colon_idx];
-        return Ok(format!("{}:{}", host, grpc_port));
-    }
-    Err(format!("cannot parse address: {}", source))
-}
+// parse_grpc_address moved to super::grpc_client::parse_grpc_address
+// for sharing with the distributed-EC-read path in server/store_ec.rs.
+// In-file callers below still write `parse_grpc_address(...)`; this
+// `use` makes them resolve to the new home without churning every
+// call site.
+use super::grpc_client::parse_grpc_address;
 
 /// Set the modification time of a file from nanoseconds since Unix epoch.
 fn set_file_mtime(path: &str, modified_ts_ns: i64) {
