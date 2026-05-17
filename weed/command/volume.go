@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -326,7 +325,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	stopChan := make(chan bool)
 	grace.OnInterrupt(func() {
-		fmt.Println("volume server has been killed")
+		glog.Infof("volume server has been killed")
 
 		// Stop heartbeats
 		if !volumeServer.StopHeartbeat() {

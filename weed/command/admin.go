@@ -27,6 +27,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/handlers"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc" // Register filer_etc credential store
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -317,7 +318,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		if err := os.MkdirAll(dataDir, 0755); err != nil {
 			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
 		}
-		fmt.Printf("Data directory created/verified: %s\n", dataDir)
+		glog.Infof("Data directory created/verified: %s", dataDir)
 	}
 
 	// Detect TLS configuration to set Secure cookie flag
@@ -359,9 +360,9 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
 	if len(filers) > 0 {
-		fmt.Printf("Discovered filers: %s\n", strings.Join(filers, ", "))
+		glog.Infof("Discovered filers: %s", strings.Join(filers, ", "))
 	} else {
-		fmt.Printf("No filers discovered from masters\n")
+		glog.Infof("No filers discovered from masters")
 	}
 
 	// Start worker gRPC server for worker connections
@@ -446,16 +447,16 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Start server
 	go func() {
-		log.Printf("Starting SeaweedFS Admin Server on port %d", *options.port)
+		glog.Infof("Starting SeaweedFS Admin Server on port %d", *options.port)
 		var serveErr error
 		if useTLS {
-			log.Printf("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
+			glog.Infof("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
 			serveErr = server.ListenAndServeTLS("", "")
 		} else {
 			serveErr = server.ListenAndServe()
 		}
 		if serveErr != nil && serveErr != http.ErrServerClosed {
-			log.Printf("Failed to start server: %v", serveErr)
+			glog.Errorf("Failed to start server: %v", serveErr)
 		}
 	}()
 
@@ -463,7 +464,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	<-ctx.Done()
 
 	// Graceful shutdown
-	log.Println("Shutting down admin server...")
+	glog.Infof("Shutting down admin server...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -600,13 +601,13 @@ func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 			encKey := make([]byte, keyLen)
 			copy(authKey, data[:keyLen])
 			copy(encKey, data[keyLen:])
-			log.Printf("Loaded persisted session key from %s", sessionKeyPath)
+			glog.Infof("Loaded persisted session key from %s", sessionKeyPath)
 			return authKey, encKey, nil
 		default:
-			log.Printf("Warning: Invalid session key file (expected %d or %d bytes, got %d), generating new key", keyLen, 2*keyLen, len(data))
+			glog.Warningf("Invalid session key file (expected %d or %d bytes, got %d), generating new key", keyLen, 2*keyLen, len(data))
 		}
 	} else if !os.IsNotExist(err) {
-		log.Printf("Warning: Failed to read session key from %s: %v. A new key will be generated.", sessionKeyPath, err)
+		glog.Warningf("Failed to read session key from %s: %v. A new key will be generated.", sessionKeyPath, err)
 	}
 
 	key := make([]byte, 2*keyLen)
@@ -615,9 +616,9 @@ func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 	}
 
 	if err := os.WriteFile(sessionKeyPath, key, 0600); err != nil {
-		log.Printf("Warning: Failed to persist session key: %v", err)
+		glog.Warningf("Failed to persist session key: %v", err)
 	} else {
-		log.Printf("Generated and persisted new session key to %s", sessionKeyPath)
+		glog.Infof("Generated and persisted new session key to %s", sessionKeyPath)
 	}
 
 	return key[:keyLen], key[keyLen:], nil
