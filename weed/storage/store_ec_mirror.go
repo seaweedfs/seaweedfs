@@ -106,19 +106,44 @@ func (s *Store) mirrorEcMetadataToShardDisks() {
 }
 
 // hasAllEcSidecarsLocally reports whether this disk already has every
-// EC sidecar that ecMirroredSidecars expects, in the directory where
-// NewEcVolume looks for it (IdxDirectory for .ecx/.ecj, Directory for
-// .vif).
+// EC sidecar ecMirroredSidecars expects. Checks the modern routing
+// first (IdxDirectory for .ecx/.ecj, Directory for .vif) and then the
+// opposite directory as a fallback — matching NewEcVolume's own
+// open-with-fallback contract and HasEcxFileOnDisk. Without the
+// fallback, a destination that still has a legacy pre-`-dir.idx`
+// .ecx in its data dir would be re-mirrored into IdxDirectory and
+// end up with two copies on disk.
 func (l *DiskLocation) hasAllEcSidecarsLocally(collection string, vid needle.VolumeId) bool {
 	for _, ext := range ecMirroredSidecars {
-		dst := l.ecSidecarDestPath(collection, vid, ext)
-		if _, err := os.Stat(dst); err != nil {
-			// Either NotExist or another error — pessimistically treat
-			// as missing so the caller attempts a fresh mirror.
-			return false
+		primary := l.ecSidecarDestPath(collection, vid, ext)
+		if statRegular(primary) {
+			continue
 		}
+		// Fall back to the opposite directory for the legacy layout:
+		// .ecx/.ecj could be in Directory (pre-`-dir.idx`), .vif
+		// could be in IdxDirectory (uncommon but allowed by
+		// NewEcVolume's .vif lookup).
+		if l.IdxDirectory != l.Directory {
+			fallbackDir := l.Directory
+			if ext == ".vif" {
+				fallbackDir = l.IdxDirectory
+			}
+			fallback := erasure_coding.EcShardFileName(collection, fallbackDir, int(vid)) + ext
+			if statRegular(fallback) {
+				continue
+			}
+		}
+		return false
 	}
 	return true
+}
+
+// statRegular returns true iff path exists and is a regular file
+// (not a directory). Used by the sidecar-presence checks; keeps the
+// fallback ladder readable.
+func statRegular(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // ecSidecarDestPath returns where on this disk a given EC sidecar
