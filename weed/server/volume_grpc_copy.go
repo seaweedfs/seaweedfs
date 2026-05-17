@@ -567,9 +567,10 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				// holds fds on the same inodes, so overwriting corrupts
 				// live readers.
 				if _, mounted := vs.store.FindEcVolume(needle.VolumeId(fileInfo.VolumeId)); mounted {
-					glog.Errorf("ReceiveFile: ec volume %d is mounted; refusing overwrite for %s", fileInfo.VolumeId, fileInfo.Ext)
+					mountedDisks := vs.store.FindEcVolumeDiskIds(needle.VolumeId(fileInfo.VolumeId))
+					glog.Errorf("ReceiveFile: ec volume %d is mounted on disk_ids:%v; refusing overwrite for %s", fileInfo.VolumeId, mountedDisks, fileInfo.Ext)
 					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
-						Error: fmt.Sprintf("ec volume %d is mounted; unmount before ReceiveFile", fileInfo.VolumeId),
+						Error: fmt.Sprintf("ec volume %d is mounted on disk_ids:%v; unmount before ReceiveFile", fileInfo.VolumeId, mountedDisks),
 					})
 				}
 

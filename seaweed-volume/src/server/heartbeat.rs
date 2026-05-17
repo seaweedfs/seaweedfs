@@ -344,6 +344,12 @@ fn diff_ec_shard_delta_messages(
         if !current.contains_key(key) {
             let mut deleted = message.clone();
             deleted.shard_sizes = vec![0];
+            tracing::info!(
+                volume_id = deleted.id,
+                disk_id = deleted.disk_id,
+                ec_index_bits = deleted.ec_index_bits,
+                "deletes ec shards"
+            );
             deleted_ec_shards.push(deleted);
         }
     }

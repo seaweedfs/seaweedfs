@@ -237,12 +237,12 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	location := s.Locations[diskId]
 
 	if deleted := location.UnloadEcShard(vid, shardId); deleted {
-		glog.V(0).Infof("UnmountEcShards %d.%d", vid, shardId)
+		glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
 		s.DeletedEcShardsChan <- message
 		return nil
 	}
 
-	return fmt.Errorf("UnmountEcShards %d.%d not found on disk", vid, shardId)
+	return fmt.Errorf("UnmountEcShards %d.%d not found on disk %d", vid, shardId, diskId)
 }
 
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
@@ -267,6 +267,20 @@ func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, boo
 		}
 	}
 	return nil, false
+}
+
+// FindEcVolumeDiskIds returns every disk_id on this store that has an
+// EcVolume entry for the given volume. Useful for diagnostic logging
+// when a single FindEcVolume hit hides which disk is actually holding
+// the mount (e.g., the ReceiveFile mounted-volume guard).
+func (s *Store) FindEcVolumeDiskIds(vid needle.VolumeId) []uint32 {
+	var ids []uint32
+	for diskId, location := range s.Locations {
+		if _, found := location.FindEcVolume(vid); found {
+			ids = append(ids, uint32(diskId))
+		}
+	}
+	return ids
 }
 
 // shardFiles is a list of shard files, which is used to return the shard locations

@@ -691,54 +691,49 @@ func (t *ErasureCodingTask) getReplicas() []string {
 	return replicas
 }
 
-// cleanupStaleEcShards unmounts and deletes partial EC shards still mounted
-// on destinations from a previous failed encode. Safe by ordering: runs
-// after the source .dat is in the worker's workdir and a full local shard
-// set is generated. Per-destination errors are aggregated, not short-circuited.
+// cleanupStaleEcShards unmounts and deletes any EC shards still mounted on
+// destinations from a previous failed encode of this volume. Targets every
+// node we plan to write to (t.targets) plus every node detection saw EC
+// shards on (t.sources with ShardIds set), and issues the cleanup over the
+// full shard range so a stale topology snapshot — or shards landed by a
+// prior attempt that haven't heartbeated yet — cannot leave the
+// mounted-volume guard tripped during distributeEcShards. Safe by ordering:
+// runs after the source .dat is in the worker's workdir and a full local
+// shard set is generated. Per-destination errors are aggregated, not
+// short-circuited.
 func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
-	if len(t.sources) == 0 {
-		return nil
-	}
-
-	// Union shard ids per destination node — volume-server cleanup walks
-	// every DiskLocation, so per-disk source rows collapse to one RPC.
-	perNode := make(map[string]map[uint32]struct{})
+	nodes := make(map[string]struct{})
 	for _, source := range t.sources {
-		if source == nil || len(source.ShardIds) == 0 {
+		if source == nil || source.Node == "" || len(source.ShardIds) == 0 {
 			continue
 		}
-		shardSet, ok := perNode[source.Node]
-		if !ok {
-			shardSet = make(map[uint32]struct{})
-			perNode[source.Node] = shardSet
-		}
-		for _, shardID := range source.ShardIds {
-			shardSet[shardID] = struct{}{}
-		}
+		nodes[source.Node] = struct{}{}
 	}
-	if len(perNode) == 0 {
+	for _, target := range t.targets {
+		if target == nil || target.Node == "" {
+			continue
+		}
+		nodes[target.Node] = struct{}{}
+	}
+	if len(nodes) == 0 {
 		return nil
 	}
 
-	var cleanupErrors []string
-	for node, shardSet := range perNode {
-		shardIds := make([]uint32, 0, len(shardSet))
-		for id := range shardSet {
-			shardIds = append(shardIds, id)
-		}
+	allShards := fullShardIdRange(t.dataShards, t.parityShards)
 
+	var cleanupErrors []string
+	for node := range nodes {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":   t.volumeID,
 			"destination": node,
-			"shard_ids":   shardIds,
+			"shard_ids":   allShards,
 		}).Info("Clearing stale EC shards on destination before re-distribute")
 
-		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, shardIds); err != nil {
+		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
 			t.GetLogger().WithFields(map[string]interface{}{
 				"volume_id":   t.volumeID,
 				"destination": node,
-				"shard_ids":   shardIds,
 				"error":       err.Error(),
 			}).Error("Failed to clear stale EC shards on destination")
 		}
@@ -749,6 +744,24 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 			len(cleanupErrors), strings.Join(cleanupErrors, "; "))
 	}
 	return nil
+}
+
+// fullShardIdRange builds [0..total-1] for unmount/delete RPCs. Falls back
+// to erasure_coding.TotalShardsCount when the task's ratio is unset (early
+// callers, tests); the helper never returns an empty slice.
+func fullShardIdRange(dataShards, parityShards int32) []uint32 {
+	total := int(dataShards + parityShards)
+	if total <= 0 {
+		total = erasure_coding.TotalShardsCount
+	}
+	if total > erasure_coding.MaxShardCount {
+		total = erasure_coding.MaxShardCount
+	}
+	ids := make([]uint32, total)
+	for i := range ids {
+		ids[i] = uint32(i)
+	}
+	return ids
 }
 
 // unmountAndDeleteEcShards unmounts then deletes the named shards on one

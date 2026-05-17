@@ -106,6 +106,144 @@ func TestCleanupStaleEcShardsBeforeDistribute(t *testing.T) {
 		"EC-shard sources must not appear in replica delete list")
 }
 
+// The destination has more shards mounted than t.sources lists — simulates
+// detection-time topology missing shards (e.g., a prior attempt's mount
+// hadn't heartbeated yet, or different shards live on a sibling disk). The
+// cleanup must clear FindEcVolume regardless, by issuing unmount/delete
+// over the full shard range, so the next ReceiveFile lands.
+func TestCleanupStaleEcShardsClearsShardsBeyondSources(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const (
+		volumeID   = uint32(94780)
+		collection = "ec-9478-beyond"
+	)
+
+	framework.AllocateVolume(t, grpcClient, volumeID, collection)
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 9478001, 0x9478FACE)
+	upResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid,
+		[]byte("payload-for-shards-beyond-sources"))
+	_ = framework.ReadAllAndClose(t, upResp)
+	require.Equal(t, http.StatusCreated, upResp.StatusCode)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId: volumeID, Collection: collection,
+	})
+	require.NoError(t, err)
+
+	// Five shards mounted on the destination.
+	mountedShards := []uint32{0, 1, 2, 3, 4}
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId: volumeID, Collection: collection,
+		ShardIds: mountedShards,
+	})
+	require.NoError(t, err)
+
+	// Detection only "saw" two of them — the rest must still get cleared.
+	knownToDetection := []uint32{0, 1}
+
+	task := NewErasureCodingTask(
+		"stale-ec-beyond-sources",
+		clusterHarness.VolumeServerAddress(),
+		volumeID,
+		collection,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	task.dataShards = erasure_coding.DataShardsCount
+	task.parityShards = erasure_coding.ParityShardsCount
+	task.sources = []*worker_pb.TaskSource{
+		{
+			Node:     clusterHarness.VolumeServerAddress(),
+			VolumeId: volumeID,
+			ShardIds: knownToDetection,
+		},
+	}
+
+	require.NoError(t, task.cleanupStaleEcShards(ctx))
+
+	_, infoErr := grpcClient.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{VolumeId: volumeID})
+	require.Error(t, infoErr,
+		"all mounted shards must be cleared even though detection only listed a subset")
+
+	shardPath := makeTinyEcShardFile(t)
+	require.NoError(t,
+		sendShardViaReceiveFile(ctx, grpcClient, volumeID, collection, 4, shardPath),
+		"ReceiveFile for a shard outside detection's snapshot must succeed after cleanup")
+}
+
+// Cleanup also targets fresh destinations from t.targets even when no
+// EC-shard source row exists for them. This catches concurrent-attempt
+// fallout where a previous worker mounted shards on a node we're now
+// writing to but the topology snapshot is stale.
+func TestCleanupStaleEcShardsCoversTargetsWithoutSources(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const (
+		volumeID   = uint32(94781)
+		collection = "ec-9478-targets-only"
+	)
+
+	framework.AllocateVolume(t, grpcClient, volumeID, collection)
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 9478101, 0x947811CE)
+	upResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid,
+		[]byte("payload-for-targets-only-cleanup"))
+	_ = framework.ReadAllAndClose(t, upResp)
+	require.Equal(t, http.StatusCreated, upResp.StatusCode)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId: volumeID, Collection: collection,
+	})
+	require.NoError(t, err)
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId: volumeID, Collection: collection,
+		ShardIds: []uint32{0, 1},
+	})
+	require.NoError(t, err)
+
+	task := NewErasureCodingTask(
+		"stale-ec-targets-only",
+		clusterHarness.VolumeServerAddress(),
+		volumeID,
+		collection,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	task.dataShards = erasure_coding.DataShardsCount
+	task.parityShards = erasure_coding.ParityShardsCount
+	// No sources. The destination is named only as a target — the cleanup
+	// must still reach it.
+	task.targets = []*worker_pb.TaskTarget{
+		{Node: clusterHarness.VolumeServerAddress(), VolumeId: volumeID, ShardIds: []uint32{0}},
+	}
+
+	require.NoError(t, task.cleanupStaleEcShards(ctx))
+
+	_, infoErr := grpcClient.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{VolumeId: volumeID})
+	require.Error(t, infoErr,
+		"target-only destinations must also be cleaned even without a source row")
+}
+
 // Cleanup is a no-op when sources carry only the regular .dat replica.
 func TestCleanupStaleEcShardsSkipsRegularReplicas(t *testing.T) {
 	if testing.Short() {
