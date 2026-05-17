@@ -196,6 +196,18 @@ func (store *PostgresStore) createTables() error {
 		);
 	`
 
+	groupInlinePoliciesTable := `
+		CREATE TABLE IF NOT EXISTS group_inline_policies (
+			group_name VARCHAR(255) REFERENCES groups(name) ON DELETE CASCADE,
+			policy_name VARCHAR(255) NOT NULL,
+			document JSONB NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (group_name, policy_name)
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_inline_policies_group_name ON group_inline_policies(group_name);
+	`
+
 	if _, err := store.db.Exec(usersTable); err != nil {
 		return fmt.Errorf("failed to create users table: %w", err)
 	}
@@ -222,6 +234,10 @@ func (store *PostgresStore) createTables() error {
 
 	if _, err := store.db.Exec(groupsTable); err != nil {
 		return fmt.Errorf("failed to create groups table: %w", err)
+	}
+
+	if _, err := store.db.Exec(groupInlinePoliciesTable); err != nil {
+		return fmt.Errorf("failed to create group_inline_policies table: %w", err)
 	}
 
 	groupsDisabledIndex := `CREATE INDEX IF NOT EXISTS idx_groups_disabled ON groups (disabled);`

@@ -203,13 +203,12 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiC
 	})
 }
 
-// GetPolicies returns the merged view of managed policies (from the configured
-// credential store, so postgres/grpc/filer_etc are all honored), plus the
-// legacy filer-side inline and group-inline policies. Reading managed policies
-// from the credential manager keeps the IAM API in sync with the Admin UI,
-// which writes through the same store. The legacy policies.json file is still
-// consulted as a fallback so existing deployments don't lose managed policies
-// that were written before this change.
+// GetPolicies returns the merged view of managed, user-inline, and group-inline
+// policies from the configured credential store, plus a one-shot fallback read
+// of the legacy /etc/iam/policies.json bundle. Routing reads through the
+// credential manager keeps the IAM API in sync with the Admin UI; the legacy
+// file fallback lets deployments that wrote policies before this change still
+// see them until the next PutPolicies migrates them into the store.
 func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 	ctx := context.Background()
 
@@ -217,7 +216,6 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 		policies.Policies = make(map[string]policy_engine.PolicyDocument)
 	}
 
-	// Managed policies from the credential store (canonical source).
 	if iama.credentialManager != nil {
 		managed, mErr := iama.credentialManager.GetPolicies(ctx)
 		if mErr != nil {
@@ -226,11 +224,23 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 		for name, doc := range managed {
 			policies.Policies[name] = doc
 		}
+
+		inline, iErr := iama.credentialManager.LoadAllInlinePolicies(ctx)
+		if iErr != nil {
+			return fmt.Errorf("load user inline policies from credential store: %w", iErr)
+		}
+		mergeInline(&policies.InlinePolicies, inline)
+
+		groupInline, gErr := iama.credentialManager.LoadAllGroupInlinePolicies(ctx)
+		if gErr != nil {
+			return fmt.Errorf("load group inline policies from credential store: %w", gErr)
+		}
+		mergeInline(&policies.GroupInlinePolicies, groupInline)
 	}
 
-	// Inline (user/group) policies still live in the legacy policies.json
-	// file on the filer. Legacy managed policies stored there before this
-	// change are merged in as a fallback (credential-store wins on conflict).
+	// Legacy /etc/iam/policies.json fallback. Credential store wins on
+	// conflict (per name / per (user, name) / per (group, name)) so we never
+	// produce duplicates.
 	var buf bytes.Buffer
 	rErr := pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf)
@@ -250,83 +260,164 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 			policies.Policies[name] = doc
 		}
 	}
-	if len(legacy.InlinePolicies) > 0 {
-		if policies.InlinePolicies == nil {
-			policies.InlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument, len(legacy.InlinePolicies))
-		}
-		for user, byName := range legacy.InlinePolicies {
-			policies.InlinePolicies[user] = byName
-		}
-	}
-	if len(legacy.GroupInlinePolicies) > 0 {
-		if policies.GroupInlinePolicies == nil {
-			policies.GroupInlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument, len(legacy.GroupInlinePolicies))
-		}
-		for group, byName := range legacy.GroupInlinePolicies {
-			policies.GroupInlinePolicies[group] = byName
-		}
-	}
+	mergeInlineFallback(&policies.InlinePolicies, legacy.InlinePolicies)
+	mergeInlineFallback(&policies.GroupInlinePolicies, legacy.GroupInlinePolicies)
 	return nil
 }
 
-// PutPolicies persists managed policies via the credential store (Create/
-// Update/Delete deltas relative to the store's current contents) and writes
-// inline/group inline policies to the filer policies.json file. Routing
-// managed policies through the credential manager fixes the split-brain
-// where the IAM API wrote to the filer while the Admin UI wrote to the
-// configured store. Legacy managed policies that GetPolicies merged in from
-// the filer file are upserted into the store on the next PutPolicies, which
-// also wipes them from the rewritten legacy file.
+// PutPolicies persists managed, user-inline, and group-inline policies through
+// the credential store as deltas relative to its current contents. The legacy
+// /etc/iam/policies.json bundle is never written; it is only read by
+// GetPolicies as a one-way migration source. With no credential manager
+// available (a test path), the bundle is written so the in-memory state still
+// round-trips.
 func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 	ctx := context.Background()
 
-	legacy := Policies{
-		InlinePolicies:      policies.InlinePolicies,
-		GroupInlinePolicies: policies.GroupInlinePolicies,
+	if iama.credentialManager == nil {
+		legacy := Policies{
+			Policies:            policies.Policies,
+			InlinePolicies:      policies.InlinePolicies,
+			GroupInlinePolicies: policies.GroupInlinePolicies,
+		}
+		if len(legacy.Policies) == 0 && len(legacy.InlinePolicies) == 0 && len(legacy.GroupInlinePolicies) == 0 {
+			return nil
+		}
+		b, mErr := json.Marshal(&legacy)
+		if mErr != nil {
+			return mErr
+		}
+		return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(ctx, client, filer.IamConfigDirectory, filer.IamPoliciesFile, b)
+		})
 	}
 
-	if iama.credentialManager == nil {
-		// Defensive fallback: with no credential store available, persist
-		// everything to the legacy file like the pre-refactor code did.
-		legacy.Policies = policies.Policies
-	} else {
-		current, gErr := iama.credentialManager.GetPolicies(ctx)
-		if gErr != nil {
-			return fmt.Errorf("read managed policies from credential store: %w", gErr)
+	// Managed delta.
+	currentManaged, gErr := iama.credentialManager.GetPolicies(ctx)
+	if gErr != nil {
+		return fmt.Errorf("read managed policies from credential store: %w", gErr)
+	}
+	for name, doc := range policies.Policies {
+		existing, found := currentManaged[name]
+		if !found {
+			if cErr := iama.credentialManager.CreatePolicy(ctx, name, doc); cErr != nil {
+				return fmt.Errorf("create policy %s in credential store: %w", name, cErr)
+			}
+			continue
 		}
-		desired := policies.Policies
+		if !reflect.DeepEqual(existing, doc) {
+			if uErr := iama.credentialManager.UpdatePolicy(ctx, name, doc); uErr != nil {
+				return fmt.Errorf("update policy %s in credential store: %w", name, uErr)
+			}
+		}
+	}
+	for name := range currentManaged {
+		if _, keep := policies.Policies[name]; !keep {
+			if dErr := iama.credentialManager.DeletePolicy(ctx, name); dErr != nil {
+				return fmt.Errorf("delete policy %s from credential store: %w", name, dErr)
+			}
+		}
+	}
+
+	// User-inline delta.
+	currentInline, iErr := iama.credentialManager.LoadAllInlinePolicies(ctx)
+	if iErr != nil {
+		return fmt.Errorf("read user inline policies from credential store: %w", iErr)
+	}
+	for user, desired := range policies.InlinePolicies {
+		existing := currentInline[user]
 		for name, doc := range desired {
-			existing, found := current[name]
-			if !found {
-				if cErr := iama.credentialManager.CreatePolicy(ctx, name, doc); cErr != nil {
-					return fmt.Errorf("create policy %s in credential store: %w", name, cErr)
-				}
+			if prior, found := existing[name]; found && reflect.DeepEqual(prior, doc) {
 				continue
 			}
-			if !reflect.DeepEqual(existing, doc) {
-				if uErr := iama.credentialManager.UpdatePolicy(ctx, name, doc); uErr != nil {
-					return fmt.Errorf("update policy %s in credential store: %w", name, uErr)
-				}
+			if pErr := iama.credentialManager.PutUserInlinePolicy(ctx, user, name, doc); pErr != nil {
+				return fmt.Errorf("put inline policy %s/%s in credential store: %w", user, name, pErr)
 			}
 		}
-		for name := range current {
-			if _, keep := desired[name]; !keep {
-				if dErr := iama.credentialManager.DeletePolicy(ctx, name); dErr != nil {
-					return fmt.Errorf("delete policy %s from credential store: %w", name, dErr)
-				}
+	}
+	for user, existing := range currentInline {
+		desired := policies.InlinePolicies[user]
+		for name := range existing {
+			if _, keep := desired[name]; keep {
+				continue
+			}
+			if dErr := iama.credentialManager.DeleteUserInlinePolicy(ctx, user, name); dErr != nil {
+				return fmt.Errorf("delete inline policy %s/%s from credential store: %w", user, name, dErr)
 			}
 		}
 	}
 
-	if len(legacy.Policies) == 0 && len(legacy.InlinePolicies) == 0 && len(legacy.GroupInlinePolicies) == 0 {
-		return nil
+	// Group-inline delta.
+	currentGroupInline, ggErr := iama.credentialManager.LoadAllGroupInlinePolicies(ctx)
+	if ggErr != nil {
+		return fmt.Errorf("read group inline policies from credential store: %w", ggErr)
+	}
+	for group, desired := range policies.GroupInlinePolicies {
+		existing := currentGroupInline[group]
+		for name, doc := range desired {
+			if prior, found := existing[name]; found && reflect.DeepEqual(prior, doc) {
+				continue
+			}
+			if pErr := iama.credentialManager.PutGroupInlinePolicy(ctx, group, name, doc); pErr != nil {
+				return fmt.Errorf("put group inline policy %s/%s in credential store: %w", group, name, pErr)
+			}
+		}
+	}
+	for group, existing := range currentGroupInline {
+		desired := policies.GroupInlinePolicies[group]
+		for name := range existing {
+			if _, keep := desired[name]; keep {
+				continue
+			}
+			if dErr := iama.credentialManager.DeleteGroupInlinePolicy(ctx, group, name); dErr != nil {
+				return fmt.Errorf("delete group inline policy %s/%s from credential store: %w", group, name, dErr)
+			}
+		}
 	}
 
-	b, err := json.Marshal(&legacy)
-	if err != nil {
-		return err
+	return nil
+}
+
+// mergeInline overwrites entries in dst with src (credential-store data taking
+// precedence over anything already in dst).
+func mergeInline(dst *map[string]map[string]policy_engine.PolicyDocument, src map[string]map[string]policy_engine.PolicyDocument) {
+	if len(src) == 0 {
+		return
 	}
-	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(ctx, client, filer.IamConfigDirectory, filer.IamPoliciesFile, b)
-	})
+	if *dst == nil {
+		*dst = make(map[string]map[string]policy_engine.PolicyDocument, len(src))
+	}
+	for outer, byName := range src {
+		bucket := (*dst)[outer]
+		if bucket == nil {
+			bucket = make(map[string]policy_engine.PolicyDocument, len(byName))
+			(*dst)[outer] = bucket
+		}
+		for name, doc := range byName {
+			bucket[name] = doc
+		}
+	}
+}
+
+// mergeInlineFallback fills only entries that are missing in dst — the legacy
+// file never overrides whatever the credential store returned.
+func mergeInlineFallback(dst *map[string]map[string]policy_engine.PolicyDocument, src map[string]map[string]policy_engine.PolicyDocument) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string]map[string]policy_engine.PolicyDocument, len(src))
+	}
+	for outer, byName := range src {
+		bucket := (*dst)[outer]
+		if bucket == nil {
+			bucket = make(map[string]policy_engine.PolicyDocument, len(byName))
+			(*dst)[outer] = bucket
+		}
+		for name, doc := range byName {
+			if _, exists := bucket[name]; !exists {
+				bucket[name] = doc
+			}
+		}
+	}
 }

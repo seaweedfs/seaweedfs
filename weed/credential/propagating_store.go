@@ -308,6 +308,41 @@ func (s *PropagatingCredentialStore) ListUserInlinePolicies(ctx context.Context,
 	return nil, nil
 }
 
+func (s *PropagatingCredentialStore) PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.PutGroupInlinePolicy(ctx, groupName, policyName, document)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error) {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.GetGroupInlinePolicy(ctx, groupName, policyName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.DeleteGroupInlinePolicy(ctx, groupName, policyName)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error) {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.ListGroupInlinePolicies(ctx, groupName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := s.CredentialStore.(GroupInlinePoliciesLoader); ok {
+		return loader.LoadGroupInlinePolicies(ctx)
+	}
+	return nil, nil
+}
+
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if pm, ok := s.CredentialStore.(PolicyManager); ok {
 		if err := pm.CreatePolicy(ctx, name, document); err != nil {

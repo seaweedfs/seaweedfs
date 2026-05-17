@@ -148,6 +148,29 @@ type InlinePolicyStore interface {
 	ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error)
 }
 
+// GroupInlinePolicyStore is an optional interface for credential stores that
+// support per-group inline policy storage. Mirrors InlinePolicyStore so the
+// IAM API can persist group-attached inline policies without writing a
+// shared filer file.
+type GroupInlinePolicyStore interface {
+	PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error
+	GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error)
+	DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error
+	ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error)
+}
+
+// InlinePoliciesLoader is an optional interface for credential stores that can
+// bulk-load every user inline policy in a single round trip.
+type InlinePoliciesLoader interface {
+	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
+// GroupInlinePoliciesLoader is an optional interface for credential stores
+// that can bulk-load every group inline policy in a single round trip.
+type GroupInlinePoliciesLoader interface {
+	LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
 // UserRenamer is an optional interface for credential stores that can
 // atomically rename a user along with all rows that reference the old
 // username (credentials, inline policies, etc). Backends with referential
