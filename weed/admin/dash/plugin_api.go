@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -767,17 +768,20 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 		clusterContext.MasterGrpcAddresses = append(clusterContext.MasterGrpcAddresses, masterAddress)
 	}
 
+	// Master returns filers in dual-port form (host:httpPort.grpcPort);
+	// workers dial these directly, so collapse to host:grpcPort first.
 	filerSeen := map[string]struct{}{}
 	for _, filer := range s.GetAllFilers() {
 		filer = strings.TrimSpace(filer)
 		if filer == "" {
 			continue
 		}
-		if _, exists := filerSeen[filer]; exists {
+		grpcAddr := pb.ServerAddress(filer).ToGrpcAddress()
+		if _, exists := filerSeen[grpcAddr]; exists {
 			continue
 		}
-		filerSeen[filer] = struct{}{}
-		clusterContext.FilerGrpcAddresses = append(clusterContext.FilerGrpcAddresses, filer)
+		filerSeen[grpcAddr] = struct{}{}
+		clusterContext.FilerGrpcAddresses = append(clusterContext.FilerGrpcAddresses, grpcAddr)
 	}
 
 	volumeSeen := map[string]struct{}{}

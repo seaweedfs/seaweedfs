@@ -257,6 +257,7 @@ jobs:
         # TTL-pinned bucket collections piled up in a single run.
         test:
           - TestLifecycleAbortIncompleteMultipartUpload
+          - TestLifecycleAdminDispatchSucceedsWithCustomFilerGrpcPort
           - TestLifecycleBootstrapWalkOnExistingObjects
           - TestLifecycleConfigUpdateBetweenSweeps
           - TestLifecycleDeleteBucketLifecycleStopsDispatching

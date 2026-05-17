@@ -40,12 +40,14 @@ const (
 	defaultS3Endpoint     = "http://localhost:8333"
 	defaultS3GrpcEndpoint = "localhost:18333"
 	defaultMasterEndpt    = "http://localhost:9333"
-	defaultFilerGRPC      = "localhost:18888"
+	defaultAdminEndpoint  = "http://localhost:23646"
+	// Pinned off the FILER_PORT+10000 convention; see Makefile.
+	defaultFilerGRPC      = "localhost:18890"
 	bucketLifecycleXMLKey = "s3-bucket-lifecycle-configuration-xml"
 	bucketsPath           = "/buckets"
 	accessKey             = "some_access_key1"
-	secretKey           = "some_secret_key1"
-	region              = "us-east-1"
+	secretKey             = "some_secret_key1"
+	region                = "us-east-1"
 )
 
 func envOr(key, def string) string {
