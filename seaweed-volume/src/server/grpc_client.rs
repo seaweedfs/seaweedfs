@@ -107,6 +107,38 @@ pub fn build_grpc_endpoint(
     Ok(endpoint)
 }
 
+/// Parse a SeaweedFS server address (`"ip:port.grpcPort"` or
+/// `"ip:port"`) into the `host:grpcPort` form `build_grpc_endpoint`
+/// expects. With the trailing `.grpcPort` segment, that segment IS
+/// the gRPC port; without it, the gRPC port is `port + 10000`
+/// (SeaweedFS's HTTP↔gRPC port-offset convention).
+///
+/// Shared between `grpc_server.rs` and the distributed-EC-read path
+/// in `store_ec.rs` — keep this as the single source of truth so the
+/// HTTP↔gRPC port translation can't drift between callers.
+pub fn parse_grpc_address(source: &str) -> Result<String, String> {
+    if let Some(colon_idx) = source.rfind(':') {
+        let port_part = &source[colon_idx + 1..];
+        if let Some(dot_idx) = port_part.rfind('.') {
+            // Format: "ip:port.grpcPort"
+            let host = &source[..colon_idx];
+            let grpc_port = &port_part[dot_idx + 1..];
+            grpc_port
+                .parse::<u16>()
+                .map_err(|e| format!("invalid grpc port: {}", e))?;
+            return Ok(format!("{}:{}", host, grpc_port));
+        }
+        // Format: "ip:port" → grpc = port + 10000
+        let port: u16 = port_part
+            .parse()
+            .map_err(|e| format!("invalid port: {}", e))?;
+        let grpc_port = port as u32 + 10000;
+        let host = &source[..colon_idx];
+        return Ok(format!("{}:{}", host, grpc_port));
+    }
+    Err(format!("cannot parse address: {}", source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{build_grpc_endpoint, grpc_endpoint_uri, load_outgoing_grpc_tls};

@@ -440,12 +440,19 @@ impl EcVolume {
 
     // ---- Shard locations (distributed tracking) ----
 
-    /// Set the list of server addresses for a given shard ID.
+    /// Set the list of server addresses for a given shard ID. Also
+    /// advances `shard_locations_refresh_time` so the distributed
+    /// read path's staleness check (needs_refresh) honors callers
+    /// that populate the cache directly without going through the
+    /// master `LookupEcVolume` RPC — otherwise the next read would
+    /// see an unset/old timestamp and trigger a redundant lookup
+    /// despite the cache being warm.
     pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
         self.shard_locations
             .write()
             .unwrap()
             .insert(shard_id, locations);
+        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
     }
 
     /// Get a cloned list of server addresses for a given shard ID.

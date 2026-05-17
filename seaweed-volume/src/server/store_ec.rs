@@ -39,10 +39,9 @@ use crate::pb::master_pb::{self, seaweed_client::SeaweedClient, LookupEcVolumeRe
 use crate::pb::volume_server_pb::{
     volume_server_client::VolumeServerClient, VolumeEcShardReadRequest,
 };
-use crate::server::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
+use crate::server::grpc_client::{build_grpc_endpoint, parse_grpc_address, GRPC_MAX_MESSAGE_SIZE};
 use crate::server::request_id::outgoing_request_id_interceptor;
 use crate::server::volume_server::VolumeServerState;
-use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::ShardId;
 use crate::storage::needle::needle::{get_actual_size, Needle};
 use crate::storage::types::*;
@@ -197,41 +196,21 @@ fn snapshot_under_lock(
         None => return Ok(None),
     };
 
-    // Resolve needle (offset, size).
-    let (offset, size) = match ecv.find_needle_from_ecx(needle_id)? {
-        Some((o, s)) => (o, s),
+    // Reuse EcVolume::locate_needle for offset/size resolution AND
+    // the per-needle shard-interval math — it's the same routine the
+    // local-only read path uses, so we stay byte-identical on the
+    // shard-size + interval boundaries.
+    let (offset, size, intervals) = match ecv.locate_needle(needle_id)? {
+        Some(v) => v,
         None => return Ok(None),
     };
-    if size.is_deleted() || offset.is_zero() {
-        return Ok(None);
-    }
-
-    // Compute the per-needle shard intervals. Reproduces the
-    // `EcVolume::locate_needle` math so we can do everything in one
-    // pass under the lock.
-    let shard_size = if ecv.dat_file_size > 0 {
-        ecv.dat_file_size / ecv.data_shards as i64
-    } else {
-        ecv.shards
-            .iter()
-            .find_map(|s| s.as_ref())
-            .map(|s| s.file_size())
-            .unwrap_or(0)
-            .saturating_sub(1)
-    };
-    let actual = get_actual_size(size, ecv.version);
-    let intervals = ec_locate::locate_data(
-        offset.to_actual_offset(),
-        Size(actual as i32),
-        shard_size,
-        ecv.data_shards,
-    );
     if intervals.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "no intervals for needle",
         ));
     }
+    let actual = get_actual_size(size, ecv.version);
 
     // Phase A.local: for each interval read the local shard if we
     // hold it; otherwise fall through to remote. We accumulate the
@@ -509,6 +488,14 @@ async fn do_read_remote_ec_shard_interval(
             )
         })?;
 
+    // TODO(grpc-jwt): clusters with `jwt.signing.key` configured will
+    // reject peer-to-peer VolumeEcShardRead calls until the Rust
+    // crate grows an outgoing-JWT interceptor. The gap is shared
+    // with every other peer gRPC call from this binary
+    // (`copy_file_from_source`, `batch_delete`, …) — handling it
+    // here in isolation would split the credential plumbing across
+    // call sites. Re-visit when outgoing JWT signing lands as a
+    // server-wide helper.
     let mut client = VolumeServerClient::with_interceptor(channel, outgoing_request_id_interceptor)
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
@@ -577,11 +564,43 @@ async fn recover_one_remote_ec_shard_interval(
         )
     })?;
 
-    // Fan-out reads. One task per known shard location (excluding the
-    // one we are reconstructing). Output goes into bufs[shard_id].
+    let mut bufs: Vec<Option<Vec<u8>>> = vec![None; total_shards];
+
+    // Phase 0: seed bufs from LOCALLY mounted shards. If this node
+    // already holds enough sibling shards, reconstruction completes
+    // without any peer fan-out — and even with a cold/incomplete
+    // shard_locations cache or a failed master lookup, local
+    // survivors still contribute. Mirrors Go's
+    // recoverOneRemoteEcShardInterval behaviour, which is implicitly
+    // local-aware because the Store fan-out targets ALL known
+    // locations (including the caller's own server address); the
+    // Rust port had been remote-only, so reconstructing with a cold
+    // cache failed even when enough siblings were on disk.
+    {
+        let store = state.store.read().unwrap();
+        if let Some(ecv) = store.find_ec_volume(vid) {
+            for sid in 0..total_shards {
+                if sid as ShardId == shard_id_to_recover {
+                    continue;
+                }
+                if let Some(Some(shard)) = ecv.shards.get(sid) {
+                    let mut buf = vec![0u8; size];
+                    if shard.read_at(&mut buf, shard_offset as u64).map(|n| n == size).unwrap_or(false) {
+                        bufs[sid] = Some(buf);
+                    }
+                }
+            }
+        }
+    }
+
+    // Phase 1: remote fan-out — one task per known shard location
+    // we DON'T already have locally and DON'T need to recover.
     let mut tasks = Vec::new();
     for (sid, locs) in shard_locations {
         if *sid == shard_id_to_recover || locs.is_empty() {
+            continue;
+        }
+        if bufs[*sid as usize].is_some() {
             continue;
         }
         let sid = *sid;
@@ -603,7 +622,6 @@ async fn recover_one_remote_ec_shard_interval(
     }
     let results = join_all(tasks).await;
 
-    let mut bufs: Vec<Option<Vec<u8>>> = vec![None; total_shards];
     for (sid, res) in results {
         match res {
             Ok(buf) => {
@@ -656,28 +674,6 @@ async fn recover_one_remote_ec_shard_interval(
     }
 }
 
-/// Local copy of grpc_server.rs's `parse_grpc_address` (not pub there
-/// and we want to keep this module self-contained). Translates a
-/// SeaweedFS address — `host:httpPort.grpcPort` or `host:httpPort`
-/// (in which case the gRPC port is httpPort + 10000) — into the
-/// `host:grpcPort` form `build_grpc_endpoint` expects.
-fn parse_grpc_address(source: &str) -> Result<String, String> {
-    let colon_idx = source
-        .rfind(':')
-        .ok_or_else(|| format!("cannot parse address: {}", source))?;
-    let port_part = &source[colon_idx + 1..];
-    if let Some(dot_idx) = port_part.rfind('.') {
-        let host = &source[..colon_idx];
-        let grpc_port = &port_part[dot_idx + 1..];
-        grpc_port
-            .parse::<u16>()
-            .map_err(|e| format!("invalid grpc port: {}", e))?;
-        return Ok(format!("{}:{}", host, grpc_port));
-    }
-    let port: u16 = port_part
-        .parse()
-        .map_err(|e| format!("invalid port: {}", e))?;
-    let grpc_port = port as u32 + 10000;
-    let host = &source[..colon_idx];
-    Ok(format!("{}:{}", host, grpc_port))
-}
+// parse_grpc_address lives in `grpc_client.rs` and is re-exported
+// here via the use above so this module shares a single
+// HTTP↔gRPC port-translation routine with grpc_server.rs.

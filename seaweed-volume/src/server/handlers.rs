@@ -1020,72 +1020,41 @@ async fn get_or_head_handler_inner(
     if has_ec_volume && !has_volume {
         // ---- EC volume read path (always full read, no streaming) ----
         //
-        // Two-tier read: try the local-only fast path first (no async
-        // dispatch overhead when every shard interval lives on this
-        // server), and fall back to the distributed path that fans
-        // out to peer volume servers + reconstructs via Reed-Solomon
-        // when a shard interval is not held locally. Mirrors Go's
-        // `Store.readOneEcShardInterval` ordering in store_ec.go.
-        let local_attempt = {
-            let store = state.store.read().unwrap();
-            store
-                .find_ec_volume(vid)
-                .map(|ecv| ecv.read_ec_shard_needle(needle_id))
-        };
-        let use_distributed = match &local_attempt {
-            None => true,
-            Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => true,
-            _ => false,
-        };
-        if let Some(Ok(Some(ec_needle))) = local_attempt.as_ref() {
-            n = ec_needle.clone();
-        } else if use_distributed {
-            match crate::server::store_ec::read_ec_shard_needle_distributed(
-                &state,
-                vid,
-                needle_id,
-            )
-            .await
-            {
-                Ok(Some(ec_needle)) => {
-                    n = ec_needle;
-                }
-                Ok(None) => {
-                    metrics::HANDLER_COUNTER
-                        .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
-                        .inc();
-                    return StatusCode::NOT_FOUND.into_response();
-                }
-                Err(e) => {
-                    metrics::HANDLER_COUNTER
-                        .with_label_values(&[metrics::ERROR_GET_INTERNAL])
-                        .inc();
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("distributed ec read: {}", e),
-                    )
-                        .into_response();
-                }
+        // The distributed read path already does a local-first pass
+        // in its Snapshot phase under the same store read lock the
+        // legacy code would have taken — so calling it directly
+        // serves both the "all shards local" fast case and the
+        // "some intervals need peer fetch + reconstruct" general
+        // case without paying for the local interval reads twice.
+        match crate::server::store_ec::read_ec_shard_needle_distributed(
+            &state, vid, needle_id,
+        )
+        .await
+        {
+            Ok(Some(ec_needle)) => {
+                n = ec_needle;
             }
-        } else {
-            match local_attempt {
-                Some(Ok(None)) => {
-                    metrics::HANDLER_COUNTER
-                        .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
-                        .inc();
+            Ok(None) => {
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
+                    .inc();
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            Err(e) => {
+                let kind = if e.kind() == std::io::ErrorKind::NotFound {
+                    metrics::ERROR_GET_NOT_FOUND
+                } else {
+                    metrics::ERROR_GET_INTERNAL
+                };
+                metrics::HANDLER_COUNTER.with_label_values(&[kind]).inc();
+                if e.kind() == std::io::ErrorKind::NotFound {
                     return StatusCode::NOT_FOUND.into_response();
                 }
-                Some(Err(e)) => {
-                    metrics::HANDLER_COUNTER
-                        .with_label_values(&[metrics::ERROR_GET_INTERNAL])
-                        .inc();
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("read ec error: {}", e),
-                    )
-                        .into_response();
-                }
-                _ => unreachable!("covered by use_distributed branch"),
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("ec read: {}", e),
+                )
+                    .into_response();
             }
         }
 
