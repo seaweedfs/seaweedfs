@@ -640,12 +640,11 @@ func buildUnbalancedTwoVolumeTopology() *master_pb.TopologyInfo {
 }
 
 // TestDetection_ExcludesVolumesWithPendingErasureCodingTask verifies that
-// a volume with an in-flight (pending or assigned) erasure_coding task is
-// dropped from the ec_balance scan. Without this filter, ec_balance would
-// happily move shards of a volume that EC encoding is still trying to
-// complete — exactly the race observed where an encode retry repeatedly
-// failed and ec_balance moved shards in between attempts, leaving orphan
-// and duplicate shards on disk.
+// a volume with an in-flight erasure_coding task is dropped from the
+// ec_balance scan. The filter is HasAnyTask, so this is the motivating
+// case (encoding/repair race) but the same filter also protects against
+// other in-flight maintenance. The companion test below pins the
+// "previous ec_balance task on the same volume also blocks" behavior.
 func TestDetection_ExcludesVolumesWithPendingErasureCodingTask(t *testing.T) {
 	topoInfo := buildUnbalancedTwoVolumeTopology()
 	at := topology.NewActiveTopology(10)
@@ -691,9 +690,50 @@ func TestDetection_ExcludesVolumesWithPendingErasureCodingTask(t *testing.T) {
 	}
 }
 
+// TestDetection_ExcludesVolumesWithPendingEcBalanceTask pins the broader
+// HasAnyTask filter: a previously-queued ec_balance task on the same
+// volume should also block a new round of detection from piling on more
+// moves before the first one has been applied to topology.
+func TestDetection_ExcludesVolumesWithPendingEcBalanceTask(t *testing.T) {
+	topoInfo := buildUnbalancedTwoVolumeTopology()
+	at := topology.NewActiveTopology(10)
+	if err := at.UpdateTopology(topoInfo); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+
+	err := at.AddPendingTask(topology.TaskSpec{
+		TaskID:     "ec-balance-100-prev",
+		TaskType:   topology.TaskTypeECBalance,
+		VolumeID:   100,
+		VolumeSize: 1 << 30,
+		Sources: []topology.TaskSourceSpec{
+			{ServerID: "server1:8080", DiskID: 0},
+		},
+		Destinations: []topology.TaskDestinationSpec{
+			{ServerID: "server3:8080", DiskID: 0},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddPendingTask: %v", err)
+	}
+
+	cfg := NewDefaultConfig()
+	cfg.MinServerCount = 1
+
+	results, _, err := Detection(context.Background(), nil, &types.ClusterInfo{ActiveTopology: at}, cfg, 0)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+	for _, r := range results {
+		if r.VolumeID == 100 {
+			t.Errorf("ec_balance emitted a move for volume 100 while a previous ec_balance task is still pending: %s", r.Reason)
+		}
+	}
+}
+
 // TestDetection_NoExclusionWhenNoActiveTask is a regression guard so the
 // filter does not accidentally drop volumes when ActiveTopology has no
-// erasure_coding task — the imbalance is still real and must be acted on.
+// task — the imbalance is still real and must be acted on.
 func TestDetection_NoExclusionWhenNoActiveTask(t *testing.T) {
 	topoInfo := buildUnbalancedTwoVolumeTopology()
 	at := topology.NewActiveTopology(10)

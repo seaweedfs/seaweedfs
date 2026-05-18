@@ -7,7 +7,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
@@ -94,19 +93,23 @@ func Detection(
 		return nil, false, nil
 	}
 
-	// Exclude volumes that have a pending or in-flight erasure-coding task.
-	// Encoding and repair both register as TaskTypeErasureCoding; moving
-	// shards on a volume mid-encode is the race that produces the
-	// "shard 58.2 balanced while encoding is retrying" symptom — partial
-	// shard sets get rearranged while the encode is still trying to mount
-	// the original layout, leaving orphan and duplicate shards behind.
-	skippedDueToEC := 0
+	// Exclude volumes with any pending or in-flight task. The motivating
+	// race is EC encoding/repair vs ec_balance — moving shards on a volume
+	// mid-encode produces the "shard 58.2 balanced while encoding is
+	// retrying" symptom: partial shard sets get rearranged while the
+	// encode is still trying to mount the original layout, leaving orphan
+	// and duplicate shards behind. The broader filter (HasAnyTask) also
+	// keeps redundant ec_balance proposals from piling up on a volume
+	// whose earlier balance move hasn't completed yet, and keeps any
+	// other maintenance operation that touches the volume from racing
+	// with shard moves.
+	skippedDueToTasks := 0
 	for collection, volumeIDs := range collections {
 		filtered := volumeIDs[:0]
 		for _, vid := range volumeIDs {
-			if clusterInfo.ActiveTopology.HasTask(vid, topology.TaskTypeErasureCoding) {
-				skippedDueToEC++
-				glog.V(2).Infof("EC balance: skip volume %d (collection=%q) because an erasure_coding task is pending or in flight", vid, collection)
+			if clusterInfo.ActiveTopology.HasAnyTask(vid) {
+				skippedDueToTasks++
+				glog.V(2).Infof("EC balance: skip volume %d (collection=%q) because a task is pending or in flight", vid, collection)
 				continue
 			}
 			filtered = append(filtered, vid)
@@ -117,8 +120,8 @@ func Detection(
 			collections[collection] = filtered
 		}
 	}
-	if skippedDueToEC > 0 {
-		glog.V(1).Infof("EC balance: skipped %d volume(s) with active erasure_coding tasks", skippedDueToEC)
+	if skippedDueToTasks > 0 {
+		glog.V(1).Infof("EC balance: skipped %d volume(s) with active tasks", skippedDueToTasks)
 	}
 	if len(collections) == 0 {
 		return nil, false, nil
