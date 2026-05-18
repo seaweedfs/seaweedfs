@@ -83,6 +83,84 @@ func TestDiskInfoSplitByPhysicalDisk_splitsByVolumeDiskId(t *testing.T) {
 	}
 }
 
+// TestDiskInfoSplitByPhysicalDisk_preservesAggregateCapacityWithRemainder
+// pins the invariant that the sum of reconstructed counters equals the
+// original aggregate, even when the count does not divide evenly.
+func TestDiskInfoSplitByPhysicalDisk_preservesAggregateCapacityWithRemainder(t *testing.T) {
+	d := &DiskInfo{
+		Type:            "hdd",
+		MaxVolumeCount:  10,
+		FreeVolumeCount: 7,
+		VolumeInfos: []*VolumeInformationMessage{
+			{Id: 1, DiskId: 0},
+			{Id: 2, DiskId: 1},
+			{Id: 3, DiskId: 2},
+		},
+	}
+
+	got := d.SplitByPhysicalDisk()
+	if len(got) != 3 {
+		t.Fatalf("want 3 disks, got %d", len(got))
+	}
+
+	var sumMax, sumFree int64
+	for _, di := range got {
+		sumMax += di.MaxVolumeCount
+		sumFree += di.FreeVolumeCount
+	}
+	if sumMax != 10 {
+		t.Errorf("sum of MaxVolumeCount = %d, want 10 (lossless split)", sumMax)
+	}
+	if sumFree != 7 {
+		t.Errorf("sum of FreeVolumeCount = %d, want 7 (lossless split)", sumFree)
+	}
+}
+
+// TestDiskInfoSplitByPhysicalDisk_countsActiveAndRemoteExactly verifies
+// the per-disk ActiveVolumeCount and RemoteVolumeCount are derived from
+// the actual VolumeInfos rather than an even split of the node totals.
+func TestDiskInfoSplitByPhysicalDisk_countsActiveAndRemoteExactly(t *testing.T) {
+	d := &DiskInfo{
+		Type: "hdd",
+		VolumeInfos: []*VolumeInformationMessage{
+			{Id: 1, DiskId: 0, ReadOnly: false},
+			{Id: 2, DiskId: 0, ReadOnly: true},
+			{Id: 3, DiskId: 1, ReadOnly: false, RemoteStorageName: "s3"},
+			{Id: 4, DiskId: 2, ReadOnly: false},
+			{Id: 5, DiskId: 2, ReadOnly: false, RemoteStorageName: "s3"},
+		},
+	}
+
+	got := d.SplitByPhysicalDisk()
+	byID := map[uint32]*DiskInfo{}
+	for _, di := range got {
+		byID[di.DiskId] = di
+	}
+
+	cases := []struct {
+		id           uint32
+		wantActive   int64
+		wantRemote   int64
+	}{
+		{0, 1, 0},
+		{1, 1, 1},
+		{2, 2, 1},
+	}
+	for _, c := range cases {
+		di := byID[c.id]
+		if di == nil {
+			t.Errorf("missing disk %d", c.id)
+			continue
+		}
+		if di.ActiveVolumeCount != c.wantActive {
+			t.Errorf("disk %d: ActiveVolumeCount = %d, want %d", c.id, di.ActiveVolumeCount, c.wantActive)
+		}
+		if di.RemoteVolumeCount != c.wantRemote {
+			t.Errorf("disk %d: RemoteVolumeCount = %d, want %d", c.id, di.RemoteVolumeCount, c.wantRemote)
+		}
+	}
+}
+
 func TestDiskInfoSplitByPhysicalDisk_splitsByEcShardDiskId(t *testing.T) {
 	d := &DiskInfo{
 		Type: "hdd",

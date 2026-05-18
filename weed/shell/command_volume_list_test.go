@@ -170,13 +170,26 @@ func TestWriteDataNodeInfo_SplitsCollapsedDisksByPhysicalDiskId(t *testing.T) {
 
 	var buf bytes.Buffer
 	verbosity := 5
-	c.writeDataNodeInfo(&buf, dn, verbosity, func() {})
+	rackInvocations := 0
+	c.writeDataNodeInfo(&buf, dn, verbosity, func() { rackInvocations++ })
 
 	out := buf.String()
+	// Match the "id:N\n" line ending so substring checks don't accept
+	// unrelated tokens like "ec volume id:101" as a match for id:1.
 	for diskID := 0; diskID < 6; diskID++ {
-		needle := fmt.Sprintf("id:%d", diskID)
+		needle := fmt.Sprintf("id:%d\n", diskID)
 		if !strings.Contains(out, needle) {
 			t.Errorf("output missing %q; got:\n%s", needle, out)
 		}
+	}
+
+	// The parent's outRackInfo callback rides the same code path as the
+	// DataNode header — it fires from the inner writeDiskInfo callback,
+	// once per disk before the fix. After the fix the header guard runs
+	// outRackInfo at most once per DataNode. This proxy lets us pin the
+	// "header printed once" invariant without depending on the exact
+	// format of the rendered DataNode line.
+	if rackInvocations != 1 {
+		t.Errorf("DataNode header callback ran %d times; want 1 (regression: header printed once per split disk)", rackInvocations)
 	}
 }
