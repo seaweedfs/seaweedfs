@@ -245,11 +245,9 @@ func startFakeFilerWithAddress(t *testing.T) (*fakeFilerServer, filer_pb.Seaweed
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Return the address in ServerAddress format (host:httpPort.grpcPort)
-	// so that dialFiler resolves it correctly via ToGrpcAddress().
-	_, portStr, _ := net.SplitHostPort(listener.Addr().String())
-	serverAddr := fmt.Sprintf("127.0.0.1:0.%s", portStr)
-	return fakeServer, client, serverAddr
+	// Return the gRPC address in dialable form (host:grpcPort) since
+	// dialFiler now dials FilerGrpcAddresses verbatim.
+	return fakeServer, client, listener.Addr().String()
 }
 
 // ---------------------------------------------------------------------------
@@ -999,24 +997,23 @@ func TestDetectWithFilters(t *testing.T) {
 
 func TestConnectToFilerSkipsUnreachableAddresses(t *testing.T) {
 	handler := NewHandler(grpc.WithTransportCredentials(insecure.NewCredentials()))
-	_, _, liveAddr := startFakeFilerWithAddress(t)
+	_, _, liveGrpcAddr := startFakeFilerWithAddress(t)
 
 	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen for dead address: %v", err)
 	}
-	_, deadPortStr, _ := net.SplitHostPort(deadListener.Addr().String())
+	deadGrpcAddr := deadListener.Addr().String()
 	_ = deadListener.Close()
-	deadAddr := fmt.Sprintf("127.0.0.1:0.%s", deadPortStr)
 
-	addr, conn, err := handler.connectToFiler(context.Background(), []string{deadAddr, liveAddr})
+	grpcAddr, conn, err := handler.connectToFiler(context.Background(), []string{deadGrpcAddr, liveGrpcAddr})
 	if err != nil {
 		t.Fatalf("connectToFiler failed: %v", err)
 	}
 	defer conn.Close()
 
-	if addr != liveAddr {
-		t.Fatalf("expected live address %q, got %q", liveAddr, addr)
+	if grpcAddr != liveGrpcAddr {
+		t.Fatalf("expected live address %q, got %q", liveGrpcAddr, grpcAddr)
 	}
 }
 
@@ -1027,11 +1024,10 @@ func TestConnectToFilerFailsWhenAllAddressesAreUnreachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen for dead address: %v", err)
 	}
-	_, deadPortStr, _ := net.SplitHostPort(deadListener.Addr().String())
+	deadGrpcAddr := deadListener.Addr().String()
 	_ = deadListener.Close()
-	deadAddr := fmt.Sprintf("127.0.0.1:0.%s", deadPortStr)
 
-	_, _, err = handler.connectToFiler(context.Background(), []string{deadAddr})
+	_, _, err = handler.connectToFiler(context.Background(), []string{deadGrpcAddr})
 	if err == nil {
 		t.Fatal("expected connectToFiler to fail")
 	}
