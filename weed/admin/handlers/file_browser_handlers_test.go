@@ -42,21 +42,3 @@ func TestValidateAndCleanFilePath_RejectsEmpty(t *testing.T) {
 	}
 }
 
-func TestFilerFileURL_EscapesControlChars(t *testing.T) {
-	cases := []struct {
-		addr string
-		path string
-		want string
-	}{
-		{"http://127.0.0.1:8888", "/buckets/profilebuilder/3testGB.zip\n ", "http://127.0.0.1:8888/buckets/profilebuilder/3testGB.zip%0A%20"},
-		{"http://127.0.0.1:8888", "/buckets/profilebuilder/file\rname", "http://127.0.0.1:8888/buckets/profilebuilder/file%0Dname"},
-		{"http://127.0.0.1:8888", "/buckets/profilebuilder/file\x00name", "http://127.0.0.1:8888/buckets/profilebuilder/file%00name"},
-		// Plain path round-trips unchanged.
-		{"http://h:1", "/a/b.txt", "http://h:1/a/b.txt"},
-	}
-	for _, tc := range cases {
-		if got := filerFileURL(tc.addr, tc.path); got != tc.want {
-			t.Errorf("filerFileURL(%q, %q) = %q, want %q", tc.addr, tc.path, got, tc.want)
-		}
-	}
-}
