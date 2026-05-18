@@ -411,7 +411,12 @@ func createIcebergTable(t *testing.T, env *TestEnvironment, bucketName, namespac
 func listFilerContents(t *testing.T, env *TestEnvironment, path string) {
 	t.Helper()
 
-	cmd := exec.Command("weed", "shell",
+	// Bound diagnostic listing so a hung weed shell during cleanup can't
+	// burn the whole 20-minute test timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "weed", "shell",
 		fmt.Sprintf("-master=%s", env.hostMasterAddress()),
 	)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("fs.ls -R %s\nexit\n", path))
