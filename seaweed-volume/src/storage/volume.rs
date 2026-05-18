@@ -2129,7 +2129,10 @@ impl Volume {
     /// surviving until the next restart, then vanishing. Re-attach a writer
     /// here so writes persist again.
     pub fn set_writable(&mut self) -> Result<(), VolumeError> {
-        self.no_write_or_delete = false;
+        // Attach the writer (if missing) before flipping the flag — otherwise
+        // a transient open/metadata failure would leave the volume marked
+        // writable with no .idx writer, and subsequent puts would silently
+        // skip the on-disk append and vanish on the next restart.
         let needs_idx_writer = self
             .nm
             .as_ref()
@@ -2147,6 +2150,7 @@ impl Volume {
                 nm.set_idx_file(Box::new(write_file), idx_size);
             }
         }
+        self.no_write_or_delete = false;
         self.save_vif()
     }
 

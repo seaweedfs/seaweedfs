@@ -66,24 +66,24 @@ func (v *Volume) reopenIdxForWrite() error {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if _, isSorted := v.nm.(*SortedFileNeedleMap); !isSorted {
+	oldNm, isSorted := v.nm.(*SortedFileNeedleMap)
+	if !isSorted {
 		return nil
 	}
-
-	if err := v.nm.Sync(); err != nil {
-		glog.Warningf("volume %d: sync sorted needle map before reopen: %v", v.Id, err)
-	}
-	v.nm.Close() // also closes the O_RDONLY .idx handle held inside
-	v.nm = nil
 
 	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return fmt.Errorf("reopen %s read-write: %v", v.FileName(".idx"), err)
 	}
 
+	// Build the replacement first; only swap once we have a live writable
+	// map. A construction failure must leave v.nm pointing at the original
+	// SortedFileNeedleMap so the caller (MarkVolumeWritable) can roll back
+	// cleanly instead of stranding the volume with v.nm == nil.
+	var newNm NeedleMapper
 	switch v.needleMapKind {
 	case NeedleMapInMemory:
-		if v.nm, err = LoadCompactNeedleMap(indexFile, v.Version()); err != nil {
+		if newNm, err = LoadCompactNeedleMap(indexFile, v.Version()); err != nil {
 			indexFile.Close()
 			return fmt.Errorf("rebuild memory needle map for volume %d: %v", v.Id, err)
 		}
@@ -94,7 +94,7 @@ func (v *Volume) reopenIdxForWrite() error {
 			CompactionTableSizeMultiplier: 10,
 			OpenFilesCacheCapacity:        LevelDbOpenFilesCacheCapacity,
 		}
-		if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
+		if newNm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
 			indexFile.Close()
 			return fmt.Errorf("rebuild leveldb needle map for volume %d: %v", v.Id, err)
 		}
@@ -105,7 +105,7 @@ func (v *Volume) reopenIdxForWrite() error {
 			CompactionTableSizeMultiplier: 10,
 			OpenFilesCacheCapacity:        LevelDbMediumOpenFilesCacheCapacity,
 		}
-		if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
+		if newNm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
 			indexFile.Close()
 			return fmt.Errorf("rebuild leveldb medium needle map for volume %d: %v", v.Id, err)
 		}
@@ -116,7 +116,7 @@ func (v *Volume) reopenIdxForWrite() error {
 			CompactionTableSizeMultiplier: 10,
 			OpenFilesCacheCapacity:        LevelDbLargeOpenFilesCacheCapacity,
 		}
-		if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
+		if newNm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
 			indexFile.Close()
 			return fmt.Errorf("rebuild leveldb large needle map for volume %d: %v", v.Id, err)
 		}
@@ -124,6 +124,12 @@ func (v *Volume) reopenIdxForWrite() error {
 		indexFile.Close()
 		return fmt.Errorf("unsupported needle map kind %v for volume %d", v.needleMapKind, v.Id)
 	}
+
+	if err := oldNm.Sync(); err != nil {
+		glog.Warningf("volume %d: sync sorted needle map before reopen: %v", v.Id, err)
+	}
+	oldNm.Close() // closes the O_RDONLY .idx handle held inside
+	v.nm = newNm
 	return nil
 }
 
