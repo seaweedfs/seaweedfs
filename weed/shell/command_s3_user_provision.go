@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -113,11 +110,7 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 	var ak, sk string
 	var userCreated bool
 
-	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	err = commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		// Step 0: Check if user already exists
 		var existingIdentity *iam_pb.Identity
 		if resp, getErr := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *name}); getErr == nil && resp.Identity != nil {
@@ -194,7 +187,7 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		}
 
 		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 	if err != nil {
 		return err
 	}
