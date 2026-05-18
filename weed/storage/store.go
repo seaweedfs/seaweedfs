@@ -164,13 +164,15 @@ func NewStore(
 	// we just cleaned up.
 	s.pruneIncompleteEcWithSiblingDat()
 
-	// After every DiskLocation has finished its per-disk EC scan, sweep the
-	// store for shards that live on a disk without local index files and
-	// load them by reaching across to a sibling disk's .ecx / .ecj / .vif.
-	// This is the volume-server side of issue #9212: ec.balance can move
-	// shards onto a destination node's second disk while leaving the index
-	// on the disk that already held the volume, and without this pass those
-	// orphan shards stay invisible to the master.
+	// Physically mirror EC sidecars onto every shard-bearing disk so
+	// each disk mounts self-contained. Must run before the cross-disk
+	// reconciler so the orphan pass can prefer the local IdxDirectory.
+	s.mirrorEcMetadataToShardDisks()
+
+	// Cross-disk fallback for orphan shards — ec.balance can land
+	// shards on one disk while leaving the index on another. Still
+	// needed after the mirror pass for volumes whose mirror failed
+	// (read-only target, out of space, partial copy).
 	s.reconcileEcShardsAcrossDisks()
 
 	// Resolve state.pb's directory via the first disk location so it inherits

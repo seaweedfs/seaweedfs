@@ -79,6 +79,17 @@ func (s *Store) reconcileEcShardsAcrossDisks() {
 					key.vid, key.collection, loc.Directory, shards)
 				continue
 			}
+			// Post-mirror fast path: when the local .ecx is present,
+			// mount self-contained against IdxDirectory instead of
+			// the owner disk.
+			if loc.HasEcxFileOnDisk(key.collection, key.vid) {
+				glog.V(0).Infof("ec volume %d (collection=%q): loading orphan shards %v on %s against locally-mirrored sidecars",
+					key.vid, key.collection, shards, loc.Directory)
+				if err := loc.loadEcShards(shards, key.collection, key.vid, loc.ecShardNotifyHandler); err != nil {
+					glog.Errorf("ec volume %d on %s: local-mirror shard load failed: %v", key.vid, loc.Directory, err)
+				}
+				continue
+			}
 			if owner.location == loc {
 				// .ecx is on this same disk, but loadAllEcShards still
 				// did not load these shards — handleFoundEcxFile already

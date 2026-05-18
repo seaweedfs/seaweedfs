@@ -96,14 +96,16 @@ impl Store {
         // re-loading shards we just cleaned up.
         self.prune_incomplete_ec_with_sibling_dat();
 
-        // After every disk has finished its per-disk EC scan, sweep
-        // the store for shards that live on a disk without local index
-        // files and load them by reaching across to a sibling disk's
-        // .ecx / .ecj / .vif (seaweedfs/seaweedfs#9212 / #9244).
-        // ec.balance / ec.rebuild can move shards onto a destination
-        // node's second disk while leaving the index on the disk that
-        // already held the volume; without this pass those orphan
-        // shards stay invisible to the master.
+        // Physically mirror EC sidecars onto every shard-bearing disk
+        // so each disk mounts self-contained. Must run before the
+        // cross-disk reconciler so the orphan pass can prefer the
+        // local idx_directory.
+        self.mirror_ec_metadata_to_shard_disks();
+
+        // Cross-disk fallback for orphan shards — ec.balance can land
+        // shards on one disk while leaving the index on another. Still
+        // needed after the mirror pass for volumes whose mirror failed
+        // (read-only target, partial copy).
         self.reconcile_ec_shards_across_disks();
 
         Ok(())
@@ -118,6 +120,7 @@ impl Store {
             }
         }
         self.prune_incomplete_ec_with_sibling_dat();
+        self.mirror_ec_metadata_to_shard_disks();
         self.reconcile_ec_shards_across_disks();
     }
 

@@ -26,6 +26,14 @@ use crate::storage::store::Store;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::VolumeId;
 
+pub(crate) fn ec_local_ecx_path(dir: &str, collection: &str, vid: VolumeId) -> String {
+    if collection.is_empty() {
+        format!("{}/{}.ecx", dir, vid.0)
+    } else {
+        format!("{}/{}_{}.ecx", dir, collection, vid.0)
+    }
+}
+
 /// Sibling-disk `.dat` candidate for `prune_incomplete_ec_with_sibling_dat`.
 /// We record both the disk index and the file's size: the size is
 /// consulted before deleting any EC artefacts. A zero-byte or truncated
@@ -76,10 +84,10 @@ impl Store {
             return;
         }
 
-        // Snapshot of orphan shards, keyed by (loc_idx, ec_key) so we
-        // can release the immutable borrow on self.locations before
-        // calling mount_ec_shards_with_idx_dir (which needs &mut).
-        let mut to_load: Vec<(usize, EcKey, Vec<(String, u32)>, EcxOwnerInfo)> = Vec::new();
+        // `use_local_idx` is the post-mirror fast path: when the
+        // mirror already installed sidecars locally, mount against
+        // loc.idx_directory instead of the owner disk.
+        let mut to_load: Vec<(usize, EcKey, Vec<(String, u32)>, EcxOwnerInfo, bool)> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let orphans = collect_orphan_ec_shards(loc, loc_idx);
             for (key, shards) in orphans {
@@ -93,34 +101,57 @@ impl Store {
                     );
                     continue;
                 };
-                if owner.location == loc_idx && owner.idx_dir == loc.idx_directory {
-                    // Normal same-disk case: load_all_ec_shards already
-                    // attempted the mount via `loc.idx_directory` and
-                    // logged the underlying failure. No point retrying
-                    // the same call.
+                let local_ecx = ec_local_ecx_path(&loc.idx_directory, &key.collection, key.vid);
+                let local_ecx_in_data = ec_local_ecx_path(&loc.directory, &key.collection, key.vid);
+                let use_local_idx = std::path::Path::new(&local_ecx).exists()
+                    || std::path::Path::new(&local_ecx_in_data).exists();
+
+                if !use_local_idx
+                    && owner.location == loc_idx
+                    && owner.idx_dir == loc.idx_directory
+                {
+                    // Same-disk no-op: load_all_ec_shards already
+                    // tried and logged the failure.
                     continue;
                 }
-                // Either a cross-disk owner OR a same-disk owner whose
-                // `.ecx` actually lives in `loc.directory` (the legacy
-                // pre-`-dir.idx` layout). The latter wasn't tried by
-                // load_all_ec_shards, which only looked in
-                // `self.idx_directory`, so we still need to retry it
-                // here with the owner's discovered idx_dir.
-                to_load.push((loc_idx, key, shards, owner.clone()));
+                to_load.push((loc_idx, key, shards, owner.clone(), use_local_idx));
             }
         }
 
-        for (loc_idx, key, shards, owner) in to_load {
+        for (loc_idx, key, shards, owner, use_local_idx) in to_load {
             let shard_names: Vec<&str> = shards.iter().map(|(n, _)| n.as_str()).collect();
+            let loc_dir = self.locations[loc_idx].directory.clone();
+            let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
+
+            if use_local_idx {
+                info!(
+                    volume_id = key.vid.0,
+                    collection = %key.collection,
+                    directory = %loc_dir,
+                    "loading orphan EC shards against locally-mirrored sidecars: {:?}",
+                    shard_names,
+                );
+                let loc = &mut self.locations[loc_idx];
+                if let Err(e) = loc.mount_ec_shards(key.vid, &key.collection, &shard_ids, "") {
+                    loc.unmount_ec_shards(key.vid, &shard_ids);
+                    warn!(
+                        volume_id = key.vid.0,
+                        directory = %loc_dir,
+                        "local-mirror shard load failed: {}",
+                        e,
+                    );
+                }
+                continue;
+            }
+
             info!(
                 volume_id = key.vid.0,
                 collection = %key.collection,
                 from = %self.locations[owner.location].directory,
-                to = %self.locations[loc_idx].directory,
+                to = %loc_dir,
                 "loading orphan EC shards using index files from sibling disk (issue #9212): {:?}",
                 shard_names,
             );
-            let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
             let owner_idx_dir = owner.idx_dir.clone();
             let loc = &mut self.locations[loc_idx];
             if let Err(e) = loc.mount_ec_shards_with_idx_dir(
@@ -141,7 +172,7 @@ impl Store {
                 loc.unmount_ec_shards(key.vid, &shard_ids);
                 warn!(
                     volume_id = key.vid.0,
-                    directory = %loc.directory,
+                    directory = %loc_dir,
                     "cross-disk shard load failed: {}",
                     e,
                 );
