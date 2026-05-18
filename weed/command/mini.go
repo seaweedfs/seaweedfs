@@ -2,6 +2,8 @@ package command
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -17,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -28,6 +31,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"golang.org/x/term"
 
 	// Import task packages to trigger their auto-registration
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
@@ -60,7 +64,6 @@ var (
 	miniS3Options     S3Options
 	miniWebDavOptions WebDavOption
 	miniAdminOptions  AdminOptions
-	createdInitialIAM bool // Track if initial IAM config was created from env vars
 	// Track which port flags were explicitly passed on CLI before config file is applied
 	explicitPortFlags map[string]bool
 	miniEnableWebDAV  *bool
@@ -69,7 +72,162 @@ var (
 	miniS3IamReadOnly *bool
 	// MiniClusterCtx is the context for the mini cluster. If set, the mini cluster will stop when the context is cancelled.
 	MiniClusterCtx context.Context
+
+	miniProgressBoard *miniProgress
 )
+
+// miniProgress renders a docker-compose-style multi-line status table for
+// mini's startup and shutdown phases. On a TTY each service has a single
+// in-place row that updates from pending -> starting -> ready (or stopping
+// -> stopped). When stdout isn't a TTY it falls back to one printed line per
+// state change so log capture stays readable. All access is mutex-guarded so
+// concurrent goroutines (S3 and WebDAV start in parallel) don't tear updates.
+type miniProgress struct {
+	mu       sync.Mutex
+	order    []string
+	states   map[string]string
+	starts   map[string]time.Time
+	elapsed  map[string]time.Duration
+	isTTY    bool
+	rendered bool
+	closed   bool
+}
+
+const miniProgressNameWidth = 12
+
+func newMiniProgress(services []string) *miniProgress {
+	p := &miniProgress{
+		order:   append([]string(nil), services...),
+		states:  make(map[string]string, len(services)),
+		starts:  make(map[string]time.Time, len(services)),
+		elapsed: make(map[string]time.Duration, len(services)),
+		isTTY:   term.IsTerminal(int(os.Stdout.Fd())),
+	}
+	for _, name := range services {
+		p.states[name] = "pending"
+	}
+	if p.isTTY {
+		// Initial render so each subsequent update can move the cursor up by
+		// len(order) rows and overwrite in place.
+		p.renderLocked()
+	}
+	return p
+}
+
+func (p *miniProgress) update(name, state string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, known := p.states[name]; !known {
+		return
+	}
+	switch state {
+	case "starting", "stopping":
+		p.starts[name] = time.Now()
+	case "ready", "stopped":
+		if started, ok := p.starts[name]; ok {
+			p.elapsed[name] = time.Since(started)
+		}
+	}
+	p.states[name] = state
+	if p.isTTY {
+		p.renderLocked()
+		return
+	}
+	// Non-TTY: print exactly one line for this transition. Pending lines aren't
+	// announced (they'd be every service on init); starting/ready/etc. are.
+	fmt.Println(p.formatRow(name))
+}
+
+func (p *miniProgress) starting(name string) { p.update(name, "starting") }
+func (p *miniProgress) ready(name string)    { p.update(name, "ready") }
+func (p *miniProgress) failed(name string)   { p.update(name, "failed") }
+func (p *miniProgress) stopping(name string) { p.update(name, "stopping") }
+func (p *miniProgress) stopped(name string)  { p.update(name, "stopped") }
+
+// renderLocked redraws every row in the board. Caller must hold p.mu and
+// p.isTTY must be true. Uses CSI sequences: ESC[<N>A moves cursor up N lines,
+// ESC[2K clears the line — leaving the cursor parked one line below the last
+// row so the next print (welcome banner, shutdown messages) flows naturally.
+func (p *miniProgress) renderLocked() {
+	if p.closed {
+		return
+	}
+	if p.rendered {
+		fmt.Printf("\033[%dA", len(p.order))
+	}
+	for _, name := range p.order {
+		fmt.Print("\r\033[2K")
+		fmt.Println(p.formatRow(name))
+	}
+	p.rendered = true
+}
+
+func (p *miniProgress) formatRow(name string) string {
+	state := p.states[name]
+	switch state {
+	case "ready", "stopped":
+		return fmt.Sprintf("  %-*s %-9s %.1fs", miniProgressNameWidth, name, state, p.elapsed[name].Seconds())
+	default:
+		return fmt.Sprintf("  %-*s %s", miniProgressNameWidth, name, state)
+	}
+}
+
+// reset clears the rendered state so the board can be redrawn as a fresh
+// table with all rows in initialState — used to switch from the startup
+// phase to the shutdown phase so shutdown rows don't try to overwrite the
+// already-printed startup rows.
+func (p *miniProgress) reset(services []string, initialState string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.order = append([]string(nil), services...)
+	p.states = make(map[string]string, len(services))
+	p.starts = make(map[string]time.Time, len(services))
+	p.elapsed = make(map[string]time.Duration, len(services))
+	now := time.Now()
+	for _, name := range services {
+		p.states[name] = initialState
+		p.starts[name] = now
+	}
+	p.rendered = false
+	if p.isTTY {
+		p.renderLocked()
+	}
+}
+
+// close prevents further redraws (e.g. before a Fatalf so the panic doesn't
+// repaint the board). Safe to call multiple times.
+func (p *miniProgress) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+}
+
+// reportMiniStopped marks a service as fully stopped on the progress board.
+// Safe to call when the board is nil (mini not running) — used from defers
+// in service goroutines so a normal exit (Ctrl+C, ctx cancel) flips the row.
+func reportMiniStopped(name string) {
+	if miniProgressBoard != nil {
+		miniProgressBoard.stopped(name)
+	}
+}
+
+// miniStartupServices lists components in the order they appear in the
+// startup progress board. Matches the welcome banner order so visual
+// continuity carries from startup through to the running summary.
+func miniStartupServices() []string {
+	services := []string{"Master", "Volume", "Filer"}
+	if miniEnableWebDAV != nil && *miniEnableWebDAV {
+		services = append(services, "WebDAV")
+	}
+	if miniEnableS3 != nil && *miniEnableS3 {
+		services = append(services, "S3")
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			services = append(services, "Iceberg")
+		}
+	}
+	services = append(services, "Admin")
+	return services
+}
 
 // miniClientsState orchestrates graceful shutdown of admin/s3/webdav/worker on
 // weed mini Ctrl+C, BEFORE filer/volume/master tear down. It is rebuilt on
@@ -165,6 +323,13 @@ func triggerMiniClientsShutdown(timeout time.Duration) {
 	s := miniClients
 	if s == nil {
 		return
+	}
+	if miniProgressBoard != nil {
+		// Switch the progress board from startup mode to shutdown mode. All
+		// services start as "stopping"; each goroutine's defer reportMiniStopped
+		// flips its own row to "stopped" when it actually drains.
+		fmt.Println("\n  Shutting down SeaweedFS Mini ...")
+		miniProgressBoard.reset(miniStartupServices(), "stopping")
 	}
 	glog.V(0).Infof("Shutting down admin/s3/webdav ...")
 	s.preCancelMu.Lock()
@@ -471,7 +636,7 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 		optimalMB = maxVolumeSizeMB
 	}
 
-	glog.Infof("Optimal volume size: %dMB (total disk capacity: %dMB, capacity/100 before rounding: %dMB, rounded to nearest power of 2, clamped to [%d,%d]MB)",
+	glog.V(1).Infof("Optimal volume size: %dMB (total disk capacity: %dMB, capacity/100 before rounding: %dMB, rounded to nearest power of 2, clamped to [%d,%d]MB)",
 		optimalMB, totalCapacityMB, initialOptimalMB, minVolumeSizeMB, maxVolumeSizeMB)
 
 	return optimalMB
@@ -486,6 +651,99 @@ func isFlagPassed(name string) bool {
 		}
 	})
 	return found
+}
+
+// quietMiniLogs routes info-level glog output to the log file only, leaving
+// stderr for warnings and errors. The welcome banner (printWelcomeMessage)
+// uses fmt.Print so it is unaffected. If the user explicitly set any glog
+// flag, leave their choice alone — they want control of the output.
+func quietMiniLogs() {
+	userOverride := false
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "v", "logtostderr", "alsologtostderr", "stderrthreshold":
+			userOverride = true
+		}
+	})
+	if userOverride {
+		return
+	}
+	_ = flag.Set("alsologtostderr", "false")
+	_ = flag.Set("stderrthreshold", "WARNING")
+}
+
+// ensureMiniDevSSES3Keys silences two startup messages that would otherwise
+// dominate mini's output even with quietMiniLogs():
+//
+//  1. the SSE-S3 "KEK will be stored in plaintext" warning from s3_sse_s3.go
+//     (cleared by providing s3.sse.kek.passphrase), and
+//  2. the IAM "no signing key found for STS service" error from s3api_server.go
+//     (cleared by populating the SSE-S3 master KEK so the IAM loader's fallback
+//     at s3api_server.go:1044 can derive an STS signing key from it).
+//
+// Values are exported as WEED_* env vars rather than written via viper.Set:
+// viper treats dots as a path delimiter, so Set("s3.sse.kek.passphrase", ...)
+// and Set("s3.sse.kek", ...) overwrite each other's subtree. Env vars are flat
+// and viper picks them up through AutomaticEnv()+SetEnvPrefix("weed").
+//
+// Both secrets are random and persisted under the data folder on first run, so
+// later runs reuse the same key — necessary because s3.sse.kek is checked for
+// equality against any existing KEK file on the filer. If the operator already
+// configured one or both via security.toml or WEED_ env vars, their values win.
+func ensureMiniDevSSES3Keys(dataFolder string) {
+	topDir := util.StringSplit(dataFolder, ",")[0]
+	if topDir == "" {
+		return
+	}
+	if err := os.MkdirAll(topDir, 0755); err != nil {
+		glog.Warningf("mini: failed to create data folder for dev SSE-S3 keys: %v", err)
+		return
+	}
+
+	// (1) KEK passphrase — wraps the KEK on the filer at rest, also gates the
+	//     plaintext-KEK warning at s3_sse_s3.go:862. Any non-empty string works.
+	if util.GetViper().GetString("s3.sse.kek.passphrase") == "" && os.Getenv("WEED_S3_SSE_KEK_PASSPHRASE") == "" {
+		if pp := loadOrCreateMiniHexSecret(filepath.Join(topDir, ".mini_kek_passphrase"), 32); pp != "" {
+			_ = os.Setenv("WEED_S3_SSE_KEK_PASSPHRASE", pp)
+		}
+	}
+
+	// (2) KEK — must be exactly 32 bytes hex-encoded. Setting this populates
+	//     SSES3KeyManager.superKey so GetMasterKey() returns a derived STS
+	//     signing key instead of nil, satisfying the IAM fallback.
+	hasOperatorKEK := util.GetViper().GetString("s3.sse.kek") != "" || util.GetViper().GetString("s3.sse.key") != "" ||
+		os.Getenv("WEED_S3_SSE_KEK") != "" || os.Getenv("WEED_S3_SSE_KEY") != ""
+	if !hasOperatorKEK {
+		if kek := loadOrCreateMiniHexSecret(filepath.Join(topDir, ".mini_sse_kek"), 32); kek != "" {
+			_ = os.Setenv("WEED_S3_SSE_KEK", kek)
+		}
+	}
+}
+
+// loadOrCreateMiniHexSecret loads a hex-encoded secret from path or generates
+// nBytes of randomness on first call, persists it (0600), and returns the hex
+// string. Returns "" if reading fails, generation fails, OR persistence fails
+// — refusing to return an in-memory-only secret is deliberate: SSE-S3 writes
+// data encrypted under this key, and a later restart that can't read the
+// persisted secret would generate a fresh one and orphan whatever was written.
+// Better to leave SSE-S3 disabled this run than to silently lose data later.
+func loadOrCreateMiniHexSecret(path string, nBytes int) string {
+	if data, err := os.ReadFile(path); err == nil {
+		if s := strings.TrimSpace(string(data)); s != "" {
+			return s
+		}
+	}
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		glog.Warningf("mini: failed to generate dev secret for %s: %v", path, err)
+		return ""
+	}
+	s := hex.EncodeToString(buf)
+	if err := os.WriteFile(path, []byte(s), 0600); err != nil {
+		glog.Warningf("mini: failed to persist dev secret to %s: %v (skipping; SSE-S3/IAM stay disabled this run to avoid orphaning data on next restart)", path, err)
+		return ""
+	}
+	return s
 }
 
 // isPortOpenOnIP checks if a port is available for binding on a specific IP address
@@ -669,12 +927,12 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
 	}
-	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
+	glog.V(1).Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
 		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
-	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
+	glog.V(1).Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
 		*miniMasterOptions.portGrpc, *miniFilerOptions.portGrpc, *miniOptions.v.portGrpc,
 		*miniS3Options.portGrpc, *miniAdminOptions.grpcPort)
 
@@ -800,7 +1058,7 @@ func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
 		}
 	}
 
-	glog.Infof("Loaded %d options from configuration file %s", len(options), configFile)
+	glog.V(1).Infof("Loaded %d options from configuration file %s", len(options), configFile)
 	return options, nil
 }
 
@@ -871,12 +1129,18 @@ func saveMiniConfiguration(dataFolder string) error {
 		return err
 	}
 
-	glog.Infof("Mini configuration saved to %s", configFile)
+	glog.V(1).Infof("Mini configuration saved to %s", configFile)
 	return nil
 }
 
 func runMini(cmd *Command, args []string) bool {
 	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
+
+	// Mini is meant to be quiet by default: only the welcome banner and any
+	// warnings/errors should reach stderr. Skip if the user passed any glog
+	// flag (-v / -logtostderr / -alsologtostderr / -stderrthreshold) so they
+	// can opt back into verbose output.
+	quietMiniLogs()
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
@@ -904,6 +1168,12 @@ func runMini(cmd *Command, args []string) bool {
 	// applyConfigFileOptions above may have overwritten -dir from the
 	// mini.options file, so re-resolve it here alongside the other paths.
 	*miniDataFolders = util.ResolveCommaSeparatedPaths(*miniDataFolders)
+
+	// Seed stable dev SSE-S3 keys before any service starts, so the SSE-S3
+	// plaintext-KEK warning and the IAM "no signing key" error don't fire.
+	// Does nothing for keys the operator has already configured.
+	ensureMiniDevSSES3Keys(*miniDataFolders)
+
 	*miniOptions.cpuprofile = util.ResolvePath(*miniOptions.cpuprofile)
 	*miniOptions.memprofile = util.ResolvePath(*miniOptions.memprofile)
 	*miniS3Config = util.ResolvePath(*miniS3Config)
@@ -1007,10 +1277,10 @@ func runMini(cmd *Command, args []string) bool {
 		// miniDataFolders was already tilde-resolved at the top of runMini.
 		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(util.StringSplit(*miniDataFolders, ",")[0])
 		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
-		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
+		glog.V(1).Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
 	} else {
 		// User specified a custom value
-		glog.Infof("Mini started with user-specified volume size limit: %dMB", *miniMasterOptions.volumeSizeLimitMB)
+		glog.V(1).Infof("Mini started with user-specified volume size limit: %dMB", *miniMasterOptions.volumeSizeLimitMB)
 	}
 
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
@@ -1032,6 +1302,8 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready
+	fmt.Println("\n  Starting SeaweedFS Mini ...")
+	miniProgressBoard = newMiniProgress(miniStartupServices())
 	allServicesReady := make(chan struct{})
 	startMiniServices(miniWhiteList, allServicesReady)
 
@@ -1083,26 +1355,35 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	bindIp := getBindIp()
 
 	// Start Master server (no dependencies)
-	go startMiniService("Master", func() {
-		startMaster(miniMasterOptions, miniWhiteList)
-	}, *miniMasterOptions.port)
+	go func() {
+		defer reportMiniStopped("Master")
+		startMiniService("Master", func() {
+			startMaster(miniMasterOptions, miniWhiteList)
+		}, *miniMasterOptions.port)
+	}()
 
 	// Wait for master to be ready
 	waitForServiceReady("Master", *miniMasterOptions.port, bindIp)
 
 	// Start Volume server (depends on master)
-	go startMiniService("Volume", func() {
-		minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, "")
-		miniOptions.v.startVolumeServer(*miniDataFolders, miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
-	}, *miniOptions.v.port)
+	go func() {
+		defer reportMiniStopped("Volume")
+		startMiniService("Volume", func() {
+			minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, "")
+			miniOptions.v.startVolumeServer(*miniDataFolders, miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
+		}, *miniOptions.v.port)
+	}()
 
 	// Wait for volume to be ready
 	waitForServiceReady("Volume", *miniOptions.v.port, bindIp)
 
 	// Start Filer (depends on master and volume)
-	go startMiniService("Filer", func() {
-		miniFilerOptions.startFiler()
-	}, *miniFilerOptions.port)
+	go func() {
+		defer reportMiniStopped("Filer")
+		startMiniService("Filer", func() {
+			miniFilerOptions.startFiler()
+		}, *miniFilerOptions.port)
+	}()
 
 	// Wait for filer to be ready
 	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
@@ -1115,6 +1396,11 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		done := trackMiniClient()
 		go func() {
 			defer done()
+			defer reportMiniStopped("S3")
+			// Iceberg lives inside the S3 server; report it stopped alongside.
+			if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+				defer reportMiniStopped("Iceberg")
+			}
 			startMiniService("S3", startS3Service, *miniS3Options.port)
 		}()
 	}
@@ -1124,6 +1410,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		done := trackMiniClient()
 		go func() {
 			defer done()
+			defer reportMiniStopped("WebDAV")
 			startMiniService("WebDAV", func() {
 				miniWebDavOptions.startWebDav()
 			}, *miniWebDavOptions.port)
@@ -1134,6 +1421,11 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	if *miniEnableS3 {
 		waitForServiceReady("S3", *miniS3Options.port, bindIp)
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			// Iceberg is started inside the S3 server, not via startMiniService,
+			// so announce it here for symmetry with the other progress lines.
+			if miniProgressBoard != nil {
+				miniProgressBoard.starting("Iceberg")
+			}
 			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
 		}
 	}
@@ -1145,13 +1437,17 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	go startMiniAdminWithWorker(allServicesReady)
 }
 
-// startMiniService starts a service in a goroutine with logging
+// startMiniService starts a service in a goroutine and reports its start to
+// the progress board.
 func startMiniService(name string, fn func(), port int) {
-	glog.Infof("%s service starting...", name)
+	if miniProgressBoard != nil {
+		miniProgressBoard.starting(name)
+	}
 	fn()
 }
 
-// waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
+// waitForServiceReady pings the service HTTP endpoint to check if it's ready
+// to accept connections, and reports the transition to the progress board.
 func waitForServiceReady(name string, port int, bindIp string) {
 	address := fmt.Sprintf("http://%s:%d", bindIp, port)
 	healthAddr := getHealthCheckAddr(address)
@@ -1165,7 +1461,9 @@ func waitForServiceReady(name string, port int, bindIp string) {
 		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
-			glog.Infof("%s service is ready at %s", name, address)
+			if miniProgressBoard != nil {
+				miniProgressBoard.ready(name)
+			}
 			return
 		}
 		attempt++
@@ -1174,19 +1472,14 @@ func waitForServiceReady(name string, port int, bindIp string) {
 
 	// Service failed to become ready, log warning but don't fail startup
 	// (services may still work even if health check endpoint isn't responding immediately)
+	if miniProgressBoard != nil {
+		miniProgressBoard.failed(name)
+	}
 	glog.Warningf("Health check for %s failed (service may still be functional, retries may succeed)", name)
 }
 
 // startS3Service initializes and starts the S3 server
 func startS3Service() {
-	// Use existing AWS env vars if present (no new env vars).
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-
-	if accessKey != "" && secretKey != "" {
-		createdInitialIAM = true
-	}
-
 	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
 	miniS3Options.startS3Server()
 }
@@ -1239,9 +1532,13 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Start admin server in background. trackMiniClient lets the Ctrl+C
 	// handler wait for startAdminServer's graceful shutdown before filer/
 	// volume/master tear down.
+	if miniProgressBoard != nil {
+		miniProgressBoard.starting("Admin")
+	}
 	done := trackMiniClient()
 	go func() {
 		defer done()
+		defer reportMiniStopped("Admin")
 		var icebergPort int
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
@@ -1253,7 +1550,6 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Wait for admin server's HTTP port to be ready before launching worker
 	adminAddr := fmt.Sprintf("http://%s:%d", bindIp, *miniAdminOptions.port)
-	glog.V(1).Infof("Waiting for admin server to be ready at %s...", adminAddr)
 	if err := waitForAdminServerReady(ctx, adminAddr); err != nil {
 		// If the parent context was cancelled (e.g. a previous in-process
 		// mini run is being torn down), bail out gracefully instead of
@@ -1272,13 +1568,16 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		glog.Fatalf("Failed to create unified worker directory: %v", err)
 	}
 
-	glog.Infof("Starting consolidated maintenance worker system (directory: %s)", workerDir)
+	glog.V(1).Infof("Starting consolidated maintenance worker system (directory: %s)", workerDir)
 	startMiniWorker(workerDir)
 	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
 	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
 	waitForWorkerReady(workerGrpcAddr)
+	if miniProgressBoard != nil {
+		miniProgressBoard.ready("Admin")
+	}
 }
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready.
@@ -1306,7 +1605,7 @@ func waitForAdminServerReady(ctx context.Context, adminAddr string) error {
 		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
-			glog.Infof("Admin server is ready at %s", adminAddr)
+			glog.V(1).Infof("Admin server is ready at %s", adminAddr)
 			return nil
 		}
 		attempt++
@@ -1357,9 +1656,9 @@ func startMiniWorker(workerDir string) {
 
 	// Use common worker directory
 
-	glog.Infof("Worker connecting to admin server: %s", adminAddr)
-	glog.Infof("Worker capabilities: %s", capabilities)
-	glog.Infof("Worker directory: %s", workerDir)
+	glog.V(1).Infof("Worker connecting to admin server: %s", adminAddr)
+	glog.V(1).Infof("Worker capabilities: %s", capabilities)
+	glog.V(1).Infof("Worker directory: %s", workerDir)
 
 	// Parse capabilities
 	capabilitiesParsed := parseCapabilities(capabilities)
@@ -1421,16 +1720,16 @@ func startMiniWorker(workerDir string) {
 		glog.Fatalf("Failed to start worker: %v", err)
 	}
 
-	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
+	glog.V(1).Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
 func startMiniPluginWorker(ctx context.Context, workerDir string) {
-	glog.Infof("Starting plugin worker for admin server")
+	glog.V(1).Infof("Starting plugin worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
 	resolvedAdminAddr := resolvePluginWorkerAdminServer(adminAddr)
 	if resolvedAdminAddr != adminAddr {
-		glog.Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
+		glog.V(1).Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
 	}
 
 	// Use common worker directory
@@ -1474,7 +1773,7 @@ func startMiniPluginWorker(ctx context.Context, workerDir string) {
 		}
 	}()
 
-	glog.Infof("Plugin worker %s started successfully with job types: %s", workerID, defaultMiniPluginJobTypes)
+	glog.V(1).Infof("Plugin worker %s started successfully with job types: %s", workerID, defaultMiniPluginJobTypes)
 }
 
 const credentialsInstructionTemplate = `
@@ -1483,16 +1782,13 @@ const credentialsInstructionTemplate = `
   Option 1: Use environment variables (recommended for quick setup)
     export AWS_ACCESS_KEY_ID=your-access-key
     export AWS_SECRET_ACCESS_KEY=your-secret-key
+    export S3_BUCKET=my-bucket
     weed mini -dir=/data
-    This will create initial credentials for the 'mini' user.
+    Creates initial credentials for the 'mini' user and pre-creates the bucket.
 
   Option 2: Use the Admin UI
     Open: http://%s:%d
     Add a new identity to create S3 credentials.
-`
-
-const credentialsCreatedMessage = `
-  Initial S3 credentials loaded from environment variables.
 `
 
 // printWelcomeMessage prints the welcome message after all services are running
@@ -1504,46 +1800,38 @@ func printWelcomeMessage() {
 	sb.WriteString("╚═══════════════════════════════════════════════════════════════════════════════╝\n\n")
 	sb.WriteString("  All enabled components are running and ready to use:\n\n")
 	fmt.Fprintf(&sb, "    Master UI:       http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Fprintf(&sb, "    Volume Server:   http://%s:%d\n", *miniIp, *miniOptions.v.port)
 	fmt.Fprintf(&sb, "    Filer UI:        http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	if *miniEnableWebDAV {
+		fmt.Fprintf(&sb, "    WebDAV:          http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+	}
 	if *miniEnableS3 {
 		fmt.Fprintf(&sb, "    S3 Endpoint:     http://%s:%d\n", *miniIp, *miniS3Options.port)
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			fmt.Fprintf(&sb, "    Iceberg Catalog: http://%s:%d\n", *miniIp, *miniS3Options.portIceberg)
 		}
 	}
-
-	if *miniEnableWebDAV {
-		fmt.Fprintf(&sb, "    WebDAV:          http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
-	}
 	if *miniEnableAdminUI {
 		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
-	}
-
-	fmt.Fprintf(&sb, "    Volume Server:   http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
-
-	sb.WriteString("  Optimized Settings:\n")
-	fmt.Fprintf(&sb, "    • Volume size limit: %dMB\n", *miniMasterOptions.volumeSizeLimitMB)
-	sb.WriteString("    • Volume max: auto (based on free disk space)\n")
-	sb.WriteString("    • Pre-stop seconds: 1 (faster shutdown)\n")
-	sb.WriteString("    • Master peers: none (single master mode)\n")
-
-	if *miniEnableAdminUI {
-		sb.WriteString("    • Admin UI for management and maintenance tasks\n")
 	}
 
 	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
 	sb.WriteString("  Press Ctrl+C to stop all components")
 
-	if createdInitialIAM {
-		sb.WriteString(credentialsCreatedMessage)
-	} else if *miniEnableAdminUI {
+	switch {
+	case s3api.HasAnyIdentity():
+		// S3 identities already exist (loaded from filer on a previous mini
+		// run, configured via env vars, static config file, etc.) — no need
+		// to show setup hints.
+	case *miniEnableAdminUI:
 		fmt.Fprintf(&sb, credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
-	} else {
+	default:
 		sb.WriteString("\n  To create S3 credentials, use environment variables:\n\n")
-		sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\\n")
-		sb.WriteString("    export AWS_SECRET_ACCESS_KEY=your-secret-key\\n")
-		sb.WriteString("    weed mini -dir=/data\\n")
-		sb.WriteString("    This will create initial credentials for the 'mini' user.\\n")
+		sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\n")
+		sb.WriteString("    export AWS_SECRET_ACCESS_KEY=your-secret-key\n")
+		sb.WriteString("    export S3_BUCKET=my-bucket\n")
+		sb.WriteString("    weed mini -dir=/data\n")
+		sb.WriteString("    Creates initial credentials for the 'mini' user and pre-creates the bucket.\n")
 	}
 
 	fmt.Print(sb.String())
