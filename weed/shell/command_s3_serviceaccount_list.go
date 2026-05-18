@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -45,11 +42,7 @@ func (c *commandS3ServiceAccountList) Do(args []string, commandEnv *CommandEnv, 
 		return err
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.ListServiceAccounts(ctx, &iam_pb.ListServiceAccountsRequest{})
 		if err != nil {
 			return err
@@ -81,5 +74,5 @@ func (c *commandS3ServiceAccountList) Do(args []string, commandEnv *CommandEnv, 
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", sa.Id, sa.ParentUser, st, desc)
 		}
 		return tw.Flush()
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }

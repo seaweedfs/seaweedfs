@@ -10,9 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/iam"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -70,11 +68,10 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	var identity *iam_pb.Identity
 	var isNewUser bool
 
-	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+	err = commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 
 		// Try to get existing user
-		resp, getErr := client.GetUser(context.Background(), &iam_pb.GetUserRequest{
+		resp, getErr := client.GetUser(ctx, &iam_pb.GetUserRequest{
 			Username: *user,
 		})
 
@@ -119,27 +116,26 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		// Apply changes
 		if *isDelete && *actions == "" && *accessKey == "" && *buckets == "" && *policies == "" {
 			// Delete User
-			_, err := client.DeleteUser(context.Background(), &iam_pb.DeleteUserRequest{Username: *user})
+			_, err := client.DeleteUser(ctx, &iam_pb.DeleteUserRequest{Username: *user})
 			return err
 		} else {
 			// Create or Update User
 			if isNewUser {
-				_, err := client.CreateUser(context.Background(), &iam_pb.CreateUserRequest{Identity: identity})
+				_, err := client.CreateUser(ctx, &iam_pb.CreateUserRequest{Identity: identity})
 				return err
 			} else {
-				_, err := client.UpdateUser(context.Background(), &iam_pb.UpdateUserRequest{Username: *user, Identity: identity})
+				_, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{Username: *user, Identity: identity})
 				return err
 			}
 		}
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 
 	return err
 }
 
 func (c *commandS3Configure) listConfiguration(commandEnv *CommandEnv, writer io.Writer) error {
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
+		resp, err := client.GetConfiguration(ctx, &iam_pb.GetConfigurationRequest{})
 		if err != nil {
 			return err
 		}
@@ -148,7 +144,7 @@ func (c *commandS3Configure) listConfiguration(commandEnv *CommandEnv, writer io
 		fmt.Fprint(writer, buf.String())
 		fmt.Fprintln(writer)
 		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }
 
 func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser bool, actions, buckets, accessKey, secretKey, policies *string, isDelete *bool, accountId, accountDisplayName, accountEmail *string) error {

@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -43,11 +40,7 @@ type s3GroupListEntry struct {
 }
 
 func (c *commandS3GroupList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetConfiguration(ctx, &iam_pb.GetConfigurationRequest{})
 		if err != nil {
 			return err
@@ -74,5 +67,5 @@ func (c *commandS3GroupList) Do(args []string, commandEnv *CommandEnv, writer io
 			result = []s3GroupListEntry{}
 		}
 		return json.NewEncoder(writer).Encode(result)
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }
