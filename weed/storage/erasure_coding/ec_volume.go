@@ -70,9 +70,12 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	// open ecx file. Wrap errors with %w so callers walking up the stack
 	// (notably Store.MountEcShards) can use errors.Is(err, os.ErrNotExist)
 	// to decide whether to try the next local disk vs. bail. A 0-byte .ecx
-	// is treated as missing: writeToFile uses O_TRUNC and may leave an
-	// empty stub on a mid-stream copy failure during EC distribute, and an
-	// empty index is not a valid mount target.
+	// is a legitimate index for a volume that had no live needles at encode
+	// time (e.g. all needles deleted before WriteSortedFileFromIdx) and
+	// must mount successfully here. A 0-byte stub left by a failed copy
+	// stream is indistinguishable from that empty case by file size alone;
+	// preventing such stubs is the receiver-side cleanup in writeToFile's
+	// job, not this open path.
 	ev.ecxActualDir = dirIdx
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
 		if dirIdx != dir && os.IsNotExist(err) {
@@ -97,10 +100,6 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	if statErr != nil {
 		_ = ev.ecxFile.Close()
 		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %w", indexBaseFileName, statErr)
-	}
-	if ecxFi.Size() == 0 {
-		_ = ev.ecxFile.Close()
-		return nil, fmt.Errorf("ec volume index %s.ecx is 0 bytes: %w", indexBaseFileName, os.ErrNotExist)
 	}
 	ev.ecxFileSize = ecxFi.Size()
 	ev.ecxCreatedAt = ecxFi.ModTime()

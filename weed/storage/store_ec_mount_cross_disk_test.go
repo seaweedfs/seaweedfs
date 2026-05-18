@@ -386,11 +386,16 @@ func TestMountEcShards_ZeroByteEcxIsIgnored(t *testing.T) {
 	}
 }
 
-// TestMountEcShards_ZeroByteEcxOnlyDisk pins the failure mode when the
-// only .ecx the volume server has is a 0-byte stub. The mount must fail
-// loudly so the orchestrator can re-copy the index from a healthy
-// replica rather than silently mounting against an empty index.
-func TestMountEcShards_ZeroByteEcxOnlyDisk(t *testing.T) {
+// TestMountEcShards_EmptyEcxMountsSuccessfully pins the empty-volume
+// case: when an EC volume's .idx had no live entries at encode time,
+// WriteSortedFileFromIdx legitimately produces a 0-byte .ecx. Mount
+// must accept that as a valid empty index and let the EC volume come
+// online — there is no reliable way to distinguish a legitimately
+// empty .ecx from a stub left by a failed copy, and preventing the
+// stub case is writeToFile's job at copy time, not NewEcVolume's at
+// mount time. Pre-fix this returned "no .ecx index found on any local
+// disk" because NewEcVolume mapped 0-byte to os.ErrNotExist.
+func TestMountEcShards_EmptyEcxMountsSuccessfully(t *testing.T) {
 	tempDir := t.TempDir()
 	dir0 := filepath.Join(tempDir, "disk0")
 	dir1 := filepath.Join(tempDir, "disk1")
@@ -398,31 +403,40 @@ func TestMountEcShards_ZeroByteEcxOnlyDisk(t *testing.T) {
 
 	const collection = "mybucket"
 	vid := needle.VolumeId(13)
-	const dataShards = 10
-	const datSize int64 = 10 * 1024 * 1024
-	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
-	const shardOnDisk0 erasure_coding.ShardId = 8
+	const dataShards, parityShards = 10, 4
+	const datSize int64 = 0
+	const shardOnDisk0 erasure_coding.ShardId = 0
 
+	// Plant a 0-byte shard, a 0-byte .ecx, an empty .ecj, and a .vif —
+	// the on-disk layout after encoding a volume that had no live needles.
 	base0 := erasure_coding.EcShardFileName(collection, dir0, int(vid))
-	f, err := os.Create(base0 + erasure_coding.ToExt(int(shardOnDisk0)))
-	if err != nil {
-		t.Fatalf("create shard: %v", err)
+	if err := os.WriteFile(base0+erasure_coding.ToExt(int(shardOnDisk0)), nil, 0o644); err != nil {
+		t.Fatalf("write 0-byte shard: %v", err)
 	}
-	if err := f.Truncate(expectedShardSize); err != nil {
-		f.Close()
-		t.Fatalf("truncate shard: %v", err)
-	}
-	f.Close()
 	if err := os.WriteFile(base0+".ecx", nil, 0o644); err != nil {
-		t.Fatalf("write 0-byte .ecx stub: %v", err)
+		t.Fatalf("write 0-byte .ecx (empty volume's legitimate empty index): %v", err)
+	}
+	if err := os.WriteFile(base0+".ecj", nil, 0o644); err != nil {
+		t.Fatalf("write .ecj: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base0+".vif", &volume_server_pb.VolumeInfo{
+		Version:     uint32(needle.Version3),
+		DatFileSize: datSize,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards:   dataShards,
+			ParityShards: parityShards,
+		},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
 	}
 
-	err = store.MountEcShards(collection, vid, shardOnDisk0, "")
-	if err == nil {
-		t.Fatalf("MountEcShards should fail when the only .ecx is a 0-byte stub")
+	if err := store.MountEcShards(collection, vid, shardOnDisk0, ""); err != nil {
+		t.Fatalf("MountEcShards should accept a 0-byte .ecx as a valid empty index: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no .ecx index found on any local disk") {
-		t.Errorf("expected 'no .ecx' aggregated error, got: %v", err)
+
+	loc0 := store.Locations[0]
+	if _, found := loc0.FindEcVolume(vid); !found {
+		t.Errorf("EC volume %d expected to be loaded on disk0 after mount", vid)
 	}
 }
 
