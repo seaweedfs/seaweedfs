@@ -289,6 +289,20 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
 				return err
 			}
+			// Defense in depth: writeToFile now removes partial files on
+			// stream error, but a source that genuinely held a 0-byte
+			// .ecx (e.g. a corrupted upstream replica) would otherwise
+			// leave a 0-byte file here and the mount path would reject
+			// it later. Catch that at distribute time so the orchestrator
+			// can pick a different source rather than learning about it
+			// at mount.
+			ecxPath := indexBaseFileName + ".ecx"
+			if info, statErr := os.Stat(ecxPath); statErr == nil && !info.IsDir() && info.Size() == 0 {
+				if removeErr := os.Remove(ecxPath); removeErr != nil && !os.IsNotExist(removeErr) {
+					glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", req.VolumeId, ecxPath, removeErr)
+				}
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", req.VolumeId)
+			}
 		}
 
 		if req.CopyEcjFile {

@@ -344,6 +344,23 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	}
 	defer dst.Close()
 
+	// removeIncomplete deletes the partially-written file we just opened
+	// with O_TRUNC. Used on stream / write / cancellation errors so a
+	// caller (notably VolumeEcShardsCopy distributing .ecx) doesn't end
+	// up with a 0-byte stub that downstream code mistakes for a valid
+	// empty file. Skip in isAppend mode — the existing content is not
+	// ours to remove, and resumable appends rely on partial state.
+	removeIncomplete := func(reason string) {
+		if isAppend {
+			return
+		}
+		if removeErr := os.Remove(fileName); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.Warningf("failed to remove incomplete file %s after %s: %v", fileName, reason, removeErr)
+		} else if removeErr == nil {
+			glog.V(1).Infof("removed incomplete file %s after %s", fileName, reason)
+		}
+	}
+
 	var progressedBytes int64
 	for {
 		resp, receiveErr := client.Recv()
@@ -354,14 +371,17 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			modifiedTsNs = resp.ModifiedTsNs
 		}
 		if receiveErr != nil {
+			removeIncomplete("receive error")
 			return modifiedTsNs, fmt.Errorf("receiving %s: %w", fileName, receiveErr)
 		}
 		if _, writeErr := dst.Write(resp.FileContent); writeErr != nil {
+			removeIncomplete("write error")
 			return modifiedTsNs, fmt.Errorf("write file %s: %w", fileName, writeErr)
 		}
 		progressedBytes += int64(len(resp.FileContent))
 		if progressFn != nil {
 			if !progressFn(progressedBytes) {
+				removeIncomplete("progress cancelled")
 				return modifiedTsNs, fmt.Errorf("interrupted copy operation")
 			}
 		}
