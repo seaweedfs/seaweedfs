@@ -425,3 +425,36 @@ func TestMountEcShards_ZeroByteEcxOnlyDisk(t *testing.T) {
 		t.Errorf("expected 'no .ecx' aggregated error, got: %v", err)
 	}
 }
+
+// TestIndexEcxOwners_IgnoresZeroByteStub guards the reconcile owner
+// selection: a 0-byte .ecx on the orphan disk must not win against a
+// valid .ecx on a sibling disk, otherwise reconcileEcShardsAcrossDisks
+// would point loaders at the stub and leave orphan shards unloaded.
+// Same invariant as findEcxIdxDirForVolume, but for the bulk scan path.
+func TestIndexEcxOwners_IgnoresZeroByteStub(t *testing.T) {
+	tempDir := t.TempDir()
+	dir0 := filepath.Join(tempDir, "disk0") // 0-byte .ecx stub
+	dir1 := filepath.Join(tempDir, "disk1") // valid .ecx
+	store := startEcMountStore(t, []string{dir0, dir1})
+
+	const collection = "mybucket"
+	vid := needle.VolumeId(99)
+
+	base0 := erasure_coding.EcShardFileName(collection, dir0, int(vid))
+	if err := os.WriteFile(base0+".ecx", nil, 0o644); err != nil {
+		t.Fatalf("write 0-byte .ecx stub on disk0: %v", err)
+	}
+	base1 := erasure_coding.EcShardFileName(collection, dir1, int(vid))
+	if err := os.WriteFile(base1+".ecx", make([]byte, 20), 0o644); err != nil {
+		t.Fatalf("write valid .ecx on disk1: %v", err)
+	}
+
+	owners := store.indexEcxOwners()
+	owner, ok := owners[ecKeyForReconcile{collection: collection, vid: vid}]
+	if !ok {
+		t.Fatalf("indexEcxOwners did not find any owner; expected disk1 with the valid .ecx")
+	}
+	if owner.location != store.Locations[1] {
+		t.Errorf("indexEcxOwners chose disk %s as owner; want disk1 (which holds the valid .ecx, not the 0-byte stub)", owner.location.Directory)
+	}
+}

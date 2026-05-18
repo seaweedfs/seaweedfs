@@ -167,6 +167,17 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 				if !strings.HasSuffix(name, ".ecx") {
 					continue
 				}
+				// A 0-byte .ecx is a corrupt stub from a failed copy and
+				// not a credible owner — skip it so the scan keeps looking
+				// for a real index on a sibling disk. Without this, an
+				// orphan-shard reconcile could pick the stub as owner and
+				// point NewEcVolume at it, which now fails by design
+				// (NewEcVolume rejects 0-byte .ecx), leaving the orphan
+				// shards unloaded even when a valid index exists nearby.
+				info, statErr := entry.Info()
+				if statErr != nil || info.Size() == 0 {
+					continue
+				}
 				base := name[:len(name)-len(".ecx")]
 				collection, vid, err := parseCollectionVolumeId(base)
 				if err != nil {
