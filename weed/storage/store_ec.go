@@ -164,12 +164,24 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 	// holding the .ec?? shard being mounted: ec.balance / ec.rebuild can
 	// place the .ecx on one local disk while later distributing shards
 	// across sibling disks of the same volume server. The per-disk
-	// IdxDirectory used by LoadEcShard would ENOENT the .ecx and fail
-	// with "cannot open ec volume index" instead of returning
-	// ErrNotExist, so the loop below would bail before trying other
-	// disks. Look up the .ecx owner across all DiskLocations once and
-	// route NewEcVolume at the directory that actually has the file.
+	// IdxDirectory used by LoadEcShard would ENOENT the .ecx, so look up
+	// the .ecx owner across all DiskLocations once and route NewEcVolume
+	// at the directory that actually has the file. A 0-byte .ecx is
+	// treated as missing here (writeToFile can leave a stub on a failed
+	// EC distribute) so we still scan the rest of the disks.
 	ecxIdxDir, ecxFound := s.findEcxIdxDirForVolume(collection, vid)
+
+	// Collect failures so an all-disks-fail return reports every disk we
+	// tried rather than just the first one. Before this loop reordered
+	// itself to keep going after the first non-ENOENT error, a single
+	// shard-on-disk-without-.ecx situation would bail the loop and the
+	// operator saw "cannot open ec volume index" naming exactly one disk
+	// even when others held a valid index.
+	type diskError struct {
+		dir string
+		err error
+	}
+	var failures []diskError
 
 	for diskId, location := range s.Locations {
 		idxDir := location.IdxDirectory
@@ -185,7 +197,8 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				}
 			}
 		}
-		if ecVolume, err := location.loadEcShardWithIdxDir(collection, vid, shardId, idxDir); err == nil {
+		ecVolume, err := location.loadEcShardWithIdxDir(collection, vid, shardId, idxDir)
+		if err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 
 			// Apply the orchestrator-supplied source disk type so the EC
@@ -207,14 +220,35 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				DiskId:      uint32(diskId),
 			}
 			return nil
-		} else if err == os.ErrNotExist {
-			continue
-		} else {
-			return fmt.Errorf("%s load ec shard %d.%d: %v", location.Directory, vid, shardId, err)
 		}
+		if errors.Is(err, os.ErrNotExist) {
+			// Shard or index not on this disk; another disk may own it.
+			continue
+		}
+		failures = append(failures, diskError{dir: location.Directory, err: err})
 	}
 
-	return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
+	if len(failures) == 0 {
+		// No disk had the shard or the index; this volume server is not
+		// holding any artefacts for the requested shard. Name what we
+		// scanned for so the operator can tell "no .ecx anywhere" apart
+		// from "shard not on this server".
+		if !ecxFound {
+			return fmt.Errorf("MountEcShards %d.%d: no .ecx index found on any local disk", vid, shardId)
+		}
+		return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
+	}
+	// Some disks returned a real (non-ENOENT) error. Report them all so
+	// the caller can see whether the failures cluster around one disk
+	// (likely hardware) or are spread out (likely a config problem).
+	var b []byte
+	for i, f := range failures {
+		if i > 0 {
+			b = append(b, "; "...)
+		}
+		b = append(b, fmt.Sprintf("%s: %v", f.dir, f.err)...)
+	}
+	return fmt.Errorf("MountEcShards %d.%d load failures: %s", vid, shardId, string(b))
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {

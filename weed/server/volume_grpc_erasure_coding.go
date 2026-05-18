@@ -289,6 +289,32 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
 				return err
 			}
+			// Defense in depth: writeToFile now removes partial files on
+			// stream error, but a source that genuinely held a 0-byte
+			// .ecx (e.g. a corrupted upstream replica) would otherwise
+			// leave a 0-byte file here and the mount path would reject
+			// it later. Catch that at distribute time so the orchestrator
+			// can pick a different source rather than learning about it
+			// at mount.
+			// Stat failure must not silently pass. doCopyFile reported
+			// success, but if the file is gone, unreadable, or a directory
+			// somehow, the orchestrator should learn now — at mount time
+			// the operator only sees "no .ecx found" with no useful context
+			// about which step actually failed.
+			ecxPath := indexBaseFileName + ".ecx"
+			info, statErr := os.Stat(ecxPath)
+			if statErr != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: stat copied .ecx %s: %w", req.VolumeId, ecxPath, statErr)
+			}
+			if info.IsDir() {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: copied .ecx path %s is a directory", req.VolumeId, ecxPath)
+			}
+			if info.Size() == 0 {
+				if removeErr := os.Remove(ecxPath); removeErr != nil && !os.IsNotExist(removeErr) {
+					glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", req.VolumeId, ecxPath, removeErr)
+				}
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", req.VolumeId)
+			}
 		}
 
 		if req.CopyEcjFile {

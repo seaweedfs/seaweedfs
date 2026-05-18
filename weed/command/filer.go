@@ -236,6 +236,12 @@ func runFiler(cmd *Command, args []string) bool {
 	filerSftpOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
 
+	// Share the S3 static identity config file with the filer regardless of
+	// whether the embedded S3 gateway runs on this node: the IAM gRPC service
+	// the admin UI and weed shell talk to is wired up unconditionally, and it
+	// needs the same identities the S3 server would load from -s3.config.
+	f.s3ConfigFile = filerS3Options.config
+
 	switch {
 	case *f.metricsHttpIp != "":
 		// noting to do, use f.metricsHttpIp

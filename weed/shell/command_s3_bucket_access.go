@@ -10,9 +10,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -98,11 +96,10 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 		accessStr = strings.Join(normalized, ",")
 	}
 
-	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+	err = commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 
 		// Get or create user
-		identity, isNewUser, getErr := getOrCreateIdentity(client, *userName)
+		identity, isNewUser, getErr := getOrCreateIdentity(ctx, client, *userName)
 		if getErr != nil {
 			return getErr
 		}
@@ -123,24 +120,24 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 
 		// Save
 		if isNewUser {
-			if _, err := client.CreateUser(context.Background(), &iam_pb.CreateUserRequest{Identity: identity}); err != nil {
+			if _, err := client.CreateUser(ctx, &iam_pb.CreateUserRequest{Identity: identity}); err != nil {
 				return fmt.Errorf("failed to create user %s: %w", *userName, err)
 			}
 			fmt.Fprintf(writer, "Created user %q and set access on bucket %s.\n", *userName, *bucketName)
 		} else {
-			if _, err := client.UpdateUser(context.Background(), &iam_pb.UpdateUserRequest{Username: *userName, Identity: identity}); err != nil {
+			if _, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{Username: *userName, Identity: identity}); err != nil {
 				return fmt.Errorf("failed to update user %s: %w", *userName, err)
 			}
 			fmt.Fprintf(writer, "Updated access for user %q on bucket %s.\n", *userName, *bucketName)
 		}
 		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 
 	return err
 }
 
-func getOrCreateIdentity(client iam_pb.SeaweedIdentityAccessManagementClient, userName string) (*iam_pb.Identity, bool, error) {
-	resp, getErr := client.GetUser(context.Background(), &iam_pb.GetUserRequest{
+func getOrCreateIdentity(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient, userName string) (*iam_pb.Identity, bool, error) {
+	resp, getErr := client.GetUser(ctx, &iam_pb.GetUserRequest{
 		Username: userName,
 	})
 	if getErr == nil && resp.Identity != nil {

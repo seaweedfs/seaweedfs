@@ -102,12 +102,16 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 // the orphan-shard layout reported in #9212.
 func (l *DiskLocation) HasEcxFileOnDisk(collection string, vid needle.VolumeId) bool {
 	idxBase := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
-	if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() {
+	// A 0-byte .ecx is a corrupt stub left by a failed EC distribute copy;
+	// it cannot drive mount and must not steer placement decisions toward
+	// this disk. Treat it as absent so the caller falls through to a
+	// sibling disk that may hold a valid index.
+	if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
 		return true
 	}
 	if l.IdxDirectory != l.Directory {
 		dataBase := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
-		if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() {
+		if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
 			return true
 		}
 	}
@@ -130,7 +134,7 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 		if err == os.ErrNotExist {
 			return nil, os.ErrNotExist
 		}
-		return nil, fmt.Errorf("failed to create ec shard %d.%d: %v", vid, shardId, err)
+		return nil, fmt.Errorf("failed to create ec shard %d.%d: %w", vid, shardId, err)
 	}
 	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
@@ -138,7 +142,10 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 	if !found {
 		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create ec volume %d: %v", vid, err)
+			// Wrap with %w so MountEcShards / startup reconcile can use
+			// errors.Is(err, os.ErrNotExist) to decide whether to try the
+			// next local disk vs. surface the failure.
+			return nil, fmt.Errorf("failed to create ec volume %d: %w", vid, err)
 		}
 		l.ecVolumes[vid] = ecVolume
 	}
