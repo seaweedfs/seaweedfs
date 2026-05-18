@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
@@ -90,6 +91,36 @@ func Detection(
 	collections := collectECCollections(nodes, ecConfig)
 	if len(collections) == 0 {
 		glog.V(1).Infof("EC balance: no EC volumes found matching filters")
+		return nil, false, nil
+	}
+
+	// Exclude volumes that have a pending or in-flight erasure-coding task.
+	// Encoding and repair both register as TaskTypeErasureCoding; moving
+	// shards on a volume mid-encode is the race that produces the
+	// "shard 58.2 balanced while encoding is retrying" symptom — partial
+	// shard sets get rearranged while the encode is still trying to mount
+	// the original layout, leaving orphan and duplicate shards behind.
+	skippedDueToEC := 0
+	for collection, volumeIDs := range collections {
+		filtered := volumeIDs[:0]
+		for _, vid := range volumeIDs {
+			if clusterInfo.ActiveTopology.HasTask(vid, topology.TaskTypeErasureCoding) {
+				skippedDueToEC++
+				glog.V(2).Infof("EC balance: skip volume %d (collection=%q) because an erasure_coding task is pending or in flight", vid, collection)
+				continue
+			}
+			filtered = append(filtered, vid)
+		}
+		if len(filtered) == 0 {
+			delete(collections, collection)
+		} else {
+			collections[collection] = filtered
+		}
+	}
+	if skippedDueToEC > 0 {
+		glog.V(1).Infof("EC balance: skipped %d volume(s) with active erasure_coding tasks", skippedDueToEC)
+	}
+	if len(collections) == 0 {
 		return nil, false, nil
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -585,3 +586,142 @@ func TestExceedsImbalanceThreshold(t *testing.T) {
 
 // helper to avoid unused import
 var _ = erasure_coding.DataShardsCount
+
+// buildUnbalancedTwoVolumeTopology returns a topology where two EC volumes
+// each have all 14 shards stacked on one node, so the detection algorithm
+// has imbalance to act on. Both servers are on the same rack so the
+// imbalance shows up in phase 3 (within-rack) and phase 4 (global).
+func buildUnbalancedTwoVolumeTopology() *master_pb.TopologyInfo {
+	mkNode := func(id string, volumeID uint32) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id:      id,
+			Address: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"hdd": {
+					Type:            "hdd",
+					MaxVolumeCount:  100,
+					FreeVolumeCount: 50,
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: volumeID, Collection: "c", EcIndexBits: 0x3FFF, DiskId: 0},
+					},
+				},
+			},
+		}
+	}
+	return &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							mkNode("server1:8080", 100),
+							mkNode("server2:8080", 200),
+							// Third server is empty — phase 3 / 4 will
+							// propose moves to spread shards onto it.
+							{
+								Id:      "server3:8080",
+								Address: "server3:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										Type:            "hdd",
+										MaxVolumeCount:  100,
+										FreeVolumeCount: 100,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestDetection_ExcludesVolumesWithPendingErasureCodingTask verifies that
+// a volume with an in-flight (pending or assigned) erasure_coding task is
+// dropped from the ec_balance scan. Without this filter, ec_balance would
+// happily move shards of a volume that EC encoding is still trying to
+// complete — exactly the race observed where an encode retry repeatedly
+// failed and ec_balance moved shards in between attempts, leaving orphan
+// and duplicate shards on disk.
+func TestDetection_ExcludesVolumesWithPendingErasureCodingTask(t *testing.T) {
+	topoInfo := buildUnbalancedTwoVolumeTopology()
+	at := topology.NewActiveTopology(10)
+	if err := at.UpdateTopology(topoInfo); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+
+	// Volume 100 has a pending EC encoding task; volume 200 does not.
+	// The detector should produce moves for 200 but skip 100 entirely.
+	err := at.AddPendingTask(topology.TaskSpec{
+		TaskID:     "ec-encode-100",
+		TaskType:   topology.TaskTypeErasureCoding,
+		VolumeID:   100,
+		VolumeSize: 1 << 30,
+		Sources: []topology.TaskSourceSpec{
+			{ServerID: "server1:8080", DiskID: 0},
+		},
+		Destinations: []topology.TaskDestinationSpec{
+			{ServerID: "server3:8080", DiskID: 0},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddPendingTask: %v", err)
+	}
+
+	cfg := NewDefaultConfig()
+	cfg.MinServerCount = 1
+
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	results, _, err := Detection(context.Background(), nil, clusterInfo, cfg, 0)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatalf("expected ec_balance moves for volume 200; got none")
+	}
+	for _, r := range results {
+		if r.VolumeID == 100 {
+			t.Errorf("ec_balance emitted a move for volume 100 while an erasure_coding task is pending: %s", r.Reason)
+		}
+	}
+}
+
+// TestDetection_NoExclusionWhenNoActiveTask is a regression guard so the
+// filter does not accidentally drop volumes when ActiveTopology has no
+// erasure_coding task — the imbalance is still real and must be acted on.
+func TestDetection_NoExclusionWhenNoActiveTask(t *testing.T) {
+	topoInfo := buildUnbalancedTwoVolumeTopology()
+	at := topology.NewActiveTopology(10)
+	if err := at.UpdateTopology(topoInfo); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+
+	cfg := NewDefaultConfig()
+	cfg.MinServerCount = 1
+
+	results, _, err := Detection(context.Background(), nil, &types.ClusterInfo{ActiveTopology: at}, cfg, 0)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("expected ec_balance moves when no erasure_coding tasks are in flight; got none")
+	}
+
+	saw100, saw200 := false, false
+	for _, r := range results {
+		if r.VolumeID == 100 {
+			saw100 = true
+		}
+		if r.VolumeID == 200 {
+			saw200 = true
+		}
+	}
+	if !saw100 || !saw200 {
+		t.Errorf("expected moves for both volumes; saw100=%v saw200=%v", saw100, saw200)
+	}
+}
