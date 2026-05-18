@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -61,11 +58,7 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("-access is required")
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		// Get or create anonymous user
 		identity, isNew, err := getOrCreateAnonymousUser(ctx, client)
 		if err != nil {
@@ -120,7 +113,7 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 
 		fmt.Fprintf(writer, "Set anonymous access on bucket %q to: %s\n", *bucket, *access)
 		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }
 
 func getOrCreateAnonymousUser(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) (*iam_pb.Identity, bool, error) {

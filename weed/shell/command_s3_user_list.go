@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -44,11 +41,7 @@ type s3UserListEntry struct {
 }
 
 func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetConfiguration(ctx, &iam_pb.GetConfigurationRequest{})
 		if err != nil {
 			return err
@@ -75,7 +68,7 @@ func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.
 			result = []s3UserListEntry{}
 		}
 		return json.NewEncoder(writer).Encode(result)
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }
 
 // joinMax joins up to max strings with ", " and appends "..." if truncated.

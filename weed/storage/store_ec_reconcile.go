@@ -127,7 +127,11 @@ func (s *Store) findEcxIdxDirForVolume(collection string, vid needle.VolumeId) (
 			}
 			seen[scan] = true
 			base := erasure_coding.EcShardFileName(collection, scan, int(vid))
-			if info, err := os.Stat(base + ".ecx"); err == nil && !info.IsDir() {
+			// A 0-byte .ecx is not a usable index — EC distribute's writeToFile
+			// opens with O_TRUNC and can leave a stub on a mid-stream failure.
+			// Treat it the same as absent so the scan continues to a sibling
+			// disk that may hold a valid index.
+			if info, err := os.Stat(base + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
 				return scan, true
 			}
 		}
@@ -161,6 +165,17 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 				}
 				name := entry.Name()
 				if !strings.HasSuffix(name, ".ecx") {
+					continue
+				}
+				// A 0-byte .ecx is a corrupt stub from a failed copy and
+				// not a credible owner — skip it so the scan keeps looking
+				// for a real index on a sibling disk. Without this, an
+				// orphan-shard reconcile could pick the stub as owner and
+				// point NewEcVolume at it, which now fails by design
+				// (NewEcVolume rejects 0-byte .ecx), leaving the orphan
+				// shards unloaded even when a valid index exists nearby.
+				info, statErr := entry.Info()
+				if statErr != nil || info.Size() == 0 {
 					continue
 				}
 				base := name[:len(name)-len(".ecx")]

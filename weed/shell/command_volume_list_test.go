@@ -1,6 +1,10 @@
 package shell
 
 import (
+	"bytes"
+	"flag"
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
@@ -126,4 +130,66 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 	}
 
 	return topo
+}
+
+// TestWriteDataNodeInfo_SplitsCollapsedDisksByPhysicalDiskId verifies that
+// the verbose Disk block in volume.list shows one entry per physical disk
+// when the master collapsed several same-type disks under a single
+// DiskInfos["hdd"] map entry. Before the split, six physical disks would
+// appear as "Disk hdd ... id:0" with all volumes stacked on it.
+func TestWriteDataNodeInfo_SplitsCollapsedDisksByPhysicalDiskId(t *testing.T) {
+	dn := &master_pb.DataNodeInfo{
+		Id: "node1:8081",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"hdd": {
+				Type:           "hdd",
+				MaxVolumeCount: 60,
+				VolumeInfos: []*master_pb.VolumeInformationMessage{
+					{Id: 1, DiskId: 0, Collection: "c"},
+					{Id: 2, DiskId: 1, Collection: "c"},
+					{Id: 3, DiskId: 2, Collection: "c"},
+				},
+				EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+					{Id: 100, DiskId: 3, Collection: "c", EcIndexBits: 1},
+					{Id: 101, DiskId: 4, Collection: "c", EcIndexBits: 1},
+					{Id: 102, DiskId: 5, Collection: "c", EcIndexBits: 1},
+				},
+			},
+		},
+	}
+
+	c := &commandVolumeList{}
+	fs := flag.NewFlagSet("volume.list", flag.ContinueOnError)
+	c.collectionPattern = fs.String("collection", "", "")
+	c.dataCenter = fs.String("dataCenter", "", "")
+	c.rack = fs.String("rack", "", "")
+	c.dataNode = fs.String("dataNode", "", "")
+	c.readonly = fs.Bool("readonly", false, "")
+	c.writable = fs.Bool("writable", false, "")
+	c.volumeId = fs.Uint64("volumeId", 0, "")
+
+	var buf bytes.Buffer
+	verbosity := 5
+	rackInvocations := 0
+	c.writeDataNodeInfo(&buf, dn, verbosity, func() { rackInvocations++ })
+
+	out := buf.String()
+	// Match the "id:N\n" line ending so substring checks don't accept
+	// unrelated tokens like "ec volume id:101" as a match for id:1.
+	for diskID := 0; diskID < 6; diskID++ {
+		needle := fmt.Sprintf("id:%d\n", diskID)
+		if !strings.Contains(out, needle) {
+			t.Errorf("output missing %q; got:\n%s", needle, out)
+		}
+	}
+
+	// The parent's outRackInfo callback rides the same code path as the
+	// DataNode header — it fires from the inner writeDiskInfo callback,
+	// once per disk before the fix. After the fix the header guard runs
+	// outRackInfo at most once per DataNode. This proxy lets us pin the
+	// "header printed once" invariant without depending on the exact
+	// format of the rendered DataNode line.
+	if rackInvocations != 1 {
+		t.Errorf("DataNode header callback ran %d times; want 1 (regression: header printed once per split disk)", rackInvocations)
+	}
 }

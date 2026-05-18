@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -67,15 +64,12 @@ func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("parse configuration: %w", err)
 	}
 
-	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	err = commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.PutConfiguration(ctx, &iam_pb.PutConfigurationRequest{
 			Configuration: config,
 		})
 		return err
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 	if err != nil {
 		return fmt.Errorf("put IAM configuration: %w", err)
 	}
