@@ -293,7 +293,7 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Upload file to filer
-		err = h.uploadFileToFiler(fullPath, fileHeader)
+		err = h.uploadFileToFiler(r.Context(), fullPath, fileHeader)
 
 		if err != nil {
 			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
@@ -334,18 +334,17 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 // HTTP. This works whether or not the filer is running with -disableHttp=true,
 // since the bytes never traverse the filer's HTTP listener. The multipart
 // file is streamed through the chunked uploader, so the admin process never
-// buffers the entire payload in memory.
-func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *multipart.FileHeader) error {
+// buffers the entire payload in memory. The caller passes the request
+// context so a client disconnect cancels the in-flight chunk uploads instead
+// of letting them run to completion against the volume servers.
+func (h *FileBrowserHandlers) uploadFileToFiler(ctx context.Context, filePath string, fileHeader *multipart.FileHeader) error {
 	file, err := fileHeader.Open()
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
-	// No request timeout: large uploads should not be capped by an arbitrary
-	// short bound, and the chunked uploader handles its own per-chunk
-	// progress. The HTTP server's IdleTimeout still bounds dead connections.
-	return h.uploadFileGrpc(context.Background(), filePath, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), file)
+	return h.uploadFileGrpc(ctx, filePath, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), file)
 }
 
 // validateAndCleanFilePath validates and cleans the file path to prevent path traversal
@@ -392,16 +391,38 @@ func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
-	if err := h.downloadFileGrpc(r.Context(), filePath, w); err != nil {
-		// Headers may already be set if the failure happened mid-stream; in
-		// that case fall back to logging since writing JSON would corrupt
-		// the partially-written response.
-		if w.Header().Get("Content-Type") != "" {
+	tracker := &responseWriteTracker{ResponseWriter: w}
+	if err := h.downloadFileGrpc(r.Context(), filePath, tracker); err != nil {
+		// Once bytes have been written we can't switch to a JSON error body
+		// without corrupting the partial response — log and stop. Before any
+		// write the response is still uncommitted, so a 502 with details is
+		// safe.
+		if tracker.committed {
 			glog.Errorf("Error streaming file download: %v", err)
 			return
 		}
 		writeJSONError(w, http.StatusBadGateway, "Failed to fetch file: "+err.Error())
 	}
+}
+
+// responseWriteTracker wraps http.ResponseWriter to record whether the
+// response has been committed (status line + headers sent). DownloadFile
+// uses this instead of probing Header() so future header-setting code
+// reorganization can't silently break the "did we already send bytes?"
+// detection.
+type responseWriteTracker struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (t *responseWriteTracker) WriteHeader(code int) {
+	t.committed = true
+	t.ResponseWriter.WriteHeader(code)
+}
+
+func (t *responseWriteTracker) Write(p []byte) (int, error) {
+	t.committed = true
+	return t.ResponseWriter.Write(p)
 }
 
 // ViewFile handles file viewing requests (for text files, images, etc.)
