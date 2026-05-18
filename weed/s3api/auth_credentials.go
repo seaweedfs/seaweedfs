@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -305,6 +306,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	iam.m.Lock()
 	iam.isAuthEnabled = len(iam.identities) > 0
 	iam.m.Unlock()
+	if iam.isAuthEnabled {
+		hasAnyIdentity.Store(true)
+	}
 
 	if iam.isAuthEnabled {
 		// Credentials were configured - enable authentication
@@ -1055,9 +1059,23 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 func (iam *IdentityAccessManagement) updateAuthenticationState(identitiesCount int) bool {
 	if !iam.isAuthEnabled && identitiesCount > 0 {
 		iam.isAuthEnabled = true
+		hasAnyIdentity.Store(true)
 		return true
 	}
 	return false
+}
+
+// hasAnyIdentity is a package-level signal for callers (like `weed mini`'s
+// welcome banner) that need to know whether any S3 credentials are configured
+// without holding an IdentityAccessManagement reference. Flipped to true the
+// first time any identity is observed; never reset.
+var hasAnyIdentity atomic.Bool
+
+// HasAnyIdentity reports whether any S3 identity has been registered with the
+// IAM subsystem during the lifetime of this process (static config, env vars,
+// or filer-stored identities). Safe to call from any goroutine.
+func HasAnyIdentity() bool {
+	return hasAnyIdentity.Load()
 }
 
 func (iam *IdentityAccessManagement) IsStaticConfig() bool {
