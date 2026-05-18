@@ -247,7 +247,7 @@ func TestEcEndToEnd(t *testing.T) {
 		"job_type": "erasure_coding",
 		"admin_runtime": map[string]interface{}{
 			"enabled":                          true,
-			"detection_interval_seconds":       1,
+			"detection_interval_minutes":       1,
 			"global_execution_concurrency":     4,
 			"per_worker_execution_concurrency": 4,
 			"max_jobs_per_detection":           100,

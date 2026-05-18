@@ -487,7 +487,7 @@ func needsMaintenance(meta table.Metadata, config Config) bool {
 }
 
 // buildMaintenanceProposal creates a JobProposal for a table needing maintenance.
-func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress, resourceGroup string) *plugin_pb.JobProposal {
+func (h *Handler) buildMaintenanceProposal(t tableInfo, filerGrpcAddress, resourceGroup string) *plugin_pb.JobProposal {
 	dedupeKey := fmt.Sprintf("iceberg_maintenance:%s/%s/%s", t.BucketName, t.Namespace, t.TableName)
 
 	snapshotCount := len(t.Metadata.Snapshots())
@@ -504,7 +504,7 @@ func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress, resourceGr
 			"namespace":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: t.Namespace}},
 			"table_name":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: t.TableName}},
 			"table_path":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: t.TablePath}},
-			"filer_address": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: filerAddress}},
+			"filer_address": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: filerGrpcAddress}},
 		},
 		Labels: map[string]string{
 			"bucket":    t.BucketName,

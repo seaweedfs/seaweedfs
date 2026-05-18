@@ -376,12 +376,12 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 
 	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalMinutes.
 
-	// Get filer addresses from cluster context
-	filerAddresses := make([]string, 0)
+	// Get filer gRPC addresses from cluster context
+	filerGrpcAddresses := make([]string, 0)
 	if request.ClusterContext != nil {
-		filerAddresses = append(filerAddresses, request.ClusterContext.FilerGrpcAddresses...)
+		filerGrpcAddresses = append(filerGrpcAddresses, request.ClusterContext.FilerGrpcAddresses...)
 	}
-	if len(filerAddresses) == 0 {
+	if len(filerGrpcAddresses) == 0 {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
 		return h.sendEmptyDetection(sender)
 	}
@@ -396,7 +396,7 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 
 	// Connect to filer — try each address until one succeeds.
-	filerAddress, conn, err := h.connectToFiler(ctx, filerAddresses)
+	filerGrpcAddress, conn, err := h.connectToFiler(ctx, filerGrpcAddresses)
 	if err != nil {
 		return fmt.Errorf("connect to filer: %w", err)
 	}
@@ -424,7 +424,7 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(tables))
 	for _, t := range tables {
-		proposal := h.buildMaintenanceProposal(t, filerAddress, resourceGroupKey(t, resourceGroups.GroupBy))
+		proposal := h.buildMaintenanceProposal(t, filerGrpcAddress, resourceGroupKey(t, resourceGroups.GroupBy))
 		proposals = append(proposals, proposal)
 	}
 
@@ -463,10 +463,10 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	namespace := readStringConfig(params, "namespace", "")
 	tableName := readStringConfig(params, "table_name", "")
 	tablePath := readStringConfig(params, "table_path", "")
-	filerAddress := readStringConfig(params, "filer_address", "")
+	filerGrpcAddress := readStringConfig(params, "filer_address", "")
 
-	if bucketName == "" || namespace == "" || tableName == "" || filerAddress == "" {
-		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerAddress)
+	if bucketName == "" || namespace == "" || tableName == "" || filerGrpcAddress == "" {
+		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerGrpcAddress)
 	}
 	// Reject path traversal in bucket/namespace/table names.
 	for _, name := range []string{bucketName, namespace, tableName} {
@@ -509,9 +509,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	}
 
 	// Connect to filer
-	conn, err := h.dialFiler(ctx, filerAddress)
+	conn, err := h.dialFiler(ctx, filerGrpcAddress)
 	if err != nil {
-		return fmt.Errorf("connect to filer %s: %w", filerAddress, err)
+		return fmt.Errorf("connect to filer %s: %w", filerGrpcAddress, err)
 	}
 	defer conn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
@@ -640,11 +640,17 @@ func (h *Handler) sendEmptyDetection(sender pluginworker.DetectionSender) error 
 	})
 }
 
-func (h *Handler) dialFiler(ctx context.Context, address string) (*grpc.ClientConn, error) {
+// dialFiler connects to a filer at the given gRPC address. The address is
+// expected to be already dialable (host:grpcPort) as supplied via
+// ClusterContext.FilerGrpcAddresses or a job proposal parameter; we don't
+// run it through pb.ServerAddress.ToGrpcAddress because that helper's
+// fallback adds +10000 to any single-port address, turning a real gRPC
+// port like 18888 into a non-existent 28888.
+func (h *Handler) dialFiler(ctx context.Context, grpcAddress string) (*grpc.ClientConn, error) {
 	opCtx, opCancel := context.WithTimeout(ctx, filerConnectTimeout)
 	defer opCancel()
 
-	conn, err := pb.GrpcDial(opCtx, pb.ServerAddress(address).ToGrpcAddress(), false, h.grpcDialOption)
+	conn, err := pb.GrpcDial(opCtx, grpcAddress, false, h.grpcDialOption)
 	if err != nil {
 		return nil, err
 	}
@@ -658,17 +664,17 @@ func (h *Handler) dialFiler(ctx context.Context, address string) (*grpc.ClientCo
 	return conn, nil
 }
 
-// connectToFiler tries each filer address in order and returns the first
-// address whose gRPC connection and Ping request succeed.
-func (h *Handler) connectToFiler(ctx context.Context, addresses []string) (string, *grpc.ClientConn, error) {
+// connectToFiler tries each filer gRPC address in order and returns the
+// first address whose gRPC connection and Ping request succeed.
+func (h *Handler) connectToFiler(ctx context.Context, grpcAddresses []string) (string, *grpc.ClientConn, error) {
 	var lastErr error
-	for _, addr := range addresses {
-		conn, err := h.dialFiler(ctx, addr)
+	for _, grpcAddr := range grpcAddresses {
+		conn, err := h.dialFiler(ctx, grpcAddr)
 		if err != nil {
-			lastErr = fmt.Errorf("filer %s: %w", addr, err)
+			lastErr = fmt.Errorf("filer %s: %w", grpcAddr, err)
 			continue
 		}
-		return addr, conn, nil
+		return grpcAddr, conn, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no filer addresses provided")
