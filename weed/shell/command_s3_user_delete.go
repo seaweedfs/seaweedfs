@@ -6,11 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -46,13 +43,10 @@ func (c *commandS3UserDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return fmt.Errorf("-name is required")
 	}
 
-	err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	err := commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.DeleteUser(ctx, &iam_pb.DeleteUserRequest{Username: *name})
 		return err
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 	if err != nil {
 		return err
 	}

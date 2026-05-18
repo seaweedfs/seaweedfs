@@ -7,11 +7,8 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -49,11 +46,7 @@ func (c *commandS3AnonymousGet) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("-bucket is required")
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: anonymousUserName})
 		if err != nil {
 			st, ok := status.FromError(err)
@@ -85,5 +78,5 @@ func (c *commandS3AnonymousGet) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }
