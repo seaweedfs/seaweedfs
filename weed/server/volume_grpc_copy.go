@@ -342,7 +342,19 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	if err != nil {
 		return modifiedTsNs, fmt.Errorf("open file %s: %w", fileName, err)
 	}
-	defer dst.Close()
+	// Track the destination handle through a closer that runs at most once.
+	// On Windows os.Remove fails while the file is still open, so any path
+	// that wants to delete the file we just created must close the handle
+	// first. The deferred call here is the safety net for normal returns.
+	dstClosed := false
+	closeDst := func() {
+		if dstClosed {
+			return
+		}
+		dstClosed = true
+		_ = dst.Close()
+	}
+	defer closeDst()
 
 	// removeIncomplete deletes the partially-written file we just opened
 	// with O_TRUNC. Used on stream / write / cancellation errors so a
@@ -354,6 +366,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 		if isAppend {
 			return
 		}
+		closeDst()
 		if removeErr := os.Remove(fileName); removeErr != nil && !os.IsNotExist(removeErr) {
 			glog.Warningf("failed to remove incomplete file %s after %s: %v", fileName, reason, removeErr)
 		} else if removeErr == nil {
@@ -392,6 +405,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	// Note: We check modifiedTsNs (not progressedBytes) because an empty source file
 	// is valid and should result in an empty destination file.
 	if modifiedTsNs == 0 && !isAppend {
+		closeDst()
 		if removeErr := os.Remove(fileName); removeErr != nil {
 			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
 		} else {

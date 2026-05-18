@@ -296,8 +296,20 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			// it later. Catch that at distribute time so the orchestrator
 			// can pick a different source rather than learning about it
 			// at mount.
+			// Stat failure must not silently pass. doCopyFile reported
+			// success, but if the file is gone, unreadable, or a directory
+			// somehow, the orchestrator should learn now — at mount time
+			// the operator only sees "no .ecx found" with no useful context
+			// about which step actually failed.
 			ecxPath := indexBaseFileName + ".ecx"
-			if info, statErr := os.Stat(ecxPath); statErr == nil && !info.IsDir() && info.Size() == 0 {
+			info, statErr := os.Stat(ecxPath)
+			if statErr != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: stat copied .ecx %s: %w", req.VolumeId, ecxPath, statErr)
+			}
+			if info.IsDir() {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: copied .ecx path %s is a directory", req.VolumeId, ecxPath)
+			}
+			if info.Size() == 0 {
 				if removeErr := os.Remove(ecxPath); removeErr != nil && !os.IsNotExist(removeErr) {
 					glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", req.VolumeId, ecxPath, removeErr)
 				}
