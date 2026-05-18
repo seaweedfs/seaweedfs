@@ -115,6 +115,7 @@ func buildErasureCodingExecutionPlan(params *worker_pb.TaskParams) map[string]in
 			source.DataCenter,
 			source.Rack,
 			source.VolumeId,
+			source.DiskId,
 			source.ShardIds,
 			dataShards,
 		))
@@ -132,6 +133,7 @@ func buildErasureCodingExecutionPlan(params *worker_pb.TaskParams) map[string]in
 			target.DataCenter,
 			target.Rack,
 			target.VolumeId,
+			target.DiskId,
 			target.ShardIds,
 			dataShards,
 		))
@@ -147,6 +149,7 @@ func buildErasureCodingExecutionPlan(params *worker_pb.TaskParams) map[string]in
 				"target_data_center": strings.TrimSpace(target.DataCenter),
 				"target_rack":        strings.TrimSpace(target.Rack),
 				"target_volume_id":   int(target.VolumeId),
+				"target_disk_id":     int(target.DiskId),
 			})
 		}
 	}
@@ -182,6 +185,7 @@ func buildExecutionEndpoint(
 	dataCenter string,
 	rack string,
 	volumeID uint32,
+	diskID uint32,
 	shardIDs []uint32,
 	dataShardCount int,
 ) map[string]interface{} {
@@ -201,6 +205,7 @@ func buildExecutionEndpoint(
 		"data_center":      strings.TrimSpace(dataCenter),
 		"rack":             strings.TrimSpace(rack),
 		"volume_id":        int(volumeID),
+		"disk_id":          int(diskID),
 		"shard_ids":        allShards,
 		"data_shard_ids":   dataShards,
 		"parity_shard_ids": parityShards,
