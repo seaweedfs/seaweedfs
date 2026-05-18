@@ -127,7 +127,11 @@ func (s *Store) findEcxIdxDirForVolume(collection string, vid needle.VolumeId) (
 			}
 			seen[scan] = true
 			base := erasure_coding.EcShardFileName(collection, scan, int(vid))
-			if info, err := os.Stat(base + ".ecx"); err == nil && !info.IsDir() {
+			// A 0-byte .ecx is not a usable index — EC distribute's writeToFile
+			// opens with O_TRUNC and can leave a stub on a mid-stream failure.
+			// Treat it the same as absent so the scan continues to a sibling
+			// disk that may hold a valid index.
+			if info, err := os.Stat(base + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
 				return scan, true
 			}
 		}

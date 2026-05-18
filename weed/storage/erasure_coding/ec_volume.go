@@ -67,7 +67,12 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	dataBaseFileName := EcShardFileName(collection, dir, int(vid))
 	indexBaseFileName := EcShardFileName(collection, dirIdx, int(vid))
 
-	// open ecx file
+	// open ecx file. Wrap errors with %w so callers walking up the stack
+	// (notably Store.MountEcShards) can use errors.Is(err, os.ErrNotExist)
+	// to decide whether to try the next local disk vs. bail. A 0-byte .ecx
+	// is treated as missing: writeToFile uses O_TRUNC and may leave an
+	// empty stub on a mid-stream copy failure during EC distribute, and an
+	// empty index is not a valid mount target.
 	ev.ecxActualDir = dirIdx
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
 		if dirIdx != dir && os.IsNotExist(err) {
@@ -75,18 +80,27 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			firstErr := err
 			glog.V(1).Infof("ecx file not found at %s.ecx, falling back to %s.ecx", indexBaseFileName, dataBaseFileName)
 			if ev.ecxFile, err = os.OpenFile(dataBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %v", indexBaseFileName, firstErr, dataBaseFileName, err)
+				if os.IsNotExist(err) {
+					return nil, fmt.Errorf("open ecx index %s.ecx (fallback %s.ecx): %w", indexBaseFileName, dataBaseFileName, os.ErrNotExist)
+				}
+				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %w", indexBaseFileName, firstErr, dataBaseFileName, err)
 			}
 			indexBaseFileName = dataBaseFileName
 			ev.ecxActualDir = dir
+		} else if os.IsNotExist(err) {
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, os.ErrNotExist)
 		} else {
-			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
 		}
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
 	if statErr != nil {
 		_ = ev.ecxFile.Close()
-		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %v", indexBaseFileName, statErr)
+		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %w", indexBaseFileName, statErr)
+	}
+	if ecxFi.Size() == 0 {
+		_ = ev.ecxFile.Close()
+		return nil, fmt.Errorf("ec volume index %s.ecx is 0 bytes: %w", indexBaseFileName, os.ErrNotExist)
 	}
 	ev.ecxFileSize = ecxFi.Size()
 	ev.ecxCreatedAt = ecxFi.ModTime()
