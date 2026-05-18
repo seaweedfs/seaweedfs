@@ -205,8 +205,21 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 		t.Fatalf("VolumeEcShardsRebuild expected to rebuild shard %d, got %v",
 			repairTargetShard, rebuildResp.GetRebuiltShardIds())
 	}
-	if _, statErr := os.Stat(shardPath); statErr != nil {
-		t.Fatalf("rebuild did not restore shard %d on disk 0 (%s): %v", repairTargetShard, shardPath, statErr)
+	// The rebuilder picks whichever disk hosts the most shards plus a
+	// matching .ecx. After the boot-time mirror runs, every shard-
+	// bearing disk owns its own sidecars, so rebuild can legitimately
+	// restore the shard on either disk — accept both.
+	rebuiltOn := -1
+	for i, dir := range dataDirs {
+		candidate := filepath.Join(dir, shardFileName(collection, volumeID, repairTargetShard))
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			rebuiltOn = i
+			shardPath = candidate
+			break
+		}
+	}
+	if rebuiltOn < 0 {
+		t.Fatalf("rebuild did not restore shard %d on any disk (checked %v)", repairTargetShard, dataDirs)
 	}
 
 	if _, err := grpcClient3.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
