@@ -12,6 +12,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// putBucketRequestPaymentMaxBodyBytes caps the request body for PutBucketRequestPayment
+// to prevent DoS via large payloads. The valid payload is a few hundred bytes.
+const putBucketRequestPaymentMaxBodyBytes = 64 * 1024
+
 type policyStatusResponse struct {
 	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ PolicyStatus"`
 	IsPublic bool     `xml:"IsPublic"`
@@ -83,12 +87,13 @@ func (s3a *S3ApiServer) PutBucketRequestPaymentHandler(w http.ResponseWriter, r 
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, putBucketRequestPaymentMaxBodyBytes)
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
-	defer r.Body.Close()
 
 	var cfg RequestPaymentConfiguration
 	if err := xml.Unmarshal(body, &cfg); err != nil {
