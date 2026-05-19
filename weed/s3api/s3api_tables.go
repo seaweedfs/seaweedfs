@@ -84,11 +84,20 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	targetMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
 		return strings.HasPrefix(r.Header.Get("X-Amz-Target"), "S3Tables.")
 	}
+	// serviceMatcher disambiguates routes whose path could also be a regular
+	// S3 bucket path (e.g. /buckets, /get-table) by requiring the AWS V4
+	// credential scope to target the s3tables service. Without it, a client
+	// listing objects on a bucket literally named "buckets" would be
+	// misrouted to ListTableBuckets and receive a JSON response that AWS SDK
+	// V2 cannot parse as XML.
+	serviceMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
+		return isS3TablesSignedRequest(r)
+	}
 	router.Methods(http.MethodPost).Path("/").MatcherFunc(targetMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.S3TablesHandler), "S3Tables-Target"))
-	router.Methods(http.MethodPut).Path("/buckets").
+	router.Methods(http.MethodPut).Path("/buckets").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateTableBucket", buildCreateTableBucketRequest)), "S3Tables-CreateTableBucket"))
-	router.Methods(http.MethodGet).Path("/buckets").
+	router.Methods(http.MethodGet).Path("/buckets").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTableBuckets", buildListTableBucketsRequest)), "S3Tables-ListTableBuckets"))
 	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableBucket", buildTableBucketArnRequest)), "S3Tables-GetTableBucket"))
@@ -131,7 +140,7 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
-	router.Methods(http.MethodGet).Path("/get-table").
+	router.Methods(http.MethodGet).Path("/get-table").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTable", buildGetTableRequest)), "S3Tables-GetTable"))
 
 	glog.V(1).Infof("S3 Tables API enabled")
@@ -621,6 +630,45 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 		ResourceARN: resourceARN,
 		TagKeys:     tagKeys,
 	}, nil
+}
+
+// isS3TablesSignedRequest reports whether the AWS V4 credential scope on r
+// targets the s3tables service. The credential scope appears in the
+// Authorization header (Credential=AK/DATE/REGION/SERVICE/aws4_request) for
+// signed requests and in the X-Amz-Credential query parameter for presigned
+// requests. Regular S3 requests use SERVICE=s3, S3 Tables requests use
+// SERVICE=s3tables, so the scope is a reliable disambiguator for paths that
+// both APIs share (e.g. /buckets, /get-table).
+func isS3TablesSignedRequest(r *http.Request) bool {
+	if scope := extractCredentialScope(r); scope != "" {
+		parts := strings.Split(scope, "/")
+		// Credential scope is AK/DATE/REGION/SERVICE/aws4_request — service
+		// is the second-to-last segment.
+		if len(parts) >= 2 && parts[len(parts)-2] == "s3tables" {
+			return true
+		}
+	}
+	return false
+}
+
+// extractCredentialScope returns the raw credential value from either the
+// Authorization header or the X-Amz-Credential query parameter, without the
+// "Credential=" prefix. Returns the empty string when neither is present.
+func extractCredentialScope(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		idx := strings.Index(auth, "Credential=")
+		if idx >= 0 {
+			tail := auth[idx+len("Credential="):]
+			if comma := strings.IndexByte(tail, ','); comma >= 0 {
+				tail = tail[:comma]
+			}
+			return strings.TrimSpace(tail)
+		}
+	}
+	if cred := r.URL.Query().Get("X-Amz-Credential"); cred != "" {
+		return cred
+	}
+	return ""
 }
 
 // authenticateS3Tables wraps the handler with IAM authentication using AuthSignatureOnly
