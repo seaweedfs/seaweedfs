@@ -141,7 +141,7 @@ require (
 	github.com/linkedin/goavro/v2 v2.15.0
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/parquet-go/parquet-go v0.28.0
+	github.com/parquet-go/parquet-go v0.30.1
 	github.com/pkg/sftp v1.13.10
 	github.com/rabbitmq/amqp091-go v1.11.0
 	github.com/rclone/rclone v1.74.1
