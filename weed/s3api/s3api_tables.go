@@ -632,13 +632,21 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 	}, nil
 }
 
-// isS3TablesSignedRequest reports whether the AWS V4 credential scope on r
-// targets the s3tables service. The credential scope appears in the
-// Authorization header (Credential=AK/DATE/REGION/SERVICE/aws4_request) for
-// signed requests and in the X-Amz-Credential query parameter for presigned
-// requests. Regular S3 requests use SERVICE=s3, S3 Tables requests use
-// SERVICE=s3tables, so the scope is a reliable disambiguator for paths that
-// both APIs share (e.g. /buckets, /get-table).
+// awsJSONRPCContentType is the AWS JSON RPC 1.1 protocol body content type
+// used by S3 Tables REST clients. Regular S3 SDKs never send this type
+// (S3 uses XML), so it is a reliable secondary signal for S3 Tables intent
+// when the request is not AWS V4 signed (e.g. internal harness traffic).
+const awsJSONRPCContentType = "application/x-amz-json-1.1"
+
+// isS3TablesSignedRequest reports whether the request is targeting the
+// S3 Tables service. The primary signal is the AWS V4 credential scope,
+// which names SERVICE=s3tables for S3 Tables SDKs and SERVICE=s3 for the
+// regular S3 SDKs. The credential scope appears in the Authorization
+// header (Credential=AK/DATE/REGION/SERVICE/aws4_request) for signed
+// requests and in the X-Amz-Credential query parameter for presigned
+// requests. As a fallback, the canonical AWS JSON RPC content type is
+// accepted so unsigned S3 Tables traffic (test harnesses, default-allow
+// deployments) still reaches the right handler.
 func isS3TablesSignedRequest(r *http.Request) bool {
 	if scope := extractCredentialScope(r); scope != "" {
 		parts := strings.Split(scope, "/")
@@ -647,8 +655,27 @@ func isS3TablesSignedRequest(r *http.Request) bool {
 		if len(parts) >= 2 && parts[len(parts)-2] == "s3tables" {
 			return true
 		}
+		// A request signed for a non-s3tables service (s3, sts, etc.) is
+		// definitively not S3 Tables — do not fall through to the content
+		// type check.
+		return false
+	}
+	if hasAWSJSONRPCContentType(r.Header.Get("Content-Type")) {
+		return true
 	}
 	return false
+}
+
+// hasAWSJSONRPCContentType reports whether ct is the canonical AWS JSON
+// RPC 1.1 content type, ignoring optional parameters like "; charset=utf-8".
+func hasAWSJSONRPCContentType(ct string) bool {
+	if ct == "" {
+		return false
+	}
+	if semi := strings.IndexByte(ct, ';'); semi >= 0 {
+		ct = ct[:semi]
+	}
+	return strings.EqualFold(strings.TrimSpace(ct), awsJSONRPCContentType)
 }
 
 // extractCredentialScope returns the raw credential value from either the

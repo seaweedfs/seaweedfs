@@ -3,6 +3,7 @@ package s3api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -13,10 +14,11 @@ import (
 // the two APIs share (e.g. /buckets, /get-table).
 func TestIsS3TablesSignedRequest(t *testing.T) {
 	cases := []struct {
-		name string
-		auth string
-		cred string
-		want bool
+		name        string
+		auth        string
+		cred        string
+		contentType string
+		want        bool
 	}{
 		{
 			name: "regular S3 auth header",
@@ -52,6 +54,27 @@ func TestIsS3TablesSignedRequest(t *testing.T) {
 			auth: "AWS4-HMAC-SHA256 Credential=s3tablesAKIA/20260101/us-east-1/s3/aws4_request, Signature=zzz",
 			want: false,
 		},
+		{
+			name:        "unsigned with AWS JSON RPC content type",
+			contentType: "application/x-amz-json-1.1",
+			want:        true,
+		},
+		{
+			name:        "unsigned with AWS JSON RPC content type and charset",
+			contentType: "application/x-amz-json-1.1; charset=utf-8",
+			want:        true,
+		},
+		{
+			name:        "JSON content type must not override S3-signed scope",
+			auth:        "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, Signature=deadbeef",
+			contentType: "application/x-amz-json-1.1",
+			want:        false,
+		},
+		{
+			name:        "regular JSON content type does not match",
+			contentType: "application/json",
+			want:        false,
+		},
 	}
 
 	for _, tc := range cases {
@@ -64,6 +87,9 @@ func TestIsS3TablesSignedRequest(t *testing.T) {
 				q := req.URL.Query()
 				q.Set("X-Amz-Credential", tc.cred)
 				req.URL.RawQuery = q.Encode()
+			}
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
 			}
 			if got := isS3TablesSignedRequest(req); got != tc.want {
 				t.Fatalf("isS3TablesSignedRequest=%v, want %v", got, tc.want)
@@ -134,6 +160,30 @@ func TestRouting_CreateBucketNamedBuckets(t *testing.T) {
 	}
 	if tmpl, _ := match.Route.GetPathTemplate(); tmpl == "/buckets" {
 		t.Fatalf("PUT /buckets signed for service=s3 matched the S3 Tables CreateTableBucket route (Path=%q); it must fall through to the bucket subrouter", tmpl)
+	}
+}
+
+// TestRouting_UnsignedS3TablesCreateTableBucket mirrors the unsigned
+// PUT /buckets traffic that the Iceberg catalog integration tests send
+// (Content-Type: application/x-amz-json-1.1, no AWS V4 signature). The
+// JSON-RPC content type must be treated as an S3 Tables signal so these
+// requests reach CreateTableBucket instead of falling through to the
+// regular S3 CreateBucket handler.
+func TestRouting_UnsignedS3TablesCreateTableBucket(t *testing.T) {
+	router := mux.NewRouter()
+	s3a := setupRoutingTestServer(t)
+	s3a.registerRouter(router)
+
+	req, _ := http.NewRequest(http.MethodPut, "/buckets", strings.NewReader(`{"name":"warehouse-x"}`))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+
+	var match mux.RouteMatch
+	if !router.Match(req, &match) {
+		t.Fatalf("expected unsigned PUT /buckets with JSON RPC content type to match a route; got no match: %v", match.MatchErr)
+	}
+	tmpl, _ := match.Route.GetPathTemplate()
+	if tmpl != "/buckets" {
+		t.Fatalf("unsigned PUT /buckets with JSON RPC content type matched %q; want the S3 Tables route /buckets", tmpl)
 	}
 }
 
