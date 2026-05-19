@@ -112,11 +112,21 @@ func (s3a *S3ApiServer) PutBucketRequestPaymentHandler(w http.ResponseWriter, r 
 // GetBucketAccelerateConfigurationHandler returns a static Suspended status.
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAccelerateConfiguration.html
 func (s3a *S3ApiServer) GetBucketAccelerateConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
 	writeSuccessResponseXML(w, r, accelerateConfigurationResponse{Status: "Suspended"})
 }
 
 // GetBucketLoggingHandler returns an empty BucketLoggingStatus (logging disabled).
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLogging.html
 func (s3a *S3ApiServer) GetBucketLoggingHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
 	writeSuccessResponseXML(w, r, bucketLoggingStatusResponse{})
 }
