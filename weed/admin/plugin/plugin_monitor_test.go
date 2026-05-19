@@ -423,6 +423,7 @@ func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
 				DataCenter: "dc1",
 				Rack:       "rack1",
 				VolumeId:   29,
+				DiskId:     5,
 			},
 		},
 		Targets: []*worker_pb.TaskTarget{
@@ -431,6 +432,7 @@ func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
 				DataCenter: "dc1",
 				Rack:       "rack2",
 				VolumeId:   29,
+				DiskId:     2,
 				ShardIds:   []uint32{0, 10},
 			},
 			{
@@ -438,6 +440,7 @@ func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
 				DataCenter: "dc2",
 				Rack:       "rack3",
 				VolumeId:   29,
+				DiskId:     3,
 				ShardIds:   []uint32{1, 11},
 			},
 		},
@@ -486,9 +489,27 @@ func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
 	if plan["volume_id"] != float64(29) {
 		t.Fatalf("unexpected execution plan volume id: %+v", plan["volume_id"])
 	}
+	sourcesRaw, ok := plan["sources"].([]interface{})
+	if !ok || len(sourcesRaw) != 1 {
+		t.Fatalf("unexpected sources in execution plan: %+v", plan["sources"])
+	}
+	firstSource, ok := sourcesRaw[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected source payload: %+v", sourcesRaw[0])
+	}
+	if firstSource["disk_id"] != float64(5) {
+		t.Fatalf("unexpected source disk_id: %+v", firstSource["disk_id"])
+	}
 	targets, ok := plan["targets"].([]interface{})
 	if !ok || len(targets) != 2 {
 		t.Fatalf("unexpected targets in execution plan: %+v", plan["targets"])
+	}
+	firstTarget, ok := targets[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected target payload: %+v", targets[0])
+	}
+	if firstTarget["disk_id"] != float64(2) {
+		t.Fatalf("unexpected target disk_id: %+v", firstTarget["disk_id"])
 	}
 	assignments, ok := plan["shard_assignments"].([]interface{})
 	if !ok || len(assignments) != 4 {
@@ -500,6 +521,16 @@ func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
 	}
 	if firstAssignment["shard_id"] != float64(0) || firstAssignment["kind"] != "data" {
 		t.Fatalf("unexpected first assignment: %+v", firstAssignment)
+	}
+	if firstAssignment["target_disk_id"] != float64(2) {
+		t.Fatalf("unexpected first assignment target_disk_id: %+v", firstAssignment["target_disk_id"])
+	}
+	secondAssignment, ok := assignments[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected second assignment payload: %+v", assignments[1])
+	}
+	if secondAssignment["shard_id"] != float64(1) || secondAssignment["target_disk_id"] != float64(3) {
+		t.Fatalf("unexpected second assignment: %+v", secondAssignment)
 	}
 }
 
