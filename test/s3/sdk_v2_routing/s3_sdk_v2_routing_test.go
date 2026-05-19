@@ -15,6 +15,7 @@ package sdkv2routing_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -157,9 +158,9 @@ func TestPutGetObject_OnBucketNamedBuckets(t *testing.T) {
 	require.NoError(t, err)
 	defer out.Body.Close()
 
-	buf := make([]byte, len(body))
-	n, _ := out.Body.Read(buf)
-	require.Equal(t, body, string(buf[:n]))
+	got, err := io.ReadAll(out.Body)
+	require.NoError(t, err)
+	require.Equal(t, body, string(got))
 }
 
 // TestListObjectsV2_OnBucketNamedGetTable covers the second colliding

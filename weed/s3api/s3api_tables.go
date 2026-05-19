@@ -84,12 +84,13 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	targetMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
 		return strings.HasPrefix(r.Header.Get("X-Amz-Target"), "S3Tables.")
 	}
-	// serviceMatcher disambiguates routes whose path could also be a regular
-	// S3 bucket path (e.g. /buckets, /get-table) by requiring the AWS V4
-	// credential scope to target the s3tables service. Without it, a client
-	// listing objects on a bucket literally named "buckets" would be
-	// misrouted to ListTableBuckets and receive a JSON response that AWS SDK
-	// V2 cannot parse as XML.
+	// serviceMatcher gates every S3 Tables route so it only matches when the
+	// request is genuinely targeting the s3tables service. The bare paths
+	// (/buckets, /get-table) collide with regular S3 buckets of the same
+	// name; the ARN-bearing paths (/buckets/<arn>, /namespaces/<arn>, ...)
+	// could collide with object keys that look like S3 Tables ARNs inside a
+	// bucket named "buckets", "namespaces", "tables", or "tag". A single
+	// matcher applied to every route closes both classes of collision.
 	serviceMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
 		return isS3TablesSignedRequest(r)
 	}
@@ -99,45 +100,45 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateTableBucket", buildCreateTableBucketRequest)), "S3Tables-CreateTableBucket"))
 	router.Methods(http.MethodGet).Path("/buckets").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTableBuckets", buildListTableBucketsRequest)), "S3Tables-ListTableBuckets"))
-	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}").
+	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableBucket", buildTableBucketArnRequest)), "S3Tables-GetTableBucket"))
-	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}").
+	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTableBucket", buildDeleteTableBucketRequest)), "S3Tables-DeleteTableBucket"))
-	router.Methods(http.MethodPut).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/policy").
+	router.Methods(http.MethodPut).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTableBucketPolicy", buildPutTableBucketPolicyRequest)), "S3Tables-PutTableBucketPolicy"))
-	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/policy").
+	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableBucketPolicy", buildGetTableBucketPolicyRequest)), "S3Tables-GetTableBucketPolicy"))
-	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/policy").
+	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTableBucketPolicy", buildDeleteTableBucketPolicyRequest)), "S3Tables-DeleteTableBucketPolicy"))
 
-	router.Methods(http.MethodPut).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}").
+	router.Methods(http.MethodPut).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateNamespace", buildCreateNamespaceRequest)), "S3Tables-CreateNamespace"))
-	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}").
+	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListNamespaces", buildListNamespacesRequest)), "S3Tables-ListNamespaces"))
-	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}").
+	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetNamespace", buildGetNamespaceRequest)), "S3Tables-GetNamespace"))
-	router.Methods(http.MethodDelete).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}").
+	router.Methods(http.MethodDelete).Path("/namespaces/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteNamespace", buildDeleteNamespaceRequest)), "S3Tables-DeleteNamespace"))
 
-	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}").
+	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateTable", buildCreateTableRequest)), "S3Tables-CreateTable"))
-	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}").
+	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTables", buildListTablesRequest)), "S3Tables-ListTables"))
-	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}").
+	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTable", buildDeleteTableRequest)), "S3Tables-DeleteTable"))
 
-	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").
+	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTablePolicy", buildPutTablePolicyRequest)), "S3Tables-PutTablePolicy"))
-	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").
+	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTablePolicy", buildGetTablePolicyRequest)), "S3Tables-GetTablePolicy"))
-	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").
+	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTablePolicy", buildDeleteTablePolicyRequest)), "S3Tables-DeleteTablePolicy"))
 
-	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
+	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("TagResource", buildTagResourceRequest)), "S3Tables-TagResource"))
-	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
+	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTagsForResource", buildListTagsForResourceRequest)), "S3Tables-ListTagsForResource"))
-	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
+	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
 	router.Methods(http.MethodGet).Path("/get-table").MatcherFunc(serviceMatcher).
@@ -649,21 +650,16 @@ const awsJSONRPCContentType = "application/x-amz-json-1.1"
 // deployments) still reaches the right handler.
 func isS3TablesSignedRequest(r *http.Request) bool {
 	if scope := extractCredentialScope(r); scope != "" {
-		parts := strings.Split(scope, "/")
-		// Credential scope is AK/DATE/REGION/SERVICE/aws4_request — service
-		// is the second-to-last segment.
-		if len(parts) >= 2 && parts[len(parts)-2] == "s3tables" {
-			return true
-		}
-		// A request signed for a non-s3tables service (s3, sts, etc.) is
-		// definitively not S3 Tables — do not fall through to the content
-		// type check.
-		return false
+		// Credential scope is AK/DATE/REGION/SERVICE/aws4_request, so a
+		// /s3tables/ substring only matches when SERVICE itself is the
+		// s3tables service — slashes do not appear inside any other
+		// component, including access keys (which are alphanumeric).
+		// A signed request for any other service (s3, sts, ...) is
+		// definitively not S3 Tables, so we do not fall through to the
+		// content-type check.
+		return strings.Contains(scope, "/s3tables/")
 	}
-	if hasAWSJSONRPCContentType(r.Header.Get("Content-Type")) {
-		return true
-	}
-	return false
+	return hasAWSJSONRPCContentType(r.Header.Get("Content-Type"))
 }
 
 // hasAWSJSONRPCContentType reports whether ct is the canonical AWS JSON
