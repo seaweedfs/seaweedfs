@@ -13,10 +13,10 @@ func (n *Needle) readNeedleTail(needleBody []byte, version Version) error {
 	if len(n.Data) > 0 {
 		expectedChecksum := CRC(util.BytesToUint32(needleBody[0:NeedleChecksumSize]))
 		dataChecksum := NewCRC(n.Data)
-		if expectedChecksum != dataChecksum {
-			// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
-			// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
-			// and switch appeared in version 3.09.
+		if expectedChecksum != dataChecksum && uint32(expectedChecksum) != dataChecksum.Value() {
+			// crc.Value() is the deprecated legacy transform used before commit 056c480eb
+			// (volume server <3.09). Accept either encoding so .dat files written by older
+			// versions still verify after an upgrade.
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 			return fmt.Errorf("invalid CRC for needle %v (got %08x, want %08x), data on disk corrupted: %w", n.Id, dataChecksum, expectedChecksum, ErrorCorrupted)
 		}
