@@ -81,6 +81,51 @@ func TestScrubVolumeData(t *testing.T) {
 	}
 }
 
+// TestCheckVolumeDataIntegrityWithDeletionTombstone guards the size argument
+// passed to ReadData when verifying a trailing deletion tombstone. The .idx
+// entry carries TombstoneFileSize (-1) but the appended tombstone needle in
+// .dat carries Size=0. Forwarding the .idx size into ReadData fails the size
+// check, activates the 32GB 4-byte-offset wrap-around retry, and surfaces EOF;
+// CheckVolumeDataIntegrity then treats the volume as corrupt and the loader
+// marks every such volume read-only on startup.
+func TestCheckVolumeDataIntegrityWithDeletionTombstone(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 3; i++ {
+		n := newRandomNeedle(uint64(i))
+		if _, _, _, err := v.writeNeedle2(n, true, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	// Delete a live needle so a tombstone (Size=0 on disk, -1 in idx) is the
+	// last entry the integrity check examines.
+	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
+		t.Fatalf("delete needle: %v", err)
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+
+	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	defer idxFile.Close()
+
+	if _, err := CheckVolumeDataIntegrity(v, idxFile); err != nil {
+		t.Fatalf("CheckVolumeDataIntegrity should succeed with a trailing deletion tombstone: %v", err)
+	}
+}
+
 // TestMaxNeedleEnd ensures the needle map's MaxNeedleEnd accumulator lets
 // volume.load() detect an .idx that references bytes past the end of the .dat
 // — the deeper-than-tail corruption shape from issue #8928 that the existing

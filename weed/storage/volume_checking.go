@@ -243,7 +243,11 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 
 func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version, offset int64, key types.NeedleId) (lastAppendAtNs uint64, err error) {
 	n := new(needle.Needle)
-	size := types.TombstoneFileSize
+	// Tombstones are appended with DataSize=0, so the on-disk header carries
+	// Size=0. TombstoneFileSize (-1) lives only in the .idx; passing it to
+	// ReadData fails the size check and triggers the 32GB wrap-around retry,
+	// which reads past EOF and falsely marks the volume read-only.
+	size := types.Size(0)
 	if err = n.ReadData(datFile, offset, size, v); err != nil {
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+needle.GetActualSize(size, v), err)
 	}
