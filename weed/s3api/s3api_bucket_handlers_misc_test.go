@@ -103,7 +103,7 @@ func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
 }
 
 func TestGetBucketAccelerateConfiguration(t *testing.T) {
-	s3a := &S3ApiServer{}
+	s3a := newMiscTestServer(t, "b")
 	req := newBucketRequest(http.MethodGet, "b", "accelerate=", "")
 	rec := httptest.NewRecorder()
 
@@ -112,7 +112,10 @@ func TestGetBucketAccelerateConfiguration(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	body, _ := io.ReadAll(rec.Body)
+	body, err := io.ReadAll(rec.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
 	got := string(body)
 	if !strings.Contains(got, "<AccelerateConfiguration") {
 		t.Fatalf("missing root element: %s", got)
@@ -126,7 +129,7 @@ func TestGetBucketAccelerateConfiguration(t *testing.T) {
 }
 
 func TestGetBucketLogging(t *testing.T) {
-	s3a := &S3ApiServer{}
+	s3a := newMiscTestServer(t, "b")
 	req := newBucketRequest(http.MethodGet, "b", "logging=", "")
 	rec := httptest.NewRecorder()
 
