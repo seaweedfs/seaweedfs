@@ -5,13 +5,22 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestBucketConfigStubs(t *testing.T) {
 	const bucket = "stub-bucket"
-	s3a := &S3ApiServer{}
+	s3a := &S3ApiServer{
+		iam:               &IdentityAccessManagement{isAuthEnabled: true},
+		bucketConfigCache: NewBucketConfigCache(time.Minute),
+	}
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
+		Name:  bucket,
+		Entry: &filer_pb.Entry{Name: bucket},
+	})
 
 	listCases := []struct {
 		name        string
