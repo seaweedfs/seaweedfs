@@ -684,9 +684,12 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			routers = append(routers, apiRouter.Host(
 				fmt.Sprintf("%s.%s", "{bucket:.+}", virtualHost)).Subrouter())
 		}
-	} else {
-		routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 	}
+	// Always register a Host-less path-style catch-all last so requests that
+	// arrive via an IP, an unlisted hostname, or a reverse proxy that rewrites
+	// the Host header still match bucket routes. Host-specific routers above
+	// take precedence because they were registered first.
+	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
 	// Get CORS middleware instance with caching
 	corsMiddleware := s3a.getCORSMiddleware()
