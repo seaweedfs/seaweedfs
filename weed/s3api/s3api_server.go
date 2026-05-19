@@ -317,8 +317,16 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// Set IAM integration in server
 			s3ApiServer.iamIntegration = s3iam
 
-			// Set the integration in the traditional IAM for compatibility
+			// Set the integration in the traditional IAM for compatibility.
+			// SetIAMIntegration no longer auto-enables auth — see the function comment.
+			// Only force isAuthEnabled when the operator actually pointed us at an
+			// IAM config file. Without one, EnableIam is the implicit mini default
+			// and we must keep the "no credentials = allow all" startup behavior so
+			// `docker run seaweedfs` works out of the box (fixes #9557).
 			iam.SetIAMIntegration(s3iam)
+			if option.IamConfig != "" {
+				iam.EnableAuthEnforcement()
+			}
 
 			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
 			if stsService := iamManager.GetSTSService(); stsService != nil {
