@@ -15,7 +15,6 @@ require (
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eapache/go-resiliency v1.6.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect
@@ -146,7 +145,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.11.0
 	github.com/rclone/rclone v1.74.1
 	github.com/rdleal/intervalst v1.5.0
-	github.com/redis/go-redis/v9 v9.18.0
+	github.com/redis/go-redis/v9 v9.19.0
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/seaweedfs/go-fuse/v2 v2.9.3
 	github.com/shirou/gopsutil/v4 v4.26.3
