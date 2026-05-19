@@ -719,8 +719,8 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	// full local shard set; the per-disk ecVolumesLock is taken inside
 	// DiskLocation.FindEcVolume.
 	var primary *erasure_coding.EcVolume
-	seenShards := make(map[uint32]struct{})
-	var shardInfos []*volume_server_pb.EcShardInfo
+	var seenShards erasure_coding.ShardBits
+	shardInfos := make([]*volume_server_pb.EcShardInfo, 0, erasure_coding.MaxShardCount)
 	for _, location := range vs.store.Locations {
 		ecv, ok := location.FindEcVolume(vid)
 		if !ok {
@@ -730,10 +730,10 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 			primary = ecv
 		}
 		for _, s := range ecv.Shards {
-			if _, dup := seenShards[uint32(s.ShardId)]; dup {
+			if seenShards.Has(s.ShardId) {
 				continue
 			}
-			seenShards[uint32(s.ShardId)] = struct{}{}
+			seenShards = seenShards.Set(s.ShardId)
 			shardInfos = append(shardInfos, s.ToEcShardInfo())
 		}
 	}
