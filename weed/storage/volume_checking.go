@@ -154,8 +154,14 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 		return 0, nil
 	}
 	if size < 0 {
-		// read the deletion entry
+		// read the deletion entry. Pass io.EOF and ErrorSizeMismatch through
+		// unwrapped so CheckVolumeDataIntegrity can recognize them and run its
+		// trailing-truncation / wrap-around recovery loop, matching the live
+		// branch below.
 		if lastAppendAtNs, err = verifyDeletedNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key); err != nil {
+			if err == io.EOF || err == ErrorSizeMismatch {
+				return lastAppendAtNs, err
+			}
 			return lastAppendAtNs, fmt.Errorf("verifyDeletedNeedleIntegrity %s failed: %v", indexFile.Name(), err)
 		}
 	} else {
@@ -249,6 +255,11 @@ func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.V
 	// which reads past EOF and falsely marks the volume read-only.
 	size := types.Size(0)
 	if err = n.ReadData(datFile, offset, size, v); err != nil {
+		// Preserve io.EOF and ErrorSizeMismatch as-is so CheckVolumeDataIntegrity
+		// can detect trailing truncation and trigger its wrap-around retry.
+		if err == io.EOF || err == ErrorSizeMismatch {
+			return n.AppendAtNs, err
+		}
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+needle.GetActualSize(size, v), err)
 	}
 	if n.Id != key {

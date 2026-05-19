@@ -121,8 +121,15 @@ func TestCheckVolumeDataIntegrityWithDeletionTombstone(t *testing.T) {
 	}
 	defer idxFile.Close()
 
-	if _, err := CheckVolumeDataIntegrity(v, idxFile); err != nil {
+	lastAppendAtNs, err := CheckVolumeDataIntegrity(v, idxFile)
+	if err != nil {
 		t.Fatalf("CheckVolumeDataIntegrity should succeed with a trailing deletion tombstone: %v", err)
+	}
+	// V3 tombstones still record AppendAtNs; a zero return means ReadData
+	// bailed out before populating the needle and would mask future regressions
+	// that quietly skip the tombstone body.
+	if lastAppendAtNs == 0 {
+		t.Errorf("expected non-zero lastAppendAtNs for V3 deletion tombstone, got 0")
 	}
 }
 
