@@ -141,7 +141,6 @@ func (p *miniProgress) update(name, state string) {
 func (p *miniProgress) starting(name string) { p.update(name, "starting") }
 func (p *miniProgress) ready(name string)    { p.update(name, "ready") }
 func (p *miniProgress) failed(name string)   { p.update(name, "failed") }
-func (p *miniProgress) stopping(name string) { p.update(name, "stopping") }
 func (p *miniProgress) stopped(name string)  { p.update(name, "stopped") }
 
 // renderLocked redraws every row in the board. Caller must hold p.mu and
@@ -192,14 +191,6 @@ func (p *miniProgress) reset(services []string, initialState string) {
 	if p.isTTY {
 		p.renderLocked()
 	}
-}
-
-// close prevents further redraws (e.g. before a Fatalf so the panic doesn't
-// repaint the board). Safe to call multiple times.
-func (p *miniProgress) close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.closed = true
 }
 
 // reportMiniStopped marks a service as fully stopped on the progress board.
@@ -264,21 +255,6 @@ func resetMiniClients() {
 	s := &miniClientsState{}
 	s.ctx, s.cancel = context.WithCancel(parent)
 	miniClients = s
-}
-
-// onMiniClientsShutdown runs fn when mini shutdown is triggered, and tracks
-// it so the interrupt hook can wait for it to drain. No-op outside mini.
-func onMiniClientsShutdown(fn func()) {
-	s := miniClients
-	if s == nil {
-		return
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		<-s.ctx.Done()
-		fn()
-	}()
 }
 
 // trackMiniClient registers an externally-managed goroutine (one that
