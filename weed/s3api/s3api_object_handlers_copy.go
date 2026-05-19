@@ -88,6 +88,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// CopyObject requires s3:GetObject on the source in addition to s3:PutObject
+	// on the destination. The Auth middleware only checked the destination, so
+	// verify the source explicitly here.
+	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Get detailed versioning state for source bucket
 	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
@@ -547,6 +555,21 @@ func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject
 	return s3a.getLatestObjectVersion(bucket, normalizedObject)
 }
 
+// authorizeCopySource enforces s3:GetObject on the CopyObject / UploadPartCopy
+// source. The route's Auth middleware only verifies destination permissions
+// because the request URL points at the destination; the source from the
+// X-Amz-Copy-Source header must be authorized separately.
+func (s3a *S3ApiServer) authorizeCopySource(r *http.Request, srcBucket, srcObject, srcVersionId string) s3err.ErrorCode {
+	if s3a.iam == nil || !s3a.iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	var identity *Identity
+	if id, ok := s3_constants.GetIdentityFromContext(r).(*Identity); ok {
+		identity = id
+	}
+	return s3a.iam.AuthorizeCopySource(r, identity, srcBucket, srcObject, srcVersionId)
+}
+
 func (s3a *S3ApiServer) canUseMetadataOnlySelfCopy(entry *filer_pb.Entry, r *http.Request, bucket, object string) bool {
 	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), s3_constants.NormalizeObjectKey(object))
 	state := DetectEncryptionStateWithEntry(entry, r, srcPath, srcPath)
@@ -646,6 +669,13 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
 			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+
+	// UploadPartCopy requires s3:GetObject on the source. The Auth middleware
+	// only verified s3:PutObject (s3:UploadPart) on the destination.
+	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
