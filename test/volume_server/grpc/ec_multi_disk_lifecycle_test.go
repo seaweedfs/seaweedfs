@@ -136,8 +136,6 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	conn2, grpcClient2 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn2.Close()
 
-	// VolumeEcShardsInfo only sees one disk's EcVolume; filesystem layout is
-	// the ground truth for the whole-store shard count.
 	postReconcileLayout := scanShardLayout(t, dataDirs, collection, volumeID)
 	if got, want := totalShardsInLayout(postReconcileLayout), erasure_coding.TotalShardsCount; got != want {
 		t.Fatalf("post-reconcile: total shards on disk mismatch: got %d, want %d (layout=%v)", got, want, postReconcileLayout)
@@ -148,10 +146,27 @@ func TestEcLifecycleAcrossMultipleDisks(t *testing.T) {
 	if got, want := len(postReconcileLayout[1]), splitAt; got != want {
 		t.Fatalf("post-reconcile: disk 1 shard count drift: got %d, want %d (layout=%v)", got, want, postReconcileLayout)
 	}
-	if _, err := grpcClient2.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
+	// VolumeEcShardsInfo must walk every DiskLocation and report the full
+	// shard set — the verification step in ec_task.go gates source-volume
+	// deletion on this RPC returning a complete shard inventory.
+	infoResp, err := grpcClient2.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
 		VolumeId: volumeID,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("VolumeEcShardsInfo after redistribute restart: %v", err)
+	}
+	if got, want := len(infoResp.GetEcShardInfos()), erasure_coding.TotalShardsCount; got != want {
+		t.Fatalf("VolumeEcShardsInfo after redistribute restart: got %d shards, want %d (per-disk layout=%v)",
+			got, want, postReconcileLayout)
+	}
+	gotShardIds := make(map[uint32]struct{}, len(infoResp.GetEcShardInfos()))
+	for _, info := range infoResp.GetEcShardInfos() {
+		gotShardIds[info.GetShardId()] = struct{}{}
+	}
+	for shardId := uint32(0); shardId < uint32(erasure_coding.TotalShardsCount); shardId++ {
+		if _, ok := gotShardIds[shardId]; !ok {
+			t.Fatalf("VolumeEcShardsInfo missing shard %d (per-disk layout=%v)", shardId, postReconcileLayout)
+		}
 	}
 	for _, n := range needles {
 		verifyHTTPRead(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload, "after-cross-disk-reconcile")

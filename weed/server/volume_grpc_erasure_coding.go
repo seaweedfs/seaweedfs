@@ -710,21 +710,39 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	glog.V(0).Infof("VolumeEcShardsInfo: volume %d", req.VolumeId)
 
-	glog.V(0).Infof("VolumeEcStatus: %v", req)
-
 	vid := needle.VolumeId(req.GetVolumeId())
-	ecv, found := vs.store.FindEcVolume(vid)
-	if !found {
-		return nil, fmt.Errorf("VolumeEcStatus: EC volume %d not found", vid)
-	}
 
-	shardInfos := make([]*volume_server_pb.EcShardInfo, len(ecv.Shards))
-	for i, s := range ecv.Shards {
-		shardInfos[i] = s.ToEcShardInfo()
+	// Multi-disk volume servers register one EcVolume per DiskLocation
+	// that holds shards for the same vid: shards may be spread across
+	// disks while the .ecx lives on whichever disk owned the original
+	// .dat. Walk every DiskLocation here so the response reflects the
+	// full local shard set; the per-disk ecVolumesLock is taken inside
+	// DiskLocation.FindEcVolume.
+	var primary *erasure_coding.EcVolume
+	seenShards := make(map[uint32]struct{})
+	var shardInfos []*volume_server_pb.EcShardInfo
+	for _, location := range vs.store.Locations {
+		ecv, ok := location.FindEcVolume(vid)
+		if !ok {
+			continue
+		}
+		if primary == nil {
+			primary = ecv
+		}
+		for _, s := range ecv.Shards {
+			if _, dup := seenShards[uint32(s.ShardId)]; dup {
+				continue
+			}
+			seenShards[uint32(s.ShardId)] = struct{}{}
+			shardInfos = append(shardInfos, s.ToEcShardInfo())
+		}
+	}
+	if primary == nil {
+		return nil, fmt.Errorf("VolumeEcShardsInfo: EC volume %d not found", vid)
 	}
 
 	var files, filesDeleted, totalSize uint64
-	err := ecv.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+	err := primary.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
 		// deleted files are counted when computing EC volume sizes. this aligns with VolumeStatus(),
 		// which reports the raw data backend file size, regardless of deleted files.
 		totalSize += uint64(size.Raw())
