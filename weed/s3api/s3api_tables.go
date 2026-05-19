@@ -633,45 +633,27 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 	}, nil
 }
 
-// awsJSONRPCContentType is the AWS JSON RPC 1.1 protocol body content type
-// used by S3 Tables REST clients. Regular S3 SDKs never send this type
-// (S3 uses XML), so it is a reliable secondary signal for S3 Tables intent
-// when the request is not AWS V4 signed (e.g. internal harness traffic).
-const awsJSONRPCContentType = "application/x-amz-json-1.1"
-
 // isS3TablesSignedRequest reports whether the request is targeting the
-// S3 Tables service. The primary signal is the AWS V4 credential scope,
-// which names SERVICE=s3tables for S3 Tables SDKs and SERVICE=s3 for the
-// regular S3 SDKs. The credential scope appears in the Authorization
-// header (Credential=AK/DATE/REGION/SERVICE/aws4_request) for signed
-// requests and in the X-Amz-Credential query parameter for presigned
-// requests. As a fallback, the canonical AWS JSON RPC content type is
-// accepted so unsigned S3 Tables traffic (test harnesses, default-allow
-// deployments) still reaches the right handler.
+// S3 Tables service. The signal is the AWS V4 credential scope, which
+// names SERVICE=s3tables for S3 Tables SDKs and SERVICE=s3 for regular
+// S3 SDKs. The credential scope appears in the Authorization header
+// (Credential=AK/DATE/REGION/SERVICE/aws4_request) for signed requests
+// and in the X-Amz-Credential query parameter for presigned requests.
+//
+// The credential scope is the only acceptable signal: a content-type-
+// based fallback would let an anonymous regular-S3 request (e.g. a
+// PutObject with body type application/x-amz-json-1.1) sneak through
+// to an S3 Tables route whenever the object key is shaped like an
+// S3 Tables ARN. Clients that genuinely target S3 Tables — including
+// internal test harnesses running against a default-allow server —
+// must sign with SERVICE=s3tables.
 func isS3TablesSignedRequest(r *http.Request) bool {
-	if scope := extractCredentialScope(r); scope != "" {
-		// Credential scope is AK/DATE/REGION/SERVICE/aws4_request, so a
-		// /s3tables/ substring only matches when SERVICE itself is the
-		// s3tables service — slashes do not appear inside any other
-		// component, including access keys (which are alphanumeric).
-		// A signed request for any other service (s3, sts, ...) is
-		// definitively not S3 Tables, so we do not fall through to the
-		// content-type check.
-		return strings.Contains(scope, "/s3tables/")
-	}
-	return hasAWSJSONRPCContentType(r.Header.Get("Content-Type"))
-}
-
-// hasAWSJSONRPCContentType reports whether ct is the canonical AWS JSON
-// RPC 1.1 content type, ignoring optional parameters like "; charset=utf-8".
-func hasAWSJSONRPCContentType(ct string) bool {
-	if ct == "" {
-		return false
-	}
-	if semi := strings.IndexByte(ct, ';'); semi >= 0 {
-		ct = ct[:semi]
-	}
-	return strings.EqualFold(strings.TrimSpace(ct), awsJSONRPCContentType)
+	scope := extractCredentialScope(r)
+	// Credential scope is AK/DATE/REGION/SERVICE/aws4_request. Slashes
+	// do not appear inside any other component (access keys are
+	// alphanumeric), so /s3tables/ matches iff SERVICE is exactly
+	// s3tables.
+	return scope != "" && strings.Contains(scope, "/s3tables/")
 }
 
 // extractCredentialScope returns the raw credential value from either the
