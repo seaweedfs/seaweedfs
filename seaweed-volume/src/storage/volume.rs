@@ -3592,6 +3592,57 @@ mod tests {
         assert!(matches!(err, VolumeError::Deleted));
     }
 
+    // Guard the Rust integrity-check tombstone path against the Go regression
+    // where verifyDeletedNeedleIntegrity forwarded TombstoneFileSize into the
+    // needle-size check, mismatched against the on-disk Size=0 header, and
+    // sent every volume with a trailing deletion read-only on load. The Rust
+    // check guards its size comparison with !size.is_deleted(); this test
+    // keeps that guarantee from silently regressing.
+    #[test]
+    fn test_check_volume_data_integrity_with_deletion_tombstone() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let mut v = make_test_volume(dir);
+            for i in 1..=3 {
+                let data = format!("data {}", i);
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true).unwrap();
+            }
+            v.delete_needle(&mut Needle {
+                id: NeedleId(2),
+                cookie: Cookie(2),
+                ..Needle::default()
+            })
+            .unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert!(
+            !v.is_no_write_or_delete(),
+            "volume should not be read-only after reload with trailing deletion tombstone"
+        );
+    }
+
     #[test]
     fn test_volume_multiple_needles() {
         let tmp = TempDir::new().unwrap();
