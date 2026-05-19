@@ -233,6 +233,73 @@ func TestEmbeddedIamUntagUserNoOpForMissingKey(t *testing.T) {
 	assert.Equal(t, "env", ident.Tags[0].Key)
 }
 
+func TestEmbeddedIamTagUserRejectsDuplicateKeyInRequest(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "henry"}},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "TagUser")
+	form.Set("UserName", "henry")
+	form.Set("Tags.member.1.Key", "env")
+	form.Set("Tags.member.1.Value", "stage")
+	form.Set("Tags.member.2.Key", "env")
+	form.Set("Tags.member.2.Value", "prod")
+	rr := postTagAction(t, api, form)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(rr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, code)
+}
+
+func TestEmbeddedIamUntagUserRejectsInvalidKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		form func() url.Values
+	}{
+		{
+			name: "no TagKeys entries",
+			form: func() url.Values {
+				v := url.Values{}
+				v.Set("Action", "UntagUser")
+				v.Set("UserName", "ivy")
+				return v
+			},
+		},
+		{
+			name: "empty TagKeys entry",
+			form: func() url.Values {
+				v := url.Values{}
+				v.Set("Action", "UntagUser")
+				v.Set("UserName", "ivy")
+				v.Set("TagKeys.member.1", "")
+				return v
+			},
+		},
+		{
+			name: "TagKeys entry over MaxUserTagKeyLength",
+			form: func() url.Values {
+				v := url.Values{}
+				v.Set("Action", "UntagUser")
+				v.Set("UserName", "ivy")
+				v.Set("TagKeys.member.1", strings.Repeat("k", MaxUserTagKeyLength+1))
+				return v
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := NewEmbeddedIamApiForTest()
+			api.mockConfig = &iam_pb.S3ApiConfiguration{
+				Identities: []*iam_pb.Identity{{Name: "ivy"}},
+			}
+			rr := postTagAction(t, api, tc.form())
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+		})
+	}
+}
+
 func TestEmbeddedIamTagUserNotFound(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 	api.mockConfig = &iam_pb.S3ApiConfiguration{}
