@@ -509,20 +509,22 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Sqlite, Mong
 
 ### Compared to MinIO ###
 
-MinIO follows AWS S3 closely and is ideal for testing for S3 API. It has good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. It is also possible to put MinIO as a gateway in front of SeaweedFS later.
+Please note, as Apr 25, 2026 MinIO ceased developement. It's strongly discouraged to use that unmaintained software with multiple security bugs.
 
-MinIO metadata are in simple files. Each file write will incur extra writes to corresponding meta file.
+MinIO followed AWS S3 closely and was ideal for testing for S3 API. It had good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. 
 
-MinIO does not have optimization for lots of small files. The files are simply stored as is to local disks.
+MinIO metadata were in simple files. Each file write will incur extra writes to corresponding meta file.
+
+MinIO did not have optimization for lots of small files. The files were simply stored as is to local disks.
 Plus the extra meta file and shards for erasure coding, it only amplifies the LOSF problem.
 
-MinIO has multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
+MinIO had multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
 
-MinIO has full-time erasure coding. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
+MinIO had full-time erasure coding. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
 
-MinIO does not have POSIX-like API support.
+MinIO did not have POSIX-like API support.
 
-MinIO has specific requirements on storage layout. It is not flexible to adjust capacity. In SeaweedFS, just start one volume server pointing to the master. That's all.
+MinIO had specific requirements on storage layout. It is not flexible to adjust capacity. In SeaweedFS, just start one volume server pointing to the master. That's all.
 
 ## Dev Plan ##
 
