@@ -1261,10 +1261,10 @@ func parseTagKeysParams(values url.Values) ([]string, *iamError) {
 // preserving original order for stable iteration.
 func mergeUserTags(existing []*iam_pb.UserTag, incoming []*iam_pb.UserTag) []*iam_pb.UserTag {
 	index := make(map[string]int, len(existing))
-	merged := make([]*iam_pb.UserTag, len(existing))
-	for i, t := range existing {
-		merged[i] = &iam_pb.UserTag{Key: t.Key, Value: t.Value}
-		index[t.Key] = i
+	merged := make([]*iam_pb.UserTag, 0, len(existing)+len(incoming))
+	for _, t := range existing {
+		merged = append(merged, &iam_pb.UserTag{Key: t.Key, Value: t.Value})
+		index[t.Key] = len(merged) - 1
 	}
 	for _, t := range incoming {
 		if i, ok := index[t.Key]; ok {
@@ -1340,7 +1340,7 @@ func (e *EmbeddedIamApi) UntagUser(s3cfg *iam_pb.S3ApiConfiguration, values url.
 		for _, k := range keys {
 			toRemove[k] = true
 		}
-		filtered := ident.Tags[:0:0]
+		filtered := make([]*iam_pb.UserTag, 0, len(ident.Tags))
 		for _, t := range ident.Tags {
 			if toRemove[t.Key] {
 				continue
