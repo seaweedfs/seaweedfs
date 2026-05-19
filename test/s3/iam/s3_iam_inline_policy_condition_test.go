@@ -87,21 +87,26 @@ func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 		}
 	})
 
-	policyDoc := func(cidr string) string {
+	policyDoc := func(cidrs ...string) string {
+		quoted := make([]string, len(cidrs))
+		for i, c := range cidrs {
+			quoted[i] = `"` + c + `"`
+		}
 		return `{
 			"Version":"2012-10-17",
 			"Statement":[{
 				"Effect":"Allow",
 				"Action":"s3:*",
 				"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
-				"Condition":{"IpAddress":{"aws:SourceIp":"` + cidr + `"}}
+				"Condition":{"IpAddress":{"aws:SourceIp":[` + strings.Join(quoted, ",") + `]}}
 			}]
 		}`
 	}
 
 	t.Run("denies_when_source_ip_does_not_match", func(t *testing.T) {
 		// SourceIp 198.51.100.0/24 is RFC5737 TEST-NET-2; the test client is on
-		// 127.0.0.1, so the condition must fail and the action must be denied.
+		// loopback (127.0.0.1 or ::1 depending on resolver), so the condition
+		// must fail and the action must be denied.
 		_, err = iamClient.PutUserPolicy(&iam.PutUserPolicyInput{
 			UserName:       aws.String(userName),
 			PolicyName:     aws.String(policyName),
@@ -122,10 +127,13 @@ func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 	})
 
 	t.Run("allows_when_source_ip_matches", func(t *testing.T) {
+		// Cover both IPv4 and IPv6 loopback: on CI runners `localhost` may
+		// resolve to ::1 first, in which case a 127.0.0.0/8-only allow would
+		// silently never match and the test would hang.
 		_, err = iamClient.PutUserPolicy(&iam.PutUserPolicyInput{
 			UserName:       aws.String(userName),
 			PolicyName:     aws.String(policyName),
-			PolicyDocument: aws.String(policyDoc("127.0.0.0/8")),
+			PolicyDocument: aws.String(policyDoc("127.0.0.0/8", "::1/128")),
 		})
 		require.NoError(t, err)
 
@@ -207,13 +215,16 @@ func TestIAMGroupInlinePolicyEnforcement(t *testing.T) {
 		}
 	})
 
+	// Cover both IPv4 and IPv6 loopback in the allow CIDR list: on CI runners
+	// `localhost` may resolve to ::1 first, in which case a 127.0.0.0/8-only
+	// allow would silently never match and the test would hang.
 	allowDoc := `{
 		"Version":"2012-10-17",
 		"Statement":[{
 			"Effect":"Allow",
 			"Action":"s3:*",
 			"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
-			"Condition":{"IpAddress":{"aws:SourceIp":"127.0.0.0/8"}}
+			"Condition":{"IpAddress":{"aws:SourceIp":["127.0.0.0/8","::1/128"]}}
 		}]
 	}`
 	denyDoc := `{
