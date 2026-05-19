@@ -158,7 +158,7 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	} else {
 		t.Ctime = t.Mtime
 	}
-	if attr.Atime != 0 {
+	if attr.Atime != 0 || attr.AtimeNs != 0 {
 		t.Atime = time.Unix(attr.Atime, int64(attr.AtimeNs))
 	} else {
 		t.Atime = t.Mtime
