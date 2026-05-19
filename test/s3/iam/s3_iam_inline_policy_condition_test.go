@@ -1,0 +1,279 @@
+package iam
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestIAMUserInlinePolicySourceIpCondition verifies that an aws:SourceIp condition
+// on a user inline policy is honored. Tests run from localhost (127.0.0.1), so a
+// policy that only allows access from a non-loopback CIDR must deny the request,
+// and a policy that allows access from 127.0.0.0/8 must allow it.
+func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
+	framework := NewS3IAMTestFramework(t)
+	defer framework.Cleanup()
+
+	iamClient, err := framework.CreateIAMClientWithJWT("admin-user", "TestAdminRole")
+	require.NoError(t, err)
+
+	userName := "test-inline-srcip-user"
+	policyName := "test-inline-srcip-policy"
+	bucketName := "test-inline-srcip-bucket"
+
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	keyResp, err := iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{
+		UserName: aws.String(userName),
+	})
+	require.NoError(t, err)
+	accessKeyId := *keyResp.AccessKey.AccessKeyId
+	secretKey := *keyResp.AccessKey.SecretAccessKey
+
+	userS3 := createS3Client(t, accessKeyId, secretKey)
+
+	adminS3, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
+	require.NoError(t, err)
+	require.NoError(t, framework.CreateBucketWithCleanup(adminS3, bucketName))
+
+	t.Cleanup(func() {
+		if _, err := iamClient.DeleteUserPolicy(&iam.DeleteUserPolicyInput{
+			UserName:   aws.String(userName),
+			PolicyName: aws.String(policyName),
+		}); err != nil {
+			t.Logf("cleanup: failed to delete user policy: %v", err)
+		}
+		if _, err := iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			UserName:    aws.String(userName),
+			AccessKeyId: keyResp.AccessKey.AccessKeyId,
+		}); err != nil {
+			t.Logf("cleanup: failed to delete access key: %v", err)
+		}
+		if _, err := iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)}); err != nil {
+			t.Logf("cleanup: failed to delete user: %v", err)
+		}
+	})
+
+	policyDoc := func(cidr string) string {
+		return `{
+			"Version":"2012-10-17",
+			"Statement":[{
+				"Effect":"Allow",
+				"Action":"s3:*",
+				"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
+				"Condition":{"IpAddress":{"aws:SourceIp":"` + cidr + `"}}
+			}]
+		}`
+	}
+
+	t.Run("denies_when_source_ip_does_not_match", func(t *testing.T) {
+		// SourceIp 198.51.100.0/24 is RFC5737 TEST-NET-2; the test client is on
+		// 127.0.0.1, so the condition must fail and the action must be denied.
+		_, err = iamClient.PutUserPolicy(&iam.PutUserPolicyInput{
+			UserName:       aws.String(userName),
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(policyDoc("198.51.100.0/24")),
+		})
+		require.NoError(t, err)
+
+		var lastErr error
+		require.Eventually(t, func() bool {
+			_, lastErr = userS3.PutObject(&s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String("denied.txt"),
+				Body:   aws.ReadSeekCloser(strings.NewReader("nope")),
+			})
+			return lastErr != nil
+		}, 10*time.Second, 500*time.Millisecond,
+			"PutObject must be denied when aws:SourceIp condition does not match")
+		awsErr, ok := lastErr.(awserr.Error)
+		require.True(t, ok, "expected awserr.Error, got %T: %v", lastErr, lastErr)
+		assert.Equal(t, "AccessDenied", awsErr.Code(),
+			"condition-driven denial should surface as AccessDenied")
+	})
+
+	t.Run("allows_when_source_ip_matches", func(t *testing.T) {
+		_, err = iamClient.PutUserPolicy(&iam.PutUserPolicyInput{
+			UserName:       aws.String(userName),
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(policyDoc("127.0.0.0/8")),
+		})
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			_, err := userS3.PutObject(&s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String("allowed.txt"),
+				Body:   aws.ReadSeekCloser(strings.NewReader("ok")),
+			})
+			return err == nil
+		}, 10*time.Second, 500*time.Millisecond,
+			"PutObject must succeed when aws:SourceIp condition matches the loopback range")
+	})
+}
+
+// TestIAMGroupInlinePolicyEnforcement verifies that PutGroupPolicy is supported
+// and that the resulting inline policy is enforced for members of the group,
+// including its Condition block.
+func TestIAMGroupInlinePolicyEnforcement(t *testing.T) {
+	framework := NewS3IAMTestFramework(t)
+	defer framework.Cleanup()
+
+	iamClient, err := framework.CreateIAMClientWithJWT("admin-user", "TestAdminRole")
+	require.NoError(t, err)
+
+	groupName := "test-inline-group"
+	userName := "test-inline-group-user"
+	policyName := "test-inline-group-policy"
+	bucketName := "test-inline-group-bucket"
+
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	keyResp, err := iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{
+		UserName: aws.String(userName),
+	})
+	require.NoError(t, err)
+
+	_, err = iamClient.CreateGroup(&iam.CreateGroupInput{GroupName: aws.String(groupName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.AddUserToGroup(&iam.AddUserToGroupInput{
+		GroupName: aws.String(groupName),
+		UserName:  aws.String(userName),
+	})
+	require.NoError(t, err)
+
+	userS3 := createS3Client(t, *keyResp.AccessKey.AccessKeyId, *keyResp.AccessKey.SecretAccessKey)
+
+	adminS3, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
+	require.NoError(t, err)
+	require.NoError(t, framework.CreateBucketWithCleanup(adminS3, bucketName))
+
+	t.Cleanup(func() {
+		if _, err := iamClient.DeleteGroupPolicy(&iam.DeleteGroupPolicyInput{
+			GroupName:  aws.String(groupName),
+			PolicyName: aws.String(policyName),
+		}); err != nil {
+			t.Logf("cleanup: failed to delete group policy: %v", err)
+		}
+		if _, err := iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
+			GroupName: aws.String(groupName),
+			UserName:  aws.String(userName),
+		}); err != nil {
+			t.Logf("cleanup: failed to remove user from group: %v", err)
+		}
+		if _, err := iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			UserName:    aws.String(userName),
+			AccessKeyId: keyResp.AccessKey.AccessKeyId,
+		}); err != nil {
+			t.Logf("cleanup: failed to delete access key: %v", err)
+		}
+		if _, err := iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)}); err != nil {
+			t.Logf("cleanup: failed to delete user: %v", err)
+		}
+		if _, err := iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)}); err != nil {
+			t.Logf("cleanup: failed to delete group: %v", err)
+		}
+	})
+
+	allowDoc := `{
+		"Version":"2012-10-17",
+		"Statement":[{
+			"Effect":"Allow",
+			"Action":"s3:*",
+			"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
+			"Condition":{"IpAddress":{"aws:SourceIp":"127.0.0.0/8"}}
+		}]
+	}`
+	denyDoc := `{
+		"Version":"2012-10-17",
+		"Statement":[{
+			"Effect":"Allow",
+			"Action":"s3:*",
+			"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
+			"Condition":{"IpAddress":{"aws:SourceIp":"198.51.100.0/24"}}
+		}]
+	}`
+
+	t.Run("crud_round_trip", func(t *testing.T) {
+		_, err := iamClient.PutGroupPolicy(&iam.PutGroupPolicyInput{
+			GroupName:      aws.String(groupName),
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(allowDoc),
+		})
+		require.NoError(t, err, "PutGroupPolicy must succeed (no longer NotImplemented)")
+
+		listResp, err := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{
+			GroupName: aws.String(groupName),
+		})
+		require.NoError(t, err)
+		found := false
+		for _, name := range listResp.PolicyNames {
+			if name != nil && *name == policyName {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "ListGroupPolicies must return the freshly added policy")
+
+		getResp, err := iamClient.GetGroupPolicy(&iam.GetGroupPolicyInput{
+			GroupName:  aws.String(groupName),
+			PolicyName: aws.String(policyName),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, getResp.PolicyDocument)
+		assert.Contains(t, *getResp.PolicyDocument, "aws:SourceIp",
+			"GetGroupPolicy must round-trip the Condition block")
+	})
+
+	t.Run("enforces_allow_when_condition_matches", func(t *testing.T) {
+		_, err := iamClient.PutGroupPolicy(&iam.PutGroupPolicyInput{
+			GroupName:      aws.String(groupName),
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(allowDoc),
+		})
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			_, err := userS3.PutObject(&s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String("group-allowed.txt"),
+				Body:   aws.ReadSeekCloser(strings.NewReader("ok")),
+			})
+			return err == nil
+		}, 10*time.Second, 500*time.Millisecond,
+			"group member must be allowed when the group policy condition matches")
+	})
+
+	t.Run("enforces_deny_when_condition_does_not_match", func(t *testing.T) {
+		_, err := iamClient.PutGroupPolicy(&iam.PutGroupPolicyInput{
+			GroupName:      aws.String(groupName),
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(denyDoc),
+		})
+		require.NoError(t, err)
+
+		var lastErr error
+		require.Eventually(t, func() bool {
+			_, lastErr = userS3.PutObject(&s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String("group-denied.txt"),
+				Body:   aws.ReadSeekCloser(strings.NewReader("nope")),
+			})
+			return lastErr != nil
+		}, 10*time.Second, 500*time.Millisecond,
+			"group member must be denied when the group policy condition does not match")
+		awsErr, ok := lastErr.(awserr.Error)
+		require.True(t, ok, "expected awserr.Error, got %T: %v", lastErr, lastErr)
+		assert.Equal(t, "AccessDenied", awsErr.Code())
+	})
+}
