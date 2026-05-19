@@ -22,6 +22,9 @@ service SeaweedFiler {
     rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
+    rpc TouchAccessTime (TouchAccessTimeRequest) returns (TouchAccessTimeResponse) {
+    }
+
     rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
     }
 
@@ -208,6 +211,8 @@ message FuseAttributes {
     int32 mtime_ns = 19; // nanosecond component of mtime (0-999999999)
     int32 ctime_ns = 20; // nanosecond component of ctime (0-999999999)
     int32 crtime_ns = 21; // nanosecond component of crtime (0-999999999)
+    int64 atime = 22; // unix time in seconds, last access time
+    int32 atime_ns = 23; // nanosecond component of atime (0-999999999)
 }
 
 message CreateEntryRequest {
@@ -245,6 +250,16 @@ message UpdateEntryRequest {
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
+}
+
+message TouchAccessTimeRequest {
+    string directory = 1;
+    string name = 2;
+    int64 client_atime_ns = 3; // nanoseconds since epoch; filer may override with relatime
+}
+message TouchAccessTimeResponse {
+    int64 persisted_atime_ns = 1; // nanoseconds since epoch; 0 if no update was performed
+    bool updated = 2;
 }
 
 message AppendToEntryRequest {
