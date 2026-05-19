@@ -866,8 +866,8 @@ github.com/cockroachdb/redact v1.1.5 h1:u1PMllDkdFfPWaNGMyLD1+so+aq3uUItthCFqzwP
 github.com/cockroachdb/redact v1.1.5/go.mod h1:BVNblN9mBWFyMyqK1k3AAiSxhvhfK2oOZZ2lK+dpvRg=
 github.com/cockroachdb/version v0.0.0-20250314144055-3860cd14adf2 h1:8Vfw2iNEpYIV6aLtMwT5UOGuPmp9MKlEKWKFTuB+MPU=
 github.com/cockroachdb/version v0.0.0-20250314144055-3860cd14adf2/go.mod h1:P9WiZOdQ1R/ZZDL0WzF5wlyRvrjtfhNOwMZymFpBwjE=
-github.com/cognusion/imaging v1.0.2 h1:BQwBV8V8eF3+dwffp8Udl9xF1JKh5Z0z5JkJwAi98Mc=
-github.com/cognusion/imaging v1.0.2/go.mod h1:mj7FvH7cT2dlFogQOSUQRtotBxJ4gFQ2ySMSmBm5dSk=
+github.com/cognusion/imaging v1.0.3 h1:nHyIeEVDV8JkBbuhgx8iSBW72W8rHbDEyruA0Jh7Lnk=
+github.com/cognusion/imaging v1.0.3/go.mod h1:38tFLFhGK81ORThZG8dVXPtp1uhd+3xM1WXuMn+unOA=
 github.com/colinmarc/hdfs/v2 v2.4.0 h1:v6R8oBx/Wu9fHpdPoJJjpGSUxo8NhHIwrwsfhFvU9W0=
 github.com/colinmarc/hdfs/v2 v2.4.0/go.mod h1:0NAO+/3knbMx6+5pCv+Hcbaz4xn/Zzbn9+WIib2rKVI=
 github.com/compose-spec/compose-go/v2 v2.9.0 h1:UHSv/QHlo6QJtrT4igF1rdORgIUhDo1gWuyJUoiNNIM=

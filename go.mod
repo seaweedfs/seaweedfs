@@ -126,7 +126,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/cognusion/imaging v1.0.2
+	github.com/cognusion/imaging v1.0.3
 	github.com/fluent/fluent-logger-golang v1.10.1
 	github.com/getsentry/sentry-go v0.44.1
 	github.com/go-git/go-billy/v5 v5.9.0
