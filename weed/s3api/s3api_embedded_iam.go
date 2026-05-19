@@ -2101,8 +2101,7 @@ func (e *EmbeddedIamApi) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, val
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 	}
 	if e.credentialManager == nil {
-		resp.ListGroupPoliciesResult.IsTruncated = false
-		return resp, nil
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
 	}
 	names, err := e.credentialManager.ListGroupInlinePolicies(context.Background(), groupName)
 	if err != nil {

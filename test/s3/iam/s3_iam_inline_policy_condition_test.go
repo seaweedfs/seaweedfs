@@ -1,6 +1,8 @@
 package iam
 
 import (
+	"fmt"
+	mathrand "math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// uniqueResourceSuffix returns a lowercased per-test, per-invocation suffix
+// safe for use in IAM resource and S3 bucket names. Avoids EntityAlreadyExists
+// / BucketAlreadyExists collisions when integration jobs retry or run in
+// parallel against a shared stack.
+func uniqueResourceSuffix(t *testing.T) string {
+	name := strings.ToLower(t.Name())
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.ReplaceAll(name, "_", "-")
+	return fmt.Sprintf("%s-%d", name, mathrand.Intn(10000))
+}
+
+// isAccessDenied returns true when err is an AWS error with code "AccessDenied".
+// Used to gate deny-path polling so transient setup errors don't end the
+// Eventually loop prematurely.
+func isAccessDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	awsErr, ok := err.(awserr.Error)
+	return ok && awsErr.Code() == "AccessDenied"
+}
+
 // TestIAMUserInlinePolicySourceIpCondition verifies that an aws:SourceIp condition
 // on a user inline policy is honored. Tests run from localhost (127.0.0.1), so a
 // policy that only allows access from a non-loopback CIDR must deny the request,
@@ -24,9 +48,10 @@ func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 	iamClient, err := framework.CreateIAMClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	userName := "test-inline-srcip-user"
-	policyName := "test-inline-srcip-policy"
-	bucketName := "test-inline-srcip-bucket"
+	suffix := uniqueResourceSuffix(t)
+	userName := "user-" + suffix
+	policyName := "policy-" + suffix
+	bucketName := "bucket-" + suffix
 
 	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
 	require.NoError(t, err)
@@ -91,13 +116,9 @@ func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 				Key:    aws.String("denied.txt"),
 				Body:   aws.ReadSeekCloser(strings.NewReader("nope")),
 			})
-			return lastErr != nil
+			return isAccessDenied(lastErr)
 		}, 10*time.Second, 500*time.Millisecond,
-			"PutObject must be denied when aws:SourceIp condition does not match")
-		awsErr, ok := lastErr.(awserr.Error)
-		require.True(t, ok, "expected awserr.Error, got %T: %v", lastErr, lastErr)
-		assert.Equal(t, "AccessDenied", awsErr.Code(),
-			"condition-driven denial should surface as AccessDenied")
+			"PutObject must be denied with AccessDenied when aws:SourceIp condition does not match (last error: %v)", lastErr)
 	})
 
 	t.Run("allows_when_source_ip_matches", func(t *testing.T) {
@@ -130,10 +151,11 @@ func TestIAMGroupInlinePolicyEnforcement(t *testing.T) {
 	iamClient, err := framework.CreateIAMClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	groupName := "test-inline-group"
-	userName := "test-inline-group-user"
-	policyName := "test-inline-group-policy"
-	bucketName := "test-inline-group-bucket"
+	suffix := uniqueResourceSuffix(t)
+	groupName := "group-" + suffix
+	userName := "user-" + suffix
+	policyName := "policy-" + suffix
+	bucketName := "bucket-" + suffix
 
 	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
 	require.NoError(t, err)
@@ -269,11 +291,8 @@ func TestIAMGroupInlinePolicyEnforcement(t *testing.T) {
 				Key:    aws.String("group-denied.txt"),
 				Body:   aws.ReadSeekCloser(strings.NewReader("nope")),
 			})
-			return lastErr != nil
+			return isAccessDenied(lastErr)
 		}, 10*time.Second, 500*time.Millisecond,
-			"group member must be denied when the group policy condition does not match")
-		awsErr, ok := lastErr.(awserr.Error)
-		require.True(t, ok, "expected awserr.Error, got %T: %v", lastErr, lastErr)
-		assert.Equal(t, "AccessDenied", awsErr.Code())
+			"group member must be denied with AccessDenied when the group policy condition does not match (last error: %v)", lastErr)
 	})
 }
