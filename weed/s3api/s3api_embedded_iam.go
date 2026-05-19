@@ -1223,12 +1223,9 @@ func parseTagListParams(values url.Values) ([]*iam_pb.UserTag, *iamError) {
 	return tags, nil
 }
 
-// parseTagKeysParams reads AWS query-encoded "TagKeys.member.N" entries.
-func parseTagKeysParams(values url.Values) []string {
-	type indexed struct {
-		idx int
-		key string
-	}
+// parseTagKeysParams reads AWS query-encoded "TagKeys.member.N" entries and
+// validates each entry is a non-empty key within MaxUserTagKeyLength.
+func parseTagKeysParams(values url.Values) ([]string, *iamError) {
 	entries := make(map[int]string)
 	for name, vs := range values {
 		if len(vs) == 0 || !strings.HasPrefix(name, "TagKeys.member.") {
@@ -1248,9 +1245,16 @@ func parseTagKeysParams(values url.Values) []string {
 	sort.Ints(keys)
 	result := make([]string, 0, len(keys))
 	for _, k := range keys {
-		result = append(result, entries[k])
+		key := entries[k]
+		if key == "" {
+			return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("tag key cannot be empty")}
+		}
+		if len(key) > MaxUserTagKeyLength {
+			return nil, &iamError{Code: "ValidationError", Error: fmt.Errorf("tag key %q exceeds %d characters", key, MaxUserTagKeyLength)}
+		}
+		result = append(result, key)
 	}
-	return result
+	return result, nil
 }
 
 // mergeUserTags overwrites existing tags with matching keys and appends new ones,
@@ -1318,12 +1322,18 @@ func (e *EmbeddedIamApi) UntagUser(s3cfg *iam_pb.S3ApiConfiguration, values url.
 	if userName == "" {
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
 	}
-	keys := parseTagKeysParams(values)
+	keys, iamErr := parseTagKeysParams(values)
+	if iamErr != nil {
+		return resp, iamErr
+	}
+	if len(keys) == 0 {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("at least one TagKeys entry is required")}
+	}
 	for _, ident := range s3cfg.Identities {
 		if ident.Name != userName {
 			continue
 		}
-		if len(keys) == 0 || len(ident.Tags) == 0 {
+		if len(ident.Tags) == 0 {
 			return resp, nil
 		}
 		toRemove := make(map[string]bool, len(keys))
