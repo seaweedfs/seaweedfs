@@ -212,6 +212,13 @@ impl CompactNeedleMap {
         self.idx_file_offset = offset;
     }
 
+    /// True when an .idx file writer is attached. A read-only load leaves
+    /// this `false` — set_writable() must reattach a writer or subsequent
+    /// puts silently skip the disk append.
+    pub fn has_idx_writer(&self) -> bool {
+        self.idx_file.is_some()
+    }
+
     // ---- Map operations ----
 
     /// Insert or update an entry. Appends to .idx file if present.
@@ -705,6 +712,11 @@ impl RedbNeedleMap {
         self.idx_file_offset = offset;
     }
 
+    /// True when an .idx file writer is attached. See CompactNeedleMap.
+    pub fn has_idx_writer(&self) -> bool {
+        self.idx_file.is_some()
+    }
+
     // ---- Map operations ----
 
     /// Insert or update an entry. Writes to idx file first, then redb.
@@ -997,6 +1009,14 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.set_idx_file(file, offset),
             NeedleMap::Redb(nm) => nm.set_idx_file(file, offset),
+        }
+    }
+
+    /// True when an .idx file writer is attached.
+    pub fn has_idx_writer(&self) -> bool {
+        match self {
+            NeedleMap::InMemory(nm) => nm.has_idx_writer(),
+            NeedleMap::Redb(nm) => nm.has_idx_writer(),
         }
     }
 

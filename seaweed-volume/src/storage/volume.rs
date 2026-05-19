@@ -2122,7 +2122,34 @@ impl Volume {
     }
 
     /// Mark this volume as writable (allow writes and deletes).
+    ///
+    /// If the volume booted with .vif ReadOnly=true, `load_index` built the
+    /// needle map without an .idx writer attached, so subsequent puts would
+    /// silently skip the on-disk append and only mutate in-memory state —
+    /// surviving until the next restart, then vanishing. Re-attach a writer
+    /// here so writes persist again.
     pub fn set_writable(&mut self) -> Result<(), VolumeError> {
+        // Attach the writer (if missing) before flipping the flag — otherwise
+        // a transient open/metadata failure would leave the volume marked
+        // writable with no .idx writer, and subsequent puts would silently
+        // skip the on-disk append and vanish on the next restart.
+        let needs_idx_writer = self
+            .nm
+            .as_ref()
+            .map(|nm| !nm.has_idx_writer())
+            .unwrap_or(false);
+        if needs_idx_writer {
+            let idx_path = self.file_name(".idx");
+            let write_file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .create(true)
+                .open(&idx_path)?;
+            let idx_size = write_file.metadata()?.len();
+            if let Some(ref mut nm) = self.nm {
+                nm.set_idx_file(Box::new(write_file), idx_size);
+            }
+        }
         self.no_write_or_delete = false;
         self.save_vif()
     }
@@ -4189,6 +4216,91 @@ mod tests {
         assert!(v.is_read_only());
         assert!(!v.no_write_or_delete);
         assert!(v.no_write_can_delete);
+    }
+
+    // A volume booted with .vif ReadOnly=true used to come back stuck —
+    // load_index_inmemory built the CompactNeedleMap without an .idx writer
+    // attached, and set_writable only flipped the flag and rewrote .vif.
+    // The next put silently skipped the .idx append, so the write landed in
+    // memory only and was lost on the next restart.
+    #[test]
+    fn test_set_writable_reattaches_idx_writer_after_persisted_readonly() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let mut v = make_test_volume(dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(1),
+                data: b"initial".to_vec(),
+                data_size: 7,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+            v.set_read_only_persist(true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert!(
+            v.no_write_or_delete,
+            "reloaded volume should be read-only from .vif"
+        );
+        assert!(
+            !v.nm.as_ref().unwrap().has_idx_writer(),
+            "read-only load should not attach an .idx writer"
+        );
+
+        v.set_writable().unwrap();
+        assert!(!v.is_read_only());
+        assert!(
+            v.nm.as_ref().unwrap().has_idx_writer(),
+            "set_writable must reattach the .idx writer or post-restart writes vanish"
+        );
+
+        let mut n = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            data: b"after-mark-writable".to_vec(),
+            data_size: 19,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+
+        // Reload one more time — the .idx must contain the post-mark-writable
+        // entry, not just have it in memory.
+        drop(v);
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let mut probe = Needle {
+            id: NeedleId(2),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(std::str::from_utf8(&probe.data).unwrap(), "after-mark-writable");
     }
 
     #[test]
