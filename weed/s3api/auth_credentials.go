@@ -2148,6 +2148,68 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	return s3err.ErrAccessDenied
 }
 
+// AuthorizeCopySource verifies the caller is allowed to read the CopyObject /
+// UploadPartCopy source. The Auth middleware only checks the destination
+// (s3:PutObject) because routing keys on the request URL; without this call,
+// an STS session token scoped to a prefix could copy from any other prefix in
+// the same bucket.
+//
+// The source path is checked against both bucket policy and IAM/identity
+// permissions, mirroring the normal request-routed flow but with a synthetic
+// GetObject request so action resolution and ARN building target the source.
+// Returns s3err.ErrNone when allowed or when auth is disabled.
+func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identity *Identity, srcBucket, srcObject, srcVersionId string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if srcBucket == "" {
+		return s3err.ErrNone
+	}
+	if identity == nil {
+		return s3err.ErrAccessDenied
+	}
+	if identity.isAdmin() {
+		return s3err.ErrNone
+	}
+
+	srcReq := r.Clone(r.Context())
+	srcURL := &url.URL{
+		Scheme: r.URL.Scheme,
+		Host:   r.URL.Host,
+		Path:   "/" + srcBucket + "/" + srcObject,
+	}
+	if srcVersionId != "" {
+		q := srcURL.Query()
+		q.Set("versionId", srcVersionId)
+		srcURL.RawQuery = q.Encode()
+	}
+	srcReq.URL = srcURL
+	srcReq.Method = http.MethodGet
+	srcReq.RequestURI = ""
+	srcReq.Body = nil
+	srcReq.GetBody = nil
+	srcReq.ContentLength = 0
+
+	action := s3_constants.ACTION_READ
+
+	if iam.policyEngine != nil {
+		principal := buildPrincipalARN(identity, srcReq)
+		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(srcBucket, srcObject, action, principal, srcReq, identity.Claims, nil)
+		if err != nil {
+			glog.Errorf("CopyObject source policy evaluation failed for %s/%s: %v - denying", srcBucket, srcObject, err)
+			return s3err.ErrAccessDenied
+		}
+		if evaluated {
+			if allowed {
+				return s3err.ErrNone
+			}
+			return s3err.ErrAccessDenied
+		}
+	}
+
+	return iam.VerifyActionPermission(srcReq, identity, Action(action), srcBucket, srcObject)
+}
+
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
