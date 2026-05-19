@@ -330,6 +330,14 @@ var (
 			Help:      "Resource usage",
 		}, []string{"name", "type"})
 
+	VolumeServerDiskErrorGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "disk_error_status",
+			Help:      "Disk error status",
+		}, []string{"name", "type"})
+
 	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -759,6 +767,7 @@ func init() {
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
+	Gather.MustRegister(VolumeServerDiskErrorGauge)
 	Gather.MustRegister(VolumeServerConcurrentDownloadLimit)
 	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)

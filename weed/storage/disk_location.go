@@ -45,8 +45,9 @@ type DiskLocation struct {
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
 
-	isDiskSpaceLow bool
-	closeCh        chan struct{}
+	isDiskSpaceLow  bool
+	isDiskAvailable bool
+	closeCh         chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -542,6 +543,14 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 func (l *DiskLocation) CheckDiskSpace() {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
 		s := stats.NewDiskStatus(dir)
+		if len(s.Error) != 0 {
+			l.isDiskAvailable = false
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.IdxDirectory, "error").Set(1)
+			glog.V(0).Infof("disk %s filesystem is not healthy", dir)
+		} else {
+			l.isDiskAvailable = true
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.IdxDirectory, "error").Set(0)
+		}
 		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))

@@ -381,7 +381,6 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 	s.DeleteCount = v.nm.DeletedCount()
 	s.DeletedByteCount = v.nm.DeletedSize()
 	s.Size = v.nm.ContentSize()
-
 	return
 }
 
@@ -406,6 +405,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
+		if !location.isDiskAvailable {
+			continue
+		}
 		var deleteVids []needle.VolumeId
 		effectiveMaxCount := location.MaxVolumeCount
 		if location.isDiskSpaceLow {

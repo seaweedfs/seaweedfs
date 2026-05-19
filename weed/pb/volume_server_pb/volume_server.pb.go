@@ -4565,6 +4565,7 @@ type DiskStatus struct {
 	PercentFree   float32                `protobuf:"fixed32,5,opt,name=percent_free,json=percentFree,proto3" json:"percent_free,omitempty"`
 	PercentUsed   float32                `protobuf:"fixed32,6,opt,name=percent_used,json=percentUsed,proto3" json:"percent_used,omitempty"`
 	DiskType      string                 `protobuf:"bytes,7,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	Error         string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4644,6 +4645,13 @@ func (x *DiskStatus) GetPercentUsed() float32 {
 func (x *DiskStatus) GetDiskType() string {
 	if x != nil {
 		return x.DiskType
+	}
+	return ""
+}
+
+func (x *DiskStatus) GetError() string {
+	if x != nil {
+		return x.Error
 	}
 	return ""
 }
@@ -7298,7 +7306,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\vvolume_info\x18\n" +
 	" \x01(\v2\x1c.volume_server_pb.VolumeInfoR\n" +
 	"volumeInfo\x12\x18\n" +
-	"\aversion\x18\v \x01(\rR\aversion\"\xbb\x01\n" +
+	"\aversion\x18\v \x01(\rR\aversion\"\xd1\x01\n" +
 	"\n" +
 	"DiskStatus\x12\x10\n" +
 	"\x03dir\x18\x01 \x01(\tR\x03dir\x12\x10\n" +
@@ -7307,7 +7315,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x04free\x18\x04 \x01(\x04R\x04free\x12!\n" +
 	"\fpercent_free\x18\x05 \x01(\x02R\vpercentFree\x12!\n" +
 	"\fpercent_used\x18\x06 \x01(\x02R\vpercentUsed\x12\x1b\n" +
-	"\tdisk_type\x18\a \x01(\tR\bdiskType\"\xa3\x01\n" +
+	"\tdisk_type\x18\a \x01(\tR\bdiskType\x12\x14\n" +
+	"\x05error\x18\b \x01(\tR\x05error\"\xa3\x01\n" +
 	"\tMemStatus\x12\x1e\n" +
 	"\n" +
 	"goroutines\x18\x01 \x01(\x05R\n" +
