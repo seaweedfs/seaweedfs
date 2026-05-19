@@ -1667,8 +1667,16 @@ type inlinePolicyLoader interface {
 	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
 }
 
+type groupInlinePolicyLoader interface {
+	LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
 func inlinePolicyRuntimeName(userName, policyName string) string {
 	return "__inline_policy__/" + userName + "/" + policyName
+}
+
+func inlineGroupPolicyRuntimeName(groupName, policyName string) string {
+	return "__inline_group_policy__/" + groupName + "/" + policyName
 }
 
 func mergePoliciesIntoConfiguration(config *iam_pb.S3ApiConfiguration, policies []*iam_pb.Policy) {
@@ -1755,44 +1763,73 @@ func (iam *IdentityAccessManagement) hydrateRuntimePolicies(ctx context.Context,
 		return nil
 	}
 
-	inlineLoader, ok := store.(inlinePolicyLoader)
-	if !ok {
-		return nil
-	}
-
-	inlinePoliciesByUser, err := inlineLoader.LoadInlinePolicies(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load inline policies for runtime: %w", err)
-	}
-
-	if len(inlinePoliciesByUser) == 0 {
-		return nil
-	}
-
-	identityByName := make(map[string]*iam_pb.Identity, len(config.Identities))
-	for _, identity := range config.Identities {
-		identityByName[identity.Name] = identity
-	}
-
 	inlinePolicies := make([]*iam_pb.Policy, 0)
-	for userName, userPolicies := range inlinePoliciesByUser {
-		identity, found := identityByName[userName]
-		if !found {
-			continue
-		}
 
-		for policyName, policyDocument := range userPolicies {
-			content, err := json.Marshal(policyDocument)
-			if err != nil {
-				return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, userName, err)
+	if inlineLoader, ok := store.(inlinePolicyLoader); ok {
+		inlinePoliciesByUser, err := inlineLoader.LoadInlinePolicies(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to load inline policies for runtime: %w", err)
+		}
+		if len(inlinePoliciesByUser) > 0 {
+			identityByName := make(map[string]*iam_pb.Identity, len(config.Identities))
+			for _, identity := range config.Identities {
+				identityByName[identity.Name] = identity
 			}
 
-			runtimePolicyName := inlinePolicyRuntimeName(userName, policyName)
-			inlinePolicies = append(inlinePolicies, &iam_pb.Policy{
-				Name:    runtimePolicyName,
-				Content: string(content),
-			})
-			identity.PolicyNames = appendUniquePolicyName(identity.PolicyNames, runtimePolicyName)
+			for userName, userPolicies := range inlinePoliciesByUser {
+				identity, found := identityByName[userName]
+				if !found {
+					continue
+				}
+
+				for policyName, policyDocument := range userPolicies {
+					content, err := json.Marshal(policyDocument)
+					if err != nil {
+						return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, userName, err)
+					}
+
+					runtimePolicyName := inlinePolicyRuntimeName(userName, policyName)
+					inlinePolicies = append(inlinePolicies, &iam_pb.Policy{
+						Name:    runtimePolicyName,
+						Content: string(content),
+					})
+					identity.PolicyNames = appendUniquePolicyName(identity.PolicyNames, runtimePolicyName)
+				}
+			}
+		}
+	}
+
+	if groupLoader, ok := store.(groupInlinePolicyLoader); ok {
+		groupPoliciesByName, err := groupLoader.LoadGroupInlinePolicies(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to load group inline policies for runtime: %w", err)
+		}
+		if len(groupPoliciesByName) > 0 {
+			groupByName := make(map[string]*iam_pb.Group, len(config.Groups))
+			for _, group := range config.Groups {
+				groupByName[group.Name] = group
+			}
+
+			for groupName, groupPolicies := range groupPoliciesByName {
+				group, found := groupByName[groupName]
+				if !found {
+					continue
+				}
+
+				for policyName, policyDocument := range groupPolicies {
+					content, err := json.Marshal(policyDocument)
+					if err != nil {
+						return fmt.Errorf("failed to marshal inline policy %q for group %q: %w", policyName, groupName, err)
+					}
+
+					runtimePolicyName := inlineGroupPolicyRuntimeName(groupName, policyName)
+					inlinePolicies = append(inlinePolicies, &iam_pb.Policy{
+						Name:    runtimePolicyName,
+						Content: string(content),
+					})
+					group.PolicyNames = appendUniquePolicyName(group.PolicyNames, runtimePolicyName)
+				}
+			}
 		}
 	}
 

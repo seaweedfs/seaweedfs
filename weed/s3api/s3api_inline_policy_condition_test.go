@@ -128,14 +128,18 @@ func TestUserInlinePolicySourceIpCondition_Allows(t *testing.T) {
 // resulting inline policy is honored for group members.
 func TestGroupInlinePolicy_PutAndEnforce(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
-	api.mockConfig = &iam_pb.S3ApiConfiguration{
-		Groups: []*iam_pb.Group{
-			{Name: "devs", Members: []string{"alice"}},
-		},
-	}
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 	seedInlineCondUser(t, api)
-	require.NoError(t, api.credentialManager.SaveConfiguration(context.Background(), api.mockConfig))
-	require.NoError(t, api.iam.LoadS3ApiConfigurationFromCredentialManager())
+	// Groups live in their own credential-store namespace (CreateGroup, not
+	// SaveConfiguration). Seed devs+alice via the dedicated API and refresh
+	// through the framework hook so both mockConfig.Groups and iam.groups
+	// observe the new group.
+	ctx := context.Background()
+	require.NoError(t, api.credentialManager.CreateGroup(ctx, &iam_pb.Group{
+		Name:    "devs",
+		Members: []string{"alice"},
+	}))
+	require.NoError(t, api.refreshIAMConfiguration())
 
 	// PutGroupPolicy must succeed. This is the call that returns
 	// NotImplemented today; this test will fail with that error.

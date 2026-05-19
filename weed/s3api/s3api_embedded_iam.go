@@ -1986,29 +1986,132 @@ func (e *EmbeddedIamApi) ListGroupsForUser(s3cfg *iam_pb.S3ApiConfiguration, val
 	return resp, nil
 }
 
-// notImplementedError returns a NotImplemented IAM error for the embedded server.
-func notImplementedGroupInlineError() *iamError {
-	return &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: fmt.Errorf("group inline policies are not supported in embedded IAM mode; use the standalone IAM server or managed policies (AttachGroupPolicy)")}
+// groupExists returns true if a group of the given name is present in the
+// supplied S3 IAM configuration.
+func groupExists(s3cfg *iam_pb.S3ApiConfiguration, groupName string) bool {
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			return true
+		}
+	}
+	return false
 }
 
-// PutGroupPolicy is not supported in embedded IAM mode.
+// PutGroupPolicy attaches an inline policy to a group. The document (including
+// any Condition block) is persisted via the credential store and registered
+// in the IAM policy engine via hydrateRuntimePolicies on the next reload.
 func (e *EmbeddedIamApi) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamPutGroupPolicyResponse, *iamError) {
-	return &iamPutGroupPolicyResponse{}, notImplementedGroupInlineError()
+	resp := &iamPutGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policyDocumentString := values.Get("PolicyDocument")
+	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+	if !groupExists(s3cfg, groupName) {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+	ctx := context.Background()
+	if err := e.credentialManager.PutGroupInlinePolicy(ctx, groupName, policyName, policyDocument); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if err := e.refreshIAMConfiguration(); err != nil {
+		glog.Warningf("PutGroupPolicy: failed to refresh IAM configuration for group %s policy %s: %v", groupName, policyName, err)
+	}
+	return resp, nil
 }
 
-// GetGroupPolicy is not supported in embedded IAM mode.
+// GetGroupPolicy returns the JSON document for an inline policy on a group.
 func (e *EmbeddedIamApi) GetGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamGetGroupPolicyResponse, *iamError) {
-	return &iamGetGroupPolicyResponse{}, notImplementedGroupInlineError()
+	resp := &iamGetGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyName := values.Get("PolicyName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
+	if !groupExists(s3cfg, groupName) {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	doc, err := e.credentialManager.GetGroupInlinePolicy(context.Background(), groupName, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if doc == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found on group %s", policyName, groupName)}
+	}
+	docJSON, err := json.Marshal(doc)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	resp.GetGroupPolicyResult.GroupName = groupName
+	resp.GetGroupPolicyResult.PolicyName = policyName
+	resp.GetGroupPolicyResult.PolicyDocument = string(docJSON)
+	return resp, nil
 }
 
-// DeleteGroupPolicy is not supported in embedded IAM mode.
+// DeleteGroupPolicy removes an inline policy from a group.
 func (e *EmbeddedIamApi) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamDeleteGroupPolicyResponse, *iamError) {
-	return &iamDeleteGroupPolicyResponse{}, notImplementedGroupInlineError()
+	resp := &iamDeleteGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyName := values.Get("PolicyName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
+	if !groupExists(s3cfg, groupName) {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	if err := e.credentialManager.DeleteGroupInlinePolicy(context.Background(), groupName, policyName); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if err := e.refreshIAMConfiguration(); err != nil {
+		glog.Warningf("DeleteGroupPolicy: failed to refresh IAM configuration for group %s policy %s: %v", groupName, policyName, err)
+	}
+	return resp, nil
 }
 
-// ListGroupPolicies is not supported in embedded IAM mode.
+// ListGroupPolicies returns the names of inline policies attached to a group.
 func (e *EmbeddedIamApi) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamListGroupPoliciesResponse, *iamError) {
-	return &iamListGroupPoliciesResponse{}, notImplementedGroupInlineError()
+	resp := &iamListGroupPoliciesResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	if !groupExists(s3cfg, groupName) {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+	if e.credentialManager == nil {
+		resp.ListGroupPoliciesResult.IsTruncated = false
+		return resp, nil
+	}
+	names, err := e.credentialManager.ListGroupInlinePolicies(context.Background(), groupName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	resp.ListGroupPoliciesResult.PolicyNames = names
+	resp.ListGroupPoliciesResult.IsTruncated = false
+	return resp, nil
 }
 
 // handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
@@ -2492,7 +2595,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy" || action == "CreateUser" {
+	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy" || action == "CreateUser" || action == "PutGroupPolicy" || action == "DeleteGroupPolicy" {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {
