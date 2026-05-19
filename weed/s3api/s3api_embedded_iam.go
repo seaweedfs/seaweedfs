@@ -2021,13 +2021,12 @@ func (e *EmbeddedIamApi) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if !groupExists(s3cfg, groupName) {
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 	}
-	ctx := context.Background()
-	if err := e.credentialManager.PutGroupInlinePolicy(ctx, groupName, policyName, policyDocument); err != nil {
+	if err := e.credentialManager.PutGroupInlinePolicy(context.Background(), groupName, policyName, policyDocument); err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
-	if err := e.refreshIAMConfiguration(); err != nil {
-		glog.Warningf("PutGroupPolicy: failed to refresh IAM configuration for group %s policy %s: %v", groupName, policyName, err)
-	}
+	// DoActions reloads the IAM configuration for PutGroupPolicy, so the
+	// engine registration via hydrateRuntimePolicies happens there. No
+	// internal refresh is needed.
 	return resp, nil
 }
 
@@ -2085,9 +2084,9 @@ func (e *EmbeddedIamApi) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	if err := e.credentialManager.DeleteGroupInlinePolicy(context.Background(), groupName, policyName); err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
-	if err := e.refreshIAMConfiguration(); err != nil {
-		glog.Warningf("DeleteGroupPolicy: failed to refresh IAM configuration for group %s policy %s: %v", groupName, policyName, err)
-	}
+	// DoActions reloads the IAM configuration for DeleteGroupPolicy, so the
+	// engine deregistration via hydrateRuntimePolicies happens there. No
+	// internal refresh is needed.
 	return resp, nil
 }
 
