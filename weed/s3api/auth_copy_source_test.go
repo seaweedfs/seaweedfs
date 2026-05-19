@@ -217,6 +217,60 @@ func TestAuthorizeCopySource_VersionIdPropagated(t *testing.T) {
 	assert.Equal(t, "versionId=abc123", capturedRawQuery)
 }
 
+// TestAuthorizeCopySource_PresignedURLSessionTokenPreserved guards against a
+// regression where the synthetic source request dropped X-Amz-Security-Token
+// from the original query string. Presigned URLs carry the STS token there
+// (not in headers), and VerifyActionPermission/authorizeWithIAM use it to
+// route the request to IAM authorization.
+func TestAuthorizeCopySource_PresignedURLSessionTokenPreserved(t *testing.T) {
+	var capturedSessionToken string
+	var capturedRawQuery string
+
+	mock := &MockIAMIntegration{
+		authorizeFunc: func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode {
+			if r != nil {
+				capturedSessionToken = r.URL.Query().Get("X-Amz-Security-Token")
+				capturedRawQuery = r.URL.RawQuery
+			}
+			// The IAM mock receives the propagated session token via IAMIdentity too.
+			if identity != nil && identity.SessionToken != "" {
+				capturedSessionToken = identity.SessionToken
+			}
+			return s3err.ErrNone
+		},
+	}
+
+	iam := &IdentityAccessManagement{iamIntegration: mock}
+	iam.isAuthEnabled = true
+
+	stsIdentity := &Identity{
+		Name:         "arn:aws:sts::assumed-role/role/session",
+		Account:      &AccountAdmin,
+		Actions:      []Action{},
+		PrincipalArn: "arn:aws:sts::assumed-role/role/session",
+	}
+
+	// Presigned URL: session token is in the query string, no
+	// X-Amz-Security-Token header. The destination URL also carries unrelated
+	// SigV4 query params (X-Amz-Algorithm, etc.) that must not leak into the
+	// synthetic source action resolution.
+	req, err := http.NewRequest(http.MethodPut,
+		"http://s3.local/bucket-a/dst.bin?X-Amz-Algorithm=AWS4-HMAC-SHA256"+
+			"&X-Amz-Credential=stsKey%2F20260518%2Fus-east-1%2Fs3%2Faws4_request"+
+			"&X-Amz-Date=20260518T000000Z&X-Amz-Expires=900"+
+			"&X-Amz-Security-Token=presigned-session-token"+
+			"&X-Amz-SignedHeaders=host&X-Amz-Signature=deadbeef", nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Copy-Source", "/bucket-a/src.bin")
+
+	errCode := iam.AuthorizeCopySource(req, stsIdentity, "bucket-a", "src.bin", "")
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.Equal(t, "presigned-session-token", capturedSessionToken,
+		"session token from presigned-URL query must reach the IAM check")
+	// versionId omitted, only the token should be present in the synthetic query.
+	assert.Equal(t, "X-Amz-Security-Token=presigned-session-token", capturedRawQuery)
+}
+
 // TestAuthorizeCopySource_PreservesCopySourceHeader verifies that the synthetic
 // source request still carries the X-Amz-Copy-Source header so policy condition
 // keys like s3:x-amz-copy-source remain available.

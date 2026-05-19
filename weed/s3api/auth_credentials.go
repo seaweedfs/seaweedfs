@@ -2178,10 +2178,19 @@ func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identi
 		Host:   r.URL.Host,
 		Path:   "/" + srcBucket + "/" + srcObject,
 	}
+	// Build the synthetic source query from scratch so leftover params like
+	// uploadId/partNumber on UploadPartCopy do not steer ResolveS3Action away
+	// from s3:GetObject. The session token must still flow through for
+	// presigned URLs that carry STS credentials in the query string.
+	srcQuery := make(url.Values)
+	if token := r.URL.Query().Get("X-Amz-Security-Token"); token != "" {
+		srcQuery.Set("X-Amz-Security-Token", token)
+	}
 	if srcVersionId != "" {
-		q := srcURL.Query()
-		q.Set("versionId", srcVersionId)
-		srcURL.RawQuery = q.Encode()
+		srcQuery.Set("versionId", srcVersionId)
+	}
+	if len(srcQuery) > 0 {
+		srcURL.RawQuery = srcQuery.Encode()
 	}
 	srcReq.URL = srcURL
 	srcReq.Method = http.MethodGet
