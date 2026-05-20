@@ -1,6 +1,8 @@
 package s3_constants
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -127,5 +129,57 @@ func TestRemoveDuplicateSlashes(t *testing.T) {
 				t.Errorf("removeDuplicateSlashes(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestIdentityHolderPropagation reproduces the audit-log middleware chain: an
+// outer handler installs the holder, an inner handler authenticates and records
+// the identity on a request copy, and the outer handler must still recover the
+// requester from its own (earlier) copy of the request.
+func TestIdentityHolderPropagation(t *testing.T) {
+	outer := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+
+	// Before the holder is installed there is no identity to recover.
+	if got := GetIdentityNameFromContext(outer); got != "" {
+		t.Fatalf("unauthenticated request reports requester %q, want empty", got)
+	}
+
+	outer = EnsureIdentityHolder(outer)
+
+	// The inner handler sets the identity on a copy, mirroring how auth wraps
+	// the request with r.WithContext before invoking the next handler.
+	innerCtx := SetIdentityNameInContext(outer.Context(), "admin")
+	inner := outer.WithContext(innerCtx)
+
+	if got := GetIdentityNameFromContext(inner); got != "admin" {
+		t.Errorf("inner request requester = %q, want admin", got)
+	}
+	if got := GetIdentityNameFromContext(outer); got != "admin" {
+		t.Errorf("outer request requester = %q, want admin (must propagate via holder)", got)
+	}
+}
+
+func TestEnsureIdentityHolderIdempotent(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+
+	first := EnsureIdentityHolder(req)
+	if first == req {
+		t.Fatal("EnsureIdentityHolder should return a new request when no holder is present")
+	}
+
+	again := EnsureIdentityHolder(first)
+	if again != first {
+		t.Error("EnsureIdentityHolder should be idempotent when a holder is already present")
+	}
+}
+
+func TestGetIdentityNameFromContextWithoutHolder(t *testing.T) {
+	// Without a holder, the per-request context value is still honored so paths
+	// that set identity without installing a holder keep working.
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+	req = req.WithContext(SetIdentityNameInContext(req.Context(), "admin"))
+
+	if got := GetIdentityNameFromContext(req); got != "admin" {
+		t.Errorf("requester = %q, want admin", got)
 	}
 }

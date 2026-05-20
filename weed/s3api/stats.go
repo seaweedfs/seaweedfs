@@ -25,6 +25,10 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 		// PostLog directly mark it; we emit a fallback entry afterward for
 		// handlers (e.g. successful GET/HEAD object) that don't.
 		r = s3err.EnsureAuditTracking(r)
+		// Attach a mutable identity holder before authentication so the fallback
+		// entry can report the requester even though auth records it on a
+		// request copy this middleware never sees.
+		r = s3_constants.EnsureIdentityHolder(r)
 		start := time.Now()
 		f(recorder, r)
 		if recorder.Status == http.StatusForbidden {
