@@ -43,8 +43,12 @@ func setDiskStatus(disk *volume_server_pb.DiskStatus) {
 
 	state.mu.Lock()
 	if state.isChecking {
+		// A previous probe is still blocked in fillInDiskStatus (a stuck disk).
+		// Record the failure but do not start another goroutine, otherwise a hung
+		// filesystem would leak one goroutine per check interval.
 		state.failureCount++
-		if state.failureCount > maxFailuresBeforeAlert {
+		state.lastErr = errors.New("statfs still in progress")
+		if state.failureCount >= maxFailuresBeforeAlert {
 			state.writeErrorLocked(disk)
 		}
 		state.mu.Unlock()
@@ -59,19 +63,32 @@ func setDiskStatus(disk *volume_server_pb.DiskStatus) {
 	probe := &volume_server_pb.DiskStatus{Dir: disk.Dir}
 	ch := make(chan error, 1)
 	go func() {
-		ch <- fillInDiskStatus(probe)
+		err := fillInDiskStatus(probe)
+		// Clear the flag only once statfs has actually returned, so a stuck disk
+		// keeps a single outstanding probe instead of spawning a new one each tick.
+		state.mu.Lock()
+		state.isChecking = false
+		state.mu.Unlock()
+		ch <- err
 	}()
 
 	var probeErr error
 	select {
 	case probeErr = <-ch:
 	case <-ctx.Done():
-		probeErr = errors.New("statfs timeout")
+		// Leave isChecking set; the probe goroutine clears it when statfs returns.
+		state.mu.Lock()
+		state.failureCount++
+		state.lastErr = errors.New("statfs timeout")
+		if state.failureCount >= maxFailuresBeforeAlert {
+			state.writeErrorLocked(disk)
+		}
+		state.mu.Unlock()
+		return
 	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	state.isChecking = false
 
 	if probeErr != nil {
 		state.failureCount++
