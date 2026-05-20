@@ -11,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -37,6 +36,7 @@ type LiveLock struct {
 	expireAtNs          int64
 	hostFiler           pb.ServerAddress
 	cancelCh            chan struct{}
+	renewalDone         chan struct{} // closed when the renewal goroutine exits; nil if there is none
 	grpcDialOption      grpc.DialOption
 	isLocked            int32 // 0 = unlocked, 1 = locked; use atomic operations
 	self                string
@@ -83,7 +83,9 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 	// Block until acquired
 	lock.retryUntilLocked(lockTTL)
 	// Start renewal goroutine using a ticker for interruptible sleep
+	lock.renewalDone = make(chan struct{})
 	go func() {
+		defer close(lock.renewalDone)
 		renewInterval := lockTTL / 2
 		ticker := time.NewTicker(renewInterval)
 		defer ticker.Stop()
@@ -119,7 +121,9 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 	if lock.lockTTL == 0 {
 		lock.lockTTL = lock_manager.LiveLockTTL
 	}
+	lock.renewalDone = make(chan struct{})
 	go func() {
+		defer close(lock.renewalDone)
 		renewInterval := lock.lockTTL / 2
 		isLocked := false
 		lockOwner := ""
@@ -149,30 +153,39 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				onLockOwnerChange(lock.LockOwner())
 				lockOwner = lock.LockOwner()
 			}
+			// Sleep until the next attempt, but wake immediately on Stop() so
+			// the goroutine exits and closes renewalDone before Stop()'s bounded
+			// wait elapses. An uninterruptible sleep here (up to 5*renewInterval
+			// when unlocked) can outlast that wait and break the shutdown
+			// synchronization.
+			sleepFor := renewInterval
+			if !isLocked {
+				sleepFor = 5 * renewInterval
+			}
+			timer := time.NewTimer(sleepFor)
 			select {
 			case <-lock.cancelCh:
+				timer.Stop()
 				return
-			default:
-				if isLocked {
-					time.Sleep(renewInterval)
-				} else {
-					time.Sleep(5 * renewInterval)
-				}
+			case <-timer.C:
 			}
 		}
 	}()
 	return
 }
 
+// retryUntilLocked blocks until the lock is acquired, polling at the steady
+// short cadence that AttemptToLock already enforces on contention (~1s). It
+// deliberately avoids util.RetryUntil's exponential backoff (which grows to
+// several seconds): when a holder on another mount releases the lock, the
+// waiter must pick it up promptly, otherwise cross-mount write handoff stalls
+// long enough to time out clients.
 func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
-	util.RetryUntil("create lock:"+lock.key, func() error {
-		return lock.AttemptToLock(lockDuration)
-	}, func(err error) (shouldContinue bool) {
-		if err != nil {
-			glog.Warningf("create lock %s: %s", lock.key, err)
+	for lock.renewToken == "" {
+		if err := lock.AttemptToLock(lockDuration); err != nil {
+			glog.V(1).Infof("create lock %s: %v", lock.key, err)
 		}
-		return lock.renewToken == ""
-	})
+	}
 }
 
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
@@ -226,10 +239,27 @@ func (lock *LiveLock) Stop() error {
 		close(lock.cancelCh)
 	}
 
-	// Wait a brief moment for the goroutine to see the closed channel
-	// This reduces the race condition window where the goroutine might
-	// attempt one more lock operation after we've released the lock
-	time.Sleep(10 * time.Millisecond)
+	// Wait for the renewal goroutine to fully exit before unlocking. A renewal
+	// in flight when we close cancelCh rotates renewToken on the server; if we
+	// then unlock with the token we read here, the unlock fails with a token
+	// mismatch and the lock lingers until its TTL expires — blocking other
+	// mounts waiting on the same file. Waiting for the goroutine to return also
+	// makes the renewToken read below race-free (channel close = happens-before).
+	if lock.renewalDone != nil {
+		select {
+		case <-lock.renewalDone:
+		case <-time.After(lock.lockTTL + 2*time.Second):
+			// The renewal goroutine is wedged, almost certainly in a stuck
+			// renewal RPC. Do not unlock here: the renewToken may be rotated
+			// when that RPC finally returns, so an unlock sent now could race
+			// it, be rejected on a stale token, and leave the lock lingering
+			// anyway. cancelCh is closed, so the goroutine stops renewing once
+			// its in-flight call returns and the lock then expires within its
+			// TTL on its own.
+			glog.Warningf("lock %s: renewal goroutine still running at shutdown; letting lock expire via TTL", lock.key)
+			return nil
+		}
+	}
 
 	// Also release the lock if held
 	// Note: We intentionally don't clear renewToken here because
