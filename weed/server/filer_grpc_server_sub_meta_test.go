@@ -460,16 +460,18 @@ func TestMaybeSendIdleHeartbeat(t *testing.T) {
 		}
 	})
 
-	t.Run("caught up via SinceNs floor on idle source", func(t *testing.T) {
-		// Source last wrote long ago; client subscribed from "now" and has read
-		// nothing this session (lastSeen == 0). It is still caught up.
+	t.Run("caught up via read position floor", func(t *testing.T) {
+		// The read cursor has advanced past the buffer head while lastSeen stayed
+		// 0. This is the idle-source case (subscribed from "now", read nothing) and
+		// also metadata-chunks mode, where persisted entries replay as log file
+		// refs and never reach eachLogEntryFn.
 		lb.LastTsNs.Store(recentEvent)
 		s := &collectingStream{}
 		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
-		startTs := time.Now().UnixNano()
-		got := fs.maybeSendIdleHeartbeat(req, s, lb, startTs, 0, 0)
+		readPosition := time.Now().UnixNano()
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, readPosition, 0, 0)
 		if len(s.messages) != 1 || got <= 0 {
-			t.Fatalf("expected heartbeat for idle source, got msgs=%d lastHeartbeat=%d", len(s.messages), got)
+			t.Fatalf("expected heartbeat for caught-up subscriber, got msgs=%d lastHeartbeat=%d", len(s.messages), got)
 		}
 	})
 

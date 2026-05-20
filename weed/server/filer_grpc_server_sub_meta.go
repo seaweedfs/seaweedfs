@@ -266,7 +266,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false
 			}
-			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, req.SinceNs, lastSeenTsNs, lastHeartbeatNs)
+			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
 			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
@@ -431,7 +431,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false
 			}
-			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.LocalMetaLogBuffer, req.SinceNs, lastSeenTsNs, lastHeartbeatNs)
+			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.LocalMetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
 			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
@@ -511,18 +511,24 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 // it to advance freshness signals (e.g. filer.sync's sync_offset) without moving
 // its resume checkpoint, so a restart still re-reads from the last real event.
 //
-// startTsNs is the subscriber's initial SinceNs and lastSeenTsNs is the
-// timestamp of the most recent entry read; their max is the floor below which
-// the buffer has nothing new. While the buffer head is past that floor the
-// subscriber is genuinely behind (e.g. replaying a backlog) and no heartbeat is
-// sent. Returns the (possibly advanced) lastHeartbeatNs.
-func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, logBuffer *log_buffer.LogBuffer, startTsNs, lastSeenTsNs, lastHeartbeatNs int64) int64 {
+// The catch-up floor is the max of two read-progress markers:
+//   - readPositionTsNs: how far the read cursor has advanced. It starts at
+//     SinceNs and also covers metadata-chunks mode, where persisted entries are
+//     replayed as log file refs rather than through eachLogEntryFn.
+//   - lastSeenTsNs: the timestamp of the most recent entry streamed in this
+//     call. It advances live while reading the in-memory backlog, before the
+//     read cursor returned by LoopProcessLogData has been updated.
+//
+// While the buffer head is past that floor the subscriber is still behind (e.g.
+// replaying a backlog) and no heartbeat is sent. Returns the (possibly advanced)
+// lastHeartbeatNs.
+func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, logBuffer *log_buffer.LogBuffer, readPositionTsNs, lastSeenTsNs, lastHeartbeatNs int64) int64 {
 	if !req.ClientSupportsIdleHeartbeat {
 		return lastHeartbeatNs
 	}
 	floorTsNs := lastSeenTsNs
-	if startTsNs > floorTsNs {
-		floorTsNs = startTsNs
+	if readPositionTsNs > floorTsNs {
+		floorTsNs = readPositionTsNs
 	}
 	if logBuffer.LastTsNs.Load() > floorTsNs {
 		// the buffer holds data the subscriber has not reached yet
