@@ -19,7 +19,12 @@ func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, node
 		for _, rack := range dc.RackInfos {
 			nodeCount += len(rack.DataNodeInfos)
 			for _, node := range rack.DataNodeInfos {
-				diskCount += len(node.DiskInfos)
+				// DiskInfos is keyed by disk type, so same-type physical disks
+				// collapse into one entry. Count physical disks so the number
+				// matches the per-disk activeDisk map.
+				for _, diskInfo := range node.DiskInfos {
+					diskCount += len(diskInfo.SplitByPhysicalDisk())
+				}
 			}
 		}
 	}
