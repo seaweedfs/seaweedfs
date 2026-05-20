@@ -152,11 +152,14 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	// request can't observe a half-merged state.
 	var requestEntry *filer_pb.Entry
 	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		// e.Chunks[snapshotLen:] is whatever async uploaders appended while
+		// we processed the snapshot. processedPrefix is freshly built and not
+		// referenced elsewhere, so we can append straight onto it.
 		var tail []*filer_pb.FileChunk
 		if len(e.Chunks) > snapshotLen {
-			tail = append([]*filer_pb.FileChunk(nil), e.Chunks[snapshotLen:]...)
+			tail = e.Chunks[snapshotLen:]
 		}
-		e.Chunks = append(append([]*filer_pb.FileChunk(nil), processedPrefix...), tail...)
+		e.Chunks = append(processedPrefix, tail...)
 		requestEntry = proto.Clone(e).(*filer_pb.Entry)
 	})
 	request := &filer_pb.CreateEntryRequest{
