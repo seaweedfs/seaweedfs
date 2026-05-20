@@ -153,15 +153,21 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				onLockOwnerChange(lock.LockOwner())
 				lockOwner = lock.LockOwner()
 			}
+			// Sleep until the next attempt, but wake immediately on Stop() so
+			// the goroutine exits and closes renewalDone before Stop()'s bounded
+			// wait elapses. An uninterruptible sleep here (up to 5*renewInterval
+			// when unlocked) can outlast that wait and break the shutdown
+			// synchronization.
+			sleepFor := renewInterval
+			if !isLocked {
+				sleepFor = 5 * renewInterval
+			}
+			timer := time.NewTimer(sleepFor)
 			select {
 			case <-lock.cancelCh:
+				timer.Stop()
 				return
-			default:
-				if isLocked {
-					time.Sleep(renewInterval)
-				} else {
-					time.Sleep(5 * renewInterval)
-				}
+			case <-timer.C:
 			}
 		}
 	}()
