@@ -90,7 +90,6 @@ type miniProgress struct {
 	elapsed  map[string]time.Duration
 	isTTY    bool
 	rendered bool
-	closed   bool
 }
 
 const miniProgressNameWidth = 12
@@ -148,9 +147,6 @@ func (p *miniProgress) stopped(name string)  { p.update(name, "stopped") }
 // ESC[2K clears the line — leaving the cursor parked one line below the last
 // row so the next print (welcome banner, shutdown messages) flows naturally.
 func (p *miniProgress) renderLocked() {
-	if p.closed {
-		return
-	}
 	if p.rendered {
 		fmt.Printf("\033[%dA", len(p.order))
 	}
