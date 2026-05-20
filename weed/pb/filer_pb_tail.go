@@ -38,6 +38,12 @@ type MetadataFollowOption struct {
 	// the server sends log file chunk fids instead of streaming events,
 	// and the client reads directly from volume servers.
 	LogFileReaderFn LogFileReaderFn
+	// OnIdleHeartbeat, when non-nil, opts in to idle heartbeats: while the
+	// subscriber is caught up the server periodically sends an empty response
+	// carrying the current time, and this is called with that timestamp. It is
+	// a freshness signal only and does not advance StartTsNs, so the resume
+	// checkpoint stays on the last real event.
+	OnIdleHeartbeat func(tsNs int64)
 }
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
@@ -77,6 +83,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			UntilNs:                      option.StopTsNs,
 			ClientSupportsBatching:       true,
 			ClientSupportsMetadataChunks: option.LogFileReaderFn != nil,
+			ClientSupportsIdleHeartbeat:  option.OnIdleHeartbeat != nil,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)
@@ -136,6 +143,17 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 					option.StartTsNs = lastTs
 				}
 				pendingRefs = nil
+			}
+
+			// Idle heartbeat: the source is caught up and has no new events, so
+			// it sends an empty response carrying the current time. Surface it as
+			// a freshness signal but leave option.StartTsNs untouched so a restart
+			// still resumes from the last real event.
+			if resp.EventNotification == nil && len(resp.Events) == 0 && resp.TsNs > 0 {
+				if option.OnIdleHeartbeat != nil {
+					option.OnIdleHeartbeat(resp.TsNs)
+				}
+				continue
 			}
 
 			// Process the first event (always present in top-level fields)
