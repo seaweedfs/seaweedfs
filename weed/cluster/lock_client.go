@@ -11,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -169,15 +168,18 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 	return
 }
 
+// retryUntilLocked blocks until the lock is acquired, polling at the steady
+// short cadence that AttemptToLock already enforces on contention (~1s). It
+// deliberately avoids util.RetryUntil's exponential backoff (which grows to
+// several seconds): when a holder on another mount releases the lock, the
+// waiter must pick it up promptly, otherwise cross-mount write handoff stalls
+// long enough to time out clients.
 func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
-	util.RetryUntil("create lock:"+lock.key, func() error {
-		return lock.AttemptToLock(lockDuration)
-	}, func(err error) (shouldContinue bool) {
-		if err != nil {
-			glog.Warningf("create lock %s: %s", lock.key, err)
+	for lock.renewToken == "" {
+		if err := lock.AttemptToLock(lockDuration); err != nil {
+			glog.V(1).Infof("create lock %s: %v", lock.key, err)
 		}
-		return lock.renewToken == ""
-	})
+	}
 }
 
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
