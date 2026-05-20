@@ -841,6 +841,16 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutPublicAccessBlockHandler, ACTION_ADMIN)), "PUT")).Queries("publicAccessBlock", "")
 		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeletePublicAccessBlockHandler, ACTION_ADMIN)), "DELETE")).Queries("publicAccessBlock", "")
 
+		// Empty bucket configuration stubs for AWS-SDK compatibility (analytics, inventory, intelligent-tiering, metrics)
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetAnalyticsConfiguration, ACTION_READ)), "GET")).Queries("analytics", "", "id", "{id:.*}")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListBucketAnalyticsConfigurations, ACTION_READ)), "GET")).Queries("analytics", "")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetInventoryConfiguration, ACTION_READ)), "GET")).Queries("inventory", "", "id", "{id:.*}")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListBucketInventoryConfigurations, ACTION_READ)), "GET")).Queries("inventory", "")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetIntelligentTieringConfiguration, ACTION_READ)), "GET")).Queries("intelligent-tiering", "", "id", "{id:.*}")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListBucketIntelligentTieringConfigurations, ACTION_READ)), "GET")).Queries("intelligent-tiering", "")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetMetricsConfiguration, ACTION_READ)), "GET")).Queries("metrics", "", "id", "{id:.*}")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListBucketMetricsConfigurations, ACTION_READ)), "GET")).Queries("metrics", "")
+
 		// ListObjectsV2
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
 			limitedHandler, _ := s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)

@@ -149,6 +149,8 @@ const (
 
 	// Object key length errors
 	ErrKeyTooLongError
+
+	ErrNoSuchConfiguration
 )
 
 // Error message constants for checksum validation
@@ -622,6 +624,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "KeyTooLongError",
 		Description:    "Your key is too long.",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrNoSuchConfiguration: {
+		Code:           "NoSuchConfiguration",
+		Description:    "The specified configuration does not exist.",
+		HTTPStatusCode: http.StatusNotFound,
 	},
 }
 
