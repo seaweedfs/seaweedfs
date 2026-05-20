@@ -494,3 +494,26 @@ type ListGroupsForUserResponse struct {
 	} `xml:"ListGroupsForUserResult"`
 	CommonResponse
 }
+
+// TagUserResponse is the response for TagUser action.
+type TagUserResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ TagUserResponse"`
+	CommonResponse
+}
+
+// UntagUserResponse is the response for UntagUser action.
+type UntagUserResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UntagUserResponse"`
+	CommonResponse
+}
+
+// ListUserTagsResponse is the response for ListUserTags action.
+type ListUserTagsResponse struct {
+	XMLName            xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListUserTagsResponse"`
+	ListUserTagsResult struct {
+		Tags        []*IAMTag `xml:"Tags>member"`
+		IsTruncated bool      `xml:"IsTruncated"`
+		Marker      string    `xml:"Marker,omitempty"`
+	} `xml:"ListUserTagsResult"`
+	CommonResponse
+}

@@ -80,6 +80,9 @@ const (
 	MaxServiceAccountsPerUser = 100  // Maximum service accounts per user
 	MaxDescriptionLength      = 1000 // Maximum description length in characters
 	MaxManagedPoliciesPerUser = 10   // Maximum managed policies attached to a user
+	MaxUserTags               = 50   // Maximum tags per user
+	MaxUserTagKeyLength       = 128  // Maximum tag key length
+	MaxUserTagValueLength     = 256  // Maximum tag value length
 )
 
 // Type aliases for IAM response types from shared package
@@ -132,6 +135,11 @@ type (
 	iamDeleteGroupPolicyResponse         = iamlib.DeleteGroupPolicyResponse
 	iamListGroupPoliciesResponse         = iamlib.ListGroupPoliciesResponse
 	iamListGroupsForUserResponse         = iamlib.ListGroupsForUserResponse
+	// User tag response types
+	iamTagUserResponse      = iamlib.TagUserResponse
+	iamUntagUserResponse    = iamlib.UntagUserResponse
+	iamListUserTagsResponse = iamlib.ListUserTagsResponse
+	iamTag                  = iamlib.IAMTag
 )
 
 // Helper function wrappers using shared package
@@ -206,7 +214,7 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResp)
 	case iam.ErrCodeEntityAlreadyExistsException:
 		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
-	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException:
+	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException, "ValidationError":
 		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
 	case "AccessDenied", iam.ErrCodeLimitExceededException:
 		s3err.WriteXMLResponse(w, r, http.StatusForbidden, errorResp)
@@ -1155,6 +1163,217 @@ func (e *EmbeddedIamApi) ListUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, valu
 			resp.ListUserPoliciesResult.IsTruncated = false
 			return resp, nil
 		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// parseTagListParams reads AWS query-encoded "Tags.member.N.Key" / "Tags.member.N.Value"
+// pairs from form values, returning them in numeric order.
+func parseTagListParams(values url.Values) ([]*iam_pb.UserTag, *iamError) {
+	type indexed struct {
+		idx   int
+		key   string
+		value string
+	}
+	indexes := make(map[int]*indexed)
+	for name, vs := range values {
+		if len(vs) == 0 || !strings.HasPrefix(name, "Tags.member.") {
+			continue
+		}
+		rest := strings.TrimPrefix(name, "Tags.member.")
+		dot := strings.Index(rest, ".")
+		if dot < 0 {
+			continue
+		}
+		n, err := strconv.Atoi(rest[:dot])
+		if err != nil || n < 1 {
+			continue
+		}
+		entry, ok := indexes[n]
+		if !ok {
+			entry = &indexed{idx: n}
+			indexes[n] = entry
+		}
+		switch rest[dot+1:] {
+		case "Key":
+			entry.key = vs[0]
+		case "Value":
+			entry.value = vs[0]
+		}
+	}
+	keys := make([]int, 0, len(indexes))
+	for k := range indexes {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	tags := make([]*iam_pb.UserTag, 0, len(keys))
+	for _, k := range keys {
+		t := indexes[k]
+		if t.key == "" {
+			return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("tag key cannot be empty")}
+		}
+		if len(t.key) > MaxUserTagKeyLength {
+			return nil, &iamError{Code: "ValidationError", Error: fmt.Errorf("tag key %q exceeds %d characters", t.key, MaxUserTagKeyLength)}
+		}
+		if len(t.value) > MaxUserTagValueLength {
+			return nil, &iamError{Code: "ValidationError", Error: fmt.Errorf("tag value for key %q exceeds %d characters", t.key, MaxUserTagValueLength)}
+		}
+		tags = append(tags, &iam_pb.UserTag{Key: t.key, Value: t.value})
+	}
+	return tags, nil
+}
+
+// parseTagKeysParams reads AWS query-encoded "TagKeys.member.N" entries and
+// validates each entry is a non-empty key within MaxUserTagKeyLength.
+func parseTagKeysParams(values url.Values) ([]string, *iamError) {
+	entries := make(map[int]string)
+	for name, vs := range values {
+		if len(vs) == 0 || !strings.HasPrefix(name, "TagKeys.member.") {
+			continue
+		}
+		rest := strings.TrimPrefix(name, "TagKeys.member.")
+		n, err := strconv.Atoi(rest)
+		if err != nil || n < 1 {
+			continue
+		}
+		entries[n] = vs[0]
+	}
+	keys := make([]int, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	result := make([]string, 0, len(keys))
+	for _, k := range keys {
+		key := entries[k]
+		if key == "" {
+			return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("tag key cannot be empty")}
+		}
+		if len(key) > MaxUserTagKeyLength {
+			return nil, &iamError{Code: "ValidationError", Error: fmt.Errorf("tag key %q exceeds %d characters", key, MaxUserTagKeyLength)}
+		}
+		result = append(result, key)
+	}
+	return result, nil
+}
+
+// mergeUserTags overwrites existing tags with matching keys and appends new ones,
+// preserving original order for stable iteration.
+func mergeUserTags(existing []*iam_pb.UserTag, incoming []*iam_pb.UserTag) []*iam_pb.UserTag {
+	index := make(map[string]int, len(existing))
+	merged := make([]*iam_pb.UserTag, 0, len(existing)+len(incoming))
+	for _, t := range existing {
+		merged = append(merged, &iam_pb.UserTag{Key: t.Key, Value: t.Value})
+		index[t.Key] = len(merged) - 1
+	}
+	for _, t := range incoming {
+		if i, ok := index[t.Key]; ok {
+			merged[i].Value = t.Value
+			continue
+		}
+		index[t.Key] = len(merged)
+		merged = append(merged, &iam_pb.UserTag{Key: t.Key, Value: t.Value})
+	}
+	return merged
+}
+
+// TagUser adds or updates tags on an IAM user.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_TagUser.html
+func (e *EmbeddedIamApi) TagUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamTagUserResponse, *iamError) {
+	resp := &iamTagUserResponse{}
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	incoming, iamErr := parseTagListParams(values)
+	if iamErr != nil {
+		return resp, iamErr
+	}
+	if len(incoming) == 0 {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("at least one tag is required")}
+	}
+	// Reject duplicate keys within the same request to match AWS semantics.
+	seen := make(map[string]bool, len(incoming))
+	for _, t := range incoming {
+		if seen[t.Key] {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("duplicate tag key %q", t.Key)}
+		}
+		seen[t.Key] = true
+	}
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		merged := mergeUserTags(ident.Tags, incoming)
+		if len(merged) > MaxUserTags {
+			return resp, &iamError{Code: iam.ErrCodeLimitExceededException, Error: fmt.Errorf("cannot exceed %d tags per user", MaxUserTags)}
+		}
+		ident.Tags = merged
+		return resp, nil
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// UntagUser removes the named tags from an IAM user. Unknown keys are silently ignored.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_UntagUser.html
+func (e *EmbeddedIamApi) UntagUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUntagUserResponse, *iamError) {
+	resp := &iamUntagUserResponse{}
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	keys, iamErr := parseTagKeysParams(values)
+	if iamErr != nil {
+		return resp, iamErr
+	}
+	if len(keys) == 0 {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("at least one TagKeys entry is required")}
+	}
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		if len(ident.Tags) == 0 {
+			return resp, nil
+		}
+		toRemove := make(map[string]bool, len(keys))
+		for _, k := range keys {
+			toRemove[k] = true
+		}
+		filtered := make([]*iam_pb.UserTag, 0, len(ident.Tags))
+		for _, t := range ident.Tags {
+			if toRemove[t.Key] {
+				continue
+			}
+			filtered = append(filtered, t)
+		}
+		ident.Tags = filtered
+		return resp, nil
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// ListUserTags returns the tags attached to an IAM user.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUserTags.html
+// Pagination is not implemented: tag counts are bounded by MaxUserTags so the
+// full set always fits in a single response.
+func (e *EmbeddedIamApi) ListUserTags(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamListUserTagsResponse, *iamError) {
+	resp := &iamListUserTagsResponse{}
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		tags := make([]*iamTag, 0, len(ident.Tags))
+		for _, t := range ident.Tags {
+			tags = append(tags, &iamTag{Key: t.Key, Value: t.Value})
+		}
+		resp.ListUserTagsResult.Tags = tags
+		resp.ListUserTagsResult.IsTruncated = false
+		return resp, nil
 	}
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
@@ -2267,6 +2486,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		switch action {
 		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListUserPolicies", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListPolicyVersions", "GetPolicyVersion", "ListServiceAccounts", "GetServiceAccount",
 			"GetGroup", "ListGroups", "ListAttachedGroupPolicies", "GetGroupPolicy", "ListGroupPolicies", "ListGroupsForUser",
+			"ListUserTags",
 			actionListOpenIDConnectProviders, actionGetOpenIDConnectProvider:
 			// Allowed read-only actions
 		default:
@@ -2388,6 +2608,25 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	case "ListUserPolicies":
 		var iamErr *iamError
 		response, iamErr = e.ListUserPolicies(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "TagUser":
+		var iamErr *iamError
+		response, iamErr = e.TagUser(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "UntagUser":
+		var iamErr *iamError
+		response, iamErr = e.UntagUser(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "ListUserTags":
+		var iamErr *iamError
+		response, iamErr = e.ListUserTags(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}

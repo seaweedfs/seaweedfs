@@ -187,6 +187,12 @@ message Identity {
     repeated string service_account_ids = 6;  // IDs of service accounts owned by this user
     repeated string policy_names = 7;
     bool is_static = 8;  // Loaded from static config file (read-only, not editable via API)
+    repeated UserTag tags = 9;
+}
+
+message UserTag {
+    string key = 1;
+    string value = 2;
 }
 
 message Credential {
