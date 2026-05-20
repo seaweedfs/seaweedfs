@@ -262,6 +262,64 @@ func TestBalance(t *testing.T) {
 
 }
 
+// Regression test: a freshly added empty volume server must end up sharing the
+// data roughly evenly, not having every volume drained onto it. Before the fix,
+// adjustAfterMove never updated the per-disk VolumeInfos that the density-based
+// capacity function reads, so the planner saw a stale topology and moved every
+// volume from the full node onto the empty one.
+func TestBalanceDoesNotDrainOntoOneNode(t *testing.T) {
+	const mb = 1024 * 1024
+	volumeSizeLimitMb := uint64(100)
+
+	makeNode := func(id string, volumes []*master_pb.VolumeInformationMessage) *Node {
+		return &Node{
+			info: &master_pb.DataNodeInfo{
+				Id: id,
+				DiskInfos: map[string]*master_pb.DiskInfo{
+					"": {
+						MaxVolumeCount: 10,
+						VolumeCount:    int64(len(volumes)),
+						VolumeInfos:    volumes,
+					},
+				},
+			},
+			dc:   "dc1",
+			rack: "rack1",
+		}
+	}
+
+	var fullVolumes []*master_pb.VolumeInformationMessage
+	for id := uint32(1); id <= 6; id++ {
+		fullVolumes = append(fullVolumes, &master_pb.VolumeInformationMessage{Id: id, Size: 95 * mb})
+	}
+	fullNode := makeNode("full", fullVolumes)
+	emptyNode := makeNode("empty", nil)
+	nodes := []*Node{fullNode, emptyNode}
+
+	volumeReplicas := map[uint32][]*VolumeReplica{}
+	for _, v := range fullVolumes {
+		loc := newLocation("dc1", "rack1", fullNode.info)
+		volumeReplicas[v.Id] = []*VolumeReplica{{location: &loc, info: v}}
+	}
+
+	for _, n := range nodes {
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool { return true })
+	}
+
+	if err := balanceSelectedVolume(nil, types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes, volumeSizeLimitMb, false); err != nil {
+		t.Fatalf("balanceSelectedVolume: %v", err)
+	}
+
+	fullCount := len(fullNode.info.DiskInfos[""].VolumeInfos)
+	emptyCount := len(emptyNode.info.DiskInfos[""].VolumeInfos)
+	if fullCount == 0 || emptyCount == 0 {
+		t.Fatalf("expected volumes spread across both nodes, got full=%d empty=%d", fullCount, emptyCount)
+	}
+	if diff := fullCount - emptyCount; diff > 1 || diff < -1 {
+		t.Fatalf("expected balanced distribution within one volume, got full=%d empty=%d", fullCount, emptyCount)
+	}
+}
+
 func TestVolumeSelection(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
 
