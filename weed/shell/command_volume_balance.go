@@ -567,7 +567,11 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 func removeVolumeInfo(diskInfo *master_pb.DiskInfo, volumeId uint32) {
 	for i, volumeInfo := range diskInfo.VolumeInfos {
 		if volumeInfo.Id == volumeId {
-			diskInfo.VolumeInfos = append(diskInfo.VolumeInfos[:i], diskInfo.VolumeInfos[i+1:]...)
+			// order does not matter here, so swap with the last and truncate
+			last := len(diskInfo.VolumeInfos) - 1
+			diskInfo.VolumeInfos[i] = diskInfo.VolumeInfos[last]
+			diskInfo.VolumeInfos[last] = nil
+			diskInfo.VolumeInfos = diskInfo.VolumeInfos[:last]
 			return
 		}
 	}
@@ -589,17 +593,13 @@ func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[u
 			// capacityByMinVolumeDensity recomputes ratios correctly on the next
 			// iteration. Without this the density view stays stale and the planner
 			// keeps draining the same node, moving every volume onto one server.
-			for diskType, diskInfo := range fullNode.info.DiskInfos {
-				if diskType == v.DiskType {
-					removeVolumeInfo(diskInfo, v.Id)
-					addVolumeCount(diskInfo, -1)
-				}
+			if fullDisk, found := fullNode.info.DiskInfos[v.DiskType]; found {
+				removeVolumeInfo(fullDisk, v.Id)
+				addVolumeCount(fullDisk, -1)
 			}
-			for diskType, diskInfo := range emptyNode.info.DiskInfos {
-				if diskType == v.DiskType {
-					diskInfo.VolumeInfos = append(diskInfo.VolumeInfos, v)
-					addVolumeCount(diskInfo, 1)
-				}
+			if emptyDisk, found := emptyNode.info.DiskInfos[v.DiskType]; found {
+				emptyDisk.VolumeInfos = append(emptyDisk.VolumeInfos, v)
+				addVolumeCount(emptyDisk, 1)
 			}
 			return
 		}
