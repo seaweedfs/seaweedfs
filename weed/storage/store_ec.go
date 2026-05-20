@@ -159,10 +159,54 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 
 }
 
-func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) error {
+func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	// The .ecx index file may live on a different disk than the one
+	// holding the .ec?? shard being mounted: ec.balance / ec.rebuild can
+	// place the .ecx on one local disk while later distributing shards
+	// across sibling disks of the same volume server. The per-disk
+	// IdxDirectory used by LoadEcShard would ENOENT the .ecx, so look up
+	// the .ecx owner across all DiskLocations once and route NewEcVolume
+	// at the directory that actually has the file. A 0-byte .ecx is
+	// treated as missing here (writeToFile can leave a stub on a failed
+	// EC distribute) so we still scan the rest of the disks.
+	ecxIdxDir, ecxFound := s.findEcxIdxDirForVolume(collection, vid)
+
+	// Collect failures so an all-disks-fail return reports every disk we
+	// tried rather than just the first one. Before this loop reordered
+	// itself to keep going after the first non-ENOENT error, a single
+	// shard-on-disk-without-.ecx situation would bail the loop and the
+	// operator saw "cannot open ec volume index" naming exactly one disk
+	// even when others held a valid index.
+	type diskError struct {
+		dir string
+		err error
+	}
+	var failures []diskError
+
 	for diskId, location := range s.Locations {
-		if ecVolume, err := location.LoadEcShard(collection, vid, shardId); err == nil {
+		idxDir := location.IdxDirectory
+		if ecxFound {
+			// Fast path: if findEcxIdxDirForVolume already pointed at
+			// one of this disk's directories, the disk owns the .ecx
+			// and the local IdxDirectory is the right answer — skip
+			// the HasEcxFileOnDisk stat. Only fall back to the sibling
+			// disk's idxDir when this disk's directories are neither.
+			if location.IdxDirectory != ecxIdxDir && location.Directory != ecxIdxDir {
+				if !location.HasEcxFileOnDisk(collection, vid) {
+					idxDir = ecxIdxDir
+				}
+			}
+		}
+		ecVolume, err := location.loadEcShardWithIdxDir(collection, vid, shardId, idxDir)
+		if err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
+
+			// Apply the orchestrator-supplied source disk type so the EC
+			// volume reports under it instead of the location's. Empty means
+			// "fall back to location's disk type" (#9423).
+			if sourceDiskType != "" {
+				ecVolume.SetDiskType(types.ToDiskType(sourceDiskType))
+			}
 
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
@@ -171,19 +215,40 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				Collection:  collection,
 				EcIndexBits: uint32(si.Bitmap()),
 				ShardSizes:  si.SizesInt64(),
-				DiskType:    string(location.DiskType),
+				DiskType:    string(ecVolume.DiskType()),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      uint32(diskId),
 			}
 			return nil
-		} else if err == os.ErrNotExist {
-			continue
-		} else {
-			return fmt.Errorf("%s load ec shard %d.%d: %v", location.Directory, vid, shardId, err)
 		}
+		if errors.Is(err, os.ErrNotExist) {
+			// Shard or index not on this disk; another disk may own it.
+			continue
+		}
+		failures = append(failures, diskError{dir: location.Directory, err: err})
 	}
 
-	return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
+	if len(failures) == 0 {
+		// No disk had the shard or the index; this volume server is not
+		// holding any artefacts for the requested shard. Name what we
+		// scanned for so the operator can tell "no .ecx anywhere" apart
+		// from "shard not on this server".
+		if !ecxFound {
+			return fmt.Errorf("MountEcShards %d.%d: no .ecx index found on any local disk", vid, shardId)
+		}
+		return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
+	}
+	// Some disks returned a real (non-ENOENT) error. Report them all so
+	// the caller can see whether the failures cluster around one disk
+	// (likely hardware) or are spread out (likely a config problem).
+	var b []byte
+	for i, f := range failures {
+		if i > 0 {
+			b = append(b, "; "...)
+		}
+		b = append(b, fmt.Sprintf("%s: %v", f.dir, f.err)...)
+	}
+	return fmt.Errorf("MountEcShards %d.%d load failures: %s", vid, shardId, string(b))
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {
@@ -206,12 +271,12 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	location := s.Locations[diskId]
 
 	if deleted := location.UnloadEcShard(vid, shardId); deleted {
-		glog.V(0).Infof("UnmountEcShards %d.%d", vid, shardId)
+		glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
 		s.DeletedEcShardsChan <- message
 		return nil
 	}
 
-	return fmt.Errorf("UnmountEcShards %d.%d not found on disk", vid, shardId)
+	return fmt.Errorf("UnmountEcShards %d.%d not found on disk %d", vid, shardId, diskId)
 }
 
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
@@ -223,6 +288,12 @@ func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId)
 	return 0, nil, false
 }
 
+// FindEcShard returns the shard if any DiskLocation on this server holds it,
+// along with that disk's id.
+func (s *Store) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
+	return s.findEcShard(vid, shardId)
+}
+
 func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
 		if s, found := location.FindEcVolume(vid); found {
@@ -230,6 +301,20 @@ func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, boo
 		}
 	}
 	return nil, false
+}
+
+// FindEcVolumeDiskIds returns every disk_id on this store that has an
+// EcVolume entry for the given volume. Useful for diagnostic logging
+// when a single FindEcVolume hit hides which disk is actually holding
+// the mount (e.g., the ReceiveFile mounted-volume guard).
+func (s *Store) FindEcVolumeDiskIds(vid needle.VolumeId) []uint32 {
+	var ids []uint32
+	for diskId, location := range s.Locations {
+		if _, found := location.FindEcVolume(vid); found {
+			ids = append(ids, uint32(diskId))
+		}
+	}
+	return ids
 }
 
 // shardFiles is a list of shard files, which is used to return the shard locations
@@ -405,7 +490,9 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 }
 
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
-	shard, found := ecVolume.FindEcVolumeShard(shardId)
+	// findEcShard walks every DiskLocation under ecVolumesLock; the
+	// shard may live on a sibling disk of this server.
+	_, shard, found := s.findEcShard(ecVolume.VolumeId, shardId)
 	if !found {
 		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
 	}

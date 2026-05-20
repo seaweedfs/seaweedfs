@@ -88,6 +88,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// CopyObject requires s3:GetObject on the source in addition to s3:PutObject
+	// on the destination. The Auth middleware only checked the destination, so
+	// verify the source explicitly here.
+	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Get detailed versioning state for source bucket
 	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
@@ -547,6 +555,21 @@ func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject
 	return s3a.getLatestObjectVersion(bucket, normalizedObject)
 }
 
+// authorizeCopySource enforces s3:GetObject on the CopyObject / UploadPartCopy
+// source. The route's Auth middleware only verifies destination permissions
+// because the request URL points at the destination; the source from the
+// X-Amz-Copy-Source header must be authorized separately.
+func (s3a *S3ApiServer) authorizeCopySource(r *http.Request, srcBucket, srcObject, srcVersionId string) s3err.ErrorCode {
+	if s3a.iam == nil || !s3a.iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	var identity *Identity
+	if id, ok := s3_constants.GetIdentityFromContext(r).(*Identity); ok {
+		identity = id
+	}
+	return s3a.iam.AuthorizeCopySource(r, identity, srcBucket, srcObject, srcVersionId)
+}
+
 func (s3a *S3ApiServer) canUseMetadataOnlySelfCopy(entry *filer_pb.Entry, r *http.Request, bucket, object string) bool {
 	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), s3_constants.NormalizeObjectKey(object))
 	state := DetectEncryptionStateWithEntry(entry, r, srcPath, srcPath)
@@ -646,6 +669,13 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
 			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+
+	// UploadPartCopy requires s3:GetObject on the source. The Auth middleware
+	// only verified s3:PutObject (s3:UploadPart) on the destination.
+	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -1053,7 +1083,20 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 		return nil, err
 	}
 
-	// Download and upload the chunk
+	// Stream the chunk through io.Pipe when no in-transit transformation is
+	// required; this holds only ~32 KiB per copy in flight, vs. the
+	// chunk-sized buffers the buffered path needs. isFullChunk=true asks
+	// the source volume for compressed bytes, so a gzipped chunk is
+	// forwarded to the destination without anyone having to decompress.
+	if canStreamCopyChunk(chunk) {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult); err != nil {
+			return nil, fmt.Errorf("stream chunk: %w", err)
+		}
+		return dstChunk, nil
+	}
+
+	// SSE / per-chunk-cipher: bytes need to be transformed in transit, so
+	// download into a buffer first.
 	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
@@ -1087,6 +1130,25 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	chunkStart := originalChunk.Offset
 	overlapStart := max(rangeStart, chunkStart)
 	offsetInChunk := overlapStart - chunkStart
+
+	// Stream the byte range through io.Pipe when there's no in-transit
+	// transformation required (see canStreamCopyChunk for the eligibility
+	// rules); this is the dominant path for Harbor-style multipart
+	// assemble loads, which use UploadPartCopy with a CopySourceRange.
+	//
+	// When the requested range happens to cover the entire source chunk
+	// exactly, switch to the full-chunk fetch mode: that asks the source
+	// volume for compressed bytes (Accept-Encoding: gzip) and forwards
+	// them as-is, avoiding the volume-side decompression that a Range
+	// fetch on a gzipped chunk would otherwise pay. Harbor's typical
+	// part-size = chunk-size assemble pattern hits this branch.
+	if canStreamCopyChunk(originalChunk) {
+		isFullChunk := offsetInChunk == 0 && rangeChunk.Size == originalChunk.Size
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult); err != nil {
+			return nil, fmt.Errorf("stream chunk range: %w", err)
+		}
+		return dstChunk, nil
+	}
 
 	// Download and upload the chunk portion
 	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), originalChunk.CipherKey)
@@ -1379,16 +1441,7 @@ func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string, expectedD
 // uploadChunkData uploads chunk data to the destination using common upload logic
 // isCompressed indicates if the data is already compressed and should not be compressed again
 func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse, isCompressed bool) error {
-	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
-
-	uploadOption := &operation.UploadOption{
-		UploadUrl:         dstUrl,
-		Cipher:            false, // Data is already encrypted if source had CipherKey; don't re-encrypt
-		IsInputCompressed: isCompressed,
-		MimeType:          "",
-		PairMap:           nil,
-		Jwt:               security.EncodedJwt(assignResult.Auth),
-	}
+	uploadOption := newChunkUploadOption(chunkData, assignResult, isCompressed)
 	uploader, err := operation.NewUploader()
 	if err != nil {
 		return fmt.Errorf("create uploader: %w", err)
@@ -1399,6 +1452,33 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 	}
 
 	return nil
+}
+
+// multipartFramingOverhead reserves space for the multipart wrapper
+// upload_content writes around chunkData (boundary + Content-Disposition +
+// optional Content-Type/Content-Encoding/Content-MD5 headers + trailing
+// boundary). Real-world overhead is a few hundred bytes; rounding to 1 KiB
+// avoids a single grow on the buffer we hand to the multipart writer.
+const multipartFramingOverhead = 1024
+
+// newChunkUploadOption builds the operation.UploadOption used by every
+// chunk-copy upload. It always sets BytesBuffer to a fresh, per-call buffer
+// so upload_content does not fall back to the package-global
+// valyala/bytebufferpool — that pool retains every high-water buffer for the
+// process's lifetime, and under concurrent UploadPartCopy load it hoarded
+// one chunk-sized buffer per concurrent upload (see #6541). The per-call
+// buffer is GC'd as soon as the upload returns.
+func newChunkUploadOption(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse, isCompressed bool) *operation.UploadOption {
+	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
+	return &operation.UploadOption{
+		UploadUrl:         dstUrl,
+		Cipher:            false, // Data is already encrypted if source had CipherKey; don't re-encrypt
+		IsInputCompressed: isCompressed,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               security.EncodedJwt(assignResult.Auth),
+		BytesBuffer:       bytes.NewBuffer(make([]byte, 0, len(chunkData)+multipartFramingOverhead)),
+	}
 }
 
 // downloadChunkData downloads chunk data from the source URL
@@ -1434,7 +1514,13 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 		return nil, fmt.Errorf("chunk size %d exceeds maximum int32 size", size)
 	}
 	sizeInt := int(size)
-	var chunkData []byte
+	// Pre-size the receive buffer to the known chunk size so the streaming
+	// callback below does not trigger geometric `append`-grow on a nil slice.
+	// Receiving a 64 MiB chunk through 256 KiB callback ticks would otherwise
+	// allocate ~2x the chunk size, and with concurrent UploadPartCopy requests
+	// (Harbor-style assemble loops) this caused the runaway-RSS pattern in
+	// https://github.com/seaweedfs/seaweedfs/issues/6541.
+	chunkData := make([]byte, 0, sizeInt)
 	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, sizeInt, func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})

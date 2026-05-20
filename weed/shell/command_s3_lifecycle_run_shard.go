@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,10 +15,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dailyrun"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -31,29 +32,30 @@ func (c *commandS3LifecycleRunShard) Name() string {
 }
 
 func (c *commandS3LifecycleRunShard) Help() string {
-	return `manually run one or more shards of the event-driven S3 lifecycle worker
+	return `manually run one daily-replay pass for the given shards
 
-Subscribes once to the filer meta-log, filters events to the configured
-(bucket, key-prefix-hash) shards, routes them through the compiled lifecycle
-engine, and dispatches due actions to the S3 server's LifecycleDelete RPC.
-Persists each shard's cursor to /etc/s3/lifecycle/cursors/shard-NN.json so
-subsequent runs resume.
+Drives dailyrun.Run once against the live filer + S3 server: builds
+the engine snapshot from filer-backed bucket configs, opens the
+meta-log subscription per shard, dispatches due actions via
+LifecycleDelete, and walks the live tree for any walker-bound rules.
+Persists each shard's cursor to /etc/s3/lifecycle/daily-cursors/
+so subsequent runs resume.
 
-The -shards form covers a range or set; one filer subscription handles the
-whole set, with no per-shard goroutine fan-out. Provide either -shard or
--shards, not both.
+Used by the s3-tests CI workflow and the test/s3/lifecycle/
+integration tests to drive expirations on demand without standing up
+the full admin+worker plugin stack.
 
 	# single shard
 	s3.lifecycle.run-shard -shard 0 -s3 localhost:8333 -events 100
 
-	# contiguous range, all 16 shards via one subscription
+	# contiguous range
 	s3.lifecycle.run-shard -shards 0-15 -s3 localhost:8333 -events 5000
 
 	# explicit set
 	s3.lifecycle.run-shard -shards 0,3,7 -s3 localhost:8333
 
-	# custom cadence
-	s3.lifecycle.run-shard -shards 0-15 -s3 s3-host:8333 -dispatch 1s -checkpoint 10s
+	# bounded wall-clock
+	s3.lifecycle.run-shard -shards 0-15 -s3 localhost:8333 -runtime 10s
 `
 }
 
@@ -64,11 +66,18 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	shard := fs.Int("shard", -1, "single shard id in [0, 16); use -shards for a range or set")
 	shardsSpec := fs.String("shards", "", "shard range \"lo-hi\" or comma list \"a,b,c\"; mutually exclusive with -shard")
 	s3Endpoint := fs.String("s3", "", "s3 server gRPC endpoint, host:port")
-	eventBudget := fs.Int("events", 1000, "max in-shard events to process before returning (0 = unbounded; counts only events that pass the shard filter)")
-	dispatchTick := fs.Duration("dispatch", 5*time.Second, "dispatcher tick cadence")
-	checkpointTick := fs.Duration("checkpoint", 30*time.Second, "cursor checkpoint cadence")
-	refreshInterval := fs.Duration("refresh", 5*time.Minute, "interval for rebuilding the engine snapshot from filer-backed bucket configs; 0 = compile once at startup")
-	runtime := fs.Duration("runtime", 0, "wall-clock cap on the run; 0 = no timeout. -events alone can hang on quiet shards")
+	eventBudget := fs.Int("events", 1000, "max in-shard events per pass (0 = drain to now)")
+	runtime := fs.Duration("runtime", 0, "wall-clock cap on the whole run; 0 = no timeout")
+	// -refresh drives the inter-pass cadence when the command runs as a
+	// long-lived worker (the s3tests CI workflow case): every refresh
+	// the engine snapshot is re-loaded and dailyrun.Run fires another
+	// pass. 0 means "run once and exit" (the integration-test case).
+	cadence := fs.Duration("refresh", 0, "inter-pass interval; 0 = single pass, then exit")
+	// Obsolete flags kept for back-compat with existing CI scripts and
+	// integration tests. Accept and ignore.
+	_ = fs.Duration("dispatch", 0, "ignored (legacy streaming flag)")
+	_ = fs.Duration("checkpoint", 0, "ignored (legacy streaming flag)")
+	_ = fs.Duration("bootstrap-interval", 0, "ignored (legacy streaming flag)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -99,99 +108,104 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 	defer conn.Close()
 	rpcClient := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(conn)
 
-	// Run the whole pipeline inside one WithFilerClient so the reader's
-	// SubscribeMetadata stream and the persister share a single connection.
 	return env.WithFilerClient(true, func(filerClient filer_pb.SeaweedFilerClient) error {
-		eng := engine.New()
-
-		pipeline := &dispatcher.Pipeline{
-			Shards:         shards,
-			BucketsPath:    bucketsPath,
-			Engine:         eng,
-			Persister:      &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-			Client:         &lifecycleClientCallable{c: rpcClient},
-			FilerClient:    filerClient,
-			ClientID:       util.RandomInt32(),
-			ClientName:     fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
-			DispatchTick:   *dispatchTick,
-			CheckpointTick: *checkpointTick,
-			EventBudget:    *eventBudget,
-		}
-
-		bsr := &scheduler.BucketBootstrapper{
-			FilerClient: filerClient,
-			BucketsPath: bucketsPath,
-			Injector:    pipeline,
-		}
-		bootstrapCtx, bootstrapCancel := context.WithCancel(context.Background())
-		defer bootstrapCancel()
-
-		compile := func(initial bool) {
-			inputs, parseErrors, err := scheduler.LoadCompileInputs(context.Background(), filerClient, bucketsPath)
-			if err != nil {
-				if initial {
-					fmt.Fprintf(writer, "warning: load lifecycle configs: %v\n", err)
-				}
-				return
-			}
-			if initial {
-				for i, pe := range parseErrors {
-					if i < 3 {
-						fmt.Fprintf(writer, "warning: %s: %v\n", pe.Bucket, pe.Err)
-					}
-				}
-				if extra := len(parseErrors) - 3; extra > 0 {
-					fmt.Fprintf(writer, "warning: %d additional bucket(s) had malformed lifecycle config\n", extra)
-				}
-				if len(inputs) == 0 {
-					fmt.Fprintln(writer, "no buckets with enabled lifecycle rules at startup; will refresh and pick them up as they're added")
-				} else {
-					fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
-				}
-			}
-			eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
-			// First time we see a bucket, spin up a one-shot walker that
-			// lists existing entries and synthesizes events. The reader-
-			// driven path only sees events created after the rule lands,
-			// so without this backfill objects PUT before the rule (the
-			// s3-tests scenario) would never expire.
-			buckets := make([]string, 0, len(inputs))
-			for _, in := range inputs {
-				buckets = append(buckets, in.Bucket)
-			}
-			bsr.KickOffNew(bootstrapCtx, buckets)
-		}
-		compile(true)
-
-		var ctx context.Context
+		ctx := context.Background()
 		var cancel context.CancelFunc
 		if *runtime > 0 {
-			ctx, cancel = context.WithTimeout(context.Background(), *runtime)
-		} else {
-			ctx, cancel = context.WithCancel(context.Background())
+			ctx, cancel = context.WithTimeout(ctx, *runtime)
+			defer cancel()
 		}
-		defer cancel()
+		client := &lifecycleClientCallable{c: rpcClient}
+		listFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
+		walkerDispatch := &dailyrun.WalkerDispatcher{Client: client}
 
-		// Periodic engine rebuild so rules added (or disabled) after startup
-		// land in the snapshot the dispatcher reads on its next tick.
-		if *refreshInterval > 0 {
-			go func() {
-				t := time.NewTicker(*refreshInterval)
-				defer t.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-t.C:
-						compile(false)
+		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n",
+			formatShardLabel(shards), *eventBudget, *runtime, *cadence)
+
+		announcedLoad := false
+		runPass := func() error {
+			// When -refresh is set we MUST cap each pass; otherwise
+			// drainShardEvents blocks until the outer runtime ctx
+			// expires and the loop's ticker never fires. With cadence=0
+			// (one-shot) the pass uses the full ctx and returns when
+			// the runtime cap hits.
+			passCtx := ctx
+			if *cadence > 0 {
+				var passCancel context.CancelFunc
+				// Pass budget = cadence + grace. Grace gives the
+				// drain time to actually process events that arrived
+				// during the cadence window.
+				passCtx, passCancel = context.WithTimeout(ctx, *cadence+5*time.Second)
+				defer passCancel()
+			}
+			eng := engine.New()
+			inputs, parseErrors, err := scheduler.LoadCompileInputs(passCtx, filerClient, bucketsPath)
+			if err != nil {
+				return fmt.Errorf("load lifecycle configs: %w", err)
+			}
+			for i, pe := range parseErrors {
+				if i < 3 {
+					fmt.Fprintf(writer, "warning: %s: %v\n", pe.Bucket, pe.Err)
+				}
+			}
+			if extra := len(parseErrors) - 3; extra > 0 {
+				fmt.Fprintf(writer, "warning: %d additional bucket(s) had malformed lifecycle config\n", extra)
+			}
+			eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
+			if len(inputs) == 0 {
+				return nil
+			}
+			if !announcedLoad {
+				fmt.Fprintf(writer, "loaded lifecycle for %d bucket(s)\n", len(inputs))
+				announcedLoad = true
+			}
+			buckets := make([]string, 0, len(inputs))
+			for _, in := range inputs {
+				if in.Bucket != "" {
+					buckets = append(buckets, in.Bucket)
+				}
+			}
+			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
+				return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, listFn, walkerDispatch)
+			})
+			return dailyrun.Run(passCtx, dailyrun.Config{
+				Shards:      shards,
+				BucketsPath: bucketsPath,
+				Engine:      eng,
+				FilerClient: filerClient,
+				Client:      client,
+				Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+				Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+				// The shell command is used for bounded one-shot sweeps in
+				// integration tests and CI. Fan out across the selected shards
+				// so recovery walks do not serialize 16 shard scans into a 10s
+				// timeout budget.
+				Workers: len(shards),
+				Walker:      walker,
+				EventBudget: *eventBudget,
+				ClientName:  fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
+			})
+		}
+
+		if err := runPass(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("daily_run: %w", err)
+		}
+		// cadence=0 → one-shot (test/s3/lifecycle/ uses this).
+		// cadence>0 → loop until ctx done (s3tests CI workflow uses this).
+		if *cadence > 0 {
+			ticker := time.NewTicker(*cadence)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					fmt.Fprintf(writer, "shards %s complete; ctx done\n", formatShardLabel(shards))
+					return nil
+				case <-ticker.C:
+					if err := runPass(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+						fmt.Fprintf(writer, "shards %s pass error: %v\n", formatShardLabel(shards), err)
 					}
 				}
-			}()
-		}
-
-		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n", formatShardLabel(shards), *eventBudget, *runtime, *refreshInterval)
-		if err := pipeline.Run(ctx); err != nil {
-			return fmt.Errorf("pipeline: %w", err)
+			}
 		}
 		fmt.Fprintf(writer, "shards %s complete; cursors checkpointed\n", formatShardLabel(shards))
 		return nil
@@ -276,7 +290,6 @@ func formatShardLabel(shards []int) string {
 	if len(shards) == 1 {
 		return fmt.Sprintf("%d", shards[0])
 	}
-	// Detect contiguous range.
 	contiguous := true
 	for i := 1; i < len(shards); i++ {
 		if shards[i] != shards[i-1]+1 {
@@ -295,7 +308,7 @@ func formatShardLabel(shards []int) string {
 }
 
 // lifecycleClientCallable adapts the generated grpc client (variadic
-// CallOption tail) to the dispatcher.LifecycleClient interface.
+// CallOption tail) to dailyrun.LifecycleClient.
 type lifecycleClientCallable struct {
 	c s3_lifecycle_pb.SeaweedS3LifecycleInternalClient
 }
@@ -324,4 +337,3 @@ func resolveBucketsPath(env *CommandEnv) (string, error) {
 	}
 	return path, nil
 }
-

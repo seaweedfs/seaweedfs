@@ -577,6 +577,72 @@ var (
 			Name:      "bootstrap_dispatch_total",
 			Help:      "Counter of bootstrap-walk Delete dispatches by bucket and action kind.",
 		}, []string{"bucket", "kind"})
+
+	// S3LifecycleMetadataOnlyCounter counts successful LifecycleDelete
+	// dispatches that took the metadata-only path — entry was removed
+	// without per-chunk DeleteFile RPCs because the entry's Attributes
+	// .TtlSec > 0 and the volume's natural TTL will reclaim chunks. Per-
+	// rule cardinality (rule_hash hex-encoded) lets operators identify
+	// which specific rule is exercising the optimization; in clusters
+	// with many rules this can be reduced via Prometheus relabeling.
+	S3LifecycleMetadataOnlyCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "metadata_only_total",
+			Help:      "Counter of LifecycleDelete completions that skipped per-chunk delete (volume TTL reclaim).",
+		}, []string{"bucket", "rule_hash"})
+
+	// S3LifecycleDispatchLimiterWaitSeconds is the cluster-wide rate
+	// limiter's per-dispatch wait time on the daily-replay path. The
+	// limiter blocks just before each LifecycleDelete RPC; near-zero
+	// observations mean the cluster cap isn't binding, a long-tail at
+	// the configured 1/rate ceiling means the cluster cap is the
+	// active throttle. Operators tune cluster_deletes_per_second by
+	// reading p95/p99 on this histogram.
+	S3LifecycleDispatchLimiterWaitSeconds = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "dispatch_limiter_wait_seconds",
+			Help:      "Time spent waiting on the cluster rate limiter before issuing a LifecycleDelete RPC. Non-zero values indicate the cluster cap is binding.",
+			Buckets:   []float64{0.0001, 0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		})
+
+	S3LifecycleDailyRunShardDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "daily_run_shard_duration_seconds",
+			Help:      "Wall-clock seconds spent in one shard's daily_replay pass. p95 climbing toward MaxRuntime means the shard is brushing its budget.",
+			Buckets:   []float64{0.1, 0.5, 1, 5, 15, 60, 300, 900, 1800, 3600},
+		}, []string{"shard"})
+
+	S3LifecycleDailyRunEventsScanned = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "daily_run_events_scanned_total",
+			Help:      "Counter of meta-log events drainShardEvents processed on the daily_replay path, partitioned by shard.",
+		}, []string{"shard"})
+
+	// S3LifecycleDailyRunLastWalkedNs is the per-shard wall-clock
+	// timestamp (UnixNano) of the most recent successful steady-state /
+	// empty-replay walker fire. Set by dailyrun.runShard after each
+	// cursor save. Zero means the shard hasn't completed a walk yet
+	// (either cold start, or the walker never fired because the bucket
+	// has only replay-eligible rules and the throttle hasn't elapsed).
+	// Operators read (now - last_walked_ns) to confirm the walker
+	// cadence matches WalkerInterval; a stuck value means the
+	// scheduler isn't invoking the worker, the throttle is too long,
+	// or the walker is failing.
+	S3LifecycleDailyRunLastWalkedNs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3_lifecycle",
+			Name:      "daily_run_last_walked_ns",
+			Help:      "Per-shard timestamp (UnixNano) of the most recent successful walker fire. 0 means the shard hasn't completed a walk yet.",
+		}, []string{"shard"})
 )
 
 func init() {
@@ -652,6 +718,11 @@ func init() {
 	Gather.MustRegister(S3LifecycleCursorMinTsNs)
 	Gather.MustRegister(S3LifecycleEventCounter)
 	Gather.MustRegister(S3LifecycleBootstrapDispatchCounter)
+	Gather.MustRegister(S3LifecycleMetadataOnlyCounter)
+	Gather.MustRegister(S3LifecycleDispatchLimiterWaitSeconds)
+	Gather.MustRegister(S3LifecycleDailyRunShardDurationSeconds)
+	Gather.MustRegister(S3LifecycleDailyRunEventsScanned)
+	Gather.MustRegister(S3LifecycleDailyRunLastWalkedNs)
 
 	Gather.MustRegister(UploadErrorCounter)
 
@@ -727,6 +798,7 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
 	c += S3LifecycleDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
+	c += S3LifecycleMetadataOnlyCounter.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
 }

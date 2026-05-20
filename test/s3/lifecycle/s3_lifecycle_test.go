@@ -40,12 +40,14 @@ const (
 	defaultS3Endpoint     = "http://localhost:8333"
 	defaultS3GrpcEndpoint = "localhost:18333"
 	defaultMasterEndpt    = "http://localhost:9333"
-	defaultFilerGRPC      = "localhost:18888"
+	defaultAdminEndpoint  = "http://localhost:23646"
+	// Pinned off the FILER_PORT+10000 convention; see Makefile.
+	defaultFilerGRPC      = "localhost:18890"
 	bucketLifecycleXMLKey = "s3-bucket-lifecycle-configuration-xml"
 	bucketsPath           = "/buckets"
 	accessKey             = "some_access_key1"
-	secretKey           = "some_secret_key1"
-	region              = "us-east-1"
+	secretKey             = "some_secret_key1"
+	region                = "us-east-1"
 )
 
 func envOr(key, def string) string {
@@ -90,13 +92,50 @@ func mustCreateBucket(t *testing.T, c *s3.Client, name string) {
 	_, err := c.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(name)})
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		// Best effort: empty + delete.
-		listOut, _ := c.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{Bucket: aws.String(name)})
+		// Drop the lifecycle configuration first so any subsequent
+		// shell-driven shard sweep stops loading rules for this bucket
+		// — without this, a later test's run-shard would pick up the
+		// dead bucket's config and produce phantom dispatches.
+		c.DeleteBucketLifecycle(context.Background(), &s3.DeleteBucketLifecycleInput{Bucket: aws.String(name)})
+
+		// Empty every version + delete marker (versioning-aware buckets
+		// hold state that ListObjectsV2 doesn't surface). Best-effort:
+		// errors are tolerated because the bucket might already be
+		// half-torn-down.
+		listOut, _ := c.ListObjectVersions(context.Background(), &s3.ListObjectVersionsInput{Bucket: aws.String(name)})
 		if listOut != nil {
-			for _, o := range listOut.Contents {
+			for _, v := range listOut.Versions {
+				c.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+					Bucket: aws.String(name), Key: v.Key, VersionId: v.VersionId,
+				})
+			}
+			for _, m := range listOut.DeleteMarkers {
+				c.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+					Bucket: aws.String(name), Key: m.Key, VersionId: m.VersionId,
+				})
+			}
+		}
+
+		// Catch any non-versioned objects ListObjectVersions missed.
+		objs, _ := c.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{Bucket: aws.String(name)})
+		if objs != nil {
+			for _, o := range objs.Contents {
 				c.DeleteObject(context.Background(), &s3.DeleteObjectInput{Bucket: aws.String(name), Key: o.Key})
 			}
 		}
+
+		// Abort any in-flight multipart uploads — the AbortMPU lifecycle
+		// test leaves these intentionally; without an explicit Abort the
+		// bucket DELETE refuses with NotEmpty.
+		mpus, _ := c.ListMultipartUploads(context.Background(), &s3.ListMultipartUploadsInput{Bucket: aws.String(name)})
+		if mpus != nil {
+			for _, u := range mpus.Uploads {
+				c.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+					Bucket: aws.String(name), Key: u.Key, UploadId: u.UploadId,
+				})
+			}
+		}
+
 		c.DeleteBucket(context.Background(), &s3.DeleteBucketInput{Bucket: aws.String(name)})
 	})
 }

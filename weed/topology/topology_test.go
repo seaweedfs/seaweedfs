@@ -3,6 +3,7 @@ package topology
 import (
 	"reflect"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -528,5 +529,47 @@ func TestDataNodeIdBasedIdentification(t *testing.T) {
 	children = rack.Children()
 	if len(children) != 4 {
 		t.Errorf("expected 4 DataNodes, got %d", len(children))
+	}
+}
+
+func TestLookupDataNodeByAddress(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+
+	maxVolumeCounts := map[string]uint32{"": 10}
+
+	// Brand-new registration must be discoverable by both the http and
+	// grpc forms of the address.
+	dn := rack.GetOrCreateDataNode("10.1.2.3", 8080, 18080, "10.1.2.3:8080", "n1", maxVolumeCounts)
+	if got := topo.LookupDataNodeByAddress(pb.ServerAddress("10.1.2.3:8080")); got != dn {
+		t.Fatalf("lookup by http address: got %v, want %v", got, dn)
+	}
+	if got := topo.LookupDataNodeByAddress(pb.ServerAddress("10.1.2.3:8080.18080")); got != dn {
+		t.Fatalf("lookup by grpc-suffix address: got %v, want %v", got, dn)
+	}
+
+	// Unknown addresses must miss.
+	if got := topo.LookupDataNodeByAddress(pb.ServerAddress("127.0.0.1:1")); got != nil {
+		t.Fatalf("unknown address must not be found, got %v", got)
+	}
+
+	// Heartbeat from a moved pod (same id, new ip) updates the index in
+	// place: the old address is dropped and the new one resolves.
+	dnMoved := rack.GetOrCreateDataNode("10.9.9.9", 8080, 18080, "10.9.9.9:8080", "n1", maxVolumeCounts)
+	if dnMoved != dn {
+		t.Fatalf("expected same node instance after move, got different")
+	}
+	if got := topo.LookupDataNodeByAddress(pb.ServerAddress("10.1.2.3:8080")); got != nil {
+		t.Fatalf("old address must be unregistered after move, got %v", got)
+	}
+	if got := topo.LookupDataNodeByAddress(pb.ServerAddress("10.9.9.9:8080")); got != dn {
+		t.Fatalf("new address lookup: got %v, want %v", got, dn)
+	}
+
+	// UnRegisterDataNode evicts the index entry.
+	topo.UnRegisterDataNode(dn)
+	if got := topo.LookupDataNodeByAddress(pb.ServerAddress("10.9.9.9:8080")); got != nil {
+		t.Fatalf("address must be unregistered after UnRegisterDataNode, got %v", got)
 	}
 }

@@ -66,31 +66,6 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	return fh
 }
 
-func (i *FileHandleToInode) ReleaseByInode(inode uint64) *FileHandle {
-	i.Lock()
-	defer i.Unlock()
-	fh, found := i.inode2fh[inode]
-	if !found {
-		return nil
-	}
-	// If the counter is already <= 0, a prior Release already started the
-	// drain.  Return nil to prevent double-processing (e.g. Forget after Release).
-	if fh.counter <= 0 {
-		return nil
-	}
-	fh.counter--
-	if fh.counter <= 0 {
-		if fh.asyncFlushPending {
-			// Handle stays in fhMap so rename/unlink can find it during drain.
-			return fh
-		}
-		delete(i.inode2fh, inode)
-		delete(i.fh2inode, fh.fh)
-		return fh
-	}
-	return nil
-}
-
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 	i.Lock()
 	defer i.Unlock()

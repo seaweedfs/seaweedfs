@@ -17,6 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
+
 	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
@@ -451,19 +454,22 @@ func icebergPath(prefix, path string) string {
 	return withPrefix
 }
 
-// createTableBucket creates a table bucket via the S3Tables REST API
+// createTableBucket creates a table bucket via the S3Tables REST API.
+// The request is AWS V4 signed for SERVICE=s3tables so the S3 Tables
+// route matcher accepts it; signing with regular SERVICE=s3 would let
+// the request fall through to the S3 CreateBucket handler.
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
-	// Use S3Tables REST API to create the bucket
 	endpoint := fmt.Sprintf("http://localhost:%d/buckets", env.s3Port)
-
 	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
+
 	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	signS3TablesRequest(t, req, reqBody)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -478,6 +484,20 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
 	}
 	t.Logf("Created table bucket %s", bucketName)
+}
+
+// signS3TablesRequest signs req with AWS V4 for SERVICE=s3tables. The
+// underlying weed mini instance runs in default-allow mode so the
+// signature itself is not verified; only the credential scope matters,
+// because the S3 Tables route matcher requires SERVICE=s3tables to
+// distinguish S3 Tables traffic from regular S3 calls on the same paths.
+func signS3TablesRequest(t *testing.T, req *http.Request, body string) {
+	t.Helper()
+	creds := credentials.NewStaticCredentials("test-ak", "test-sk", "")
+	signer := v4.NewSigner(creds)
+	if _, err := signer.Sign(req, strings.NewReader(body), "s3tables", "us-east-1", time.Now()); err != nil {
+		t.Fatalf("Failed to sign S3 Tables request: %v", err)
+	}
 }
 
 // randomSuffix returns a short random hex suffix for unique resource naming.

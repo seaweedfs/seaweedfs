@@ -452,7 +452,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d",
 		bucket, object, uploadID, partID, r.ContentLength)
 
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, "", partID, nil)
+	// MPU parts must NOT inherit the bucket's lifecycle Expiration.Days
+	// volume TTL: the rule targets the user-visible object, not the
+	// transient .uploads/<id>/<n> path, and a part write would otherwise
+	// start the TTL clock before CompleteMultipartUpload ever assembled
+	// the object.
+	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, "", partID, 0, nil)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d",
 			errCode, bucket, object, partID)

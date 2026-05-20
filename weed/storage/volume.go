@@ -53,7 +53,77 @@ type Volume struct {
 	location         *DiskLocation
 	diskId           uint32 // ID of this volume's disk in Store.Locations array
 
-	lastIoError error
+	// lastIoError is the most recent EIO from a read/write/delete; cleared
+	// on the next successful or non-EIO op. lastIoErrorCount tracks
+	// consecutive EIOs so CollectHeartbeat can require a sustained failure
+	// before unmounting the replica — protects against a transient
+	// hardware/network blip hitting multiple replicas at once and
+	// stranding the only good copy.
+	//
+	// ioErrorQuarantined is sticky: once CollectHeartbeat sees the streak
+	// cross IoErrorTolerance it sets this and never clears it on its own.
+	// A subsequent successful read clears the streak counter but must NOT
+	// un-quarantine the volume — only MarkVolumeWritable does that, after
+	// an operator has decided the disk is healthy. Without the sticky
+	// bit, one good read between heartbeats would silently put a known-
+	// bad replica back into rotation.
+	//
+	// All four fields are guarded together so the heartbeat reader sees
+	// a consistent snapshot.
+	lastIoError        error
+	lastIoErrorCount   int32
+	ioErrorQuarantined bool
+	lastIoErrorLock    sync.RWMutex
+}
+
+// noteIoError records an EIO and increments the consecutive-error
+// counter. Caller has already verified errors.Is(err, syscall.EIO).
+func (v *Volume) noteIoError(err error) {
+	v.lastIoErrorLock.Lock()
+	defer v.lastIoErrorLock.Unlock()
+	v.lastIoError = err
+	v.lastIoErrorCount++
+}
+
+// clearIoError resets the EIO streak counter only. The sticky quarantine
+// bit set by CollectHeartbeat is intentionally left alone — recovery is
+// an operator decision via MarkVolumeWritable. Called on any successful
+// op or on a non-EIO error (which still breaks the EIO streak; only
+// sustained EIOs are diagnostic of a failing volume).
+func (v *Volume) clearIoError() {
+	v.lastIoErrorLock.Lock()
+	defer v.lastIoErrorLock.Unlock()
+	v.lastIoError = nil
+	v.lastIoErrorCount = 0
+}
+
+// resetIoErrorState clears both the EIO streak and the sticky quarantine
+// flag. Used by MarkVolumeWritable to rejoin a previously-quarantined
+// replica; if the disk is still bad, the next failed op re-arms the
+// streak.
+func (v *Volume) resetIoErrorState() {
+	v.lastIoErrorLock.Lock()
+	defer v.lastIoErrorLock.Unlock()
+	v.lastIoError = nil
+	v.lastIoErrorCount = 0
+	v.ioErrorQuarantined = false
+}
+
+// markIoQuarantined sets the sticky quarantine flag. Idempotent; safe
+// to call from CollectHeartbeat each pass while the volume remains
+// quarantined.
+func (v *Volume) markIoQuarantined() {
+	v.lastIoErrorLock.Lock()
+	defer v.lastIoErrorLock.Unlock()
+	v.ioErrorQuarantined = true
+}
+
+// getIoErrorState returns the latest EIO, the consecutive-EIO count,
+// and the sticky quarantine flag as one consistent snapshot.
+func (v *Volume) getIoErrorState() (error, int32, bool) {
+	v.lastIoErrorLock.RLock()
+	defer v.lastIoErrorLock.RUnlock()
+	return v.lastIoError, v.lastIoErrorCount, v.ioErrorQuarantined
 }
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {

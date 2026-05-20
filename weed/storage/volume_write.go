@@ -17,16 +17,25 @@ var ErrorNotFound = errors.New("not found")
 var ErrorDeleted = errors.New("already deleted")
 var ErrorSizeMismatch = errors.New("size mismatch")
 
+// IoErrorTolerance is the number of consecutive EIOs a volume must
+// see before CollectHeartbeat treats the replica as broken. A single
+// transient error is forgiven so a brief NFS / fabric / power blip
+// affecting several replicas at once does not cascade into removal of
+// the last healthy copy.
+const IoErrorTolerance = 3
+
 func (v *Volume) checkReadWriteError(err error) {
 	if err == nil {
-		if v.lastIoError != nil {
-			v.lastIoError = nil
-		}
+		v.clearIoError()
 		return
 	}
 	if errors.Is(err, syscall.EIO) {
-		v.lastIoError = err
+		v.noteIoError(err)
+		return
 	}
+	// non-EIO error breaks the EIO streak — only sustained EIOs should
+	// be treated as a failing volume.
+	v.clearIoError()
 }
 
 // isFileUnchanged checks whether this needle to write is same as last one.
@@ -92,11 +101,17 @@ func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 }
 
 func removeVolumeFiles(filename string) {
-	// basic
+	// .dat/.idx removals log at V(0) so destructive calls are traceable.
 	deleteAndLog := func(ext string) {
 		fullFilename := filename + "." + ext
-		if err := os.RemoveAll(fullFilename); err != nil {
+		st, statErr := os.Stat(fullFilename)
+		err := os.RemoveAll(fullFilename)
+		if err != nil {
 			glog.V(0).Infof("failed to remove volume file %s: %s", fullFilename, err)
+			return
+		}
+		if statErr == nil && (ext == "dat" || ext == "idx") {
+			glog.Infof("removed volume file %s (size=%d)", fullFilename, st.Size())
 		}
 	}
 	deleteAndLog("dat")

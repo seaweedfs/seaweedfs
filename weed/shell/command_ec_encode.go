@@ -199,6 +199,10 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
+	// A partial encode followed by source deletion is unrecoverable.
+	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
+		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
+	}
 	// ...then delete original volumes using pre-collected locations.
 	fmt.Printf("Deleting original volumes after EC encoding...\n")
 	if err := doDeleteVolumesWithLocations(commandEnv, volumeIds, volumeLocationsMap, *maxParallelization); err != nil {
@@ -330,6 +334,39 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	}
 	if err := ewg.Wait(); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
+	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return fmt.Errorf("fetch topology for shard verification: %w", err)
+	}
+
+	for _, vid := range volumeIds {
+		nodeShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+
+		var union erasure_coding.ShardBits
+		for _, info := range nodeShards {
+			union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
+		}
+
+		totalShards := erasure_coding.TotalShardsCount
+		if err := erasure_coding.RequireFullShardSet(uint32(vid), union, totalShards); err != nil {
+			summary := make([]string, 0, len(nodeShards))
+			for node, info := range nodeShards {
+				summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
+			}
+			sort.Strings(summary)
+			glog.Errorf("EC shard verification failed for volume %d on diskType %q: %v; observed: %v",
+				vid, diskType.ReadableString(), err, summary)
+			return fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
+		}
+
+		glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
+			vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
 	}
 
 	return nil

@@ -217,7 +217,7 @@ func (h *ErasureCodingHandler) Detect(
 		return err
 	}
 
-	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
+	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology, GrpcDialOption: h.grpcDialOption}
 	maxResults := int(request.MaxResults)
 	if maxResults < 0 {
 		maxResults = 0
@@ -713,6 +713,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 	if parityShards <= 0 {
 		parityShards = int32(ecstorage.ParityShardsCount)
 	}
+	sourceDiskType := strings.TrimSpace(pluginworker.ReadStringConfig(job.Parameters, "source_disk_type", ""))
 	totalShards := int(dataShards + parityShards)
 
 	if volumeID == 0 {
@@ -758,8 +759,9 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		Targets: targets,
 		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 			ErasureCodingParams: &worker_pb.ErasureCodingTaskParams{
-				DataShards:   dataShards,
-				ParityShards: parityShards,
+				DataShards:     dataShards,
+				ParityShards:   parityShards,
+				SourceDiskType: sourceDiskType,
 			},
 		},
 	}, nil

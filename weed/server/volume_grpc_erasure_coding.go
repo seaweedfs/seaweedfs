@@ -289,6 +289,32 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
 				return err
 			}
+			// Defense in depth: writeToFile now removes partial files on
+			// stream error, but a source that genuinely held a 0-byte
+			// .ecx (e.g. a corrupted upstream replica) would otherwise
+			// leave a 0-byte file here and the mount path would reject
+			// it later. Catch that at distribute time so the orchestrator
+			// can pick a different source rather than learning about it
+			// at mount.
+			// Stat failure must not silently pass. doCopyFile reported
+			// success, but if the file is gone, unreadable, or a directory
+			// somehow, the orchestrator should learn now — at mount time
+			// the operator only sees "no .ecx found" with no useful context
+			// about which step actually failed.
+			ecxPath := indexBaseFileName + ".ecx"
+			info, statErr := os.Stat(ecxPath)
+			if statErr != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: stat copied .ecx %s: %w", req.VolumeId, ecxPath, statErr)
+			}
+			if info.IsDir() {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: copied .ecx path %s is a directory", req.VolumeId, ecxPath)
+			}
+			if info.Size() == 0 {
+				if removeErr := os.Remove(ecxPath); removeErr != nil && !os.IsNotExist(removeErr) {
+					glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", req.VolumeId, ecxPath, removeErr)
+				}
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", req.VolumeId)
+			}
 		}
 
 		if req.CopyEcjFile {
@@ -327,9 +353,9 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
-	for _, location := range vs.store.Locations {
+	for diskId, location := range vs.store.Locations {
 		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {
-			glog.Errorf("deleteEcShards from %s %s.%v: %v", location.Directory, bName, req.ShardIds, err)
+			glog.Errorf("deleteEcShards from disk_id:%d %s %s.%v: %v", diskId, location.Directory, bName, req.ShardIds, err)
 			return nil, err
 		}
 	}
@@ -439,7 +465,7 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 	glog.V(0).Infof("VolumeEcShardsMount: %v", req)
 
 	for _, shardId := range req.ShardIds {
-		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.SourceDiskType)
 
 		if err != nil {
 			glog.Errorf("ec shard mount %v: %v", req, err)
@@ -482,7 +508,9 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	if !found {
 		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
 	}
-	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
+	// shard may live on a sibling disk of this server; walk all of them
+	// under ecVolumesLock.
+	_, ecShard, found := vs.store.FindEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId))
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}
@@ -682,21 +710,39 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	glog.V(0).Infof("VolumeEcShardsInfo: volume %d", req.VolumeId)
 
-	glog.V(0).Infof("VolumeEcStatus: %v", req)
-
 	vid := needle.VolumeId(req.GetVolumeId())
-	ecv, found := vs.store.FindEcVolume(vid)
-	if !found {
-		return nil, fmt.Errorf("VolumeEcStatus: EC volume %d not found", vid)
-	}
 
-	shardInfos := make([]*volume_server_pb.EcShardInfo, len(ecv.Shards))
-	for i, s := range ecv.Shards {
-		shardInfos[i] = s.ToEcShardInfo()
+	// Multi-disk volume servers register one EcVolume per DiskLocation
+	// that holds shards for the same vid: shards may be spread across
+	// disks while the .ecx lives on whichever disk owned the original
+	// .dat. Walk every DiskLocation here so the response reflects the
+	// full local shard set; the per-disk ecVolumesLock is taken inside
+	// DiskLocation.FindEcVolume.
+	var primary *erasure_coding.EcVolume
+	var seenShards erasure_coding.ShardBits
+	shardInfos := make([]*volume_server_pb.EcShardInfo, 0, erasure_coding.MaxShardCount)
+	for _, location := range vs.store.Locations {
+		ecv, ok := location.FindEcVolume(vid)
+		if !ok {
+			continue
+		}
+		if primary == nil {
+			primary = ecv
+		}
+		for _, s := range ecv.Shards {
+			if seenShards.Has(s.ShardId) {
+				continue
+			}
+			seenShards = seenShards.Set(s.ShardId)
+			shardInfos = append(shardInfos, s.ToEcShardInfo())
+		}
+	}
+	if primary == nil {
+		return nil, fmt.Errorf("VolumeEcShardsInfo: EC volume %d not found", vid)
 	}
 
 	var files, filesDeleted, totalSize uint64
-	err := ecv.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+	err := primary.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
 		// deleted files are counted when computing EC volume sizes. this aligns with VolumeStatus(),
 		// which reports the raw data backend file size, regardless of deleted files.
 		totalSize += uint64(size.Raw())

@@ -135,6 +135,14 @@ spec:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
             {{- end }}
+            {{- $secretExtraEnvironmentVars := .Values.admin.secretExtraEnvironmentVars }}
+            {{- if $secretExtraEnvironmentVars }}
+            {{- range $key := keys $secretExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $secretExtraEnvironmentVars $key }}
+            - name: {{ $key }}
+              valueFrom: {{ toYaml $value | nindent 16 }}
+            {{- end }}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
@@ -180,11 +188,13 @@ spec:
             - name: admin-logs
               mountPath: /logs
             {{- end }}
-            {{- if .Values.global.seaweedfs.enableSecurity }}
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
               subPath: security.toml
+            {{- end }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
@@ -275,10 +285,12 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.admin.logs.claimName }}
         {{- end }}
-        {{- if .Values.global.seaweedfs.enableSecurity }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: ca-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-ca-cert

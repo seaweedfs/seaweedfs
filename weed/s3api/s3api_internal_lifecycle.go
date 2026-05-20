@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"path"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // LifecycleDelete executes one (rule, action) verdict: re-fetch, identity
@@ -54,6 +56,7 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 }
 
 func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	metadataOnly := entryUsesMetadataOnlyDelete(entry)
 	switch req.ActionKind {
 	case s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, s3_lifecycle_pb.ActionKind_EXPIRATION_DATE:
 		// Current-version expiration: Enabled -> delete marker; Suspended
@@ -74,7 +77,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		case s3_constants.VersioningSuspended:
 			// Best-effort null delete; NotFound is benign.
-			if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, "null"); err != nil {
+			if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
 				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
 					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
 				}
@@ -85,7 +88,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		default:
 			err := s3a.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath)
+				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath, metadataOnly)
 			})
 			if err != nil {
 				if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) {
@@ -93,6 +96,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				}
 				return retryLater("TRANSPORT_ERROR: deleteUnversioned: " + err.Error()), nil
 			}
+			recordMetadataOnlyIf(metadataOnly, req)
 			return done(), nil
 		}
 
@@ -120,12 +124,22 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return noopResolved("VERSION_IS_LATEST"), nil
 			}
 		}
-		if err := s3a.deleteSpecificObjectVersion(req.Bucket, req.ObjectPath, req.VersionId); err != nil {
+		// Re-check sole-survivor: a fresh PUT can land between schedule
+		// and dispatch. Identity-CAS upstream covers the marker bytes;
+		// this covers the directory shape.
+		if req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER {
+			outcome, err := s3a.checkSoleSurvivorMarker(ctx, req.Bucket, req.ObjectPath, req.VersionId)
+			if outcome != nil || err != nil {
+				return outcome, err
+			}
+		}
+		if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, req.VersionId, metadataOnly); err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
 				return noopResolved("NOT_FOUND_AT_DELETE"), nil
 			}
 			return retryLater("TRANSPORT_ERROR: deleteSpecificVersion: " + err.Error()), nil
 		}
+		recordMetadataOnlyIf(metadataOnly, req)
 		return done(), nil
 
 	case s3_lifecycle_pb.ActionKind_ABORT_MPU:
@@ -173,6 +187,92 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 		return retryLater("TRANSPORT_ERROR: rm: " + err.Error()), nil
 	}
 	return done(), nil
+}
+
+// checkSoleSurvivorMarker returns nil to proceed with the delete, or a
+// terminal response when state has drifted: count != 1, the surviving
+// entry is a different version, the .versions/ directory's latest
+// pointer doesn't name versionId, or a bare null-version exists outside
+// .versions/. Pointer missing while a marker is present is treated as
+// retry-later — the create races with the directory metadata update.
+func (s3a *S3ApiServer) checkSoleSurvivorMarker(ctx context.Context, bucket, object, versionId string) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	bucketDir := s3a.bucketDir(bucket)
+	versionsDir := bucketDir + "/" + object + s3_constants.VersionsFolder
+	count := 0
+	var firstName string
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.SeaweedList(ctx, client, versionsDir, "", func(entry *filer_pb.Entry, _ bool) error {
+			count++
+			if count == 1 && entry != nil {
+				firstName = entry.Name
+			}
+			return nil
+		}, "", false, 2)
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return noopResolved("NOT_FOUND"), nil
+		}
+		return retryLater("TRANSPORT_ERROR: sole-survivor list: " + err.Error()), nil
+	}
+	if count == 0 {
+		return noopResolved("NOT_FOUND"), nil
+	}
+	if count > 1 {
+		return noopResolved("NOT_SOLE_SURVIVOR"), nil
+	}
+	// SeaweedList delivered a single callback but with a nil entry; we
+	// can't compare names so retry rather than silently bypass the
+	// marker-replaced check.
+	if firstName == "" {
+		return retryLater("PENDING_SURVIVOR_ENTRY"), nil
+	}
+	if versionId != "" && firstName != s3a.getVersionFileName(versionId) {
+		return noopResolved("MARKER_REPLACED"), nil
+	}
+	// Latest-pointer check: createDeleteMarker writes the marker file
+	// and then updates the parent directory's Extended map. Reading
+	// before the second step lands would see count==1 but no pointer;
+	// retry-later rather than mistakenly delete.
+	parent, name := path.Split(versionsDir)
+	parent = strings.TrimRight(parent, "/")
+	if parent == "" {
+		parent = "/"
+	}
+	versionsEntry, err := s3a.getEntry(parent, name)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return noopResolved("NOT_FOUND"), nil
+		}
+		return retryLater("TRANSPORT_ERROR: latest-pointer lookup: " + err.Error()), nil
+	}
+	if versionsEntry == nil {
+		return noopResolved("NOT_FOUND"), nil
+	}
+	latest, hasPointer := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+	if !hasPointer || len(latest) == 0 {
+		return retryLater("PENDING_LATEST_POINTER"), nil
+	}
+	if string(latest) != versionId {
+		return noopResolved("MARKER_NOT_LATEST"), nil
+	}
+	// Null-version check: pre-versioning objects survive as the bare
+	// <bucket>/<key>. Both regular files and explicit S3 directory-key
+	// markers (object names ending in /) qualify; the listing path
+	// (s3api_object_versioning.go processExplicitDirectory) treats both
+	// as the null version. getEntry uses NewFullPath so a trailing slash
+	// in object splits the same as a regular key.
+	bareEntry, err := s3a.getEntry(bucketDir, object)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, nil
+		}
+		return retryLater("TRANSPORT_ERROR: null-version lookup: " + err.Error()), nil
+	}
+	if bareEntry != nil && (!bareEntry.IsDirectory || bareEntry.IsDirectoryKeyObject()) {
+		return noopResolved("NULL_VERSION_PRESENT"), nil
+	}
+	return nil, nil
 }
 
 // isCurrentLatestVersion reports whether versionId is the version the
@@ -240,6 +340,28 @@ func identityMatches(live, want *s3_lifecycle_pb.EntryIdentity) bool {
 		return false
 	}
 	return bytes.Equal(live.ExtendedHash, want.ExtendedHash)
+}
+
+// entryUsesMetadataOnlyDelete reports whether the lifecycle delete path
+// can skip per-chunk DeleteFile RPCs and rely on the volume's TTL to
+// reclaim chunks. Per-write TTL stamping (PR 9377) sets Attributes.TtlSec
+// on every entry whose lifecycle rule fits within volume TTL — observing
+// a non-zero TtlSec on the live entry is the authoritative signal.
+// Defensive nil-checks because the caller may be racing a concurrent
+// rewrite that nil-ed Attributes briefly during meta-log replay.
+func entryUsesMetadataOnlyDelete(entry *filer_pb.Entry) bool {
+	return entry != nil && entry.Attributes != nil && entry.Attributes.TtlSec > 0
+}
+
+// recordMetadataOnlyIf bumps the metadata-only counter when on=true.
+// Skipped when off so callers don't need a guard at every call site.
+// rule_hash is hex-encoded so operators can group by rule when
+// debugging; nil rule_hash collapses to the empty string.
+func recordMetadataOnlyIf(on bool, req *s3_lifecycle_pb.LifecycleDeleteRequest) {
+	if !on || req == nil {
+		return
+	}
+	stats_collect.S3LifecycleMetadataOnlyCounter.WithLabelValues(req.Bucket, hex.EncodeToString(req.RuleHash)).Inc()
 }
 
 func done() *s3_lifecycle_pb.LifecycleDeleteResponse {

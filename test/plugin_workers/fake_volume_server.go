@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -289,6 +290,74 @@ func (v *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_serv
 	v.mountRequests = append(v.mountRequests, req)
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
+}
+
+// VolumeEcShardsUnmount is a no-op stub: the worker's pre-distribute
+// cleanup calls it against every destination, and the fake server has no
+// mounted state to clear.
+func (v *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+	return &volume_server_pb.VolumeEcShardsUnmountResponse{}, nil
+}
+
+// VolumeEcShardsDelete is a no-op stub paired with VolumeEcShardsUnmount
+// above; the fake server doesn't persist shard files beyond what
+// ReceiveFile wrote, so there's nothing to remove.
+func (v *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
+	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("VolumeEcShardsInfo request is nil")
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Report whichever shards exist on disk: seeded or mounted. Collection
+	// comes from the matching mount request when one exists.
+	collectionByShard := make(map[uint32]string)
+	for _, mr := range v.mountRequests {
+		if mr == nil || mr.VolumeId != req.VolumeId {
+			continue
+		}
+		for _, shardId := range mr.ShardIds {
+			if _, ok := collectionByShard[shardId]; !ok {
+				collectionByShard[shardId] = mr.Collection
+			}
+		}
+	}
+
+	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	prefix := fmt.Sprintf("%d.ec", req.VolumeId)
+	entries, _ := os.ReadDir(v.baseDir)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, prefix)
+		if len(suffix) < 2 {
+			continue
+		}
+		var shardId uint32
+		if _, err := fmt.Sscanf(suffix[:2], "%d", &shardId); err != nil {
+			continue
+		}
+		var size int64
+		if info, err := entry.Info(); err == nil {
+			size = info.Size()
+		}
+		resp.EcShardInfos = append(resp.EcShardInfos, &volume_server_pb.EcShardInfo{
+			ShardId:    shardId,
+			Size:       size,
+			Collection: collectionByShard[shardId],
+			VolumeId:   req.VolumeId,
+		})
+	}
+	return resp, nil
 }
 
 func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {

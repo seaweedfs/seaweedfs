@@ -18,6 +18,8 @@ global:
     loggingLevel: 1
     enableSecurity: false
     masterServer: null
+    # filerWrite: true mounts security.toml on filer + admin without needing
+    # enableSecurity (mTLS); required for the Admin UI Users tab.
     securityConfig:
       jwtSigning:
         volumeWrite: true
@@ -1285,6 +1287,13 @@ admin:
   containerSecurityContext: {}
 
   extraEnvironmentVars: {}
+
+  # secret env variables (e.g. for injecting OIDC client secret from a Kubernetes Secret)
+  secretExtraEnvironmentVars: {}
+    # WEED_ADMIN_OIDC_CLIENT_SECRET:
+    #   secretKeyRef:
+    #     name: seaweedfs-admin-oidc
+    #     key: client_secret
 
   # Health checks
   livenessProbe:

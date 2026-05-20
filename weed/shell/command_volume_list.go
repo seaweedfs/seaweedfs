@@ -181,14 +181,38 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 func (c *commandVolumeList) writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo, verbosityLevel int, outRackInfo func()) statistics {
 	var s statistics
 	diskInfoFound := false
+	headerPrinted := false
+	// DataNodeInfo.DiskInfos keys by disk type, so a node with several disks
+	// of the same type collapses into a single entry. Split each one back
+	// into per-physical-disk views (using the DiskId carried on each
+	// VolumeInfo / EcShardInfo) so the verbose Disk block shows one entry
+	// per physical disk instead of summing them all under "id:0". headerPrinted
+	// guards against the inner callback firing once per split disk and
+	// emitting the DataNode header on every iteration.
 	for _, diskType := range sortMapKey(t.DiskInfos) {
-		diskInfo := t.DiskInfos[diskType]
-		s.add(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
-			outRackInfo()
-			output(verbosityLevel >= 3, writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
-		}))
-		if !diskInfoFound && !s.isEmpty() {
-			diskInfoFound = true
+		perDiskInfos := t.DiskInfos[diskType].SplitByPhysicalDisk()
+		slices.SortFunc(perDiskInfos, func(a, b *master_pb.DiskInfo) int {
+			switch {
+			case a.DiskId < b.DiskId:
+				return -1
+			case a.DiskId > b.DiskId:
+				return 1
+			default:
+				return 0
+			}
+		})
+		for _, diskInfo := range perDiskInfos {
+			s.add(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
+				if headerPrinted {
+					return
+				}
+				outRackInfo()
+				output(verbosityLevel >= 3, writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
+				headerPrinted = true
+			}))
+			if !diskInfoFound && !s.isEmpty() {
+				diskInfoFound = true
+			}
 		}
 	}
 	output(diskInfoFound && verbosityLevel >= 3, writer, "      DataNode %s %+v \n", t.Id, s)

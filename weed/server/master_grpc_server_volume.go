@@ -274,6 +274,8 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 				Url:        dn.Url(),
 				PublicUrl:  dn.PublicUrl,
 				DataCenter: dn.GetDataCenterId(),
+				// without this, clients derive grpc as httpPort+10000
+				GrpcPort: uint32(dn.GrpcPort),
 			})
 		}
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{

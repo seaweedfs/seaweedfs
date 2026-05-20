@@ -73,6 +73,14 @@ type Topology struct {
 	lastLeaderChangeTime     time.Time
 	hadVolumesAtLeaderChange bool
 	lastLeaderChangeTimeLock sync.RWMutex
+
+	// dataNodeIndex is an address -> *DataNode lookup so callers (e.g. the
+	// Ping admission gate) do not have to walk every dc/rack/node tier on
+	// every request. Keys use the canonical http form returned by
+	// pb.ServerAddress.ToHttpAddress so a target like "1.2.3.4:8080" finds
+	// the same node whether or not the grpc port suffix is present.
+	dataNodeIndex     map[string]*DataNode
+	dataNodeIndexLock sync.RWMutex
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -95,8 +103,63 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.chanCrowdedVolumes = make(chan storage.VolumeInfo)
 
 	t.Configuration = &Configuration{}
+	t.dataNodeIndex = make(map[string]*DataNode)
 
 	return t
+}
+
+// LookupDataNodeByAddress returns the registered DataNode that serves addr,
+// or nil if no such node has been observed. Lookup is O(1) and uses the
+// canonical http form of the address so callers that pass either
+// "host:port" or "host:port.grpc" find the same node.
+func (t *Topology) LookupDataNodeByAddress(addr pb.ServerAddress) *DataNode {
+	if addr == "" {
+		return nil
+	}
+	t.dataNodeIndexLock.RLock()
+	defer t.dataNodeIndexLock.RUnlock()
+	if t.dataNodeIndex == nil {
+		return nil
+	}
+	return t.dataNodeIndex[addr.ToHttpAddress()]
+}
+
+// registerDataNodeAddress records dn in the address index under its current
+// http address. Callers must invoke unregisterDataNodeAddress with the prior
+// address whenever a node's Ip or Port changes (e.g. k8s pod reschedule).
+func (t *Topology) registerDataNodeAddress(dn *DataNode) {
+	if dn == nil {
+		return
+	}
+	key := dn.ServerAddress().ToHttpAddress()
+	if key == "" {
+		return
+	}
+	t.dataNodeIndexLock.Lock()
+	defer t.dataNodeIndexLock.Unlock()
+	if t.dataNodeIndex == nil {
+		t.dataNodeIndex = make(map[string]*DataNode)
+	}
+	t.dataNodeIndex[key] = dn
+}
+
+// unregisterDataNodeAddress removes the index entry for addr, but only when
+// the entry still points at dn. The conditional guard avoids dropping a
+// freshly re-registered node whose address happens to alias the one being
+// removed (e.g. legacy id transitions or a fast restart).
+func (t *Topology) unregisterDataNodeAddress(addr pb.ServerAddress, dn *DataNode) {
+	if addr == "" {
+		return
+	}
+	key := addr.ToHttpAddress()
+	if key == "" {
+		return
+	}
+	t.dataNodeIndexLock.Lock()
+	defer t.dataNodeIndexLock.Unlock()
+	if existing, ok := t.dataNodeIndex[key]; ok && (dn == nil || existing == dn) {
+		delete(t.dataNodeIndex, key)
+	}
 }
 
 func (t *Topology) IsChildLocked() (bool, error) {

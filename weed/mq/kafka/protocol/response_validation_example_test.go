@@ -100,16 +100,6 @@ func TestCurrentTestingApproach(t *testing.T) {
 	t.Log("  This is why JoinGroup issue wasn't caught by unit tests")
 }
 
-// parseCompactArray is a helper that would be needed for field-level testing
-func parseCompactArray(data []byte) int {
-	// Compact array encoding: varint length (length+1 for non-null, 0 for null)
-	length := int(data[0])
-	if length == 0 {
-		return -1 // null
-	}
-	return length - 1 // actual length
-}
-
 // Example of a REAL field-level test we could write
 func TestMetadataResponseHasBrokers(t *testing.T) {
 	t.Skip("Example of what a real field-level test would look like")

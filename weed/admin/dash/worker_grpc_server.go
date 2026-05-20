@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +18,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -273,9 +276,13 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 
 		msg, err := stream.Recv()
 		if err != nil {
-			if err == io.EOF {
+			switch {
+			case err == io.EOF:
 				glog.Infof("Worker %s disconnected", workerID)
-			} else {
+			case errors.Is(err, context.Canceled), status.Code(err) == codes.Canceled:
+				// Graceful shutdown on either side cancels the stream.
+				glog.V(1).Infof("Worker %s stream canceled: %v", workerID, err)
+			default:
 				glog.Errorf("Error receiving from worker %s: %v", workerID, err)
 			}
 			s.unregisterWorker(conn)

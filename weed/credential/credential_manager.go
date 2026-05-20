@@ -305,6 +305,60 @@ func (cm *CredentialManager) ListUserInlinePolicies(ctx context.Context, userNam
 	return nil, nil
 }
 
+// LoadAllInlinePolicies returns every user inline policy in a single map
+// keyed by username then policy name. Returns nil, nil if the underlying
+// store does not implement bulk loading.
+func (cm *CredentialManager) LoadAllInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := cm.Store.(InlinePoliciesLoader); ok {
+		return loader.LoadInlinePolicies(ctx)
+	}
+	return nil, nil
+}
+
+// PutGroupInlinePolicy stores a per-group inline policy document.
+// Returns nil without error if the underlying store does not support
+// group inline policies.
+func (cm *CredentialManager) PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error {
+	if store, ok := cm.Store.(GroupInlinePolicyStore); ok {
+		return store.PutGroupInlinePolicy(ctx, groupName, policyName, document)
+	}
+	return nil
+}
+
+// GetGroupInlinePolicy retrieves a per-group inline policy document.
+func (cm *CredentialManager) GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error) {
+	if store, ok := cm.Store.(GroupInlinePolicyStore); ok {
+		return store.GetGroupInlinePolicy(ctx, groupName, policyName)
+	}
+	return nil, nil
+}
+
+// DeleteGroupInlinePolicy removes a per-group inline policy document.
+func (cm *CredentialManager) DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error {
+	if store, ok := cm.Store.(GroupInlinePolicyStore); ok {
+		return store.DeleteGroupInlinePolicy(ctx, groupName, policyName)
+	}
+	return nil
+}
+
+// ListGroupInlinePolicies returns the names of all inline policies for a group.
+func (cm *CredentialManager) ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error) {
+	if store, ok := cm.Store.(GroupInlinePolicyStore); ok {
+		return store.ListGroupInlinePolicies(ctx, groupName)
+	}
+	return nil, nil
+}
+
+// LoadAllGroupInlinePolicies returns every group inline policy in a single
+// map keyed by group name then policy name. Returns nil, nil if the
+// underlying store does not implement bulk loading.
+func (cm *CredentialManager) LoadAllGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := cm.Store.(GroupInlinePoliciesLoader); ok {
+		return loader.LoadGroupInlinePolicies(ctx)
+	}
+	return nil, nil
+}
+
 // RenameUser atomically renames a user along with all FK-backed
 // dependents (credentials, inline policies, ...) when the underlying
 // store implements UserRenamer. Returns false if the store does not

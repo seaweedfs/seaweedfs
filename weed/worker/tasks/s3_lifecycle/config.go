@@ -9,46 +9,38 @@ import (
 const (
 	jobType = "s3_lifecycle"
 
-	defaultWorkers                = 1
-	defaultDispatchTickMinutes    = int64(1)
-	defaultCheckpointTickSeconds  = int64(30)
-	defaultRefreshIntervalMinutes = int64(5)
-	defaultMaxRuntimeMinutes      = int64(60)
+	// In-process fan-out across the 16 shards.
+	shardPipelineGoroutines = 1
 )
 
-// Config is the parsed AdminConfigForm + WorkerConfigForm view.
 type Config struct {
-	Workers         int
-	DispatchTick    time.Duration
-	CheckpointTick  time.Duration
-	RefreshInterval time.Duration
-	MaxRuntime      time.Duration
+	Workers          int
+	MetaLogRetention time.Duration
+	// WalkerInterval is the minimum time between steady-state walker
+	// fires per shard. 0 means "fire on every run", preserving prior
+	// behavior; positive values gate the walker via Cursor.LastWalkedNs
+	// inside dailyrun.runShard.
+	WalkerInterval time.Duration
 }
 
-// ParseConfig pulls the lifecycle Handler config from the merged
-// admin+worker config values. Missing fields fall back to defaults.
-func ParseConfig(adminValues, workerValues map[string]*plugin_pb.ConfigValue) Config {
+func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		Workers:         int(readInt64(adminValues, "workers", defaultWorkers)),
-		DispatchTick:    time.Duration(readInt64(workerValues, "dispatch_tick_minutes", defaultDispatchTickMinutes)) * time.Minute,
-		CheckpointTick:  time.Duration(readInt64(workerValues, "checkpoint_tick_seconds", defaultCheckpointTickSeconds)) * time.Second,
-		RefreshInterval: time.Duration(readInt64(workerValues, "refresh_interval_minutes", defaultRefreshIntervalMinutes)) * time.Minute,
-		MaxRuntime:      time.Duration(readInt64(workerValues, "max_runtime_minutes", defaultMaxRuntimeMinutes)) * time.Minute,
+		Workers: shardPipelineGoroutines,
 	}
-	if cfg.Workers <= 0 {
-		cfg.Workers = defaultWorkers
+	_ = workerValues // worker-side config form is currently empty; reserved for future per-worker tuning.
+	// Operator-declared meta-log retention. Negative or zero values stay
+	// zero so runShard falls back to maxTTL (PromotedHash dormant).
+	// Convert days->hours in int64 space before lifting to time.Duration
+	// so the unit is unambiguous.
+	if days := readInt64(adminValues, MetaLogRetentionDaysAdminKey, 0); days > 0 {
+		cfg.MetaLogRetention = time.Duration(days*24) * time.Hour
 	}
-	if cfg.DispatchTick <= 0 {
-		cfg.DispatchTick = time.Duration(defaultDispatchTickMinutes) * time.Minute
-	}
-	if cfg.CheckpointTick <= 0 {
-		cfg.CheckpointTick = time.Duration(defaultCheckpointTickSeconds) * time.Second
-	}
-	if cfg.RefreshInterval <= 0 {
-		cfg.RefreshInterval = time.Duration(defaultRefreshIntervalMinutes) * time.Minute
-	}
-	if cfg.MaxRuntime <= 0 {
-		cfg.MaxRuntime = time.Duration(defaultMaxRuntimeMinutes) * time.Minute
+	// Walker throttle. Negative / zero stay zero so dailyrun.runShard
+	// keeps the prior "fire every pass" semantics — important for in-
+	// repo integration tests and s3tests's sub-minute driver. Positive
+	// values throttle the steady-state walker per shard.
+	if mins := readInt64(adminValues, WalkerIntervalMinutesAdminKey, 0); mins > 0 {
+		cfg.WalkerInterval = time.Duration(mins) * time.Minute
 	}
 	return cfg
 }

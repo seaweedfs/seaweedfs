@@ -214,55 +214,15 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	glog.V(3).Infof("updateBucketConfigCacheFromEntry: called for bucket %s, ExtObjectLockEnabledKey=%s",
 		bucket, string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 
-	// Create new bucket config from the entry
+	// Create new bucket config from the entry. populateBucketConfigDerivedFields
+	// is the single source of truth for mapping Entry.Extended → cached
+	// fields (incl. LifecycleTTL), so a meta-log Put/DeleteBucketLifecycle
+	// here can't leave a stale resolver in cache.
 	config := &BucketConfig{
-		Name:         bucket,
-		Entry:        entry,
-		IsPublicRead: false, // Explicitly default to false for private buckets
+		Name:  bucket,
+		Entry: entry,
 	}
-
-	// Extract configuration from extended attributes
-	if entry.Extended != nil {
-		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
-			config.Versioning = string(versioning)
-		}
-		if ownership, exists := entry.Extended[s3_constants.ExtOwnershipKey]; exists {
-			config.Ownership = string(ownership)
-		}
-		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
-			config.ACL = acl
-			// Parse ACL and cache public-read status
-			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
-		} else {
-			// No ACL means private bucket
-			config.IsPublicRead = false
-		}
-		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
-			config.Owner = string(owner)
-		}
-		// Parse Object Lock configuration if present
-		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
-			config.ObjectLockConfig = objectLockConfig
-			glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s: %+v", bucket, objectLockConfig)
-		} else {
-			glog.V(3).Infof("updateBucketConfigCacheFromEntry: no Object Lock configuration found for bucket %s", bucket)
-		}
-
-		// Load bucket policy if present (for performance optimization)
-		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
-	}
-
-	// Sync bucket policy to the policy engine for evaluation
-	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
-
-	// Parse CORS configuration directly from the subscription entry's Content field.
-	// This avoids a separate RPC call that could return stale data when racing with
-	// concurrent metadata updates (e.g., PutBucketCors clearing the cache while this
-	// handler is still processing an older event).
-	config.CORS = parseCORSFromEntryContent(entry.Content)
-	if config.CORS != nil {
-		glog.V(2).Infof("updateBucketConfigCacheFromEntry: parsed CORS config for bucket %s from entry content", bucket)
-	}
+	s3a.populateBucketConfigDerivedFields(config)
 
 	// Update timestamp
 	config.LastModified = time.Now()

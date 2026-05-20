@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -46,11 +43,7 @@ func (c *commandS3AccessKeyList) Do(args []string, commandEnv *CommandEnv, write
 		return fmt.Errorf("-user is required")
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *user})
 		if err != nil {
 			return err
@@ -71,5 +64,5 @@ func (c *commandS3AccessKeyList) Do(args []string, commandEnv *CommandEnv, write
 			fmt.Fprintf(tw, "%s\t%s\n", cred.AccessKey, st)
 		}
 		return tw.Flush()
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }

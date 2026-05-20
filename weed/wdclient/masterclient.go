@@ -439,6 +439,18 @@ func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 	return mc.masters.GetInstances()
 }
 
+// ListMasterSet returns a set of configured master addresses keyed by their
+// canonical http form. Unlike GetMasters this does not wait for a connection,
+// so it is safe to call from admission paths that must stay non-blocking.
+func (mc *MasterClient) ListMasterSet() map[string]struct{} {
+	addrs := mc.masters.GetInstances()
+	set := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		set[a.ToHttpAddress()] = struct{}{}
+	}
+	return set
+}
+
 // WaitUntilConnected blocks until a master connection is established or ctx is canceled.
 // This does NOT initiate connections - it only waits for KeepConnectedToMaster to succeed.
 func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {

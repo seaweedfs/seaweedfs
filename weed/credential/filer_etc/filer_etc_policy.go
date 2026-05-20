@@ -19,8 +19,9 @@ const (
 )
 
 type PoliciesCollection struct {
-	Policies       map[string]policy_engine.PolicyDocument            `json:"policies"`
-	InlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"inlinePolicies"`
+	Policies            map[string]policy_engine.PolicyDocument            `json:"policies"`
+	InlinePolicies      map[string]map[string]policy_engine.PolicyDocument `json:"inlinePolicies"`
+	GroupInlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"groupInlinePolicies,omitempty"`
 }
 
 func validatePolicyName(name string) error {
@@ -29,8 +30,9 @@ func validatePolicyName(name string) error {
 
 func newPoliciesCollection() *PoliciesCollection {
 	return &PoliciesCollection{
-		Policies:       make(map[string]policy_engine.PolicyDocument),
-		InlinePolicies: make(map[string]map[string]policy_engine.PolicyDocument),
+		Policies:            make(map[string]policy_engine.PolicyDocument),
+		InlinePolicies:      make(map[string]map[string]policy_engine.PolicyDocument),
+		GroupInlinePolicies: make(map[string]map[string]policy_engine.PolicyDocument),
 	}
 }
 
@@ -53,6 +55,9 @@ func (store *FilerEtcStore) loadLegacyPoliciesCollection(ctx context.Context) (*
 	}
 	if policiesCollection.InlinePolicies == nil {
 		policiesCollection.InlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+	}
+	if policiesCollection.GroupInlinePolicies == nil {
+		policiesCollection.GroupInlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
 	}
 
 	return policiesCollection, true, nil
@@ -377,6 +382,87 @@ func (store *FilerEtcStore) ListUserInlinePolicies(ctx context.Context, userName
 		names = append(names, name)
 	}
 	return names, nil
+}
+
+// PutGroupInlinePolicy stores a per-group inline policy document.
+func (store *FilerEtcStore) PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+
+	if policiesCollection.GroupInlinePolicies[groupName] == nil {
+		policiesCollection.GroupInlinePolicies[groupName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	policiesCollection.GroupInlinePolicies[groupName][policyName] = document
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// GetGroupInlinePolicy retrieves a per-group inline policy document.
+func (store *FilerEtcStore) GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if groupPolicies := policiesCollection.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		if doc, exists := groupPolicies[policyName]; exists {
+			return &doc, nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteGroupInlinePolicy removes a per-group inline policy document.
+func (store *FilerEtcStore) DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+	if groupPolicies := policiesCollection.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		delete(groupPolicies, policyName)
+		if len(groupPolicies) == 0 {
+			delete(policiesCollection.GroupInlinePolicies, groupName)
+		}
+	}
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// ListGroupInlinePolicies returns the names of all inline policies for a group.
+func (store *FilerEtcStore) ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groupPolicies := policiesCollection.GroupInlinePolicies[groupName]
+	names := make([]string, 0, len(groupPolicies))
+	for name := range groupPolicies {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// LoadGroupInlinePolicies returns all group inline policies stored in the
+// legacy file keyed by group name then policy name.
+func (store *FilerEtcStore) LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]map[string]policy_engine.PolicyDocument, len(policiesCollection.GroupInlinePolicies))
+	for groupName, groupPolicies := range policiesCollection.GroupInlinePolicies {
+		copied := make(map[string]policy_engine.PolicyDocument, len(groupPolicies))
+		for policyName, doc := range groupPolicies {
+			copied[policyName] = doc
+		}
+		result[groupName] = copied
+	}
+	return result, nil
 }
 
 // ListPolicyNames returns all managed policy names stored in the filer.

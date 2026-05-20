@@ -98,16 +98,6 @@ func TestOffsetFetchAfterCommit(t *testing.T) {
 	t.Skip("Integration test - requires mock broker setup")
 
 	t.Run("FetchAfterCommit", func(t *testing.T) {
-		type FetchRequest struct {
-			partition int32
-			offset    int64
-		}
-
-		type FetchResponse struct {
-			records    []byte
-			nextOffset int64
-		}
-
 		// Simulate: Commit offset 163, then fetch offset 164
 		committedOffset := int64(163)
 		nextFetchOffset := committedOffset + 1
@@ -213,10 +203,8 @@ func TestLongPollWithOffsetCommit(t *testing.T) {
 		// Critical: long-poll duration should NOT be reported as throttleTimeMs
 		// This was bug 8969b4509
 
-		const maxWaitTime = 5 * time.Second
-
 		// Simulate long-poll wait (no data available)
-		time.Sleep(100 * time.Millisecond) // Broker waits up to maxWaitTime
+		time.Sleep(100 * time.Millisecond)
 
 		// throttleTimeMs should be 0 (NOT elapsed duration!)
 		throttleTimeMs := int32(0) // CORRECT

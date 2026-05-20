@@ -6,11 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -50,11 +47,7 @@ func (c *commandS3PolicyDetach) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("-user is required")
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *user})
 		if err != nil {
 			return fmt.Errorf("get user %q: %w", *user, err)
@@ -86,5 +79,5 @@ func (c *commandS3PolicyDetach) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		return json.NewEncoder(writer).Encode(map[string]string{"policy": *policy, "user": *user})
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 }

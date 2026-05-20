@@ -154,13 +154,25 @@ func NewStore(
 	}
 	wg.Wait()
 
-	// After every DiskLocation has finished its per-disk EC scan, sweep the
-	// store for shards that live on a disk without local index files and
-	// load them by reaching across to a sibling disk's .ecx / .ecj / .vif.
-	// This is the volume-server side of issue #9212: ec.balance can move
-	// shards onto a destination node's second disk while leaving the index
-	// on the disk that already held the volume, and without this pass those
-	// orphan shards stay invisible to the master.
+	// First, scrub partial EC artefacts left on one disk by an interrupted
+	// encode while the source .dat still lives on a sibling disk of the
+	// same store. The per-disk loader cannot see the sibling .dat and so
+	// loads the partial shards as if they were a distributed-EC layout,
+	// which makes the volume server heartbeat both a regular replica and
+	// an EC shard set for the same vid (issue #9478). Running before the
+	// cross-disk reconcile keeps that pass from later re-loading shards
+	// we just cleaned up.
+	s.pruneIncompleteEcWithSiblingDat()
+
+	// Physically mirror EC sidecars onto every shard-bearing disk so
+	// each disk mounts self-contained. Must run before the cross-disk
+	// reconciler so the orphan pass can prefer the local IdxDirectory.
+	s.mirrorEcMetadataToShardDisks()
+
+	// Cross-disk fallback for orphan shards — ec.balance can land
+	// shards on one disk while leaving the index on another. Still
+	// needed after the mirror pass for volumes whose mirror failed
+	// (read-only target, out of space, partial copy).
 	s.reconcileEcShardsAcrossDisks()
 
 	// Resolve state.pb's directory via the first disk location so it inherits
@@ -394,12 +406,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
-		// keepRemoteData is parallel to deleteVids: true entries preserve the
-		// cloud-tier object on Volume.Destroy. IO-error deletions on a
-		// remote-tiered volume must not nuke the remote object — the error
-		// is local/transient and the cloud copy is the source of truth.
 		var deleteVids []needle.VolumeId
-		var keepRemoteData []bool
 		effectiveMaxCount := location.MaxVolumeCount
 		if location.isDiskSpaceLow {
 			usedSlots := int32(location.LocalVolumesLen())
@@ -420,26 +427,42 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if maxFileKey < curMaxFileKey {
 				maxFileKey = curMaxFileKey
 			}
-			shouldDeleteVolume := false
 
-			if v.lastIoError != nil {
-				deleteVids = append(deleteVids, v.Id)
-				keepRemoteData = append(keepRemoteData, v.HasRemoteFile())
-				shouldDeleteVolume = true
-				glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
+			ioErr, ioCount, quarantined := v.getIoErrorState()
+			if quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
+				// Sustained EIO: stop announcing this replica so the master
+				// re-replicates from healthy peers, and mark it read-only
+				// so further writes fail fast instead of producing more
+				// EIOs. Never physically delete the data — the disk may
+				// be transiently bad and this could be the last good
+				// copy. The quarantine is sticky: a stray successful read
+				// clears the streak counter but must not silently put a
+				// known-bad replica back into rotation; recovery is via
+				// MarkVolumeWritable.
+				if !quarantined {
+					glog.Warningf("volume %d quarantined after %d consecutive IO errors: %v",
+						v.Id, ioCount, ioErr)
+					v.markIoQuarantined()
+				}
+				v.noWriteLock.Lock()
+				v.noWriteOrDelete = true
+				v.noWriteLock.Unlock()
+				// Skip per-volume size and read-only bookkeeping: a
+				// quarantined replica should not be summed into the
+				// collection's reported total nor counted in the
+				// read-only stats.
+				continue
+			}
+
+			shouldDeleteVolume := false
+			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
+				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
-				if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
-					volumeMessages = append(volumeMessages, volumeMessage)
+				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+					deleteVids = append(deleteVids, v.Id)
+					shouldDeleteVolume = true
 				} else {
-					if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
-						if !shouldDeleteVolume {
-							deleteVids = append(deleteVids, v.Id)
-							keepRemoteData = append(keepRemoteData, false)
-							shouldDeleteVolume = true
-						}
-					} else {
-						glog.V(0).Infof("volume %d is expired", v.Id)
-					}
+					glog.V(0).Infof("volume %d is expired", v.Id)
 				}
 			}
 
@@ -483,8 +506,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		if len(deleteVids) > 0 {
 			// delete expired volumes.
 			location.volumesLock.Lock()
-			for i, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false, keepRemoteData[i])
+			for _, vid := range deleteVids {
+				found, err := location.deleteVolumeById(vid, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -674,10 +697,21 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	// If the volume booted with .vif ReadOnly=true, .idx is opened O_RDONLY
+	// and v.nm is a SortedFileNeedleMap that rejects Put. Swap to writable
+	// form before flipping the flag so the next write doesn't race past a
+	// stale read-only handle.
+	if err := v.reopenIdxForWrite(); err != nil {
+		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
+	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = false
 	v.PersistReadOnly(false)
 	v.noWriteLock.Unlock()
+	// Clear the EIO streak and the sticky quarantine flag so the next
+	// CollectHeartbeat can announce the volume again. If the disk is
+	// still bad, the next failed op will re-arm the streak.
+	v.resetIoErrorState()
 	return nil
 }
 

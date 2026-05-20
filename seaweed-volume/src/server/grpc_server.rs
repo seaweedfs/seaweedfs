@@ -1511,9 +1511,11 @@ impl VolumeServer for VolumeGrpcService {
                             // EcVolume holds fds on the same inodes, so overwriting
                             // corrupts live readers.
                             if store.has_ec_volume(VolumeId(info.volume_id)) {
+                                let mounted_disks =
+                                    store.find_ec_volume_disk_ids(VolumeId(info.volume_id));
                                 resp_error = Some(format!(
-                                    "ec volume {} is mounted; unmount before ReceiveFile",
-                                    info.volume_id
+                                    "ec volume {} is mounted on disk_ids:{:?}; unmount before ReceiveFile",
+                                    info.volume_id, mounted_disks
                                 ));
                                 break;
                             }
@@ -2612,7 +2614,7 @@ impl VolumeServer for VolumeGrpcService {
         let mut store = self.state.store.write().unwrap();
         for &shard_id in &req.shard_ids {
             store
-                .mount_ec_shard(vid, &req.collection, shard_id)
+                .mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
                 .map_err(|e| {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;
@@ -3898,6 +3900,24 @@ impl VolumeServer for VolumeGrpcService {
 
         let start = now_ns();
 
+        // Empty target is a self-liveness probe and stays unauthenticated.
+        // Otherwise gate the dial on cluster membership: volume servers only
+        // know masters, so any other target type is refused. Mirrors Go's
+        // volume_grpc_admin.go Ping admission check. tonic forbids returning
+        // a body alongside an error, so we surface the InvalidArgument status
+        // alone — behaviour-identical to Go's status.Errorf return.
+        if !req.target.is_empty()
+            && !self
+                .state
+                .is_known_ping_target(&req.target, &req.target_type)
+                .await
+        {
+            return Err(Status::invalid_argument(format!(
+                "unknown ping target {} of type {}",
+                req.target, req.target_type
+            )));
+        }
+
         // Route ping based on target type (matches Go's volume_grpc_admin.go Ping)
         let remote_time_ns = if req.target_type == "volumeServer" {
             match ping_volume_server_target(&req.target, self.state.outgoing_grpc_tls.as_ref())
@@ -4033,29 +4053,12 @@ async fn ping_filer_target(
     Ok(resp.into_inner().start_time_ns)
 }
 
-/// Parse a SeaweedFS server address ("ip:port.grpcPort" or "ip:port") into a gRPC address.
-fn parse_grpc_address(source: &str) -> Result<String, String> {
-    if let Some(colon_idx) = source.rfind(':') {
-        let port_part = &source[colon_idx + 1..];
-        if let Some(dot_idx) = port_part.rfind('.') {
-            // Format: "ip:port.grpcPort"
-            let host = &source[..colon_idx];
-            let grpc_port = &port_part[dot_idx + 1..];
-            grpc_port
-                .parse::<u16>()
-                .map_err(|e| format!("invalid grpc port: {}", e))?;
-            return Ok(format!("{}:{}", host, grpc_port));
-        }
-        // Format: "ip:port" → grpc = port + 10000
-        let port: u16 = port_part
-            .parse()
-            .map_err(|e| format!("invalid port: {}", e))?;
-        let grpc_port = port as u32 + 10000;
-        let host = &source[..colon_idx];
-        return Ok(format!("{}:{}", host, grpc_port));
-    }
-    Err(format!("cannot parse address: {}", source))
-}
+// parse_grpc_address moved to super::grpc_client::parse_grpc_address
+// for sharing with the distributed-EC-read path in server/store_ec.rs.
+// In-file callers below still write `parse_grpc_address(...)`; this
+// `use` makes them resolve to the new home without churning every
+// call site.
+use super::grpc_client::parse_grpc_address;
 
 /// Set the modification time of a file from nanoseconds since Unix epoch.
 fn set_file_mtime(path: &str, modified_ts_ns: i64) {
@@ -4560,6 +4563,8 @@ mod tests {
             read_mode: crate::config::ReadMode::Local,
             master_url: String::new(),
             master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
             outgoing_http_scheme: "http".to_string(),
@@ -4662,6 +4667,8 @@ mod tests {
             read_mode: crate::config::ReadMode::Local,
             master_url: String::new(),
             master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
             outgoing_http_scheme: "http".to_string(),
@@ -4708,6 +4715,206 @@ mod tests {
             .write()
             .unwrap()
             .remove("s3.incr_copy_test");
+    }
+
+    /// Build a bare-bones service with no on-disk store but a configurable
+    /// seed master set, for Ping admission tests. Matches the structure of
+    /// `make_local_service_with_volume` minus the volume bits.
+    fn make_service_with_seed_masters(seeds: &[&str]) -> (VolumeGrpcService, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let master_urls: Vec<String> = seeds.iter().map(|s| (*s).to_string()).collect();
+        let seed_master_set =
+            crate::server::volume_server::VolumeServerState::build_seed_master_set(&master_urls);
+
+        let state = Arc::new(VolumeServerState {
+            store: RwLock::new(store),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
+            is_stopping: RwLock::new(false),
+            maintenance: std::sync::atomic::AtomicBool::new(false),
+            state_version: std::sync::atomic::AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::from_secs(60),
+            inflight_download_data_timeout: std::time::Duration::from_secs(60),
+            inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+            inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
+            is_heartbeating: std::sync::atomic::AtomicBool::new(true),
+            has_master: false,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            s3_tier_registry: std::sync::RwLock::new(
+                crate::remote_storage::s3_tier::S3TierRegistry::new(),
+            ),
+            read_mode: crate::config::ReadMode::Local,
+            master_url: master_urls.first().cloned().unwrap_or_default(),
+            master_urls,
+            seed_master_set,
+            current_master_url: tokio::sync::RwLock::new(String::new()),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
+            metrics_runtime: std::sync::RwLock::new(
+                crate::server::volume_server::RuntimeMetricsConfig::default(),
+            ),
+            metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
+            has_slow_read: false,
+            read_buffer_size_bytes: 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
+            state_file_path: String::new(),
+        });
+
+        (VolumeGrpcService { state }, tmp)
+    }
+
+    #[tokio::test]
+    async fn test_ping_empty_target_is_self_probe() {
+        // Empty target stays unauthenticated and returns Ok with timing fields
+        // populated — it is the local liveness probe path.
+        let (service, _tmp) = make_service_with_seed_masters(&[]);
+        let response = service
+            .ping(Request::new(volume_server_pb::PingRequest {
+                target: String::new(),
+                target_type: String::new(),
+            }))
+            .await
+            .expect("empty target ping must succeed");
+        let inner = response.into_inner();
+        assert!(inner.start_time_ns > 0);
+        assert!(inner.stop_time_ns >= inner.start_time_ns);
+    }
+
+    #[tokio::test]
+    async fn test_ping_seed_master_target_passes_admission() {
+        // A target that matches a configured seed master clears admission.
+        // The dial itself may or may not succeed depending on what's listening
+        // on the loopback; either way, the response must not be the
+        // InvalidArgument the gate would surface.
+        let (service, _tmp) = make_service_with_seed_masters(&["localhost:9333"]);
+        let result = service
+            .ping(Request::new(volume_server_pb::PingRequest {
+                target: "localhost:9333".to_string(),
+                target_type: "master".to_string(),
+            }))
+            .await;
+        if let Err(err) = result {
+            assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+            assert!(
+                !err.message().contains("unknown ping target"),
+                "admission gate should have allowed this target: {}",
+                err.message()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ping_unknown_master_target_rejected() {
+        // A master-type target not in the seed list and not the current
+        // master is refused with InvalidArgument.
+        let (service, _tmp) = make_service_with_seed_masters(&["localhost:9333"]);
+        let err = service
+            .ping(Request::new(volume_server_pb::PingRequest {
+                target: "localhost:9999".to_string(),
+                target_type: "master".to_string(),
+            }))
+            .await
+            .expect_err("unknown master target must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(
+            err.message(),
+            "unknown ping target localhost:9999 of type master"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ping_volume_server_target_always_rejected() {
+        // Volume servers do not maintain a peer-volume list, so volumeServer
+        // pings are refused regardless of address.
+        let (service, _tmp) = make_service_with_seed_masters(&["localhost:9333"]);
+        let err = service
+            .ping(Request::new(volume_server_pb::PingRequest {
+                target: "localhost:8080".to_string(),
+                target_type: "volumeServer".to_string(),
+            }))
+            .await
+            .expect_err("volumeServer target must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(
+            err.message(),
+            "unknown ping target localhost:8080 of type volumeServer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ping_current_master_target_passes_admission() {
+        // A target that matches the current (post-leader-change) master also
+        // clears admission, even if it is not in the seed list. Pick a port
+        // that is extremely unlikely to be live so the test does not flake on
+        // a developer machine that happens to be running a real master.
+        let (service, _tmp) = make_service_with_seed_masters(&["localhost:9333"]);
+        // Simulate the heartbeat goroutine having moved to a new leader.
+        *service.state.current_master_url.write().await = "127.0.0.1:1".to_string();
+
+        let result = service
+            .ping(Request::new(volume_server_pb::PingRequest {
+                target: "127.0.0.1:1".to_string(),
+                target_type: "master".to_string(),
+            }))
+            .await;
+        if let Err(err) = result {
+            assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+            assert!(
+                !err.message().contains("unknown ping target"),
+                "leader-change master should be admitted: {}",
+                err.message()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ping_target_with_grpc_port_suffix_is_normalised() {
+        // Seed masters in pb.ServerAddress form (`host:port.grpcPort`) must
+        // match a Ping target sent in plain `host:port` form, since the gate
+        // normalises both sides through to_http_address.
+        let (service, _tmp) = make_service_with_seed_masters(&["localhost:9333.19333"]);
+        let result = service
+            .ping(Request::new(volume_server_pb::PingRequest {
+                target: "localhost:9333".to_string(),
+                target_type: "master".to_string(),
+            }))
+            .await;
+        if let Err(err) = result {
+            assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+        }
     }
 
     #[tokio::test]

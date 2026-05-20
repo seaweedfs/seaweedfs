@@ -928,8 +928,10 @@ func TestS3IAMOnlyModeRejectsAnonymous(t *testing.T) {
 	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
 	require.NotNil(t, s3IAMIntegration)
 
-	// Set IAM integration - this should enable auth
+	// Set IAM integration and explicitly enforce auth, matching what the
+	// startup path does when an operator passes -s3.iam.config (#9557).
 	iam.SetIAMIntegration(s3IAMIntegration)
+	iam.EnableAuthEnforcement()
 
 	// Verify auth is enabled
 	require.True(t, iam.isEnabled(), "Auth must be enabled when IAM integration is configured")

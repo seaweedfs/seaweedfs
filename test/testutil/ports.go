@@ -51,6 +51,13 @@ func MustAllocatePorts(t *testing.T, count int) []int {
 // from recycling ports between allocations. Use this when ports will be
 // passed to weed mini without explicit gRPC port flags, so mini will
 // derive gRPC ports as HTTP + 10000.
+//
+// Listeners are bound on all interfaces (":port") rather than 127.0.0.1
+// to match weed mini's availability check (isPortAvailable). A port can
+// be free on loopback but held by another process on a different
+// interface; reserving only on loopback lets mini's check fail and
+// trigger gRPC port shifting, which then causes weed shell to dial the
+// wrong port and hang.
 func AllocateMiniPorts(count int) ([]int, error) {
 	const (
 		minPort = 10000
@@ -75,12 +82,12 @@ func AllocateMiniPorts(count int) ([]int, error) {
 				continue
 			}
 
-			l1, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			l1, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 			if err != nil {
 				continue
 			}
 
-			l2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
+			l2, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
 			if err != nil {
 				l1.Close()
 				continue
@@ -145,11 +152,11 @@ func AllocatePortSet(miniCount, regularCount int) (mini []int, regular []int, er
 			if reserved[port] || reserved[grpcPort] {
 				continue
 			}
-			l1, lErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			l1, lErr := net.Listen("tcp", fmt.Sprintf(":%d", port))
 			if lErr != nil {
 				continue
 			}
-			l2, lErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
+			l2, lErr := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
 			if lErr != nil {
 				l1.Close()
 				continue
@@ -168,7 +175,7 @@ func AllocatePortSet(miniCount, regularCount int) (mini []int, regular []int, er
 
 	regular = make([]int, 0, regularCount)
 	for i := 0; i < regularCount; i++ {
-		l, lErr := net.Listen("tcp", "127.0.0.1:0")
+		l, lErr := net.Listen("tcp", ":0")
 		if lErr != nil {
 			return nil, nil, lErr
 		}

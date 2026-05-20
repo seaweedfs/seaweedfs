@@ -152,6 +152,19 @@ func getValidVolumeName(basename string) string {
 	return ""
 }
 
+// hasEcxFile reports whether an .ecx for volumeName exists on this disk.
+// Checks IdxDirectory first, then falls back to Directory (the .ecx may
+// have been created before -dir.idx was configured).
+func (l *DiskLocation) hasEcxFile(volumeName string) bool {
+	if util.FileExists(filepath.Join(l.IdxDirectory, volumeName+".ecx")) {
+		return true
+	}
+	if l.IdxDirectory != l.Directory {
+		return util.FileExists(filepath.Join(l.Directory, volumeName+".ecx"))
+	}
+	return false
+}
+
 func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32) bool {
 	basename := dirEntry.Name()
 	if dirEntry.IsDir() {
@@ -169,14 +182,16 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		return false
 	}
 
+	// .vif next to .ecx is EC shard metadata, not a regular volume.
+	// Without this guard NewVolume below would create a phantom empty .dat.
+	if strings.HasSuffix(basename, ".vif") && l.hasEcxFile(volumeName) {
+		glog.V(1).Infof("loadExistingVolume: skipping .vif-only entry for volume %d (collection=%q); .ecx present", vid, collection)
+		return false
+	}
+
 	// skip if ec volumes exists, but validate EC files first
 	if skipIfEcVolumesExists {
-		ecxFilePath := filepath.Join(l.IdxDirectory, volumeName+".ecx")
-		if !util.FileExists(ecxFilePath) && l.IdxDirectory != l.Directory {
-			// .ecx may have been created before -dir.idx was configured
-			ecxFilePath = filepath.Join(l.Directory, volumeName+".ecx")
-		}
-		if util.FileExists(ecxFilePath) {
+		if l.hasEcxFile(volumeName) {
 			// Validate EC volume: shard count, size consistency, and expected size vs .dat file
 			if !l.validateEcVolume(collection, vid) {
 				glog.Warningf("EC volume %d validation failed, removing incomplete EC files to allow .dat file loading", vid)

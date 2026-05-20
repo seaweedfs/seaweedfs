@@ -3,32 +3,81 @@ package weed_server
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
-// IamGrpcServer implements the IAM gRPC service on the filer
+// IamGrpcServer implements the IAM gRPC service on the filer.
+// Auth is opt-in: when jwt.filer_signing.key is set in security.toml the
+// service requires a Bearer token in the "authorization" metadata signed with
+// that key; when it is empty every RPC is accepted unauthenticated, matching
+// the rest of SeaweedFS's gRPC surface. Operators who expose the filer gRPC
+// port beyond a trusted network should configure the key.
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager
+	adminSigningKey   security.SigningKey
 }
 
-// NewIamGrpcServer creates a new IAM gRPC server
-func NewIamGrpcServer(credentialManager *credential.CredentialManager) *IamGrpcServer {
+// NewIamGrpcServer creates a new IAM gRPC server. If adminSigningKey is empty
+// the service runs unauthenticated; otherwise every RPC requires a Bearer
+// token signed with the key.
+func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSigningKey security.SigningKey) *IamGrpcServer {
 	return &IamGrpcServer{
 		credentialManager: credentialManager,
+		adminSigningKey:   adminSigningKey,
 	}
+}
+
+// checkAdminAuth verifies the caller presented a Bearer token signed by the
+// filer's write-signing key. It is invoked at the top of every IAM RPC.
+// When no signing key is configured the service runs unauthenticated and this
+// check is a no-op.
+func (s *IamGrpcServer) checkAdminAuth(ctx context.Context) error {
+	if len(s.adminSigningKey) == 0 {
+		return nil
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing metadata")
+	}
+	authHeaders := md.Get("authorization")
+	if len(authHeaders) == 0 {
+		return status.Error(codes.Unauthenticated, "missing authorization metadata")
+	}
+	// RFC 6750 §2.1: the "Bearer" auth-scheme name is case-insensitive.
+	// Tolerate surrounding whitespace and any spacing between scheme and token.
+	raw := strings.TrimSpace(authHeaders[0])
+	parts := strings.Fields(raw)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+		return status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
+	}
+	token := parts[1]
+	parsed, err := security.DecodeJwt(s.adminSigningKey, security.EncodedJwt(token), &security.SeaweedFilerAdminClaims{})
+	if err != nil || parsed == nil || !parsed.Valid {
+		return status.Error(codes.Unauthenticated, "invalid admin token")
+	}
+	return nil
 }
 
 //////////////////////////////////////////////////
 // Configuration Management
 
 func (s *IamGrpcServer) GetConfiguration(ctx context.Context, req *iam_pb.GetConfigurationRequest) (*iam_pb.GetConfigurationResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("GetConfiguration")
 
 	if s.credentialManager == nil {
@@ -47,6 +96,12 @@ func (s *IamGrpcServer) GetConfiguration(ctx context.Context, req *iam_pb.GetCon
 }
 
 func (s *IamGrpcServer) PutConfiguration(ctx context.Context, req *iam_pb.PutConfigurationRequest) (*iam_pb.PutConfigurationResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("PutConfiguration")
 
 	if s.credentialManager == nil {
@@ -70,6 +125,9 @@ func (s *IamGrpcServer) PutConfiguration(ctx context.Context, req *iam_pb.PutCon
 // User Management
 
 func (s *IamGrpcServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRequest) (*iam_pb.CreateUserResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil || req.Identity == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "identity is required")
 	}
@@ -92,6 +150,12 @@ func (s *IamGrpcServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRe
 }
 
 func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest) (*iam_pb.GetUserResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("GetUser: %s", req.Username)
 
 	if s.credentialManager == nil {
@@ -117,6 +181,9 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 }
 
 func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil || req.Identity == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "identity is required")
 	}
@@ -139,6 +206,12 @@ func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRe
 }
 
 func (s *IamGrpcServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRequest) (*iam_pb.DeleteUserResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("IAM: Filer.DeleteUser %s", req.Username)
 
 	if s.credentialManager == nil {
@@ -158,6 +231,12 @@ func (s *IamGrpcServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRe
 }
 
 func (s *IamGrpcServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequest) (*iam_pb.ListUsersResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("ListUsers")
 
 	if s.credentialManager == nil {
@@ -193,6 +272,9 @@ func (s *IamGrpcServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequ
 // Access Key Management
 
 func (s *IamGrpcServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateAccessKeyRequest) (*iam_pb.CreateAccessKeyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil || req.Credential == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "credential is required")
 	}
@@ -215,6 +297,12 @@ func (s *IamGrpcServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateA
 }
 
 func (s *IamGrpcServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteAccessKeyRequest) (*iam_pb.DeleteAccessKeyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("DeleteAccessKey: %s for user: %s", req.AccessKey, req.Username)
 
 	if s.credentialManager == nil {
@@ -237,6 +325,12 @@ func (s *IamGrpcServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteA
 }
 
 func (s *IamGrpcServer) GetUserByAccessKey(ctx context.Context, req *iam_pb.GetUserByAccessKeyRequest) (*iam_pb.GetUserByAccessKeyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("GetUserByAccessKey: %s", req.AccessKey)
 
 	if s.credentialManager == nil {
@@ -261,6 +355,12 @@ func (s *IamGrpcServer) GetUserByAccessKey(ctx context.Context, req *iam_pb.GetU
 // Policy Management
 
 func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequest) (*iam_pb.PutPolicyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("IAM: Filer.PutPolicy %s", req.Name)
 
 	if s.credentialManager == nil {
@@ -293,6 +393,12 @@ func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 }
 
 func (s *IamGrpcServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequest) (*iam_pb.GetPolicyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("GetPolicy: %s", req.Name)
 
 	if s.credentialManager == nil {
@@ -322,6 +428,12 @@ func (s *IamGrpcServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequ
 }
 
 func (s *IamGrpcServer) ListPolicies(ctx context.Context, req *iam_pb.ListPoliciesRequest) (*iam_pb.ListPoliciesResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("ListPolicies")
 
 	if s.credentialManager == nil {
@@ -352,6 +464,12 @@ func (s *IamGrpcServer) ListPolicies(ctx context.Context, req *iam_pb.ListPolici
 }
 
 func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePolicyRequest) (*iam_pb.DeletePolicyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("DeletePolicy: %s", req.Name)
 
 	if s.credentialManager == nil {
@@ -371,6 +489,9 @@ func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 // Service Account Management
 
 func (s *IamGrpcServer) CreateServiceAccount(ctx context.Context, req *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil || req.ServiceAccount == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service account is required")
 	}
@@ -393,6 +514,9 @@ func (s *IamGrpcServer) CreateServiceAccount(ctx context.Context, req *iam_pb.Cr
 }
 
 func (s *IamGrpcServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.UpdateServiceAccountRequest) (*iam_pb.UpdateServiceAccountResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil || req.ServiceAccount == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service account is required")
 	}
@@ -412,6 +536,12 @@ func (s *IamGrpcServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.Up
 }
 
 func (s *IamGrpcServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.DeleteServiceAccountRequest) (*iam_pb.DeleteServiceAccountResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("DeleteServiceAccount: %s", req.Id)
 
 	if s.credentialManager == nil {
@@ -431,6 +561,12 @@ func (s *IamGrpcServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.De
 }
 
 func (s *IamGrpcServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetServiceAccountRequest) (*iam_pb.GetServiceAccountResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("GetServiceAccount: %s", req.Id)
 
 	if s.credentialManager == nil {
@@ -453,6 +589,12 @@ func (s *IamGrpcServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetSe
 }
 
 func (s *IamGrpcServer) ListServiceAccounts(ctx context.Context, req *iam_pb.ListServiceAccountsRequest) (*iam_pb.ListServiceAccountsResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("ListServiceAccounts")
 
 	if s.credentialManager == nil {
@@ -471,6 +613,9 @@ func (s *IamGrpcServer) ListServiceAccounts(ctx context.Context, req *iam_pb.Lis
 }
 
 func (s *IamGrpcServer) GetServiceAccountByAccessKey(ctx context.Context, req *iam_pb.GetServiceAccountByAccessKeyRequest) (*iam_pb.GetServiceAccountByAccessKeyResponse, error) {
+	if err := s.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "request is required")
 	}

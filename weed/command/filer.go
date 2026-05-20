@@ -236,6 +236,12 @@ func runFiler(cmd *Command, args []string) bool {
 	filerSftpOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
 
+	// Share the S3 static identity config file with the filer regardless of
+	// whether the embedded S3 gateway runs on this node: the IAM gRPC service
+	// the admin UI and weed shell talk to is wired up unconditionally, and it
+	// needs the same identities the S3 server would load from -s3.config.
+	f.s3ConfigFile = filerS3Options.config
+
 	switch {
 	case *f.metricsHttpIp != "":
 		// noting to do, use f.metricsHttpIp
@@ -431,11 +437,21 @@ func (fo *FilerOptions) startFiler() {
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 
-	// Register IAM gRPC service if credential manager is available
+	// Register the IAM gRPC service. Auth is opt-in: when
+	// jwt.filer_signing.key is configured the service requires a Bearer token
+	// signed with that key; otherwise it runs unauthenticated, matching the
+	// rest of the filer's gRPC surface. Operators who expose the filer gRPC
+	// port beyond a trusted network should set jwt.filer_signing.key on both
+	// the filer and the admin server.
 	if credentialManager != nil {
-		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager)
+		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
+		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
-		glog.V(0).Info("Registered IAM gRPC service on filer")
+		if len(adminSigningKey) == 0 {
+			glog.V(0).Info("Registered IAM gRPC service on filer (unauthenticated; set jwt.filer_signing.key in security.toml to require admin Bearer token)")
+		} else {
+			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")
+		}
 	}
 
 	reflection.Register(grpcS)

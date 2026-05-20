@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func TestComputeEntryIdentity_BasicFields(t *testing.T) {
@@ -145,5 +147,185 @@ func TestLifecycleAbortMPU_RejectsTraversalUploadIDs(t *testing.T) {
 					path, resp.Outcome, resp.Reason)
 			}
 		})
+	}
+}
+
+func TestLifecycleDispatch_AbortMPUAfterFetchIsBlocked(t *testing.T) {
+	// LifecycleDelete routes ABORT_MPU to lifecycleAbortMPU before
+	// getObjectEntry; reaching lifecycleDispatch with ABORT_MPU means
+	// some caller bypassed that route. Defensive BLOCKED so a
+	// regression there can't accidentally rm a real object via the
+	// expiration paths.
+	s := &S3ApiServer{}
+	resp, err := s.lifecycleDispatch(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:     "bk",
+		ObjectPath: "k",
+		ActionKind: s3_lifecycle_pb.ActionKind_ABORT_MPU,
+	}, &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}})
+	if err != nil {
+		t.Fatalf("unexpected gRPC error: %v", err)
+	}
+	if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+		t.Fatalf("ABORT_MPU at dispatch should be BLOCKED, got %v reason=%q", resp.Outcome, resp.Reason)
+	}
+	if !contains(resp.Reason, "ABORT_MPU dispatched after fetch") {
+		t.Fatalf("reason should name the route bypass, got %q", resp.Reason)
+	}
+}
+
+func TestLifecycleDispatch_UnknownActionKindIsBlocked(t *testing.T) {
+	// An ActionKind value the proto doesn't define yet must produce a
+	// FATAL outcome rather than fall through to a default delete path.
+	s := &S3ApiServer{}
+	const bogus = s3_lifecycle_pb.ActionKind(999)
+	resp, err := s.lifecycleDispatch(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:     "bk",
+		ObjectPath: "k",
+		ActionKind: bogus,
+	}, &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}})
+	if err != nil {
+		t.Fatalf("unexpected gRPC error: %v", err)
+	}
+	if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+		t.Fatalf("unknown action kind should be BLOCKED, got %v reason=%q", resp.Outcome, resp.Reason)
+	}
+	if !contains(resp.Reason, "unknown action_kind") {
+		t.Fatalf("reason should name the unknown kind, got %q", resp.Reason)
+	}
+}
+
+func TestLifecycleDispatch_NoncurrentRequiresVersionID(t *testing.T) {
+	// Noncurrent / EXPIRED_DELETE_MARKER target a specific version; an
+	// empty version_id is a writer-side bug and must be rejected before
+	// any filer call. This pinning keeps the early-return in place so
+	// a refactor doesn't accidentally let the empty-version_id path
+	// reach deleteSpecificObjectVersion.
+	s := &S3ApiServer{}
+	for _, kind := range []s3_lifecycle_pb.ActionKind{
+		s3_lifecycle_pb.ActionKind_NONCURRENT_DAYS,
+		s3_lifecycle_pb.ActionKind_NEWER_NONCURRENT,
+		s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER,
+	} {
+		t.Run(kind.String(), func(t *testing.T) {
+			resp, err := s.lifecycleDispatch(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:     "bk",
+				ObjectPath: "k",
+				ActionKind: kind,
+				// VersionId intentionally empty
+			}, &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}})
+			if err != nil {
+				t.Fatalf("unexpected gRPC error: %v", err)
+			}
+			if resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+				t.Fatalf("kind %v with empty version_id should be BLOCKED, got %v reason=%q",
+					kind, resp.Outcome, resp.Reason)
+			}
+			if !contains(resp.Reason, "version_id required") {
+				t.Fatalf("reason should name the missing version_id, got %q", resp.Reason)
+			}
+		})
+	}
+}
+
+// contains is a tiny helper so the tests above don't pull in strings
+// just for a substring check.
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEntryUsesMetadataOnlyDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry *filer_pb.Entry
+		want  bool
+	}{
+		{
+			name:  "nil entry",
+			entry: nil,
+			want:  false,
+		},
+		{
+			name:  "nil attributes",
+			entry: &filer_pb.Entry{},
+			want:  false,
+		},
+		{
+			name:  "TtlSec=0 (no per-write stamp)",
+			entry: &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{TtlSec: 0}},
+			want:  false,
+		},
+		{
+			name:  "TtlSec>0 (PR 9377 stamped a fast-path TTL)",
+			entry: &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{TtlSec: 86400}},
+			want:  true,
+		},
+		{
+			name:  "TtlSec<0 should not happen but must not flip the path on",
+			entry: &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{TtlSec: -1}},
+			want:  false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := entryUsesMetadataOnlyDelete(c.entry); got != c.want {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+func TestRecordMetadataOnlyIf_OnlyFiresWhenOn(t *testing.T) {
+	// Counter must increment exactly once per (bucket, hex(rule_hash))
+	// when on=true, and not at all when on=false. Other lifecycle paths
+	// in the same suite share the global counter — use distinct bucket
+	// names per test so series don't bleed.
+	c := stats_collect.S3LifecycleMetadataOnlyCounter
+	bucket := "bk-counter-on"
+	hash := []byte{0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04}
+	hexHash := "deadbeef01020304"
+
+	before := testutil.ToFloat64(c.WithLabelValues(bucket, hexHash))
+	recordMetadataOnlyIf(true, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:   bucket,
+		RuleHash: hash,
+	})
+	if got := testutil.ToFloat64(c.WithLabelValues(bucket, hexHash)); got != before+1 {
+		t.Fatalf("on=true should bump by 1; before=%v after=%v", before, got)
+	}
+
+	beforeOff := testutil.ToFloat64(c.WithLabelValues("bk-counter-off", hexHash))
+	recordMetadataOnlyIf(false, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:   "bk-counter-off",
+		RuleHash: hash,
+	})
+	if got := testutil.ToFloat64(c.WithLabelValues("bk-counter-off", hexHash)); got != beforeOff {
+		t.Fatalf("on=false should not bump; before=%v after=%v", beforeOff, got)
+	}
+}
+
+func TestRecordMetadataOnlyIf_NilRequestSafe(t *testing.T) {
+	// A nil req is a defensive no-op; never panic on the prometheus
+	// label call which would otherwise dereference req.Bucket.
+	recordMetadataOnlyIf(true, nil)
+}
+
+func TestRecordMetadataOnlyIf_EmptyRuleHashCollapsesToEmptyLabel(t *testing.T) {
+	// Bootstrap or test paths may not stamp a rule hash; the label
+	// must end up as an empty string rather than panicking on
+	// hex.EncodeToString(nil).
+	c := stats_collect.S3LifecycleMetadataOnlyCounter
+	bucket := "bk-counter-emptyhash"
+	before := testutil.ToFloat64(c.WithLabelValues(bucket, ""))
+	recordMetadataOnlyIf(true, &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: bucket})
+	if got := testutil.ToFloat64(c.WithLabelValues(bucket, "")); got != before+1 {
+		t.Fatalf("nil rule_hash should produce empty-label series; before=%v after=%v", before, got)
 	}
 }

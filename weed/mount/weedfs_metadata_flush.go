@@ -104,25 +104,36 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	glog.V(4).Infof("flushFileMetadata %s fh %d", fileFullPath, fh.fh)
 
-	entry := fh.GetEntry()
-	if entry == nil {
+	if fh.GetEntry() == nil {
 		return nil
 	}
-	entry.Name = name
 
-	// Do not stamp mtime/ctime here. Write/SetAttr already maintain
-	// them on the entry; overwriting at periodic-flush time clobbered
-	// user-set mtime (utimes/touch -m -d) once the timer fired.
+	// Snapshot the current chunk list. Async uploader goroutines call
+	// entry.AppendChunks while we run CompactFileChunks / MaybeManifestize
+	// below — those steps can take seconds (manifest upload is a round trip).
+	// We must remember the snapshot length so we can splice any chunks that
+	// land after the snapshot back in once we reassign entry.Chunks; without
+	// that, the naked overwrite below clobbers them and the file ends up
+	// missing chunk references for data the volumes already store.
+	var snapshotChunks []*filer_pb.FileChunk
+	var snapshotLen int
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		// Do not stamp mtime/ctime here. Write/SetAttr already maintain
+		// them on the entry; overwriting at periodic-flush time clobbered
+		// user-set mtime (utimes/touch -m -d) once the timer fired.
+		e.Name = name
+		snapshotLen = len(e.Chunks)
+		if snapshotLen > 0 {
+			snapshotChunks = append([]*filer_pb.FileChunk(nil), e.Chunks...)
+		}
+	})
 
-	// Get current chunks - these include chunks that have been uploaded
-	// but not yet persisted to filer metadata
-	chunks := entry.GetChunks()
-	if len(chunks) == 0 {
+	if snapshotLen == 0 {
 		return nil
 	}
 
 	// Separate manifest and non-manifest chunks
-	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(chunks)
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshotChunks)
 
 	// Compact chunks to remove fully overlapped ones
 	compactedChunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
@@ -133,11 +144,24 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
 	}
 
-	entry.Chunks = append(compactedChunks, manifestChunks...)
+	processedPrefix := append(compactedChunks, manifestChunks...)
 
-	// Clone the proto entry so mapPbIdFromLocalToFiler does not mutate the
-	// file handle's live entry (same race as in flushMetadataToFiler).
-	requestEntry := proto.Clone(entry.GetEntry()).(*filer_pb.Entry)
+	// Splice the processed snapshot back in, preserving any chunks that
+	// async uploaders appended after our snapshot, and clone the resulting
+	// entry for the filer request while still holding the lock so the
+	// request can't observe a half-merged state.
+	var requestEntry *filer_pb.Entry
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		// e.Chunks[snapshotLen:] is whatever async uploaders appended while
+		// we processed the snapshot. processedPrefix is freshly built and not
+		// referenced elsewhere, so we can append straight onto it.
+		var tail []*filer_pb.FileChunk
+		if len(e.Chunks) > snapshotLen {
+			tail = e.Chunks[snapshotLen:]
+		}
+		e.Chunks = append(processedPrefix, tail...)
+		requestEntry = proto.Clone(e).(*filer_pb.Entry)
+	})
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dir),
 		Entry:                    requestEntry,
@@ -161,7 +185,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
 	}
 
-	glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(entry.GetChunks()))
+	glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(requestEntry.GetChunks()))
 
 	// Note: We do NOT clear dirtyMetadata here because:
 	// 1. There may still be dirty pages in the write buffer

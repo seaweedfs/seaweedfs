@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
@@ -175,6 +176,13 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		return fmt.Errorf("mount decoded volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
 
+	// Confirm the regenerated .dat is present and non-empty before destroying
+	// the shards. Without this gate, a silent failure in generate/mount could
+	// leave the cluster with neither shards nor volume.
+	if err := verifyDecodedVolumeBeforeDelete(commandEnv.option.GrpcDialOption, targetNodeLocation, vid); err != nil {
+		return fmt.Errorf("verify decoded volume %d on %s before deleting shards: %w", vid, targetNodeLocation, err)
+	}
+
 	// delete the previous ec shards
 	err = unmountAndDeleteEcShardsWithPrefix("deleteDecodedEcShards", commandEnv.option.GrpcDialOption, collection, nodeToEcShardsInfo, vid)
 	if err != nil {
@@ -223,6 +231,30 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 		})
 	}
 	return ewg.Wait()
+}
+
+func verifyDecodedVolumeBeforeDelete(grpcDialOption grpc.DialOption, target pb.ServerAddress, vid needle.VolumeId) error {
+	var resp *volume_server_pb.ReadVolumeFileStatusResponse
+	if err := operation.WithVolumeServerClient(false, target, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		r, e := client.ReadVolumeFileStatus(context.Background(), &volume_server_pb.ReadVolumeFileStatusRequest{
+			VolumeId: uint32(vid),
+		})
+		if e != nil {
+			return e
+		}
+		resp = r
+		return nil
+	}); err != nil {
+		return fmt.Errorf("read volume file status: %w", err)
+	}
+	if resp.DatFileSize == 0 {
+		return fmt.Errorf("decoded .dat is 0 bytes")
+	}
+	if resp.IdxFileSize == 0 {
+		return fmt.Errorf("decoded .idx is 0 bytes")
+	}
+	glog.V(0).Infof("ec decode verification ok for volume %d on %s: dat=%d idx=%d", vid, target, resp.DatFileSize, resp.IdxFileSize)
+	return nil
 }
 
 func mountDecodedVolume(grpcDialOption grpc.DialOption, targetNodeLocation pb.ServerAddress, vid needle.VolumeId) error {

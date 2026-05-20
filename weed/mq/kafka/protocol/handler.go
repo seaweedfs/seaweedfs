@@ -286,8 +286,6 @@ type Handler struct {
 	inferredRecordTypes   map[string]*schema_pb.RecordType
 	inferredRecordTypesMu sync.RWMutex
 
-	filerClient filer_pb.SeaweedFilerClient
-
 	// SMQ broker addresses discovered from masters for Metadata responses
 	smqBrokerAddresses []string
 

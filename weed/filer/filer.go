@@ -223,6 +223,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		entry.Attr.TtlSec = 0
 	}
 
+	if entry.Attr.Atime.IsZero() {
+		entry.Attr.Atime = entryInitialAtime(entry.Attr)
+	}
+
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
 
 	/*
@@ -371,7 +375,17 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsFile)
 		}
 	}
+	if entry.Attr.Atime.IsZero() {
+		entry.Attr.Atime = entryInitialAtime(entry.Attr)
+	}
 	return f.Store.UpdateEntry(ctx, entry)
+}
+
+func entryInitialAtime(attr Attr) time.Time {
+	if !attr.Mtime.IsZero() {
+		return attr.Mtime
+	}
+	return attr.Crtime
 }
 
 var (

@@ -1,5 +1,5 @@
 {{- include "seaweedfs.compat" . -}}
-{{- if .Values.global.seaweedfs.enableSecurity }}
+{{- if include "seaweedfs.securityConfigEnabled" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -55,6 +55,7 @@ data:
     key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
     {{- end }}
 
+    {{- if .Values.global.seaweedfs.enableSecurity }}
     # all grpc tls authentications are mutual
     # the values for the following ca, cert, and key are paths to the PERM files.
     [grpc]
@@ -94,4 +95,5 @@ data:
     [https.volume]
     cert = ""
     key  = ""
+    {{- end }}
 {{- end }}

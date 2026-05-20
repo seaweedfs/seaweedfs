@@ -71,8 +71,10 @@ jobs:
           echo "Waiting for SeaweedFS S3 gateway to be ready via proxy..."
           S3_READY=0
           for i in $(seq 1 30); do
-            # Check logs first for startup message (weed mini says "S3 service is ready")
-            if docker compose logs seaweedfs 2>&1 | grep -qE "S3 (gateway|service).*(started|ready)"; then
+            # Check logs first for the readiness line. weed mini's progress
+            # board prints "  S3           ready (Xs)"; older builds and the
+            # standalone S3 binary log "S3 (gateway|service) ... ready".
+            if docker compose logs seaweedfs 2>&1 | grep -qE "S3 (gateway|service).*(started|ready)|S3[[:space:]]+ready"; then
               echo "SeaweedFS S3 gateway is ready"
               S3_READY=1
               break

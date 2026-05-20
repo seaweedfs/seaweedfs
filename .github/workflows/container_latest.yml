@@ -1,9 +1,10 @@
 name: "docker: build latest container"
 
+# Manual fallback only. On tag push, container_release_unified.yml already
+# re-tags the released versioned image as `latest` / `latest_large_disk`,
+# so a full rebuild here is unnecessary. Run this manually if you need to
+# rebuild `latest` from an arbitrary ref.
 on:
-  push:
-    tags:
-      - '*'
   workflow_dispatch:
     inputs:
       source_ref:

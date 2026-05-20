@@ -29,6 +29,41 @@ type SeaweedFilerClaims struct {
 	jwt.RegisteredClaims
 }
 
+// SeaweedFilerAdminClaims is presented by callers of the filer's IAM gRPC
+// service to prove they are authorised to administer users, access keys, and
+// policies. The token is signed with the filer write-signing key
+// (jwt.filer_signing.key in security.toml).
+//
+// Validation is delegated to DecodeJwt below: it enforces HS256 via the
+// SigningMethodHMAC type check, and jwt/v5 validates exp/nbf on the embedded
+// RegisteredClaims. Extra JSON fields in the payload are silently ignored by
+// encoding/json, which is the desired behaviour here (forward-compat).
+type SeaweedFilerAdminClaims struct {
+	jwt.RegisteredClaims
+}
+
+// GenJwtForFilerAdmin mints a Bearer token for the filer IAM gRPC service.
+// Returns an empty string if the signing key is not configured.
+func GenJwtForFilerAdmin(signingKey SigningKey, expiresAfterSec int) EncodedJwt {
+	if len(signingKey) == 0 {
+		return ""
+	}
+
+	claims := SeaweedFilerAdminClaims{
+		RegisteredClaims: jwt.RegisteredClaims{},
+	}
+	if expiresAfterSec > 0 {
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Second * time.Duration(expiresAfterSec)))
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
+	if e != nil {
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		return ""
+	}
+	return EncodedJwt(encoded)
+}
+
 func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
 	if len(signingKey) == 0 {
 		return ""

@@ -649,6 +649,14 @@ func (r *Plugin) executeJobWithExecutor(
 		return nil, err
 	}
 
+	// Apply per-job-type cluster-allocation decoration (e.g. s3_lifecycle
+	// divides cluster_deletes_per_second by min(workers, maxJobsPerDetection)
+	// and ships the share via ClusterContext.Metadata). No-op for job
+	// types without an allocator registered. MaxJobsPerDetection caps
+	// the divisor so a singleton job (maxJobs=1) gets the full budget on
+	// the single active worker, not 1/N of it.
+	clusterContext = r.decorateClusterContextForJob(clusterContext, job.JobType, adminConfigValues, int(adminRuntime.GetMaxJobsPerDetection()))
+
 	completedCh := make(chan *plugin_pb.JobCompleted, 1)
 	r.pendingExecutionMu.Lock()
 	r.pendingExecution[requestID] = completedCh

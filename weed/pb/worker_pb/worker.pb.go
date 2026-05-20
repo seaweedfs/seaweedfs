@@ -1322,6 +1322,7 @@ type ErasureCodingTaskParams struct {
 	WorkingDir         string                 `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`                            // Working directory for EC processing
 	MasterClient       string                 `protobuf:"bytes,5,opt,name=master_client,json=masterClient,proto3" json:"master_client,omitempty"`                      // Master server address
 	CleanupSource      bool                   `protobuf:"varint,6,opt,name=cleanup_source,json=cleanupSource,proto3" json:"cleanup_source,omitempty"`                  // Whether to cleanup source volume after EC
+	SourceDiskType     string                 `protobuf:"bytes,8,opt,name=source_disk_type,json=sourceDiskType,proto3" json:"source_disk_type,omitempty"`              // Source volume's disk type, passed to VolumeEcShardsMount so shards report under it (#9423)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1396,6 +1397,13 @@ func (x *ErasureCodingTaskParams) GetCleanupSource() bool {
 		return x.CleanupSource
 	}
 	return false
+}
+
+func (x *ErasureCodingTaskParams) GetSourceDiskType() string {
+	if x != nil {
+		return x.SourceDiskType
+	}
+	return ""
 }
 
 // TaskSource represents a unified source location for any task type
@@ -4032,7 +4040,7 @@ const file_worker_proto_rawDesc = "" +
 	"batch_size\x18\x03 \x01(\x05R\tbatchSize\x12\x1f\n" +
 	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12'\n" +
-	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\xfe\x01\n" +
+	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\xae\x02\n" +
 	"\x17ErasureCodingTaskParams\x120\n" +
 	"\x14estimated_shard_size\x18\x01 \x01(\x04R\x12estimatedShardSize\x12\x1f\n" +
 	"\vdata_shards\x18\x02 \x01(\x05R\n" +
@@ -4041,7 +4049,8 @@ const file_worker_proto_rawDesc = "" +
 	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12#\n" +
 	"\rmaster_client\x18\x05 \x01(\tR\fmasterClient\x12%\n" +
-	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\"\xcf\x01\n" +
+	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\x12(\n" +
+	"\x10source_disk_type\x18\b \x01(\tR\x0esourceDiskTypeJ\x04\b\a\x10\b\"\xcf\x01\n" +
 	"\n" +
 	"TaskSource\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x17\n" +

@@ -34,6 +34,16 @@ func (store *MemoryStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiC
 		})
 	}
 
+	// Groups are written via CreateGroup / AddUserToGroup / AttachGroupPolicy
+	// (never via SaveConfiguration), so they live in store.groups regardless
+	// of the bulk-config path. Surface them here so consumers that reload
+	// through cm.LoadConfiguration see a faithful snapshot — without this,
+	// iam.groups would never repopulate on memory-store reloads and group
+	// policy evaluation would silently no-op.
+	for _, g := range store.groups {
+		config.Groups = append(config.Groups, cloneGroup(g))
+	}
+
 	return config, nil
 }
 

@@ -24,7 +24,24 @@ import (
 )
 
 func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
+	return vs.getCurrentMaster()
+}
+
+// getCurrentMaster returns vs.currentMaster under a read lock so callers
+// (e.g. Ping admission) do not race with the heartbeat goroutine that
+// rewrites it on leader changes.
+func (vs *VolumeServer) getCurrentMaster() pb.ServerAddress {
+	vs.currentMasterLock.RLock()
+	defer vs.currentMasterLock.RUnlock()
 	return vs.currentMaster
+}
+
+// setCurrentMaster updates vs.currentMaster under a write lock. The
+// heartbeat goroutine calls this whenever it (re)connects to a master.
+func (vs *VolumeServer) setCurrentMaster(master pb.ServerAddress) {
+	vs.currentMasterLock.Lock()
+	vs.currentMaster = master
+	vs.currentMasterLock.Unlock()
 }
 
 func (vs *VolumeServer) checkWithMaster() (err error) {
@@ -126,7 +143,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 		return "", err
 	}
 	glog.V(0).Infof("Heartbeat to: %v", masterAddress)
-	vs.currentMaster = masterAddress
+	vs.setCurrentMaster(masterAddress)
 
 	doneChan := make(chan error, 1)
 
@@ -176,16 +193,19 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			if volumeOptsChanged {
 				if vs.store.MaybeAdjustVolumeMax() {
 					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
+						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.getCurrentMaster(), err)
 						return
 					}
 				}
 			}
-			if in.GetLeader() != "" && !vs.currentMaster.Equals(pb.ServerAddress(in.GetLeader())) {
-				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
-				newLeader = pb.ServerAddress(in.GetLeader())
-				doneChan <- nil
-				return
+			if in.GetLeader() != "" {
+				current := vs.getCurrentMaster()
+				if !current.Equals(pb.ServerAddress(in.GetLeader())) {
+					glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), current)
+					newLeader = pb.ServerAddress(in.GetLeader())
+					doneChan <- nil
+					return
+				}
 			}
 		}
 	}()
@@ -280,7 +300,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				},
 			}
 			si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(&ecShardMessage)
-			glog.V(0).Infof("volume server %s:%d deletes ec shards from %d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, si.String())
+			glog.V(0).Infof("volume server %s:%d deletes ec shards from %d disk_id:%d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, ecShardMessage.DiskId, si.String())
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err

@@ -3,6 +3,8 @@ package s3_lifecycle
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -11,10 +13,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dailyrun"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
 
@@ -30,8 +34,8 @@ func init() {
 }
 
 // Handler is the worker-side runner for S3 object lifecycle expiration.
-// One Execute call drives a long-running scheduler.Scheduler against the
-// S3 endpoints discovered from the master; admin caps concurrency at one
+// One Execute call drives one bounded dailyrun.Run pass against the S3
+// endpoints discovered from the master; admin caps concurrency at one
 // job per worker so a fresh proposal only spawns a new run after the
 // prior one exits.
 type Handler struct {
@@ -65,85 +69,89 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		AdminConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "s3-lifecycle-admin",
 			Title:       "S3 Lifecycle",
-			Description: "Cluster-wide controls for the lifecycle scheduler.",
+			Description: "Cluster-wide delete-throughput cap.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "scope",
 					Title:       "Scope",
-					Description: "How many pipeline goroutines split the 16-shard space.",
+					Description: "Cluster-wide delete-throughput cap.",
 					Fields: []*plugin_pb.ConfigField{
 						{
-							Name:        "workers",
-							Label:       "Worker Count",
-							Description: "Number of pipeline goroutines per executing worker. Each owns a contiguous slice of [0, 16) shards. Default 1 = one goroutine handles all 16 shards.",
+							Name:        ClusterDeletesPerSecondAdminKey,
+							Label:       "Cluster Delete Rate (per second)",
+							Description: "Cluster-wide ceiling on lifecycle delete RPCs per second, divided evenly across active s3_lifecycle workers at job-dispatch time. 0 = unlimited.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 16}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+						{
+							Name:        ClusterDeletesBurstAdminKey,
+							Label:       "Cluster Delete Burst",
+							Description: "Token-bucket burst capacity across the cluster (max simultaneous deletes). 0 = 2 × rate. Same allocation rule as the rate.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+						{
+							Name:        MetaLogRetentionDaysAdminKey,
+							Label:       "Meta-Log Retention (days)",
+							Description: "How far back the filer's meta-log subscription can reach. Rules whose TTL exceeds this run via the walker; shrinking this value will trigger a one-time recovery walk on the next run for any rule that's now too old to replay. 0 = unbounded (no partition; every rule serviced by replay).",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+						{
+							Name:        WalkerIntervalMinutesAdminKey,
+							Label:       "Walker Interval (minutes)",
+							Description: "Minimum time between steady-state walker fires per shard. Cold-start and rule-change recovery walks ignore this — they run unconditionally. 0 = fire on every run (use when the worker is scheduled at the desired walk cadence, e.g. hourly). Set to a positive value when the worker runs at a tighter cadence than the desired walk frequency, to avoid hammering filer with a full subtree scan per run.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"workers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultWorkers}},
+				ClusterDeletesPerSecondAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				MetaLogRetentionDaysAdminKey:    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				WalkerIntervalMinutesAdminKey:   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
-		WorkerConfigForm: &plugin_pb.ConfigForm{
-			FormId:      "s3-lifecycle-worker",
-			Title:       "S3 Lifecycle Worker",
-			Description: "Operational tuning for the lifecycle pipeline.",
-			Sections: []*plugin_pb.ConfigSection{
-				{
-					SectionId:   "cadence",
-					Title:       "Cadence",
-					Description: "Tick intervals for the dispatch loop, durable checkpoint, and engine refresh; plus the wall-clock cap on each daily run.",
-					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "dispatch_tick_minutes",
-							Label:       "Dispatch Tick (minutes)",
-							Description: "How often each pipeline drains its schedule.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "checkpoint_tick_seconds",
-							Label:       "Cursor Checkpoint Tick (seconds)",
-							Description: "How often each pipeline persists its cursor map to the filer.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "refresh_interval_minutes",
-							Label:       "Engine Refresh Interval (minutes)",
-							Description: "How often the scheduler rebuilds the engine snapshot from bucket lifecycle configs.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "max_runtime_minutes",
-							Label:       "Max Runtime (minutes)",
-							Description: "Wall-clock cap on each run. Each daily run processes events for one day; the cursor persists across runs.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-					},
-				},
-			},
-			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"dispatch_tick_minutes":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDispatchTickMinutes}},
-				"checkpoint_tick_seconds":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultCheckpointTickSeconds}},
-				"refresh_interval_minutes": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultRefreshIntervalMinutes}},
-				"max_runtime_minutes":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxRuntimeMinutes}},
-			},
-		},
+		// WorkerConfigForm intentionally absent — the prior
+		// "Per-Run Time Limit (minutes)" knob duplicated the admin
+		// scheduler's Execution Timeout (both wall-clock caps on the
+		// same Execute call), and operators had to keep the two values
+		// in agreement. Removed in favor of a single source of truth:
+		// AdminRuntimeDefaults.ExecutionTimeoutSeconds below.
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
+			// On by default: S3 lifecycle is a standard bucket feature
+			// (PutBucketLifecycleConfiguration is part of the S3 API),
+			// and a bucket with rules set but no worker running silently
+			// retains data past its declared expiration. Operators who
+			// want the worker off can still disable it in the admin UI;
+			// the default error is "data lingers" not "worker burns CPU
+			// on empty rule sets" (the worker fast-exits with no
+			// configured rules).
+			Enabled:                  true,
 			DetectionIntervalMinutes: 24 * 60, // daily
 			DetectionTimeoutSeconds:  60,
 			MaxJobsPerDetection:      1,
+			// Effectively no per-pass wall-clock cap. Lifecycle is a
+			// scheduled batch — its natural duration is "as long as it
+			// takes to process today's events." The scheduler's global
+			// 90s default would kill every real run, and a numeric
+			// cap operators have to estimate (1h? 8h?) is a recurring
+			// footgun: too low truncates a legitimate large-bucket
+			// pass; too high makes the value meaningless.
+			//
+			// Use math.MaxInt32 seconds (~68 years) for both knobs to
+			// say "no timeout in practice" in code-review-readable form.
+			// Operators who genuinely want a cap can set one in the
+			// admin UI; the underlying context.WithTimeout machinery
+			// is unchanged.
+			ExecutionTimeoutSeconds:  math.MaxInt32,
+			JobTypeMaxRuntimeSeconds: math.MaxInt32,
 		},
 	}
 }
@@ -207,13 +215,19 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return fmt.Errorf("execute: missing filer_grpc_address in job parameters")
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, cfg.MaxRuntime)
-	defer cancel()
+	// Run lifetime is bounded by the scheduler's Execution Timeout
+	// (admin UI). The handler used to wrap ctx in another
+	// context.WithTimeout(cfg.MaxRuntime), but that doubled the
+	// concept — both knobs were wall-clock caps on the same Execute
+	// call, and the smaller one always won (typically the 90s
+	// scheduler default would clobber a 60-min worker setting).
+	// Single source of truth is now AdminRuntimeDefaults.ExecutionTimeoutSeconds.
+	runCtx := ctx
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("scheduler workers=%d s3=%v runtime=%s", cfg.Workers, s3Endpoints, cfg.MaxRuntime),
+		Message: fmt.Sprintf("scheduler workers=%d s3=%v", cfg.Workers, s3Endpoints),
 	})
 
 	dialCtx, dialCancel := context.WithTimeout(runCtx, 30*time.Second)
@@ -239,24 +253,130 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
-	sched := &scheduler.Scheduler{
-		BucketsPath:     bucketsPath,
-		Engine:          engine.New(),
-		Persister:       &dispatcher.FilerPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
-		Client:          lifecycleRPCAdapter{c: rpc},
-		FilerClient:     filerClient,
-		ClientID:        util.RandomInt32(),
-		ClientName:      "worker-s3-lifecycle",
-		Workers:         cfg.Workers,
-		DispatchTick:    cfg.DispatchTick,
-		CheckpointTick:  cfg.CheckpointTick,
-		RefreshInterval: cfg.RefreshInterval,
+	return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
+}
+
+// executeDailyReplay runs one bounded daily-replay pass via
+// dailyrun.Run. The walker fires inside runShard on rule-content edits
+// and against the steady-state walk view; all rule kinds are serviced.
+func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
+	eng := engine.New()
+	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
+	if err != nil {
+		return fmt.Errorf("daily_replay: load lifecycle inputs: %w", err)
 	}
-	if err := sched.Run(runCtx); err != nil {
-		glog.Warningf("s3 lifecycle execute: %v", err)
-		return err
+	for _, pe := range parseErrors {
+		glog.V(1).Infof("daily_replay: %s: %v", pe.Bucket, pe.Err)
+	}
+	eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
+
+	shards := make([]int, 0, s3lifecycle.ShardCount)
+	for i := 0; i < s3lifecycle.ShardCount; i++ {
+		shards = append(shards, i)
+	}
+
+	limiter, limiterDesc := buildLimiterFromClusterContext(request.GetClusterContext())
+
+	// Reuse one LifecycleClient across the replay drain and the
+	// walker's per-entry dispatch.
+	client := lifecycleRPCAdapter{c: rpc}
+
+	// Bucket list for the walker — derived from inputs so it matches
+	// the snapshot the engine compiled.
+	buckets := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		if in.Bucket != "" {
+			buckets = append(buckets, in.Bucket)
+		}
+	}
+	walkerListFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
+	// Share the limiter with processMatches so walker + replay can't
+	// combine to burst past the cluster cap.
+	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter}
+	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
+		return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, walkerListFn, walkerDispatch)
+	})
+
+	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		JobId: request.Job.JobId, JobType: jobType,
+		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
+		Message: fmt.Sprintf("daily_replay shards=%d workers=%d rate=%s buckets=%d walker=on",
+			len(shards), cfg.Workers, limiterDesc, len(buckets)),
+	})
+
+	runErr := dailyrun.Run(ctx, dailyrun.Config{
+		Shards:          shards,
+		BucketsPath:     bucketsPath,
+		Engine:          eng,
+		FilerClient:     filerClient,
+		Client:          client,
+		Persister:       &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Lister:          dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
+		Workers:         cfg.Workers,
+		Limiter:         limiter,
+		RetentionWindow: cfg.MetaLogRetention,
+		Walker:          walker,
+		WalkerInterval:  cfg.WalkerInterval,
+		ClientName:      "worker-s3-lifecycle-daily",
+	})
+	if runErr != nil {
+		glog.Warningf("daily_replay: %v", runErr)
+		return runErr
 	}
 	return nil
+}
+
+// buildLimiterFromClusterContext parses the per-worker share the admin
+// wrote into ClusterContext.Metadata (see weed/admin/plugin/plugin.go's
+// s3_lifecycle injection) and returns a rate.Limiter, or nil when no
+// rate cap applies. The description string is for the JobProgressUpdate
+// so operators can see "rate=unlimited" / "rate=12.5/s burst=25" in
+// the activity log.
+//
+// Tolerant of missing keys, empty strings, malformed numbers, and
+// non-positive values — all treated as "no limit" rather than failing
+// the run. The admin allocator is the single point that decides whether
+// to populate these keys; the worker doesn't second-guess.
+func buildLimiterFromClusterContext(cc *plugin_pb.ClusterContext) (*rate.Limiter, string) {
+	if cc == nil || cc.Metadata == nil {
+		return nil, "unlimited"
+	}
+	rps, ok := parsePositiveFloat(cc.Metadata[MetadataKeyDeletesPerSecond])
+	if !ok {
+		return nil, "unlimited"
+	}
+	burst, _ := parsePositiveInt(cc.Metadata[MetadataKeyDeletesBurst])
+	if burst <= 0 {
+		// Sensible default: enough headroom for one tick's worth of
+		// throughput. Caller may also supply 0 to opt into this default.
+		burst = int(rps * 2)
+		if burst < 1 {
+			burst = 1
+		}
+	}
+	return rate.NewLimiter(rate.Limit(rps), burst), fmt.Sprintf("%.3g/s burst=%d", rps, burst)
+}
+
+func parsePositiveFloat(s string) (float64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+func parsePositiveInt(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 // clusterS3Endpoints returns the master-discovered S3 gRPC addresses for the

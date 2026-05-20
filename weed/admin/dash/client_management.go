@@ -12,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
 
 // WithMasterClient executes a function with a master client connection
@@ -36,6 +38,21 @@ func (s *AdminServer) WithVolumeServerClient(address pb.ServerAddress, f func(cl
 	return operation.WithVolumeServerClient(false, address, s.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		return f(client)
 	})
+}
+
+// GetMasterClient returns the admin server's wdclient.MasterClient. It is used
+// by file browser download paths that stream chunks straight from the volume
+// servers via filer.PrepareStreamContent so they keep working when the filer
+// has -disableHttp=true.
+func (s *AdminServer) GetMasterClient() *wdclient.MasterClient {
+	return s.masterClient
+}
+
+// GetGrpcDialOption returns the dial option used for all admin-originated
+// gRPC connections (TLS or insecure). File browser uploads need this when
+// they perform the assign + volume HTTP POST + create-entry flow.
+func (s *AdminServer) GetGrpcDialOption() grpc.DialOption {
+	return s.grpcDialOption
 }
 
 // GetFilerAddress returns a filer address, discovering from masters if needed

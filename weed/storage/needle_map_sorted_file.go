@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -33,6 +34,15 @@ func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File, versio
 	}
 	dbStat, _ := m.dbFile.Stat()
 	m.dbFileSize = dbStat.Size()
+	// Seed indexFileOffset so Delete() appends tombstones to the tail of
+	// .idx instead of overwriting from offset 0 and clobbering existing
+	// records with tombstones for unrelated keys.
+	indexStat, statErr := indexFile.Stat()
+	if statErr != nil {
+		_ = m.dbFile.Close()
+		return nil, fmt.Errorf("stat %s: %v", indexFile.Name(), statErr)
+	}
+	m.indexFileOffset = indexStat.Size()
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile, version)
 	if indexLoadError != nil {

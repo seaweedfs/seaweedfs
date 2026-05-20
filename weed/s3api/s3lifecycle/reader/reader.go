@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -13,14 +14,36 @@ import (
 )
 
 // Event is one in-shard meta-log event delivered to the router.
+//
+// BootstrapVersion is set only by the bucket bootstrapper when it
+// expands a .versions/ directory; the meta-log path leaves it nil.
+// Carries pre-computed sibling state so the router can fire
+// NoncurrentDays / NewerNoncurrent without listing again.
 type Event struct {
-	TsNs      int64
-	Bucket    string
-	Key       string
-	ShardID   int
-	OldEntry  *filer_pb.Entry
-	NewEntry  *filer_pb.Entry
-	NewParent string
+	TsNs             int64
+	Bucket           string
+	Key              string
+	ShardID          int
+	OldEntry         *filer_pb.Entry
+	NewEntry         *filer_pb.Entry
+	NewParent        string
+	BootstrapVersion *BootstrapVersion
+}
+
+// BootstrapVersion is the per-version state computed once per
+// .versions/<key>/ directory at bootstrap time. Key fields shape
+// EvaluateAction: IsLatest gates current vs. noncurrent rules,
+// NoncurrentIndex gates NewerNoncurrentVersions retention,
+// SuccessorModTime sets the noncurrent clock (when this version was
+// replaced).
+type BootstrapVersion struct {
+	LogicalKey       string
+	VersionID        string
+	IsLatest         bool
+	IsDeleteMarker   bool
+	NumVersions      int
+	NoncurrentIndex  int // 0 = newest noncurrent
+	SuccessorModTime time.Time
 }
 
 // IsDelete reports whether this event removes an entry.

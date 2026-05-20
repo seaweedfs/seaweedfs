@@ -108,6 +108,7 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	}
 	dn.DeltaUpdateVolumes([]storage.VolumeInfo{}, dn.GetVolumes())
 	dn.DeltaUpdateEcShards([]*erasure_coding.EcVolumeInfo{}, dn.GetEcShards())
+	t.unregisterDataNodeAddress(dn.ServerAddress(), dn)
 	if dn.Parent() != nil {
 		dn.Parent().UnlinkChildNode(dn.Id())
 	}

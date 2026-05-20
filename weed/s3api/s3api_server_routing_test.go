@@ -296,3 +296,43 @@ func TestRouting_IAMMatcherLogic(t *testing.T) {
 		})
 	}
 }
+
+// TestRouting_BucketRouteMatchesAnyHost is a regression test for issue #9539.
+// When DomainName is configured, bucket-prefix routes must still match for
+// requests whose Host header does not match a configured domain (for example,
+// requests forwarded by a reverse proxy that rewrites Host to an internal
+// upstream address). A Host-less path-style catch-all is registered after the
+// host-specific routers so it only fires when no Host matcher applies.
+func TestRouting_BucketRouteMatchesAnyHost(t *testing.T) {
+	cases := []struct {
+		name       string
+		domainName string
+		host       string
+	}{
+		{"virtual-host domain configured, request via IP", "s3.example.com", "10.0.0.5:8333"},
+		{"virtual-host domain configured, request via unrelated host", "s3.example.com", "internal-upstream:8333"},
+		{"path-style + virtual-host configured, request via IP", "s3.example.com,api.s3.example.com", "10.0.0.5:8333"},
+		{"domain configured, request via the bare configured host (no bucket subdomain)", "s3.example.com", "s3.example.com"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router := mux.NewRouter()
+			s3a := setupRoutingTestServer(t)
+			s3a.option.DomainName = tc.domainName
+			s3a.registerRouter(router)
+
+			req, _ := http.NewRequest(http.MethodHead, "http://"+tc.host+"/some-bucket", nil)
+			req.Host = tc.host
+
+			var match mux.RouteMatch
+			if !router.Match(req, &match) {
+				t.Fatalf("expected HEAD /some-bucket with Host=%q to match a bucket route (domainName=%q); got no match (err=%v)",
+					tc.host, tc.domainName, match.MatchErr)
+			}
+			if match.MatchErr != nil {
+				t.Fatalf("route matched but reported error: %v", match.MatchErr)
+			}
+		})
+	}
+}

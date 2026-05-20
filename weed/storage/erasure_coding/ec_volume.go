@@ -67,7 +67,15 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	dataBaseFileName := EcShardFileName(collection, dir, int(vid))
 	indexBaseFileName := EcShardFileName(collection, dirIdx, int(vid))
 
-	// open ecx file
+	// open ecx file. Wrap errors with %w so callers walking up the stack
+	// (notably Store.MountEcShards) can use errors.Is(err, os.ErrNotExist)
+	// to decide whether to try the next local disk vs. bail. A 0-byte .ecx
+	// is a legitimate index for a volume that had no live needles at encode
+	// time (e.g. all needles deleted before WriteSortedFileFromIdx) and
+	// must mount successfully here. A 0-byte stub left by a failed copy
+	// stream is indistinguishable from that empty case by file size alone;
+	// preventing such stubs is the receiver-side cleanup in writeToFile's
+	// job, not this open path.
 	ev.ecxActualDir = dirIdx
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
 		if dirIdx != dir && os.IsNotExist(err) {
@@ -75,18 +83,23 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			firstErr := err
 			glog.V(1).Infof("ecx file not found at %s.ecx, falling back to %s.ecx", indexBaseFileName, dataBaseFileName)
 			if ev.ecxFile, err = os.OpenFile(dataBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %v", indexBaseFileName, firstErr, dataBaseFileName, err)
+				if os.IsNotExist(err) {
+					return nil, fmt.Errorf("open ecx index %s.ecx (fallback %s.ecx): %w", indexBaseFileName, dataBaseFileName, os.ErrNotExist)
+				}
+				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %w", indexBaseFileName, firstErr, dataBaseFileName, err)
 			}
 			indexBaseFileName = dataBaseFileName
 			ev.ecxActualDir = dir
+		} else if os.IsNotExist(err) {
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, os.ErrNotExist)
 		} else {
-			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
 		}
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
 	if statErr != nil {
 		_ = ev.ecxFile.Close()
-		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %v", indexBaseFileName, statErr)
+		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %w", indexBaseFileName, statErr)
 	}
 	ev.ecxFileSize = ecxFi.Size()
 	ev.ecxCreatedAt = ecxFi.ModTime()
@@ -246,6 +259,24 @@ func (ev *EcVolume) Destroy() {
 	os.Remove(ev.FileName(".vif"))
 }
 
+// DiskType returns the disk type the EC volume currently reports under.
+// Defaults to the physical location's disk type; orchestrators can override
+// it via SetDiskType so the volume keeps reporting under the source
+// volume's disk type after encoding (#9423).
+func (ev *EcVolume) DiskType() types.DiskType {
+	return ev.diskType
+}
+
+// SetDiskType overrides the EC volume's reported disk type and propagates
+// to its mounted shards. Intended for the orchestrator-driven mount path
+// (VolumeEcShardsMount); not persisted across restarts.
+func (ev *EcVolume) SetDiskType(d types.DiskType) {
+	ev.diskType = d
+	for _, s := range ev.Shards {
+		s.DiskType = d
+	}
+}
+
 func (ev *EcVolume) FileName(ext string) string {
 	switch ext {
 	case ".ecx", ".ecj":
@@ -268,6 +299,15 @@ func (ev *EcVolume) ShardSize() uint64 {
 		return uint64(ev.Shards[0].Size())
 	}
 	return 0
+}
+
+// DatFileSize returns the source .dat file size as recorded in .vif at
+// EC encoding time. Zero for old EC volumes whose .vif predates the
+// field, or for .vif files we failed to parse. Used by the Store-level
+// prune in store_ec_reconcile.go to validate that a sibling-disk .dat
+// is plausibly the encoding source before deleting the partial EC.
+func (ev *EcVolume) DatFileSize() int64 {
+	return ev.datFileSize
 }
 
 func (ev *EcVolume) Size() (size uint64) {

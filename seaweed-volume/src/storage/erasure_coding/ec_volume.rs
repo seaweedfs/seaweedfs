@@ -44,8 +44,17 @@ pub struct EcVolume {
     /// Directory where .ecx/.ecj were actually found (may differ from dir_idx after fallback).
     ecx_actual_dir: String,
     /// Maps shard ID -> list of server addresses where that shard exists.
-    /// Used for distributed EC reads across the cluster.
-    pub shard_locations: HashMap<ShardId, Vec<String>>,
+    /// Used for distributed EC reads across the cluster. Wrapped in
+    /// `RwLock` so the read path can refresh the map (under master
+    /// lookup) without holding the Store write lock — mirrors Go's
+    /// `ShardLocationsLock sync.RWMutex` in `weed/storage/erasure_coding/ec_volume.go`.
+    pub shard_locations: std::sync::RwLock<HashMap<ShardId, Vec<String>>>,
+    /// Wall-clock timestamp of the most recent successful
+    /// `LookupEcVolume` refresh of `shard_locations`. `None` until the
+    /// first refresh. Drives the staleness heuristic in
+    /// `cached_lookup_ec_shard_locations` (mirrors Go's
+    /// `ShardLocationsRefreshTime`).
+    pub shard_locations_refresh_time: std::sync::Mutex<Option<std::time::Instant>>,
     /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
     pub expire_at_sec: u64,
 }
@@ -120,10 +129,15 @@ impl EcVolume {
             shards.push(None);
         }
 
-        // Read expire_at_sec and version from .vif if present (matches Go's MaybeLoadVolumeInfo).
-        // Prefer the data dir; fall back to the idx dir for the
-        // cross-disk reconcile case (#9212 / #9244).
-        let (expire_at_sec, vif_version) = {
+        // Read expire_at_sec, version, and dat_file_size from .vif if
+        // present (matches Go's MaybeLoadVolumeInfo). Prefer the data
+        // dir; fall back to the idx dir for the cross-disk reconcile
+        // case (#9212 / #9244). `dat_file_size` is the source .dat
+        // size at encode time, used both by `locate_ec_shard_needle`
+        // for shard-size math and by the Store-level prune in
+        // `store_ec_reconcile.rs` to verify a sibling-disk .dat is
+        // plausibly the encoding source (#9478).
+        let (expire_at_sec, vif_version, vif_dat_file_size) = {
             let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
             if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
                 if let Ok(vif_info) =
@@ -134,12 +148,12 @@ impl EcVolume {
                     } else {
                         Version::current()
                     };
-                    (vif_info.expire_at_sec, ver)
+                    (vif_info.expire_at_sec, ver, vif_info.dat_file_size)
                 } else {
-                    (0, Version::current())
+                    (0, Version::current(), 0)
                 }
             } else {
-                (0, Version::current())
+                (0, Version::current(), 0)
             }
         };
 
@@ -150,7 +164,7 @@ impl EcVolume {
             dir_idx: dir_idx.to_string(),
             version: vif_version,
             shards,
-            dat_file_size: 0,
+            dat_file_size: vif_dat_file_size,
             data_shards,
             parity_shards,
             ecx_file: None,
@@ -160,7 +174,8 @@ impl EcVolume {
             deleted_needles: RwLock::new(HashSet::new()),
             disk_type: DiskType::default(),
             ecx_actual_dir: dir_idx.to_string(),
-            shard_locations: HashMap::new(),
+            shard_locations: std::sync::RwLock::new(HashMap::new()),
+            shard_locations_refresh_time: std::sync::Mutex::new(None),
             expire_at_sec,
         };
 
@@ -327,6 +342,20 @@ impl EcVolume {
         Ok(())
     }
 
+    /// Override the disk type the EC volume (and its already-mounted
+    /// shards) reports under. Used by the `VolumeEcShardsMount` handler
+    /// so the source volume's disk type is preserved across encoding
+    /// (#9423). Not persisted across restarts — disk-scan reload paths
+    /// default to the physical location's disk type.
+    pub fn set_disk_type(&mut self, d: DiskType) {
+        self.disk_type = d.clone();
+        for slot in self.shards.iter_mut() {
+            if let Some(shard) = slot {
+                shard.disk_type = d.clone();
+            }
+        }
+    }
+
     /// Remove and close a shard.
     pub fn remove_shard(&mut self, shard_id: ShardId) {
         if let Some(ref mut shard) = self.shards[shard_id as usize] {
@@ -411,17 +440,45 @@ impl EcVolume {
 
     // ---- Shard locations (distributed tracking) ----
 
-    /// Set the list of server addresses for a given shard ID.
-    pub fn set_shard_locations(&mut self, shard_id: ShardId, locations: Vec<String>) {
-        self.shard_locations.insert(shard_id, locations);
+    /// Set the list of server addresses for a single shard ID. Does
+    /// NOT touch `shard_locations_refresh_time` — a per-shard write
+    /// from inside a multi-shard population (e.g. iterating the
+    /// `LookupEcVolume` response shard-by-shard) would otherwise
+    /// flip the staleness flag while the map is still incomplete,
+    /// letting a concurrent reader observe `needs_refresh == false`
+    /// against a half-populated cache and return NotFound for the
+    /// not-yet-inserted shards.
+    ///
+    /// Callers populating the whole cache atomically should use
+    /// [`Self::replace_shard_locations`] instead — it swaps the
+    /// entire map under the write lock and advances the refresh
+    /// timestamp in one step.
+    pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
+        self.shard_locations
+            .write()
+            .unwrap()
+            .insert(shard_id, locations);
     }
 
-    /// Get the list of server addresses for a given shard ID.
-    pub fn get_shard_locations(&self, shard_id: ShardId) -> &[String] {
+    /// Atomically replace the entire shard-locations map and stamp
+    /// the refresh time. Used by the distributed-read path's
+    /// post-`LookupEcVolume` write-back so the cache transitions
+    /// from old → fresh in a single observable step — concurrent
+    /// readers either see the full prior map or the full new map,
+    /// never an intermediate state with the freshness flag flipped.
+    pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
+        *self.shard_locations.write().unwrap() = locations;
+        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+    }
+
+    /// Get a cloned list of server addresses for a given shard ID.
+    pub fn get_shard_locations(&self, shard_id: ShardId) -> Vec<String> {
         self.shard_locations
+            .read()
+            .unwrap()
             .get(&shard_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .cloned()
+            .unwrap_or_default()
     }
 
     // ---- Index operations ----

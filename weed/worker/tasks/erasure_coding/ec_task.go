@@ -37,6 +37,7 @@ type ErasureCodingTask struct {
 	// EC parameters
 	dataShards      int32
 	parityShards    int32
+	sourceDiskType  string                  // source volume's disk type, forwarded to Mount RPC (#9423)
 	targets         []*worker_pb.TaskTarget // Unified targets for EC shards
 	sources         []*worker_pb.TaskSource // Unified sources for cleanup
 	shardAssignment map[string][]string     // destination -> assigned shard types
@@ -68,6 +69,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 
 	t.dataShards = ecParams.DataShards
 	t.parityShards = ecParams.ParityShards
+	t.sourceDiskType = ecParams.SourceDiskType
 	t.workDir = ecParams.WorkingDir
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
@@ -174,6 +176,16 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to generate EC shards: %v", err)
 	}
 
+	// Clear partial EC shards left over on destinations from a prior failed
+	// encode so distributeEcShards' ReceiveFile is not refused by the
+	// mounted-volume guard.
+	t.ReportProgressWithStage(55.0, "Clearing stale EC shards on destinations")
+	t.GetLogger().Info("Clearing stale EC shards on destinations")
+	if err := t.cleanupStaleEcShards(ctx); err != nil {
+		t.rollbackReadonly(ctx)
+		return fmt.Errorf("failed to clear stale EC shards on destinations: %v", err)
+	}
+
 	// Step 4: Distribute shards to destinations
 	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
 	t.GetLogger().Info("Distributing EC shards to destinations")
@@ -188,7 +200,15 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
 
-	// Step 6: Delete original volume
+	// Without this gate, a partial distribute/mount lets the next step
+	// zero the only intact .dat while the cluster is missing shards.
+	t.ReportProgressWithStage(85.0, "Verifying EC shards across destinations")
+	t.GetLogger().Info("Verifying EC shards across destinations")
+	if err := t.verifyEcShardsBeforeDelete(ctx); err != nil {
+		return fmt.Errorf("EC shard verification failed; refusing to delete source volume %d: %w", t.volumeID, err)
+	}
+
+	// Step 7: Delete original volume
 	t.ReportProgressWithStage(90.0, "Deleting original volume")
 	t.GetLogger().Info("Deleting original volume")
 	if err := t.deleteOriginalVolume(ctx); err != nil {
@@ -540,7 +560,38 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 
 // mountEcShards mounts EC shards on destination servers
 func (t *ErasureCodingTask) mountEcShards() error {
-	return erasure_coding.MountEcShards(t.volumeID, t.collection, t.shardAssignment, t.grpcDialOption, t.GetLogger())
+	return erasure_coding.MountEcShards(t.volumeID, t.collection, t.shardAssignment, t.sourceDiskType, t.grpcDialOption, t.GetLogger())
+}
+
+func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) error {
+	servers := make([]string, 0, len(t.shardAssignment))
+	for node := range t.shardAssignment {
+		servers = append(servers, node)
+	}
+	if len(servers) == 0 {
+		return fmt.Errorf("no destinations to verify; shardAssignment is empty")
+	}
+
+	totalShards := int(t.dataShards + t.parityShards)
+	union, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, t.volumeID, servers, t.grpcDialOption)
+
+	summary := erasure_coding.SummarizeShardInventory(perServer)
+	t.GetLogger().WithFields(map[string]interface{}{
+		"volume_id":     t.volumeID,
+		"shards_seen":   union.Count(),
+		"shards_needed": totalShards,
+		"per_server":    summary,
+	}).Info("EC shard inventory before source deletion")
+
+	if err := erasure_coding.RequireFullShardSet(t.volumeID, union, totalShards); err != nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":  t.volumeID,
+			"per_server": summary,
+			"error":      err.Error(),
+		}).Error("EC shard verification failed — source volume will be kept")
+		return err
+	}
+	return nil
 }
 
 // deleteOriginalVolume deletes the original volume and all its replicas from all servers
@@ -620,18 +671,127 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 	return nil
 }
 
-// getReplicas extracts replica servers from unified sources
+// getReplicas extracts regular .dat replica servers from unified sources.
+// Sources with ShardIds set are EC-shard cleanup targets and must be skipped.
+// Per-disk source rows are deduped to one server entry — VolumeDelete is a
+// server-wide call.
 func (t *ErasureCodingTask) getReplicas() []string {
 	var replicas []string
+	seen := make(map[string]struct{})
 	for _, source := range t.sources {
-		// Only include volume replica sources (not EC shard sources)
-		// Assumption: VolumeId == 0 is considered invalid and should be excluded.
-		// If volume ID 0 is valid in some contexts, update this check accordingly.
-		if source.VolumeId > 0 {
-			replicas = append(replicas, source.Node)
+		if source.VolumeId == 0 || len(source.ShardIds) > 0 {
+			continue
 		}
+		if _, ok := seen[source.Node]; ok {
+			continue
+		}
+		seen[source.Node] = struct{}{}
+		replicas = append(replicas, source.Node)
 	}
 	return replicas
+}
+
+// cleanupStaleEcShards unmounts and deletes any EC shards still mounted on
+// destinations from a previous failed encode of this volume. Targets every
+// node we plan to write to (t.targets) plus every node detection saw EC
+// shards on (t.sources with ShardIds set), and issues the cleanup over the
+// full shard range so a stale topology snapshot — or shards landed by a
+// prior attempt that haven't heartbeated yet — cannot leave the
+// mounted-volume guard tripped during distributeEcShards. Safe by ordering:
+// runs after the source .dat is in the worker's workdir and a full local
+// shard set is generated. Per-destination errors are aggregated, not
+// short-circuited.
+func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
+	nodes := make(map[string]struct{})
+	for _, source := range t.sources {
+		if source == nil || source.Node == "" || len(source.ShardIds) == 0 {
+			continue
+		}
+		nodes[source.Node] = struct{}{}
+	}
+	for _, target := range t.targets {
+		if target == nil || target.Node == "" {
+			continue
+		}
+		nodes[target.Node] = struct{}{}
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	allShards := fullShardIdRange(t.dataShards, t.parityShards)
+
+	var cleanupErrors []string
+	for node := range nodes {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":   t.volumeID,
+			"destination": node,
+			"shard_ids":   allShards,
+		}).Info("Clearing stale EC shards on destination before re-distribute")
+
+		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
+			t.GetLogger().WithFields(map[string]interface{}{
+				"volume_id":   t.volumeID,
+				"destination": node,
+				"error":       err.Error(),
+			}).Error("Failed to clear stale EC shards on destination")
+		}
+	}
+
+	if len(cleanupErrors) > 0 {
+		return fmt.Errorf("stale EC shard cleanup failed on %d destination(s): %s",
+			len(cleanupErrors), strings.Join(cleanupErrors, "; "))
+	}
+	return nil
+}
+
+// fullShardIdRange builds [0..total-1] for unmount/delete RPCs. Falls back
+// to erasure_coding.TotalShardsCount when the task's ratio is unset (early
+// callers, tests); the helper never returns an empty slice.
+func fullShardIdRange(dataShards, parityShards int32) []uint32 {
+	total := int(dataShards + parityShards)
+	if total <= 0 {
+		total = erasure_coding.TotalShardsCount
+	}
+	if total > erasure_coding.MaxShardCount {
+		total = erasure_coding.MaxShardCount
+	}
+	ids := make([]uint32, total)
+	for i := range ids {
+		ids[i] = uint32(i)
+	}
+	return ids
+}
+
+// unmountAndDeleteEcShards unmounts then deletes the named shards on one
+// destination. Unmount must precede delete (delete requires the shard be
+// unmounted); both RPCs are idempotent against missing shards.
+func unmountAndDeleteEcShards(
+	ctx context.Context,
+	dialOption grpc.DialOption,
+	destination string,
+	volumeID uint32,
+	collection string,
+	shardIds []uint32,
+) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(destination), dialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if _, err := client.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
+				VolumeId: volumeID,
+				ShardIds: shardIds,
+			}); err != nil {
+				return fmt.Errorf("unmount: %w", err)
+			}
+			if _, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+				VolumeId:   volumeID,
+				Collection: collection,
+				ShardIds:   shardIds,
+			}); err != nil {
+				return fmt.Errorf("delete: %w", err)
+			}
+			return nil
+		})
 }
 
 // verifyDatIdxConsistency checks that all .idx entries reference data within the

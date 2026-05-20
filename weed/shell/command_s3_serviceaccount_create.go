@@ -11,9 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -115,15 +113,12 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 		sa.Expiration = time.Now().Add(*expiry).Unix()
 	}
 
-	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	err = commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.CreateServiceAccount(ctx, &iam_pb.CreateServiceAccountRequest{
 			ServiceAccount: sa,
 		})
 		return err
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 	if err != nil {
 		return err
 	}

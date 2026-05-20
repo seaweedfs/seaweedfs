@@ -344,6 +344,12 @@ fn diff_ec_shard_delta_messages(
         if !current.contains_key(key) {
             let mut deleted = message.clone();
             deleted.shard_sizes = vec![0];
+            tracing::info!(
+                volume_id = deleted.id,
+                disk_id = deleted.disk_id,
+                ec_index_bits = deleted.ec_index_bits,
+                "deletes ec shards"
+            );
             deleted_ec_shards.push(deleted);
         }
     }
@@ -397,6 +403,15 @@ async fn do_heartbeat(
     let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
 
     info!("Heartbeat stream established with {}", grpc_addr);
+    // Publish the master we're now talking to in canonical http host:port
+    // form so Ping admission can recognise it once a leader change moves us
+    // off the seed list. Mirrors Go's vs.setCurrentMaster(masterAddress).
+    {
+        let normalised =
+            super::volume_server::to_http_address(current_master).into_owned();
+        let mut guard = state.current_master_url.write().await;
+        *guard = normalised;
+    }
     if is_stopping(state) {
         state.is_heartbeating.store(false, Ordering::Relaxed);
         send_deregister_heartbeat(config, state, &tx).await;
@@ -1033,6 +1048,8 @@ mod tests {
             read_mode: ReadMode::Local,
             master_url: String::new(),
             master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
             outgoing_http_scheme: "http".to_string(),
@@ -1241,7 +1258,7 @@ mod tests {
         let shard_path = format!("{}/ec_metrics_case_27.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(27), "ec_metrics_case", &[0])
+            .mount_ec_shards(VolumeId(27), "ec_metrics_case", &[0], "")
             .unwrap();
 
         let state = test_state_with_store(store);
@@ -1283,7 +1300,7 @@ mod tests {
 
         std::fs::write(format!("{}/expired_heartbeat_ec_31.ec00", dir), b"expired").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0])
+            .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0], "")
             .unwrap();
         store
             .find_ec_volume_mut(VolumeId(31))
@@ -1586,7 +1603,7 @@ mod tests {
 
         std::fs::write(format!("{}/ec_delta_case_81.ec00", dir), b"delta").unwrap();
         store.locations[0]
-            .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0])
+            .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0], "")
             .unwrap();
         let current = collect_ec_shard_delta_messages(&store);
         let (new_ec_shards, deleted_ec_shards) =

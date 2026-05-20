@@ -125,7 +125,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s version %s: %v", bucket, object, versionId, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(bucket, object, versionId); err != nil {
+		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, versionId, false); err != nil {
 			glog.Errorf("deleteVersionedObject: failed to delete specific version %s for %s/%s: %v", versionId, bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
@@ -148,7 +148,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s null version: %v", bucket, object, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(bucket, object, "null"); err != nil {
+		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, "null", false); err != nil {
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
@@ -166,10 +166,15 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 	return result, s3err.ErrInternalError
 }
 
-func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(client filer_pb.SeaweedFilerClient, bucket, object string) error {
+// deleteUnversionedObjectWithClient removes the bare object entry. When
+// metadataOnly is true the filer skips per-chunk DeleteFile RPCs and
+// relies on the volume's natural TTL to reclaim chunks; pass true only
+// when the entry's Attributes.TtlSec > 0 so the volume is guaranteed to
+// drop the chunks on its own.
+func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
 	target := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := target.DirAndName()
-	return deleteObjectEntry(client, dir, name, true, false)
+	return deleteObjectEntry(client, dir, name, !metadataOnly, false)
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +233,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return s3a.deleteUnversionedObjectWithClient(client, bucket, object)
+			return s3a.deleteUnversionedObjectWithClient(client, bucket, object, false)
 		}); err != nil {
 			glog.Errorf("DeleteObjectHandler: failed to delete %s/%s: %v", bucket, object, err)
 			return s3err.ErrInternalError
@@ -251,6 +256,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	if auditLog != nil {
 		auditLog.Key = strings.TrimPrefix(object, "/")
 		s3err.PostAccessLog(*auditLog)
+		s3err.MarkAuditLogged(r)
 	}
 
 	stats_collect.RecordBucketActiveTime(bucket)
@@ -370,7 +376,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					return s3err.ErrAccessDenied
 				}
 
-				if err := s3a.deleteUnversionedObjectWithClient(client, bucket, object.Key); err != nil {
+				if err := s3a.deleteUnversionedObjectWithClient(client, bucket, object.Key, false); err != nil {
 					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, object.Key, err)
 					return s3err.ErrInternalError
 				}
@@ -399,6 +405,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			if auditLog != nil {
 				auditLog.Key = object.Key
 				s3err.PostAccessLog(*auditLog)
+				s3err.MarkAuditLogged(r)
 			}
 		}
 

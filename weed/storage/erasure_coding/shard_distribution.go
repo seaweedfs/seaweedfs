@@ -222,7 +222,9 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 }
 
 // MountEcShards mounts EC shards on destination servers using an assignment map.
-func MountEcShards(volumeID uint32, collection string, shardAssignment map[string][]string, dialOption grpc.DialOption, logger logger) error {
+// sourceDiskType is forwarded to VolumeEcShardsMount so the resulting EC volume
+// reports under the source's disk type rather than the destination's (#9423).
+func MountEcShards(volumeID uint32, collection string, shardAssignment map[string][]string, sourceDiskType string, dialOption grpc.DialOption, logger logger) error {
 	if shardAssignment == nil {
 		return fmt.Errorf("shard assignment not available for mounting")
 	}
@@ -263,9 +265,10 @@ func MountEcShards(volumeID uint32, collection string, shardAssignment map[strin
 		err := operation.WithVolumeServerClient(false, pb.ServerAddress(destNode), dialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
 				_, mountErr := client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
-					VolumeId:   volumeID,
-					Collection: collection,
-					ShardIds:   shardIds,
+					VolumeId:       volumeID,
+					Collection:     collection,
+					ShardIds:       shardIds,
+					SourceDiskType: sourceDiskType,
 				})
 				return mountErr
 			})

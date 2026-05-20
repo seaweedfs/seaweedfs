@@ -342,7 +342,37 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	if err != nil {
 		return modifiedTsNs, fmt.Errorf("open file %s: %w", fileName, err)
 	}
-	defer dst.Close()
+	// Track the destination handle through a closer that runs at most once.
+	// On Windows os.Remove fails while the file is still open, so any path
+	// that wants to delete the file we just created must close the handle
+	// first. The deferred call here is the safety net for normal returns.
+	dstClosed := false
+	closeDst := func() {
+		if dstClosed {
+			return
+		}
+		dstClosed = true
+		_ = dst.Close()
+	}
+	defer closeDst()
+
+	// removeIncomplete deletes the partially-written file we just opened
+	// with O_TRUNC. Used on stream / write / cancellation errors so a
+	// caller (notably VolumeEcShardsCopy distributing .ecx) doesn't end
+	// up with a 0-byte stub that downstream code mistakes for a valid
+	// empty file. Skip in isAppend mode — the existing content is not
+	// ours to remove, and resumable appends rely on partial state.
+	removeIncomplete := func(reason string) {
+		if isAppend {
+			return
+		}
+		closeDst()
+		if removeErr := os.Remove(fileName); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.Warningf("failed to remove incomplete file %s after %s: %v", fileName, reason, removeErr)
+		} else if removeErr == nil {
+			glog.V(1).Infof("removed incomplete file %s after %s", fileName, reason)
+		}
+	}
 
 	var progressedBytes int64
 	for {
@@ -354,14 +384,17 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			modifiedTsNs = resp.ModifiedTsNs
 		}
 		if receiveErr != nil {
+			removeIncomplete("receive error")
 			return modifiedTsNs, fmt.Errorf("receiving %s: %w", fileName, receiveErr)
 		}
 		if _, writeErr := dst.Write(resp.FileContent); writeErr != nil {
+			removeIncomplete("write error")
 			return modifiedTsNs, fmt.Errorf("write file %s: %w", fileName, writeErr)
 		}
 		progressedBytes += int64(len(resp.FileContent))
 		if progressFn != nil {
 			if !progressFn(progressedBytes) {
+				removeIncomplete("progress cancelled")
 				return modifiedTsNs, fmt.Errorf("interrupted copy operation")
 			}
 		}
@@ -372,6 +405,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	// Note: We check modifiedTsNs (not progressedBytes) because an empty source file
 	// is valid and should result in an empty destination file.
 	if modifiedTsNs == 0 && !isAppend {
+		closeDst()
 		if removeErr := os.Remove(fileName); removeErr != nil {
 			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
 		} else {
@@ -567,9 +601,10 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				// holds fds on the same inodes, so overwriting corrupts
 				// live readers.
 				if _, mounted := vs.store.FindEcVolume(needle.VolumeId(fileInfo.VolumeId)); mounted {
-					glog.Errorf("ReceiveFile: ec volume %d is mounted; refusing overwrite for %s", fileInfo.VolumeId, fileInfo.Ext)
+					mountedDisks := vs.store.FindEcVolumeDiskIds(needle.VolumeId(fileInfo.VolumeId))
+					glog.Errorf("ReceiveFile: ec volume %d is mounted on disk_ids:%v; refusing overwrite for %s", fileInfo.VolumeId, mountedDisks, fileInfo.Ext)
 					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
-						Error: fmt.Sprintf("ec volume %d is mounted; unmount before ReceiveFile", fileInfo.VolumeId),
+						Error: fmt.Sprintf("ec volume %d is mounted on disk_ids:%v; unmount before ReceiveFile", fileInfo.VolumeId, mountedDisks),
 					})
 				}
 

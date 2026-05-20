@@ -6,75 +6,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
-
-// splitDiskInfoByPhysicalDisk returns one master_pb.DiskInfo per physical
-// disk_id observed in VolumeInfos / EcShardInfos. Multiple same-type physical
-// disks collapse to one DiskInfo at the master; per-volume/per-shard records
-// keep the original disk_id and are the authoritative signal here. Capacity
-// is split evenly — the wire format doesn't carry per-disk capacity yet.
-func splitDiskInfoByPhysicalDisk(diskInfo *master_pb.DiskInfo) []*master_pb.DiskInfo {
-	if diskInfo == nil {
-		return nil
-	}
-
-	// Records with DiskId=0 and a non-zero outer DiskId belong to the outer
-	// disk — handles older payloads / fixtures that omit the per-record id.
-	normalize := func(id uint32) uint32 {
-		if id == 0 && diskInfo.DiskId != 0 {
-			return diskInfo.DiskId
-		}
-		return id
-	}
-
-	diskIDs := make(map[uint32]struct{})
-	for _, vi := range diskInfo.VolumeInfos {
-		diskIDs[normalize(vi.DiskId)] = struct{}{}
-	}
-	for _, eci := range diskInfo.EcShardInfos {
-		diskIDs[normalize(eci.DiskId)] = struct{}{}
-	}
-	if len(diskIDs) == 0 {
-		diskIDs[diskInfo.DiskId] = struct{}{}
-	}
-
-	if len(diskIDs) == 1 {
-		for diskID := range diskIDs {
-			if diskID == diskInfo.DiskId {
-				return []*master_pb.DiskInfo{diskInfo}
-			}
-		}
-	}
-
-	perDiskVolumes := make(map[uint32][]*master_pb.VolumeInformationMessage)
-	for _, vi := range diskInfo.VolumeInfos {
-		perDiskVolumes[normalize(vi.DiskId)] = append(perDiskVolumes[normalize(vi.DiskId)], vi)
-	}
-	perDiskShards := make(map[uint32][]*master_pb.VolumeEcShardInformationMessage)
-	for _, eci := range diskInfo.EcShardInfos {
-		perDiskShards[normalize(eci.DiskId)] = append(perDiskShards[normalize(eci.DiskId)], eci)
-	}
-
-	count := int64(len(diskIDs))
-	share := func(total int64) int64 { return total / count }
-
-	result := make([]*master_pb.DiskInfo, 0, len(diskIDs))
-	for diskID := range diskIDs {
-		result = append(result, &master_pb.DiskInfo{
-			Type:              diskInfo.Type,
-			MaxVolumeCount:    share(diskInfo.MaxVolumeCount),
-			VolumeCount:       int64(len(perDiskVolumes[diskID])),
-			FreeVolumeCount:   share(diskInfo.FreeVolumeCount),
-			ActiveVolumeCount: share(diskInfo.ActiveVolumeCount),
-			RemoteVolumeCount: share(diskInfo.RemoteVolumeCount),
-			VolumeInfos:       perDiskVolumes[diskID],
-			EcShardInfos:      perDiskShards[diskID],
-			DiskId:            diskID,
-			Tags:              append([]string(nil), diskInfo.Tags...),
-		})
-	}
-	return result
-}
 
 // CountTopologyResources counts datacenters, nodes, and disks in topology info
 func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, nodeCount, diskCount int) {
@@ -141,10 +74,10 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 					disks:      make(map[uint32]*activeDisk),
 				}
 
-				// One activeDisk per physical disk_id (#9369): the master keys
+				// One activeDisk per physical disk_id: the master keys
 				// DiskInfos by disk type, so same-type disks must be split out.
 				for diskType, diskInfo := range nodeInfo.DiskInfos {
-					perDiskInfos := splitDiskInfoByPhysicalDisk(diskInfo)
+					perDiskInfos := diskInfo.SplitByPhysicalDisk()
 					for _, perDisk := range perDiskInfos {
 						disk := &activeDisk{
 							DiskInfo: &DiskInfo{
@@ -333,7 +266,8 @@ func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string)
 	return replicas
 }
 
-// GetECShardLocations returns the disk locations for EC shards using O(1) lookup
+// GetECShardLocations returns the disk locations for EC shards using O(1) lookup.
+// Each VolumeReplica.ShardIds lists the shard ids on that disk.
 func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string) []VolumeReplica {
 	at.mutex.RLock()
 	defer at.mutex.RUnlock()
@@ -345,20 +279,57 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 
 	var ecShards []VolumeReplica
 	for _, diskKey := range diskKeys {
-		if disk, diskExists := at.disks[diskKey]; diskExists {
-			// Verify collection matches (since index doesn't include collection)
-			if at.ecShardMatchesCollection(disk, volumeID, collection) {
-				ecShards = append(ecShards, VolumeReplica{
-					ServerID:   disk.NodeID,
-					DiskID:     disk.DiskID,
-					DataCenter: disk.DataCenter,
-					Rack:       disk.Rack,
-				})
-			}
+		disk, diskExists := at.disks[diskKey]
+		if !diskExists {
+			continue
 		}
+		if !at.ecShardMatchesCollection(disk, volumeID, collection) {
+			continue
+		}
+		shardIds := collectShardIdsForDisk(disk, volumeID, collection)
+		if len(shardIds) == 0 {
+			// ecShardMatchesCollection saw an info entry but every
+			// EcIndexBits is zero — phantom shard record; emitting it
+			// would feed an EC-cleanup source with no shard ids and
+			// confuse the len(ShardIds) discriminator downstream.
+			continue
+		}
+		ecShards = append(ecShards, VolumeReplica{
+			ServerID:   disk.NodeID,
+			DiskID:     disk.DiskID,
+			DataCenter: disk.DataCenter,
+			Rack:       disk.Rack,
+			ShardIds:   shardIds,
+		})
 	}
 
 	return ecShards
+}
+
+// collectShardIdsForDisk unions every matching EcIndexBits on the disk and
+// expands the bitmap into shard ids, so multiple info entries for the same
+// volume don't produce duplicates.
+func collectShardIdsForDisk(disk *activeDisk, volumeID uint32, collection string) []uint32 {
+	if disk == nil || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return nil
+	}
+	var bits erasure_coding.ShardBits
+	for _, ecShardInfo := range disk.DiskInfo.DiskInfo.EcShardInfos {
+		if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
+			continue
+		}
+		bits |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+	}
+	if bits == 0 {
+		return nil
+	}
+	ids := make([]uint32, 0, bits.Count())
+	for id := uint32(0); id < erasure_coding.MaxShardCount; id++ {
+		if uint32(bits)&(1<<id) != 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // volumeMatchesCollection checks if a volume on a disk matches the given collection

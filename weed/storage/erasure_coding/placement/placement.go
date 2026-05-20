@@ -10,6 +10,7 @@ package placement
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // DiskCandidate represents a disk that can receive EC shards
@@ -18,6 +19,7 @@ type DiskCandidate struct {
 	DiskID     uint32
 	DataCenter string
 	Rack       string
+	DiskType   string // disk type (hdd/ssd/...) — empty means HardDrive
 
 	// Capacity information
 	VolumeCount    int64
@@ -62,6 +64,13 @@ type PlacementRequest struct {
 	// PreferDifferentRacks when true, spreads shards across different racks
 	// before using multiple servers in the same rack
 	PreferDifferentRacks bool
+
+	// PreferredDiskType, when non-empty, biases placement toward disks of
+	// this type. Disks of the preferred type are exhausted (subject to the
+	// other diversity preferences) before disks of any other type are
+	// considered. Empty means no disk-type bias — all suitable disks form a
+	// single pool, matching pre-#9423 behavior.
+	PreferredDiskType string
 }
 
 // PlacementResult contains the selected destinations for EC shards
@@ -77,12 +86,25 @@ type PlacementResult struct {
 	ShardsPerServer map[string]int
 	ShardsPerRack   map[string]int
 	ShardsPerDC     map[string]int
+
+	// SpilledToOtherDiskType is set when PlacementRequest.PreferredDiskType
+	// was non-empty but the preferred-type pool could not satisfy
+	// ShardsNeeded, so placement had to spill onto disks of other types.
+	// Callers can log a warning when this is true.
+	SpilledToOtherDiskType bool
 }
 
 // SelectDestinations selects the best disks for EC shard placement.
 // This is the main entry point for EC placement logic.
 //
-// The algorithm works in multiple passes:
+// Disk-type preference (#9423): when config.PreferredDiskType is non-empty,
+// suitable disks are partitioned into a matching-type tier and a
+// fallback tier. Each tier is run through the diversity passes below;
+// the fallback tier is only consulted if the matching tier runs out of
+// candidates before ShardsNeeded is satisfied. Empty PreferredDiskType
+// processes all suitable disks as one tier, preserving prior behavior.
+//
+// Within each tier, the algorithm works in multiple passes:
 // 1. First pass: Select one disk from each rack (maximize rack diversity)
 // 2. Second pass: Select one disk from each unused server in used racks (maximize server diversity)
 // 3. Third pass: Select additional disks from servers already used (maximize disk diversity)
@@ -100,9 +122,6 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 		return nil, fmt.Errorf("no suitable disks found after filtering")
 	}
 
-	// Build indexes for efficient lookup
-	rackToDisks := groupDisksByRack(suitable)
-
 	result := &PlacementResult{
 		SelectedDisks:   make([]*DiskCandidate, 0, config.ShardsNeeded),
 		ShardsPerServer: make(map[string]int),
@@ -114,13 +133,92 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 	usedServers := make(map[string]bool) // nodeID -> bool
 	usedRacks := make(map[string]bool)   // "dc:rack" -> bool
 
-	// Pass 1: Select one disk from each rack (maximize rack diversity)
+	// Partition suitable into preferred-disk-type / fallback tiers.
+	// Process the preferred tier first; only spill to fallback when the
+	// preferred pool can't satisfy ShardsNeeded.
+	preferredTier, fallbackTier := partitionByDiskType(suitable, config.PreferredDiskType)
+	selectFromTier(preferredTier, result, usedDisks, usedServers, usedRacks, config)
+	if config.PreferredDiskType != "" && len(result.SelectedDisks) < config.ShardsNeeded && len(fallbackTier) > 0 {
+		before := len(result.SelectedDisks)
+		selectFromTier(fallbackTier, result, usedDisks, usedServers, usedRacks, config)
+		if len(result.SelectedDisks) > before {
+			result.SpilledToOtherDiskType = true
+		}
+	}
+
+	// Calculate final statistics
+	result.ServersUsed = len(usedServers)
+	result.RacksUsed = len(usedRacks)
+	dcSet := make(map[string]bool)
+	for _, disk := range result.SelectedDisks {
+		dcSet[disk.DataCenter] = true
+	}
+	result.DCsUsed = len(dcSet)
+
+	return result, nil
+}
+
+// partitionByDiskType splits disks into (matching, fallback) based on the
+// preferred disk type. If preferred is empty, everything goes into the
+// matching tier and fallback is empty — i.e. existing single-pool behavior.
+//
+// Empty DiskCandidate.DiskType is treated as HardDriveType ("hdd") to
+// mirror weed/storage/types.ToDiskType's normalization, so a
+// PreferredDiskType of "hdd" matches disks reporting "" — otherwise EC
+// shards from an HDD source would always spill onto disks that happen to
+// report their type as "" (HardDriveType).
+func partitionByDiskType(disks []*DiskCandidate, preferred string) (matching, fallback []*DiskCandidate) {
+	if preferred == "" {
+		return disks, nil
+	}
+	pref := normalizeDiskType(preferred)
+	for _, d := range disks {
+		if normalizeDiskType(d.DiskType) == pref {
+			matching = append(matching, d)
+		} else {
+			fallback = append(fallback, d)
+		}
+	}
+	return matching, fallback
+}
+
+// normalizeDiskType lower-cases the input and folds "" to "hdd" so the
+// HardDriveType sentinel ("") and explicit "hdd"/"HDD" all compare equal.
+func normalizeDiskType(t string) string {
+	t = strings.ToLower(t)
+	if t == "" {
+		return "hdd"
+	}
+	return t
+}
+
+// selectFromTier runs the three diversity passes against `tier`, mutating
+// `result` and the used* maps in place. Passes stop as soon as ShardsNeeded
+// is reached. The function is a no-op when the tier is empty or the result
+// already has enough shards, so it is safe to call once per tier.
+func selectFromTier(tier []*DiskCandidate, result *PlacementResult,
+	usedDisks, usedServers, usedRacks map[string]bool,
+	config PlacementRequest) {
+
+	if len(tier) == 0 || len(result.SelectedDisks) >= config.ShardsNeeded {
+		return
+	}
+
+	rackToDisks := groupDisksByRack(tier)
+
+	// Pass 1: Select one disk from each rack (maximize rack diversity).
+	// When this is the fallback tier (preferred tier already populated
+	// usedRacks), skip those racks so the spillover still spreads onto
+	// new racks instead of doubling up on ones already picked.
 	if config.PreferDifferentRacks {
 		// Sort racks by number of available servers (descending) to prioritize racks with more options
 		sortedRacks := sortRacksByServerCount(rackToDisks)
 		for _, rackKey := range sortedRacks {
 			if len(result.SelectedDisks) >= config.ShardsNeeded {
 				break
+			}
+			if usedRacks[rackKey] {
+				continue
 			}
 			rackDisks := rackToDisks[rackKey]
 			// Select best disk from this rack, preferring a new server
@@ -166,9 +264,9 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 	// Pass 3: Fill remaining slots from already-used servers (different disks)
 	// Use round-robin across servers to balance shards evenly
 	if len(result.SelectedDisks) < config.ShardsNeeded {
-		// Group remaining disks by server
+		// Group remaining disks by server (within this tier)
 		serverToRemainingDisks := make(map[string][]*DiskCandidate)
-		for _, disk := range suitable {
+		for _, disk := range tier {
 			if !usedDisks[getDiskKey(disk)] {
 				serverToRemainingDisks[disk.NodeID] = append(serverToRemainingDisks[disk.NodeID], disk)
 			}
@@ -220,17 +318,6 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 			addDiskToResult(result, disk, usedDisks, usedServers, usedRacks)
 		}
 	}
-
-	// Calculate final statistics
-	result.ServersUsed = len(usedServers)
-	result.RacksUsed = len(usedRacks)
-	dcSet := make(map[string]bool)
-	for _, disk := range result.SelectedDisks {
-		dcSet[disk.DataCenter] = true
-	}
-	result.DCsUsed = len(dcSet)
-
-	return result, nil
 }
 
 // filterSuitableDisks filters disks that are suitable for EC placement
