@@ -2010,8 +2010,17 @@ func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte)
 // isAuthEnabled themselves via EnableAuthEnforcement / updateAuthenticationState.
 func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegration) {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	iam.iamIntegration = integration
+	// Config loaded before the integration was attached skipped the policy sync
+	// (syncRuntimePoliciesToIAMManager no-ops while iamIntegration is nil), so
+	// flush the policies already in memory into the manager's engine now. This
+	// covers either startup ordering: if the load won the race the policies are
+	// here to push; if SetIAMIntegration won, the load's own sync runs next.
+	policies := iam.collectPoliciesLocked()
+	iam.m.Unlock()
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), policies); err != nil {
+		glog.Warningf("Failed to sync runtime policies on IAM integration setup: %v", err)
+	}
 }
 
 // EnableAuthEnforcement turns on the auth-required mode unconditionally. Use
@@ -2351,7 +2360,6 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 // PutPolicy adds or updates a policy
 func (iam *IdentityAccessManagement) PutPolicy(name string, content string) error {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	if iam.policies == nil {
 		iam.policies = make(map[string]*iam_pb.Policy)
 	}
@@ -2362,9 +2370,13 @@ func (iam *IdentityAccessManagement) PutPolicy(name string, content string) erro
 	if err := iam.iamPolicyEngine.SetBucketPolicy(name, content); err != nil {
 		glog.Warningf("IAM policy %q is stored but could not be compiled for cache: %v", name, err)
 	}
+	policies := iam.collectPoliciesLocked()
+	iam.m.Unlock()
 	// Also sync to the advanced IAM Manager's policy engine so that the
 	// authorizeWithIAM path (used when identity has policy_names) sees the update.
-	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), iam.collectPoliciesLocked()); err != nil {
+	// Done after releasing iam.m so the per-request auth RLock path isn't blocked
+	// by the policy recompile.
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), policies); err != nil {
 		glog.Warningf("Failed to sync policy %q to IAM Manager: %v", name, err)
 	}
 	return nil
@@ -2383,13 +2395,14 @@ func (iam *IdentityAccessManagement) GetPolicy(name string) (*iam_pb.Policy, err
 // DeletePolicy removes a policy
 func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	delete(iam.policies, name)
 	if iam.iamPolicyEngine != nil {
 		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
 	}
-	// Also sync to the advanced IAM Manager's policy engine
-	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), iam.collectPoliciesLocked()); err != nil {
+	policies := iam.collectPoliciesLocked()
+	iam.m.Unlock()
+	// Also sync the removal to the advanced IAM Manager's policy engine.
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), policies); err != nil {
 		glog.Warningf("Failed to sync policy deletion %q to IAM Manager: %v", name, err)
 	}
 	return nil

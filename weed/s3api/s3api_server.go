@@ -323,22 +323,16 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// IAM config file. Without one, EnableIam is the implicit mini default
 			// and we must keep the "no credentials = allow all" startup behavior so
 			// `docker run seaweedfs` works out of the box (fixes #9557).
+			//
+			// SetIAMIntegration also flushes the policies already loaded from the
+			// credential store into this manager's engine. The earlier config
+			// loads (the synchronous one in NewIdentityAccessManagementWithStore
+			// and the async goroutine) may have run before iamIntegration was set,
+			// in which case their syncRuntimePoliciesToIAMManager call was a no-op
+			// and identities relying on policy_names would get AccessDenied.
 			iam.SetIAMIntegration(s3iam)
 			if option.IamConfig != "" {
 				iam.EnableAuthEnforcement()
-			}
-
-			// Sync runtime policies into the newly created IAM Manager.
-			// The earlier loadS3ApiConfigurationFromFiler calls (both synchronous
-			// in NewIdentityAccessManagementWithStore and the async goroutine)
-			// may have completed before iamIntegration was set, causing
-			// syncRuntimePoliciesToIAMManager to no-op. Re-trigger a full reload
-			// now so that managed policies from the credential store are
-			// registered in the policy engine. Without this, identities that
-			// rely on policy_names will get AccessDenied until an external IAM
-			// change event triggers a reload via subscribeMetaEvents.
-			if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
-				glog.Warningf("Failed to sync runtime policies after IAM integration setup: %v", err)
 			}
 
 			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
