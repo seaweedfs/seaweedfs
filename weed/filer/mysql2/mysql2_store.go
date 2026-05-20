@@ -77,7 +77,12 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
-	store.DB.SetMaxIdleConns(maxIdle)
+	// SetMaxIdleConns(0) keeps no idle connections, so every query opens and
+	// closes a fresh connection. When unconfigured, leave database/sql's
+	// default idle pool of 2 in place instead.
+	if maxIdle > 0 {
+		store.DB.SetMaxIdleConns(maxIdle)
+	}
 	store.DB.SetMaxOpenConns(maxOpen)
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
