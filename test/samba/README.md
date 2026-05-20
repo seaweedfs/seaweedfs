@@ -40,32 +40,8 @@ the same data on each.
 > file at a time) and guarantees writes are not torn. It does not guarantee
 > which concurrent writer wins or instant cross-mount read convergence — the
 > holder's buffered data is flushed on close, asynchronously to lock release.
-
-### Known issue: DLM handoff stalls under same-file contention
-
-The two handoff checks in test 2 (`blocked SMB write succeeds after the other
-mount releases` and `post-release content is the SMB writer's payload`) are
-marked **expected-fail** (xfail) — they pin a remaining DLM liveness bug without
-failing CI. If the handoff is fixed they flip to `[XPASS]` and turn the suite
-red, a reminder to promote them to hard assertions.
-
-When two mounts contend for the *same* file, the lock handoff does not complete
-in a reasonable time because the holder releases the distributed lock only on
-the FUSE `Release` op, which the kernel delays by tens of seconds after
-`close()` (vs ~12 ms uncontended). The waiting writer's client gives up before
-the lock frees. This is a **liveness/latency** problem, not data corruption —
-the lock stays over-conservative, so no torn writes occur.
-
-Two contributing causes have been fixed in the lock client (`weed/cluster/lock_client.go`):
-
-- the waiter no longer polls with `util.RetryUntil`'s growing backoff; it polls
-  at a steady cadence so a freed lock is picked up promptly, and
-- `Stop()` no longer races the renewal goroutine, which previously could send a
-  stale unlock token and leave the lock lingering as "owned" at the filer.
-
-The remaining cause — the holder-side release waiting on FUSE `Release` — needs
-the lock released promptly on flush/close (with care for the multi-fd case), and
-is left as a follow-up.
+> When a holder closes the file, a writer on another mount acquires the freed
+> lock within ~1s and completes.
 
 ## Layout
 
