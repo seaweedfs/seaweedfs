@@ -44,25 +44,28 @@ the same data on each.
 ### Known issue: DLM handoff stalls under same-file contention
 
 The two handoff checks in test 2 (`blocked SMB write succeeds after the other
-mount releases` and `post-release content is the SMB writer's payload`)
-currently **fail on purpose** — they pin a real DLM liveness bug.
+mount releases` and `post-release content is the SMB writer's payload`) are
+marked **expected-fail** (xfail) — they pin a remaining DLM liveness bug without
+failing CI. If the handoff is fixed they flip to `[XPASS]` and turn the suite
+red, a reminder to promote them to hard assertions.
 
 When two mounts contend for the *same* file, the lock handoff does not complete
-in a reasonable time:
+in a reasonable time because the holder releases the distributed lock only on
+the FUSE `Release` op, which the kernel delays by tens of seconds after
+`close()` (vs ~12 ms uncontended). The waiting writer's client gives up before
+the lock frees. This is a **liveness/latency** problem, not data corruption —
+the lock stays over-conservative, so no torn writes occur.
 
-- the holder's lock release is tied to the FUSE `Release` op, which under
-  contention is delayed by tens of seconds after `close()` (vs ~12 ms
-  uncontended), and
-- the lock lingers as "owned" at the filer even after the holder's unlock, so
-  the waiting writer keeps getting "lock already owned" and never acquires.
-- the waiter polls with exponential backoff (`util.RetryUntil`, 1s ×1.5, no
-  release notification), adding further delay.
+Two contributing causes have been fixed in the lock client (`weed/cluster/lock_client.go`):
 
-The result is that the second writer's client (here, smbclient with a 120s
-timeout) gives up before the lock frees. This is a **liveness/latency** problem,
-not data corruption — the lock stays over-conservative, so no torn writes
-occur. The checks stay red until the handoff is fixed (e.g. capping the
-acquire-retry backoff and releasing the lock promptly on flush/close).
+- the waiter no longer polls with `util.RetryUntil`'s growing backoff; it polls
+  at a steady cadence so a freed lock is picked up promptly, and
+- `Stop()` no longer races the renewal goroutine, which previously could send a
+  stale unlock token and leave the lock lingering as "owned" at the filer.
+
+The remaining cause — the holder-side release waiting on FUSE `Release` — needs
+the lock released promptly on flush/close (with care for the multi-fd case), and
+is left as a follow-up.
 
 ## Layout
 

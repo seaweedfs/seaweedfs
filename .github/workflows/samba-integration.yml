@@ -6,6 +6,7 @@ on:
     paths:
       - 'weed/mount/**'
       - 'weed/filer/**'
+      - 'weed/cluster/**'
       - 'test/samba/**'
       - '.github/workflows/samba-integration.yml'
   pull_request:
@@ -13,6 +14,7 @@ on:
     paths:
       - 'weed/mount/**'
       - 'weed/filer/**'
+      - 'weed/cluster/**'
       - 'test/samba/**'
       - '.github/workflows/samba-integration.yml'
   workflow_dispatch:

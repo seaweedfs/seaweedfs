@@ -105,6 +105,11 @@ for i in $(seq 1 60); do
   fi
   sleep 0.5
 done
+if ! (echo >"/dev/tcp/127.0.0.1/${FILER_PORT}") 2>/dev/null; then
+  echo "weed mini filer did not become reachable within 30s; log tail:" >&2
+  tail -n 100 "${LOG_DIR}/mini.log" >&2 || true
+  exit 1
+fi
 
 # --- 2. weed mount (two mounts, both with -dlm) -----------------------------
 # mount_with_dlm <mountpoint> <logfile> <pid-var-name>
@@ -167,6 +172,11 @@ for i in $(seq 1 60); do
   fi
   sleep 0.5
 done
+if ! (echo >"/dev/tcp/127.0.0.1/${SMB_PORT}") 2>/dev/null; then
+  echo "smbd did not become reachable within 30s; log tail:" >&2
+  tail -n 100 "${LOG_DIR}/smbd.out" "${STATE_DIR}/smbd.log" 2>/dev/null >&2 || true
+  exit 1
+fi
 
 # --- 4. run the test batteries ---------------------------------------------
 rc=0

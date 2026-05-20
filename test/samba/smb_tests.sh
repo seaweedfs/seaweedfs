@@ -127,8 +127,8 @@ mkdir -p "${tree}/a/b"
 echo one >"${tree}/f1.txt"
 echo two >"${tree}/a/f2.txt"
 echo three >"${tree}/a/b/f3.txt"
-(cd "${WORK}" && smb "recurse ON; prompt OFF; mput tree" >/dev/null 2>&1)
-if [[ -z "${SHARE_FS_PATH}" || -f "${SHARE_FS_PATH}/tree/a/b/f3.txt" ]]; then
+if (cd "${WORK}" && smb "recurse ON; prompt OFF; mput tree" >/dev/null 2>&1) &&
+  { [[ -z "${SHARE_FS_PATH}" ]] || [[ -f "${SHARE_FS_PATH}/tree/a/b/f3.txt" ]]; }; then
   pass "recursive mput"
 else
   fail "recursive mput"
