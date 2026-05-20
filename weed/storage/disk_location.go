@@ -549,11 +549,11 @@ func (l *DiskLocation) CheckDiskSpace() {
 		s := stats.NewDiskStatus(dir)
 		if len(s.Error) != 0 {
 			l.isDiskAvailable = false
-			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.IdxDirectory, "error").Set(1)
-			glog.V(0).Infof("disk %s filesystem is not healthy", dir)
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
+			glog.V(0).Infof("disk %s is not healthy: %s", dir, s.Error)
 		} else {
 			l.isDiskAvailable = true
-			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.IdxDirectory, "error").Set(0)
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(0)
 		}
 		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
