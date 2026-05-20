@@ -145,10 +145,7 @@ func OpenDB(dsn, adaptedDSN string, pgbouncerCompatible bool, maxIdle, maxOpen, 
 	}
 
 	db := stdlib.OpenDB(*connConfig)
-	// maxIdle 0 would disable the idle pool; keep database/sql's default of 2.
-	if maxIdle > 0 {
-		db.SetMaxIdleConns(maxIdle)
-	}
+	db.SetMaxIdleConns(maxIdle)
 	db.SetMaxOpenConns(maxOpen)
 	db.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
