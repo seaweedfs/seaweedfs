@@ -11,7 +11,7 @@ import (
 
 func TestShardBitCount(t *testing.T) {
 	tests := []struct {
-		bits     uint32
+		bits     erasure_coding.ShardBits
 		expected int
 	}{
 		{0, 0},
@@ -21,9 +21,9 @@ func TestShardBitCount(t *testing.T) {
 		{0b10101010, 4},
 	}
 	for _, tt := range tests {
-		got := shardBitCount(tt.bits)
+		got := tt.bits.Count()
 		if got != tt.expected {
-			t.Errorf("shardBitCount(%b) = %d, want %d", tt.bits, got, tt.expected)
+			t.Errorf("ShardBits(%b).Count() = %d, want %d", tt.bits, got, tt.expected)
 		}
 	}
 }
@@ -420,8 +420,8 @@ func TestBuildECTopology(t *testing.T) {
 	if ecInfo.collection != "test" {
 		t.Errorf("expected collection=test, got %s", ecInfo.collection)
 	}
-	if shardBitCount(ecInfo.shardBits) != 14 {
-		t.Errorf("expected 14 shards, got %d", shardBitCount(ecInfo.shardBits))
+	if ecInfo.shardBits.Count() != 14 {
+		t.Errorf("expected 14 shards, got %d", ecInfo.shardBits.Count())
 	}
 }
 
