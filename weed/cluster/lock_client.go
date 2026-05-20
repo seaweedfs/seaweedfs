@@ -243,7 +243,15 @@ func (lock *LiveLock) Stop() error {
 		select {
 		case <-lock.renewalDone:
 		case <-time.After(lock.lockTTL + 2*time.Second):
-			glog.Warningf("lock %s: renewal goroutine did not exit before unlock", lock.key)
+			// The renewal goroutine is wedged, almost certainly in a stuck
+			// renewal RPC. Do not unlock here: the renewToken may be rotated
+			// when that RPC finally returns, so an unlock sent now could race
+			// it, be rejected on a stale token, and leave the lock lingering
+			// anyway. cancelCh is closed, so the goroutine stops renewing once
+			// its in-flight call returns and the lock then expires within its
+			// TTL on its own.
+			glog.Warningf("lock %s: renewal goroutine still running at shutdown; letting lock expire via TTL", lock.key)
+			return nil
 		}
 	}
 
