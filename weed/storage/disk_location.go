@@ -45,9 +45,9 @@ type DiskLocation struct {
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
 
-	isDiskSpaceLow  bool
-	isDiskAvailable bool
-	closeCh         chan struct{}
+	isDiskSpaceLow    bool
+	isDiskUnavailable bool
+	closeCh           chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -105,10 +105,6 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,
-		// Assume the disk is healthy until the first check proves otherwise;
-		// otherwise the heartbeat would omit every volume until the async
-		// CheckDiskSpace runs, making the master treat them as missing.
-		isDiskAvailable: true,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
@@ -548,11 +544,11 @@ func (l *DiskLocation) CheckDiskSpace() {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
 		s := stats.NewDiskStatus(dir)
 		if len(s.Error) != 0 {
-			l.isDiskAvailable = false
+			l.isDiskUnavailable = true
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
 			glog.V(0).Infof("disk %s is not healthy: %s", dir, s.Error)
 		} else {
-			l.isDiskAvailable = true
+			l.isDiskUnavailable = false
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(0)
 		}
 		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)

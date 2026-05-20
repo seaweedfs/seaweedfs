@@ -405,7 +405,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
-		if !location.isDiskAvailable {
+		if location.isDiskUnavailable {
 			continue
 		}
 		var deleteVids []needle.VolumeId
