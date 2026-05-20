@@ -105,6 +105,10 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,
+		// Assume the disk is healthy until the first check proves otherwise;
+		// otherwise the heartbeat would omit every volume until the async
+		// CheckDiskSpace runs, making the master treat them as missing.
+		isDiskAvailable: true,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
