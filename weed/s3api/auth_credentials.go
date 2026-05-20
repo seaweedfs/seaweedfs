@@ -2362,6 +2362,11 @@ func (iam *IdentityAccessManagement) PutPolicy(name string, content string) erro
 	if err := iam.iamPolicyEngine.SetBucketPolicy(name, content); err != nil {
 		glog.Warningf("IAM policy %q is stored but could not be compiled for cache: %v", name, err)
 	}
+	// Also sync to the advanced IAM Manager's policy engine so that the
+	// authorizeWithIAM path (used when identity has policy_names) sees the update.
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), iam.collectPoliciesLocked()); err != nil {
+		glog.Warningf("Failed to sync policy %q to IAM Manager: %v", name, err)
+	}
 	return nil
 }
 
@@ -2383,7 +2388,21 @@ func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	if iam.iamPolicyEngine != nil {
 		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
 	}
+	// Also sync to the advanced IAM Manager's policy engine
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), iam.collectPoliciesLocked()); err != nil {
+		glog.Warningf("Failed to sync policy deletion %q to IAM Manager: %v", name, err)
+	}
 	return nil
+}
+
+// collectPoliciesLocked returns all policies as a slice for SyncRuntimePolicies.
+// Caller must hold iam.m (read or write).
+func (iam *IdentityAccessManagement) collectPoliciesLocked() []*iam_pb.Policy {
+	policies := make([]*iam_pb.Policy, 0, len(iam.policies))
+	for _, p := range iam.policies {
+		policies = append(policies, p)
+	}
+	return policies
 }
 
 func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {

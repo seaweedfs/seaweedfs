@@ -328,6 +328,19 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				iam.EnableAuthEnforcement()
 			}
 
+			// Sync runtime policies into the newly created IAM Manager.
+			// The earlier loadS3ApiConfigurationFromFiler calls (both synchronous
+			// in NewIdentityAccessManagementWithStore and the async goroutine)
+			// may have completed before iamIntegration was set, causing
+			// syncRuntimePoliciesToIAMManager to no-op. Re-trigger a full reload
+			// now so that managed policies from the credential store are
+			// registered in the policy engine. Without this, identities that
+			// rely on policy_names will get AccessDenied until an external IAM
+			// change event triggers a reload via subscribeMetaEvents.
+			if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+				glog.Warningf("Failed to sync runtime policies after IAM integration setup: %v", err)
+			}
+
 			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
 			if stsService := iamManager.GetSTSService(); stsService != nil {
 				s3ApiServer.stsHandlers = NewSTSHandlers(stsService, iam)
