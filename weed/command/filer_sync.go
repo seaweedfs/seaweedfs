@@ -439,6 +439,13 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		StartTsNs:              sourceFilerOffsetTsNs,
 		StopTsNs:               0,
 		EventErrorType:         pb.RetryForeverOnError,
+		// While the source has only read activity it emits no metadata events, so
+		// the watermark above never advances and sync_offset would look stuck.
+		// The idle heartbeat moves the gauge to the source's current time once we
+		// are caught up, so now-sync_offset reflects real lag and stays alertable.
+		OnIdleHeartbeat: func(tsNs int64) {
+			statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(tsNs))
+		},
 	}
 
 	return pb.FollowMetadata(sourceFiler, sourceGrpcDialOption, metadataFollowOption, processEventFnWithOffset)

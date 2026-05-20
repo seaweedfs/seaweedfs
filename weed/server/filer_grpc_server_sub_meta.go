@@ -22,6 +22,12 @@ import (
 const (
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
 	MaxUnsyncedEvents = 1e3
+
+	// idleHeartbeatInterval bounds how often a caught-up subscriber that asked
+	// for idle heartbeats is reminded that the source is alive and has nothing
+	// newer. It keeps freshness signals such as filer.sync's sync_offset metric
+	// from looking stuck during read-only periods on the source.
+	idleHeartbeatInterval = 5 * time.Second
 )
 
 // metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
@@ -186,7 +192,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
 
-	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
+	// only emitted once it is caught up to the buffer head. It is read and
+	// written from this single goroutine, so no synchronization is needed.
+	var lastSeenTsNs int64
+	var lastHeartbeatNs int64
+	baseEachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		lastSeenTsNs = logEntry.TsNs
+		return baseEachLogEntryFn(logEntry)
+	}
 
 	var processedTsNs int64
 	var readPersistedLogErr error
@@ -248,7 +263,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				return false
 			default:
 			}
-			return fs.hasClient(req.ClientId, req.ClientEpoch)
+			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+				return false
+			}
+			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, req.SinceNs, lastSeenTsNs, lastHeartbeatNs)
+			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
@@ -314,7 +333,16 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
 
-	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
+	// only emitted once it is caught up to the buffer head. It is read and
+	// written from this single goroutine, so no synchronization is needed.
+	var lastSeenTsNs int64
+	var lastHeartbeatNs int64
+	baseEachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		lastSeenTsNs = logEntry.TsNs
+		return baseEachLogEntryFn(logEntry)
+	}
 
 	var processedTsNs int64
 	var readPersistedLogErr error
@@ -400,7 +428,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				return false
 			default:
 			}
-			return fs.hasClient(req.ClientId, req.ClientEpoch)
+			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+				return false
+			}
+			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.LocalMetaLogBuffer, req.SinceNs, lastSeenTsNs, lastHeartbeatNs)
+			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
@@ -472,6 +504,39 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 
 		return false, nil
 	}
+}
+
+// maybeSendIdleHeartbeat emits an empty response carrying the current time when
+// the subscriber has consumed everything up to the buffer head. The client uses
+// it to advance freshness signals (e.g. filer.sync's sync_offset) without moving
+// its resume checkpoint, so a restart still re-reads from the last real event.
+//
+// startTsNs is the subscriber's initial SinceNs and lastSeenTsNs is the
+// timestamp of the most recent entry read; their max is the floor below which
+// the buffer has nothing new. While the buffer head is past that floor the
+// subscriber is genuinely behind (e.g. replaying a backlog) and no heartbeat is
+// sent. Returns the (possibly advanced) lastHeartbeatNs.
+func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, logBuffer *log_buffer.LogBuffer, startTsNs, lastSeenTsNs, lastHeartbeatNs int64) int64 {
+	if !req.ClientSupportsIdleHeartbeat {
+		return lastHeartbeatNs
+	}
+	floorTsNs := lastSeenTsNs
+	if startTsNs > floorTsNs {
+		floorTsNs = startTsNs
+	}
+	if logBuffer.LastTsNs.Load() > floorTsNs {
+		// the buffer holds data the subscriber has not reached yet
+		return lastHeartbeatNs
+	}
+	now := time.Now().UnixNano()
+	if now-lastHeartbeatNs < int64(idleHeartbeatInterval) {
+		return lastHeartbeatNs
+	}
+	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{TsNs: now}); err != nil {
+		glog.V(0).Infof("=> idle heartbeat to %s: %v", req.ClientName, err)
+		return lastHeartbeatNs
+	}
+	return now
 }
 
 // sendLogFileRefs collects persisted log file chunk references and sends them
