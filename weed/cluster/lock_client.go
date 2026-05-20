@@ -37,6 +37,7 @@ type LiveLock struct {
 	expireAtNs          int64
 	hostFiler           pb.ServerAddress
 	cancelCh            chan struct{}
+	renewalDone         chan struct{} // closed when the renewal goroutine exits; nil if there is none
 	grpcDialOption      grpc.DialOption
 	isLocked            int32 // 0 = unlocked, 1 = locked; use atomic operations
 	self                string
@@ -83,7 +84,9 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 	// Block until acquired
 	lock.retryUntilLocked(lockTTL)
 	// Start renewal goroutine using a ticker for interruptible sleep
+	lock.renewalDone = make(chan struct{})
 	go func() {
+		defer close(lock.renewalDone)
 		renewInterval := lockTTL / 2
 		ticker := time.NewTicker(renewInterval)
 		defer ticker.Stop()
@@ -119,7 +122,9 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 	if lock.lockTTL == 0 {
 		lock.lockTTL = lock_manager.LiveLockTTL
 	}
+	lock.renewalDone = make(chan struct{})
 	go func() {
+		defer close(lock.renewalDone)
 		renewInterval := lock.lockTTL / 2
 		isLocked := false
 		lockOwner := ""
@@ -226,10 +231,19 @@ func (lock *LiveLock) Stop() error {
 		close(lock.cancelCh)
 	}
 
-	// Wait a brief moment for the goroutine to see the closed channel
-	// This reduces the race condition window where the goroutine might
-	// attempt one more lock operation after we've released the lock
-	time.Sleep(10 * time.Millisecond)
+	// Wait for the renewal goroutine to fully exit before unlocking. A renewal
+	// in flight when we close cancelCh rotates renewToken on the server; if we
+	// then unlock with the token we read here, the unlock fails with a token
+	// mismatch and the lock lingers until its TTL expires — blocking other
+	// mounts waiting on the same file. Waiting for the goroutine to return also
+	// makes the renewToken read below race-free (channel close = happens-before).
+	if lock.renewalDone != nil {
+		select {
+		case <-lock.renewalDone:
+		case <-time.After(lock.lockTTL + 2*time.Second):
+			glog.Warningf("lock %s: renewal goroutine did not exit before unlock", lock.key)
+		}
+	}
 
 	// Also release the lock if held
 	// Note: We intentionally don't clear renewToken here because
