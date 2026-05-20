@@ -31,14 +31,8 @@ trap 'rm -rf "${WORK}"' EXIT
 
 PASS=0
 FAIL=0
-XFAIL=0
-XPASS=0
 pass() { printf '  [PASS] %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  [FAIL] %s\n' "$1"; FAIL=$((FAIL + 1)); }
-# Expected failure: a known-broken behavior. [XFAIL] does not fail the suite;
-# an unexpected pass ([XPASS]) does, so the check gets promoted once it's fixed.
-xfail() { printf '  [XFAIL] %s\n' "$1"; XFAIL=$((XFAIL + 1)); }
-xpass() { printf '  [XPASS] %s\n' "$1"; XPASS=$((XPASS + 1)); }
 
 smb() {
   smbclient "//${SMB_HOST}/${SMB_SHARE}" -p "${SMB_PORT}" \
@@ -112,16 +106,9 @@ FAIL=$((FAIL + $(grep -c '\[FAIL\]' <<<"${fcntl_out}")))
 # 2. Distributed lock blocks a cross-mount writer, then hands it off ----------
 # mount 2 holds a file open for writing (holding the DLM lock on its path).
 # An SMB put of the same file goes through mount 1 and must (a) block while
-# mount 2 holds it and (b) actually SUCCEED once mount 2 releases, leaving the
-# SMB writer's payload on disk. smbclient gets a long client timeout (-t) so we
-# are testing the lock handoff itself, not smbclient's own ~20s default timeout.
-#
-# KNOWN ISSUE (expected failure): the (b) handoff checks are marked xfail. The
-# holder releases the distributed lock only on FUSE Release, which the kernel
-# delays for tens of seconds under this contention, so the waiting writer does
-# not acquire in time. This is a DLM liveness bug, not data corruption. When the
-# holder-side release is fixed these flip to [XPASS] and fail the suite, a
-# reminder to promote them to hard assertions.
+# mount 2 holds it and (b) succeed once mount 2 releases, leaving the SMB
+# writer's payload on disk. smbclient gets a long client timeout (-t) so we are
+# testing the lock handoff itself, not smbclient's own ~20s default timeout.
 echo "==> 2. distributed lock: cross-mount write coordination"
 dlmfile="dlm_coord.bin"
 newdata="${WORK}/dlm_new.bin"
@@ -131,14 +118,17 @@ head -c 4096 /dev/urandom >"${newdata}"
 exec 9>"${MOUNT2_SHARE}/${dlmfile}"
 printf 'held-by-mount2' >&9
 
-# Start the SMB write; record its real exit code when it returns.
+# Start the SMB write; record its real exit code when it returns. The subshell
+# must NOT inherit fd 9 (9>&-): otherwise the SMB writer keeps the file open and
+# waits on a DLM lock held by its own inherited descriptor, deadlocking the
+# handoff this test is meant to exercise.
 rm -f "${WORK}/dlm_put.rc"
 (
   smbclient "//${SMB_HOST}/${SMB_SHARE}" -p "${SMB_PORT}" \
     -U "${SMB_USER}%${SMB_PASS}" -m SMB3 -t 120 \
     -c "put ${newdata} ${dlmfile}" >/dev/null 2>&1
   echo "$?" >"${WORK}/dlm_put.rc"
-) &
+) 9>&- &
 smb_bg=$!
 
 sleep 4
@@ -164,21 +154,19 @@ done
 kill "${smb_bg}" 2>/dev/null
 wait "${smb_bg}" 2>/dev/null
 
-# xfail: the handoff stalls because the lock is freed only on the delayed FUSE
-# Release. A pass here means the holder-side release was fixed.
 if [[ "${put_rc}" == "0" ]]; then
-  xpass "blocked SMB write succeeds after the other mount releases"
+  pass "blocked SMB write succeeds after the other mount releases"
 else
-  xfail "blocked SMB write succeeds after the other mount releases (rc=${put_rc})"
+  fail "blocked SMB write succeeds after the other mount releases (rc=${put_rc})"
 fi
 
 # A correct handoff leaves the SMB writer's payload on disk: mount 1 acquired
 # the lock and wrote after mount 2 released.
 got="${WORK}/dlm_got.bin"
 if smb "get ${dlmfile} ${got}" >/dev/null 2>&1 && [[ "$(md5 "${got}")" == "$(md5 "${newdata}")" ]]; then
-  xpass "post-release content is the SMB writer's payload (correct handoff)"
+  pass "post-release content is the SMB writer's payload (correct handoff)"
 else
-  xfail "post-release content is the SMB writer's payload (correct handoff)"
+  fail "post-release content is the SMB writer's payload (correct handoff)"
 fi
 
 # 3. Distributed lock integrity: concurrent writers, same file ---------------
@@ -226,8 +214,5 @@ else
 fi
 
 echo
-echo "==> Summary: ${PASS} passed, ${FAIL} failed, ${XFAIL} expected-fail"
-if [[ "${XPASS}" -gt 0 ]]; then
-  echo "==> ${XPASS} check(s) unexpectedly passed - the DLM handoff appears fixed; promote them from xfail to assertions"
-fi
-[[ "${FAIL}" -eq 0 && "${XPASS}" -eq 0 ]]
+echo "==> Summary: ${PASS} passed, ${FAIL} failed"
+[[ "${FAIL}" -eq 0 ]]
