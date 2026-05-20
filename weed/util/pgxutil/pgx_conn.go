@@ -145,9 +145,7 @@ func OpenDB(dsn, adaptedDSN string, pgbouncerCompatible bool, maxIdle, maxOpen, 
 	}
 
 	db := stdlib.OpenDB(*connConfig)
-	// SetMaxIdleConns(0) keeps no idle connections, so every query opens and
-	// closes a fresh connection. When unconfigured, leave database/sql's
-	// default idle pool of 2 in place instead.
+	// maxIdle 0 would disable the idle pool; keep database/sql's default of 2.
 	if maxIdle > 0 {
 		db.SetMaxIdleConns(maxIdle)
 	}
