@@ -282,16 +282,21 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				glog.V(2).Infof("Found %d volume replicas and %d existing EC shards for volume %d (total %d cleanup sources)",
 					len(replicaLocations), len(existingECShards), metric.VolumeID, len(sources))
 
-				// Convert shard destinations to TaskDestinationSpec
+				// Convert shard destinations to TaskDestinationSpec. With fewer
+				// disks than shards a destination holds several shards, so reserve
+				// capacity for the actual per-disk shard count (round-robin matches
+				// createECTargets) rather than assuming one shard each.
 				destinations := make([]topology.TaskDestinationSpec, len(shardDestinations))
-				shardImpact := topology.CalculateECShardStorageImpact(1, int64(expectedShardSize)) // 1 shard per destination
-				shardSize := int64(expectedShardSize)
+				shardsPerDest := distributeECShards(dataShards+parityShards, len(shardDestinations))
 				for i, dest := range shardDestinations {
+					shardCount := len(shardsPerDest[i])
+					shardImpact := topology.CalculateECShardStorageImpact(int32(shardCount), int64(expectedShardSize))
+					destSize := int64(expectedShardSize) * int64(shardCount)
 					destinations[i] = topology.TaskDestinationSpec{
 						ServerID:      dest,
 						DiskID:        shardDiskIDs[i],
 						StorageImpact: &shardImpact,
-						EstimatedSize: &shardSize,
+						EstimatedSize: &destSize,
 					}
 				}
 
@@ -698,13 +703,19 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 		return nil, err
 	}
 	if len(selectedDisks) < minTotalDisks {
-		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), minTotalDisks)
+		return nil, fmt.Errorf("found %d disks, but EC %d+%d needs at least %d disks so no disk holds more than %d shards",
+			len(selectedDisks), dataShards, parityShards, minTotalDisks, parityShards)
 	}
-	// One shard per (server, disk_id): #9185's disk_id-aware ReceiveFile rejects
-	// a second shard on the same disk.
+	// Fewer than totalShards disks is fine: createECTargets round-robins the
+	// shards across the available disks, packing several distinct shards onto a
+	// disk when needed (matching ec.encode's "spread as 4,4,3,3" fallback for
+	// small clusters). A disk holding several shards of one volume is safe —
+	// each is a separate .ecNN file and ReceiveFile keys by that extension. The
+	// minTotalDisks floor above keeps any single disk under parityShards shards,
+	// so the volume still survives losing any one disk.
 	if len(selectedDisks) < totalShards {
-		return nil, fmt.Errorf("found %d disks, but EC %d+%d needs %d distinct (server, disk_id) targets",
-			len(selectedDisks), dataShards, parityShards, totalShards)
+		glog.V(1).Infof("EC volume %d: only %d disks for %d shards, packing up to %d shards per disk",
+			metric.VolumeID, len(selectedDisks), totalShards, (totalShards+len(selectedDisks)-1)/len(selectedDisks))
 	}
 
 	var plans []*topology.DestinationPlan
@@ -761,13 +772,12 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 	}, nil
 }
 
-// createECTargets builds TaskTargets with one shard per plan entry.
-// planECDestinations ensures numTargets == totalShards.
-func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards int) []*worker_pb.TaskTarget {
-	var targets []*worker_pb.TaskTarget
-	numTargets := len(multiPlan.Plans)
-	totalShards := dataShards + parityShards
-
+// distributeECShards assigns shard ids 0..totalShards-1 across numTargets
+// targets round-robin, so each target holds either floor or ceil of
+// totalShards/numTargets shards. When numTargets < totalShards this packs
+// several shards onto a target; planECDestinations guarantees numTargets is at
+// least ceil(totalShards/parityShards), so no target exceeds parityShards shards.
+func distributeECShards(totalShards, numTargets int) [][]uint32 {
 	targetShards := make([][]uint32, numTargets)
 	for i := range targetShards {
 		targetShards[i] = make([]uint32, 0)
@@ -776,6 +786,17 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parit
 		targetIndex := shardId % numTargets
 		targetShards[targetIndex] = append(targetShards[targetIndex], uint32(shardId))
 	}
+	return targetShards
+}
+
+// createECTargets builds TaskTargets, round-robining shards across the plan
+// entries. With fewer disks than shards a target receives several shard ids.
+func createECTargets(multiPlan *topology.MultiDestinationPlan, dataShards, parityShards int) []*worker_pb.TaskTarget {
+	var targets []*worker_pb.TaskTarget
+	numTargets := len(multiPlan.Plans)
+	totalShards := dataShards + parityShards
+
+	targetShards := distributeECShards(totalShards, numTargets)
 
 	for i, plan := range multiPlan.Plans {
 		target := &worker_pb.TaskTarget{
