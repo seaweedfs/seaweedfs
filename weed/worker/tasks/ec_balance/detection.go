@@ -25,6 +25,20 @@ type ecNodeInfo struct {
 	freeSlots int
 	// volumeID -> shardBits (bitmask of shard IDs present on this node)
 	ecShards map[uint32]*ecVolumeInfo
+	// physical disk_id -> per-disk capacity/occupancy, used to pick a good
+	// destination disk for a moved shard (see pickBestDiskOnNode).
+	disks map[uint32]*ecDiskInfo
+}
+
+// ecDiskInfo is a per-physical-disk view of a node. Same-type disks collapse
+// into one DiskInfo on the wire, so free capacity is only known per node; it is
+// split evenly across the node's physical disks (matching the shell ec.balance
+// heuristic). ecShardCount is the exact total of EC shards on the disk.
+type ecDiskInfo struct {
+	diskID       uint32
+	diskType     string
+	freeSlots    int // approximate per-disk free EC slots
+	ecShardCount int // total EC shards on this disk, across all volumes
 }
 
 type ecVolumeInfo struct {
@@ -35,6 +49,19 @@ type ecVolumeInfo struct {
 	// collapse into one DiskInfo; this preserves which disk actually holds each
 	// shard so a move reports the correct source disk.
 	diskShardBits map[uint32]erasure_coding.ShardBits
+	// dataShards is this volume's EC data-shard count, reported per shard message
+	// (0 means the reporting volume server predates custom ratios). It sets the
+	// data/parity boundary for anti-affinity instead of assuming the 10+4 default.
+	dataShards int
+}
+
+// dataShardCount returns the volume's EC data-shard count, falling back to the
+// standard default when the volume server did not report a custom ratio.
+func (info *ecVolumeInfo) dataShardCount() int {
+	if info != nil && info.dataShards > 0 {
+		return info.dataShards
+	}
+	return erasure_coding.DataShardsCount
 }
 
 // ecRackInfo represents a rack with EC node information
@@ -228,6 +255,7 @@ func buildECTopology(topoInfo *master_pb.TopologyInfo, config *Config) (map[stri
 					dc:       dc.Id,
 					rack:     rackKey,
 					ecShards: make(map[uint32]*ecVolumeInfo),
+					disks:    make(map[uint32]*ecDiskInfo),
 				}
 
 				hasMatchingDisk := false
@@ -242,7 +270,23 @@ func buildECTopology(topoInfo *master_pb.TopologyInfo, config *Config) (map[stri
 						node.freeSlots += freeSlots
 					}
 
+					ensureDisk := func(diskID uint32) *ecDiskInfo {
+						d, ok := node.disks[diskID]
+						if !ok {
+							d = &ecDiskInfo{diskID: diskID, diskType: diskType}
+							node.disks[diskID] = d
+						}
+						return d
+					}
+					// Discover physical disks from regular volumes too, so an
+					// EC-empty disk is still a candidate destination.
+					for _, vi := range diskInfo.VolumeInfos {
+						ensureDisk(vi.DiskId)
+					}
+
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						ensureDisk(ecShardInfo.DiskId).ecShardCount += erasure_coding.GetShardCount(ecShardInfo)
+
 						vid := ecShardInfo.Id
 						existing, ok := node.ecShards[vid]
 						if !ok {
@@ -260,6 +304,15 @@ func buildECTopology(topoInfo *master_pb.TopologyInfo, config *Config) (map[stri
 
 				if !hasMatchingDisk {
 					continue
+				}
+
+				// The wire collapses same-type disks, so per-disk free capacity
+				// is unknown; split the node total evenly across its disks.
+				if diskCount := len(node.disks); diskCount > 0 && node.freeSlots > 0 {
+					perDisk := node.freeSlots / diskCount
+					for _, d := range node.disks {
+						d.freeSlots = perDisk
+					}
 				}
 
 				nodes[dn.Id] = node
@@ -420,6 +473,9 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*e
 					continue
 				}
 
+				// Spread the shard across the destination's disks (data/parity
+				// anti-affinity), rather than letting it land on disk 0.
+				destDisk := pickBestDiskOnNode(destNode, vid, diskType, shardID, info.dataShardCount())
 				moves = append(moves, &shardMove{
 					volumeID:   vid,
 					shardID:    shardID,
@@ -427,13 +483,10 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*e
 					source:     node,
 					sourceDisk: ecShardDiskIDForShard(node, vid, shardID),
 					target:     destNode,
-					// Leave the destination disk unspecified so the volume server
-					// places the shard on a disk with free capacity, matching the
-					// within-rack and global phases. Targeting a specific disk here
-					// risks co-locating shards of the same volume on one disk.
-					targetDisk: 0,
+					targetDisk: destDisk,
 					phase:      "cross_rack",
 				})
+				reserveShardOnDisk(destNode, vid, collection, shardID, destDisk)
 				movedFromRack++
 
 				// Reserve capacity on destination so it isn't picked again,
@@ -508,6 +561,7 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 					continue
 				}
 
+				destDisk := pickBestDiskOnNode(destNode, vid, diskType, shardID, info.dataShardCount())
 				moves = append(moves, &shardMove{
 					volumeID:   vid,
 					shardID:    shardID,
@@ -515,9 +569,10 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 					source:     node,
 					sourceDisk: ecShardDiskIDForShard(node, vid, shardID),
 					target:     destNode,
-					targetDisk: 0,
+					targetDisk: destDisk,
 					phase:      "within_rack",
 				})
+				reserveShardOnDisk(destNode, vid, collection, shardID, destDisk)
 				moved++
 				nodeShardCount[nodeID]--
 				nodeShardCount[destNode.nodeID]++
@@ -650,6 +705,7 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 						continue
 					}
 
+					destDisk := pickBestDiskOnNode(minNode, vid, config.DiskType, shardID, info.dataShardCount())
 					moves = append(moves, &shardMove{
 						volumeID:   vid,
 						shardID:    shardID,
@@ -657,30 +713,18 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 						source:     maxNode,
 						sourceDisk: ecShardDiskIDForShard(maxNode, vid, shardID),
 						target:     minNode,
-						targetDisk: 0,
+						targetDisk: destDisk,
 						phase:      "global",
 					})
-					// Update in-memory shard placement so the next iteration
-					// of this loop picks a different shard. Without this, the
-					// inner loop always finds the lowest-set bit and emits
-					// duplicate move requests for the same physical shard.
+					// Update in-memory shard placement so the next iteration of the
+					// outer loop sees the move: drop the shard from the source and
+					// record it on the chosen destination disk.
 					sid := erasure_coding.ShardId(shardID)
 					info.shardBits = info.shardBits.Clear(sid)
 					for diskID := range info.diskShardBits {
 						info.diskShardBits[diskID] = info.diskShardBits[diskID].Clear(sid)
 					}
-					if minInfo == nil {
-						minInfo = &ecVolumeInfo{
-							collection:    info.collection,
-							diskShardBits: make(map[uint32]erasure_coding.ShardBits),
-						}
-						minNode.ecShards[vid] = minInfo
-					}
-					if minInfo.diskShardBits == nil {
-						minInfo.diskShardBits = make(map[uint32]erasure_coding.ShardBits)
-					}
-					minInfo.shardBits = minInfo.shardBits.Set(sid)
-					minInfo.diskShardBits[0] = minInfo.diskShardBits[0].Set(sid)
+					reserveShardOnDisk(minNode, vid, info.collection, shardID, destDisk)
 					nodeShardCounts[maxNode.nodeID]--
 					nodeShardCounts[minNode.nodeID]++
 					maxNode.freeSlots++
@@ -886,6 +930,104 @@ func ecShardDiskIDForShard(node *ecNodeInfo, vid uint32, shardID int) uint32 {
 		}
 	}
 	return 0
+}
+
+// pickBestDiskOnNode chooses the physical disk on a node to place a new EC shard
+// of the given volume, mirroring the shell ec.balance heuristic. It considers
+// only disks of the matching type (diskType == "" matches any) with free
+// capacity, and prefers, by ascending score:
+//   - fewer total EC shards on the disk (spread load across disks),
+//   - far fewer shards of this same volume on the disk (spread a volume's shards
+//     across disks for fault tolerance, weighted heavily), and
+//   - data/parity anti-affinity: a data shard avoids disks already holding this
+//     volume's parity shards, and a parity shard avoids disks holding its data
+//     shards.
+//
+// Returns 0 ("let the volume server pick a disk with free space") when no disk
+// info is available or no disk of the right type has capacity.
+func pickBestDiskOnNode(node *ecNodeInfo, vid uint32, diskType string, shardID, dataShardCount int) uint32 {
+	if len(node.disks) == 0 {
+		return 0
+	}
+
+	isDataShard := dataShardCount > 0 && shardID < dataShardCount
+	info := node.ecShards[vid]
+
+	var bestDiskID uint32
+	bestScore := -1
+	for diskID, disk := range node.disks {
+		if diskType != "" && disk.diskType != diskType {
+			continue
+		}
+		if disk.freeSlots <= 0 {
+			continue
+		}
+
+		existingShards := 0
+		hasDataShards := false
+		hasParityShards := false
+		if info != nil {
+			bits := info.diskShardBits[diskID]
+			existingShards = bits.Count()
+			if dataShardCount > 0 {
+				for s := 0; s < erasure_coding.MaxShardCount; s++ {
+					if !bits.Has(erasure_coding.ShardId(s)) {
+						continue
+					}
+					if s < dataShardCount {
+						hasDataShards = true
+					} else {
+						hasParityShards = true
+					}
+				}
+			}
+		}
+
+		// Lower score is better. Shards of this volume dominate (weight 100) so
+		// the shard spreads across disks; total occupancy (weight 10) breaks ties.
+		score := disk.ecShardCount*10 + existingShards*100
+		if dataShardCount > 0 {
+			if isDataShard && hasParityShards {
+				score += 1000
+			} else if !isDataShard && hasDataShards {
+				score += 1000
+			}
+		}
+
+		if bestScore == -1 || score < bestScore {
+			bestScore = score
+			bestDiskID = diskID
+		}
+	}
+
+	return bestDiskID
+}
+
+// reserveShardOnDisk records a just-planned shard placement on a destination
+// node's in-memory model so later picks in the same detection run spread shards
+// across disks (and across nodes) instead of repeatedly choosing disk 0. It is
+// idempotent with applyMovesToTopology, which re-asserts the same shard bit.
+func reserveShardOnDisk(node *ecNodeInfo, vid uint32, collection string, shardID int, diskID uint32) {
+	info, ok := node.ecShards[vid]
+	if !ok {
+		info = &ecVolumeInfo{
+			collection:    collection,
+			diskShardBits: make(map[uint32]erasure_coding.ShardBits),
+		}
+		node.ecShards[vid] = info
+	}
+	if info.diskShardBits == nil {
+		info.diskShardBits = make(map[uint32]erasure_coding.ShardBits)
+	}
+	sid := erasure_coding.ShardId(shardID)
+	info.shardBits = info.shardBits.Set(sid)
+	info.diskShardBits[diskID] = info.diskShardBits[diskID].Set(sid)
+	if disk, ok := node.disks[diskID]; ok {
+		disk.ecShardCount++
+		if disk.freeSlots > 0 {
+			disk.freeSlots--
+		}
+	}
 }
 
 func ceilDivide(a, b int) int {
