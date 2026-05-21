@@ -206,7 +206,7 @@ func TestReplicaUnionBuilder_EmptyLocations(t *testing.T) {
 		vid:    1,
 	}
 
-	_, count, err := builder.buildUnionReplica(nil, "")
+	_, count, err := builder.buildUnionReplica(nil, nil, "")
 	if err == nil {
 		t.Error("Expected error for empty locations")
 	}

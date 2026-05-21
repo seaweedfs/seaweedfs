@@ -158,6 +158,8 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.ReportProgressWithStage(10.0, "Marking volume readonly")
 	t.GetLogger().Info("Marking volume readonly")
 	if err := t.markReplicasReadonly(ctx); err != nil {
+		// Marking can fail partway; restore the replicas already marked readonly.
+		t.rollbackReadonly(ctx)
 		return fmt.Errorf("failed to mark volume readonly: %v", err)
 	}
 	if err := t.syncAndSelectSourceReplica(); err != nil {

@@ -101,7 +101,7 @@ type unionBuilder struct {
 // replicas into it. If excludeFromSelection is non-empty, that server won't be
 // selected as the target but will still be used as a source for missing entries.
 // Returns the location of the union replica (the one that now has all entries).
-func (rub *unionBuilder) buildUnionReplica(locations []wdclient.Location, excludeFromSelection string) (wdclient.Location, int, error) {
+func (rub *unionBuilder) buildUnionReplica(locations []wdclient.Location, statuses []ReplicaStatus, excludeFromSelection string) (wdclient.Location, int, error) {
 	if len(locations) == 0 {
 		return wdclient.Location{}, 0, fmt.Errorf("no replicas available")
 	}
@@ -112,9 +112,8 @@ func (rub *unionBuilder) buildUnionReplica(locations []wdclient.Location, exclud
 		return locations[0], 0, nil
 	}
 
-	// Step 1: Find the largest replica (highest file count) that's not excluded
-	statuses := GetReplicaStatuses(rub.grpcDialOption, rub.vid, locations)
-
+	// Step 1: Find the largest replica (highest file count) that's not excluded.
+	// statuses are supplied by the caller to avoid a redundant status RPC sweep.
 	bestIdx := -1
 	var bestFileCount uint64
 	for i, s := range statuses {
@@ -176,10 +175,15 @@ func (rub *unionBuilder) buildUnionReplica(locations []wdclient.Location, exclud
 				return nil
 			}
 			if _, found := bestDB.Get(nv.Key); !found {
-				// Skip entries written after sync started to avoid copying in-flight writes.
-				if needleMeta, err := ReadNeedleMeta(rub.grpcDialOption, loc.ServerAddress(), uint32(rub.vid), nv); err == nil {
-					if needleMeta.AppendAtNs > cutoffFromAtNs {
-						return nil
+				// Skip entries written after sync started to avoid copying in-flight
+				// writes. A read-only replica accepts no new writes, so the per-needle
+				// metadata RPC is unnecessary then (ec.encode/tier.move mark readonly
+				// before syncing).
+				if !statuses[i].IsReadOnly {
+					if needleMeta, err := ReadNeedleMeta(rub.grpcDialOption, loc.ServerAddress(), uint32(rub.vid), nv); err == nil {
+						if needleMeta.AppendAtNs > cutoffFromAtNs {
+							return nil
+						}
 					}
 				}
 				missingNeedles = append(missingNeedles, nv)
@@ -345,7 +349,7 @@ func SyncAndSelectBestReplica(grpcDialOption grpc.DialOption, vid needle.VolumeI
 		collection:     collection,
 	}
 
-	unionLocation, totalSynced, err := builder.buildUnionReplica(locations, excludeFromSelection)
+	unionLocation, totalSynced, err := builder.buildUnionReplica(locations, statuses, excludeFromSelection)
 	if err != nil {
 		return wdclient.Location{}, fmt.Errorf("failed to build union replica: %w", err)
 	}
