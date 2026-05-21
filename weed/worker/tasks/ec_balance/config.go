@@ -17,7 +17,8 @@ type Config struct {
 	CollectionFilter   string   `json:"collection_filter"`
 	DiskType           string   `json:"disk_type"`
 	PreferredTags      []string `json:"preferred_tags"`
-	DataCenterFilter   string   `json:"-"` // per-detection-run, not persisted
+	ReplicaPlacement   string   `json:"replica_placement"` // e.g. "020"; empty = even spread, no constraint
+	DataCenterFilter   string   `json:"-"`                  // per-detection-run, not persisted
 }
 
 // NewDefaultConfig creates a new default EC balance configuration
@@ -155,6 +156,19 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "replica_placement",
+				JSONName:     "replica_placement",
+				Type:         config.FieldTypeString,
+				DefaultValue: "",
+				Required:     false,
+				DisplayName:  "Replica Placement",
+				Description:  "EC shard replica placement constraint (e.g. 020)",
+				HelpText:     "Leave empty for even spread. When set, limits shards per rack/node per the placement digits (dc/rack/node)",
+				Placeholder:  "020",
+				InputType:    "text",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -174,6 +188,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				CollectionFilter:   c.CollectionFilter,
 				DiskType:           c.DiskType,
 				PreferredTags:      preferredTagsCopy,
+				ReplicaPlacement:   c.ReplicaPlacement,
 			},
 		},
 	}
@@ -195,6 +210,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.CollectionFilter = ecbConfig.CollectionFilter
 		c.DiskType = ecbConfig.DiskType
 		c.PreferredTags = append([]string(nil), ecbConfig.PreferredTags...)
+		c.ReplicaPlacement = ecbConfig.ReplicaPlacement
 	}
 
 	return nil

@@ -112,7 +112,7 @@ func TestDetectCrossRackImbalance(t *testing.T) {
 	}
 
 	// Use very low threshold so this triggers
-	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01)
+	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, nil)
 
 	// With 14 shards across 2 racks, max per rack = 7
 	// rack1 has 14 -> excess = 7, should move 7 to rack2
@@ -160,7 +160,7 @@ func TestDetectCrossRackImbalanceBelowThreshold(t *testing.T) {
 	}
 
 	// High threshold should skip this
-	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.5)
+	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.5, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, nil)
 	if len(moves) != 0 {
 		t.Fatalf("expected 0 moves below threshold, got %d", len(moves))
 	}
@@ -187,7 +187,7 @@ func TestDetectWithinRackImbalance(t *testing.T) {
 		},
 	}
 
-	moves := detectWithinRackImbalance(100, "col1", nodes, racks, "", 0.01)
+	moves := detectWithinRackImbalance(100, "col1", nodes, racks, "", 0.01, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, nil)
 
 	// 10 shards on 2 nodes, max per node = 5
 	// node1 has 10 -> excess = 5, should move 5 to node2
@@ -233,7 +233,7 @@ func TestDetectGlobalImbalance(t *testing.T) {
 
 	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.01 // low threshold to ensure moves happen
-	moves := detectGlobalImbalance(nodes, racks, config, nil)
+	moves := detectGlobalImbalance(nodes, racks, config, nil, nil)
 
 	// Total = 22 shards, avg = 11. node1 has 20, node2 has 2.
 	// Should move shards until balanced (max 10 iterations)
@@ -295,7 +295,7 @@ func TestDetectGlobalImbalance_HeterogeneousCapacity(t *testing.T) {
 
 	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.01
-	moves := detectGlobalImbalance(nodes, racks, config, nil)
+	moves := detectGlobalImbalance(nodes, racks, config, nil, nil)
 
 	if len(moves) == 0 {
 		t.Fatal("expected moves from high-util node2 to low-util node1, got 0")
@@ -351,7 +351,7 @@ func TestDetectGlobalImbalanceSkipsFullNodes(t *testing.T) {
 
 	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.01
-	moves := detectGlobalImbalance(nodes, racks, config, nil)
+	moves := detectGlobalImbalance(nodes, racks, config, nil, nil)
 
 	// node2 has no free slots so no moves should be proposed
 	if len(moves) != 0 {

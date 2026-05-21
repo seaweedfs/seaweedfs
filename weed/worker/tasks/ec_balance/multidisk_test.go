@@ -6,7 +6,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
+
+// emptyDestNode builds an EC-empty destination node with six physical disks
+// (discovered from regular volumes) and ample free capacity.
+func emptyDestNode(id string) *master_pb.DataNodeInfo {
+	var vols []*master_pb.VolumeInformationMessage
+	for diskID := uint32(1); diskID <= 6; diskID++ {
+		vols = append(vols, &master_pb.VolumeInformationMessage{Id: diskID, DiskId: diskID})
+	}
+	return &master_pb.DataNodeInfo{
+		Id: id,
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"": {Type: "", MaxVolumeCount: 100, VolumeCount: 6, VolumeInfos: vols},
+		},
+	}
+}
 
 // shardBitsFor builds an EcIndexBits bitmask from a list of shard ids.
 func shardBitsFor(shardIds ...int) uint32 {
@@ -105,7 +121,7 @@ func TestSourceDiskAttributionAcrossDisks(t *testing.T) {
 
 	// A cross-rack rebalance from the loaded rack must carry the correct source
 	// disk for every moved shard.
-	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01)
+	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, nil)
 	if len(moves) == 0 {
 		t.Fatal("expected cross-rack moves, got none")
 	}
@@ -225,14 +241,14 @@ func TestPickBestDiskOnNode(t *testing.T) {
 		}
 	})
 
-	t.Run("anti-affinity follows the volume's own EC ratio", func(t *testing.T) {
+	t.Run("anti-affinity follows the resolved EC ratio (boundary param)", func(t *testing.T) {
 		// A 6+3 volume: shard ids >= 6 are parity. Disk 1 holds shard 7 (parity
 		// at 6+3) and is otherwise emptier; disk 2 holds shard 2 (data) plus an
-		// unrelated shard. Placing a data shard must avoid disk 1's parity.
+		// unrelated shard. Placing a data shard must avoid disk 1's parity. The
+		// boundary is supplied by the caller from resolveECRatio.
 		node := &ecNodeInfo{
 			ecShards: map[uint32]*ecVolumeInfo{
 				vid: {
-					dataShards: 6,
 					diskShardBits: map[uint32]erasure_coding.ShardBits{
 						1: shardBitsOf(7), // parity at 6+3
 						2: shardBitsOf(2), // data
@@ -245,11 +261,11 @@ func TestPickBestDiskOnNode(t *testing.T) {
 			},
 		}
 		// With the volume's real ratio (6) a data shard avoids disk 1's parity.
-		if got := pickBestDiskOnNode(node, vid, "", 1, node.ecShards[vid].dataShardCount()); got != 2 {
+		if got := pickBestDiskOnNode(node, vid, "", 1, 6); got != 2 {
 			t.Errorf("with ratio 6: got disk %d, want 2 (data shard avoids parity-bearing disk 1)", got)
 		}
-		// With the wrong hardcoded boundary (10) shard 7 looks like data, the
-		// anti-affinity penalty vanishes, and the emptier disk 1 wins — the bug.
+		// With the wrong boundary (10) shard 7 looks like data, the anti-affinity
+		// penalty vanishes, and the emptier disk 1 wins — the bug the ratio fixes.
 		if got := pickBestDiskOnNode(node, vid, "", 1, erasure_coding.DataShardsCount); got != 1 {
 			t.Errorf("with boundary 10: got disk %d, want 1 (demonstrates why the constant is wrong)", got)
 		}
@@ -313,7 +329,7 @@ func TestCrossRackMoveSpreadsAcrossDestinationDisks(t *testing.T) {
 	config.Enabled = true
 	nodes, racks := buildECTopology(topo, config)
 
-	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01)
+	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, nil)
 	if len(moves) != 7 { // 14 shards, 2 racks -> max 7 per rack -> move 7
 		t.Fatalf("expected 7 cross-rack moves, got %d", len(moves))
 	}
@@ -339,4 +355,130 @@ func shardBitsOf(ids ...int) erasure_coding.ShardBits {
 		b = b.Set(erasure_coding.ShardId(id))
 	}
 	return b
+}
+
+// TestCrossRackParityAntiAffinity verifies the cross-rack two-pass: parity
+// shards are steered to racks that do not already hold the volume's data shards.
+func TestCrossRackParityAntiAffinity(t *testing.T) {
+	// Volume 100 is a 1+2 EC volume (data id 0, parity ids 1,2), all on rack1.
+	src := &master_pb.DataNodeInfo{
+		Id: "node1",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"": {Type: "", MaxVolumeCount: 100, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+				{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: shardBitsFor(0, 1, 2)},
+			}},
+		},
+	}
+	topo := &master_pb.TopologyInfo{
+		Id: "aa_topo",
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{
+				{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{src}},
+				{Id: "rack2", DataNodeInfos: []*master_pb.DataNodeInfo{emptyDestNode("node2")}},
+				{Id: "rack3", DataNodeInfos: []*master_pb.DataNodeInfo{emptyDestNode("node3")}},
+			},
+		}},
+	}
+	config := &Config{}
+	config.Enabled = true
+	nodes, racks := buildECTopology(topo, config)
+
+	// 1 data shard fits in rack1 (max ceil(1/3)=1), so only parity should move,
+	// and never onto the data-bearing rack.
+	moves := detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01, 1, 2, nil)
+	if len(moves) == 0 {
+		t.Fatal("expected at least one parity move across racks")
+	}
+	for _, m := range moves {
+		if m.shardID < 1 {
+			t.Errorf("data shard %d moved, but a single data shard fits in rack1", m.shardID)
+		}
+		if m.target.rack == "dc1:rack1" {
+			t.Errorf("parity shard %d moved onto the data-bearing rack1 (anti-affinity violated)", m.shardID)
+		}
+	}
+}
+
+// TestWithinRackParityAntiAffinity verifies the within-rack two-pass: parity
+// shards avoid nodes that already hold the volume's data shards.
+func TestWithinRackParityAntiAffinity(t *testing.T) {
+	src := &master_pb.DataNodeInfo{
+		Id: "node1",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"": {Type: "", MaxVolumeCount: 100, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+				{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: shardBitsFor(0, 1, 2)},
+			}},
+		},
+	}
+	topo := &master_pb.TopologyInfo{
+		Id: "aa_rack",
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{src, emptyDestNode("node2"), emptyDestNode("node3")},
+			}},
+		}},
+	}
+	config := &Config{}
+	config.Enabled = true
+	nodes, racks := buildECTopology(topo, config)
+
+	moves := detectWithinRackImbalance(100, "col1", nodes, racks, "", 0.01, 1, 2, nil)
+	if len(moves) == 0 {
+		t.Fatal("expected at least one parity move within the rack")
+	}
+	for _, m := range moves {
+		if m.shardID < 1 {
+			t.Errorf("data shard %d moved, but a single data shard fits on node1", m.shardID)
+		}
+		if m.target.nodeID == "node1" {
+			t.Errorf("parity shard %d moved onto the data-bearing node1 (anti-affinity violated)", m.shardID)
+		}
+	}
+}
+
+// TestReplicaPlacementCapsShardsPerRack verifies the DiffRackCount constraint:
+// with replica placement limiting shards per rack, fewer shards move than the
+// even-spread maximum.
+func TestReplicaPlacementCapsShardsPerRack(t *testing.T) {
+	// Volume 100 with 6 data shards, all on rack1; rack2 and rack3 empty.
+	newTopo := func() (map[string]*ecNodeInfo, map[string]*ecRackInfo) {
+		src := &master_pb.DataNodeInfo{
+			Id: "node1",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {Type: "", MaxVolumeCount: 100, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+					{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: shardBitsFor(0, 1, 2, 3, 4, 5)},
+				}},
+			},
+		}
+		topo := &master_pb.TopologyInfo{
+			Id: "rp_topo",
+			DataCenterInfos: []*master_pb.DataCenterInfo{{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{src}},
+					{Id: "rack2", DataNodeInfos: []*master_pb.DataNodeInfo{emptyDestNode("node2")}},
+					{Id: "rack3", DataNodeInfos: []*master_pb.DataNodeInfo{emptyDestNode("node3")}},
+				},
+			}},
+		}
+		config := &Config{}
+		config.Enabled = true
+		return buildECTopology(topo, config)
+	}
+
+	// Even spread (max ceil(6/3)=2 per rack) moves 4 shards off rack1.
+	nodes, racks := newTopo()
+	if got := len(detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01, 6, 0, nil)); got != 4 {
+		t.Fatalf("without replica placement: got %d moves, want 4", got)
+	}
+
+	// DiffRackCount=1 caps each destination rack at one shard, so only 2 move.
+	nodes, racks = newTopo()
+	rp := &super_block.ReplicaPlacement{DiffRackCount: 1}
+	if got := len(detectCrossRackImbalance(100, "col1", nodes, racks, "", 0.01, 6, 0, rp)); got != 2 {
+		t.Errorf("with DiffRackCount=1: got %d moves, want 2 (one per destination rack)", got)
+	}
 }

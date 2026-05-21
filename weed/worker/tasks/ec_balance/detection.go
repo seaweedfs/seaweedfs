@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -49,19 +50,6 @@ type ecVolumeInfo struct {
 	// collapse into one DiskInfo; this preserves which disk actually holds each
 	// shard so a move reports the correct source disk.
 	diskShardBits map[uint32]erasure_coding.ShardBits
-	// dataShards is this volume's EC data-shard count, reported per shard message
-	// (0 means the reporting volume server predates custom ratios). It sets the
-	// data/parity boundary for anti-affinity instead of assuming the 10+4 default.
-	dataShards int
-}
-
-// dataShardCount returns the volume's EC data-shard count, falling back to the
-// standard default when the volume server did not report a custom ratio.
-func (info *ecVolumeInfo) dataShardCount() int {
-	if info != nil && info.dataShards > 0 {
-		return info.dataShards
-	}
-	return erasure_coding.DataShardsCount
 }
 
 // ecRackInfo represents a rack with EC node information
@@ -127,9 +115,25 @@ func Detection(
 	threshold := ecConfig.ImbalanceThreshold
 	var allMoves []*shardMove
 
-	// Build set of allowed collections for global phase filtering
+	// Optional EC shard replica placement constraint (empty = even spread).
+	var replicaPlacement *super_block.ReplicaPlacement
+	if ecConfig.ReplicaPlacement != "" {
+		rp, rpErr := super_block.NewReplicaPlacementFromString(ecConfig.ReplicaPlacement)
+		if rpErr != nil {
+			glog.Warningf("EC balance: ignoring invalid replica_placement %q: %v", ecConfig.ReplicaPlacement, rpErr)
+		} else if rp.HasReplication() {
+			replicaPlacement = rp
+		}
+	}
+
+	// Build set of allowed collections for global phase filtering, and resolve
+	// each collection's EC ratio once (data/parity boundary for the two-pass
+	// balancing and disk anti-affinity).
 	allowedVids := make(map[uint32]bool)
-	for _, volumeIDs := range collections {
+	dataShardsByCollection := make(map[string]int)
+	for collection, volumeIDs := range collections {
+		dataShards, _ := resolveECRatio(clusterInfo, collection)
+		dataShardsByCollection[collection] = dataShards
 		for _, vid := range volumeIDs {
 			allowedVids[vid] = true
 		}
@@ -142,6 +146,8 @@ func Detection(
 			}
 		}
 
+		dataShards, parityShards := resolveECRatio(clusterInfo, collection)
+
 		// Phase 1: Detect duplicate shards (always run, duplicates are errors not imbalance)
 		for _, vid := range volumeIDs {
 			moves := detectDuplicateShards(vid, collection, nodes, ecConfig.DiskType)
@@ -151,21 +157,21 @@ func Detection(
 
 		// Phase 2: Balance shards across racks (operates on updated topology from phase 1)
 		for _, vid := range volumeIDs {
-			moves := detectCrossRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold)
+			moves := detectCrossRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold, dataShards, parityShards, replicaPlacement)
 			applyMovesToTopology(moves)
 			allMoves = append(allMoves, moves...)
 		}
 
 		// Phase 3: Balance shards within racks (operates on updated topology from phases 1-2)
 		for _, vid := range volumeIDs {
-			moves := detectWithinRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold)
+			moves := detectWithinRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold, dataShards, parityShards, replicaPlacement)
 			applyMovesToTopology(moves)
 			allMoves = append(allMoves, moves...)
 		}
 	}
 
 	// Phase 4: Global node balance across racks (only for volumes in allowed collections)
-	globalMoves := detectGlobalImbalance(nodes, racks, ecConfig, allowedVids)
+	globalMoves := detectGlobalImbalance(nodes, racks, ecConfig, allowedVids, dataShardsByCollection)
 	allMoves = append(allMoves, globalMoves...)
 
 	// Cap results
@@ -406,188 +412,249 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*ecNo
 	return moves
 }
 
-// detectCrossRackImbalance detects shards that should be moved across racks for even distribution.
-// Returns nil if imbalance is below the threshold.
-func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, threshold float64) []*shardMove {
+// detectCrossRackImbalance spreads a volume's shards across racks. It balances
+// data shards and parity shards in two separate passes so each type spreads
+// evenly, and gives parity shards anti-affinity to racks already holding data
+// shards (mirrors the shell ec.balance doBalanceEcShardsAcrossRacks). Returns
+// nil if the overall distribution is below the imbalance threshold.
+func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*shardMove {
 	numRacks := len(racks)
 	if numRacks <= 1 {
 		return nil
 	}
 
-	// Count shards per rack for this volume
-	rackShardCount := make(map[string]int)
-	rackShardNodes := make(map[string][]*ecNodeInfo)
+	rackShardCount := countShardsByRackForVolume(vid, nodes)
 	totalShards := 0
-
-	for _, node := range nodes {
-		info, ok := node.ecShards[vid]
-		if !ok {
-			continue
-		}
-		count := info.shardBits.Count()
-		if count > 0 {
-			rackShardCount[node.rack] += count
-			rackShardNodes[node.rack] = append(rackShardNodes[node.rack], node)
-			totalShards += count
-		}
+	for _, c := range rackShardCount {
+		totalShards += c
 	}
-
-	if totalShards == 0 {
+	if totalShards == 0 || !exceedsImbalanceThreshold(rackShardCount, totalShards, numRacks, threshold) {
 		return nil
 	}
-
-	// Check if imbalance exceeds threshold
-	if !exceedsImbalanceThreshold(rackShardCount, totalShards, numRacks, threshold) {
-		return nil
-	}
-
-	maxPerRack := ceilDivide(totalShards, numRacks)
 
 	var moves []*shardMove
 
-	// Find over-loaded racks and move excess shards to under-loaded racks
-	for rackID, count := range rackShardCount {
-		if count <= maxPerRack {
+	// Pass 1: data shards, no anti-affinity.
+	dataPerRack, _ := shardsByGroup(vid, nodes, dataShards, func(n *ecNodeInfo) string { return n.rack })
+	moves = append(moves, balanceShardTypeAcrossRacks(vid, collection, nodes, racks, diskType, dataShards,
+		dataPerRack, rackShardCount, ceilDivide(dataShards, numRacks), nil, rp)...)
+
+	// Pass 2: parity shards, avoiding racks that hold data shards (recompute from
+	// the now-updated placement).
+	dataPerRack, parityPerRack := shardsByGroup(vid, nodes, dataShards, func(n *ecNodeInfo) string { return n.rack })
+	antiAffinityRacks := make(map[string]bool)
+	for rackID, shards := range dataPerRack {
+		if len(shards) > 0 {
+			antiAffinityRacks[rackID] = true
+		}
+	}
+	moves = append(moves, balanceShardTypeAcrossRacks(vid, collection, nodes, racks, diskType, dataShards,
+		parityPerRack, rackShardCount, ceilDivide(parityShards, numRacks), antiAffinityRacks, rp)...)
+
+	return moves
+}
+
+// balanceShardTypeAcrossRacks moves the excess shards of one type (data or
+// parity, given by shardsPerRack) out of racks holding more than maxPerRack of
+// that type, into racks chosen by pickTarget (honoring anti-affinity and the
+// replica placement's DiffRackCount). The destination node within the rack and
+// the destination disk are chosen for even spread.
+func balanceShardTypeAcrossRacks(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, dataShards int, shardsPerRack map[string][]int, rackShardCount map[string]int, maxPerRack int, antiAffinityRacks map[string]bool, rp *super_block.ReplicaPlacement) []*shardMove {
+	if maxPerRack < 1 {
+		maxPerRack = 1
+	}
+	rackKeys := sortedRackKeys(racks)
+
+	type pending struct {
+		shardID int
+		src     *ecNodeInfo
+	}
+	var toMove []pending
+	for _, rackID := range rackKeys {
+		shards := append([]int(nil), shardsPerRack[rackID]...)
+		if len(shards) <= maxPerRack {
 			continue
 		}
-		excess := count - maxPerRack
-		movedFromRack := 0
-
-		// Find shards to move from this rack
-		for _, node := range rackShardNodes[rackID] {
-			if movedFromRack >= excess {
-				break
-			}
-			info := node.ecShards[vid]
-			for shardID := 0; shardID < erasure_coding.TotalShardsCount; shardID++ {
-				if movedFromRack >= excess {
-					break
-				}
-				if !info.shardBits.Has(erasure_coding.ShardId(shardID)) {
-					continue
-				}
-
-				// Find destination: rack with fewest shards of this volume
-				destNode := findDestNodeInUnderloadedRack(vid, racks, rackShardCount, maxPerRack, rackID, nodes)
-				if destNode == nil {
-					continue
-				}
-
-				// Spread the shard across the destination's disks (data/parity
-				// anti-affinity), rather than letting it land on disk 0.
-				destDisk := pickBestDiskOnNode(destNode, vid, diskType, shardID, info.dataShardCount())
-				moves = append(moves, &shardMove{
-					volumeID:   vid,
-					shardID:    shardID,
-					collection: collection,
-					source:     node,
-					sourceDisk: ecShardDiskIDForShard(node, vid, shardID),
-					target:     destNode,
-					targetDisk: destDisk,
-					phase:      "cross_rack",
-				})
-				reserveShardOnDisk(destNode, vid, collection, shardID, destDisk)
-				movedFromRack++
-
-				// Reserve capacity on destination so it isn't picked again,
-				// and release one slot on the source so later volumes in this
-				// same detection run see its true available capacity.
-				rackShardCount[destNode.rack]++
-				rackShardCount[rackID]--
-				node.freeSlots++
-				destNode.freeSlots--
+		sort.Ints(shards)
+		for i := 0; i < len(shards)-maxPerRack; i++ {
+			if src := nodeInRackHoldingShard(nodes, rackID, vid, shards[i]); src != nil {
+				toMove = append(toMove, pending{shards[i], src})
 			}
 		}
+	}
+
+	var moves []*shardMove
+	for _, pm := range toMove {
+		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinityRacks,
+			func(r string) bool { return racks[r].freeSlots > 0 },
+			func(r string) bool {
+				if rp != nil && rp.DiffRackCount > 0 {
+					return rackShardCount[r] < rp.DiffRackCount
+				}
+				return true
+			})
+		if !ok {
+			continue
+		}
+		destNode := pickNodeInRack(racks[destRack], vid, rp)
+		if destNode == nil {
+			continue
+		}
+		destDisk := pickBestDiskOnNode(destNode, vid, diskType, pm.shardID, dataShards)
+		moves = append(moves, &shardMove{
+			volumeID:   vid,
+			shardID:    pm.shardID,
+			collection: collection,
+			source:     pm.src,
+			sourceDisk: ecShardDiskIDForShard(pm.src, vid, pm.shardID),
+			target:     destNode,
+			targetDisk: destDisk,
+			phase:      "cross_rack",
+		})
+		releaseShardFromNode(pm.src, vid, pm.shardID)
+		reserveShardOnDisk(destNode, vid, collection, pm.shardID, destDisk)
+		srcRack := pm.src.rack
+		shardsPerRack[destRack] = append(shardsPerRack[destRack], pm.shardID)
+		shardsPerRack[srcRack] = removeInt(shardsPerRack[srcRack], pm.shardID)
+		rackShardCount[destRack]++
+		rackShardCount[srcRack]--
+		racks[destRack].freeSlots--
+		racks[srcRack].freeSlots++
+	}
+	return moves
+}
+
+// pickNodeInRack chooses the node in a rack to receive a new shard of the
+// volume: the one with free slots and the fewest shards of this volume, honoring
+// the replica placement's SameRackCount limit. Deterministic by node id.
+func pickNodeInRack(rack *ecRackInfo, vid uint32, rp *super_block.ReplicaPlacement) *ecNodeInfo {
+	var best *ecNodeInfo
+	bestCount := -1
+	for _, id := range sortedNodeKeys(rack.nodes) {
+		node := rack.nodes[id]
+		if node.freeSlots <= 0 {
+			continue
+		}
+		count := volumeShardCount(node, vid)
+		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount+1 {
+			continue
+		}
+		if best == nil || count < bestCount {
+			best, bestCount = node, count
+		}
+	}
+	return best
+}
+
+// detectWithinRackImbalance spreads a volume's shards evenly across the nodes of
+// each rack. Like the cross-rack phase it runs separate data and parity passes,
+// giving parity shards anti-affinity to nodes already holding data shards
+// (mirrors the shell ec.balance doBalanceEcShardsWithinOneRack).
+func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*shardMove {
+	var moves []*shardMove
+
+	for _, rackID := range sortedRackKeys(racks) {
+		rack := racks[rackID]
+		if len(rack.nodes) <= 1 {
+			continue
+		}
+
+		nodeShardCount := countShardsByNodeForVolume(vid, rack.nodes)
+		totalInRack := 0
+		for _, c := range nodeShardCount {
+			totalInRack += c
+		}
+		if totalInRack == 0 || !exceedsImbalanceThreshold(nodeShardCount, totalInRack, len(rack.nodes), threshold) {
+			continue
+		}
+		numNodes := len(rack.nodes)
+
+		// Pass 1: data shards across nodes.
+		dataPerNode, _ := shardsByGroup(vid, rack.nodes, dataShards, func(n *ecNodeInfo) string { return n.nodeID })
+		moves = append(moves, balanceShardTypeAcrossNodes(vid, collection, rack, diskType, dataShards,
+			dataPerNode, nodeShardCount, ceilDivide(sumLens(dataPerNode), numNodes), nil, rp)...)
+
+		// Pass 2: parity shards across nodes, avoiding nodes that hold data shards.
+		dataPerNode, parityPerNode := shardsByGroup(vid, rack.nodes, dataShards, func(n *ecNodeInfo) string { return n.nodeID })
+		antiAffinityNodes := make(map[string]bool)
+		for nodeID, shards := range dataPerNode {
+			if len(shards) > 0 {
+				antiAffinityNodes[nodeID] = true
+			}
+		}
+		moves = append(moves, balanceShardTypeAcrossNodes(vid, collection, rack, diskType, dataShards,
+			parityPerNode, nodeShardCount, ceilDivide(sumLens(parityPerNode), numNodes), antiAffinityNodes, rp)...)
 	}
 
 	return moves
 }
 
-// detectWithinRackImbalance detects shards that should be moved within racks for even node distribution.
-// Returns nil if imbalance is below the threshold.
-func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, threshold float64) []*shardMove {
-	var moves []*shardMove
+// balanceShardTypeAcrossNodes moves excess shards of one type out of nodes
+// holding more than maxPerNode of it, into nodes chosen by pickTarget (honoring
+// anti-affinity and the replica placement's SameRackCount).
+func balanceShardTypeAcrossNodes(vid uint32, collection string, rack *ecRackInfo, diskType string, dataShards int, shardsPerNode map[string][]int, nodeShardCount map[string]int, maxPerNode int, antiAffinityNodes map[string]bool, rp *super_block.ReplicaPlacement) []*shardMove {
+	if maxPerNode < 1 {
+		maxPerNode = 1
+	}
+	nodeKeys := sortedNodeKeys(rack.nodes)
 
-	for _, rack := range racks {
-		if len(rack.nodes) <= 1 {
+	type pending struct {
+		shardID int
+		src     *ecNodeInfo
+	}
+	var toMove []pending
+	for _, nodeID := range nodeKeys {
+		shards := append([]int(nil), shardsPerNode[nodeID]...)
+		if len(shards) <= maxPerNode {
 			continue
 		}
-
-		// Count shards per node in this rack for this volume
-		nodeShardCount := make(map[string]int)
-		totalInRack := 0
-		for nodeID, node := range rack.nodes {
-			info, ok := node.ecShards[vid]
-			if !ok {
-				continue
-			}
-			count := info.shardBits.Count()
-			nodeShardCount[nodeID] = count
-			totalInRack += count
-		}
-
-		if totalInRack == 0 {
-			continue
-		}
-
-		// Check if imbalance exceeds threshold
-		if !exceedsImbalanceThreshold(nodeShardCount, totalInRack, len(rack.nodes), threshold) {
-			continue
-		}
-
-		maxPerNode := ceilDivide(totalInRack, len(rack.nodes))
-
-		// Find over-loaded nodes and move excess
-		for nodeID, count := range nodeShardCount {
-			if count <= maxPerNode {
-				continue
-			}
-			excess := count - maxPerNode
-			node := rack.nodes[nodeID]
-			info := node.ecShards[vid]
-			moved := 0
-
-			for shardID := 0; shardID < erasure_coding.TotalShardsCount; shardID++ {
-				if moved >= excess {
-					break
-				}
-				if !info.shardBits.Has(erasure_coding.ShardId(shardID)) {
-					continue
-				}
-
-				// Find least-loaded node in same rack
-				destNode := findLeastLoadedNodeInRack(vid, rack, nodeID, nodeShardCount, maxPerNode)
-				if destNode == nil {
-					continue
-				}
-
-				destDisk := pickBestDiskOnNode(destNode, vid, diskType, shardID, info.dataShardCount())
-				moves = append(moves, &shardMove{
-					volumeID:   vid,
-					shardID:    shardID,
-					collection: collection,
-					source:     node,
-					sourceDisk: ecShardDiskIDForShard(node, vid, shardID),
-					target:     destNode,
-					targetDisk: destDisk,
-					phase:      "within_rack",
-				})
-				reserveShardOnDisk(destNode, vid, collection, shardID, destDisk)
-				moved++
-				nodeShardCount[nodeID]--
-				nodeShardCount[destNode.nodeID]++
-				node.freeSlots++
-				destNode.freeSlots--
-			}
+		sort.Ints(shards)
+		src := rack.nodes[nodeID]
+		for i := 0; i < len(shards)-maxPerNode; i++ {
+			toMove = append(toMove, pending{shards[i], src})
 		}
 	}
 
+	var moves []*shardMove
+	for _, pm := range toMove {
+		destID, ok := pickTarget(nodeKeys, shardsPerNode, maxPerNode, antiAffinityNodes,
+			func(n string) bool { return n != pm.src.nodeID && rack.nodes[n].freeSlots > 0 },
+			func(n string) bool {
+				if rp != nil && rp.SameRackCount > 0 {
+					return nodeShardCount[n] < rp.SameRackCount+1
+				}
+				return true
+			})
+		if !ok {
+			continue
+		}
+		destNode := rack.nodes[destID]
+		destDisk := pickBestDiskOnNode(destNode, vid, diskType, pm.shardID, dataShards)
+		moves = append(moves, &shardMove{
+			volumeID:   vid,
+			shardID:    pm.shardID,
+			collection: collection,
+			source:     pm.src,
+			sourceDisk: ecShardDiskIDForShard(pm.src, vid, pm.shardID),
+			target:     destNode,
+			targetDisk: destDisk,
+			phase:      "within_rack",
+		})
+		releaseShardFromNode(pm.src, vid, pm.shardID)
+		reserveShardOnDisk(destNode, vid, collection, pm.shardID, destDisk)
+		shardsPerNode[destID] = append(shardsPerNode[destID], pm.shardID)
+		shardsPerNode[pm.src.nodeID] = removeInt(shardsPerNode[pm.src.nodeID], pm.shardID)
+		nodeShardCount[destID]++
+		nodeShardCount[pm.src.nodeID]--
+		pm.src.freeSlots++
+		destNode.freeSlots--
+	}
 	return moves
 }
 
 // detectGlobalImbalance detects total shard count imbalance across nodes in each rack.
 // Respects ImbalanceThreshold from config. Only considers volumes in allowedVids.
-func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, config *Config, allowedVids map[uint32]bool) []*shardMove {
+func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, config *Config, allowedVids map[uint32]bool, dataShardsByCollection map[string]int) []*shardMove {
 	var moves []*shardMove
 
 	for _, rack := range racks {
@@ -705,7 +772,11 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 						continue
 					}
 
-					destDisk := pickBestDiskOnNode(minNode, vid, config.DiskType, shardID, info.dataShardCount())
+					dataShards := dataShardsByCollection[info.collection]
+					if dataShards <= 0 {
+						dataShards = erasure_coding.DataShardsCount
+					}
+					destDisk := pickBestDiskOnNode(minNode, vid, config.DiskType, shardID, dataShards)
 					moves = append(moves, &shardMove{
 						volumeID:   vid,
 						shardID:    shardID,
@@ -742,58 +813,181 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 	return moves
 }
 
-// findDestNodeInUnderloadedRack finds a node in a rack that has fewer than maxPerRack shards
-func findDestNodeInUnderloadedRack(vid uint32, racks map[string]*ecRackInfo, rackShardCount map[string]int, maxPerRack int, excludeRack string, nodes map[string]*ecNodeInfo) *ecNodeInfo {
-	var bestNode *ecNodeInfo
-	bestFreeSlots := -1
-
-	for rackID, rack := range racks {
-		if rackID == excludeRack {
-			continue
-		}
-		if rackShardCount[rackID] >= maxPerRack {
-			continue
-		}
-		if rack.freeSlots <= 0 {
-			continue
-		}
-		for _, node := range rack.nodes {
-			if node.freeSlots <= 0 {
-				continue
-			}
-			if node.freeSlots > bestFreeSlots {
-				bestFreeSlots = node.freeSlots
-				bestNode = node
-			}
-		}
-	}
-
-	return bestNode
+// resolveECRatio returns the (dataShards, parityShards) for a collection.
+// Custom EC ratios are an enterprise feature; OSS always uses the standard
+// scheme, so the collection and cluster snapshot are not consulted here.
+func resolveECRatio(_ *types.ClusterInfo, _ string) (int, int) {
+	return normalizeECShardCounts(0, 0)
 }
 
-// findLeastLoadedNodeInRack finds the node with fewest shards in a rack
-func findLeastLoadedNodeInRack(vid uint32, rack *ecRackInfo, excludeNode string, nodeShardCount map[string]int, maxPerNode int) *ecNodeInfo {
-	var bestNode *ecNodeInfo
-	bestCount := maxPerNode + 1
+func normalizeECShardCounts(dataShards, parityShards int) (int, int) {
+	if dataShards <= 0 {
+		dataShards = erasure_coding.DataShardsCount
+	}
+	if parityShards <= 0 {
+		parityShards = erasure_coding.ParityShardsCount
+	}
+	return dataShards, parityShards
+}
 
-	for nodeID, node := range rack.nodes {
-		if nodeID == excludeNode {
+// shardsByGroup classifies a volume's shards into data (id < dataShards) and
+// parity buckets, grouped by key(node). Returns map[groupKey] -> []shardID.
+func shardsByGroup(vid uint32, nodes map[string]*ecNodeInfo, dataShards int, key func(*ecNodeInfo) string) (dataPer, parityPer map[string][]int) {
+	dataPer = make(map[string][]int)
+	parityPer = make(map[string][]int)
+	for _, node := range nodes {
+		info, ok := node.ecShards[vid]
+		if !ok {
 			continue
 		}
-		if node.freeSlots <= 0 {
-			continue
-		}
-		count := nodeShardCount[nodeID]
-		if count >= maxPerNode {
-			continue
-		}
-		if count < bestCount {
-			bestCount = count
-			bestNode = node
+		k := key(node)
+		for s := 0; s < erasure_coding.MaxShardCount; s++ {
+			if !info.shardBits.Has(erasure_coding.ShardId(s)) {
+				continue
+			}
+			if s < dataShards {
+				dataPer[k] = append(dataPer[k], s)
+			} else {
+				parityPer[k] = append(parityPer[k], s)
+			}
 		}
 	}
+	return
+}
 
-	return bestNode
+// pickTarget selects a destination key (rack or node) with room for another
+// shard of a type, in two passes: first excluding anti-affinity targets, then
+// falling back to any valid target. Among valid targets it prefers the one
+// holding the fewest shards of this type; ties break on the (sorted) key order
+// of candidates, so selection is deterministic.
+func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTarget int, antiAffinity map[string]bool, hasFreeSlots, withinLimit func(string) bool) (string, bool) {
+	try := func(skipAnti bool) (string, bool) {
+		best := ""
+		bestCount := maxPerTarget + 1
+		for _, c := range candidates {
+			if skipAnti && antiAffinity[c] {
+				continue
+			}
+			if !hasFreeSlots(c) {
+				continue
+			}
+			if len(shardsPerTarget[c]) >= maxPerTarget {
+				continue
+			}
+			if !withinLimit(c) {
+				continue
+			}
+			if cnt := len(shardsPerTarget[c]); cnt < bestCount {
+				best, bestCount = c, cnt
+			}
+		}
+		return best, best != ""
+	}
+	if len(antiAffinity) > 0 {
+		if t, ok := try(true); ok {
+			return t, true
+		}
+	}
+	return try(false)
+}
+
+// releaseShardFromNode removes a shard of the volume from a node's in-memory
+// model (shardBits, the holding disk's bits, and that disk's occupancy/free
+// slots), so a two-pass run sees the source give up the shard.
+func releaseShardFromNode(node *ecNodeInfo, vid uint32, shardID int) {
+	info, ok := node.ecShards[vid]
+	if !ok {
+		return
+	}
+	sid := erasure_coding.ShardId(shardID)
+	for diskID, bits := range info.diskShardBits {
+		if bits.Has(sid) {
+			info.diskShardBits[diskID] = bits.Clear(sid)
+			if disk, ok := node.disks[diskID]; ok {
+				disk.ecShardCount--
+				disk.freeSlots++
+			}
+		}
+	}
+	info.shardBits = info.shardBits.Clear(sid)
+}
+
+func volumeShardCount(node *ecNodeInfo, vid uint32) int {
+	if info, ok := node.ecShards[vid]; ok {
+		return info.shardBits.Count()
+	}
+	return 0
+}
+
+// nodeInRackHoldingShard returns the (deterministically lowest-id) node in the
+// rack that holds the given shard of the volume.
+func nodeInRackHoldingShard(nodes map[string]*ecNodeInfo, rackID string, vid uint32, shardID int) *ecNodeInfo {
+	sid := erasure_coding.ShardId(shardID)
+	for _, id := range sortedNodeKeys(nodes) {
+		node := nodes[id]
+		if node.rack != rackID {
+			continue
+		}
+		if info, ok := node.ecShards[vid]; ok && info.shardBits.Has(sid) {
+			return node
+		}
+	}
+	return nil
+}
+
+func countShardsByRackForVolume(vid uint32, nodes map[string]*ecNodeInfo) map[string]int {
+	m := make(map[string]int)
+	for _, node := range nodes {
+		if info, ok := node.ecShards[vid]; ok {
+			m[node.rack] += info.shardBits.Count()
+		}
+	}
+	return m
+}
+
+func countShardsByNodeForVolume(vid uint32, nodes map[string]*ecNodeInfo) map[string]int {
+	m := make(map[string]int)
+	for id, node := range nodes {
+		if info, ok := node.ecShards[vid]; ok {
+			m[id] = info.shardBits.Count()
+		}
+	}
+	return m
+}
+
+func sortedRackKeys(racks map[string]*ecRackInfo) []string {
+	keys := make([]string, 0, len(racks))
+	for k := range racks {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedNodeKeys(nodes map[string]*ecNodeInfo) []string {
+	keys := make([]string, 0, len(nodes))
+	for k := range nodes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sumLens(m map[string][]int) int {
+	total := 0
+	for _, v := range m {
+		total += len(v)
+	}
+	return total
+}
+
+func removeInt(s []int, v int) []int {
+	for i, x := range s {
+		if x == v {
+			return append(s[:i], s[i+1:]...)
+		}
+	}
+	return s
 }
 
 // exceedsImbalanceThreshold checks if the distribution of counts exceeds the threshold.
