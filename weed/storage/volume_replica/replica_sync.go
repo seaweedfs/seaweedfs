@@ -1,4 +1,9 @@
-package shell
+// Package volume_replica reconciles regular (non-EC) volume replicas: it reads
+// per-replica status, builds the union of all live entries onto the most-complete
+// replica, and returns that replica. It is shared by the shell (volume.tier.move,
+// ec.encode, replica check) and the EC encode worker so a stale replica is never
+// used as the basis of an operation.
+package volume_replica
 
 import (
 	"bytes"
@@ -19,8 +24,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
-// VolumeReplicaStatus represents the status of a volume replica
-type VolumeReplicaStatus struct {
+// ReplicaStatus is the observed state of one volume replica.
+type ReplicaStatus struct {
 	Location         wdclient.Location
 	FileCount        uint64
 	FileDeletedCount uint64
@@ -29,12 +34,9 @@ type VolumeReplicaStatus struct {
 	Error            error
 }
 
-// getVolumeReplicaStatus retrieves the current status of a volume replica
-func getVolumeReplicaStatus(grpcDialOption grpc.DialOption, vid needle.VolumeId, location wdclient.Location) VolumeReplicaStatus {
-	status := VolumeReplicaStatus{
-		Location: location,
-	}
-
+// GetReplicaStatus retrieves the current status of a single volume replica.
+func GetReplicaStatus(grpcDialOption grpc.DialOption, vid needle.VolumeId, location wdclient.Location) ReplicaStatus {
+	status := ReplicaStatus{Location: location}
 	err := operation.WithVolumeServerClient(false, location.ServerAddress(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, reqErr := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: uint32(vid),
@@ -54,34 +56,52 @@ func getVolumeReplicaStatus(grpcDialOption grpc.DialOption, vid needle.VolumeId,
 	return status
 }
 
-// getVolumeReplicaStatuses retrieves status for all replicas of a volume in parallel
-func getVolumeReplicaStatuses(grpcDialOption grpc.DialOption, vid needle.VolumeId, locations []wdclient.Location) []VolumeReplicaStatus {
-	statuses := make([]VolumeReplicaStatus, len(locations))
+// GetReplicaStatuses retrieves status for all replicas of a volume in parallel.
+func GetReplicaStatuses(grpcDialOption grpc.DialOption, vid needle.VolumeId, locations []wdclient.Location) []ReplicaStatus {
+	statuses := make([]ReplicaStatus, len(locations))
 	var wg sync.WaitGroup
 	for i, location := range locations {
 		wg.Add(1)
 		go func(i int, location wdclient.Location) {
 			defer wg.Done()
-			statuses[i] = getVolumeReplicaStatus(grpcDialOption, vid, location)
+			statuses[i] = GetReplicaStatus(grpcDialOption, vid, location)
 		}(i, location)
 	}
 	wg.Wait()
 	return statuses
 }
 
-// replicaUnionBuilder builds a union replica by copying missing entries from other replicas
-type replicaUnionBuilder struct {
+// ReadNeedleMeta reads a needle's metadata (e.g. AppendAtNs) from a volume server.
+func ReadNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
+	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if resp, err = client.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(needleValue.Key),
+				Offset:   needleValue.Offset.ToActualOffset(),
+				Size:     int32(needleValue.Size),
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+	return
+}
+
+// unionBuilder builds a union replica by copying missing entries from other replicas.
+type unionBuilder struct {
 	grpcDialOption grpc.DialOption
 	writer         io.Writer
 	vid            needle.VolumeId
 	collection     string
 }
 
-// buildUnionReplica finds the largest replica and copies missing entries from other replicas into it.
-// If excludeFromSelection is non-empty, that server won't be selected as the target but will still
-// be used as a source for missing entries.
+// buildUnionReplica finds the largest replica and copies missing entries from other
+// replicas into it. If excludeFromSelection is non-empty, that server won't be
+// selected as the target but will still be used as a source for missing entries.
 // Returns the location of the union replica (the one that now has all entries).
-func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location, excludeFromSelection string) (wdclient.Location, int, error) {
+func (rub *unionBuilder) buildUnionReplica(locations []wdclient.Location, statuses []ReplicaStatus, excludeFromSelection string) (wdclient.Location, int, error) {
 	if len(locations) == 0 {
 		return wdclient.Location{}, 0, fmt.Errorf("no replicas available")
 	}
@@ -92,9 +112,8 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 		return locations[0], 0, nil
 	}
 
-	// Step 1: Find the largest replica (highest file count) that's not excluded
-	statuses := getVolumeReplicaStatuses(rub.grpcDialOption, rub.vid, locations)
-
+	// Step 1: Find the largest replica (highest file count) that's not excluded.
+	// statuses are supplied by the caller to avoid a redundant status RPC sweep.
 	bestIdx := -1
 	var bestFileCount uint64
 	for i, s := range statuses {
@@ -138,7 +157,6 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 			continue
 		}
 
-		// Read this replica's index
 		otherDB := needle_map.NewMemDb()
 		if otherDB == nil {
 			fmt.Fprintf(rub.writer, "  skipping %s: failed to allocate DB\n", loc.Url)
@@ -151,19 +169,21 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 			continue
 		}
 
-		// Find entries in other that are missing from best
 		var missingNeedles []needle_map.NeedleValue
-
 		otherDB.AscendingVisit(func(nv needle_map.NeedleValue) error {
 			if nv.Size.IsDeleted() {
 				return nil
 			}
 			if _, found := bestDB.Get(nv.Key); !found {
-				// Check if this entry was written too recently (after sync started)
-				// Skip entries written after sync started to avoid copying in-flight writes
-				if needleMeta, err := readNeedleMeta(rub.grpcDialOption, loc.ServerAddress(), uint32(rub.vid), nv); err == nil {
-					if needleMeta.AppendAtNs > cutoffFromAtNs {
-						return nil // Skip entries written after sync started
+				// Skip entries written after sync started to avoid copying in-flight
+				// writes. A read-only replica accepts no new writes, so the per-needle
+				// metadata RPC is unnecessary then (ec.encode/tier.move mark readonly
+				// before syncing).
+				if !statuses[i].IsReadOnly {
+					if needleMeta, err := ReadNeedleMeta(rub.grpcDialOption, loc.ServerAddress(), uint32(rub.vid), nv); err == nil {
+						if needleMeta.AppendAtNs > cutoffFromAtNs {
+							return nil
+						}
 					}
 				}
 				missingNeedles = append(missingNeedles, nv)
@@ -176,7 +196,6 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 			continue
 		}
 
-		// Copy missing entries from this replica to best replica
 		syncedFromThis := 0
 		for _, nv := range missingNeedles {
 			needleBlob, err := rub.readNeedleBlob(loc.ServerAddress(), nv)
@@ -190,7 +209,6 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 				continue
 			}
 
-			// Also add to bestDB so we don't copy duplicates from other replicas
 			bestDB.Set(nv.Key, nv.Offset, nv.Size)
 			syncedFromThis++
 		}
@@ -205,7 +223,7 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 	return bestLocation, totalSynced, nil
 }
 
-func (rub *replicaUnionBuilder) readIndexDatabase(db *needle_map.MemDb, server pb.ServerAddress) error {
+func (rub *unionBuilder) readIndexDatabase(db *needle_map.MemDb, server pb.ServerAddress) error {
 	var buf bytes.Buffer
 
 	err := operation.WithVolumeServerClient(true, server, rub.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -241,7 +259,7 @@ func (rub *replicaUnionBuilder) readIndexDatabase(db *needle_map.MemDb, server p
 	return db.LoadFilterFromReaderAt(bytes.NewReader(buf.Bytes()), true, false)
 }
 
-func (rub *replicaUnionBuilder) readNeedleBlob(server pb.ServerAddress, nv needle_map.NeedleValue) ([]byte, error) {
+func (rub *unionBuilder) readNeedleBlob(server pb.ServerAddress, nv needle_map.NeedleValue) ([]byte, error) {
 	var needleBlob []byte
 	err := operation.WithVolumeServerClient(false, server, rub.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, err := client.ReadNeedleBlob(context.Background(), &volume_server_pb.ReadNeedleBlobRequest{
@@ -258,7 +276,7 @@ func (rub *replicaUnionBuilder) readNeedleBlob(server pb.ServerAddress, nv needl
 	return needleBlob, err
 }
 
-func (rub *replicaUnionBuilder) writeNeedleBlob(server pb.ServerAddress, nv needle_map.NeedleValue, needleBlob []byte) error {
+func (rub *unionBuilder) writeNeedleBlob(server pb.ServerAddress, nv needle_map.NeedleValue, needleBlob []byte) error {
 	return operation.WithVolumeServerClient(false, server, rub.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		_, err := client.WriteNeedleBlob(context.Background(), &volume_server_pb.WriteNeedleBlobRequest{
 			VolumeId:   uint32(rub.vid),
@@ -270,20 +288,15 @@ func (rub *replicaUnionBuilder) writeNeedleBlob(server pb.ServerAddress, nv need
 	})
 }
 
-// syncAndSelectBestReplica finds the largest replica, copies missing entries from other replicas
-// into it to create a union, then returns this union replica for the operation.
-// If excludeFromSelection is non-empty, that server won't be selected but will still contribute entries.
-//
-// The process:
-// 1. Find the replica with the highest file count (the "best" one), excluding excludeFromSelection
-// 2. For each other replica, find entries missing from best and copy them to best
-// 3. Return the best replica which now contains the union of all entries
-func syncAndSelectBestReplica(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, locations []wdclient.Location, excludeFromSelection string, writer io.Writer) (wdclient.Location, error) {
+// SyncAndSelectBestReplica finds the largest replica, copies missing entries from
+// other replicas into it to create a union, then returns this union replica for the
+// operation. If excludeFromSelection is non-empty, that server won't be selected
+// but will still contribute entries. Already-consistent replica sets skip the sync.
+func SyncAndSelectBestReplica(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, locations []wdclient.Location, excludeFromSelection string, writer io.Writer) (wdclient.Location, error) {
 	if len(locations) == 0 {
 		return wdclient.Location{}, fmt.Errorf("no replicas available for volume %d", vid)
 	}
 
-	// Filter for checking consistency (exclude the excluded server)
 	var checkLocations []wdclient.Location
 	for _, loc := range locations {
 		if loc.Url != excludeFromSelection {
@@ -299,14 +312,12 @@ func syncAndSelectBestReplica(grpcDialOption grpc.DialOption, vid needle.VolumeI
 		return checkLocations[0], nil
 	}
 
-	// Check if replicas are already consistent (skip sync if so)
-	statuses := getVolumeReplicaStatuses(grpcDialOption, vid, locations)
-	var validStatuses []VolumeReplicaStatus
-	for i, s := range statuses {
+	// Check if replicas are already consistent (skip sync if so).
+	statuses := GetReplicaStatuses(grpcDialOption, vid, locations)
+	var validStatuses []ReplicaStatus
+	for _, s := range statuses {
 		if s.Error == nil {
-			// Include all for consistency check
 			validStatuses = append(validStatuses, s)
-			_ = i
 		}
 	}
 
@@ -319,7 +330,6 @@ func syncAndSelectBestReplica(grpcDialOption grpc.DialOption, vid needle.VolumeI
 			}
 		}
 		if allSame {
-			// All replicas are consistent, return the best non-excluded one
 			for _, s := range validStatuses {
 				if s.Location.Url != excludeFromSelection {
 					fmt.Fprintf(writer, "volume %d: all %d replicas are consistent (file count: %d)\n",
@@ -330,17 +340,16 @@ func syncAndSelectBestReplica(grpcDialOption grpc.DialOption, vid needle.VolumeI
 		}
 	}
 
-	// Replicas are inconsistent, build union on the best replica
 	fmt.Fprintf(writer, "volume %d: replicas are inconsistent, building union...\n", vid)
 
-	builder := &replicaUnionBuilder{
+	builder := &unionBuilder{
 		grpcDialOption: grpcDialOption,
 		writer:         writer,
 		vid:            vid,
 		collection:     collection,
 	}
 
-	unionLocation, totalSynced, err := builder.buildUnionReplica(locations, excludeFromSelection)
+	unionLocation, totalSynced, err := builder.buildUnionReplica(locations, statuses, excludeFromSelection)
 	if err != nil {
 		return wdclient.Location{}, fmt.Errorf("failed to build union replica: %w", err)
 	}

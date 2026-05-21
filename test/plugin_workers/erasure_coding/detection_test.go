@@ -207,8 +207,10 @@ func buildVolumeListResponse(t *testing.T, spec topologySpec, volumeID uint32) *
 	t.Helper()
 
 	volumeSizeLimitMB := uint64(100)
-	volumeSize := uint64(90) * 1024 * 1024
-	volumeModifiedAt := time.Now().Add(-10 * time.Minute).Unix()
+	// Exceed the default fullness (0.95) and quiet (1h) thresholds so volumes are
+	// EC-eligible.
+	volumeSize := uint64(96) * 1024 * 1024
+	volumeModifiedAt := time.Now().Add(-2 * time.Hour).Unix()
 
 	diskTypes := spec.diskTypes
 	if len(diskTypes) == 0 {

@@ -52,11 +52,18 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	skippedCollectionFilter := 0
 	skippedQuietTime := 0
 	skippedFullness := 0
+	skippedRemote := 0
+	skippedTooFewNodes := 0
 	consecutivePlanningFailures := 0
 
 	var planner *ecPlacementPlanner
 
 	allowedCollections := wildcard.CompileWildcardMatchers(ecConfig.CollectionFilter)
+
+	// Cluster node count for the min-node safety gate (mirrors the shell ec.encode
+	// guard that refuses to encode when nodes < parity shards, so shards cannot be
+	// spread for fault tolerance).
+	clusterNodeCount := countTopologyNodes(clusterInfo.ActiveTopology)
 
 	// Group metrics by VolumeID to handle replicas and select canonical server
 	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
@@ -160,6 +167,21 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		// Check collection filter if specified
 		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
 			skippedCollectionFilter++
+			continue
+		}
+
+		// Skip remote/tiered volumes: encoding them would lose the tiering. The
+		// shell ec.encode excludes remote volumes for the same reason.
+		if metric.HasRemoteCopy {
+			skippedRemote++
+			continue
+		}
+
+		// Min-node safety gate: don't encode when the cluster has fewer nodes than
+		// this collection's parity shards — shards could not be spread to tolerate
+		// failures. Mirrors the shell ec.encode guard (node count < parity shards).
+		if clusterNodeCount > 0 && clusterNodeCount < erasure_coding.ParityShardsCount {
+			skippedTooFewNodes++
 			continue
 		}
 
@@ -373,8 +395,8 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	// Log debug summary if no tasks were created
 	if len(results) == 0 && len(metrics) > 0 && !stoppedEarly {
 		totalVolumes := len(metrics)
-		glog.V(1).Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
-			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
+		glog.V(1).Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full, %d remote, %d too few nodes)",
+			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness, skippedRemote, skippedTooFewNodes)
 
 		// Show details for first few volumes
 		for i, metric := range metrics {
@@ -658,6 +680,25 @@ func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement
 
 // planECDestinations plans the destinations for erasure coding operation.
 // dataShards/parityShards are parameters so callers can drive non-10+4 ratios.
+// countTopologyNodes counts volume-server nodes in the active topology, used by
+// the min-node safety gate.
+func countTopologyNodes(at *topology.ActiveTopology) int {
+	if at == nil {
+		return 0
+	}
+	topo := at.GetTopologyInfo()
+	if topo == nil {
+		return 0
+	}
+	n := 0
+	for _, dc := range topo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			n += len(rack.DataNodeInfos)
+		}
+	}
+	return n
+}
+
 func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config, dataShards, parityShards int) (*topology.MultiDestinationPlan, error) {
 	if planner == nil || planner.activeTopology == nil {
 		return nil, fmt.Errorf("active topology not available for EC placement")

@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	storagetypes "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 	"google.golang.org/grpc"
@@ -35,12 +38,13 @@ type ErasureCodingTask struct {
 	grpcDialOption grpc.DialOption
 
 	// EC parameters
-	dataShards      int32
-	parityShards    int32
-	sourceDiskType  string                  // source volume's disk type, forwarded to Mount RPC (#9423)
-	targets         []*worker_pb.TaskTarget // Unified targets for EC shards
-	sources         []*worker_pb.TaskSource // Unified sources for cleanup
-	shardAssignment map[string][]string     // destination -> assigned shard types
+	dataShards       int32
+	parityShards     int32
+	sourceDiskType   string                  // source volume's disk type, forwarded to Mount RPC (#9423)
+	targets          []*worker_pb.TaskTarget // Unified targets for EC shards
+	sources          []*worker_pb.TaskSource // Unified sources for cleanup
+	shardAssignment  map[string][]string     // destination -> assigned shard types
+	readonlyReplicas []pb.ServerAddress      // replicas marked readonly, for rollback
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -146,11 +150,21 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		}
 	}()
 
-	// Step 1: Mark volume readonly
+	// Step 1: Mark all replicas readonly, then reconcile them and select the most
+	// complete replica as the encode source. Encoding a stale replica and then
+	// deleting the originals would silently lose entries that exist only on another
+	// replica; SyncAndSelectBestReplica builds the union onto the best replica first
+	// (mirrors the shell ec.encode best-replica selection).
 	t.ReportProgressWithStage(10.0, "Marking volume readonly")
 	t.GetLogger().Info("Marking volume readonly")
-	if err := t.markVolumeReadonly(ctx); err != nil {
+	if err := t.markReplicasReadonly(ctx); err != nil {
+		// Marking can fail partway; restore the replicas already marked readonly.
+		t.rollbackReadonly(ctx)
 		return fmt.Errorf("failed to mark volume readonly: %v", err)
+	}
+	if err := t.syncAndSelectSourceReplica(); err != nil {
+		t.rollbackReadonly(ctx)
+		return fmt.Errorf("failed to sync and select source replica: %v", err)
 	}
 
 	// Step 2: Copy volume files to worker
@@ -277,39 +291,87 @@ func (t *ErasureCodingTask) GetProgress() float64 {
 
 // Helper methods for actual EC operations
 
-// markVolumeReadonly marks the volume as readonly on the source server
-func (t *ErasureCodingTask) markVolumeReadonly(ctx context.Context) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
-				VolumeId: t.volumeID,
-			})
-			return err
-		})
+// replicaLocations returns the regular (non-EC) volume replica locations from the
+// task sources. EC-shard sources carry shard ids; regular replicas do not. Falls
+// back to the assigned source server when no replica sources are present.
+func (t *ErasureCodingTask) replicaLocations() []wdclient.Location {
+	var locs []wdclient.Location
+	for _, s := range t.sources {
+		if s == nil || len(s.ShardIds) > 0 || s.Node == "" {
+			continue
+		}
+		locs = append(locs, wdclient.Location{Url: s.Node, DataCenter: s.DataCenter})
+	}
+	if len(locs) == 0 {
+		locs = append(locs, wdclient.Location{Url: t.server})
+	}
+	return locs
 }
 
-// rollbackReadonly is a best-effort rollback of markVolumeReadonly, used when the
-// EC task fails before any shards are distributed. Logs but does not return errors.
-// Uses a fresh context with timeout since the caller's ctx may already be cancelled.
+// markReplicasReadonly marks every regular replica readonly so no writes land
+// during encoding, recording them so rollbackReadonly can restore them all.
+func (t *ErasureCodingTask) markReplicasReadonly(ctx context.Context) error {
+	t.readonlyReplicas = t.readonlyReplicas[:0]
+	for _, loc := range t.replicaLocations() {
+		addr := loc.ServerAddress()
+		err := operation.WithVolumeServerClient(false, addr, t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, e := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: t.volumeID})
+				return e
+			})
+		if err != nil {
+			return fmt.Errorf("mark volume %d readonly on %s: %w", t.volumeID, addr, err)
+		}
+		t.readonlyReplicas = append(t.readonlyReplicas, addr)
+	}
+	return nil
+}
+
+// syncAndSelectSourceReplica reconciles the volume's replicas (building the union
+// of all live entries onto the most complete one) and switches the encode source
+// to that replica, so a stale replica is never the basis of the encode.
+func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
+	locs := t.replicaLocations()
+	if len(locs) <= 1 {
+		return nil // single replica: nothing to reconcile
+	}
+	var buf bytes.Buffer
+	best, err := volume_replica.SyncAndSelectBestReplica(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, "", &buf)
+	if out := strings.TrimSpace(buf.String()); out != "" {
+		glog.Infof("EC encode replica sync for volume %d:\n%s", t.volumeID, out)
+	}
+	if err != nil {
+		return err
+	}
+	if best.Url != "" && best.Url != t.server {
+		glog.Infof("EC encode: using best replica %s as source for volume %d (was %s)", best.Url, t.volumeID, t.server)
+		t.server = best.Url
+	}
+	return nil
+}
+
+// rollbackReadonly is a best-effort restore of every replica markReplicasReadonly
+// touched, used when the EC task fails before the originals are deleted. Logs but
+// does not return errors; uses a fresh context since the caller's may be cancelled.
 func (t *ErasureCodingTask) rollbackReadonly(_ context.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := t.markVolumeWritable(ctx); err != nil {
-		glog.Warningf("failed to restore volume %d to writable after EC task failure: %v", t.volumeID, err)
-	} else {
-		glog.V(0).Infof("restored volume %d to writable after EC task failure", t.volumeID)
+	servers := t.readonlyReplicas
+	if len(servers) == 0 {
+		servers = []pb.ServerAddress{pb.ServerAddress(t.server)}
 	}
-}
-
-// markVolumeWritable restores the volume to writable on the source server.
-func (t *ErasureCodingTask) markVolumeWritable(ctx context.Context) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{
-				VolumeId: t.volumeID,
+	for _, addr := range servers {
+		err := operation.WithVolumeServerClient(false, addr, t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, e := client.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: t.volumeID})
+				return e
 			})
-			return err
-		})
+		if err != nil {
+			glog.Warningf("failed to restore volume %d to writable on %s after EC task failure: %v", t.volumeID, addr, err)
+		} else {
+			glog.V(0).Infof("restored volume %d to writable on %s after EC task failure", t.volumeID, addr)
+		}
+	}
 }
 
 // copyVolumeFilesToWorker copies .idx and .dat files from source server to local worker.

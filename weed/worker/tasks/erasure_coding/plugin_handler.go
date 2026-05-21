@@ -143,10 +143,10 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"quiet_for_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 300},
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3600},
 				},
 				"fullness_ratio": {
-					Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.8},
+					Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.95},
 				},
 				"min_size_mb": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
@@ -170,10 +170,10 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"quiet_for_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 300},
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3600},
 			},
 			"fullness_ratio": {
-				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.8},
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.95},
 			},
 			"min_size_mb": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
