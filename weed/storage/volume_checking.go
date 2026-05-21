@@ -29,14 +29,18 @@ func (v *Volume) openIndex() (*os.File, int64, error) {
 	}
 
 	if idxStat.Size() == 0 {
+		if v.DataBackend == nil {
+			idxFile.Close()
+			return nil, 0, fmt.Errorf("volume %v has no data backend", v.Id)
+		}
 		volumeFileSize, _, err := v.DataBackend.GetStat()
 		if err != nil {
 			idxFile.Close()
-			return nil, 0, fmt.Errorf("failed to stat storage for zero-size IDX volume %v", v.Id)
+			return nil, 0, fmt.Errorf("failed to stat storage for zero-size IDX volume %v: %w", v.Id, err)
 		}
 
 		// account for pre-allocated volumes (f.ex. after running "volume.grow") without data, as these
-		// are allowed to have zero-size indeces.
+		// are allowed to have zero-size indices.
 		if volumeFileSize > int64(super_block.SuperBlockSize) {
 			idxFile.Close()
 			return nil, 0, fmt.Errorf("zero-size IDX file for volume %v with store size %d", v.Id, volumeFileSize)
@@ -62,6 +66,10 @@ func (v *Volume) ScrubIndex() (int64, []error) {
 
 // scrubVolumeData checks a volume content + index for issues.
 func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []error) {
+	if v.DataBackend == nil {
+		return 0, []error{fmt.Errorf("volume %d has no data backend", v.Id)}
+	}
+
 	// full scrubbing means also scrubbing the index
 	var count int64
 	_, errs := idx.CheckIndexFile(idxFile, idxFileSize, v.Version())
