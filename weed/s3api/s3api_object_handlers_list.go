@@ -302,16 +302,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
-					if originalPrefix != "" {
-						normalizedPrefix := strings.TrimPrefix(strings.TrimSuffix(originalPrefix, "/"), "/")
-						if normalizedPrefix != "" {
-							relativePath := strings.TrimPrefix(fmt.Sprintf("%s/%s", dir, entry.Name), bucketPrefix)
-							relativePath = strings.TrimPrefix(relativePath, "/")
-							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) && !entry.IsDirectoryKeyObject() {
-								return
-							}
-						}
-					}
 					// When delimiter is specified, apply delimiter logic to directory key objects too
 					if delimiter != "" && entry.IsDirectoryKeyObject() {
 						// Apply the same delimiter logic as for regular files
@@ -679,19 +669,32 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
-					if entry.IsDirectoryKeyObject() {
-						eachEntryFn(dir, entry)
-					}
-				} else if entry.IsDirectoryKeyObject() {
+				}
+				isKeyObject := entry.IsDirectoryKeyObject()
+				if isKeyObject {
 					// Directory key objects (created via PutObject with trailing "/")
 					// must appear as regular keys in recursive listing mode.
 					eachEntryFn(dir, entry)
 				}
-				// Recurse into subdirectory to list any children
-				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
+				// Recurse into subdirectory to list any children, noting whether the
+				// subtree produced any entries.
+				childEmitted := false
+				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, func(d string, e *filer_pb.Entry) {
+					childEmitted = true
+					eachEntryFn(d, e)
+				})
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
 					return
+				}
+				// A real but empty directory (created out of band via mount, mkdir or
+				// the filer API, so it carries no MIME) is otherwise invisible to S3
+				// clients that detect directories by listing. Surface it as a directory
+				// marker, identical to directories created via PutObject with a trailing
+				// "/", so tools like hadoop-aws can find it.
+				if !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
+					entry.Attributes.Mime = s3_constants.FolderMimeType
+					eachEntryFn(dir, entry)
 				}
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
 				nextMarker = entry.Name + "/" + subNextMarker
