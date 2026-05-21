@@ -20,6 +20,15 @@ type Topology struct {
 	nodes map[string]*Node
 }
 
+// volKey identifies an EC volume by (collection, id). A numeric volume id can be
+// reused across collections, so the collection is part of the identity (see
+// weed/storage/store_ec_attach_reservation.go); keying shards by id alone would
+// merge unrelated volumes and could dedup/move shards across collections.
+type volKey struct {
+	collection string
+	vid        uint32
+}
+
 // Node is a volume server in the snapshot. Fields are set through the builder
 // methods; only its identity is read back (via Move).
 type Node struct {
@@ -28,7 +37,7 @@ type Node struct {
 	rack      string // composite rack key (e.g. "dc1:rack1")
 	freeSlots int
 	disks     map[uint32]*disk
-	shards    map[uint32]*volumeShards
+	shards    map[volKey]*volumeShards
 }
 
 type disk struct {
@@ -110,7 +119,7 @@ func (t *Topology) AddNode(id, dc, rackKey string, freeSlots int) *Node {
 		rack:      rackKey,
 		freeSlots: freeSlots,
 		disks:     make(map[uint32]*disk),
-		shards:    make(map[uint32]*volumeShards),
+		shards:    make(map[volKey]*volumeShards),
 	}
 	t.nodes[id] = n
 	return n
@@ -127,10 +136,11 @@ func (n *Node) AddDisk(diskID uint32, diskType string, freeSlots, shardCount int
 // only for the volumes that should be balanced; the disk's overall occupancy is
 // reported separately via AddDisk.
 func (n *Node) AddShards(vid uint32, collection string, diskID uint32, bits erasure_coding.ShardBits) {
-	vs, ok := n.shards[vid]
+	key := volKey{collection: collection, vid: vid}
+	vs, ok := n.shards[key]
 	if !ok {
 		vs = &volumeShards{collection: collection, diskShardBits: make(map[uint32]erasure_coding.ShardBits)}
-		n.shards[vid] = vs
+		n.shards[key] = vs
 	}
 	vs.shardBits |= bits
 	vs.diskShardBits[diskID] |= bits
@@ -154,18 +164,16 @@ func Plan(topo *Topology, opts Options) []Move {
 	nodes := topo.nodes
 	racks := buildRacks(nodes)
 
-	// Group volume IDs by collection (deterministic order), and resolve each
-	// collection's data-shard count once for the global phase's disk scoring.
-	byCollection := make(map[string][]uint32)
-	seen := make(map[string]map[uint32]bool)
+	// Group volumes by collection (deterministic order), keyed by (collection, id)
+	// so volumes that reuse a numeric id across collections stay distinct. Resolve
+	// each collection's data-shard count once for the global phase's disk scoring.
+	byCollection := make(map[string][]volKey)
+	seen := make(map[volKey]bool)
 	for _, n := range nodes {
-		for vid, vs := range n.shards {
-			if seen[vs.collection] == nil {
-				seen[vs.collection] = make(map[uint32]bool)
-			}
-			if !seen[vs.collection][vid] {
-				seen[vs.collection][vid] = true
-				byCollection[vs.collection] = append(byCollection[vs.collection], vid)
+		for vk := range n.shards {
+			if !seen[vk] {
+				seen[vk] = true
+				byCollection[vk.collection] = append(byCollection[vk.collection], vk)
 			}
 		}
 	}
@@ -173,7 +181,7 @@ func Plan(topo *Topology, opts Options) []Move {
 	dataShardsByCollection := make(map[string]int)
 	for c := range byCollection {
 		collections = append(collections, c)
-		sort.Slice(byCollection[c], func(i, j int) bool { return byCollection[c][i] < byCollection[c][j] })
+		sort.Slice(byCollection[c], func(i, j int) bool { return byCollection[c][i].vid < byCollection[c][j].vid })
 		d, _ := ratio(c)
 		dataShardsByCollection[c] = d
 	}
@@ -183,18 +191,18 @@ func Plan(topo *Topology, opts Options) []Move {
 	for _, collection := range collections {
 		dataShards, parityShards := ratio(collection)
 
-		for _, vid := range byCollection[collection] {
-			m := detectDuplicateShards(vid, collection, nodes)
+		for _, vk := range byCollection[collection] {
+			m := detectDuplicateShards(vk, nodes)
 			applyMovesToTopology(m)
 			all = append(all, m...)
 		}
-		for _, vid := range byCollection[collection] {
-			m := detectCrossRackImbalance(vid, collection, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
+		for _, vk := range byCollection[collection] {
+			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
 			applyMovesToTopology(m)
 			all = append(all, m...)
 		}
-		for _, vid := range byCollection[collection] {
-			m := detectWithinRackImbalance(vid, collection, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
+		for _, vk := range byCollection[collection] {
+			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
 			applyMovesToTopology(m)
 			all = append(all, m...)
 		}
@@ -236,10 +244,10 @@ func buildRacks(nodes map[string]*Node) map[string]*rack {
 
 // detectDuplicateShards finds shards present on more than one node and proposes
 // deleting all copies but the one on the node with the most free slots.
-func detectDuplicateShards(vid uint32, collection string, nodes map[string]*Node) []*move {
+func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 	shardLocations := make(map[int][]*Node)
 	for _, node := range nodes {
-		info, ok := node.shards[vid]
+		info, ok := node.shards[vk]
 		if !ok {
 			continue
 		}
@@ -267,13 +275,13 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*Node
 		})
 		for _, node := range locs[:len(locs)-1] {
 			moves = append(moves, &move{
-				volumeID:   vid,
+				volumeID:   vk.vid,
 				shardID:    shardID,
-				collection: collection,
+				collection: vk.collection,
 				source:     node,
-				sourceDisk: shardDiskID(node, vid, shardID),
+				sourceDisk: shardDiskID(node, vk, shardID),
 				target:     node,
-				targetDisk: shardDiskID(node, vid, shardID),
+				targetDisk: shardDiskID(node, vk, shardID),
 				phase:      "dedup",
 			})
 		}
@@ -284,7 +292,7 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*Node
 // detectCrossRackImbalance spreads a volume's shards across racks in two passes
 // (data, then parity with anti-affinity to data-bearing racks). Returns nil if
 // the overall distribution is below the imbalance threshold.
-func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
+func detectCrossRackImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
 	numRacks := len(racks)
 	if numRacks <= 1 {
 		return nil
@@ -292,32 +300,32 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*N
 
 	// Gate on per-type spread: act when data OR parity shards are unevenly
 	// distributed across racks, even if the per-rack totals happen to be even.
-	gateData, gateParity := shardsByGroup(vid, nodes, dataShards, func(n *Node) string { return n.rack })
+	gateData, gateParity := shardsByGroup(vk, nodes, dataShards, func(n *Node) string { return n.rack })
 	if !typeImbalanced(gateData, numRacks, threshold) && !typeImbalanced(gateParity, numRacks, threshold) {
 		return nil
 	}
 
-	rackShardCount := countShardsByRack(vid, nodes)
+	rackShardCount := countShardsByRack(vk, nodes)
 	var moves []*move
 
-	dataPerRack, _ := shardsByGroup(vid, nodes, dataShards, func(n *Node) string { return n.rack })
-	moves = append(moves, balanceShardTypeAcrossRacks(vid, collection, nodes, racks, diskType, dataShards,
+	dataPerRack, _ := shardsByGroup(vk, nodes, dataShards, func(n *Node) string { return n.rack })
+	moves = append(moves, balanceShardTypeAcrossRacks(vk, nodes, racks, diskType, dataShards,
 		dataPerRack, rackShardCount, ceilDivide(dataShards, numRacks), nil, rp)...)
 
-	dataPerRack, parityPerRack := shardsByGroup(vid, nodes, dataShards, func(n *Node) string { return n.rack })
+	dataPerRack, parityPerRack := shardsByGroup(vk, nodes, dataShards, func(n *Node) string { return n.rack })
 	antiAffinity := make(map[string]bool)
 	for rackID, shards := range dataPerRack {
 		if len(shards) > 0 {
 			antiAffinity[rackID] = true
 		}
 	}
-	moves = append(moves, balanceShardTypeAcrossRacks(vid, collection, nodes, racks, diskType, dataShards,
+	moves = append(moves, balanceShardTypeAcrossRacks(vk, nodes, racks, diskType, dataShards,
 		parityPerRack, rackShardCount, ceilDivide(parityShards, numRacks), antiAffinity, rp)...)
 
 	return moves
 }
 
-func balanceShardTypeAcrossRacks(vid uint32, collection string, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards int, shardsPerRack map[string][]int, rackShardCount map[string]int, maxPerRack int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
+func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards int, shardsPerRack map[string][]int, rackShardCount map[string]int, maxPerRack int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
 	if maxPerRack < 1 {
 		maxPerRack = 1
 	}
@@ -335,7 +343,7 @@ func balanceShardTypeAcrossRacks(vid uint32, collection string, nodes map[string
 		}
 		sort.Ints(shards)
 		for i := 0; i < len(shards)-maxPerRack; i++ {
-			if src := nodeInRackHoldingShard(nodes, rackID, vid, shards[i]); src != nil {
+			if src := nodeInRackHoldingShard(nodes, rackID, vk, shards[i]); src != nil {
 				toMove = append(toMove, pending{shards[i], src})
 			}
 		}
@@ -354,23 +362,23 @@ func balanceShardTypeAcrossRacks(vid uint32, collection string, nodes map[string
 		if !ok {
 			continue
 		}
-		destNode := pickNodeInRack(racks[destRack], vid, rp)
+		destNode := pickNodeInRack(racks[destRack], vk, rp)
 		if destNode == nil {
 			continue
 		}
-		destDisk := pickBestDiskOnNode(destNode, vid, diskType, pm.shardID, dataShards)
+		destDisk := pickBestDiskOnNode(destNode, vk, diskType, pm.shardID, dataShards)
 		moves = append(moves, &move{
-			volumeID:   vid,
+			volumeID:   vk.vid,
 			shardID:    pm.shardID,
-			collection: collection,
+			collection: vk.collection,
 			source:     pm.src,
-			sourceDisk: shardDiskID(pm.src, vid, pm.shardID),
+			sourceDisk: shardDiskID(pm.src, vk, pm.shardID),
 			target:     destNode,
 			targetDisk: destDisk,
 			phase:      "cross_rack",
 		})
-		releaseShard(pm.src, vid, pm.shardID)
-		reserveShard(destNode, vid, collection, pm.shardID, destDisk)
+		releaseShard(pm.src, vk, pm.shardID)
+		reserveShard(destNode, vk, pm.shardID, destDisk)
 		srcRack := pm.src.rack
 		shardsPerRack[destRack] = append(shardsPerRack[destRack], pm.shardID)
 		shardsPerRack[srcRack] = removeInt(shardsPerRack[srcRack], pm.shardID)
@@ -386,7 +394,7 @@ func balanceShardTypeAcrossRacks(vid uint32, collection string, nodes map[string
 	return moves
 }
 
-func pickNodeInRack(r *rack, vid uint32, rp *super_block.ReplicaPlacement) *Node {
+func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node {
 	var best *Node
 	bestCount := -1
 	for _, id := range sortedNodeKeys(r.nodes) {
@@ -394,7 +402,7 @@ func pickNodeInRack(r *rack, vid uint32, rp *super_block.ReplicaPlacement) *Node
 		if node.freeSlots <= 0 {
 			continue
 		}
-		count := volumeShardCount(node, vid)
+		count := volumeShardCount(node, vk)
 		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount+1 {
 			continue
 		}
@@ -407,7 +415,7 @@ func pickNodeInRack(r *rack, vid uint32, rp *super_block.ReplicaPlacement) *Node
 
 // detectWithinRackImbalance spreads a volume's shards across the nodes of each
 // rack, again data then parity with anti-affinity.
-func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
+func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
 	var moves []*move
 
 	for _, rackID := range sortedKeys(racks) {
@@ -418,31 +426,31 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 
 		numNodes := len(r.nodes)
 		// Gate on per-type spread across the rack's nodes (see cross-rack phase).
-		gateData, gateParity := shardsByGroup(vid, r.nodes, dataShards, func(n *Node) string { return n.id })
+		gateData, gateParity := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
 		if !typeImbalanced(gateData, numNodes, threshold) && !typeImbalanced(gateParity, numNodes, threshold) {
 			continue
 		}
-		nodeShardCount := countShardsByNode(vid, r.nodes)
+		nodeShardCount := countShardsByNode(vk, r.nodes)
 
-		dataPerNode, _ := shardsByGroup(vid, r.nodes, dataShards, func(n *Node) string { return n.id })
-		moves = append(moves, balanceShardTypeAcrossNodes(vid, collection, r, diskType, dataShards,
+		dataPerNode, _ := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
+		moves = append(moves, balanceShardTypeAcrossNodes(vk, r, diskType, dataShards,
 			dataPerNode, nodeShardCount, ceilDivide(sumLens(dataPerNode), numNodes), nil, rp)...)
 
-		dataPerNode, parityPerNode := shardsByGroup(vid, r.nodes, dataShards, func(n *Node) string { return n.id })
+		dataPerNode, parityPerNode := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
 		antiAffinity := make(map[string]bool)
 		for nodeID, shards := range dataPerNode {
 			if len(shards) > 0 {
 				antiAffinity[nodeID] = true
 			}
 		}
-		moves = append(moves, balanceShardTypeAcrossNodes(vid, collection, r, diskType, dataShards,
+		moves = append(moves, balanceShardTypeAcrossNodes(vk, r, diskType, dataShards,
 			parityPerNode, nodeShardCount, ceilDivide(sumLens(parityPerNode), numNodes), antiAffinity, rp)...)
 	}
 
 	return moves
 }
 
-func balanceShardTypeAcrossNodes(vid uint32, collection string, r *rack, diskType string, dataShards int, shardsPerNode map[string][]int, nodeShardCount map[string]int, maxPerNode int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
+func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards int, shardsPerNode map[string][]int, nodeShardCount map[string]int, maxPerNode int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
 	if maxPerNode < 1 {
 		maxPerNode = 1
 	}
@@ -479,19 +487,19 @@ func balanceShardTypeAcrossNodes(vid uint32, collection string, r *rack, diskTyp
 			continue
 		}
 		destNode := r.nodes[destID]
-		destDisk := pickBestDiskOnNode(destNode, vid, diskType, pm.shardID, dataShards)
+		destDisk := pickBestDiskOnNode(destNode, vk, diskType, pm.shardID, dataShards)
 		moves = append(moves, &move{
-			volumeID:   vid,
+			volumeID:   vk.vid,
 			shardID:    pm.shardID,
-			collection: collection,
+			collection: vk.collection,
 			source:     pm.src,
-			sourceDisk: shardDiskID(pm.src, vid, pm.shardID),
+			sourceDisk: shardDiskID(pm.src, vk, pm.shardID),
 			target:     destNode,
 			targetDisk: destDisk,
 			phase:      "within_rack",
 		})
-		releaseShard(pm.src, vid, pm.shardID)
-		reserveShard(destNode, vid, collection, pm.shardID, destDisk)
+		releaseShard(pm.src, vk, pm.shardID)
+		reserveShard(destNode, vk, pm.shardID, destDisk)
 		shardsPerNode[destID] = append(shardsPerNode[destID], pm.shardID)
 		shardsPerNode[pm.src.id] = removeInt(shardsPerNode[pm.src.id], pm.shardID)
 		nodeShardCount[destID]++
@@ -589,12 +597,12 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 			// (pass 1), to keep each volume's shards spread across nodes.
 			moved := false
 			for pass := 0; pass < 2 && !moved; pass++ {
-				for _, vid := range sortedVolumeKeys(maxNode.shards) {
+				for _, vk := range sortedVolumeKeys(maxNode.shards) {
 					if moved {
 						break
 					}
-					info := maxNode.shards[vid]
-					minInfo := minNode.shards[vid]
+					info := maxNode.shards[vk]
+					minInfo := minNode.shards[vk]
 					volumeOnMin := minInfo != nil && minInfo.shardBits != 0
 					if pass == 0 && volumeOnMin {
 						continue // pass 0: only volumes absent from the destination
@@ -612,17 +620,17 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 						if minInfo != nil && minInfo.shardBits.Has(sid) {
 							continue
 						}
-						dataShards := dataShardsByCollection[info.collection]
+						dataShards := dataShardsByCollection[vk.collection]
 						if dataShards <= 0 {
 							dataShards = erasure_coding.DataShardsCount
 						}
-						destDisk := pickBestDiskOnNode(minNode, vid, diskType, shardID, dataShards)
+						destDisk := pickBestDiskOnNode(minNode, vk, diskType, shardID, dataShards)
 						moves = append(moves, &move{
-							volumeID:   vid,
+							volumeID:   vk.vid,
 							shardID:    shardID,
-							collection: info.collection,
+							collection: vk.collection,
 							source:     maxNode,
-							sourceDisk: shardDiskID(maxNode, vid, shardID),
+							sourceDisk: shardDiskID(maxNode, vk, shardID),
 							target:     minNode,
 							targetDisk: destDisk,
 							phase:      "global",
@@ -631,7 +639,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 						for diskID := range info.diskShardBits {
 							info.diskShardBits[diskID] = info.diskShardBits[diskID].Clear(sid)
 						}
-						reserveShard(minNode, vid, info.collection, shardID, destDisk)
+						reserveShard(minNode, vk, shardID, destDisk)
 						nodeShardCounts[maxNode.id]--
 						nodeShardCounts[minNode.id]++
 						maxNode.freeSlots++
@@ -652,11 +660,11 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 
 // shardsByGroup classifies a volume's shards into data (id < dataShards) and
 // parity buckets, grouped by key(node).
-func shardsByGroup(vid uint32, nodes map[string]*Node, dataShards int, key func(*Node) string) (dataPer, parityPer map[string][]int) {
+func shardsByGroup(vk volKey, nodes map[string]*Node, dataShards int, key func(*Node) string) (dataPer, parityPer map[string][]int) {
 	dataPer = make(map[string][]int)
 	parityPer = make(map[string][]int)
 	for _, node := range nodes {
-		info, ok := node.shards[vid]
+		info, ok := node.shards[vk]
 		if !ok {
 			continue
 		}
@@ -714,12 +722,12 @@ func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTar
 // volume: matching disk type with free capacity, preferring fewer total shards,
 // far fewer shards of the same volume, and data/parity anti-affinity. Returns 0
 // ("server picks") when no disk info or no disk with capacity.
-func pickBestDiskOnNode(node *Node, vid uint32, diskType string, shardID, dataShardCount int) uint32 {
+func pickBestDiskOnNode(node *Node, vk volKey, diskType string, shardID, dataShardCount int) uint32 {
 	if len(node.disks) == 0 {
 		return 0
 	}
 	isDataShard := dataShardCount > 0 && shardID < dataShardCount
-	info := node.shards[vid]
+	info := node.shards[vk]
 
 	var bestDiskID uint32
 	bestScore := -1
@@ -769,8 +777,8 @@ func pickBestDiskOnNode(node *Node, vid uint32, diskType string, shardID, dataSh
 }
 
 // shardDiskID returns the disk holding the given shard of the volume, or 0.
-func shardDiskID(node *Node, vid uint32, shardID int) uint32 {
-	info, ok := node.shards[vid]
+func shardDiskID(node *Node, vk volKey, shardID int) uint32 {
+	info, ok := node.shards[vk]
 	if !ok {
 		return 0
 	}
@@ -785,11 +793,11 @@ func shardDiskID(node *Node, vid uint32, shardID int) uint32 {
 
 // reserveShard records a just-planned placement on the destination so later picks
 // in the same run spread across disks/nodes.
-func reserveShard(node *Node, vid uint32, collection string, shardID int, diskID uint32) {
-	info, ok := node.shards[vid]
+func reserveShard(node *Node, vk volKey, shardID int, diskID uint32) {
+	info, ok := node.shards[vk]
 	if !ok {
-		info = &volumeShards{collection: collection, diskShardBits: make(map[uint32]erasure_coding.ShardBits)}
-		node.shards[vid] = info
+		info = &volumeShards{collection: vk.collection, diskShardBits: make(map[uint32]erasure_coding.ShardBits)}
+		node.shards[vk] = info
 	}
 	if info.diskShardBits == nil {
 		info.diskShardBits = make(map[uint32]erasure_coding.ShardBits)
@@ -806,8 +814,8 @@ func reserveShard(node *Node, vid uint32, collection string, shardID int, diskID
 }
 
 // releaseShard removes a shard of the volume from a node's model.
-func releaseShard(node *Node, vid uint32, shardID int) {
-	info, ok := node.shards[vid]
+func releaseShard(node *Node, vk volKey, shardID int) {
+	info, ok := node.shards[vk]
 	if !ok {
 		return
 	}
@@ -828,17 +836,18 @@ func releaseShard(node *Node, vid uint32, shardID int) {
 func applyMovesToTopology(moves []*move) {
 	for _, m := range moves {
 		sid := erasure_coding.ShardId(m.shardID)
-		if srcInfo, ok := m.source.shards[m.volumeID]; ok {
+		vk := volKey{collection: m.collection, vid: m.volumeID}
+		if srcInfo, ok := m.source.shards[vk]; ok {
 			srcInfo.shardBits = srcInfo.shardBits.Clear(sid)
 			for diskID := range srcInfo.diskShardBits {
 				srcInfo.diskShardBits[diskID] = srcInfo.diskShardBits[diskID].Clear(sid)
 			}
 		}
 		if m.source.id != m.target.id {
-			dstInfo, ok := m.target.shards[m.volumeID]
+			dstInfo, ok := m.target.shards[vk]
 			if !ok {
 				dstInfo = &volumeShards{collection: m.collection, diskShardBits: make(map[uint32]erasure_coding.ShardBits)}
-				m.target.shards[m.volumeID] = dstInfo
+				m.target.shards[vk] = dstInfo
 			}
 			if dstInfo.diskShardBits == nil {
 				dstInfo.diskShardBits = make(map[uint32]erasure_coding.ShardBits)
@@ -849,41 +858,41 @@ func applyMovesToTopology(moves []*move) {
 	}
 }
 
-func volumeShardCount(node *Node, vid uint32) int {
-	if info, ok := node.shards[vid]; ok {
+func volumeShardCount(node *Node, vk volKey) int {
+	if info, ok := node.shards[vk]; ok {
 		return info.shardBits.Count()
 	}
 	return 0
 }
 
-func nodeInRackHoldingShard(nodes map[string]*Node, rackID string, vid uint32, shardID int) *Node {
+func nodeInRackHoldingShard(nodes map[string]*Node, rackID string, vk volKey, shardID int) *Node {
 	sid := erasure_coding.ShardId(shardID)
 	for _, id := range sortedNodeKeys(nodes) {
 		node := nodes[id]
 		if node.rack != rackID {
 			continue
 		}
-		if info, ok := node.shards[vid]; ok && info.shardBits.Has(sid) {
+		if info, ok := node.shards[vk]; ok && info.shardBits.Has(sid) {
 			return node
 		}
 	}
 	return nil
 }
 
-func countShardsByRack(vid uint32, nodes map[string]*Node) map[string]int {
+func countShardsByRack(vk volKey, nodes map[string]*Node) map[string]int {
 	m := make(map[string]int)
 	for _, node := range nodes {
-		if info, ok := node.shards[vid]; ok {
+		if info, ok := node.shards[vk]; ok {
 			m[node.rack] += info.shardBits.Count()
 		}
 	}
 	return m
 }
 
-func countShardsByNode(vid uint32, nodes map[string]*Node) map[string]int {
+func countShardsByNode(vk volKey, nodes map[string]*Node) map[string]int {
 	m := make(map[string]int)
 	for id, node := range nodes {
-		if info, ok := node.shards[vid]; ok {
+		if info, ok := node.shards[vk]; ok {
 			m[id] = info.shardBits.Count()
 		}
 	}
@@ -912,12 +921,17 @@ func sortedDiskKeys[T any](m map[uint32]T) []uint32 {
 	return keys
 }
 
-func sortedVolumeKeys(m map[uint32]*volumeShards) []uint32 {
-	keys := make([]uint32, 0, len(m))
+func sortedVolumeKeys(m map[volKey]*volumeShards) []volKey {
+	keys := make([]volKey, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].vid != keys[j].vid {
+			return keys[i].vid < keys[j].vid
+		}
+		return keys[i].collection < keys[j].collection
+	})
 	return keys
 }
 

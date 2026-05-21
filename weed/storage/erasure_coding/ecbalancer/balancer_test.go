@@ -30,13 +30,14 @@ func ratio(d, p int) func(string) (int, int) {
 func TestPickBestDiskOnNode(t *testing.T) {
 	const vid = uint32(100)
 	const ds = erasure_coding.DataShardsCount
+	vk := volKey{collection: "c", vid: vid}
 
 	t.Run("skips disks with no free slots", func(t *testing.T) {
 		topo := NewTopology()
 		n := topo.AddNode("n1", "dc1", "dc1:r1", 100)
 		n.AddDisk(1, "", 0, 0)
 		n.AddDisk(2, "", 10, 0)
-		if got := pickBestDiskOnNode(n, vid, "", 0, ds); got != 2 {
+		if got := pickBestDiskOnNode(n, vk, "", 0, ds); got != 2 {
 			t.Errorf("got disk %d, want 2", got)
 		}
 	})
@@ -47,7 +48,7 @@ func TestPickBestDiskOnNode(t *testing.T) {
 		n.AddDisk(1, "", 10, 1)
 		n.AddDisk(2, "", 10, 0)
 		n.AddShards(vid, "c", 1, bits(0))
-		if got := pickBestDiskOnNode(n, vid, "", 5, ds); got != 2 {
+		if got := pickBestDiskOnNode(n, vk, "", 5, ds); got != 2 {
 			t.Errorf("got disk %d, want 2 (disk 1 already holds this volume)", got)
 		}
 	})
@@ -58,7 +59,7 @@ func TestPickBestDiskOnNode(t *testing.T) {
 		n.AddDisk(1, "", 10, 1)
 		n.AddDisk(2, "", 10, 0)
 		n.AddShards(vid, "c", 1, bits(ds)) // parity on disk 1
-		if got := pickBestDiskOnNode(n, vid, "", 0, ds); got != 2 {
+		if got := pickBestDiskOnNode(n, vk, "", 0, ds); got != 2 {
 			t.Errorf("got disk %d, want 2 (anti-affinity)", got)
 		}
 	})
@@ -70,10 +71,10 @@ func TestPickBestDiskOnNode(t *testing.T) {
 		n.AddDisk(2, "", 10, 2)
 		n.AddShards(vid, "c", 1, bits(7)) // parity at 6+3
 		n.AddShards(vid, "c", 2, bits(2)) // data
-		if got := pickBestDiskOnNode(n, vid, "", 1, 6); got != 2 {
+		if got := pickBestDiskOnNode(n, vk, "", 1, 6); got != 2 {
 			t.Errorf("ratio 6: got disk %d, want 2", got)
 		}
-		if got := pickBestDiskOnNode(n, vid, "", 1, erasure_coding.DataShardsCount); got != 1 {
+		if got := pickBestDiskOnNode(n, vk, "", 1, erasure_coding.DataShardsCount); got != 1 {
 			t.Errorf("boundary 10: got disk %d, want 1", got)
 		}
 	})
@@ -83,7 +84,7 @@ func TestPickBestDiskOnNode(t *testing.T) {
 		n := topo.AddNode("n1", "dc1", "dc1:r1", 100)
 		n.AddDisk(1, "ssd", 10, 0)
 		n.AddDisk(2, "hdd", 10, 0)
-		if got := pickBestDiskOnNode(n, vid, "hdd", 0, ds); got != 2 {
+		if got := pickBestDiskOnNode(n, vk, "hdd", 0, ds); got != 2 {
 			t.Errorf("got disk %d, want 2 (only hdd)", got)
 		}
 	})
@@ -176,7 +177,7 @@ func TestWithinRackParityAntiAffinity(t *testing.T) {
 	addEmptyNode(topo, "node3", "dc1:rack1")
 
 	racks := buildRacks(topo.nodes)
-	moves := detectWithinRackImbalance(100, "col1", topo.nodes, racks, "", 0.01, 1, 2, nil)
+	moves := detectWithinRackImbalance(volKey{collection: "col1", vid: 100}, topo.nodes, racks, "", 0.01, 1, 2, nil)
 	if len(moves) == 0 {
 		t.Fatal("expected parity moves within rack")
 	}
@@ -370,6 +371,26 @@ func TestGlobalPrefersVolumeAbsentFromDestination(t *testing.T) {
 	for _, m := range moves {
 		if m.source.id != "node1" || m.target.id != "node2" {
 			t.Errorf("move %+v, want node1->node2", m)
+		}
+	}
+}
+
+// TestPlanKeepsCollectionsWithSameVolumeIdDistinct guards EC identity: a numeric
+// volume id reused across collections must not be merged. (A,5) on node1 and
+// (B,5) on node2 are different volumes, so neither dedup nor any move should
+// treat them as copies of one another.
+func TestPlanKeepsCollectionsWithSameVolumeIdDistinct(t *testing.T) {
+	topo := NewTopology()
+	n1 := topo.AddNode("node1", "dc1", "dc1:rack1", 100)
+	n1.AddDisk(0, "", 100, 1)
+	n1.AddShards(5, "A", 0, bits(0))
+	n2 := topo.AddNode("node2", "dc1", "dc1:rack2", 100)
+	n2.AddDisk(0, "", 100, 1)
+	n2.AddShards(5, "B", 0, bits(0))
+
+	for _, m := range Plan(topo, Options{ImbalanceThreshold: 0.01, Ratio: ratio(10, 4)}) {
+		if m.Phase == "dedup" {
+			t.Errorf("dedup %+v: (A,5) and (B,5) are different volumes and must not be deduped", m)
 		}
 	}
 }
