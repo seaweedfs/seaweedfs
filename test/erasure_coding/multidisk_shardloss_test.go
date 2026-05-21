@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/stretchr/testify/assert"
@@ -72,25 +73,37 @@ func TestMultiDiskECBalanceNoShardLoss(t *testing.T) {
 	t.Logf("using volume %d", volumeId)
 	time.Sleep(3 * time.Second)
 
-	// Populate every server's disks with volumes so the balancer can see and
-	// target each physical disk. The master only enumerates disks that already
-	// hold a volume or EC shard — an empty disk leaves no trace in the topology
-	// (heartbeats aggregate capacity per disk type, not per physical disk). So
-	// without pre-populating, the post-encode balance would collapse each node's
-	// shards onto the single disk that happened to hold data, and whether the
-	// fillers spread across disks is environment-dependent (master volume-growth
-	// timing). Growing a few volumes per server makes the multi-disk layout
-	// deterministic: the volume server places each new volume on its least-loaded
-	// disk, so a handful of grows touches every disk.
-	for i := 0; i < 3; i++ {
-		server := fmt.Sprintf("127.0.0.1:809%d", i)
-		out, growErr := captureCommandOutput(t, shell.Commands[findCommandIndex("volume.grow")],
-			[]string{"-collection", "test", "-dataNode", server, "-count", "4"}, commandEnv)
-		require.NoError(t, growErr, "volume.grow on %s failed: %s", server, out)
-	}
-	// Let the freshly grown volumes reach the master via heartbeat before encoding
-	// so collectEcNodes sees every disk.
-	time.Sleep(5 * time.Second)
+	// Populate every server's disks with volumes so the encode can see and target
+	// each physical disk. The master only enumerates disks that already hold a
+	// volume or EC shard — an empty disk leaves no trace in the topology (heartbeats
+	// aggregate capacity per disk type, not per physical disk). ec.encode therefore
+	// spreads a volume's shards only across the disks the master already knows hold
+	// data on each node; if a node's data sits on a single disk, all its shards land
+	// there and ec.balance cannot redistribute them (it has no within-node
+	// cross-disk move). So spreading must be set up before encoding.
+	//
+	// volume.grow only tops up toward a writable target and stops on the first
+	// allocation error, so a single -count grow can create far fewer volumes than
+	// asked and leave a node on one disk. Grow repeatedly on the nodes that have not
+	// spread yet (the volume server places each new volume on its least-loaded disk)
+	// until the master's topology shows every node holding volumes on at least two
+	// physical disks. This makes the multi-disk layout — and thus the post-encode
+	// disk spread — deterministic instead of racing volume-growth and heartbeat.
+	require.Eventually(t, func() bool {
+		spread := nodeVolumeDiskCounts(t, commandEnv)
+		if len(spread) == 3 && allAtLeast(spread, 2) {
+			return true
+		}
+		for i := 0; i < 3; i++ {
+			server := fmt.Sprintf("127.0.0.1:809%d", i)
+			if spread[server] < 2 {
+				captureCommandOutput(t, shell.Commands[findCommandIndex("volume.grow")],
+					[]string{"-collection", "test", "-dataNode", server, "-count", "4"}, commandEnv)
+			}
+		}
+		return false
+	}, 60*time.Second, 2*time.Second,
+		"volumes never spread across >=2 disks on all 3 nodes")
 
 	locked, unlock := tryLockWithTimeout(t, commandEnv, 15*time.Second)
 	require.True(t, locked, "could not acquire shell lock")
@@ -177,6 +190,48 @@ func disksWithShards(testDir string, volumeId uint32) int {
 		}
 	}
 	return n
+}
+
+// nodeVolumeDiskCounts returns, per volume server id, how many distinct physical
+// disks hold at least one volume according to the master's topology. The master
+// only enumerates disks that already hold a volume or EC shard (heartbeats
+// aggregate capacity per disk type, not per physical disk), so this reports the
+// disks ec.encode can actually spread a volume's shards across on each node.
+func nodeVolumeDiskCounts(t *testing.T, commandEnv *shell.CommandEnv) map[string]int {
+	t.Helper()
+	var resp *master_pb.VolumeListResponse
+	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		var e error
+		resp, e = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		return e
+	})
+	counts := map[string]int{}
+	if err != nil || resp.GetTopologyInfo() == nil {
+		return counts
+	}
+	for _, dc := range resp.GetTopologyInfo().GetDataCenterInfos() {
+		for _, r := range dc.GetRackInfos() {
+			for _, dn := range r.GetDataNodeInfos() {
+				disks := map[uint32]bool{}
+				for _, di := range dn.GetDiskInfos() {
+					for _, vi := range di.GetVolumeInfos() {
+						disks[vi.GetDiskId()] = true
+					}
+				}
+				counts[dn.Id] = len(disks)
+			}
+		}
+	}
+	return counts
+}
+
+func allAtLeast(counts map[string]int, min int) bool {
+	for _, c := range counts {
+		if c < min {
+			return false
+		}
+	}
+	return true
 }
 
 var diskCountRe = regexp.MustCompile(`(\d+)\s+disks?`)
