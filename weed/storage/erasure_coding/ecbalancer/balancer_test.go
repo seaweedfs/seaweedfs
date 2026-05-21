@@ -315,3 +315,34 @@ func TestGlobalImbalanceSkipsFullNodes(t *testing.T) {
 		t.Fatalf("expected 0 moves (node2 full), got %d", len(moves))
 	}
 }
+
+// TestPlanBalancesSkewedDataParityWithEvenTotals guards the per-type gate: two
+// racks hold equal shard totals (7 each) but the data shards are skewed (7 vs 3).
+// A total-count gate would skip balancing; the per-type gate must still act.
+func TestPlanBalancesSkewedDataParityWithEvenTotals(t *testing.T) {
+	topo := NewTopology()
+	n1 := topo.AddNode("node1", "dc1", "dc1:rack1", 100)
+	n1.AddDisk(0, "", 100, 7)
+	n1.AddShards(100, "col1", 0, bits(0, 1, 2, 3, 4, 5, 6)) // 7 data shards
+	n2 := topo.AddNode("node2", "dc1", "dc1:rack2", 100)
+	n2.AddDisk(0, "", 100, 7)
+	n2.AddShards(100, "col1", 0, bits(7, 8, 9, 10, 11, 12, 13)) // 3 data + 4 parity
+
+	moves := Plan(topo, Options{ImbalanceThreshold: 0, Ratio: ratio(10, 4)})
+
+	crossRack, dataMoved := 0, 0
+	for _, m := range moves {
+		if m.Phase == "cross_rack" {
+			crossRack++
+			if m.ShardID < 10 {
+				dataMoved++
+			}
+		}
+	}
+	if crossRack == 0 {
+		t.Fatal("even totals masked a data/parity skew: no cross-rack moves produced")
+	}
+	if dataMoved == 0 {
+		t.Error("expected skewed data shards to rebalance across racks")
+	}
+}

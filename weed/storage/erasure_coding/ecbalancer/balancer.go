@@ -281,15 +281,14 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*N
 		return nil
 	}
 
-	rackShardCount := countShardsByRack(vid, nodes)
-	total := 0
-	for _, c := range rackShardCount {
-		total += c
-	}
-	if total == 0 || !exceedsImbalanceThreshold(rackShardCount, total, numRacks, threshold) {
+	// Gate on per-type spread: act when data OR parity shards are unevenly
+	// distributed across racks, even if the per-rack totals happen to be even.
+	gateData, gateParity := shardsByGroup(vid, nodes, dataShards, func(n *Node) string { return n.rack })
+	if !typeImbalanced(gateData, numRacks, threshold) && !typeImbalanced(gateParity, numRacks, threshold) {
 		return nil
 	}
 
+	rackShardCount := countShardsByRack(vid, nodes)
 	var moves []*move
 
 	dataPerRack, _ := shardsByGroup(vid, nodes, dataShards, func(n *Node) string { return n.rack })
@@ -370,6 +369,10 @@ func balanceShardTypeAcrossRacks(vid uint32, collection string, nodes map[string
 		rackShardCount[srcRack]--
 		racks[destRack].freeSlots--
 		racks[srcRack].freeSlots++
+		// Account at the node level too, so pickNodeInRack does not over-plan a
+		// limited-capacity destination across successive moves.
+		destNode.freeSlots--
+		pm.src.freeSlots++
 	}
 	return moves
 }
@@ -404,15 +407,13 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 			continue
 		}
 
-		nodeShardCount := countShardsByNode(vid, r.nodes)
-		total := 0
-		for _, c := range nodeShardCount {
-			total += c
-		}
-		if total == 0 || !exceedsImbalanceThreshold(nodeShardCount, total, len(r.nodes), threshold) {
+		numNodes := len(r.nodes)
+		// Gate on per-type spread across the rack's nodes (see cross-rack phase).
+		gateData, gateParity := shardsByGroup(vid, r.nodes, dataShards, func(n *Node) string { return n.id })
+		if !typeImbalanced(gateData, numNodes, threshold) && !typeImbalanced(gateParity, numNodes, threshold) {
 			continue
 		}
-		numNodes := len(r.nodes)
+		nodeShardCount := countShardsByNode(vid, r.nodes)
 
 		dataPerNode, _ := shardsByGroup(vid, r.nodes, dataShards, func(n *Node) string { return n.id })
 		moves = append(moves, balanceShardTypeAcrossNodes(vid, collection, r, diskType, dataShards,
@@ -581,7 +582,9 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 				}
 				info := maxNode.shards[vid]
 				minInfo := minNode.shards[vid]
-				for shardID := 0; shardID < erasure_coding.TotalShardsCount; shardID++ {
+				// Iterate the full shard-id space so custom ratios with more than
+				// the standard total (ids 14..MaxShardCount-1) are candidates too.
+				for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
 					sid := erasure_coding.ShardId(shardID)
 					if !info.shardBits.Has(sid) {
 						continue
@@ -919,6 +922,23 @@ func ceilDivide(a, b int) int {
 		return 0
 	}
 	return (a + b - 1) / b
+}
+
+// typeImbalanced reports whether the shards of one type (data or parity),
+// grouped by rack or node, are spread unevenly enough across numGroups to exceed
+// the threshold. Gating per type (rather than on combined totals) ensures a
+// data/parity skew is acted on even when the per-group totals are even.
+func typeImbalanced(perGroup map[string][]int, numGroups int, threshold float64) bool {
+	counts := make(map[string]int, len(perGroup))
+	total := 0
+	for k, v := range perGroup {
+		counts[k] = len(v)
+		total += len(v)
+	}
+	if total == 0 {
+		return false
+	}
+	return exceedsImbalanceThreshold(counts, total, numGroups, threshold)
 }
 
 // exceedsImbalanceThreshold reports whether (max-min)/avg over numGroups exceeds

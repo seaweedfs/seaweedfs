@@ -814,53 +814,107 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 	return topo
 }
 
-// executeMoves carries out the planned moves. Dedup moves are an unmount+delete
-// on the source; all others copy to the destination disk then delete the source.
+// executeMoves carries out the planned moves. Phases run in order (a within-rack
+// move can depend on a cross-rack move's result), and the independent moves
+// within a phase run with up to maxParallelization concurrency. Apply mode does
+// only the RPCs; dry-run mode runs sequentially and mutates the in-memory EcNode
+// model so callers/tests can inspect the planned end state.
 func (ecb *ecBalancer) executeMoves(moves []ecbalancer.Move) error {
 	byID := make(map[string]*EcNode, len(ecb.ecNodes))
 	for _, en := range ecb.ecNodes {
 		byID[en.info.Id] = en
 	}
 
-	for _, m := range moves {
-		src := byID[m.SourceNode]
-		if src == nil {
-			continue
+	// Plan emits moves grouped by phase; run each contiguous same-phase group
+	// together, waiting before the next so cross-phase dependencies hold.
+	for i := 0; i < len(moves); {
+		j := i
+		for j < len(moves) && moves[j].Phase == moves[i].Phase {
+			j++
 		}
-		vid := needle.VolumeId(m.VolumeID)
-		shardId := erasure_coding.ShardId(m.ShardID)
-		shardIds := []erasure_coding.ShardId{shardId}
-
-		if m.Phase == "dedup" {
-			fmt.Printf("dedup: delete ec shard %d.%d on %s\n", vid, shardId, m.SourceNode)
-			if ecb.applyBalancing {
-				addr := pb.NewServerAddressFromDataNode(src.info)
-				grpcDialOption := ecb.commandEnv.option.GrpcDialOption
-				if err := unmountEcShards(grpcDialOption, vid, addr, shardIds); err != nil {
-					return err
-				}
-				if err := sourceServerDeleteEcShards(grpcDialOption, m.Collection, vid, addr, shardIds); err != nil {
-					return err
-				}
-			}
-			src.deleteEcVolumeShards(vid, shardIds, ecb.diskType)
-			continue
-		}
-
-		dst := byID[m.TargetNode]
-		if dst == nil {
-			continue
-		}
-		if m.TargetDisk > 0 {
-			fmt.Printf("%s moves ec shard %d.%d to %s (disk %d)\n", m.SourceNode, vid, shardId, m.TargetNode, m.TargetDisk)
-		} else {
-			fmt.Printf("%s moves ec shard %d.%d to %s\n", m.SourceNode, vid, shardId, m.TargetNode)
-		}
-		if err := moveMountedShardToEcNode(ecb.commandEnv, src, m.Collection, vid, shardId, dst, m.TargetDisk, ecb.applyBalancing, ecb.diskType); err != nil {
+		if err := ecb.executePhase(byID, moves[i:j]); err != nil {
 			return err
 		}
+		i = j
 	}
 	return nil
+}
+
+func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.Move) error {
+	if !ecb.applyBalancing {
+		// Dry-run: sequential so the in-memory model updates are race-free and
+		// reflect the full plan for inspection.
+		for _, m := range moves {
+			if err := ecb.executeMove(byID, m); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	ewg := NewErrorWaitGroup(ecb.maxParallelization)
+	for _, m := range moves {
+		m := m
+		ewg.Add(func() error { return ecb.executeMove(byID, m) })
+	}
+	return ewg.Wait()
+}
+
+func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) error {
+	src := byID[m.SourceNode]
+	if src == nil {
+		return nil
+	}
+	vid := needle.VolumeId(m.VolumeID)
+	shardId := erasure_coding.ShardId(m.ShardID)
+	shardIds := []erasure_coding.ShardId{shardId}
+
+	if m.Phase == "dedup" {
+		fmt.Printf("dedup: delete ec shard %d.%d on %s\n", vid, shardId, m.SourceNode)
+		if !ecb.applyBalancing {
+			src.deleteEcVolumeShards(vid, shardIds, ecb.diskType)
+			return nil
+		}
+		grpcDialOption := ecb.commandEnv.option.GrpcDialOption
+		addr := pb.NewServerAddressFromDataNode(src.info)
+		if err := unmountEcShards(grpcDialOption, vid, addr, shardIds); err != nil {
+			return err
+		}
+		return sourceServerDeleteEcShards(grpcDialOption, m.Collection, vid, addr, shardIds)
+	}
+
+	dst := byID[m.TargetNode]
+	if dst == nil {
+		return nil
+	}
+	if m.TargetDisk > 0 {
+		fmt.Printf("%s moves ec shard %d.%d to %s (disk %d)\n", m.SourceNode, vid, shardId, m.TargetNode, m.TargetDisk)
+	} else {
+		fmt.Printf("%s moves ec shard %d.%d to %s\n", m.SourceNode, vid, shardId, m.TargetNode)
+	}
+	if !ecb.applyBalancing {
+		// Dry-run: update the in-memory model only.
+		return moveMountedShardToEcNode(ecb.commandEnv, src, m.Collection, vid, shardId, dst, m.TargetDisk, false, ecb.diskType)
+	}
+	return ecb.applyShardMoveRPC(src, dst, m.Collection, vid, shardId, m.TargetDisk)
+}
+
+// applyShardMoveRPC copies a shard to the destination disk, then unmounts and
+// deletes it on the source. It does not touch the in-memory model, so it is safe
+// to run concurrently across the moves of a phase.
+func (ecb *ecBalancer) applyShardMoveRPC(src, dst *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destDiskId uint32) error {
+	grpcDialOption := ecb.commandEnv.option.GrpcDialOption
+	srcAddr := pb.NewServerAddressFromDataNode(src.info)
+	copiedShardIds, err := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, dst, []erasure_coding.ShardId{shardId}, vid, collection, srcAddr, destDiskId)
+	if err != nil {
+		return err
+	}
+	if len(copiedShardIds) == 0 {
+		return nil
+	}
+	if err := unmountEcShards(grpcDialOption, vid, srcAddr, copiedShardIds); err != nil {
+		return err
+	}
+	return sourceServerDeleteEcShards(grpcDialOption, collection, vid, srcAddr, copiedShardIds)
 }
 
 // compileCollectionPattern compiles a regex pattern for collection matching.
