@@ -333,38 +333,44 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	fullPath := bucketDir + "/" + cleanPrefix
 
 	// Try to list one child object in the directory
+	var found bool
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.ListEntriesRequest{
-			Directory:          fullPath,
-			Limit:              1,
-			InclusiveStartFrom: true,
-		}
-
-		stream, err := client.ListEntries(context.Background(), request)
-		if err != nil {
-			return err
-		}
-
-		// Check if we got at least one entry
-		_, err = stream.Recv()
-		if err == io.EOF {
-			return io.EOF // No children
-		}
-		if err != nil {
-			return err
-		}
-		return nil
+		var listErr error
+		found, listErr = filerDirectoryHasChildren(client, fullPath)
+		return listErr
 	})
 
-	// If we got an entry (not EOF), then it has children
 	if err == nil {
-		return true
+		return found
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, filer_pb.ErrNotFound) {
+	if errors.Is(err, filer_pb.ErrNotFound) {
 		return false
 	}
 	glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, cleanPrefix, err)
 	return true
+}
+
+func filerDirectoryHasChildren(client filer_pb.SeaweedFilerClient, fullPath string) (bool, error) {
+	request := &filer_pb.ListEntriesRequest{
+		Directory:          fullPath,
+		Limit:              1,
+		InclusiveStartFrom: true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.ListEntries(ctx, request)
+	if err != nil {
+		return false, err
+	}
+
+	if _, err = stream.Recv(); err != nil {
+		if err == io.EOF {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
