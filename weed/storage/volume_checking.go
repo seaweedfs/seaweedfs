@@ -27,9 +27,20 @@ func (v *Volume) openIndex() (*os.File, int64, error) {
 		idxFile.Close()
 		return nil, 0, fmt.Errorf("failed to stat IDX file %s for volume %v: %v", idxFileName, v.Id, err)
 	}
+
 	if idxStat.Size() == 0 {
-		idxFile.Close()
-		return nil, 0, fmt.Errorf("zero-size IDX file for volume %v at %s", v.Id, idxFileName)
+		volumeFileSize, _, err := v.DataBackend.GetStat()
+		if err != nil {
+			idxFile.Close()
+			return nil, 0, fmt.Errorf("failed to stat storage for zero-size IDX volume %v", v.Id)
+		}
+
+		// account for pre-allocated volumes (f.ex. after running "volume.grow") without data, as these
+		// are allowed to have zero-size indeces.
+		if volumeFileSize > int64(super_block.SuperBlockSize) {
+			idxFile.Close()
+			return nil, 0, fmt.Errorf("zero-size IDX file for volume %v with store size %d", v.Id, volumeFileSize)
+		}
 	}
 
 	return idxFile, idxStat.Size(), nil
@@ -50,7 +61,7 @@ func (v *Volume) ScrubIndex() (int64, []error) {
 }
 
 // scrubVolumeData checks a volume content + index for issues.
-func (v *Volume) scrubVolumeData(dataFile backend.BackendStorageFile, idxFile *os.File, idxFileSize int64) (int64, []error) {
+func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []error) {
 	// full scrubbing means also scrubbing the index
 	var count int64
 	_, errs := idx.CheckIndexFile(idxFile, idxFileSize, v.Version())
@@ -73,8 +84,8 @@ func (v *Volume) scrubVolumeData(dataFile backend.BackendStorageFile, idxFile *o
 		}
 
 		n := needle.Needle{}
-		if err := n.ReadData(dataFile, offset.ToActualOffset(), size, version); err != nil {
-			errs = append(errs, fmt.Errorf("needle %d on volume %d: %v", id, v.Id, err))
+		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), size, version); err != nil {
+			errs = append(errs, fmt.Errorf("failed to read needle %d on volume %d: %v", id, v.Id, err))
 		}
 
 		totalRead += actualSize
@@ -86,7 +97,8 @@ func (v *Volume) scrubVolumeData(dataFile backend.BackendStorageFile, idxFile *o
 
 	// check total volume file size
 	wantSize := totalRead + super_block.SuperBlockSize
-	dataSize, _, err := dataFile.GetStat()
+	dataSize, _, err := v.DataBackend.GetStat()
+
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to stat data file for volume %d: %v", v.Id, err))
 	} else {
@@ -111,7 +123,7 @@ func (v *Volume) Scrub() (int64, []error) {
 	}
 	defer idxFile.Close()
 
-	return v.scrubVolumeData(v.DataBackend, idxFile, idxFileSize)
+	return v.scrubVolumeData(idxFile, idxFileSize)
 }
 
 func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
@@ -174,7 +186,6 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	}
 	return lastAppendAtNs, nil
 }
-
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
