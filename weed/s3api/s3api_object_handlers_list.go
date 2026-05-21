@@ -109,7 +109,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
+	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
+	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -232,7 +232,7 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 	}
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := s3a.bucketPrefix(bucket)
@@ -307,7 +307,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						if normalizedPrefix != "" {
 							relativePath := strings.TrimPrefix(fmt.Sprintf("%s/%s", dir, entry.Name), bucketPrefix)
 							relativePath = strings.TrimPrefix(relativePath, "/")
-							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) && !entry.IsDirectoryKeyObject() {
+							if normalizedPrefix == relativePath && !s3a.hasChildren(ctx, bucket, relativePath) && !entry.IsDirectoryKeyObject() {
 								return
 							}
 						}
