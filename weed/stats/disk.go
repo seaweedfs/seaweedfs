@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,17 +16,50 @@ import (
 )
 
 type diskState struct {
-	mu           sync.Mutex
-	isChecking   bool
-	failureCount int
-	lastErr      error
+	mu sync.Mutex
+
+	// statfs probe
+	isChecking       bool
+	statFailureCount int
+	lastStatErr      error
+
+	// latency tracking
+	initialized     bool
+	avgLatency      float64
+	variance        float64
+	consecutiveSlow int
+
+	// IO probe
+	isIOChecking   bool
+	ioCheckID      uint64
+	lastIOCheck    time.Time
+	ioFile         *os.File
+	ioBuf          []byte
+	ioFailureCount int
+	lastIOErr      error
 }
 
 var diskRegistry sync.Map
 
 const (
 	maxFailuresBeforeAlert = 3
-	diskTimeout            = 500 * time.Millisecond
+
+	// statfs timeout
+	diskTimeout = 500 * time.Millisecond
+
+	// real IO timeout
+	ioTimeout = 2 * time.Second
+
+	// IO probe interval
+	ioCheckInterval = 30 * time.Second
+
+	// EWMA config
+	latencyAlpha = 0.2
+
+	minSlowLatency     = 50 * time.Millisecond
+	slowLatencyFactor  = 3.0
+	slowStddevFactor   = 2.0
+	maxConsecutiveSlow = 3
 )
 
 func NewDiskStatus(path string) (disk *volume_server_pb.DiskStatus) {
@@ -34,23 +71,15 @@ func NewDiskStatus(path string) (disk *volume_server_pb.DiskStatus) {
 	return
 }
 
-// setDiskStatus fills disk by calling the platform fillInDiskStatus under a
-// timeout, so a stuck filesystem cannot block the caller. Repeated failures are
-// surfaced through disk.Error once they cross maxFailuresBeforeAlert.
 func setDiskStatus(disk *volume_server_pb.DiskStatus) {
 	actual, _ := diskRegistry.LoadOrStore(disk.Dir, &diskState{})
 	state := actual.(*diskState)
 
 	state.mu.Lock()
 	if state.isChecking {
-		// A previous probe is still blocked in fillInDiskStatus (a stuck disk).
-		// Record the failure but do not start another goroutine, otherwise a hung
-		// filesystem would leak one goroutine per check interval.
-		state.failureCount++
-		state.lastErr = errors.New("statfs still in progress")
-		if state.failureCount >= maxFailuresBeforeAlert {
-			state.writeErrorLocked(disk)
-		}
+		state.statFailureCount++
+		state.lastStatErr = errors.New("statfs still in progress")
+		state.updateErrorLocked(disk)
 		state.mu.Unlock()
 		return
 	}
@@ -78,40 +107,226 @@ func setDiskStatus(disk *volume_server_pb.DiskStatus) {
 	case <-ctx.Done():
 		// Leave isChecking set; the probe goroutine clears it when statfs returns.
 		state.mu.Lock()
-		state.failureCount++
-		state.lastErr = errors.New("statfs timeout")
-		if state.failureCount >= maxFailuresBeforeAlert {
-			state.writeErrorLocked(disk)
-		}
+		state.statFailureCount++
+		state.lastStatErr = errors.New("statfs timeout")
+		state.updateErrorLocked(disk)
 		state.mu.Unlock()
 		return
 	}
 
 	state.mu.Lock()
-	defer state.mu.Unlock()
 
 	if probeErr != nil {
-		state.failureCount++
-		state.lastErr = probeErr
-		if state.failureCount >= maxFailuresBeforeAlert {
-			state.writeErrorLocked(disk)
-		}
+		state.statFailureCount++
+		state.lastStatErr = probeErr
+		state.updateErrorLocked(disk)
+		state.mu.Unlock()
 		return
 	}
 
-	state.failureCount = 0
-	state.lastErr = nil
+	state.statFailureCount = 0
+	state.lastStatErr = nil
 	disk.All = probe.All
 	disk.Free = probe.Free
 	disk.Used = probe.Used
 	disk.PercentFree = probe.PercentFree
 	disk.PercentUsed = probe.PercentUsed
+
+	shouldCheckIO := false
+	ioCheckID := uint64(0)
+
+	if time.Since(state.lastIOCheck) >= ioCheckInterval {
+		if state.isIOChecking {
+			state.ioFailureCount++
+			state.lastIOErr = errors.New("disk io still in progress")
+			state.lastIOCheck = time.Now()
+		} else {
+			state.isIOChecking = true
+			state.ioCheckID++
+			ioCheckID = state.ioCheckID
+			state.lastIOCheck = time.Now()
+			shouldCheckIO = true
+		}
+	}
+
+	state.updateErrorLocked(disk)
+	state.mu.Unlock()
+
+	if shouldCheckIO {
+		checkDiskIOLatency(state, disk, ioCheckID)
+	}
 }
 
-func (s *diskState) writeErrorLocked(disk *volume_server_pb.DiskStatus) {
-	if s.lastErr == nil {
-		disk.Error = "disk health check failed"
+type ioProbeResult struct {
+	err     error
+	latency time.Duration
+}
+
+func checkDiskIOLatency(state *diskState, disk *volume_server_pb.DiskStatus, checkID uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), ioTimeout)
+	defer cancel()
+
+	ch := make(chan ioProbeResult, 1)
+
+	go func() {
+		start := time.Now()
+		err := runIOProbe(state, disk.Dir)
+		ch <- ioProbeResult{
+			err:     err,
+			latency: time.Since(start),
+		}
+	}()
+
+	select {
+	case result := <-ch:
+		state.mu.Lock()
+		defer state.mu.Unlock()
+
+		if state.ioCheckID != checkID {
+			return
+		}
+
+		state.isIOChecking = false
+		state.lastIOCheck = time.Now()
+
+		if result.err != nil {
+			state.ioFailureCount++
+			state.lastIOErr = result.err
+			state.updateErrorLocked(disk)
+			return
+		}
+
+		if state.observeLatencyLocked(result.latency) {
+			state.ioFailureCount++
+			state.lastIOErr = fmt.Errorf(
+				"disk io degradation detected latency=%v avg=%v",
+				result.latency,
+				time.Duration(state.avgLatency),
+			)
+		} else {
+			state.ioFailureCount = 0
+			state.lastIOErr = nil
+		}
+
+		state.updateErrorLocked(disk)
+
+		glog.V(0).Infof(
+			"disk io latency dir=%s latency=%v avg=%v stddev=%v",
+			disk.Dir,
+			result.latency,
+			time.Duration(state.avgLatency),
+			time.Duration(math.Sqrt(state.variance)),
+		)
+
+	case <-ctx.Done():
+		state.mu.Lock()
+
+		if state.ioCheckID == checkID {
+			state.ioFailureCount++
+			state.lastIOErr = errors.New("disk io timeout")
+			state.lastIOCheck = time.Now()
+			state.updateErrorLocked(disk)
+		}
+
+		state.mu.Unlock()
+
+		go func() {
+			<-ch
+
+			state.mu.Lock()
+			if state.ioCheckID == checkID {
+				state.isIOChecking = false
+				state.lastIOCheck = time.Now()
+			}
+			state.mu.Unlock()
+		}()
+	}
+}
+
+func runIOProbe(state *diskState, dir string) error {
+	state.mu.Lock()
+	f := state.ioFile
+	buf := state.ioBuf
+	state.mu.Unlock()
+
+	if f == nil {
+		path := filepath.Join(dir, ".disk-health-check")
+
+		newFile, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return err
+		}
+
+		state.mu.Lock()
+		if state.ioFile == nil {
+			state.ioFile = newFile
+			state.ioBuf = make([]byte, 4096)
+			f = state.ioFile
+			buf = state.ioBuf
+			newFile = nil
+		} else {
+			f = state.ioFile
+			buf = state.ioBuf
+		}
+		state.mu.Unlock()
+
+		if newFile != nil {
+			_ = newFile.Close()
+		}
+	}
+
+	if _, err := f.WriteAt(buf, 0); err != nil {
+		return err
+	}
+
+	return f.Sync()
+}
+
+func (s *diskState) observeLatencyLocked(d time.Duration) bool {
+	x := float64(d)
+
+	if !s.initialized {
+		s.avgLatency = x
+		s.initialized = true
+		return false
+	}
+
+	avg := s.avgLatency
+	stddev := math.Sqrt(s.variance)
+
+	isSlow := d > minSlowLatency &&
+		x > avg*slowLatencyFactor &&
+		x > avg+slowStddevFactor*stddev
+
+	if isSlow {
+		s.consecutiveSlow++
+		return s.consecutiveSlow >= maxConsecutiveSlow
+	}
+
+	s.consecutiveSlow = 0
+
+	diff := x - avg
+	s.avgLatency = latencyAlpha*x + (1-latencyAlpha)*avg
+	s.variance = latencyAlpha*(diff*diff) + (1-latencyAlpha)*s.variance
+
+	return false
+}
+
+func (s *diskState) updateErrorLocked(disk *volume_server_pb.DiskStatus) {
+	var problems []string
+
+	if s.statFailureCount >= maxFailuresBeforeAlert && s.lastStatErr != nil {
+		problems = append(problems, fmt.Sprintf("statfs: %v", s.lastStatErr))
+	}
+
+	if s.ioFailureCount >= maxFailuresBeforeAlert && s.lastIOErr != nil {
+		problems = append(problems, fmt.Sprintf("io: %v", s.lastIOErr))
+	}
+
+	if len(problems) == 0 {
+		disk.Error = ""
 		return
 	}
-	disk.Error = fmt.Sprintf("disk health check failed: %v", s.lastErr)
+
+	disk.Error = "disk health check failed: " + strings.Join(problems, "; ")
 }
