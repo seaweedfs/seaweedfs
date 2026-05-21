@@ -305,3 +305,31 @@ func TestBuildBalancerTopologyNormalizesHddDiskType(t *testing.T) {
 		t.Errorf("disk_type=ssd matched %d nodes on an all-HDD cluster, want 0", n)
 	}
 }
+
+// TestResolveReplicaPlacementFallsBackToMasterDefault verifies the worker mirrors
+// the shell: explicit config wins, otherwise the master's default replication is
+// the fallback, and an empty or zero-replication value means no constraint.
+func TestResolveReplicaPlacementFallsBackToMasterDefault(t *testing.T) {
+	cases := []struct {
+		name        string
+		configRP    string
+		defaultRP   string
+		wantApplied bool
+	}{
+		{"explicit config used", "010", "", true},
+		{"explicit config wins over default", "010", "100", true},
+		{"falls back to master default", "", "010", true},
+		{"zero master default = no constraint", "", "000", false},
+		{"empty everywhere = no constraint", "", "", false},
+		{"invalid value ignored", "", "nonsense", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rp := resolveReplicaPlacement(&Config{ReplicaPlacement: tc.configRP},
+				&types.ClusterInfo{DefaultReplicaPlacement: tc.defaultRP})
+			if (rp != nil) != tc.wantApplied {
+				t.Errorf("config=%q default=%q: applied=%v, want %v", tc.configRP, tc.defaultRP, rp != nil, tc.wantApplied)
+			}
+		})
+	}
+}

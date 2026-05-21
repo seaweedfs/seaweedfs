@@ -26,6 +26,10 @@ type MaintenanceIntegration struct {
 	// Active topology for task detection and target selection
 	activeTopology *topology.ActiveTopology
 
+	// Master's default replication, refreshed by the scanner each cycle and
+	// passed to detectors as the replica-placement fallback (matches the shell).
+	defaultReplicaPlacement string
+
 	// Type conversion maps
 	taskTypeMap    map[types.TaskType]MaintenanceTaskType
 	revTaskTypeMap map[MaintenanceTaskType]types.TaskType
@@ -219,9 +223,10 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 
 	// Create cluster info
 	clusterInfo := &types.ClusterInfo{
-		TotalVolumes:   len(filteredMetrics),
-		LastUpdated:    time.Now(),
-		ActiveTopology: s.activeTopology, // Provide ActiveTopology for destination planning
+		TotalVolumes:            len(filteredMetrics),
+		LastUpdated:             time.Now(),
+		ActiveTopology:          s.activeTopology, // Provide ActiveTopology for destination planning
+		DefaultReplicaPlacement: s.defaultReplicaPlacement,
 	}
 
 	// Run detection for each registered task type
@@ -269,6 +274,12 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 	}
 
 	return allResults, nil
+}
+
+// SetDefaultReplicaPlacement records the master's default replication so detectors
+// can use it as the replica-placement fallback (matching the shell).
+func (s *MaintenanceIntegration) SetDefaultReplicaPlacement(replicaPlacement string) {
+	s.defaultReplicaPlacement = replicaPlacement
 }
 
 // UpdateTopologyInfo updates the volume shard tracker with topology information for empty servers

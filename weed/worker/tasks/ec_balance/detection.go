@@ -52,16 +52,7 @@ func Detection(
 		return nil, false, nil
 	}
 
-	// Optional EC shard replica placement constraint (empty = even spread).
-	var replicaPlacement *super_block.ReplicaPlacement
-	if ecConfig.ReplicaPlacement != "" {
-		rp, rpErr := super_block.NewReplicaPlacementFromString(ecConfig.ReplicaPlacement)
-		if rpErr != nil {
-			glog.Warningf("EC balance: ignoring invalid replica_placement %q: %v", ecConfig.ReplicaPlacement, rpErr)
-		} else if rp.HasReplication() {
-			replicaPlacement = rp
-		}
-	}
+	replicaPlacement := resolveReplicaPlacement(ecConfig, clusterInfo)
 
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -244,6 +235,29 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 func resolveECRatio(_ *types.ClusterInfo, _ string) (int, int) {
 	// Custom EC ratios are an enterprise feature; OSS uses the standard scheme.
 	return normalizeECShardCounts(0, 0)
+}
+
+// resolveReplicaPlacement picks the EC shard replica placement constraint: an
+// explicit config value wins; otherwise it falls back to the master's default
+// replication (matching the shell ec.balance default). A missing, invalid, or
+// zero-replication value yields nil, meaning even spread / no constraint.
+func resolveReplicaPlacement(ecConfig *Config, clusterInfo *types.ClusterInfo) *super_block.ReplicaPlacement {
+	spec := ecConfig.ReplicaPlacement
+	if spec == "" && clusterInfo != nil {
+		spec = clusterInfo.DefaultReplicaPlacement
+	}
+	if spec == "" {
+		return nil
+	}
+	rp, err := super_block.NewReplicaPlacementFromString(spec)
+	if err != nil {
+		glog.Warningf("EC balance: ignoring invalid replica placement %q: %v", spec, err)
+		return nil
+	}
+	if !rp.HasReplication() {
+		return nil
+	}
+	return rp
 }
 
 func normalizeECShardCounts(dataShards, parityShards int) (int, int) {
