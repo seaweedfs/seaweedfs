@@ -1296,10 +1296,9 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	// Calculate ETag for the source entry
-	srcPath := util.FullPath(fmt.Sprintf("%s/%s", r.URL.Path, entry.Name))
+	// Calculate ETag for the source entry. ETagEntry derives the tag from the
+	// chunks/Md5/remote-etag only, so no path is needed here.
 	filerEntry := &filer.Entry{
-		FullPath: srcPath,
 		Attr: filer.Attr{
 			FileSize: entry.Attributes.FileSize,
 			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
