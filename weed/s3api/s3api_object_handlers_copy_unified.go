@@ -45,7 +45,7 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 		return chunks, nil, err
 
 	case CopyStrategyKeyRotation:
-		return s3a.executeKeyRotation(entry, r, state)
+		return s3a.executeKeyRotation(entry, r, state, dstBucket, dstPath)
 
 	case CopyStrategyEncrypt:
 		return s3a.executeEncryptCopy(entry, r, state, dstBucket, dstPath)
@@ -90,13 +90,13 @@ func (s3a *S3ApiServer) mapCopyErrorToS3Error(err error) s3err.ErrorCode {
 }
 
 // executeKeyRotation handles key rotation for same-object copies
-func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// For key rotation, we only need to update metadata, not re-copy chunks
 	// This is a significant optimization for same-object key changes
 
 	if state.SrcSSEC && state.DstSSEC {
 		// SSE-C key rotation - need to handle new key/IV, use reencrypt logic
-		return s3a.executeReencryptCopy(entry, r, state, "", "")
+		return s3a.executeReencryptCopy(entry, r, state, dstBucket, dstPath)
 	}
 
 	if state.SrcSSEKMS && state.DstSSEKMS {
@@ -105,14 +105,14 @@ func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Reques
 	}
 
 	// Fallback to reencrypt if we can't do metadata-only rotation
-	return s3a.executeReencryptCopy(entry, r, state, "", "")
+	return s3a.executeReencryptCopy(entry, r, state, dstBucket, dstPath)
 }
 
 // executeEncryptCopy handles plain → encrypted copies
 func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	if state.DstSSEC {
 		// Use existing SSE-C copy logic
-		return s3a.copyChunksWithSSEC(entry, r)
+		return s3a.copyChunksWithSSEC(entry, r, dstPath)
 	}
 
 	if state.DstSSEKMS {
@@ -145,7 +145,7 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Use chunk-by-chunk approach for all cross-encryption scenarios (consistent behavior)
 	if state.SrcSSEC && state.DstSSEC {
-		return s3a.copyChunksWithSSEC(entry, r)
+		return s3a.copyChunksWithSSEC(entry, r, dstPath)
 	}
 
 	if state.SrcSSEKMS && state.DstSSEKMS {

@@ -627,6 +627,17 @@ type CopyPartResult struct {
 	ETag         string    `xml:"ETag"`
 }
 
+// copyPartLocation returns the destination directory and filename for a
+// server-side copy part under the destination bucket's .uploads folder. Copy
+// parts carry a fixed "copy" suffix (rather than the random suffix
+// genPartUploadPath mints for client uploads) so re-copying a part replaces
+// its predecessor in place.
+func (s3a *S3ApiServer) copyPartLocation(dstBucket, uploadID string, partID int) (uploadDir, partName string) {
+	uploadDir = s3a.genUploadsFolder(dstBucket) + "/" + uploadID
+	partName = fmt.Sprintf("%04d_%s.part", partID, "copy")
+	return
+}
+
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	t := time.Now().UTC().Truncate(time.Millisecond)
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
@@ -845,6 +856,15 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		Extended: make(map[string][]byte),
 	}
 
+	// The copied part lives under the destination bucket's .uploads folder.
+	// Assign destination volumes against that real filer path so they land in
+	// the destination bucket's collection. r.URL.Path is the S3 request URI
+	// (e.g. /bucket/key), not a filer path, so passing it would skip the
+	// filer's bucket-to-collection mapping and route the copied bytes to the
+	// default collection.
+	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
+	dstPartPath := uploadDir + "/" + partName
+
 	// Handle zero-size files or empty ranges
 	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
 		// For zero-size files or invalid ranges, create an empty part with size 0
@@ -852,7 +872,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		dstEntry.Chunks = nil
 	} else {
 		// Copy chunks that overlap with the range
-		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, r.URL.Path)
+		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstPartPath)
 		if err != nil {
 			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -862,9 +882,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Save the part entry to the multipart uploads folder
-	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
-	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
-
 	// Check if part exists and remove it first (allow re-copying same part)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
 		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
@@ -2276,7 +2293,10 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 // copyChunksWithSSEC handles SSE-C aware copying with smart fast/slow path selection
 // Returns chunks and destination metadata that should be applied to the destination entry
-func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+// dstPath is the destination object's filer path, so volume assignment targets
+// the destination bucket's collection. The caller must not pass r.URL.Path (the
+// S3 request URI), which would route copied chunks to the default collection.
+func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 
 	// Parse SSE-C headers
 	copySourceKey, err := ParseSSECCopySourceHeaders(r)
@@ -2304,7 +2324,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 
 	if isMultipartSSEC {
 		glog.V(2).Infof("Detected multipart SSE-C object with %d encrypted chunks for copy", sseCChunks)
-		return s3a.copyMultipartSSECChunks(entry, copySourceKey, destKey, r.URL.Path)
+		return s3a.copyMultipartSSECChunks(entry, copySourceKey, destKey, dstPath)
 	}
 
 	// Single-part SSE-C object: use original logic
@@ -2320,13 +2340,13 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 	case SSECCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy
 		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
-		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, dstPath)
 		return chunks, nil, err
 
 	case SSECCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt and re-encrypt
 		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
-		chunks, destIV, err := s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, r.URL.Path)
+		chunks, destIV, err := s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, dstPath)
 		if err != nil {
 			return nil, nil, err
 		}
