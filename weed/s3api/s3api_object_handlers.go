@@ -324,7 +324,7 @@ func removeDuplicateSlashes(object string) string {
 //	hasChildren("bucket", "empty-dir") where no children exist → false
 //
 // Performance: ~1-5ms per call (one gRPC LIST request with Limit=1)
-func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
+func (s3a *S3ApiServer) hasChildren(ctx context.Context, bucket, prefix string) bool {
 	// Clean up prefix: remove leading slashes
 	cleanPrefix := strings.TrimPrefix(prefix, "/")
 
@@ -332,35 +332,20 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	bucketDir := s3a.bucketDir(bucket)
 	fullPath := bucketDir + "/" + cleanPrefix
 
-	// Try to list one child object in the directory
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.ListEntriesRequest{
-			Directory:          fullPath,
-			Limit:              1,
-			InclusiveStartFrom: true,
-		}
-
-		stream, err := client.ListEntries(context.Background(), request)
-		if err != nil {
-			return err
-		}
-
-		// Check if we got at least one entry
-		_, err = stream.Recv()
-		if err == io.EOF {
-			return io.EOF // No children
-		}
-		if err != nil {
-			return err
-		}
+	// List one child object. filer_pb.List cancels the underlying ListEntries
+	// stream when it returns, so gRPC's per-stream client goroutine is not leaked.
+	// The caller's request context is propagated so the probe is cancelled if the
+	// client disconnects.
+	found := false
+	err := filer_pb.List(ctx, s3a, fullPath, "", func(*filer_pb.Entry, bool) error {
+		found = true
 		return nil
-	})
+	}, "", true, 1)
 
-	// If we got an entry (not EOF), then it has children
 	if err == nil {
-		return true
+		return found
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, filer_pb.ErrNotFound) {
+	if errors.Is(err, filer_pb.ErrNotFound) {
 		return false
 	}
 	glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, cleanPrefix, err)
@@ -2337,7 +2322,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			if isZeroByteFile {
 				// Check if it has children (making it an implicit directory)
-				if s3a.hasChildren(bucket, object) {
+				if s3a.hasChildren(r.Context(), bucket, object) {
 					// This is an implicit directory with children
 					// Return 404 to force clients (like s3fs) to use LIST-based discovery
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
