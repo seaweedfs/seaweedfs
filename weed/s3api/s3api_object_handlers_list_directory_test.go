@@ -137,3 +137,47 @@ func TestNonEmptyDirectoryGetsNoPhantomMarker(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a.txt"}, seen, "non-empty directory must be represented by its child only")
 }
+
+// TestEmptyDirectoryHiddenInFlatListing ensures the marker is only surfaced for an
+// explicit "<dir>/" probe, not in a plain (no prefix, no delimiter) listing. An empty
+// directory left behind by deleted objects (e.g. after lifecycle expiration) must not
+// appear as a phantom key, matching AWS S3.
+func TestEmptyDirectoryHiddenInFlatListing(t *testing.T) {
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{BucketsPath: "/buckets"},
+	}
+
+	emptyDir := &filer_pb.Entry{
+		Name:        "expire1",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{Mime: ""},
+	}
+	keepDir := &filer_pb.Entry{
+		Name:        "keep2",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{Mime: ""},
+	}
+	keepObj := &filer_pb.Entry{
+		Name:        "foo",
+		IsDirectory: false,
+		Attributes:  &filer_pb.FuseAttributes{},
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test":         {emptyDir, keepDir},
+			"/buckets/test/expire1": {},
+			"/buckets/test/keep2":   {keepObj},
+		},
+	}
+
+	// Plain flat listing: no prefix, no delimiter.
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(client, "/buckets/test", "", cursor, "", "", false, "test",
+		func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, entry.Name)
+		})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"foo"}, seen, "flat listing must hide the empty directory and return only real objects")
+}

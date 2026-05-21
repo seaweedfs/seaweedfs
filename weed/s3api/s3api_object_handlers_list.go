@@ -302,6 +302,16 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
+					if originalPrefix != "" {
+						normalizedPrefix := strings.TrimPrefix(strings.TrimSuffix(originalPrefix, "/"), "/")
+						if normalizedPrefix != "" {
+							relativePath := strings.TrimPrefix(fmt.Sprintf("%s/%s", dir, entry.Name), bucketPrefix)
+							relativePath = strings.TrimPrefix(relativePath, "/")
+							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) && !entry.IsDirectoryKeyObject() {
+								return
+							}
+						}
+					}
 					// When delimiter is specified, apply delimiter logic to directory key objects too
 					if delimiter != "" && entry.IsDirectoryKeyObject() {
 						// Apply the same delimiter logic as for regular files
@@ -667,6 +677,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+				// A trailing-slash prefix (e.g. "logs/") names one directory and asks
+				// whether it exists, so a real but empty directory must be reported for
+				// that probe.
+				explicitDirProbe := cursor.prefixEndsOnDelimiter
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
 				}
@@ -689,10 +703,12 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				// A real but empty directory (created out of band via mount, mkdir or
 				// the filer API, so it carries no MIME) is otherwise invisible to S3
-				// clients that detect directories by listing. Surface it as a directory
-				// marker, identical to directories created via PutObject with a trailing
-				// "/", so tools like hadoop-aws can find it.
-				if !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
+				// clients that detect directories by listing it under its own "<dir>/"
+				// prefix. Surface it as a directory marker for that explicit probe,
+				// identical to a directory created via PutObject with a trailing "/", so
+				// tools like hadoop-aws can find it. Plain listings are left untouched, so
+				// empty directories left behind by deleted objects are not shown as keys.
+				if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
 					entry.Attributes.Mime = s3_constants.FolderMimeType
 					eachEntryFn(dir, entry)
 				}
