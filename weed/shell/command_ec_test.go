@@ -19,7 +19,7 @@ func TestCommandEcBalanceSmall(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceNothingToMove(t *testing.T) {
@@ -36,7 +36,7 @@ func TestCommandEcBalanceNothingToMove(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceAddNewServers(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCommandEcBalanceAddNewServers(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceAddNewRacks(t *testing.T) {
@@ -74,7 +74,7 @@ func TestCommandEcBalanceAddNewRacks(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
@@ -118,8 +118,7 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
-	ecb.balanceEcRacks()
+	ecb.balance([]string{"c1"})
 }
 
 func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNode {
@@ -158,7 +157,7 @@ func TestCommandEcBalanceEvenDataAndParityDistribution(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 
 	// After balancing (dry-run), verify the PLANNED distribution by checking what moves were proposed
 	// The ecb.ecNodes state is updated during dry-run to track planned moves
@@ -262,7 +261,7 @@ func TestCommandEcBalanceMultipleVolumesEvenDistribution(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 
 	// Check both volumes
 	for _, vid := range []needle.VolumeId{1, 2} {
@@ -316,8 +315,7 @@ func TestCommandEcBalanceAllNodesShareAllVolumes(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
-	ecb.balanceEcRacks()
+	ecb.balance([]string{"c1"})
 
 	// Count total shards per node after balancing
 	for _, node := range ecb.ecNodes {
@@ -396,8 +394,7 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 		t.Logf("BEFORE node %s (max %d): %d shards", node.info.Id, node.freeEcSlot+count, count)
 	}
 
-	ecb.balanceEcVolumes("cldata")
-	ecb.balanceEcRacks()
+	ecb.balance([]string{"cldata"})
 
 	// Verify: no node should exceed the average
 	totalShards := 0

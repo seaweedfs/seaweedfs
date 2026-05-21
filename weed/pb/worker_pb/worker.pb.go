@@ -3297,6 +3297,7 @@ type EcBalanceTaskConfig struct {
 	CollectionFilter   string                 `protobuf:"bytes,3,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`         // Collection filter
 	DiskType           string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`                                 // Disk type filter
 	PreferredTags      []string               `protobuf:"bytes,5,rep,name=preferred_tags,json=preferredTags,proto3" json:"preferred_tags,omitempty"`                  // Preferred disk tags for placement
+	ReplicaPlacement   string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`         // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -3364,6 +3365,13 @@ func (x *EcBalanceTaskConfig) GetPreferredTags() []string {
 		return x.PreferredTags
 	}
 	return nil
+}
+
+func (x *EcBalanceTaskConfig) GetReplicaPlacement() string {
+	if x != nil {
+		return x.ReplicaPlacement
+	}
+	return ""
 }
 
 // MaintenanceTaskData represents complete task state for persistence
@@ -4238,13 +4246,14 @@ const file_worker_proto_rawDesc = "" +
 	"\x0esource_disk_id\x18\x05 \x01(\rR\fsourceDiskId\x12\x1f\n" +
 	"\vtarget_node\x18\x06 \x01(\tR\n" +
 	"targetNode\x12$\n" +
-	"\x0etarget_disk_id\x18\a \x01(\rR\ftargetDiskId\"\xe1\x01\n" +
+	"\x0etarget_disk_id\x18\a \x01(\rR\ftargetDiskId\"\x8e\x02\n" +
 	"\x13EcBalanceTaskConfig\x12/\n" +
 	"\x13imbalance_threshold\x18\x01 \x01(\x01R\x12imbalanceThreshold\x12(\n" +
 	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\x12+\n" +
 	"\x11collection_filter\x18\x03 \x01(\tR\x10collectionFilter\x12\x1b\n" +
 	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\x12%\n" +
-	"\x0epreferred_tags\x18\x05 \x03(\tR\rpreferredTags\"\xae\a\n" +
+	"\x0epreferred_tags\x18\x05 \x03(\tR\rpreferredTags\x12+\n" +
+	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\"\xae\a\n" +
 	"\x13MaintenanceTaskData\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1a\n" +

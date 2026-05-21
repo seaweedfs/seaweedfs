@@ -51,6 +51,10 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 			}
 		}
 
+		// Refresh the master's default replication so detectors can use it as the
+		// replica-placement fallback (matches the shell ec.balance default).
+		ms.integration.SetDefaultReplicaPlacement(ms.getDefaultReplicaPlacement())
+
 		// Use task detection system with complete cluster information
 		results, err := ms.integration.ScanWithTaskDetectors(taskMetrics)
 		if err != nil {
@@ -65,6 +69,26 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 	// No integration available
 	glog.Warningf("No integration available, no tasks will be scheduled")
 	return []*TaskDetectionResult{}, nil
+}
+
+// getDefaultReplicaPlacement reads the master's configured default replication,
+// used by detectors as the replica-placement fallback. Returns "" on error so
+// detectors fall back to even spread rather than failing the scan.
+func (ms *MaintenanceScanner) getDefaultReplicaPlacement() string {
+	var replicaPlacement string
+	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		replicaPlacement = resp.DefaultReplication
+		return nil
+	})
+	if err != nil {
+		glog.V(1).Infof("could not fetch master default replication: %v", err)
+		return ""
+	}
+	return replicaPlacement
 }
 
 // getVolumeHealthMetrics collects health information for all volumes.

@@ -413,6 +413,7 @@ message EcBalanceTaskConfig {
   string collection_filter = 3;           // Collection filter
   string disk_type = 4;                   // Disk type filter
   repeated string preferred_tags = 5;     // Preferred disk tags for placement
+  string replica_placement = 6;           // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 }
 
 // ========== Task Persistence Messages ==========

@@ -405,9 +405,19 @@ func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.Volume
 	res := make(map[pb.ServerAddress]*erasure_coding.ShardsInfo)
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
+			// A node may report several EcShardInfos for one volume — one per
+			// physical disk holding shards of it (multi-disk nodes). Union them
+			// rather than overwriting, or only the last disk's shards survive and
+			// the node looks like it is missing shards it actually has.
 			for _, v := range diskInfo.EcShardInfos {
 				if v.Id == uint32(vid) {
-					res[pb.NewServerAddressFromDataNode(dn)] = erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(v)
+					addr := pb.NewServerAddressFromDataNode(dn)
+					si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(v)
+					if existing, ok := res[addr]; ok {
+						existing.Add(si)
+					} else {
+						res[addr] = si
+					}
 				}
 			}
 		}
