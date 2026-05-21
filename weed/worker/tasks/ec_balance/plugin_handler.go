@@ -105,8 +105,8 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "shard_replica_placement",
 							Label:       "Shard Replica Placement",
-							Description: "EC shard replica placement constraint (e.g. 020); empty spreads evenly. Mirrors the ec.balance -shardReplicaPlacement flag.",
-							Placeholder: "even spread",
+							Description: "EC shard replica placement constraint (e.g. 020); empty uses the master default replication (even spread only when that default is empty or zero). Mirrors the ec.balance -shardReplicaPlacement flag.",
+							Placeholder: "master default",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},

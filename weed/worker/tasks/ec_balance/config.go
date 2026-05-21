@@ -17,7 +17,7 @@ type Config struct {
 	CollectionFilter   string   `json:"collection_filter"`
 	DiskType           string   `json:"disk_type"`
 	PreferredTags      []string `json:"preferred_tags"`
-	ReplicaPlacement   string   `json:"replica_placement"` // e.g. "020"; empty = even spread, no constraint
+	ReplicaPlacement   string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication (even spread only when that default is empty or zero)
 	DataCenterFilter   string   `json:"-"`                  // per-detection-run, not persisted
 }
 
@@ -164,7 +164,7 @@ func GetConfigSpec() base.ConfigSpec {
 				Required:     false,
 				DisplayName:  "Replica Placement",
 				Description:  "EC shard replica placement constraint (e.g. 020)",
-				HelpText:     "Leave empty for even spread. When set, limits shards per rack/node per the placement digits (dc/rack/node)",
+				HelpText:     "Leave empty to use the master default replication (even spread only when that default is empty or zero). When set, limits shards per rack/node per the placement digits (dc/rack/node)",
 				Placeholder:  "020",
 				InputType:    "text",
 				CSSClasses:   "form-control",

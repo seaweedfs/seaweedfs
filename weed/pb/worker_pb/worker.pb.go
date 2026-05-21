@@ -3297,7 +3297,7 @@ type EcBalanceTaskConfig struct {
 	CollectionFilter   string                 `protobuf:"bytes,3,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`         // Collection filter
 	DiskType           string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`                                 // Disk type filter
 	PreferredTags      []string               `protobuf:"bytes,5,rep,name=preferred_tags,json=preferredTags,proto3" json:"preferred_tags,omitempty"`                  // Preferred disk tags for placement
-	ReplicaPlacement   string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`         // EC shard replica placement (e.g. "020"); empty = even spread
+	ReplicaPlacement   string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`         // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
