@@ -255,7 +255,16 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*Node
 		if len(locs) <= 1 {
 			continue
 		}
-		sort.Slice(locs, func(i, j int) bool { return locs[i].freeSlots < locs[j].freeSlots })
+		// Keep the copy on the node with the most free slots and delete the
+		// duplicates from the more-constrained nodes, relieving capacity pressure
+		// where it is tightest. Sort ascending by free slots (tie-break on node id
+		// for determinism) and keep the last entry.
+		sort.Slice(locs, func(i, j int) bool {
+			if locs[i].freeSlots != locs[j].freeSlots {
+				return locs[i].freeSlots < locs[j].freeSlots
+			}
+			return locs[i].id < locs[j].id
+		})
 		for _, node := range locs[:len(locs)-1] {
 			moves = append(moves, &move{
 				volumeID:   vid,
