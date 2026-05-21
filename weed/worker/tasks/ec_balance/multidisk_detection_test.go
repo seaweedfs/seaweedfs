@@ -11,13 +11,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// These tests exercise the real detection entry point against a topology shaped
-// the way the master actually reports a multi-disk cluster: several same-type
-// physical disks on a node collapse into a single DiskInfo, with each shard's
-// real DiskId surviving only in the per-shard records (issue 9593). They run the
-// full master-wire-format -> ActiveTopology -> Detection path, then simulate
+// In-process (no real cluster) tests of the detection/planning path against a
+// topology shaped the way the master reports a multi-disk cluster: several
+// same-type physical disks on a node collapse into a single DiskInfo, with each
+// shard's real DiskId surviving only in the per-shard records (issue 9593). They
+// run the master-wire-format -> ActiveTopology -> Detection path, then simulate
 // executing the planned moves with the volume server's actual semantics
-// (VolumeEcShardsDelete is node-wide) to assert no EC shard is ever lost.
+// (VolumeEcShardsDelete is node-wide) to assert no EC shard is ever lost. The
+// real-cluster end-to-end equivalent lives in test/erasure_coding.
 
 // nodeSpec describes one volume server: its rack and the volume's shards per
 // physical disk (diskID -> shard ids).
@@ -167,11 +168,11 @@ func (m shardModel) apply(results []*types.TaskDetectionResult) {
 	}
 }
 
-// TestIntegrationMultiDiskBalanceNeverLosesShards is the core regression for
+// TestMultiDiskBalanceNeverLosesShards is the core regression for
 // issue 9593: a freshly-encoded volume on a 3-node, 6-disk-per-node cluster,
 // balanced and then concentrated, must never lose a shard when the planned moves
 // are executed with real node-wide-delete semantics.
-func TestIntegrationMultiDiskBalanceNeverLosesShards(t *testing.T) {
+func TestMultiDiskBalanceNeverLosesShards(t *testing.T) {
 	cfg := NewDefaultConfig()
 	cfg.ImbalanceThreshold = 0.0 // balance to even; surface any move the planner makes
 
@@ -244,10 +245,10 @@ func TestIntegrationMultiDiskBalanceNeverLosesShards(t *testing.T) {
 	}
 }
 
-// TestIntegrationConcentratedVolumeSpreadsAcrossNodesAndDisks asserts the
+// TestConcentratedVolumeSpreadsAcrossNodesAndDisks asserts the
 // remediation actually happens: a one-node-concentrated volume is redistributed
 // to the other racks, landing on multiple distinct destination disks.
-func TestIntegrationConcentratedVolumeSpreadsAcrossNodesAndDisks(t *testing.T) {
+func TestConcentratedVolumeSpreadsAcrossNodesAndDisks(t *testing.T) {
 	cfg := NewDefaultConfig()
 	cfg.ImbalanceThreshold = 0.0
 
