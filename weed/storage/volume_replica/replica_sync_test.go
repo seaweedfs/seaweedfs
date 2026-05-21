@@ -1,4 +1,4 @@
-package shell
+package volume_replica
 
 import (
 	"bytes"
@@ -201,7 +201,7 @@ func TestDeletedEntriesAreSkipped(t *testing.T) {
 
 func TestReplicaUnionBuilder_EmptyLocations(t *testing.T) {
 	// Test handling of empty locations slice
-	builder := &replicaUnionBuilder{
+	builder := &unionBuilder{
 		writer: &bytes.Buffer{},
 		vid:    1,
 	}
