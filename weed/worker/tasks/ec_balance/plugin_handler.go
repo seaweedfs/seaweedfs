@@ -231,7 +231,10 @@ func (h *ECBalanceHandler) Detect(
 		return err
 	}
 
-	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
+	clusterInfo := &workertypes.ClusterInfo{
+		ActiveTopology:          activeTopology,
+		DefaultReplicaPlacement: pluginworker.FetchDefaultReplicaPlacement(ctx, masters, h.grpcDialOption),
+	}
 	maxResults := int(request.MaxResults)
 	if maxResults < 0 {
 		maxResults = 0
