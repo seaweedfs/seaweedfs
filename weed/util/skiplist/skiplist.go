@@ -240,9 +240,10 @@ func (t *SkipList) DeleteByKey(key []byte) (id int64, err error) {
 				}
 			}
 
-			// Link from start needs readjustments.
-			startNextKey := t.StartLevels[index].Key
-			if compareElement(nextNode, startNextKey) == 0 {
+			// Match by id, not the cached key: redis3 re-keys nodes in place,
+			// so StartLevels[index].Key can be stale and skip this update while
+			// the end readjustment below still clears EndLevels[index].
+			if t.StartLevels[index] != nil && t.StartLevels[index].ElementPointer == nextNode.Id {
 				t.HasChanges = true
 				t.StartLevels[index] = nextNode.Next[index]
 				// This was our currently highest node!
@@ -307,8 +308,14 @@ func (t *SkipList) InsertByKey(key []byte, idIfKnown int64, value []byte) (id in
 	newFirst := true
 	newLast := true
 	if !t.IsEmpty() {
-		newFirst = compareElement(elem, t.StartLevels[0].Key) < 0
-		newLast = compareElement(elem, t.EndLevels[0].Key) > 0
+		// Guard each end: a persisted skiplist may have one end nil, so
+		// self-heal instead of dereferencing it.
+		if t.StartLevels[0] != nil {
+			newFirst = compareElement(elem, t.StartLevels[0].Key) < 0
+		}
+		if t.EndLevels[0] != nil {
+			newLast = compareElement(elem, t.EndLevels[0].Key) > 0
+		}
 	}
 
 	normallyInserted := false
