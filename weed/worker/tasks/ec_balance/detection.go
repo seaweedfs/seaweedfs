@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	storagetypes "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -68,8 +69,12 @@ func Detection(
 		}
 	}
 
+	// Canonical disk type for placement/execution: "hdd" -> "" (HardDriveType),
+	// matching the topology's disk keys and the volume server's move RPCs.
+	normalizedDiskType := storagetypes.ToDiskType(ecConfig.DiskType).String()
+
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{
-		DiskType:           ecConfig.DiskType,
+		DiskType:           normalizedDiskType,
 		ImbalanceThreshold: ecConfig.ImbalanceThreshold,
 		ReplicaPlacement:   replicaPlacement,
 		Ratio: func(collection string) (int, int) {
@@ -124,7 +129,7 @@ func Detection(
 				}},
 				TaskParams: &worker_pb.TaskParams_EcBalanceParams{
 					EcBalanceParams: &worker_pb.EcBalanceTaskParams{
-						DiskType:       ecConfig.DiskType,
+						DiskType:       normalizedDiskType,
 						TimeoutSeconds: 600,
 					},
 				},
@@ -145,6 +150,13 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 	topo := ecbalancer.NewTopology()
 	allowedCollections := wildcard.CompileWildcardMatchers(config.CollectionFilter)
 
+	// Normalize the disk-type filter: "hdd" (and the default "") map to the
+	// HardDriveType, which the topology reports under the empty-string key. Keep a
+	// separate "filter requested" flag so a configured "hdd" still filters to HDD
+	// disks instead of being mistaken for "all disk types".
+	filterByDiskType := config.DiskType != ""
+	wantDiskType := storagetypes.ToDiskType(config.DiskType).String()
+
 	nodeCount := 0
 	for _, dc := range topoInfo.DataCenterInfos {
 		if config.DataCenterFilter != "" {
@@ -164,7 +176,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				hasMatchingDisk := false
 
 				for diskType, diskInfo := range dn.DiskInfos {
-					if config.DiskType != "" && diskType != config.DiskType {
+					if filterByDiskType && diskType != wantDiskType {
 						continue
 					}
 					hasMatchingDisk = true
@@ -207,7 +219,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				// Add shards only for volumes whose collection passes the filter;
 				// those are the volumes the planner will balance.
 				for diskType, diskInfo := range dn.DiskInfos {
-					if config.DiskType != "" && diskType != config.DiskType {
+					if filterByDiskType && diskType != wantDiskType {
 						continue
 					}
 					for _, eci := range diskInfo.EcShardInfos {

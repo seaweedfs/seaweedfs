@@ -283,3 +283,24 @@ func TestIntegrationConcentratedVolumeSpreadsAcrossNodesAndDisks(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildBalancerTopologyNormalizesHddDiskType guards the disk-type filter:
+// the master reports default-HDD disks under the empty-string key, so a config of
+// "hdd" must match them (not filter everything out), while "ssd" must exclude them.
+func TestBuildBalancerTopologyNormalizesHddDiskType(t *testing.T) {
+	specs := []nodeSpec{
+		{id: "n1", rack: "r1", disks: map[uint32][]int{0: {0, 1}}},
+		{id: "n2", rack: "r1", disks: map[uint32][]int{0: {2}}},
+	}
+	topoInfo := buildMasterTopology("c", 100, 50, specs)
+
+	if _, n := buildBalancerTopology(topoInfo, &Config{DiskType: "hdd"}); n != 2 {
+		t.Errorf("disk_type=hdd matched %d nodes on an all-HDD cluster, want 2 (hdd must map to the empty HDD key)", n)
+	}
+	if _, n := buildBalancerTopology(topoInfo, &Config{DiskType: ""}); n != 2 {
+		t.Errorf("disk_type=empty matched %d nodes, want 2 (all)", n)
+	}
+	if _, n := buildBalancerTopology(topoInfo, &Config{DiskType: "ssd"}); n != 0 {
+		t.Errorf("disk_type=ssd matched %d nodes on an all-HDD cluster, want 0", n)
+	}
+}

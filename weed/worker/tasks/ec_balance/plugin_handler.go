@@ -102,13 +102,22 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
+						{
+							Name:        "shard_replica_placement",
+							Label:       "Shard Replica Placement",
+							Description: "EC shard replica placement constraint (e.g. 020); empty spreads evenly. Mirrors the ec.balance -shardReplicaPlacement flag.",
+							Placeholder: "even spread",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"collection_filter":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"data_center_filter": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"disk_type":          {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"collection_filter":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"data_center_filter":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"disk_type":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"shard_replica_placement": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -206,6 +215,10 @@ func (h *ECBalanceHandler) Detect(
 	diskType := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "disk_type", ""))
 	if diskType != "" {
 		workerConfig.TaskConfig.DiskType = diskType
+	}
+	replicaPlacement := strings.TrimSpace(pluginworker.ReadStringConfig(request.GetAdminConfigValues(), "shard_replica_placement", ""))
+	if replicaPlacement != "" {
+		workerConfig.TaskConfig.ReplicaPlacement = replicaPlacement
 	}
 
 	masters := make([]string, 0)
@@ -427,15 +440,15 @@ func buildECBalanceProposal(result *workertypes.TaskDetectionResult) (*plugin_pb
 		proposalID = fmt.Sprintf("ec-balance-%d-%d", result.VolumeID, time.Now().UnixNano())
 	}
 
-	// Dedupe key includes volume ID, shard ID, source node, and collection
-	// to distinguish moves of the same shard from different source nodes (e.g. dedup)
+	// Dedupe per (collection, volume), NOT per shard. A volume's EC shards can be
+	// spread across several disks on one server, and concurrent moves of the same
+	// volume race on its shared .ecx/.ecj/.vif sidecar files. Keying by volume
+	// makes the scheduler run only one of a volume's moves at a time — both within
+	// a detection run and against in-flight jobs — and because the planner emits a
+	// volume's moves in phase order (dedup, cross-rack, within-rack, global), the
+	// phases then execute in order across detection cycles. This mirrors the shell,
+	// which serializes a volume's moves and waits between phases.
 	dedupeKey := fmt.Sprintf("ec_balance:%d", result.VolumeID)
-	if len(result.TypedParams.Sources) > 0 {
-		src := result.TypedParams.Sources[0]
-		if len(src.ShardIds) > 0 {
-			dedupeKey = fmt.Sprintf("ec_balance:%d:%d:%s", result.VolumeID, src.ShardIds[0], src.Node)
-		}
-	}
 	if result.Collection != "" {
 		dedupeKey += ":" + result.Collection
 	}
