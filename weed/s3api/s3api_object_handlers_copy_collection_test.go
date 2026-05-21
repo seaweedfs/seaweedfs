@@ -30,7 +30,8 @@ func TestCopyDestinationPathResolvesBucketCollection(t *testing.T) {
 	}
 
 	// UploadPartCopy assigns against the destination part path under .uploads.
-	partPath := s3a.genUploadsFolder(bucket) + "/uploadid/" + fmt.Sprintf("%04d_%s.part", 1, "copy")
+	uploadDir, partName := s3a.copyPartLocation(bucket, "uploadid", 1)
+	partPath := uploadDir + "/" + partName
 	if got := f.DetectBucket(util.FullPath(partPath)); got != bucket {
 		t.Fatalf("UploadPartCopy dst path %q resolved to collection %q, want %q", partPath, got, bucket)
 	}
