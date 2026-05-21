@@ -332,13 +332,13 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	bucketDir := s3a.bucketDir(bucket)
 	fullPath := bucketDir + "/" + cleanPrefix
 
-	// Try to list one child object in the directory
-	var found bool
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		var listErr error
-		found, listErr = filerDirectoryHasChildren(client, fullPath)
-		return listErr
-	})
+	// List one child object. filer_pb.List cancels the underlying ListEntries
+	// stream when it returns, so gRPC's per-stream client goroutine is not leaked.
+	found := false
+	err := filer_pb.List(context.Background(), s3a, fullPath, "", func(*filer_pb.Entry, bool) error {
+		found = true
+		return nil
+	}, "", true, 1)
 
 	if err == nil {
 		return found
@@ -348,29 +348,6 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	}
 	glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, cleanPrefix, err)
 	return true
-}
-
-func filerDirectoryHasChildren(client filer_pb.SeaweedFilerClient, fullPath string) (bool, error) {
-	request := &filer_pb.ListEntriesRequest{
-		Directory:          fullPath,
-		Limit:              1,
-		InclusiveStartFrom: true,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stream, err := client.ListEntries(ctx, request)
-	if err != nil {
-		return false, err
-	}
-
-	if _, err = stream.Recv(); err != nil {
-		if err == io.EOF {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
