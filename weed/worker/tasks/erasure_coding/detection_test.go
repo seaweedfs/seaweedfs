@@ -233,13 +233,13 @@ func buildStuckSourceTopology(t *testing.T, volumeID uint32, presentShardCount i
 // criteria (Age, FullnessRatio, Size), with `Age` derived from `LastModified`
 // so the two fields stay consistent for any reader.
 func buildStuckSourceMetrics(volumeID uint32, server string) []*types.VolumeHealthMetrics {
-	lastModified := time.Now().Add(-time.Hour)
+	lastModified := time.Now().Add(-2 * time.Hour)
 	return []*types.VolumeHealthMetrics{{
 		VolumeID:      volumeID,
 		Server:        server,
 		Size:          200 * 1024 * 1024,
 		Collection:    "",
-		FullnessRatio: 0.9,
+		FullnessRatio: 0.96,
 		LastModified:  lastModified,
 		Age:           time.Since(lastModified),
 	}}
@@ -482,9 +482,9 @@ func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {
 			Server:        "10.0.0.1:8080",
 			Size:          200 * 1024 * 1024,
 			Collection:    "",
-			FullnessRatio: 0.9,
-			LastModified:  now.Add(-time.Hour),
-			Age:           10 * time.Minute,
+			FullnessRatio: 0.96,
+			LastModified:  now.Add(-2 * time.Hour),
+			Age:           2 * time.Hour,
 		})
 	}
 	return metrics

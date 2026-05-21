@@ -27,8 +27,8 @@ func NewDefaultConfig() *Config {
 			ScanIntervalSeconds: 60 * 60, // 1 hour
 			MaxConcurrent:       1,
 		},
-		QuietForSeconds:  300, // 5 minutes
-		FullnessRatio:    0.8, // 80%
+		QuietForSeconds:  3600, // 1 hour, matching the shell ec.encode -quietFor default
+		FullnessRatio:    0.95, // 95%, matching the shell ec.encode -fullPercent default
 		CollectionFilter: "",
 		MinSizeMB:        30, // 30MB (more reasonable than 100MB)
 		PreferredTags:    nil,

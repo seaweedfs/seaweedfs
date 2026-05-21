@@ -59,7 +59,7 @@ func TestCopyVolumeFilesToWorkerUsesCurrentCompactionRevision(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(t, task.markVolumeReadonly(ctx))
+	require.NoError(t, task.markReplicasReadonly(ctx))
 
 	fileStatus, err := task.readSourceVolumeFileStatus(ctx)
 	require.NoError(t, err)
