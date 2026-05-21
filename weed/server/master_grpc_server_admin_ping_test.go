@@ -8,6 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
 
 func TestMasterIsKnownPingTarget(t *testing.T) {
@@ -59,6 +61,36 @@ func TestMasterIsKnownPingTarget(t *testing.T) {
 				t.Fatalf("isKnownPingTarget(%q,%q) = %v, want %v", tc.target, tc.targetType, got, tc.want)
 			}
 		})
+	}
+}
+
+// On a follower master the topology is empty because only the leader receives
+// volume-server heartbeats. The gate must then fall back to the volume-server
+// set learned over the MasterClient subscription instead of rejecting every
+// volume-server target. The positive MasterClient.HasVolumeServer lookup is
+// covered by wdclient.TestHasVolumeServer; here we lock in that an empty
+// topology no longer short-circuits to false and that the fallback is
+// nil-safe.
+func TestMasterIsKnownPingTargetFollowerEmptyTopology(t *testing.T) {
+	ctx := context.Background()
+	vs := "10.0.0.10:8080.18080"
+
+	// No topology and no MasterClient: nothing to consult, so reject.
+	bare := &MasterServer{option: &MasterOption{Master: pb.ServerAddress("10.0.0.1:9333")}}
+	if bare.isKnownPingTarget(ctx, vs, cluster.VolumeServerType) {
+		t.Fatalf("volume server must be unknown without topology or MasterClient")
+	}
+
+	// Empty topology plus a MasterClient that has not learned this volume
+	// server yet: still reject, but exercise the MasterClient fallback path.
+	mc := wdclient.NewMasterClient(grpc.EmptyDialOption{}, "", cluster.MasterType, "", "", "", pb.ServerDiscovery{})
+	follower := &MasterServer{
+		option:       &MasterOption{Master: pb.ServerAddress("10.0.0.1:9333")},
+		Topo:         topology.NewTopology("test", sequence.NewMemorySequencer(), 32*1024, 5, false),
+		MasterClient: mc,
+	}
+	if follower.isKnownPingTarget(ctx, vs, cluster.VolumeServerType) {
+		t.Fatalf("volume server must be unknown until the MasterClient learns it")
 	}
 }
 
