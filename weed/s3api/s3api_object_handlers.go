@@ -332,35 +332,18 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	bucketDir := s3a.bucketDir(bucket)
 	fullPath := bucketDir + "/" + cleanPrefix
 
-	// Try to list one child object in the directory
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.ListEntriesRequest{
-			Directory:          fullPath,
-			Limit:              1,
-			InclusiveStartFrom: true,
-		}
-
-		stream, err := client.ListEntries(context.Background(), request)
-		if err != nil {
-			return err
-		}
-
-		// Check if we got at least one entry
-		_, err = stream.Recv()
-		if err == io.EOF {
-			return io.EOF // No children
-		}
-		if err != nil {
-			return err
-		}
+	// List one child object. filer_pb.List cancels the underlying ListEntries
+	// stream when it returns, so gRPC's per-stream client goroutine is not leaked.
+	found := false
+	err := filer_pb.List(context.Background(), s3a, fullPath, "", func(*filer_pb.Entry, bool) error {
+		found = true
 		return nil
-	})
+	}, "", true, 1)
 
-	// If we got an entry (not EOF), then it has children
 	if err == nil {
-		return true
+		return found
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, filer_pb.ErrNotFound) {
+	if errors.Is(err, filer_pb.ErrNotFound) {
 		return false
 	}
 	glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, cleanPrefix, err)
