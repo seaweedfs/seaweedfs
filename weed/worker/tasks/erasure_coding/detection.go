@@ -226,7 +226,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				parityShards := erasure_coding.ParityShardsCount
 				multiPlan, err := planECDestinations(planner, metric, ecConfig, dataShards, parityShards)
 				if err != nil {
-					glog.Warningf("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
+					glog.V(2).Infof("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
 					consecutivePlanningFailures++
 					if len(results) >= minProposalsBeforeEarlyStop && consecutivePlanningFailures >= maxConsecutivePlanningFailures {
 						glog.Warningf("EC Detection: stopping early after %d consecutive placement failures with %d proposals already planned", consecutivePlanningFailures, len(results))
