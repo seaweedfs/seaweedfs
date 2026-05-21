@@ -72,6 +72,26 @@ func TestMultiDiskECBalanceNoShardLoss(t *testing.T) {
 	t.Logf("using volume %d", volumeId)
 	time.Sleep(3 * time.Second)
 
+	// Populate every server's disks with volumes so the balancer can see and
+	// target each physical disk. The master only enumerates disks that already
+	// hold a volume or EC shard — an empty disk leaves no trace in the topology
+	// (heartbeats aggregate capacity per disk type, not per physical disk). So
+	// without pre-populating, the post-encode balance would collapse each node's
+	// shards onto the single disk that happened to hold data, and whether the
+	// fillers spread across disks is environment-dependent (master volume-growth
+	// timing). Growing a few volumes per server makes the multi-disk layout
+	// deterministic: the volume server places each new volume on its least-loaded
+	// disk, so a handful of grows touches every disk.
+	for i := 0; i < 3; i++ {
+		server := fmt.Sprintf("127.0.0.1:809%d", i)
+		out, growErr := captureCommandOutput(t, shell.Commands[findCommandIndex("volume.grow")],
+			[]string{"-collection", "test", "-dataNode", server, "-count", "4"}, commandEnv)
+		require.NoError(t, growErr, "volume.grow on %s failed: %s", server, out)
+	}
+	// Let the freshly grown volumes reach the master via heartbeat before encoding
+	// so collectEcNodes sees every disk.
+	time.Sleep(5 * time.Second)
+
 	locked, unlock := tryLockWithTimeout(t, commandEnv, 15*time.Second)
 	require.True(t, locked, "could not acquire shell lock")
 	defer unlock()
