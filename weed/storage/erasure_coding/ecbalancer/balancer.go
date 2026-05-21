@@ -584,49 +584,61 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 				break
 			}
 
+			// Prefer moving a shard of a volume the destination does not hold at
+			// all (pass 0) before adding another shard of an already-present volume
+			// (pass 1), to keep each volume's shards spread across nodes.
 			moved := false
-			for _, vid := range sortedVolumeKeys(maxNode.shards) {
-				if moved {
-					break
-				}
-				info := maxNode.shards[vid]
-				minInfo := minNode.shards[vid]
-				// Iterate the full shard-id space so custom ratios with more than
-				// the standard total (ids 14..MaxShardCount-1) are candidates too.
-				for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
-					sid := erasure_coding.ShardId(shardID)
-					if !info.shardBits.Has(sid) {
-						continue
+			for pass := 0; pass < 2 && !moved; pass++ {
+				for _, vid := range sortedVolumeKeys(maxNode.shards) {
+					if moved {
+						break
 					}
-					if minInfo != nil && minInfo.shardBits.Has(sid) {
-						continue
+					info := maxNode.shards[vid]
+					minInfo := minNode.shards[vid]
+					volumeOnMin := minInfo != nil && minInfo.shardBits != 0
+					if pass == 0 && volumeOnMin {
+						continue // pass 0: only volumes absent from the destination
 					}
-					dataShards := dataShardsByCollection[info.collection]
-					if dataShards <= 0 {
-						dataShards = erasure_coding.DataShardsCount
+					if pass == 1 && !volumeOnMin {
+						continue // pass 1: only volumes already on the destination
 					}
-					destDisk := pickBestDiskOnNode(minNode, vid, diskType, shardID, dataShards)
-					moves = append(moves, &move{
-						volumeID:   vid,
-						shardID:    shardID,
-						collection: info.collection,
-						source:     maxNode,
-						sourceDisk: shardDiskID(maxNode, vid, shardID),
-						target:     minNode,
-						targetDisk: destDisk,
-						phase:      "global",
-					})
-					info.shardBits = info.shardBits.Clear(sid)
-					for diskID := range info.diskShardBits {
-						info.diskShardBits[diskID] = info.diskShardBits[diskID].Clear(sid)
+					// Iterate the full shard-id space so custom ratios with more than
+					// the standard total (ids 14..MaxShardCount-1) are candidates too.
+					for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
+						sid := erasure_coding.ShardId(shardID)
+						if !info.shardBits.Has(sid) {
+							continue
+						}
+						if minInfo != nil && minInfo.shardBits.Has(sid) {
+							continue
+						}
+						dataShards := dataShardsByCollection[info.collection]
+						if dataShards <= 0 {
+							dataShards = erasure_coding.DataShardsCount
+						}
+						destDisk := pickBestDiskOnNode(minNode, vid, diskType, shardID, dataShards)
+						moves = append(moves, &move{
+							volumeID:   vid,
+							shardID:    shardID,
+							collection: info.collection,
+							source:     maxNode,
+							sourceDisk: shardDiskID(maxNode, vid, shardID),
+							target:     minNode,
+							targetDisk: destDisk,
+							phase:      "global",
+						})
+						info.shardBits = info.shardBits.Clear(sid)
+						for diskID := range info.diskShardBits {
+							info.diskShardBits[diskID] = info.diskShardBits[diskID].Clear(sid)
+						}
+						reserveShard(minNode, vid, info.collection, shardID, destDisk)
+						nodeShardCounts[maxNode.id]--
+						nodeShardCounts[minNode.id]++
+						maxNode.freeSlots++
+						minNode.freeSlots--
+						moved = true
+						break
 					}
-					reserveShard(minNode, vid, info.collection, shardID, destDisk)
-					nodeShardCounts[maxNode.id]--
-					nodeShardCounts[minNode.id]++
-					maxNode.freeSlots++
-					minNode.freeSlots--
-					moved = true
-					break
 				}
 			}
 			if !moved {

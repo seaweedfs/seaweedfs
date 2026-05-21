@@ -851,10 +851,28 @@ func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.
 		}
 		return nil
 	}
-	ewg := NewErrorWaitGroup(ecb.maxParallelization)
+	// Apply mode: parallelize across volumes, but run one volume's moves within a
+	// phase sequentially. Concurrent moves of the same volume to a node can race
+	// on its shared .ecx/.ecj/.vif sidecar files.
+	var order []uint32
+	byVol := make(map[uint32][]ecbalancer.Move)
 	for _, m := range moves {
-		m := m
-		ewg.Add(func() error { return ecb.executeMove(byID, m) })
+		if _, ok := byVol[m.VolumeID]; !ok {
+			order = append(order, m.VolumeID)
+		}
+		byVol[m.VolumeID] = append(byVol[m.VolumeID], m)
+	}
+	ewg := NewErrorWaitGroup(ecb.maxParallelization)
+	for _, vid := range order {
+		group := byVol[vid]
+		ewg.Add(func() error {
+			for _, m := range group {
+				if err := ecb.executeMove(byID, m); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	}
 	return ewg.Wait()
 }

@@ -346,3 +346,30 @@ func TestPlanBalancesSkewedDataParityWithEvenTotals(t *testing.T) {
 		t.Error("expected skewed data shards to rebalance across racks")
 	}
 }
+
+// TestGlobalPrefersVolumeAbsentFromDestination guards the global phase's
+// volume-diversity preference: when draining a node, move a shard of a volume the
+// destination does not hold at all before piling a second shard of an
+// already-present volume onto it. node1 (full) holds vol100 and vol200; node2
+// (empty) holds only vol100, so the first global move should be a vol200 shard.
+func TestGlobalPrefersVolumeAbsentFromDestination(t *testing.T) {
+	topo := NewTopology()
+	n1 := topo.AddNode("node1", "dc1", "dc1:rack1", 0)
+	n1.AddShards(100, "col1", 0, bits(0, 1))
+	n1.AddShards(200, "col1", 0, bits(0, 1))
+	n2 := topo.AddNode("node2", "dc1", "dc1:rack1", 3)
+	n2.AddShards(100, "col1", 0, bits(2))
+
+	moves := detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.01, nil, 0, true)
+	if len(moves) == 0 {
+		t.Fatal("expected a global move from the full node")
+	}
+	if moves[0].volumeID != 200 {
+		t.Errorf("first global move is volume %d, want 200 (the volume absent from node2)", moves[0].volumeID)
+	}
+	for _, m := range moves {
+		if m.source.id != "node1" || m.target.id != "node2" {
+			t.Errorf("move %+v, want node1->node2", m)
+		}
+	}
+}
