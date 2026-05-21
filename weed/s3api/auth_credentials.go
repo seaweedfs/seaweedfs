@@ -68,6 +68,11 @@ type IdentityAccessManagement struct {
 	// IAM Integration for advanced features
 	iamIntegration IAMIntegration
 
+	// Serializes resyncs of the policy set into the advanced IAM manager so that
+	// concurrent policy updates can't apply stale views out of order. See
+	// resyncIAMManagerPolicies.
+	iamManagerSyncMu sync.Mutex
+
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
 
@@ -1859,6 +1864,28 @@ func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context
 	return manager.SyncRuntimePolicies(ctx, policies)
 }
 
+// resyncIAMManagerPolicies pushes the current policy set into the advanced IAM
+// manager's engine. SyncRuntimePolicies treats its argument as the full desired
+// state, so callers must not pass snapshots captured earlier: two updates that
+// mutate iam.policies in order could otherwise apply their snapshots in the
+// opposite order and resurrect a deleted policy or drop a new one. Instead this
+// serializes on iamManagerSyncMu and reads iam.policies fresh, so whatever the
+// map holds when the last caller runs becomes the manager's state. Call it after
+// the iam.policies mutation has been committed (lock released).
+func (iam *IdentityAccessManagement) resyncIAMManagerPolicies() {
+	if iam == nil {
+		return
+	}
+	iam.iamManagerSyncMu.Lock()
+	defer iam.iamManagerSyncMu.Unlock()
+	iam.m.RLock()
+	policies := iam.collectPoliciesLocked()
+	iam.m.RUnlock()
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), policies); err != nil {
+		glog.Warningf("Failed to sync runtime policies to IAM Manager: %v", err)
+	}
+}
+
 // PruneBucketFromConfiguration removes any identity actions scoped to the given
 // bucket (e.g. "Read:bucket", "Write:bucket/prefix") from the persisted S3 IAM
 // configuration. Wildcarded resources and global actions are preserved because
@@ -1953,15 +1980,16 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 		glog.Errorf("Failed to hydrate runtime IAM policies: %v", err)
 		return err
 	}
-	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), s3ApiConfiguration.Policies); err != nil {
-		glog.Errorf("Failed to sync runtime IAM policies to advanced IAM manager: %v", err)
-		return err
-	}
 
+	// Install the loaded config into iam.policies first, then resync the advanced
+	// IAM manager from that committed map. Syncing before the load would leave a
+	// window where the manager holds policies the map doesn't, which a concurrent
+	// resync (e.g. SetIAMIntegration or a runtime PutPolicy) would then clobber.
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
 		glog.Errorf("Failed to load S3 API configuration: %v", err)
 		return err
 	}
+	iam.resyncIAMManagerPolicies()
 
 	glog.V(1).Infof("Successfully loaded S3 API configuration from credential manager")
 	return nil
@@ -2010,8 +2038,14 @@ func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte)
 // isAuthEnabled themselves via EnableAuthEnforcement / updateAuthenticationState.
 func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegration) {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	iam.iamIntegration = integration
+	iam.m.Unlock()
+	// Config loaded before the integration was attached skipped the policy sync
+	// (syncRuntimePoliciesToIAMManager no-ops while iamIntegration is nil), so
+	// flush the policies already in memory into the manager's engine now. This
+	// covers either startup ordering: if the load won the race the policies are
+	// here to push; if SetIAMIntegration won, the load's own resync runs next.
+	iam.resyncIAMManagerPolicies()
 }
 
 // EnableAuthEnforcement turns on the auth-required mode unconditionally. Use
@@ -2351,7 +2385,6 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 // PutPolicy adds or updates a policy
 func (iam *IdentityAccessManagement) PutPolicy(name string, content string) error {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	if iam.policies == nil {
 		iam.policies = make(map[string]*iam_pb.Policy)
 	}
@@ -2362,6 +2395,12 @@ func (iam *IdentityAccessManagement) PutPolicy(name string, content string) erro
 	if err := iam.iamPolicyEngine.SetBucketPolicy(name, content); err != nil {
 		glog.Warningf("IAM policy %q is stored but could not be compiled for cache: %v", name, err)
 	}
+	iam.m.Unlock()
+	// Also sync to the advanced IAM Manager's policy engine so that the
+	// authorizeWithIAM path (used when identity has policy_names) sees the update.
+	// Done after releasing iam.m so the per-request auth RLock path isn't blocked
+	// by the policy recompile.
+	iam.resyncIAMManagerPolicies()
 	return nil
 }
 
@@ -2378,12 +2417,24 @@ func (iam *IdentityAccessManagement) GetPolicy(name string) (*iam_pb.Policy, err
 // DeletePolicy removes a policy
 func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	delete(iam.policies, name)
 	if iam.iamPolicyEngine != nil {
 		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
 	}
+	iam.m.Unlock()
+	// Also sync the removal to the advanced IAM Manager's policy engine.
+	iam.resyncIAMManagerPolicies()
 	return nil
+}
+
+// collectPoliciesLocked returns all policies as a slice for SyncRuntimePolicies.
+// Caller must hold iam.m (read or write).
+func (iam *IdentityAccessManagement) collectPoliciesLocked() []*iam_pb.Policy {
+	policies := make([]*iam_pb.Policy, 0, len(iam.policies))
+	for _, p := range iam.policies {
+		policies = append(policies, p)
+	}
+	return policies
 }
 
 func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
