@@ -394,3 +394,38 @@ func TestPlanKeepsCollectionsWithSameVolumeIdDistinct(t *testing.T) {
 		}
 	}
 }
+
+// TestDedupFreesCapacityForLaterPhases checks that capacity opened by deleting a
+// duplicate is usable by a later phase in the same Plan. node2 is full (0 free)
+// but holds a duplicate of node1's shard 0; node1 is roomier, so dedup deletes
+// node2's copy, freeing a slot. The within-rack phase must then be able to move a
+// shard onto node2.
+func TestDedupFreesCapacityForLaterPhases(t *testing.T) {
+	topo := NewTopology()
+	n1 := topo.AddNode("node1", "dc1", "dc1:rack1", 5)
+	n1.AddDisk(0, "", 5, 7)
+	n1.AddShards(100, "col1", 0, bits(0, 1, 2, 3, 4, 5, 6))
+	n2 := topo.AddNode("node2", "dc1", "dc1:rack1", 0) // full
+	n2.AddDisk(0, "", 0, 1)
+	n2.AddShards(100, "col1", 0, bits(0)) // duplicate of node1's shard 0
+
+	moves := Plan(topo, Options{ImbalanceThreshold: 0.01, Ratio: ratio(10, 4)})
+
+	dedup := false
+	toNode2 := 0
+	for _, m := range moves {
+		if m.Phase == "dedup" {
+			dedup = true
+			continue
+		}
+		if m.TargetNode == "node2" {
+			toNode2++
+		}
+	}
+	if !dedup {
+		t.Fatal("expected a dedup move for the duplicated shard 0")
+	}
+	if toNode2 == 0 {
+		t.Error("slot freed by dedup on node2 was not usable by a later phase")
+	}
+}

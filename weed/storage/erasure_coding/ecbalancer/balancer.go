@@ -193,17 +193,17 @@ func Plan(topo *Topology, opts Options) []Move {
 
 		for _, vk := range byCollection[collection] {
 			m := detectDuplicateShards(vk, nodes)
-			applyMovesToTopology(m)
+			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
 			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
-			applyMovesToTopology(m)
+			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
 			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
-			applyMovesToTopology(m)
+			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 	}
@@ -833,28 +833,51 @@ func releaseShard(node *Node, vk volKey, shardID int) {
 }
 
 // applyMovesToTopology simulates moves so later phases see updated placement.
-func applyMovesToTopology(moves []*move) {
+// Dedup moves (source==target) are deletions that this helper alone applies, so
+// it also credits the freed disk/node/rack capacity — otherwise a slot opened by
+// dedup could not be used by the cross-rack/within-rack/global phases in the same
+// run. Non-dedup moves already had their slots accounted inline by the phase that
+// produced them, so only their shard bits are (idempotently) re-asserted here.
+func applyMovesToTopology(moves []*move, racks map[string]*rack) {
 	for _, m := range moves {
 		sid := erasure_coding.ShardId(m.shardID)
 		vk := volKey{collection: m.collection, vid: m.volumeID}
+		dedup := m.source.id == m.target.id
+
 		if srcInfo, ok := m.source.shards[vk]; ok {
 			srcInfo.shardBits = srcInfo.shardBits.Clear(sid)
 			for diskID := range srcInfo.diskShardBits {
+				if !srcInfo.diskShardBits[diskID].Has(sid) {
+					continue
+				}
 				srcInfo.diskShardBits[diskID] = srcInfo.diskShardBits[diskID].Clear(sid)
+				if dedup {
+					if d, ok := m.source.disks[diskID]; ok {
+						d.shardCount--
+						d.freeSlots++
+					}
+				}
 			}
 		}
-		if m.source.id != m.target.id {
-			dstInfo, ok := m.target.shards[vk]
-			if !ok {
-				dstInfo = &volumeShards{collection: m.collection, diskShardBits: make(map[uint32]erasure_coding.ShardBits)}
-				m.target.shards[vk] = dstInfo
+
+		if dedup {
+			m.source.freeSlots++
+			if r, ok := racks[m.source.rack]; ok {
+				r.freeSlots++
 			}
-			if dstInfo.diskShardBits == nil {
-				dstInfo.diskShardBits = make(map[uint32]erasure_coding.ShardBits)
-			}
-			dstInfo.shardBits = dstInfo.shardBits.Set(sid)
-			dstInfo.diskShardBits[m.targetDisk] = dstInfo.diskShardBits[m.targetDisk].Set(sid)
+			continue
 		}
+
+		dstInfo, ok := m.target.shards[vk]
+		if !ok {
+			dstInfo = &volumeShards{collection: m.collection, diskShardBits: make(map[uint32]erasure_coding.ShardBits)}
+			m.target.shards[vk] = dstInfo
+		}
+		if dstInfo.diskShardBits == nil {
+			dstInfo.diskShardBits = make(map[uint32]erasure_coding.ShardBits)
+		}
+		dstInfo.shardBits = dstInfo.shardBits.Set(sid)
+		dstInfo.diskShardBits[m.targetDisk] = dstInfo.diskShardBits[m.targetDisk].Set(sid)
 	}
 }
 
