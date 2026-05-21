@@ -242,9 +242,11 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	}
 
 	transferStatus := &ChunkTransferStatus{
-		ChunkFileId: sourceChunk.GetFileIdString(),
-		Path:        path,
-		Status:      "downloading",
+		ChunkTransferSnapshot: ChunkTransferSnapshot{
+			ChunkFileId: sourceChunk.GetFileIdString(),
+			Path:        path,
+			Status:      "downloading",
+		},
 	}
 	fs.activeTransfers.Store(sourceChunk.GetFileIdString(), transferStatus)
 	defer fs.activeTransfers.Delete(sourceChunk.GetFileIdString())
