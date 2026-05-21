@@ -2,6 +2,8 @@ package volume_server_http_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -44,6 +46,17 @@ func TestReplicatedUploadSucceedsImmediatelyAfterAllocate(t *testing.T) {
 	fid := framework.NewFileID(volumeID, 881001, 0x0B0C0D0E)
 	payload := []byte("replicated-upload-after-allocate")
 
+	// The master only learns about replica locations through volume-server
+	// heartbeats, which lag behind the direct AllocateVolume gRPC calls above.
+	// In production a client obtains its fid from the master assign flow, which
+	// guarantees the master already knows every replica; this test crafts the
+	// fid by hand, so the replicated write would otherwise look up the master
+	// before the second replica is registered and fail with a 500. Wait until
+	// the master reports both replicas before uploading.
+	if !waitForMasterReplicaCount(t, client, clusterHarness.MasterURL(), volumeID, 2, 10*time.Second) {
+		t.Fatalf("master did not report 2 replica locations for volume %d within deadline", volumeID)
+	}
+
 	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(0), fid, payload)
 	_ = framework.ReadAllAndClose(t, uploadResp)
 	if uploadResp.StatusCode != http.StatusCreated {
@@ -60,4 +73,30 @@ func TestReplicatedUploadSucceedsImmediatelyAfterAllocate(t *testing.T) {
 	if string(replicaBody) != string(payload) {
 		t.Fatalf("replica body mismatch: got %q want %q", string(replicaBody), string(payload))
 	}
+}
+
+// waitForMasterReplicaCount polls the master volume lookup until it reports at
+// least want locations for volumeID, or the timeout elapses.
+func waitForMasterReplicaCount(t testing.TB, client *http.Client, masterURL string, volumeID uint32, want int, timeout time.Duration) bool {
+	t.Helper()
+
+	lookupURL := fmt.Sprintf("%s/dir/lookup?volumeId=%d", masterURL, volumeID)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, lookupURL))
+		body := framework.ReadAllAndClose(t, resp)
+		if resp.StatusCode == http.StatusOK {
+			var result struct {
+				Locations []struct {
+					Url string `json:"url"`
+				} `json:"locations"`
+			}
+			if err := json.Unmarshal(body, &result); err == nil && len(result.Locations) >= want {
+				return true
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	return false
 }
