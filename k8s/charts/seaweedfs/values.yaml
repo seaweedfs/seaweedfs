@@ -305,6 +305,11 @@ volume:
   enabled: true
   imageOverride: null
   restartPolicy: null
+  # Run the Rust volume server (/usr/bin/weed-volume) instead of the Go one.
+  # Requires an image that ships the Rust binary (amd64/arm64). The Go-only
+  # log flags (-logtostderr/-logdir/-v) and -pulseSeconds are dropped; set log
+  # level via the RUST_LOG env var in extraEnvironmentVars if needed.
+  rust: false
   port: 8080
   grpcPort: 18080
   metricsPort: 9327

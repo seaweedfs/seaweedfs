@@ -137,6 +137,9 @@ spec:
             - "/bin/sh"
             - "-ec"
             - |
+              {{- if $volume.rust }}
+              exec /usr/bin/weed-volume \
+              {{- else }}
               exec /usr/bin/weed \
                 {{- if $volume.logs }}
                 -logdir=/logs \
@@ -149,6 +152,7 @@ spec:
                 -v={{ $.Values.global.seaweedfs.loggingLevel }} \
                 {{- end }}
                 volume \
+              {{- end }}
                 -port={{ $volume.port }} \
                 {{- if $volume.metricsPort }}
                 -metricsPort={{ $volume.metricsPort }} \
@@ -180,7 +184,7 @@ spec:
                 {{- if $volume.imagesFixOrientation }}
                 -images.fix.orientation \
                 {{- end }}
-                {{- if $volume.pulseSeconds }}
+                {{- if and $volume.pulseSeconds (not $volume.rust) }}
                 -pulseSeconds={{ $volume.pulseSeconds }} \
                 {{- end }}
                 {{- if $volume.index }}
