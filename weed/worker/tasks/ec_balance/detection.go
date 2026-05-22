@@ -242,22 +242,11 @@ func resolveECRatio(_ *types.ClusterInfo, _ string) (int, int) {
 // replication (matching the shell ec.balance default). A missing, invalid, or
 // zero-replication value yields nil, meaning even spread / no constraint.
 func resolveReplicaPlacement(ecConfig *Config, clusterInfo *types.ClusterInfo) *super_block.ReplicaPlacement {
-	spec := ecConfig.ReplicaPlacement
-	if spec == "" && clusterInfo != nil {
-		spec = clusterInfo.DefaultReplicaPlacement
+	clusterDefault := ""
+	if clusterInfo != nil {
+		clusterDefault = clusterInfo.DefaultReplicaPlacement
 	}
-	if spec == "" {
-		return nil
-	}
-	rp, err := super_block.NewReplicaPlacementFromString(spec)
-	if err != nil {
-		glog.Warningf("EC balance: ignoring invalid replica placement %q: %v", spec, err)
-		return nil
-	}
-	if !rp.HasReplication() {
-		return nil
-	}
-	return rp
+	return super_block.ResolveReplicaPlacement(ecConfig.ReplicaPlacement, clusterDefault)
 }
 
 func normalizeECShardCounts(dataShards, parityShards int) (int, int) {
