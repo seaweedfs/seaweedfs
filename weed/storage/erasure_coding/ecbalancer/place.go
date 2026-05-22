@@ -218,17 +218,69 @@ func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, 
 	}
 
 	destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti,
-		func(r string) bool { return racks[r].freeSlots > 0 },
+		func(r string) bool { return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], c.DiskType) },
 		withinLimit)
 	if !ok {
 		return nil, 0, false
 	}
-	node := pickNodeInRack(racks[destRack], vk, rp)
+	node := pickNodeInRackWithDisk(racks[destRack], vk, rp, c.DiskType)
 	if node == nil {
 		return nil, 0, false
 	}
 	diskID := pickBestDiskOnNode(node, vk, c.DiskType, sid, dataShards)
 	return node, diskID, true
+}
+
+// nodeHasFreeDiskOfType reports whether the node has a disk of diskType ("" = any)
+// with free capacity.
+func nodeHasFreeDiskOfType(n *Node, diskType string) bool {
+	for _, d := range n.disks {
+		if diskType != "" && d.diskType != diskType {
+			continue
+		}
+		if d.freeSlots > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// rackHasFreeDiskOfType reports whether any node in the rack has a free disk of
+// diskType.
+func rackHasFreeDiskOfType(r *rack, diskType string) bool {
+	for _, n := range r.nodes {
+		if n.freeSlots > 0 && nodeHasFreeDiskOfType(n, diskType) {
+			return true
+		}
+	}
+	return false
+}
+
+// pickNodeInRackWithDisk is pickNodeInRack restricted to nodes that actually have
+// a free disk of diskType. FromActiveTopology keeps all disk types in the
+// snapshot, so without this a node with free volume slots but no disk of the
+// requested type could be chosen, and pickBestDiskOnNode would fall back to disk 0
+// on the wrong tier.
+func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement, diskType string) *Node {
+	var best *Node
+	bestCount := -1
+	for _, id := range sortedNodeKeys(r.nodes) {
+		node := r.nodes[id]
+		if node.freeSlots <= 0 {
+			continue
+		}
+		if !nodeHasFreeDiskOfType(node, diskType) {
+			continue
+		}
+		count := volumeShardCount(node, vk)
+		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount+1 {
+			continue
+		}
+		if best == nil || count < bestCount {
+			best, bestCount = node, count
+		}
+	}
+	return best
 }
 
 // shardsOfType returns the sorted subset of need that are data shards (id <

@@ -125,3 +125,41 @@ func TestPlaceDurabilityFirstRelaxesRP(t *testing.T) {
 		t.Errorf("expected replica-placement relaxation, got %v", res.Relaxed)
 	}
 }
+
+// TestPlaceDiskTypeHardFilter: with DiskType set, shards land only on disks of
+// that type, even though the snapshot also contains other-typed disks.
+func TestPlaceDiskTypeHardFilter(t *testing.T) {
+	topo := NewTopology()
+	for r := 0; r < 4; r++ {
+		rackKey := fmt.Sprintf("dc1:rack%d", r)
+		ssd := topo.AddNode(fmt.Sprintf("ssd-%d:8080", r), "dc1", rackKey, 50)
+		ssd.AddDisk(0, "ssd", 50, 0)
+		hdd := topo.AddNode(fmt.Sprintf("hdd-%d:8080", r), "dc1", rackKey, 50)
+		hdd.AddDisk(0, "hdd", 50, 0)
+	}
+
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd"}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place ssd: %v", err)
+	}
+	for sid, d := range res.Destinations {
+		node := topo.nodes[d.Node]
+		disk := node.disks[d.DiskID]
+		if disk == nil || disk.diskType != "ssd" {
+			t.Errorf("shard %d placed on non-ssd disk: node=%s diskID=%d", sid, d.Node, d.DiskID)
+		}
+	}
+}
+
+// TestPlaceDiskTypeUnavailableFails: a request for a disk type with no matching
+// disks fails rather than silently placing on the wrong tier.
+func TestPlaceDiskTypeUnavailableFails(t *testing.T) {
+	topo := NewTopology()
+	for r := 0; r < 4; r++ {
+		n := topo.AddNode(fmt.Sprintf("hdd-%d:8080", r), "dc1", fmt.Sprintf("dc1:rack%d", r), 50)
+		n.AddDisk(0, "hdd", 50, 0)
+	}
+	if _, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd"}, PlaceStrict); err == nil {
+		t.Fatal("expected Place to fail when no disks of the requested type exist")
+	}
+}
