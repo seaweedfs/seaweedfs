@@ -71,3 +71,43 @@ func TestDetectCrossDCImbalanceNoOp(t *testing.T) {
 		t.Errorf("expected no moves when DiffDataCenterCount is 0, got %d", len(moves))
 	}
 }
+
+// TestBalanceCrossRackAllowsSameDCMoveAtDCCap: a DC sitting exactly at its
+// DiffDataCenterCount cap must still permit intra-DC cross-rack rebalancing — a
+// same-DC move leaves the DC total unchanged. Regression test for the per-DC cap
+// predicate previously rejecting every target rack in a capped DC, which blocked
+// legal within-DC spreads after detectCrossDCImbalance drained both DCs to the cap.
+func TestBalanceCrossRackAllowsSameDCMoveAtDCCap(t *testing.T) {
+	vk := volKey{collection: "c1", vid: 1}
+	topo := NewTopology()
+	mk := func(node, dc, rack string, bits uint32) {
+		n := topo.AddNode(node, dc, rack, 50)
+		n.AddDisk(0, "", 50, 0)
+		if bits != 0 {
+			n.AddShards(1, "c1", 0, erasure_coding.ShardBits(bits))
+		}
+	}
+	// Both DCs hold 5 shards (the cap), each concentrated on one rack with an empty
+	// peer rack in the same DC. The only legal targets are the same-DC empty racks.
+	mk("dc0-n0:8080", "dc0", "dc0:rack0", 0x1F)  // shards 0..4
+	mk("dc0-n1:8080", "dc0", "dc0:rack1", 0)     // empty, same DC as rack0
+	mk("dc1-n0:8080", "dc1", "dc1:rack2", 0x3E0) // shards 5..9
+	mk("dc1-n1:8080", "dc1", "dc1:rack3", 0)     // empty, same DC as rack2
+
+	racks := buildRacks(topo.nodes)
+	rp := &super_block.ReplicaPlacement{DiffDataCenterCount: 5}
+	shardsPerRack, _ := shardsByGroup(vk, topo.nodes, erasure_coding.DataShardsCount, func(n *Node) string { return n.rack })
+	rackShardCount := countShardsByRack(vk, topo.nodes)
+
+	// maxPerRack=2 forces each over-full rack to shed into its empty same-DC peer.
+	moves := balanceShardTypeAcrossRacks(vk, topo.nodes, racks, "", erasure_coding.DataShardsCount,
+		shardsPerRack, rackShardCount, 2, nil, rp)
+	if len(moves) == 0 {
+		t.Fatal("expected same-DC cross-rack moves when the DC is at its DC cap, got none")
+	}
+	for _, m := range moves {
+		if m.source.dc != m.target.dc {
+			t.Errorf("expected same-DC move, got %s -> %s", m.source.dc, m.target.dc)
+		}
+	}
+}

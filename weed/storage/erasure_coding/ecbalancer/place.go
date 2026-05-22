@@ -222,10 +222,8 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 		if !ok {
 			continue
 		}
-		for s := 0; s < erasure_coding.MaxShardCount; s++ {
-			if !info.shardBits.Has(erasure_coding.ShardId(s)) {
-				continue
-			}
+		for sid := range info.shardBits.All() {
+			s := int(sid)
 			isData := s < dataShards
 			shardsPerRack[isData][n.rack] = append(shardsPerRack[isData][n.rack], s)
 			rackShardCount[n.rack]++
@@ -431,11 +429,8 @@ func pickBestDiskEligible(node *Node, vk volKey, eligible func(*disk) bool, pref
 			bits := info.diskShardBits[diskID]
 			existingShards = bits.Count()
 			if dataShardCount > 0 {
-				for s := 0; s < erasure_coding.MaxShardCount; s++ {
-					if !bits.Has(erasure_coding.ShardId(s)) {
-						continue
-					}
-					if s < dataShardCount {
+				for sid := range bits.All() {
+					if int(sid) < dataShardCount {
 						hasData = true
 					} else {
 						hasParity = true

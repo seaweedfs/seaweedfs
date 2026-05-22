@@ -265,10 +265,8 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 		if !ok {
 			continue
 		}
-		for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
-			if info.shardBits.Has(erasure_coding.ShardId(shardID)) {
-				shardLocations[shardID] = append(shardLocations[shardID], node)
-			}
+		for sid := range info.shardBits.All() {
+			shardLocations[int(sid)] = append(shardLocations[int(sid)], node)
 		}
 	}
 
@@ -389,7 +387,11 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 				if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
 					return false
 				}
-				if rp.DiffDataCenterCount > 0 && dcShardCount[dcOfRack[r]] >= rp.DiffDataCenterCount {
+				// A same-DC move leaves that DC's total unchanged, so only enforce the
+				// per-DC cap when the target rack is in a different DC than the source.
+				if rp.DiffDataCenterCount > 0 &&
+					dcOfRack[r] != pm.src.dc &&
+					dcShardCount[dcOfRack[r]] >= rp.DiffDataCenterCount {
 					return false
 				}
 				return true
@@ -649,13 +651,10 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					if pass == 1 && !volumeOnMin {
 						continue // pass 1: only volumes already on the destination
 					}
-					// Iterate the full shard-id space so custom ratios with more than
-					// the standard total (ids 14..MaxShardCount-1) are candidates too.
-					for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
-						sid := erasure_coding.ShardId(shardID)
-						if !info.shardBits.Has(sid) {
-							continue
-						}
+					// Walk the volume's actual shard bitmap so custom ratios with more
+					// than the standard total (ids 14..MaxShardCount-1) are candidates too.
+					for sid := range info.shardBits.All() {
+						shardID := int(sid)
 						if minInfo != nil && minInfo.shardBits.Has(sid) {
 							continue
 						}
@@ -708,10 +707,8 @@ func shardsByGroup(vk volKey, nodes map[string]*Node, dataShards int, key func(*
 			continue
 		}
 		k := key(node)
-		for s := 0; s < erasure_coding.MaxShardCount; s++ {
-			if !info.shardBits.Has(erasure_coding.ShardId(s)) {
-				continue
-			}
+		for sid := range info.shardBits.All() {
+			s := int(sid)
 			if s < dataShards {
 				dataPer[k] = append(dataPer[k], s)
 			} else {
@@ -786,11 +783,8 @@ func pickBestDiskOnNode(node *Node, vk volKey, diskType string, shardID, dataSha
 			bits := info.diskShardBits[diskID]
 			existingShards = bits.Count()
 			if dataShardCount > 0 {
-				for s := 0; s < erasure_coding.MaxShardCount; s++ {
-					if !bits.Has(erasure_coding.ShardId(s)) {
-						continue
-					}
-					if s < dataShardCount {
+				for sid := range bits.All() {
+					if int(sid) < dataShardCount {
 						hasData = true
 					} else {
 						hasParity = true

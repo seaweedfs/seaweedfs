@@ -43,10 +43,8 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 		if !ok {
 			continue
 		}
-		for s := 0; s < erasure_coding.MaxShardCount; s++ {
-			if info.shardBits.Has(erasure_coding.ShardId(s)) {
-				dcShards[n.dc] = append(dcShards[n.dc], s)
-			}
+		for sid := range info.shardBits.All() {
+			dcShards[n.dc] = append(dcShards[n.dc], int(sid))
 		}
 	}
 
@@ -111,11 +109,14 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 		if !ok {
 			continue
 		}
-		destNode := pickNodeInRack(racks[destRack], vk, rp)
+		destNode := pickNodeInRackEligible(racks[destRack], vk, rp, eligible)
 		if destNode == nil {
 			continue
 		}
-		destDisk := pickBestDiskOnNode(destNode, vk, diskType, pm.shardID, dataShards)
+		destDisk, ok, _ := pickBestDiskEligible(destNode, vk, eligible, nil, pm.shardID, dataShards)
+		if !ok {
+			continue
+		}
 		moves = append(moves, &move{
 			volumeID:   vk.vid,
 			shardID:    pm.shardID,
@@ -176,10 +177,8 @@ func shardsPerRackList(vk volKey, racks map[string]*rack, rackKeys []string) map
 			if !ok {
 				continue
 			}
-			for s := 0; s < erasure_coding.MaxShardCount; s++ {
-				if info.shardBits.Has(erasure_coding.ShardId(s)) {
-					out[rk] = append(out[rk], s)
-				}
+			for sid := range info.shardBits.All() {
+				out[rk] = append(out[rk], int(sid))
 			}
 		}
 	}

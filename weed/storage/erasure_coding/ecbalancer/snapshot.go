@@ -104,7 +104,10 @@ func ecShardSlotsOnDisk(d *topology.DiskInfo, targetDataShards int) int {
 		if ds <= 0 {
 			ds = erasure_coding.DataShardsCount
 		}
-		total += erasure_coding.GetShardCount(eci) * targetDataShards / ds
+		// Round up so an existing shard always consumes at least its fractional
+		// footprint; flooring lets a low-data-shard volume (targetDataShards < ds)
+		// count as zero target slots and overstate the disk's free capacity.
+		total += (erasure_coding.GetShardCount(eci)*targetDataShards + ds - 1) / ds
 	}
 	return total
 }
