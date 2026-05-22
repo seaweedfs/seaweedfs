@@ -74,7 +74,11 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 	}
 
 	rackShardCount := countShardsByRack(vk, nodes)
-	rackCap := len(racks) + 1
+	// No per-rack cap unless ReplicaPlacement sets one. A volume has at most
+	// MaxShardCount shards, so MaxShardCount+1 is effectively unlimited and lets a
+	// DC's single rack absorb that DC's whole allocation (len(racks)+1 was too
+	// small: a 2-rack cluster wrongly capped each rack at 3).
+	rackCap := erasure_coding.MaxShardCount + 1
 	if rp.DiffRackCount > 0 {
 		rackCap = rp.DiffRackCount
 	}
