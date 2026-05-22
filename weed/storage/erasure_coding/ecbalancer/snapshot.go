@@ -53,6 +53,7 @@ func FromActiveTopology(at *topology.ActiveTopology, dataShards int) *Topology {
 				free = 0
 			}
 			node.AddDisk(d.DiskID, d.DiskType, free, ecShardCountOnDisk(d))
+			node.AddDiskTags(d.DiskID, d.DiskInfo.Tags)
 			for _, eci := range d.DiskInfo.EcShardInfos {
 				if eci.DiskId != d.DiskID {
 					continue

@@ -14,25 +14,43 @@ import (
 // when non-nil, caps shards per DC (DiffDataCenterCount), per rack
 // (DiffRackCount), and per node within a rack (SameRackCount).
 //
-// FilterDiskType selects how DiskType is used: false means any disk type is
-// eligible; true means only disks whose type matches DiskType (compared after
-// normalization, so "" and "hdd" both mean HardDriveType). The separate flag is
-// required because HardDriveType normalizes to "", which would otherwise be
-// indistinguishable from "any".
+// DiskTypePolicy controls how DiskType constrains placement (Any / Prefer /
+// Require). PreferredTags drives whole-plan tag tiering: Place tries disks
+// carrying the earliest tags first and widens to all disks only if a tier cannot
+// place every shard.
 type Constraints struct {
 	DiskType         string
-	FilterDiskType   bool
+	DiskTypePolicy   DiskTypePolicy
+	PreferredTags    []string
 	ReplicaPlacement *super_block.ReplicaPlacement
 	Ratio            func(collection string) (dataShards, parityShards int)
 }
 
-// diskTypeMatches reports whether disk type dt satisfies a request for want when
-// filtering is enabled; types are normalized so "" and "hdd" are equivalent.
-func diskTypeMatches(dt, want string, filter bool) bool {
-	if !filter {
-		return true
+// DiskTypePolicy controls how Constraints.DiskType constrains placement.
+type DiskTypePolicy int
+
+const (
+	DiskTypeAny     DiskTypePolicy = iota // any disk type
+	DiskTypePrefer                        // prefer DiskType, spill to other types if needed
+	DiskTypeRequire                       // only DiskType (HardDriveType when "")
+)
+
+// diskTypeEqual compares disk types after normalization, so "" and "hdd" (both
+// HardDriveType) are equal.
+func diskTypeEqual(a, b string) bool {
+	return storagetypes.ToDiskType(a).String() == storagetypes.ToDiskType(b).String()
+}
+
+// diskHasAnyTag reports whether the disk carries any of the given tags.
+func diskHasAnyTag(d *disk, tags []string) bool {
+	for _, want := range tags {
+		for _, have := range d.tags {
+			if have == want {
+				return true
+			}
+		}
 	}
-	return storagetypes.ToDiskType(dt).String() == storagetypes.ToDiskType(want).String()
+	return false
 }
 
 // Destination is a chosen target for one shard.
@@ -42,11 +60,14 @@ type Destination struct {
 	Rack   string // composite "dc:rack"
 }
 
-// PlaceResult holds the chosen destinations and which constraints (if any) had to
-// be relaxed to place every shard (durability-first only).
+// PlaceResult holds the chosen destinations, which constraints had to be relaxed
+// (durability-first only), and whether placement spilled outside the preferred
+// disk type or tag tiers (for parity with today's logging).
 type PlaceResult struct {
-	Destinations map[int]Destination
-	Relaxed      []string
+	Destinations                map[int]Destination
+	Relaxed                     []string
+	SpilledToOtherDiskType      bool
+	SpilledOutsidePreferredTags bool
 }
 
 // PlacementMode selects the strictness/relaxation policy.
@@ -104,13 +125,16 @@ type placedEntry struct {
 // Place assigns destinations for the `need` shard ids of volume (collection,vid),
 // reading the volume's already-placed shards from the snapshot (so encode passes
 // an empty-for-this-volume snapshot, repair passes one seeded with the surviving
-// shards). Data shards are placed first, then parity with anti-affinity to the
-// data-bearing racks (and vice-versa), each capped to an even per-rack share.
-// Reservations are journaled and rolled back if any shard cannot be placed.
+// shards).
+//
+// Tag tiering (whole-plan retry): it tries the preferred-tag tiers in order, each
+// a complete candidate set, and returns the first tier that places every shard;
+// only when it falls through to the no-tag tier does it set
+// SpilledOutsidePreferredTags. Within a tier, disk-type Prefer spills to other
+// types per shard (SpilledToOtherDiskType); Require filters strictly.
 func (t *Topology) Place(vid uint32, collection string, need []int, c Constraints, mode PlacementMode) (*PlaceResult, error) {
-	result := &PlaceResult{Destinations: make(map[int]Destination, len(need))}
 	if len(need) == 0 {
-		return result, nil
+		return &PlaceResult{Destinations: map[int]Destination{}}, nil
 	}
 
 	vk := volKey{collection: collection, vid: vid}
@@ -126,16 +150,67 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 		return nil, fmt.Errorf("no racks available for EC placement")
 	}
 	rackKeys := sortedKeys(racks)
-	numRacks := len(racks)
-
-	// dcOfRack maps each rack key to its data center (for the ReplicaPlacement DC
-	// limit). Built from every node so all racks are covered, not just occupied ones.
-	dcOfRack := make(map[string]string, numRacks)
+	dcOfRack := make(map[string]string, len(racks))
 	for _, n := range t.nodes {
 		dcOfRack[n.rack] = n.dc
 	}
 
-	// Per-type shard ids per rack (for even caps), total shard count per rack
+	// Disk-type eligibility (Require filters; Any/Prefer admit all) and the soft
+	// type preference applied in scoring under Prefer.
+	typeEligible := func(d *disk) bool {
+		if c.DiskTypePolicy == DiskTypeRequire {
+			return diskTypeEqual(d.diskType, c.DiskType)
+		}
+		return true
+	}
+	var prefer func(*disk) bool
+	if c.DiskTypePolicy == DiskTypePrefer {
+		prefer = func(d *disk) bool { return diskTypeEqual(d.diskType, c.DiskType) }
+	}
+
+	// Whole-plan retry over preferred-tag tiers; the first tier that places every
+	// shard wins. Reaching the no-tag tier means we spilled outside the tags.
+	tiers := tagTiers(c.PreferredTags)
+	var lastErr error
+	for _, tierTags := range tiers {
+		tt := tierTags
+		eligible := func(d *disk) bool {
+			return typeEligible(d) && (len(tt) == 0 || diskHasAnyTag(d, tt))
+		}
+		res, err := t.tryPlace(vk, need, dataShards, parityShards, racks, rackKeys, dcOfRack, mode, c.ReplicaPlacement, eligible, prefer)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(c.PreferredTags) > 0 && len(tierTags) == 0 {
+			res.SpilledOutsidePreferredTags = true
+		}
+		return res, nil
+	}
+	return nil, lastErr
+}
+
+// tagTiers returns the eligibility tag-sets in increasing breadth, ending with an
+// empty set ("any disk"). Empty preferredTags yields a single any-disk tier.
+func tagTiers(preferredTags []string) [][]string {
+	if len(preferredTags) == 0 {
+		return [][]string{nil}
+	}
+	tiers := make([][]string, 0, len(preferredTags)+1)
+	for k := range preferredTags {
+		tiers = append(tiers, append([]string(nil), preferredTags[:k+1]...))
+	}
+	return append(tiers, nil)
+}
+
+// tryPlace runs one whole-plan placement attempt restricted to disks satisfying
+// `eligible`, with `prefer` (may be nil) ranking soft-preferred disks first. It
+// journals reservations and rolls them all back if any shard cannot be placed, so
+// a failed tier leaves the snapshot unchanged for the next attempt.
+func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int, racks map[string]*rack, rackKeys []string, dcOfRack map[string]string, mode PlacementMode, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool) (*PlaceResult, error) {
+	result := &PlaceResult{Destinations: make(map[int]Destination, len(need))}
+
+	// Per-type shard ids per rack (even caps), total shard count per rack
 	// (DiffRackCount) and per DC (DiffDataCenterCount), and the racks bearing each
 	// type (anti-affinity) — all seeded from the volume's existing shards.
 	shardsPerRack := map[bool]map[string][]int{true: {}, false: {}}
@@ -159,6 +234,19 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 		}
 	}
 
+	// Even per-rack caps divide by racks that actually have an eligible free disk,
+	// not all racks (the snapshot keeps every disk type/tag), so a valid tiered
+	// cluster — e.g. SSDs in only 2 of 4 racks — is not capped impossibly low.
+	numEligibleRacks := 0
+	for _, rk := range rackKeys {
+		if rackHasFreeDisk(racks[rk], eligible) {
+			numEligibleRacks++
+		}
+	}
+	if numEligibleRacks < 1 {
+		numEligibleRacks = 1
+	}
+
 	attempts := strictAttempts
 	if mode == PlaceDurabilityFirst {
 		attempts = durabilityAttempts
@@ -166,6 +254,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 
 	var journal []placedEntry
 	relaxedSeen := map[string]bool{}
+	spilledType := false
 
 	placeShard := func(sid int, isData bool) bool {
 		typeTotal := dataShards
@@ -173,7 +262,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, ok := t.chooseShardDest(vk, sid, isData, dataShards, typeTotal, numRacks, racks, rackKeys, c, shardsPerRack[isData], rackShardCount, dcShardCount, dcOfRack, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, dcShardCount, dcOfRack, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -186,6 +275,9 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 			bearing[isData][node.rack] = true
 			journal = append(journal, placedEntry{node: node, sid: sid, rackKey: node.rack})
 			result.Destinations[sid] = Destination{Node: node.id, DiskID: diskID, Rack: node.rack}
+			if spilled {
+				spilledType = true
+			}
 			for _, name := range rl.relaxedNames() {
 				relaxedSeen[name] = true
 			}
@@ -205,10 +297,11 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 				e.node.freeSlots++
 				racks[e.rackKey].freeSlots++
 			}
-			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q): no disk with capacity", sid, vid, collection)
+			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q)", sid, vk.vid, vk.collection)
 		}
 	}
 
+	result.SpilledToOtherDiskType = spilledType
 	for name := range relaxedSeen {
 		result.Relaxed = append(result.Relaxed, name)
 	}
@@ -217,13 +310,14 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 }
 
 // chooseShardDest selects a (node, disk) for one shard at the given relaxation
-// level: pick a rack (even per-type cap + ReplicaPlacement rack limit + two-pass
-// anti-affinity to the opposite type), then the least-loaded node in that rack,
-// then the best disk on that node. Returns ok=false when no rack/node/disk fits.
-func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numRacks int, racks map[string]*rack, rackKeys []string, c Constraints, shardsPerRackType map[string][]int, rackShardCount, dcShardCount map[string]int, dcOfRack map[string]string, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool) {
-	maxPerRack := numRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
+// level: pick a rack (even per-type cap + ReplicaPlacement caps + two-pass
+// anti-affinity to the opposite type), then the least-loaded eligible node, then
+// the best eligible disk. The third return reports whether the disk spilled off
+// the soft-preferred type. ok=false when no rack/node/disk fits.
+func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount, dcShardCount map[string]int, dcOfRack map[string]string, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
+	maxPerRack := numEligibleRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
-		if maxPerRack = ceilDivide(typeTotal, numRacks); maxPerRack < 1 {
+		if maxPerRack = ceilDivide(typeTotal, numEligibleRacks); maxPerRack < 1 {
 			maxPerRack = 1
 		}
 	}
@@ -233,14 +327,12 @@ func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, 
 		anti = bearing[!isData] // racks already holding the opposite shard type
 	}
 
-	rp := c.ReplicaPlacement
 	if !rl.rp {
 		rp = nil
 	}
 	// A rack is eligible only if it is under both the per-rack (DiffRackCount) and
-	// per-DC (DiffDataCenterCount) shard caps. The DC cap is what spreads shards
-	// across data centers; it is enforced only when set, so non-DC placements are
-	// unchanged.
+	// per-DC (DiffDataCenterCount) shard caps. The DC cap spreads shards across data
+	// centers; it is enforced only when set, so non-DC placements are unchanged.
 	withinLimit := func(r string) bool {
 		if rp == nil {
 			return true
@@ -255,53 +347,46 @@ func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, 
 	}
 
 	destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti,
-		func(r string) bool {
-			return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], c.DiskType, c.FilterDiskType)
-		},
+		func(r string) bool { return racks[r].freeSlots > 0 && rackHasFreeDisk(racks[r], eligible) },
 		withinLimit)
 	if !ok {
-		return nil, 0, false
+		return nil, 0, false, false
 	}
-	node := pickNodeInRackWithDisk(racks[destRack], vk, rp, c.DiskType, c.FilterDiskType)
+	node := pickNodeInRackEligible(racks[destRack], vk, rp, eligible)
 	if node == nil {
-		return nil, 0, false
+		return nil, 0, false, false
 	}
-	diskID, ok := pickBestDiskOfTypeOnNode(node, vk, c.DiskType, c.FilterDiskType, sid, dataShards)
+	diskID, ok, spilled := pickBestDiskEligible(node, vk, eligible, prefer, sid, dataShards)
 	if !ok {
-		return nil, 0, false
+		return nil, 0, false, false
 	}
-	return node, diskID, true
+	return node, diskID, spilled, true
 }
 
-// nodeHasFreeDiskOfType reports whether the node has a free disk matching the
-// disk-type request (see diskTypeMatches; filter=false means any type).
-func nodeHasFreeDiskOfType(n *Node, diskType string, filter bool) bool {
+// nodeHasFreeDisk reports whether the node has a free disk satisfying eligible.
+func nodeHasFreeDisk(n *Node, eligible func(*disk) bool) bool {
 	for _, d := range n.disks {
-		if !diskTypeMatches(d.diskType, diskType, filter) {
-			continue
-		}
-		if d.freeSlots > 0 {
+		if d.freeSlots > 0 && eligible(d) {
 			return true
 		}
 	}
 	return false
 }
 
-// rackHasFreeDiskOfType reports whether any node in the rack has a matching free disk.
-func rackHasFreeDiskOfType(r *rack, diskType string, filter bool) bool {
+// rackHasFreeDisk reports whether any node in the rack has a free eligible disk.
+func rackHasFreeDisk(r *rack, eligible func(*disk) bool) bool {
 	for _, n := range r.nodes {
-		if n.freeSlots > 0 && nodeHasFreeDiskOfType(n, diskType, filter) {
+		if n.freeSlots > 0 && nodeHasFreeDisk(n, eligible) {
 			return true
 		}
 	}
 	return false
 }
 
-// pickNodeInRackWithDisk is pickNodeInRack restricted to nodes that actually have
-// a matching free disk. FromActiveTopology keeps all disk types in the snapshot,
-// so without this a node with free volume slots but no disk of the requested type
-// could be chosen.
-func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement, diskType string, filter bool) *Node {
+// pickNodeInRackEligible is pickNodeInRack restricted to nodes that have a free
+// eligible disk. FromActiveTopology keeps all disk types/tags in the snapshot, so
+// without this a node with free volume slots but no eligible disk could be chosen.
+func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool) *Node {
 	var best *Node
 	bestCount := -1
 	for _, id := range sortedNodeKeys(r.nodes) {
@@ -309,7 +394,7 @@ func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 		if node.freeSlots <= 0 {
 			continue
 		}
-		if !nodeHasFreeDiskOfType(node, diskType, filter) {
+		if !nodeHasFreeDisk(node, eligible) {
 			continue
 		}
 		count := volumeShardCount(node, vk)
@@ -323,21 +408,20 @@ func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 	return best
 }
 
-// pickBestDiskOfTypeOnNode is pickBestDiskOnNode with a strict disk-type filter
-// (so a HardDriveType request does not fall through to other tiers) and an
-// explicit found result. Returns ok=false when the node has no matching disk with
-// capacity.
-func pickBestDiskOfTypeOnNode(node *Node, vk volKey, diskType string, filter bool, shardID, dataShardCount int) (uint32, bool) {
+// pickBestDiskEligible chooses the best eligible disk on a node, ranking
+// soft-preferred disks (prefer != nil && prefer(d)) ahead of others so disk-type
+// Prefer uses the preferred type when available but spills otherwise. Returns the
+// disk id, whether one was found, and whether the chosen disk spilled off the
+// preferred type.
+func pickBestDiskEligible(node *Node, vk volKey, eligible func(*disk) bool, prefer func(*disk) bool, shardID, dataShardCount int) (uint32, bool, bool) {
 	isDataShard := dataShardCount > 0 && shardID < dataShardCount
 	info := node.shards[vk]
 	var bestDiskID uint32
 	bestScore := -1
+	bestPreferred := false
 	for _, diskID := range sortedDiskKeys(node.disks) {
 		d := node.disks[diskID]
-		if !diskTypeMatches(d.diskType, diskType, filter) {
-			continue
-		}
-		if d.freeSlots <= 0 {
+		if !eligible(d) || d.freeSlots <= 0 {
 			continue
 		}
 		existingShards := 0
@@ -367,12 +451,20 @@ func pickBestDiskOfTypeOnNode(node *Node, vk volKey, diskType string, filter boo
 				score += 1000
 			}
 		}
+		preferred := prefer == nil || prefer(d)
+		if !preferred {
+			score += 100000 // strongly deprioritize spilling to a non-preferred type
+		}
 		if bestScore == -1 || score < bestScore {
 			bestScore = score
 			bestDiskID = diskID
+			bestPreferred = preferred
 		}
 	}
-	return bestDiskID, bestScore != -1
+	if bestScore == -1 {
+		return 0, false, false
+	}
+	return bestDiskID, true, prefer != nil && !bestPreferred
 }
 
 // clearShardAccounting removes one shard copy of a volume from the snapshot's

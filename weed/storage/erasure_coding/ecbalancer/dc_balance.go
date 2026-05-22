@@ -84,13 +84,15 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 	}
 	// Balance uses the same convention as pickBestDiskOnNode: a non-empty disk type
 	// is a filter, "" means any (the balance snapshot is pre-filtered by type).
-	filterDiskType := diskType != ""
+	eligible := func(d *disk) bool {
+		return diskType == "" || diskTypeEqual(d.diskType, diskType)
+	}
 
 	var moves []*move
 	for _, pm := range toMove {
 		// Target DC: fewest shards of this volume, under the DC cap, with room.
 		destDC, ok := pickTarget(dcKeys, dcShards, maxPerDC, nil,
-			func(dc string) bool { return dcHasFreeDisk(racks, dcRacks[dc], diskType, filterDiskType) },
+			func(dc string) bool { return dcHasFreeDisk(racks, dcRacks[dc], eligible) },
 			func(string) bool { return true })
 		if !ok {
 			continue
@@ -98,7 +100,7 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 		// Target rack within the DC: fewest shards, under the per-rack cap.
 		destRack, ok := pickTarget(dcRacks[destDC], shardsPerRackList(vk, racks, dcRacks[destDC]), rackCap, nil,
 			func(r string) bool {
-				return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], diskType, filterDiskType)
+				return racks[r].freeSlots > 0 && rackHasFreeDisk(racks[r], eligible)
 			},
 			func(r string) bool {
 				if rp.DiffRackCount > 0 {
@@ -154,11 +156,11 @@ func dcNodeHoldingShard(racks map[string]*rack, rackKeys []string, vk volKey, sh
 	return nil
 }
 
-// dcHasFreeDisk reports whether any rack in the DC has a node with a free disk
-// matching the disk-type request.
-func dcHasFreeDisk(racks map[string]*rack, rackKeys []string, diskType string, filter bool) bool {
+// dcHasFreeDisk reports whether any rack in the DC has a node with a free eligible
+// disk.
+func dcHasFreeDisk(racks map[string]*rack, rackKeys []string, eligible func(*disk) bool) bool {
 	for _, rk := range rackKeys {
-		if racks[rk].freeSlots > 0 && rackHasFreeDiskOfType(racks[rk], diskType, filter) {
+		if racks[rk].freeSlots > 0 && rackHasFreeDisk(racks[rk], eligible) {
 			return true
 		}
 	}

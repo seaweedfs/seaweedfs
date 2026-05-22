@@ -43,6 +43,7 @@ type Node struct {
 type disk struct {
 	diskID     uint32
 	diskType   string
+	tags       []string // placement tags, for preferred-tag tiering
 	freeSlots  int
 	shardCount int // total EC shards on this disk across all volumes
 }
@@ -130,6 +131,14 @@ func (t *Topology) AddNode(id, dc, rackKey string, freeSlots int) *Node {
 // free EC shard slots.
 func (n *Node) AddDisk(diskID uint32, diskType string, freeSlots, shardCount int) {
 	n.disks[diskID] = &disk{diskID: diskID, diskType: diskType, freeSlots: freeSlots, shardCount: shardCount}
+}
+
+// AddDiskTags records placement tags (e.g. "ssd","fast") for a disk, used by
+// preferred-tag tiering in Place. Call after AddDisk; a no-op if the disk is unknown.
+func (n *Node) AddDiskTags(diskID uint32, tags []string) {
+	if d, ok := n.disks[diskID]; ok {
+		d.tags = append([]string(nil), tags...)
+	}
 }
 
 // AddShards records that the volume's shards in bits live on diskID. Call it

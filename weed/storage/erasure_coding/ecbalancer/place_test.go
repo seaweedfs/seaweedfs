@@ -139,7 +139,7 @@ func TestPlaceDiskTypeHardFilter(t *testing.T) {
 		hdd.AddDisk(0, "hdd", 50, 0)
 	}
 
-	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", FilterDiskType: true}, PlaceStrict)
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypeRequire}, PlaceStrict)
 	if err != nil {
 		t.Fatalf("Place ssd: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestPlaceDiskTypeUnavailableFails(t *testing.T) {
 		n := topo.AddNode(fmt.Sprintf("hdd-%d:8080", r), "dc1", fmt.Sprintf("dc1:rack%d", r), 50)
 		n.AddDisk(0, "hdd", 50, 0)
 	}
-	if _, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", FilterDiskType: true}, PlaceStrict); err == nil {
+	if _, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypeRequire}, PlaceStrict); err == nil {
 		t.Fatal("expected Place to fail when no disks of the requested type exist")
 	}
 }
@@ -176,7 +176,7 @@ func TestPlaceHDDRequestMatchesEmptyTypeDisks(t *testing.T) {
 		n.AddDisk(1, "ssd", 50, 0) // SSD
 	}
 
-	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "hdd", FilterDiskType: true}, PlaceStrict)
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "hdd", DiskTypePolicy: DiskTypeRequire}, PlaceStrict)
 	if err != nil {
 		t.Fatalf("Place hdd: %v", err)
 	}
@@ -213,6 +213,116 @@ func TestClearShardAccounting(t *testing.T) {
 	}
 	if n.disks[1].freeSlots != freeBefore {
 		t.Errorf("freeSlots changed %d -> %d; clearShardAccounting must not credit capacity", freeBefore, n.disks[1].freeSlots)
+	}
+}
+
+// TestPlaceDiskTypePreferSpills: DiskTypePrefer fills the preferred type first and
+// spills the remainder to other types, reporting SpilledToOtherDiskType.
+func TestPlaceDiskTypePreferSpills(t *testing.T) {
+	topo := NewTopology()
+	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 100)
+	n.AddDisk(0, "ssd", 4, 0) // small SSD: only 4 shards fit
+	n.AddDisk(1, "", 50, 0)   // large HDD
+
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypePrefer}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	if len(res.Destinations) != erasure_coding.TotalShardsCount {
+		t.Fatalf("placed %d, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
+	}
+	ssd := 0
+	for _, d := range res.Destinations {
+		if d.DiskID == 0 {
+			ssd++
+		}
+	}
+	if ssd != 4 {
+		t.Errorf("expected SSD filled to its 4-slot capacity, got %d", ssd)
+	}
+	if !res.SpilledToOtherDiskType {
+		t.Error("expected SpilledToOtherDiskType when SSD cannot hold every shard")
+	}
+}
+
+// TestPlacePreferredTagsUseTaggedDisks: when tagged disks can hold the whole plan,
+// every shard lands on a tagged disk and no spill is reported.
+func TestPlacePreferredTagsUseTaggedDisks(t *testing.T) {
+	topo := NewTopology()
+	for r := 0; r < 4; r++ {
+		rackKey := fmt.Sprintf("dc1:rack%d", r)
+		fast := topo.AddNode(fmt.Sprintf("fast-%d:8080", r), "dc1", rackKey, 50)
+		fast.AddDisk(0, "", 50, 0)
+		fast.AddDiskTags(0, []string{"fast"})
+		topo.AddNode(fmt.Sprintf("slow-%d:8080", r), "dc1", rackKey, 50).AddDisk(0, "", 50, 0)
+	}
+
+	res, err := topo.Place(1, "c1", allShards(), Constraints{PreferredTags: []string{"fast"}}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	for sid, d := range res.Destinations {
+		if !diskHasAnyTag(topo.nodes[d.Node].disks[d.DiskID], []string{"fast"}) {
+			t.Errorf("shard %d placed on an untagged disk (node %s)", sid, d.Node)
+		}
+	}
+	if res.SpilledOutsidePreferredTags {
+		t.Error("did not expect tag spill when tagged disks suffice")
+	}
+}
+
+// TestPlacePreferredTagsSpillWhenInsufficient: when the tagged tier cannot hold the
+// whole plan, Place falls back to all disks and reports SpilledOutsidePreferredTags.
+func TestPlacePreferredTagsSpillWhenInsufficient(t *testing.T) {
+	topo := NewTopology()
+	for r := 0; r < 4; r++ {
+		n := topo.AddNode(fmt.Sprintf("n-%d:8080", r), "dc1", fmt.Sprintf("dc1:rack%d", r), 50)
+		if r == 0 {
+			n.AddDisk(0, "", 5, 0) // the only tagged disk, too small for 14 shards
+			n.AddDiskTags(0, []string{"fast"})
+		} else {
+			n.AddDisk(0, "", 50, 0)
+		}
+	}
+
+	res, err := topo.Place(1, "c1", allShards(), Constraints{PreferredTags: []string{"fast"}}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	if len(res.Destinations) != erasure_coding.TotalShardsCount {
+		t.Fatalf("placed %d, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
+	}
+	if !res.SpilledOutsidePreferredTags {
+		t.Error("expected SpilledOutsidePreferredTags when the single fast disk cannot hold the plan")
+	}
+}
+
+// TestPlaceStrictCapsCountEligibleRacks: with DiskTypeRequire, the even per-rack
+// cap divides by racks that have a matching disk, not all racks, so SSDs in only
+// some racks still place successfully.
+func TestPlaceStrictCapsCountEligibleRacks(t *testing.T) {
+	topo := NewTopology()
+	for r := 0; r < 4; r++ {
+		rackKey := fmt.Sprintf("dc1:rack%d", r)
+		n := topo.AddNode(fmt.Sprintf("n-%d:8080", r), "dc1", rackKey, 100)
+		n.AddDisk(0, "", 50, 0) // HDD on every rack
+		if r < 2 {
+			n.AddDisk(1, "ssd", 50, 0) // SSD only in 2 of 4 racks
+		}
+	}
+
+	// 10 data shards over 2 SSD racks need ceil(10/2)=5 per rack; ceil(10/4)=3 would fail.
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypeRequire}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place ssd in 2/4 racks: %v", err)
+	}
+	if len(res.Destinations) != erasure_coding.TotalShardsCount {
+		t.Fatalf("placed %d, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
+	}
+	for sid, d := range res.Destinations {
+		if d.DiskID != 1 {
+			t.Errorf("shard %d not on the SSD disk (disk 1): node=%s disk=%d", sid, d.Node, d.DiskID)
+		}
 	}
 }
 
