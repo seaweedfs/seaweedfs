@@ -89,8 +89,8 @@ type Options struct {
 	GlobalMaxMovesPerRack int
 	// GlobalUtilizationBased selects the global phase's balance metric: when true,
 	// nodes are balanced by fractional fullness (shards/capacity), which suits
-	// heterogeneous-capacity racks; when false, by raw shard count. The worker
-	// uses utilization; the shell uses raw count.
+	// heterogeneous-capacity racks; when false, by raw shard count. Both the worker
+	// and the shell enable it; the two metrics agree when capacities are uniform.
 	GlobalUtilizationBased bool
 }
 
