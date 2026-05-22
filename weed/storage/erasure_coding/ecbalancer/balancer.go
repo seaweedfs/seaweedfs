@@ -197,6 +197,11 @@ func Plan(topo *Topology, opts Options) []Move {
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
+			m := detectCrossDCImbalance(vk, nodes, racks, opts.DiskType, dataShards, opts.ReplicaPlacement)
+			applyMovesToTopology(m, racks)
+			all = append(all, m...)
+		}
+		for _, vk := range byCollection[collection] {
 			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
@@ -331,6 +336,21 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 	}
 	rackKeys := sortedKeys(racks)
 
+	// Per-DC shard accounting, used only to honor the ReplicaPlacement data-center
+	// limit on move targets. Computed lazily so non-DC placements are unaffected
+	// (and the balance output stays byte-identical when DiffDataCenterCount is 0).
+	var dcOfRack map[string]string
+	dcShardCount := map[string]int{}
+	if rp != nil && rp.DiffDataCenterCount > 0 {
+		dcOfRack = make(map[string]string, len(racks))
+		for _, n := range nodes {
+			dcOfRack[n.rack] = n.dc
+			if info, ok := n.shards[vk]; ok {
+				dcShardCount[n.dc] += info.shardBits.Count()
+			}
+		}
+	}
+
 	type pending struct {
 		shardID int
 		src     *Node
@@ -354,8 +374,14 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinity,
 			func(r string) bool { return racks[r].freeSlots > 0 },
 			func(r string) bool {
-				if rp != nil && rp.DiffRackCount > 0 {
-					return rackShardCount[r] < rp.DiffRackCount
+				if rp == nil {
+					return true
+				}
+				if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
+					return false
+				}
+				if rp.DiffDataCenterCount > 0 && dcShardCount[dcOfRack[r]] >= rp.DiffDataCenterCount {
+					return false
 				}
 				return true
 			})
@@ -384,6 +410,10 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 		shardsPerRack[srcRack] = removeInt(shardsPerRack[srcRack], pm.shardID)
 		rackShardCount[destRack]++
 		rackShardCount[srcRack]--
+		if dcOfRack != nil {
+			dcShardCount[dcOfRack[destRack]]++
+			dcShardCount[dcOfRack[srcRack]]--
+		}
 		racks[destRack].freeSlots--
 		racks[srcRack].freeSlots++
 		// Account at the node level too, so pickNodeInRack does not over-plan a
