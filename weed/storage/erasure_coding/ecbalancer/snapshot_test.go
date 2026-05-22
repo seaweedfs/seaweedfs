@@ -51,7 +51,7 @@ func TestFromActiveTopology(t *testing.T) {
 		t.Fatalf("UpdateTopology: %v", err)
 	}
 
-	topo := FromActiveTopology(at)
+	topo := FromActiveTopology(at, 0)
 
 	if got := len(topo.nodes); got != 2 {
 		t.Fatalf("node count = %d, want 2", got)

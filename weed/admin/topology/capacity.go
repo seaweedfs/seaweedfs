@@ -62,7 +62,17 @@ func (at *ActiveTopology) GetEffectiveAvailableCapacityDetailed(nodeID string, d
 // slots) so a reservation that is not a whole multiple of ShardsPerVolumeSlot is
 // not lost. It does NOT subtract the EC shards already persisted on the disk;
 // callers that track those (from EcShardInfos) subtract them separately.
-func (at *ActiveTopology) GetEffectiveAvailableEcShardSlots(nodeID string, diskID uint32) int {
+//
+// shardsPerVolume is the number of EC shards of the target collection that fit in
+// one volume slot (i.e. its data-shard count): a 4+2 volume's shards are ~1/4 of a
+// volume each, so one volume slot holds 4 of them, not the default
+// ShardsPerVolumeSlot. Pass <= 0 to use the default. Using the target ratio keeps
+// Place from over-filling a disk for low-data-shard layouts.
+func (at *ActiveTopology) GetEffectiveAvailableEcShardSlots(nodeID string, diskID uint32, shardsPerVolume int) int {
+	if shardsPerVolume <= 0 {
+		shardsPerVolume = ShardsPerVolumeSlot
+	}
+
 	at.mutex.RLock()
 	defer at.mutex.RUnlock()
 
@@ -72,13 +82,23 @@ func (at *ActiveTopology) GetEffectiveAvailableEcShardSlots(nodeID string, diskI
 		return 0
 	}
 
-	base := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
+	info := disk.DiskInfo.DiskInfo
+	base := info.MaxVolumeCount - info.VolumeCount
+	if base <= 0 && info.MaxVolumeCount == 0 && info.VolumeCount == 0 &&
+		len(info.VolumeInfos) == 0 && len(info.EcShardInfos) == 0 {
+		// Freshly started empty servers can report max=0 before publishing concrete
+		// limits; keep one provisional slot so EC placement still sees the disk,
+		// mirroring getEffectiveAvailableCapacityUnsafe.
+		base = 1
+	}
 	if base < 0 {
 		base = 0
 	}
 	// calculateTaskStorageImpact reports consumption as positive, so subtract it.
+	// Volume-slot reservations scale by the target ratio; the sub-volume shard-slot
+	// remainder is in default units and subtracted as-is (a small approximation).
 	impact := at.getEffectiveCapacityUnsafe(disk)
-	free := base*int64(ShardsPerVolumeSlot) - (int64(impact.VolumeSlots)*int64(ShardsPerVolumeSlot) + int64(impact.ShardSlots))
+	free := base*int64(shardsPerVolume) - (int64(impact.VolumeSlots)*int64(shardsPerVolume) + int64(impact.ShardSlots))
 	if free < 0 {
 		free = 0
 	}
