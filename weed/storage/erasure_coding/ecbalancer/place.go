@@ -1,0 +1,245 @@
+package ecbalancer
+
+import (
+	"fmt"
+	"sort"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+)
+
+// Constraints configures a Place call. Ratio resolves a collection's
+// (dataShards, parityShards); nil uses the standard scheme. DiskType filters
+// candidate disks ("" = any). ReplicaPlacement, when non-nil, caps shards per
+// rack (DiffRackCount) and per node within a rack (SameRackCount).
+type Constraints struct {
+	DiskType         string
+	ReplicaPlacement *super_block.ReplicaPlacement
+	Ratio            func(collection string) (dataShards, parityShards int)
+}
+
+// Destination is a chosen target for one shard.
+type Destination struct {
+	Node   string
+	DiskID uint32
+	Rack   string // composite "dc:rack"
+}
+
+// PlaceResult holds the chosen destinations and which constraints (if any) had to
+// be relaxed to place every shard (durability-first only).
+type PlaceResult struct {
+	Destinations map[int]Destination
+	Relaxed      []string
+}
+
+// PlacementMode selects the strictness/relaxation policy.
+type PlacementMode int
+
+const (
+	// PlaceStrict (encode): caps and ReplicaPlacement are hard. Place fails rather
+	// than violate them, so the caller can leave the volume unencoded and retry.
+	PlaceStrict PlacementMode = iota
+	// PlaceDurabilityFirst (repair): relax per-type caps -> data/parity
+	// anti-affinity -> ReplicaPlacement, in that order, until each shard lands.
+	// Fail only if no disk has free capacity at all.
+	PlaceDurabilityFirst
+)
+
+// relaxation controls which placement-quality constraints are enforced on an
+// attempt. preferring fresh nodes (repair's "avoid surviving-shard nodes") is not
+// listed: pickNodeInRack already selects the node with the fewest shards of the
+// volume, so survivors are deprioritized with built-in fallback.
+type relaxation struct {
+	caps         bool
+	antiAffinity bool
+	rp           bool
+}
+
+func (r relaxation) relaxedNames() []string {
+	var n []string
+	if !r.caps {
+		n = append(n, "caps")
+	}
+	if !r.antiAffinity {
+		n = append(n, "anti-affinity")
+	}
+	if !r.rp {
+		n = append(n, "replica-placement")
+	}
+	return n
+}
+
+var strictAttempts = []relaxation{{caps: true, antiAffinity: true, rp: true}}
+
+var durabilityAttempts = []relaxation{
+	{caps: true, antiAffinity: true, rp: true},
+	{caps: false, antiAffinity: true, rp: true},
+	{caps: false, antiAffinity: false, rp: true},
+	{caps: false, antiAffinity: false, rp: false},
+}
+
+type placedEntry struct {
+	node    *Node
+	sid     int
+	rackKey string
+}
+
+// Place assigns destinations for the `need` shard ids of volume (collection,vid),
+// reading the volume's already-placed shards from the snapshot (so encode passes
+// an empty-for-this-volume snapshot, repair passes one seeded with the surviving
+// shards). Data shards are placed first, then parity with anti-affinity to the
+// data-bearing racks (and vice-versa), each capped to an even per-rack share.
+// Reservations are journaled and rolled back if any shard cannot be placed.
+func (t *Topology) Place(vid uint32, collection string, need []int, c Constraints, mode PlacementMode) (*PlaceResult, error) {
+	result := &PlaceResult{Destinations: make(map[int]Destination, len(need))}
+	if len(need) == 0 {
+		return result, nil
+	}
+
+	vk := volKey{collection: collection, vid: vid}
+	dataShards, parityShards := erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount
+	if c.Ratio != nil {
+		if d, p := c.Ratio(collection); d > 0 && p > 0 {
+			dataShards, parityShards = d, p
+		}
+	}
+
+	racks := buildRacks(t.nodes)
+	if len(racks) == 0 {
+		return nil, fmt.Errorf("no racks available for EC placement")
+	}
+	rackKeys := sortedKeys(racks)
+	numRacks := len(racks)
+
+	// Per-type shard ids per rack (for caps), total shard count per rack (for the
+	// ReplicaPlacement rack limit), and the racks bearing each type (for
+	// anti-affinity) — all seeded from the volume's existing shards in the snapshot.
+	shardsPerRack := map[bool]map[string][]int{true: {}, false: {}}
+	rackShardCount := map[string]int{}
+	bearing := map[bool]map[string]bool{true: {}, false: {}}
+	for _, n := range t.nodes {
+		info, ok := n.shards[vk]
+		if !ok {
+			continue
+		}
+		for s := 0; s < erasure_coding.MaxShardCount; s++ {
+			if !info.shardBits.Has(erasure_coding.ShardId(s)) {
+				continue
+			}
+			isData := s < dataShards
+			shardsPerRack[isData][n.rack] = append(shardsPerRack[isData][n.rack], s)
+			rackShardCount[n.rack]++
+			bearing[isData][n.rack] = true
+		}
+	}
+
+	attempts := strictAttempts
+	if mode == PlaceDurabilityFirst {
+		attempts = durabilityAttempts
+	}
+
+	var journal []placedEntry
+	relaxedSeen := map[string]bool{}
+
+	placeShard := func(sid int, isData bool) bool {
+		typeTotal := dataShards
+		if !isData {
+			typeTotal = parityShards
+		}
+		for _, rl := range attempts {
+			node, diskID, ok := t.chooseShardDest(vk, sid, isData, dataShards, typeTotal, numRacks, racks, rackKeys, c, shardsPerRack[isData], rackShardCount, bearing, rl)
+			if !ok {
+				continue
+			}
+			reserveShard(node, vk, sid, diskID)
+			node.freeSlots--
+			racks[node.rack].freeSlots--
+			shardsPerRack[isData][node.rack] = append(shardsPerRack[isData][node.rack], sid)
+			rackShardCount[node.rack]++
+			bearing[isData][node.rack] = true
+			journal = append(journal, placedEntry{node: node, sid: sid, rackKey: node.rack})
+			result.Destinations[sid] = Destination{Node: node.id, DiskID: diskID, Rack: node.rack}
+			for _, name := range rl.relaxedNames() {
+				relaxedSeen[name] = true
+			}
+			return true
+		}
+		return false
+	}
+
+	// Data shards first, then parity, so parity can avoid data-bearing racks.
+	for _, isData := range []bool{true, false} {
+		for _, sid := range shardsOfType(need, isData, dataShards) {
+			if placeShard(sid, isData) {
+				continue
+			}
+			for _, e := range journal {
+				releaseShard(e.node, vk, e.sid)
+				e.node.freeSlots++
+				racks[e.rackKey].freeSlots++
+			}
+			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q): no disk with capacity", sid, vid, collection)
+		}
+	}
+
+	for name := range relaxedSeen {
+		result.Relaxed = append(result.Relaxed, name)
+	}
+	sort.Strings(result.Relaxed)
+	return result, nil
+}
+
+// chooseShardDest selects a (node, disk) for one shard at the given relaxation
+// level: pick a rack (even per-type cap + ReplicaPlacement rack limit + two-pass
+// anti-affinity to the opposite type), then the least-loaded node in that rack,
+// then the best disk on that node. Returns ok=false when no rack/node/disk fits.
+func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numRacks int, racks map[string]*rack, rackKeys []string, c Constraints, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool) {
+	maxPerRack := numRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
+	if rl.caps {
+		if maxPerRack = ceilDivide(typeTotal, numRacks); maxPerRack < 1 {
+			maxPerRack = 1
+		}
+	}
+
+	var anti map[string]bool
+	if rl.antiAffinity {
+		anti = bearing[!isData] // racks already holding the opposite shard type
+	}
+
+	rp := c.ReplicaPlacement
+	if !rl.rp {
+		rp = nil
+	}
+	withinLimit := func(r string) bool {
+		if rp != nil && rp.DiffRackCount > 0 {
+			return rackShardCount[r] < rp.DiffRackCount
+		}
+		return true
+	}
+
+	destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti,
+		func(r string) bool { return racks[r].freeSlots > 0 },
+		withinLimit)
+	if !ok {
+		return nil, 0, false
+	}
+	node := pickNodeInRack(racks[destRack], vk, rp)
+	if node == nil {
+		return nil, 0, false
+	}
+	diskID := pickBestDiskOnNode(node, vk, c.DiskType, sid, dataShards)
+	return node, diskID, true
+}
+
+// shardsOfType returns the sorted subset of need that are data shards (id <
+// dataShards) when isData, else the parity subset.
+func shardsOfType(need []int, isData bool, dataShards int) []int {
+	var out []int
+	for _, s := range need {
+		if (s < dataShards) == isData {
+			out = append(out, s)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
