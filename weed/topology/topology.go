@@ -586,6 +586,16 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		}
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		// Self-heal: a volume reported by the data node but missing from the
+		// lookup index is re-registered. This repairs the split left by a
+		// disconnect/reconnect race, where UnRegisterDataNode dropped the volume
+		// from vid2location but the reconnecting full heartbeat skipped it
+		// (still in the disk map, so UpdateVolumes did not report it as new).
+		// Without this, the volume stays visible in volume.list/admin UI yet
+		// LookupVolume returns "volume id not found".
+		if !vl.HasDataNode(v.Id, dn) {
+			t.RegisterVolumeLayout(v, dn)
+		}
 		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
 		}
