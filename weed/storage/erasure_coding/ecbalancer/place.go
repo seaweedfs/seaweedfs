@@ -494,6 +494,18 @@ func clearShardAccounting(node *Node, vk volKey, shardID int, diskID uint32) {
 	info.shardBits = union
 }
 
+// ClearShardAccounting drops one shard copy of a volume from placement accounting
+// without crediting capacity (see clearShardAccounting). Repair calls it for each
+// copy it plans to delete before placing missing shards, so those copies do not
+// inflate caps/RP/anti-affinity. No-op for an unknown node.
+func (t *Topology) ClearShardAccounting(nodeID, collection string, vid uint32, shardID int, diskID uint32) {
+	n, ok := t.nodes[nodeID]
+	if !ok {
+		return
+	}
+	clearShardAccounting(n, volKey{collection: collection, vid: vid}, shardID, diskID)
+}
+
 // shardsOfType returns the sorted subset of need that are data shards (id <
 // dataShards) when isData, else the parity subset.
 func shardsOfType(need []int, isData bool, dataShards int) []int {
