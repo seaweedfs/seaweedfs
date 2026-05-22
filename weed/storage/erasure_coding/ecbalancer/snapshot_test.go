@@ -98,3 +98,37 @@ func TestFromActiveTopology(t *testing.T) {
 		t.Errorf("free slots not positive: A=%d B=%d", a.freeSlots, b.freeSlots)
 	}
 }
+
+// TestEcShardSlotsOnDiskRoundsUp covers the mixed-ratio (targetDataShards <
+// existingDataShards) conversion: an existing shard's fractional footprint must
+// round up so it is never floored to zero, which would overstate free capacity.
+// OSS always uses the standard ratio at runtime, but ecShardSlotsOnDisk takes the
+// target data-shard count as a parameter, so the fractional path is exercised
+// directly here; the enterprise build reaches it with real per-volume ratios.
+func TestEcShardSlotsOnDiskRoundsUp(t *testing.T) {
+	// A single shard (id 3) of a standard 10-data-shard volume on disk 0.
+	disk := &topology.DiskInfo{
+		DiskID: 0,
+		DiskInfo: &master_pb.DiskInfo{
+			DiskId: 0,
+			EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+				Id:          7,
+				Collection:  "c1",
+				EcIndexBits: uint32(1) << 3,
+				DiskId:      0,
+			}},
+		},
+	}
+
+	// Against a 2-data-shard target the shard occupies 2/10 of a slot, which must
+	// round up to 1 rather than floor to 0.
+	if got := ecShardSlotsOnDisk(disk, 2); got != 1 {
+		t.Errorf("ecShardSlotsOnDisk(target=2) = %d, want 1 (rounded up from 0.2)", got)
+	}
+
+	// Identity case: target equals the existing data-shard count, so the shard
+	// consumes exactly its whole-number footprint.
+	if got := ecShardSlotsOnDisk(disk, erasure_coding.DataShardsCount); got != 1 {
+		t.Errorf("ecShardSlotsOnDisk(target=%d) = %d, want 1", erasure_coding.DataShardsCount, got)
+	}
+}
