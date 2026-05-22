@@ -6,16 +6,33 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	storagetypes "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 // Constraints configures a Place call. Ratio resolves a collection's
-// (dataShards, parityShards); nil uses the standard scheme. DiskType filters
-// candidate disks ("" = any). ReplicaPlacement, when non-nil, caps shards per
-// rack (DiffRackCount) and per node within a rack (SameRackCount).
+// (dataShards, parityShards); nil uses the standard scheme. ReplicaPlacement,
+// when non-nil, caps shards per DC (DiffDataCenterCount), per rack
+// (DiffRackCount), and per node within a rack (SameRackCount).
+//
+// FilterDiskType selects how DiskType is used: false means any disk type is
+// eligible; true means only disks whose type matches DiskType (compared after
+// normalization, so "" and "hdd" both mean HardDriveType). The separate flag is
+// required because HardDriveType normalizes to "", which would otherwise be
+// indistinguishable from "any".
 type Constraints struct {
 	DiskType         string
+	FilterDiskType   bool
 	ReplicaPlacement *super_block.ReplicaPlacement
 	Ratio            func(collection string) (dataShards, parityShards int)
+}
+
+// diskTypeMatches reports whether disk type dt satisfies a request for want when
+// filtering is enabled; types are normalized so "" and "hdd" are equivalent.
+func diskTypeMatches(dt, want string, filter bool) bool {
+	if !filter {
+		return true
+	}
+	return storagetypes.ToDiskType(dt).String() == storagetypes.ToDiskType(want).String()
 }
 
 // Destination is a chosen target for one shard.
@@ -238,24 +255,29 @@ func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, 
 	}
 
 	destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti,
-		func(r string) bool { return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], c.DiskType) },
+		func(r string) bool {
+			return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], c.DiskType, c.FilterDiskType)
+		},
 		withinLimit)
 	if !ok {
 		return nil, 0, false
 	}
-	node := pickNodeInRackWithDisk(racks[destRack], vk, rp, c.DiskType)
+	node := pickNodeInRackWithDisk(racks[destRack], vk, rp, c.DiskType, c.FilterDiskType)
 	if node == nil {
 		return nil, 0, false
 	}
-	diskID := pickBestDiskOnNode(node, vk, c.DiskType, sid, dataShards)
+	diskID, ok := pickBestDiskOfTypeOnNode(node, vk, c.DiskType, c.FilterDiskType, sid, dataShards)
+	if !ok {
+		return nil, 0, false
+	}
 	return node, diskID, true
 }
 
-// nodeHasFreeDiskOfType reports whether the node has a disk of diskType ("" = any)
-// with free capacity.
-func nodeHasFreeDiskOfType(n *Node, diskType string) bool {
+// nodeHasFreeDiskOfType reports whether the node has a free disk matching the
+// disk-type request (see diskTypeMatches; filter=false means any type).
+func nodeHasFreeDiskOfType(n *Node, diskType string, filter bool) bool {
 	for _, d := range n.disks {
-		if diskType != "" && d.diskType != diskType {
+		if !diskTypeMatches(d.diskType, diskType, filter) {
 			continue
 		}
 		if d.freeSlots > 0 {
@@ -265,11 +287,10 @@ func nodeHasFreeDiskOfType(n *Node, diskType string) bool {
 	return false
 }
 
-// rackHasFreeDiskOfType reports whether any node in the rack has a free disk of
-// diskType.
-func rackHasFreeDiskOfType(r *rack, diskType string) bool {
+// rackHasFreeDiskOfType reports whether any node in the rack has a matching free disk.
+func rackHasFreeDiskOfType(r *rack, diskType string, filter bool) bool {
 	for _, n := range r.nodes {
-		if n.freeSlots > 0 && nodeHasFreeDiskOfType(n, diskType) {
+		if n.freeSlots > 0 && nodeHasFreeDiskOfType(n, diskType, filter) {
 			return true
 		}
 	}
@@ -277,11 +298,10 @@ func rackHasFreeDiskOfType(r *rack, diskType string) bool {
 }
 
 // pickNodeInRackWithDisk is pickNodeInRack restricted to nodes that actually have
-// a free disk of diskType. FromActiveTopology keeps all disk types in the
-// snapshot, so without this a node with free volume slots but no disk of the
-// requested type could be chosen, and pickBestDiskOnNode would fall back to disk 0
-// on the wrong tier.
-func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement, diskType string) *Node {
+// a matching free disk. FromActiveTopology keeps all disk types in the snapshot,
+// so without this a node with free volume slots but no disk of the requested type
+// could be chosen.
+func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement, diskType string, filter bool) *Node {
 	var best *Node
 	bestCount := -1
 	for _, id := range sortedNodeKeys(r.nodes) {
@@ -289,7 +309,7 @@ func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 		if node.freeSlots <= 0 {
 			continue
 		}
-		if !nodeHasFreeDiskOfType(node, diskType) {
+		if !nodeHasFreeDiskOfType(node, diskType, filter) {
 			continue
 		}
 		count := volumeShardCount(node, vk)
@@ -301,6 +321,58 @@ func pickNodeInRackWithDisk(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 		}
 	}
 	return best
+}
+
+// pickBestDiskOfTypeOnNode is pickBestDiskOnNode with a strict disk-type filter
+// (so a HardDriveType request does not fall through to other tiers) and an
+// explicit found result. Returns ok=false when the node has no matching disk with
+// capacity.
+func pickBestDiskOfTypeOnNode(node *Node, vk volKey, diskType string, filter bool, shardID, dataShardCount int) (uint32, bool) {
+	isDataShard := dataShardCount > 0 && shardID < dataShardCount
+	info := node.shards[vk]
+	var bestDiskID uint32
+	bestScore := -1
+	for _, diskID := range sortedDiskKeys(node.disks) {
+		d := node.disks[diskID]
+		if !diskTypeMatches(d.diskType, diskType, filter) {
+			continue
+		}
+		if d.freeSlots <= 0 {
+			continue
+		}
+		existingShards := 0
+		hasData := false
+		hasParity := false
+		if info != nil {
+			bits := info.diskShardBits[diskID]
+			existingShards = bits.Count()
+			if dataShardCount > 0 {
+				for s := 0; s < erasure_coding.MaxShardCount; s++ {
+					if !bits.Has(erasure_coding.ShardId(s)) {
+						continue
+					}
+					if s < dataShardCount {
+						hasData = true
+					} else {
+						hasParity = true
+					}
+				}
+			}
+		}
+		score := d.shardCount*10 + existingShards*100
+		if dataShardCount > 0 {
+			if isDataShard && hasParity {
+				score += 1000
+			} else if !isDataShard && hasData {
+				score += 1000
+			}
+		}
+		if bestScore == -1 || score < bestScore {
+			bestScore = score
+			bestDiskID = diskID
+		}
+	}
+	return bestDiskID, bestScore != -1
 }
 
 // shardsOfType returns the sorted subset of need that are data shards (id <

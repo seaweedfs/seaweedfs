@@ -78,19 +78,24 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 	if rp.DiffRackCount > 0 {
 		rackCap = rp.DiffRackCount
 	}
+	// Balance uses the same convention as pickBestDiskOnNode: a non-empty disk type
+	// is a filter, "" means any (the balance snapshot is pre-filtered by type).
+	filterDiskType := diskType != ""
 
 	var moves []*move
 	for _, pm := range toMove {
 		// Target DC: fewest shards of this volume, under the DC cap, with room.
 		destDC, ok := pickTarget(dcKeys, dcShards, maxPerDC, nil,
-			func(dc string) bool { return dcHasFreeDisk(racks, dcRacks[dc], diskType) },
+			func(dc string) bool { return dcHasFreeDisk(racks, dcRacks[dc], diskType, filterDiskType) },
 			func(string) bool { return true })
 		if !ok {
 			continue
 		}
 		// Target rack within the DC: fewest shards, under the per-rack cap.
 		destRack, ok := pickTarget(dcRacks[destDC], shardsPerRackList(vk, racks, dcRacks[destDC]), rackCap, nil,
-			func(r string) bool { return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], diskType) },
+			func(r string) bool {
+				return racks[r].freeSlots > 0 && rackHasFreeDiskOfType(racks[r], diskType, filterDiskType)
+			},
 			func(r string) bool {
 				if rp.DiffRackCount > 0 {
 					return rackShardCount[r] < rp.DiffRackCount
@@ -145,11 +150,11 @@ func dcNodeHoldingShard(racks map[string]*rack, rackKeys []string, vk volKey, sh
 	return nil
 }
 
-// dcHasFreeDisk reports whether any rack in the DC has a node with a free disk of
-// the requested type.
-func dcHasFreeDisk(racks map[string]*rack, rackKeys []string, diskType string) bool {
+// dcHasFreeDisk reports whether any rack in the DC has a node with a free disk
+// matching the disk-type request.
+func dcHasFreeDisk(racks map[string]*rack, rackKeys []string, diskType string, filter bool) bool {
 	for _, rk := range rackKeys {
-		if racks[rk].freeSlots > 0 && rackHasFreeDiskOfType(racks[rk], diskType) {
+		if racks[rk].freeSlots > 0 && rackHasFreeDiskOfType(racks[rk], diskType, filter) {
 			return true
 		}
 	}

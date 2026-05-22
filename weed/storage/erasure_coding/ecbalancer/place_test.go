@@ -139,7 +139,7 @@ func TestPlaceDiskTypeHardFilter(t *testing.T) {
 		hdd.AddDisk(0, "hdd", 50, 0)
 	}
 
-	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd"}, PlaceStrict)
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", FilterDiskType: true}, PlaceStrict)
 	if err != nil {
 		t.Fatalf("Place ssd: %v", err)
 	}
@@ -160,8 +160,30 @@ func TestPlaceDiskTypeUnavailableFails(t *testing.T) {
 		n := topo.AddNode(fmt.Sprintf("hdd-%d:8080", r), "dc1", fmt.Sprintf("dc1:rack%d", r), 50)
 		n.AddDisk(0, "hdd", 50, 0)
 	}
-	if _, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd"}, PlaceStrict); err == nil {
+	if _, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", FilterDiskType: true}, PlaceStrict); err == nil {
 		t.Fatal("expected Place to fail when no disks of the requested type exist")
+	}
+}
+
+// TestPlaceHDDRequestMatchesEmptyTypeDisks: a "hdd" request normalizes to
+// HardDriveType ("") and must land on the HDD disk (reported as ""), never the SSD
+// disk, even on nodes that have both.
+func TestPlaceHDDRequestMatchesEmptyTypeDisks(t *testing.T) {
+	topo := NewTopology()
+	for r := 0; r < 6; r++ {
+		n := topo.AddNode(fmt.Sprintf("n%d:8080", r), "dc1", fmt.Sprintf("dc1:rack%d", r), 100)
+		n.AddDisk(0, "", 50, 0)    // HDD (HardDriveType, reported as "")
+		n.AddDisk(1, "ssd", 50, 0) // SSD
+	}
+
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "hdd", FilterDiskType: true}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place hdd: %v", err)
+	}
+	for sid, d := range res.Destinations {
+		if d.DiskID != 0 { // disk 0 is the HDD disk on every node
+			t.Errorf("shard %d placed on disk %d (expected HDD disk 0) on node %s", sid, d.DiskID, d.Node)
+		}
 	}
 }
 
