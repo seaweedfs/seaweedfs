@@ -67,15 +67,15 @@ func FromActiveTopology(at *topology.ActiveTopology, dataShards int) *Topology {
 
 // perDiskFreeECSlots returns the disk's free EC shard slots for a volume with
 // dataShards data shards: the topology's shard-granular effective availability
-// (accounting for in-flight task reservations without truncating sub-volume
-// reservations, and sized by the target ratio) minus the EC shards already
-// persisted on the disk.
+// (sized by the target ratio) minus the EC shards already on the disk, also
+// expressed in the target ratio's shard slots so mixed-ratio disks are charged by
+// size rather than raw count.
 func perDiskFreeECSlots(at *topology.ActiveTopology, d *topology.DiskInfo, dataShards int) int {
-	return at.GetEffectiveAvailableEcShardSlots(d.NodeID, d.DiskID, dataShards) - ecShardCountOnDisk(d)
+	return at.GetEffectiveAvailableEcShardSlots(d.NodeID, d.DiskID, dataShards) - ecShardSlotsOnDisk(d, dataShards)
 }
 
 // ecShardCountOnDisk counts the EC shards physically on this disk (matching
-// eci.DiskId), across all volumes.
+// eci.DiskId), across all volumes. Used as a per-disk load metric for scoring.
 func ecShardCountOnDisk(d *topology.DiskInfo) int {
 	count := 0
 	for _, eci := range d.DiskInfo.EcShardInfos {
@@ -84,4 +84,26 @@ func ecShardCountOnDisk(d *topology.DiskInfo) int {
 		}
 	}
 	return count
+}
+
+// ecShardSlotsOnDisk returns the EC shards already on the disk expressed in the
+// TARGET collection's shard slots. A shard of a collection with d data shards
+// occupies ~1/d of a volume, i.e. targetDataShards/d target slots, so a 2+1 shard
+// counted against a 10+4 snapshot consumes ~5 slots, not 1.
+func ecShardSlotsOnDisk(d *topology.DiskInfo, targetDataShards int) int {
+	if targetDataShards <= 0 {
+		targetDataShards = erasure_coding.DataShardsCount
+	}
+	total := 0
+	for _, eci := range d.DiskInfo.EcShardInfos {
+		if eci.DiskId != d.DiskID {
+			continue
+		}
+		ds := shardDataShards(eci)
+		if ds <= 0 {
+			ds = erasure_coding.DataShardsCount
+		}
+		total += erasure_coding.GetShardCount(eci) * targetDataShards / ds
+	}
+	return total
 }

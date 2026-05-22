@@ -98,7 +98,12 @@ func (at *ActiveTopology) GetEffectiveAvailableEcShardSlots(nodeID string, diskI
 	// Volume-slot reservations scale by the target ratio; the sub-volume shard-slot
 	// remainder is in default units and subtracted as-is (a small approximation).
 	impact := at.getEffectiveCapacityUnsafe(disk)
-	free := base*int64(shardsPerVolume) - (int64(impact.VolumeSlots)*int64(shardsPerVolume) + int64(impact.ShardSlots))
+	// impact.ShardSlots is recorded in default ShardsPerVolumeSlot units; convert it
+	// to the target ratio's shard slots before subtracting (identity when
+	// shardsPerVolume == ShardsPerVolumeSlot).
+	free := base*int64(shardsPerVolume) -
+		int64(impact.VolumeSlots)*int64(shardsPerVolume) -
+		int64(impact.ShardSlots)*int64(shardsPerVolume)/int64(ShardsPerVolumeSlot)
 	if free < 0 {
 		free = 0
 	}
