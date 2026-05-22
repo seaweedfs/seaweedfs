@@ -12,8 +12,10 @@ import (
 
 // Constraints configures a Place call. Ratio resolves a collection's
 // (dataShards, parityShards); nil uses the standard scheme. ReplicaPlacement,
-// when non-nil, caps shards per DC (DiffDataCenterCount), per rack
-// (DiffRackCount), and per node within a rack (SameRackCount).
+// when non-nil, caps shards per rack (DiffRackCount) and per node within a rack
+// (SameRackCount). The data-center digit (DiffDataCenterCount) is not honored:
+// the 1-byte volume ReplicaPlacement can only encode 0-2 there, too small to be a
+// meaningful per-DC EC shard cap, so EC relies on the rack/node even spread instead.
 //
 // DiskTypePolicy controls how DiskType constrains placement (Any / Prefer /
 // Require). PreferredTags drives whole-plan tag tiering: Place tries disks
@@ -154,10 +156,6 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 		return nil, fmt.Errorf("no racks available for EC placement")
 	}
 	rackKeys := sortedKeys(racks)
-	dcOfRack := make(map[string]string, len(racks))
-	for _, n := range t.nodes {
-		dcOfRack[n.rack] = n.dc
-	}
 
 	// Disk-type eligibility (Require filters; Any/Prefer admit all) and the soft
 	// type preference applied in scoring under Prefer.
@@ -181,7 +179,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 		eligible := func(d *disk) bool {
 			return typeEligible(d) && (len(tt) == 0 || diskHasAnyTag(d, tt))
 		}
-		res, err := t.tryPlace(vk, need, dataShards, parityShards, racks, rackKeys, dcOfRack, mode, c.ReplicaPlacement, eligible, prefer)
+		res, err := t.tryPlace(vk, need, dataShards, parityShards, racks, rackKeys, mode, c.ReplicaPlacement, eligible, prefer)
 		if err != nil {
 			lastErr = err
 			continue
@@ -211,15 +209,14 @@ func tagTiers(preferredTags []string) [][]string {
 // `eligible`, with `prefer` (may be nil) ranking soft-preferred disks first. It
 // journals reservations and rolls them all back if any shard cannot be placed, so
 // a failed tier leaves the snapshot unchanged for the next attempt.
-func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int, racks map[string]*rack, rackKeys []string, dcOfRack map[string]string, mode PlacementMode, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool) (*PlaceResult, error) {
+func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int, racks map[string]*rack, rackKeys []string, mode PlacementMode, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool) (*PlaceResult, error) {
 	result := &PlaceResult{Destinations: make(map[int]Destination, len(need))}
 
 	// Per-type shard ids per rack (even caps), total shard count per rack
-	// (DiffRackCount) and per DC (DiffDataCenterCount), and the racks bearing each
-	// type (anti-affinity) — all seeded from the volume's existing shards.
+	// (DiffRackCount), and the racks bearing each type (anti-affinity) — all seeded
+	// from the volume's existing shards.
 	shardsPerRack := map[bool]map[string][]int{true: {}, false: {}}
 	rackShardCount := map[string]int{}
-	dcShardCount := map[string]int{}
 	bearing := map[bool]map[string]bool{true: {}, false: {}}
 	for _, n := range t.nodes {
 		info, ok := n.shards[vk]
@@ -231,7 +228,6 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			isData := s < dataShards
 			shardsPerRack[isData][n.rack] = append(shardsPerRack[isData][n.rack], s)
 			rackShardCount[n.rack]++
-			dcShardCount[n.dc]++
 			bearing[isData][n.rack] = true
 		}
 	}
@@ -249,15 +245,6 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 		numEligibleRacks = 1
 	}
 
-	// Bounded-proportional per-DC cap: spread shards across DCs (down to the
-	// durability floor), not merely under DiffDataCenterCount, so encode/repair
-	// place the way the balancer's cross-DC phase wants and don't get rewritten.
-	dcSet := make(map[string]bool, len(dcOfRack))
-	for _, dc := range dcOfRack {
-		dcSet[dc] = true
-	}
-	dcCap := boundedMaxPerDC(rp, dataShards, parityShards, len(dcSet))
-
 	attempts := strictAttempts
 	if mode == PlaceDurabilityFirst {
 		attempts = durabilityAttempts
@@ -273,7 +260,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, racks, rackKeys, rp, dcCap, eligible, prefer, shardsPerRack[isData], rackShardCount, dcShardCount, dcOfRack, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -282,7 +269,6 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			racks[node.rack].freeSlots--
 			shardsPerRack[isData][node.rack] = append(shardsPerRack[isData][node.rack], sid)
 			rackShardCount[node.rack]++
-			dcShardCount[dcOfRack[node.rack]]++
 			bearing[isData][node.rack] = true
 			journal = append(journal, placedEntry{node: node, sid: sid, rackKey: node.rack})
 			result.Destinations[sid] = Destination{
@@ -330,7 +316,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 // anti-affinity to the opposite type), then the least-loaded eligible node, then
 // the best eligible disk. The third return reports whether the disk spilled off
 // the soft-preferred type. ok=false when no rack/node/disk fits.
-func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, dcCap int, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount, dcShardCount map[string]int, dcOfRack map[string]string, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
+func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
 	maxPerRack := numEligibleRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
 		if maxPerRack = ceilDivide(typeTotal, numEligibleRacks); maxPerRack < 1 {
@@ -346,19 +332,13 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 	if !rl.rp {
 		rp = nil
 	}
-	// A rack is eligible only if it is under both the per-rack (DiffRackCount) and
-	// per-DC shard caps. dcCap is the bounded-proportional per-DC target (see
-	// boundedMaxPerDC): shards spread evenly across DCs down to the durability floor,
-	// not merely under DiffDataCenterCount. Enforced only when set (and relaxed with
-	// rp), so non-DC placements are unchanged.
+	// A rack is eligible only if it is under the per-rack shard cap (DiffRackCount),
+	// enforced only when set (and relaxed with rp).
 	withinLimit := func(r string) bool {
 		if rp == nil {
 			return true
 		}
 		if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
-			return false
-		}
-		if dcCap > 0 && dcShardCount[dcOfRack[r]] >= dcCap {
 			return false
 		}
 		return true

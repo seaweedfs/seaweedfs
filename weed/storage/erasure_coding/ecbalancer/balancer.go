@@ -206,11 +206,6 @@ func Plan(topo *Topology, opts Options) []Move {
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
-			m := detectCrossDCImbalance(vk, nodes, racks, opts.DiskType, dataShards, parityShards, opts.ReplicaPlacement)
-			applyMovesToTopology(m, racks)
-			all = append(all, m...)
-		}
-		for _, vk := range byCollection[collection] {
 			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
@@ -321,7 +316,7 @@ func detectCrossRackImbalance(vk volKey, nodes map[string]*Node, racks map[strin
 	var moves []*move
 
 	dataPerRack, _ := shardsByGroup(vk, nodes, dataShards, func(n *Node) string { return n.rack })
-	moves = append(moves, balanceShardTypeAcrossRacks(vk, nodes, racks, diskType, dataShards, parityShards,
+	moves = append(moves, balanceShardTypeAcrossRacks(vk, nodes, racks, diskType, dataShards,
 		dataPerRack, rackShardCount, ceilDivide(dataShards, numRacks), nil, rp)...)
 
 	dataPerRack, parityPerRack := shardsByGroup(vk, nodes, dataShards, func(n *Node) string { return n.rack })
@@ -331,39 +326,17 @@ func detectCrossRackImbalance(vk volKey, nodes map[string]*Node, racks map[strin
 			antiAffinity[rackID] = true
 		}
 	}
-	moves = append(moves, balanceShardTypeAcrossRacks(vk, nodes, racks, diskType, dataShards, parityShards,
+	moves = append(moves, balanceShardTypeAcrossRacks(vk, nodes, racks, diskType, dataShards,
 		parityPerRack, rackShardCount, ceilDivide(parityShards, numRacks), antiAffinity, rp)...)
 
 	return moves
 }
 
-func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards, parityShards int, shardsPerRack map[string][]int, rackShardCount map[string]int, maxPerRack int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
+func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards int, shardsPerRack map[string][]int, rackShardCount map[string]int, maxPerRack int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
 	if maxPerRack < 1 {
 		maxPerRack = 1
 	}
 	rackKeys := sortedKeys(racks)
-
-	// Per-DC shard accounting, used only to honor the ReplicaPlacement data-center
-	// limit on move targets. Computed lazily so non-DC placements are unaffected
-	// (and the balance output stays byte-identical when DiffDataCenterCount is 0).
-	// dcCap is the bounded-proportional per-DC target (see boundedMaxPerDC), so a
-	// cross-DC rack move can't push a DC back above the spread detectCrossDCImbalance
-	// established.
-	var dcOfRack map[string]string
-	dcShardCount := map[string]int{}
-	dcCap := 0
-	if rp != nil && rp.DiffDataCenterCount > 0 {
-		dcOfRack = make(map[string]string, len(racks))
-		dcSet := map[string]bool{}
-		for _, n := range nodes {
-			dcOfRack[n.rack] = n.dc
-			dcSet[n.dc] = true
-			if info, ok := n.shards[vk]; ok {
-				dcShardCount[n.dc] += info.shardBits.Count()
-			}
-		}
-		dcCap = boundedMaxPerDC(rp, dataShards, parityShards, len(dcSet))
-	}
 
 	type pending struct {
 		shardID int
@@ -394,13 +367,6 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 				if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
 					return false
 				}
-				// A same-DC move leaves that DC's total unchanged, so only enforce the
-				// per-DC cap when the target rack is in a different DC than the source.
-				if dcCap > 0 &&
-					dcOfRack[r] != pm.src.dc &&
-					dcShardCount[dcOfRack[r]] >= dcCap {
-					return false
-				}
 				return true
 			})
 		if !ok {
@@ -428,10 +394,6 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 		shardsPerRack[srcRack] = removeInt(shardsPerRack[srcRack], pm.shardID)
 		rackShardCount[destRack]++
 		rackShardCount[srcRack]--
-		if dcOfRack != nil {
-			dcShardCount[dcOfRack[destRack]]++
-			dcShardCount[dcOfRack[srcRack]]--
-		}
 		racks[destRack].freeSlots--
 		racks[srcRack].freeSlots++
 		// Account at the node level too, so pickNodeInRack does not over-plan a
