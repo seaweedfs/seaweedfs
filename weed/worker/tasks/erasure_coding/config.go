@@ -17,6 +17,7 @@ type Config struct {
 	CollectionFilter string   `json:"collection_filter"`
 	MinSizeMB        int      `json:"min_size_mb"`
 	PreferredTags    []string `json:"preferred_tags"`
+	ReplicaPlacement string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -157,6 +158,19 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "replica_placement",
+				JSONName:     "replica_placement",
+				Type:         config.FieldTypeString,
+				DefaultValue: "",
+				Required:     false,
+				DisplayName:  "Replica Placement",
+				Description:  "EC shard replica placement constraint (e.g. 020)",
+				HelpText:     "Leave empty to use the master default replication (even spread only when that default is empty or zero). When set, limits shards per data center/rack/node per the placement digits",
+				Placeholder:  "020",
+				InputType:    "text",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -177,6 +191,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				MinVolumeSizeMb:  int32(c.MinSizeMB),
 				CollectionFilter: c.CollectionFilter,
 				PreferredTags:    preferredTagsCopy,
+				ReplicaPlacement: c.ReplicaPlacement,
 			},
 		},
 	}
@@ -200,6 +215,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.MinSizeMB = int(ecConfig.MinVolumeSizeMb)
 		c.CollectionFilter = ecConfig.CollectionFilter
 		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
+		c.ReplicaPlacement = ecConfig.ReplicaPlacement
 	}
 
 	return nil
