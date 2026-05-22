@@ -375,6 +375,33 @@ func pickBestDiskOfTypeOnNode(node *Node, vk volKey, diskType string, filter boo
 	return bestDiskID, bestScore != -1
 }
 
+// clearShardAccounting removes one shard copy of a volume from the snapshot's
+// per-domain accounting (the volume's shard bits) WITHOUT crediting disk capacity.
+// It clears only the given physical disk's bit, then recomputes the node-level
+// union from the remaining disk bits, so a kept copy of the same shard on another
+// disk of the same node still counts toward caps / ReplicaPlacement / anti-affinity.
+//
+// Repair uses this to drop the duplicate/mismatched copies it plans to delete
+// before placing missing shards, so those copies do not inflate placement
+// accounting. Capacity is deliberately NOT credited: the deletes run only after
+// the rebuilt shards are distributed, so the slots are not free at plan time. This
+// is distinct from releaseShard, which credits freeSlots and clears the union.
+func clearShardAccounting(node *Node, vk volKey, shardID int, diskID uint32) {
+	info, ok := node.shards[vk]
+	if !ok {
+		return
+	}
+	sid := erasure_coding.ShardId(shardID)
+	if bits, ok := info.diskShardBits[diskID]; ok {
+		info.diskShardBits[diskID] = bits.Clear(sid)
+	}
+	var union erasure_coding.ShardBits
+	for _, b := range info.diskShardBits {
+		union |= b
+	}
+	info.shardBits = union
+}
+
 // shardsOfType returns the sorted subset of need that are data shards (id <
 // dataShards) when isData, else the parity subset.
 func shardsOfType(need []int, isData bool, dataShards int) []int {

@@ -187,6 +187,35 @@ func TestPlaceHDDRequestMatchesEmptyTypeDisks(t *testing.T) {
 	}
 }
 
+// TestClearShardAccounting: dropping one disk's copy of a shard preserves a kept
+// copy of the same shard on another disk of the same node, and credits no capacity.
+func TestClearShardAccounting(t *testing.T) {
+	topo := NewTopology()
+	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 50)
+	n.AddDisk(0, "", 50, 0)
+	n.AddDisk(1, "", 50, 0)
+	vk := volKey{collection: "c1", vid: 1}
+	// Shard 3 lives on disk 0 (keep) and disk 1 (duplicate to delete).
+	n.AddShards(1, "c1", 0, erasure_coding.ShardBits(uint32(1)<<3))
+	n.AddShards(1, "c1", 1, erasure_coding.ShardBits(uint32(1)<<3))
+	if got := n.shards[vk].shardBits.Count(); got != 1 {
+		t.Fatalf("union count = %d, want 1", got)
+	}
+	freeBefore := n.disks[1].freeSlots
+
+	clearShardAccounting(n, vk, 3, 1)
+
+	if !n.shards[vk].shardBits.Has(erasure_coding.ShardId(3)) {
+		t.Error("kept copy of shard 3 (disk 0) lost from the node-level union")
+	}
+	if n.shards[vk].diskShardBits[1].Has(erasure_coding.ShardId(3)) {
+		t.Error("disk-1 copy of shard 3 was not cleared")
+	}
+	if n.disks[1].freeSlots != freeBefore {
+		t.Errorf("freeSlots changed %d -> %d; clearShardAccounting must not credit capacity", freeBefore, n.disks[1].freeSlots)
+	}
+}
+
 // TestPlaceEnforcesDiffDataCenterCount: with DiffDataCenterCount set, no data
 // center holds more than that many shards, so shards spread across DCs.
 func TestPlaceEnforcesDiffDataCenterCount(t *testing.T) {
