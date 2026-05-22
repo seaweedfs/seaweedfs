@@ -443,7 +443,7 @@ func TestPlanECDestinationsPacksWhenFewerDisksThanShards(t *testing.T) {
 
 	// createECTargets must cover all 14 shards exactly once, packing onto the
 	// available disks without any disk exceeding parityShards shards.
-	targets := createECTargets(plan, shardsPerPlan, erasure_coding.DataShardsCount)
+	targets := createECTargets(plan, shardsPerPlan)
 	require.Equal(t, len(plan.Plans), len(targets))
 
 	seenShards := make(map[uint32]bool)

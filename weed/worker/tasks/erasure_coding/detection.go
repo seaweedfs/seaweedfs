@@ -362,7 +362,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 					Sources: sourcesProto,
 
 					// Unified targets - all EC shard destinations
-					Targets: createECTargets(multiPlan, shardsPerPlan, dataShards),
+					Targets: createECTargets(multiPlan, shardsPerPlan),
 
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 						ErasureCodingParams: createECTaskParams(dataShards, parityShards, metric.DiskType),
@@ -825,7 +825,7 @@ func distributeECShards(totalShards, numTargets int) [][]uint32 {
 
 // createECTargets builds TaskTargets from the per-disk plans and the shard ids
 // ecbalancer.Place assigned to each (shardsPerPlan is parallel to multiPlan.Plans).
-func createECTargets(multiPlan *topology.MultiDestinationPlan, shardsPerPlan [][]uint32, dataShards int) []*worker_pb.TaskTarget {
+func createECTargets(multiPlan *topology.MultiDestinationPlan, shardsPerPlan [][]uint32) []*worker_pb.TaskTarget {
 	targets := make([]*worker_pb.TaskTarget, 0, len(multiPlan.Plans))
 	for i, plan := range multiPlan.Plans {
 		shardIDs := shardsPerPlan[i]
