@@ -15,11 +15,32 @@ import (
 // Like the cross-rack phase, it mutates the snapshot inline (release on the source,
 // reserve on the target) and adjusts rack/node/DC capacity; Plan re-asserts the
 // shard bits via applyMovesToTopology.
-func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards int, rp *super_block.ReplicaPlacement) []*move {
+// boundedMaxPerDC returns the per-DC shard cap to balance toward: the operator's
+// DiffDataCenterCount, but tightened so shards spread proportionally across the
+// available DCs (ceil(total/numDCs)) instead of merely staying under the cap. The
+// proportional target is floored at parityShards — once each DC holds at most
+// parityShards a single-DC loss is already recoverable, so spreading tighter only
+// adds cross-DC (WAN) traffic for no durability gain. Returns 0 when no DC cap
+// applies (rp unset, DiffDataCenterCount 0, or a single DC).
+func boundedMaxPerDC(rp *super_block.ReplicaPlacement, dataShards, parityShards, numDCs int) int {
+	if rp == nil || rp.DiffDataCenterCount <= 0 || numDCs <= 1 {
+		return 0
+	}
+	limit := rp.DiffDataCenterCount
+	target := ceilDivide(dataShards+parityShards, numDCs)
+	if target < parityShards {
+		target = parityShards
+	}
+	if target < limit {
+		limit = target
+	}
+	return limit
+}
+
+func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
 	if rp == nil || rp.DiffDataCenterCount <= 0 {
 		return nil
 	}
-	maxPerDC := rp.DiffDataCenterCount
 
 	// Group racks by data center.
 	dcOfRack := make(map[string]string, len(racks))
@@ -35,6 +56,7 @@ func detectCrossDCImbalance(vk volKey, nodes map[string]*Node, racks map[string]
 	if len(dcKeys) <= 1 {
 		return nil
 	}
+	maxPerDC := boundedMaxPerDC(rp, dataShards, parityShards, len(dcKeys))
 
 	// This volume's shard ids per DC.
 	dcShards := map[string][]int{}

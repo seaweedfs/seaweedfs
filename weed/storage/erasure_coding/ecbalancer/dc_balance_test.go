@@ -27,7 +27,7 @@ func TestDetectCrossDCImbalanceDrainsOverCapDC(t *testing.T) {
 	}
 
 	rp := &super_block.ReplicaPlacement{DiffDataCenterCount: 7}
-	moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, rp)
+	moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, rp)
 	if len(moves) != 3 { // 10 - 7
 		t.Fatalf("expected 3 cross-DC moves, got %d", len(moves))
 	}
@@ -52,6 +52,43 @@ func TestDetectCrossDCImbalanceDrainsOverCapDC(t *testing.T) {
 	}
 }
 
+// TestDetectCrossDCImbalanceBoundedProportional: with a loose DiffDataCenterCount,
+// the phase spreads shards evenly across DCs (down to the durability floor) rather
+// than only draining to the cap. 14 shards in one DC, 2 DCs, cap=10: bounded target
+// is min(10, max(ceil(14/2)=7, parity=4)) = 7, so it drains 14->7 (7 moves -> 7/7),
+// not 14->10 (4 moves -> 10/4).
+func TestDetectCrossDCImbalanceBoundedProportional(t *testing.T) {
+	vk := volKey{collection: "c1", vid: 1}
+	topo := NewTopology()
+	for dc := 0; dc < 2; dc++ {
+		dcID := fmt.Sprintf("dc%d", dc)
+		for r := 0; r < erasure_coding.TotalShardsCount; r++ {
+			rackKey := fmt.Sprintf("%s:rack%d", dcID, r)
+			n := topo.AddNode(fmt.Sprintf("%s-n%d:8080", dcID, r), dcID, rackKey, 50)
+			n.AddDisk(0, "", 50, 0)
+			if dc == 0 {
+				n.AddShards(1, "c1", 0, erasure_coding.ShardBits(uint32(1)<<uint(r))) // all 14 shards in dc0
+			}
+		}
+	}
+
+	rp := &super_block.ReplicaPlacement{DiffDataCenterCount: 10} // loose cap (10 of 14)
+	moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, rp)
+	if len(moves) != 7 {
+		t.Fatalf("expected 7 cross-DC moves (bounded 14->7), got %d", len(moves))
+	}
+
+	perDC := map[string]int{}
+	for _, n := range topo.nodes {
+		if info, ok := n.shards[vk]; ok {
+			perDC[n.dc] += info.shardBits.Count()
+		}
+	}
+	if perDC["dc0"] != 7 || perDC["dc1"] != 7 {
+		t.Errorf("expected even 7/7 spread under the loose cap, got dc0=%d dc1=%d", perDC["dc0"], perDC["dc1"])
+	}
+}
+
 // TestDetectCrossDCImbalanceNoOp: without a DC constraint the phase proposes
 // nothing (so the balancer's behavior is unchanged for non-DC placements).
 func TestDetectCrossDCImbalanceNoOp(t *testing.T) {
@@ -63,11 +100,11 @@ func TestDetectCrossDCImbalanceNoOp(t *testing.T) {
 		n.AddShards(1, "c1", 0, erasure_coding.ShardBits(uint32(1)<<uint(r)))
 	}
 
-	if moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, nil); moves != nil {
+	if moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, nil); moves != nil {
 		t.Errorf("expected no moves with nil ReplicaPlacement, got %d", len(moves))
 	}
 	rp := &super_block.ReplicaPlacement{DiffRackCount: 2} // no DC digit
-	if moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, rp); moves != nil {
+	if moves := detectCrossDCImbalance(vk, topo.nodes, buildRacks(topo.nodes), "", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount, rp); moves != nil {
 		t.Errorf("expected no moves when DiffDataCenterCount is 0, got %d", len(moves))
 	}
 }
@@ -100,7 +137,7 @@ func TestBalanceCrossRackAllowsSameDCMoveAtDCCap(t *testing.T) {
 	rackShardCount := countShardsByRack(vk, topo.nodes)
 
 	// maxPerRack=2 forces each over-full rack to shed into its empty same-DC peer.
-	moves := balanceShardTypeAcrossRacks(vk, topo.nodes, racks, "", erasure_coding.DataShardsCount,
+	moves := balanceShardTypeAcrossRacks(vk, topo.nodes, racks, "", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount,
 		shardsPerRack, rackShardCount, 2, nil, rp)
 	if len(moves) == 0 {
 		t.Fatal("expected same-DC cross-rack moves when the DC is at its DC cap, got none")

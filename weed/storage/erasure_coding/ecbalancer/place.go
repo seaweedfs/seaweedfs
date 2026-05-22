@@ -249,6 +249,15 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 		numEligibleRacks = 1
 	}
 
+	// Bounded-proportional per-DC cap: spread shards across DCs (down to the
+	// durability floor), not merely under DiffDataCenterCount, so encode/repair
+	// place the way the balancer's cross-DC phase wants and don't get rewritten.
+	dcSet := make(map[string]bool, len(dcOfRack))
+	for _, dc := range dcOfRack {
+		dcSet[dc] = true
+	}
+	dcCap := boundedMaxPerDC(rp, dataShards, parityShards, len(dcSet))
+
 	attempts := strictAttempts
 	if mode == PlaceDurabilityFirst {
 		attempts = durabilityAttempts
@@ -264,7 +273,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, dcShardCount, dcOfRack, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, racks, rackKeys, rp, dcCap, eligible, prefer, shardsPerRack[isData], rackShardCount, dcShardCount, dcOfRack, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -321,7 +330,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 // anti-affinity to the opposite type), then the least-loaded eligible node, then
 // the best eligible disk. The third return reports whether the disk spilled off
 // the soft-preferred type. ok=false when no rack/node/disk fits.
-func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount, dcShardCount map[string]int, dcOfRack map[string]string, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
+func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, dcCap int, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount, dcShardCount map[string]int, dcOfRack map[string]string, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
 	maxPerRack := numEligibleRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
 		if maxPerRack = ceilDivide(typeTotal, numEligibleRacks); maxPerRack < 1 {
@@ -338,8 +347,10 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 		rp = nil
 	}
 	// A rack is eligible only if it is under both the per-rack (DiffRackCount) and
-	// per-DC (DiffDataCenterCount) shard caps. The DC cap spreads shards across data
-	// centers; it is enforced only when set, so non-DC placements are unchanged.
+	// per-DC shard caps. dcCap is the bounded-proportional per-DC target (see
+	// boundedMaxPerDC): shards spread evenly across DCs down to the durability floor,
+	// not merely under DiffDataCenterCount. Enforced only when set (and relaxed with
+	// rp), so non-DC placements are unchanged.
 	withinLimit := func(r string) bool {
 		if rp == nil {
 			return true
@@ -347,7 +358,7 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 		if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
 			return false
 		}
-		if rp.DiffDataCenterCount > 0 && dcShardCount[dcOfRack[r]] >= rp.DiffDataCenterCount {
+		if dcCap > 0 && dcShardCount[dcOfRack[r]] >= dcCap {
 			return false
 		}
 		return true
