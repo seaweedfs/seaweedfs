@@ -86,6 +86,9 @@ func TestFromActiveTopology(t *testing.T) {
 	if b == nil {
 		t.Fatal("node B missing from snapshot")
 	}
+	if b.rack != "dc1:rack1" {
+		t.Errorf("node B rack = %q, want dc1:rack1", b.rack)
+	}
 	if diskB := b.disks[0]; diskB == nil || diskB.shardCount != 0 {
 		t.Errorf("node B disk 0 shardCount = %v, want 0", diskB)
 	}
