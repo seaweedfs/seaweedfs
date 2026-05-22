@@ -7,14 +7,11 @@ import (
 
 // FromActiveTopology builds a Topology snapshot from the cluster's ActiveTopology
 // using the reservation-aware effective-capacity view that EC encode and repair
-// rely on (GetDisksWithEffectiveCapacity already accounts for in-flight tasks).
-//
-// It collects ALL EC-eligible disks with no hard disk-type filter; disk-type
-// preference is applied later as a soft tier by callers. Per-disk free EC shard
-// slots are free-volume-slots * DataShardsCount minus the EC shards already on the
-// disk, matching buildBalancerTopology's accounting — but kept per physical disk,
-// since GetDisksWithEffectiveCapacity separates disks (no even-split needed). Rack
-// keys are composite "dc:rack" to avoid cross-DC name collisions.
+// rely on. It collects ALL EC-eligible disks with no hard disk-type filter;
+// disk-type preference is applied later by callers (Place). Per-disk free EC shard
+// slots come from GetEffectiveAvailableEcShardSlots (shard-granular, so in-flight
+// task reservations that are not whole-volume multiples are not lost) minus the EC
+// shards already persisted on the disk. Rack keys are composite "dc:rack".
 //
 // This is the encode/repair-side constructor; balance keeps its own raw-topology
 // builder (buildBalancerTopology) until the snapshot sources are reconciled.
@@ -35,7 +32,7 @@ func FromActiveTopology(at *topology.ActiveTopology) *Topology {
 		if d == nil || d.DiskInfo == nil {
 			continue
 		}
-		if free := perDiskFreeECSlots(d); free > 0 {
+		if free := perDiskFreeECSlots(at, d); free > 0 {
 			nodeFree[d.NodeID] += free
 		}
 		nodeDC[d.NodeID] = d.DataCenter
@@ -46,7 +43,7 @@ func FromActiveTopology(at *topology.ActiveTopology) *Topology {
 	for nodeID, ds := range byNode {
 		node := topo.AddNode(nodeID, nodeDC[nodeID], nodeRack[nodeID], nodeFree[nodeID])
 		for _, d := range ds {
-			free := perDiskFreeECSlots(d)
+			free := perDiskFreeECSlots(at, d)
 			if free < 0 {
 				free = 0
 			}
@@ -63,16 +60,12 @@ func FromActiveTopology(at *topology.ActiveTopology) *Topology {
 	return topo
 }
 
-// perDiskFreeECSlots returns the disk's free EC shard slots from the
-// effective-capacity view: free volume slots * DataShardsCount minus the EC shards
-// already on the disk.
-func perDiskFreeECSlots(d *topology.DiskInfo) int {
-	info := d.DiskInfo
-	freeVol := int(info.MaxVolumeCount - info.VolumeCount)
-	if freeVol < 0 {
-		freeVol = 0
-	}
-	return freeVol*erasure_coding.DataShardsCount - ecShardCountOnDisk(d)
+// perDiskFreeECSlots returns the disk's free EC shard slots: the topology's
+// shard-granular effective availability (accounting for in-flight task
+// reservations without truncating sub-volume reservations) minus the EC shards
+// already persisted on the disk.
+func perDiskFreeECSlots(at *topology.ActiveTopology, d *topology.DiskInfo) int {
+	return at.GetEffectiveAvailableEcShardSlots(d.NodeID, d.DiskID) - ecShardCountOnDisk(d)
 }
 
 // ecShardCountOnDisk counts the EC shards physically on this disk (matching
