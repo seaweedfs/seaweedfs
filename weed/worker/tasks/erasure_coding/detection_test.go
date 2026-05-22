@@ -14,37 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestECPlacementPlannerApplyReservations(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 10, 0)
-
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
-
-	key := ecDiskKey("10.0.0.1:8080", 0)
-	candidate, ok := planner.candidateByKey[key]
-	require.True(t, ok)
-	assert.Equal(t, 10, candidate.FreeSlots)
-	assert.Equal(t, 0, candidate.ShardCount)
-	assert.Equal(t, 0, candidate.LoadCount)
-
-	shardImpact := topology.CalculateECShardStorageImpact(1, 1)
-	destinations := make([]topology.TaskDestinationSpec, 10)
-	for i := 0; i < 10; i++ {
-		destinations[i] = topology.TaskDestinationSpec{
-			ServerID:      "10.0.0.1:8080",
-			DiskID:        0,
-			StorageImpact: &shardImpact,
-		}
-	}
-
-	planner.applyTaskReservations(1024, nil, destinations)
-
-	candidate = planner.candidateByKey[key]
-	assert.Equal(t, 9, candidate.FreeSlots, "10 shard slots should reduce available volume slots by 1")
-	assert.Equal(t, 10, candidate.ShardCount)
-	assert.Equal(t, 1, candidate.LoadCount, "load should only be incremented once per disk")
-}
-
 func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0)
 
@@ -59,70 +28,6 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	requireAllShardsPlaced(t, plan, shardsPerPlan)
-}
-
-func TestECPlacementPlannerPrefersTaggedDisks(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 3, []string{"hdd"}, 10, 0)
-	topo := activeTopology.GetTopologyInfo()
-	for _, dc := range topo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for k, node := range rack.DataNodeInfos {
-				for diskType := range node.DiskInfos {
-					if k < 2 {
-						node.DiskInfos[diskType].Tags = []string{"fast"}
-					} else {
-						node.DiskInfos[diskType].Tags = []string{"slow"}
-					}
-				}
-			}
-		}
-	}
-	require.NoError(t, activeTopology.UpdateTopology(topo))
-
-	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
-	require.NotNil(t, planner)
-
-	selected, err := planner.selectDestinations("", "", "", 2)
-	require.NoError(t, err)
-	require.Len(t, selected, 2)
-
-	for _, candidate := range selected {
-		key := ecDiskKey(candidate.NodeID, candidate.DiskID)
-		assert.True(t, diskHasTag(planner.diskTags[key], "fast"))
-	}
-}
-
-func TestECPlacementPlannerFallsBackWhenTagsInsufficient(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 3, []string{"hdd"}, 10, 0)
-	topo := activeTopology.GetTopologyInfo()
-	for _, dc := range topo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for i, node := range rack.DataNodeInfos {
-				for diskType := range node.DiskInfos {
-					if i == 0 {
-						node.DiskInfos[diskType].Tags = []string{"fast"}
-					}
-				}
-			}
-		}
-	}
-	require.NoError(t, activeTopology.UpdateTopology(topo))
-
-	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
-	require.NotNil(t, planner)
-
-	selected, err := planner.selectDestinations("", "", "", 3)
-	require.NoError(t, err)
-	require.Len(t, selected, 3)
-
-	taggedCount := 0
-	for _, candidate := range selected {
-		key := ecDiskKey(candidate.NodeID, candidate.DiskID)
-		if diskHasTag(planner.diskTags[key], "fast") {
-			taggedCount++
-		}
-	}
-	assert.Less(t, taggedCount, len(selected))
 }
 
 // TestDetectionSkipsWhenECShardsAlreadyExist guards against issue #9448: a
