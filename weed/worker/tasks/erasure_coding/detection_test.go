@@ -233,13 +233,13 @@ func buildStuckSourceTopology(t *testing.T, volumeID uint32, presentShardCount i
 // criteria (Age, FullnessRatio, Size), with `Age` derived from `LastModified`
 // so the two fields stay consistent for any reader.
 func buildStuckSourceMetrics(volumeID uint32, server string) []*types.VolumeHealthMetrics {
-	lastModified := time.Now().Add(-time.Hour)
+	lastModified := time.Now().Add(-2 * time.Hour)
 	return []*types.VolumeHealthMetrics{{
 		VolumeID:      volumeID,
 		Server:        server,
 		Size:          200 * 1024 * 1024,
 		Collection:    "",
-		FullnessRatio: 0.9,
+		FullnessRatio: 0.96,
 		LastModified:  lastModified,
 		Age:           time.Since(lastModified),
 	}}
@@ -402,6 +402,77 @@ func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 	require.Error(t, err)
 }
 
+// #9586: with fewer single-disk servers than total shards, EC must still plan
+// by packing several shards onto a disk (ec.encode's "4,4,3,3" fallback) rather
+// than refusing. The reporter has 8 single-disk servers across 3 racks and a
+// 10+4 scheme — 8 disks for 14 shards. minTotalDisks (ceil(14/4)=4) keeps any
+// disk under parityShards shards, so durability holds.
+func TestPlanECDestinationsPacksWhenFewerDisksThanShards(t *testing.T) {
+	const numServers = 8
+	// rack3 holds 4 servers, rack1 and rack2 hold 2 each, mirroring the report.
+	racks := []string{"rack3", "rack3", "rack3", "rack3", "rack1", "rack1", "rack2", "rack2"}
+
+	activeTopology := topology.NewActiveTopology(10)
+	rackNodes := make(map[string][]*master_pb.DataNodeInfo)
+	for i := 0; i < numServers; i++ {
+		nodeID := fmt.Sprintf("192.168.1.%d:%d", 143+i/3, 8080+i)
+		rackNodes[racks[i]] = append(rackNodes[racks[i]], &master_pb.DataNodeInfo{
+			Id: nodeID,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"hdd": {
+					DiskId:         0,
+					VolumeCount:    1,
+					MaxVolumeCount: 200,
+					VolumeInfos: []*master_pb.VolumeInformationMessage{{
+						Id:       uint32(i + 1),
+						DiskId:   0,
+						DiskType: "hdd",
+					}},
+				},
+			},
+		})
+	}
+	rackInfos := make([]*master_pb.RackInfo, 0, len(rackNodes))
+	for _, rackID := range []string{"rack1", "rack2", "rack3"} {
+		rackInfos = append(rackInfos, &master_pb.RackInfo{Id: rackID, DataNodeInfos: rackNodes[rackID]})
+	}
+	require.NoError(t, activeTopology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{Id: "dc1", RackInfos: rackInfos}},
+	}))
+
+	planner := newECPlacementPlanner(activeTopology, nil)
+	require.NotNil(t, planner)
+
+	metric := &types.VolumeHealthMetrics{
+		VolumeID:   4569,
+		Server:     "192.168.1.145:8081",
+		Size:       100 * 1024 * 1024,
+		Collection: "",
+	}
+
+	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	// One plan entry per available disk; fewer than the 14 shards.
+	require.Equal(t, numServers, len(plan.Plans))
+
+	// createECTargets must cover all 14 shards exactly once, packing onto the
+	// available disks without any disk exceeding parityShards shards.
+	targets := createECTargets(plan, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	require.Equal(t, numServers, len(targets))
+
+	seenShards := make(map[uint32]bool)
+	for _, target := range targets {
+		require.LessOrEqual(t, len(target.ShardIds), erasure_coding.ParityShardsCount,
+			"no disk may hold more than parityShards shards, else losing it loses the volume")
+		for _, shardId := range target.ShardIds {
+			require.False(t, seenShards[shardId], "shard %d assigned to more than one target", shardId)
+			seenShards[shardId] = true
+		}
+	}
+	require.Len(t, seenShards, erasure_coding.TotalShardsCount, "every shard must be placed exactly once")
+}
+
 func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {
 	metrics := make([]*types.VolumeHealthMetrics, 0, count)
 	now := time.Now()
@@ -411,9 +482,9 @@ func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {
 			Server:        "10.0.0.1:8080",
 			Size:          200 * 1024 * 1024,
 			Collection:    "",
-			FullnessRatio: 0.9,
-			LastModified:  now.Add(-time.Hour),
-			Age:           10 * time.Minute,
+			FullnessRatio: 0.96,
+			LastModified:  now.Add(-2 * time.Hour),
+			Age:           2 * time.Hour,
 		})
 	}
 	return metrics

@@ -42,6 +42,10 @@ RUN if [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \
       echo "Skipping Rust build for $TARGETARCH (unsupported)" && \
       touch /weed-volume; \
     fi
+# Pre-built binaries arrive via GitHub Actions artifacts, which drop the
+# executable bit, so the copied file is 0644 and exec fails with "Permission
+# denied". Restore it (no-op for the empty placeholder, which stays size 0).
+RUN chmod 0755 /weed-volume
 
 FROM alpine AS final
 LABEL author="Chris Lu"

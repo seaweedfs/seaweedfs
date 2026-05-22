@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
 )
 
 func init() {
@@ -295,7 +296,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		collection := volumeIdToCollection[vid]
 
 		// Sync missing entries between replicas, then select the best one
-		bestLoc, selectErr := syncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
+		bestLoc, selectErr := volume_replica.SyncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
 		if selectErr != nil {
 			return fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
 		}
@@ -340,36 +341,58 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 }
 
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
-	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
-	if err != nil {
-		return fmt.Errorf("fetch topology for shard verification: %w", err)
-	}
+	// Shard relocations from the preceding EC balance reach the master via
+	// volume-server heartbeats, so freshly distributed shards may not all be
+	// visible in the master topology immediately. Poll a few times before
+	// concluding the shard set is incomplete, so a heartbeat-propagation lag is
+	// not mistaken for missing data (which would abort the encode). Genuine loss
+	// still fails after the retries are exhausted.
+	const maxAttempts = 10
+	const retryInterval = 2 * time.Second
 
-	for _, vid := range volumeIds {
-		nodeShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
-
-		var union erasure_coding.ShardBits
-		for _, info := range nodeShards {
-			union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
+		if err != nil {
+			return fmt.Errorf("fetch topology for shard verification: %w", err)
 		}
 
-		totalShards := erasure_coding.TotalShardsCount
-		if err := erasure_coding.RequireFullShardSet(uint32(vid), union, totalShards); err != nil {
-			summary := make([]string, 0, len(nodeShards))
-			for node, info := range nodeShards {
-				summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
+		lastErr = nil
+		for _, vid := range volumeIds {
+			nodeShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+
+			var union erasure_coding.ShardBits
+			for _, info := range nodeShards {
+				union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
 			}
-			sort.Strings(summary)
-			glog.Errorf("EC shard verification failed for volume %d on diskType %q: %v; observed: %v",
-				vid, diskType.ReadableString(), err, summary)
-			return fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
+
+			totalShards := erasure_coding.TotalShardsCount
+			if err := erasure_coding.RequireFullShardSet(uint32(vid), union, totalShards); err != nil {
+				summary := make([]string, 0, len(nodeShards))
+				for node, info := range nodeShards {
+					summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
+				}
+				sort.Strings(summary)
+				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
+				break
+			}
+
+			glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
+				vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
 		}
 
-		glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
-			vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
+		if lastErr == nil {
+			return nil
+		}
+		if attempt < maxAttempts-1 {
+			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v",
+				attempt+1, maxAttempts, lastErr)
+			time.Sleep(retryInterval)
+		}
 	}
 
-	return nil
+	glog.Errorf("EC shard verification failed after %d attempts: %v", maxAttempts, lastErr)
+	return lastErr
 }
 
 // doDeleteVolumesWithLocations deletes volumes using pre-collected location information

@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	adminScriptJobType        = "admin_script"
-	maxAdminScriptOutputBytes = 16 * 1024
-	defaultAdminScriptRunMins = 17
+	adminScriptJobType           = "admin_script"
+	maxAdminScriptOutputBytes    = 16 * 1024
+	defaultAdminScriptRunMins    = 17
 	adminScriptDetectTickMinutes = 17
 )
 
@@ -546,13 +546,31 @@ func (h *AdminScriptHandler) buildAdminScriptCommandEnv(
 	ctx context.Context,
 	clusterContext *plugin_pb.ClusterContext,
 ) (*shell.CommandEnv, context.CancelFunc, error) {
+	options, err := h.buildAdminScriptShellOptions(clusterContext)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	commandEnv := shell.NewCommandEnv(&options)
+	commandEnv.ForceNoLock()
+
+	ctx, cancel := context.WithCancel(ctx)
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+
+	return commandEnv, cancel, nil
+}
+
+// buildAdminScriptShellOptions maps a cluster context onto shell.ShellOptions.
+// It is split out from buildAdminScriptCommandEnv so the address handling is
+// testable without standing up a master client.
+func (h *AdminScriptHandler) buildAdminScriptShellOptions(clusterContext *plugin_pb.ClusterContext) (shell.ShellOptions, error) {
 	if clusterContext == nil {
-		return nil, nil, fmt.Errorf("cluster context is required")
+		return shell.ShellOptions{}, fmt.Errorf("cluster context is required")
 	}
 
 	masters := normalizeAddressList(clusterContext.MasterGrpcAddresses)
 	if len(masters) == 0 {
-		return nil, nil, fmt.Errorf("missing master addresses for admin script")
+		return shell.ShellOptions{}, fmt.Errorf("missing master addresses for admin script")
 	}
 
 	filerGroup := ""
@@ -564,20 +582,17 @@ func (h *AdminScriptHandler) buildAdminScriptCommandEnv(
 		Directory:      "/",
 	}
 
-	filers := normalizeAddressList(clusterContext.FilerGrpcAddresses)
+	// FilerAddresses are pb.ServerAddress strings (host:httpPort.grpcPort).
+	// ShellOptions.FilerAddress is itself a ServerAddress; shell commands derive
+	// the gRPC or HTTP port from it as needed, so store it verbatim.
+	filers := normalizeAddressList(clusterContext.FilerAddresses)
 	if len(filers) > 0 {
 		options.FilerAddress = pb.ServerAddress(filers[0])
 	} else {
 		glog.V(1).Infof("admin script worker missing filer address; filer-dependent commands may fail")
 	}
 
-	commandEnv := shell.NewCommandEnv(&options)
-	commandEnv.ForceNoLock()
-
-	ctx, cancel := context.WithCancel(ctx)
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-
-	return commandEnv, cancel, nil
+	return options, nil
 }
 
 func normalizeAddressList(addresses []string) []string {

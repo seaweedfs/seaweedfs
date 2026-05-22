@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
 )
 
 func init() {
@@ -221,7 +222,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			// Sync replicas and select the best one (with highest file count) for multi-replica volumes
 			// This addresses data inconsistency risk in multi-replica volumes (issue #7797)
 			// by syncing missing entries between replicas before moving
-			sourceLoc, selectErr := syncAndSelectBestReplica(
+			sourceLoc, selectErr := volume_replica.SyncAndSelectBestReplica(
 				commandEnv.option.GrpcDialOption, vid, collection, locations, dst.dataNode.Id, writer)
 			if selectErr != nil {
 				fmt.Fprintf(writer, "failed to sync and select source replica for volume %d: %v\n", vid, selectErr)

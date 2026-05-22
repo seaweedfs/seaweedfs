@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
 	"google.golang.org/grpc"
 )
 
@@ -521,7 +522,7 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 				return nil
 			}
 			if doCutoffOfLastNeedle {
-				if needleMeta, err := readNeedleMeta(vcd.grpcDialOption(), pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, minuendValue); err == nil {
+				if needleMeta, err := volume_replica.ReadNeedleMeta(vcd.grpcDialOption(), pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, minuendValue); err == nil {
 					// needles older than the cutoff time are not missing yet
 					if needleMeta.AppendAtNs > cutoffFromAtNs {
 						return nil

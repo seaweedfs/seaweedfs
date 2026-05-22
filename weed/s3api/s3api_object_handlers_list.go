@@ -109,7 +109,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
+	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
+	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -232,7 +232,7 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 	}
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := s3a.bucketPrefix(bucket)
@@ -307,7 +307,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						if normalizedPrefix != "" {
 							relativePath := strings.TrimPrefix(fmt.Sprintf("%s/%s", dir, entry.Name), bucketPrefix)
 							relativePath = strings.TrimPrefix(relativePath, "/")
-							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) && !entry.IsDirectoryKeyObject() {
+							if normalizedPrefix == relativePath && !s3a.hasChildren(ctx, bucket, relativePath) && !entry.IsDirectoryKeyObject() {
 								return
 							}
 						}
@@ -677,21 +677,40 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+				// A trailing-slash prefix (e.g. "logs/") names one directory and asks
+				// whether it exists, so a real but empty directory must be reported for
+				// that probe.
+				explicitDirProbe := cursor.prefixEndsOnDelimiter
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
-					if entry.IsDirectoryKeyObject() {
-						eachEntryFn(dir, entry)
-					}
-				} else if entry.IsDirectoryKeyObject() {
+				}
+				isKeyObject := entry.IsDirectoryKeyObject()
+				if isKeyObject {
 					// Directory key objects (created via PutObject with trailing "/")
 					// must appear as regular keys in recursive listing mode.
 					eachEntryFn(dir, entry)
 				}
-				// Recurse into subdirectory to list any children
-				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
+				// Recurse into subdirectory to list any children, noting whether the
+				// subtree produced any entries.
+				childEmitted := false
+				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, func(d string, e *filer_pb.Entry) {
+					childEmitted = true
+					eachEntryFn(d, e)
+				})
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
 					return
+				}
+				// A real but empty directory (created out of band via mount, mkdir or
+				// the filer API, so it carries no MIME) is otherwise invisible to S3
+				// clients that detect directories by listing it under its own "<dir>/"
+				// prefix. Surface it as a directory marker for that explicit probe,
+				// identical to a directory created via PutObject with a trailing "/", so
+				// tools like hadoop-aws can find it. Plain listings are left untouched, so
+				// empty directories left behind by deleted objects are not shown as keys.
+				if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
+					entry.Attributes.Mime = s3_constants.FolderMimeType
+					eachEntryFn(dir, entry)
 				}
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
 				nextMarker = entry.Name + "/" + subNextMarker

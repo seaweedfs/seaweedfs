@@ -28,6 +28,8 @@ func (store *PostgresStore) GetName() string {
 }
 
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
+	configuration.SetDefault(prefix+"connection_max_idle", 2)
 	return store.initialize(
 		configuration.GetString(prefix+"upsertQuery"),
 		configuration.GetBool(prefix+"enableUpsert"),

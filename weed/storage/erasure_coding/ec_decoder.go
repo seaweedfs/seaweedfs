@@ -172,7 +172,7 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 }
 
-// WriteDatFile generates .dat from .ec00 ~ .ec09 files
+// WriteDatFile generates .dat from EC shard files (e.g., .ec00 ~ .ec09 for 10+4)
 func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []string) error {
 
 	datFile, openErr := os.OpenFile(baseFileName+".dat", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -181,25 +181,28 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 	}
 	defer datFile.Close()
 
-	inputFiles := make([]*os.File, DataShardsCount)
+	// Use the actual number of data shards passed in rather than the global
+	// constant, so the de-striping matches the caller's shard set.
+	dataShards := len(shardFileNames)
+	inputFiles := make([]*os.File, dataShards)
 
 	defer func() {
-		for shardId := 0; shardId < DataShardsCount; shardId++ {
+		for shardId := 0; shardId < dataShards; shardId++ {
 			if inputFiles[shardId] != nil {
 				inputFiles[shardId].Close()
 			}
 		}
 	}()
 
-	for shardId := 0; shardId < DataShardsCount; shardId++ {
+	for shardId := 0; shardId < dataShards; shardId++ {
 		inputFiles[shardId], openErr = os.OpenFile(shardFileNames[shardId], os.O_RDONLY, 0)
 		if openErr != nil {
 			return openErr
 		}
 	}
 
-	for datFileSize >= DataShardsCount*ErasureCodingLargeBlockSize {
-		for shardId := 0; shardId < DataShardsCount; shardId++ {
+	for datFileSize >= int64(dataShards)*ErasureCodingLargeBlockSize {
+		for shardId := 0; shardId < dataShards; shardId++ {
 			w, err := io.CopyN(datFile, inputFiles[shardId], ErasureCodingLargeBlockSize)
 			if w != ErasureCodingLargeBlockSize {
 				return fmt.Errorf("copy %s large block on shardId %d: %v", baseFileName, shardId, err)
@@ -209,7 +212,7 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 	}
 
 	for datFileSize > 0 {
-		for shardId := 0; shardId < DataShardsCount; shardId++ {
+		for shardId := 0; shardId < dataShards; shardId++ {
 			toRead := min(datFileSize, ErasureCodingSmallBlockSize)
 			w, err := io.CopyN(datFile, inputFiles[shardId], toRead)
 			if w != toRead {

@@ -421,6 +421,7 @@ message SubscribeMetadataRequest {
     repeated string directories = 10;  // exact directory to watch
     bool client_supports_batching = 11; // client can unpack SubscribeMetadataResponse.events
     bool client_supports_metadata_chunks = 12; // client can read log file chunks from volume servers
+    bool client_supports_idle_heartbeat = 13; // server may send empty responses carrying the current time while the client is caught up
 }
 message SubscribeMetadataResponse {
     string directory = 1;

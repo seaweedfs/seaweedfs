@@ -327,7 +327,13 @@ func (sp *ClusterStatusPrinter) printClusterInfo() {
 		for _, ri := range dci.RackInfos {
 			for _, dni := range ri.DataNodeInfos {
 				nodes++
-				disks += len(dni.DiskInfos)
+				// The master keys DiskInfos by disk type, so multiple
+				// same-type physical disks on one node collapse into a single
+				// entry. Count physical disks via SplitByPhysicalDisk so a node
+				// with N disks of one type reports N, not 1.
+				for _, di := range dni.DiskInfos {
+					disks += len(di.SplitByPhysicalDisk())
+				}
 			}
 		}
 	}

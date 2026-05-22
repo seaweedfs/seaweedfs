@@ -16,7 +16,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -735,8 +734,8 @@ func (s *AdminServer) parseOrBuildClusterContext(raw json.RawMessage) (*plugin_p
 	if len(contextMessage.MasterGrpcAddresses) == 0 {
 		contextMessage.MasterGrpcAddresses = append(contextMessage.MasterGrpcAddresses, fallback.MasterGrpcAddresses...)
 	}
-	if len(contextMessage.FilerGrpcAddresses) == 0 {
-		contextMessage.FilerGrpcAddresses = append(contextMessage.FilerGrpcAddresses, fallback.FilerGrpcAddresses...)
+	if len(contextMessage.FilerAddresses) == 0 {
+		contextMessage.FilerAddresses = append(contextMessage.FilerAddresses, fallback.FilerAddresses...)
 	}
 	if len(contextMessage.VolumeGrpcAddresses) == 0 {
 		contextMessage.VolumeGrpcAddresses = append(contextMessage.VolumeGrpcAddresses, fallback.VolumeGrpcAddresses...)
@@ -755,7 +754,7 @@ func (s *AdminServer) parseOrBuildClusterContext(raw json.RawMessage) (*plugin_p
 func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterContext {
 	clusterContext := &plugin_pb.ClusterContext{
 		MasterGrpcAddresses: make([]string, 0),
-		FilerGrpcAddresses:  make([]string, 0),
+		FilerAddresses:      make([]string, 0),
 		VolumeGrpcAddresses: make([]string, 0),
 		S3GrpcAddresses:     make([]string, 0),
 		Metadata: map[string]string{
@@ -768,20 +767,20 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 		clusterContext.MasterGrpcAddresses = append(clusterContext.MasterGrpcAddresses, masterAddress)
 	}
 
-	// Master returns filers in dual-port form (host:httpPort.grpcPort);
-	// workers dial these directly, so collapse to host:grpcPort first.
+	// Master returns filers in pb.ServerAddress form (host:httpPort.grpcPort).
+	// Forward that verbatim; each worker converts to a gRPC or HTTP address as
+	// it needs (dialing wants gRPC, the admin shell wants the ServerAddress).
 	filerSeen := map[string]struct{}{}
 	for _, filer := range s.GetAllFilers() {
 		filer = strings.TrimSpace(filer)
 		if filer == "" {
 			continue
 		}
-		grpcAddr := pb.ServerAddress(filer).ToGrpcAddress()
-		if _, exists := filerSeen[grpcAddr]; exists {
+		if _, exists := filerSeen[filer]; exists {
 			continue
 		}
-		filerSeen[grpcAddr] = struct{}{}
-		clusterContext.FilerGrpcAddresses = append(clusterContext.FilerGrpcAddresses, grpcAddr)
+		filerSeen[filer] = struct{}{}
+		clusterContext.FilerAddresses = append(clusterContext.FilerAddresses, filer)
 	}
 
 	volumeSeen := map[string]struct{}{}
@@ -829,7 +828,7 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 	}
 
 	sort.Strings(clusterContext.MasterGrpcAddresses)
-	sort.Strings(clusterContext.FilerGrpcAddresses)
+	sort.Strings(clusterContext.FilerAddresses)
 	sort.Strings(clusterContext.VolumeGrpcAddresses)
 	sort.Strings(clusterContext.S3GrpcAddresses)
 

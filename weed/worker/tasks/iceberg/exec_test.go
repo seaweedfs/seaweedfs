@@ -246,7 +246,7 @@ func startFakeFilerWithAddress(t *testing.T) (*fakeFilerServer, filer_pb.Seaweed
 	}
 
 	// Return the gRPC address in dialable form (host:grpcPort) since
-	// dialFiler now dials FilerGrpcAddresses verbatim.
+	// dialFiler dials the resolved filer_grpc_address verbatim.
 	return fakeServer, client, listener.Addr().String()
 }
 

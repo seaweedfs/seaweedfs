@@ -407,8 +407,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 // writeEmptyCopyPart writes a 0-byte part entry for an empty UploadPartCopy
 // range, mirroring the legacy fast path's handling of endOffset < startOffset.
 func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, uploadID string, partID int) (string, s3err.ErrorCode) {
-	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
-	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
+	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
 		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
 			return "", s3err.ErrInternalError

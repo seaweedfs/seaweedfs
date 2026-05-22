@@ -136,7 +136,10 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 				}
 			}
 			volumeReplicas, _ := collectVolumeReplicaLocations(c.topologyInfo)
-			for _, vol := range diskInfo.VolumeInfos {
+			// A successful move calls adjustAfterMove, which removes the volume from
+			// this disk's VolumeInfos in place. Iterate over a snapshot so removals
+			// don't leave nil holes in the slice we are ranging over.
+			for _, vol := range slices.Clone(diskInfo.VolumeInfos) {
 				hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
 				if err != nil {
 					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", vol.Id, volumeServer, err)
