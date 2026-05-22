@@ -3,6 +3,7 @@ package ecbalancer
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -53,11 +54,14 @@ func diskHasAnyTag(d *disk, tags []string) bool {
 	return false
 }
 
-// Destination is a chosen target for one shard.
+// Destination is a chosen target for one shard. DataCenter and Rack are kept as
+// separate values (matching topology.DiskInfo) rather than a "dc:rack" composite,
+// so callers read them directly instead of parsing.
 type Destination struct {
-	Node   string
-	DiskID uint32
-	Rack   string // composite "dc:rack"
+	Node       string
+	DiskID     uint32
+	DataCenter string
+	Rack       string // bare rack id within DataCenter
 }
 
 // PlaceResult holds the chosen destinations, which constraints had to be relaxed
@@ -272,7 +276,12 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			dcShardCount[dcOfRack[node.rack]]++
 			bearing[isData][node.rack] = true
 			journal = append(journal, placedEntry{node: node, sid: sid, rackKey: node.rack})
-			result.Destinations[sid] = Destination{Node: node.id, DiskID: diskID, Rack: node.rack}
+			result.Destinations[sid] = Destination{
+				Node:       node.id,
+				DiskID:     diskID,
+				DataCenter: node.dc,
+				Rack:       strings.TrimPrefix(node.rack, node.dc+":"),
+			}
 			if spilled {
 				spilledType = true
 			}

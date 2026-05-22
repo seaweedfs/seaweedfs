@@ -2,7 +2,6 @@ package ecbalancer
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -348,7 +347,7 @@ func TestPlaceEnforcesDiffDataCenterCount(t *testing.T) {
 
 	perDC := map[string]int{}
 	for _, d := range res.Destinations {
-		perDC[strings.SplitN(d.Rack, ":", 2)[0]]++
+		perDC[d.DataCenter]++
 	}
 	for dc, n := range perDC {
 		if n > rp.DiffDataCenterCount {
