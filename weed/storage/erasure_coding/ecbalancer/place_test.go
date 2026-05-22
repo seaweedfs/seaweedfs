@@ -2,6 +2,7 @@ package ecbalancer
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -161,5 +162,39 @@ func TestPlaceDiskTypeUnavailableFails(t *testing.T) {
 	}
 	if _, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd"}, PlaceStrict); err == nil {
 		t.Fatal("expected Place to fail when no disks of the requested type exist")
+	}
+}
+
+// TestPlaceEnforcesDiffDataCenterCount: with DiffDataCenterCount set, no data
+// center holds more than that many shards, so shards spread across DCs.
+func TestPlaceEnforcesDiffDataCenterCount(t *testing.T) {
+	topo := NewTopology()
+	for dc := 0; dc < 2; dc++ {
+		dcID := fmt.Sprintf("dc%d", dc)
+		for r := 0; r < 8; r++ {
+			rackKey := fmt.Sprintf("%s:rack%d", dcID, r)
+			n := topo.AddNode(fmt.Sprintf("%s-n%d:8080", dcID, r), dcID, rackKey, 50)
+			n.AddDisk(0, "", 50, 0)
+		}
+	}
+
+	// 14 shards, cap 7/DC -> exactly fills 2 DCs.
+	rp := &super_block.ReplicaPlacement{DiffDataCenterCount: 7, DiffRackCount: 2}
+	res, err := topo.Place(1, "c1", allShards(), Constraints{ReplicaPlacement: rp}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+
+	perDC := map[string]int{}
+	for _, d := range res.Destinations {
+		perDC[strings.SplitN(d.Rack, ":", 2)[0]]++
+	}
+	for dc, n := range perDC {
+		if n > rp.DiffDataCenterCount {
+			t.Errorf("DC %s holds %d shards, cap %d", dc, n, rp.DiffDataCenterCount)
+		}
+	}
+	if len(perDC) < 2 {
+		t.Errorf("shards not spread across data centers: %v", perDC)
 	}
 }

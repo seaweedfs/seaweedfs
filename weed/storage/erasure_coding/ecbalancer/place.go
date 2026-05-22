@@ -111,11 +111,19 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 	rackKeys := sortedKeys(racks)
 	numRacks := len(racks)
 
-	// Per-type shard ids per rack (for caps), total shard count per rack (for the
-	// ReplicaPlacement rack limit), and the racks bearing each type (for
-	// anti-affinity) — all seeded from the volume's existing shards in the snapshot.
+	// dcOfRack maps each rack key to its data center (for the ReplicaPlacement DC
+	// limit). Built from every node so all racks are covered, not just occupied ones.
+	dcOfRack := make(map[string]string, numRacks)
+	for _, n := range t.nodes {
+		dcOfRack[n.rack] = n.dc
+	}
+
+	// Per-type shard ids per rack (for even caps), total shard count per rack
+	// (DiffRackCount) and per DC (DiffDataCenterCount), and the racks bearing each
+	// type (anti-affinity) — all seeded from the volume's existing shards.
 	shardsPerRack := map[bool]map[string][]int{true: {}, false: {}}
 	rackShardCount := map[string]int{}
+	dcShardCount := map[string]int{}
 	bearing := map[bool]map[string]bool{true: {}, false: {}}
 	for _, n := range t.nodes {
 		info, ok := n.shards[vk]
@@ -129,6 +137,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 			isData := s < dataShards
 			shardsPerRack[isData][n.rack] = append(shardsPerRack[isData][n.rack], s)
 			rackShardCount[n.rack]++
+			dcShardCount[n.dc]++
 			bearing[isData][n.rack] = true
 		}
 	}
@@ -147,7 +156,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, ok := t.chooseShardDest(vk, sid, isData, dataShards, typeTotal, numRacks, racks, rackKeys, c, shardsPerRack[isData], rackShardCount, bearing, rl)
+			node, diskID, ok := t.chooseShardDest(vk, sid, isData, dataShards, typeTotal, numRacks, racks, rackKeys, c, shardsPerRack[isData], rackShardCount, dcShardCount, dcOfRack, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -156,6 +165,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 			racks[node.rack].freeSlots--
 			shardsPerRack[isData][node.rack] = append(shardsPerRack[isData][node.rack], sid)
 			rackShardCount[node.rack]++
+			dcShardCount[dcOfRack[node.rack]]++
 			bearing[isData][node.rack] = true
 			journal = append(journal, placedEntry{node: node, sid: sid, rackKey: node.rack})
 			result.Destinations[sid] = Destination{Node: node.id, DiskID: diskID, Rack: node.rack}
@@ -193,7 +203,7 @@ func (t *Topology) Place(vid uint32, collection string, need []int, c Constraint
 // level: pick a rack (even per-type cap + ReplicaPlacement rack limit + two-pass
 // anti-affinity to the opposite type), then the least-loaded node in that rack,
 // then the best disk on that node. Returns ok=false when no rack/node/disk fits.
-func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numRacks int, racks map[string]*rack, rackKeys []string, c Constraints, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool) {
+func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numRacks int, racks map[string]*rack, rackKeys []string, c Constraints, shardsPerRackType map[string][]int, rackShardCount, dcShardCount map[string]int, dcOfRack map[string]string, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool) {
 	maxPerRack := numRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
 		if maxPerRack = ceilDivide(typeTotal, numRacks); maxPerRack < 1 {
@@ -210,9 +220,19 @@ func (t *Topology) chooseShardDest(vk volKey, sid int, isData bool, dataShards, 
 	if !rl.rp {
 		rp = nil
 	}
+	// A rack is eligible only if it is under both the per-rack (DiffRackCount) and
+	// per-DC (DiffDataCenterCount) shard caps. The DC cap is what spreads shards
+	// across data centers; it is enforced only when set, so non-DC placements are
+	// unchanged.
 	withinLimit := func(r string) bool {
-		if rp != nil && rp.DiffRackCount > 0 {
-			return rackShardCount[r] < rp.DiffRackCount
+		if rp == nil {
+			return true
+		}
+		if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
+			return false
+		}
+		if rp.DiffDataCenterCount > 0 && dcShardCount[dcOfRack[r]] >= rp.DiffDataCenterCount {
+			return false
 		}
 		return true
 	}
