@@ -781,6 +781,10 @@ func (ecb *ecBalancer) balance(collections []string) error {
 		ImbalanceThreshold: 0, // the shell balances to an even distribution
 		ReplicaPlacement:   ecb.replicaPlacement,
 		Ratio:              shellECRatio,
+		// Balance the global phase by fractional fullness so heterogeneous-capacity
+		// nodes fill proportionally (matching the worker). This is identical to raw
+		// shard count when capacities are uniform.
+		GlobalUtilizationBased: true,
 	})
 	return ecb.executeMoves(moves)
 }
