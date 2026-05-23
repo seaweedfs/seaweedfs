@@ -94,6 +94,20 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	}
 	sort.Slice(groupKeys, func(i, j int) bool { return groupKeys[i] < groupKeys[j] })
 
+	// Build the EC placement snapshot once per detection cycle. planECDestinations
+	// reserves the shards it assigns directly into it, so volumes planned later in
+	// this cycle see the reduced capacity. Rebuilding it per volume re-walked the
+	// whole topology (and ActiveTopology's growing pending-task set) every time,
+	// which is O(volumes × topology) and times out on large clusters. The node
+	// address map is precomputed for the same reason (ResolveServerAddress rebuilds
+	// the full node map on every call).
+	var ecSnapshot *ecbalancer.Topology
+	var nodeAddresses map[string]string
+	if clusterInfo.ActiveTopology != nil {
+		ecSnapshot = ecbalancer.FromActiveTopology(clusterInfo.ActiveTopology, erasure_coding.DataShardsCount)
+		nodeAddresses = buildNodeAddressMap(clusterInfo.ActiveTopology)
+	}
+
 	// Iterate over groups to check criteria and creation tasks
 	for idx, volumeID := range groupKeys {
 		if ctx != nil {
@@ -233,7 +247,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				glog.Infof("EC Detection: ActiveTopology available, planning destinations for volume %d", metric.VolumeID)
 				dataShards := erasure_coding.DataShardsCount
 				parityShards := erasure_coding.ParityShardsCount
-				multiPlan, shardsPerPlan, err := planECDestinations(clusterInfo.ActiveTopology, metric, ecConfig, replicaPlacement, dataShards, parityShards)
+				multiPlan, shardsPerPlan, err := planECDestinations(ecSnapshot, nodeAddresses, metric, ecConfig, replicaPlacement, dataShards, parityShards)
 				if err != nil {
 					glog.V(2).Infof("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
 					consecutivePlanningFailures++
@@ -707,17 +721,38 @@ func countTopologyNodes(at *topology.ActiveTopology) int {
 	return n
 }
 
+// buildNodeAddressMap resolves every node's server address once per detection
+// cycle. ResolveServerAddress rebuilds the full node map on each call, so
+// resolving per shard destination is O(destinations × topology); callers build
+// this map once and look up addresses from it.
+func buildNodeAddressMap(at *topology.ActiveTopology) map[string]string {
+	if at == nil {
+		return nil
+	}
+	allNodes := at.GetAllNodes()
+	m := make(map[string]string, len(allNodes))
+	for id, n := range allNodes {
+		m[id] = string(pb.NewServerAddressFromDataNode(n))
+	}
+	return m
+}
+
 // planECDestinations places all shards of the volume via the shared ecbalancer
 // policy and returns the per-disk destination plans plus, parallel to them, the
 // shard ids ecbalancer.Place assigned to each disk (so createECTargets and the
 // capacity reservations use the real assignment, not a round-robin guess).
 //
+// snap is the cycle-wide placement snapshot, built once by the caller and reused
+// across volumes: Place reserves the shards it assigns into it, so later volumes
+// in the same detection cycle see the reduced capacity. Rebuilding it per volume
+// is O(volumes × topology) and times out on large clusters.
+//
 // Encode is lenient (PlaceDurabilityFirst): it relaxes caps/anti-affinity/RP as
 // needed rather than fail, and prefers the source disk type but spills if that
 // type can't hold every shard. rp is the resolved replica placement (may be nil).
-func planECDestinations(at *topology.ActiveTopology, metric *types.VolumeHealthMetrics, ecConfig *Config, rp *super_block.ReplicaPlacement, dataShards, parityShards int) (*topology.MultiDestinationPlan, [][]uint32, error) {
-	if at == nil {
-		return nil, nil, fmt.Errorf("active topology not available for EC placement")
+func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]string, metric *types.VolumeHealthMetrics, ecConfig *Config, rp *super_block.ReplicaPlacement, dataShards, parityShards int) (*topology.MultiDestinationPlan, [][]uint32, error) {
+	if snap == nil {
+		return nil, nil, fmt.Errorf("EC placement snapshot not available")
 	}
 	if dataShards <= 0 || parityShards <= 0 {
 		return nil, nil, fmt.Errorf("invalid EC ratio: dataShards=%d parityShards=%d", dataShards, parityShards)
@@ -728,7 +763,6 @@ func planECDestinations(at *topology.ActiveTopology, metric *types.VolumeHealthM
 	minTotalDisks := (totalShards + parityShards - 1) / parityShards
 	expectedShardSize := uint64(metric.Size) / uint64(dataShards)
 
-	snap := ecbalancer.FromActiveTopology(at, dataShards)
 	// Encode is greenfield: any EC shards already present for this volume are stale
 	// leftovers from a prior failed attempt, which the task deletes
 	// (cleanupStaleEcShards) before distributing the new shards. Release them so they
@@ -799,9 +833,9 @@ func planECDestinations(at *topology.ActiveTopology, metric *types.VolumeHealthM
 	dcCount := make(map[string]int)
 	for _, key := range order {
 		g := groups[key]
-		targetAddress, err := workerutil.ResolveServerAddress(g.node, at)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to resolve address for target server %s: %v", g.node, err)
+		targetAddress, ok := nodeAddresses[g.node]
+		if !ok {
+			return nil, nil, fmt.Errorf("failed to resolve address for target server %s", g.node)
 		}
 		plans = append(plans, &topology.DestinationPlan{
 			TargetNode:    g.node,
