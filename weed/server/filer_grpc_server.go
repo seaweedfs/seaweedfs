@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -15,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -192,6 +194,25 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
+	// Evaluate the optional precondition against the current entry while the
+	// path lock is held, so the check and the write are atomic on this filer.
+	if conditionIsSet(req.Condition) {
+		current, findErr := fs.filer.FindEntry(ctx, fullpath)
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry condition check %s: %w", fullpath, findErr)
+		}
+		if findErr == filer_pb.ErrNotFound {
+			current = nil
+		}
+		if !writeConditionSatisfied(req.Condition, current) {
+			glog.V(3).InfofCtx(ctx, "CreateEntry %s: precondition failed: %v", fullpath, req.Condition)
+			return &filer_pb.CreateEntryResponse{
+				Error:     "precondition failed",
+				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+			}, nil
+		}
+	}
+
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
@@ -216,6 +237,97 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	}
 
 	return
+}
+
+// conditionIsSet reports whether a condition asks for any check at all.
+func conditionIsSet(cond *filer_pb.WriteCondition) bool {
+	return cond != nil && (cond.Kind != filer_pb.WriteCondition_NONE || len(cond.Clauses) > 0)
+}
+
+// writeConditionSatisfied reports whether the precondition holds against the
+// current entry (nil if absent), evaluated under the path lock. When clauses is
+// non-empty every clause must hold (logical AND); otherwise the legacy single
+// kind/etag/unix_time triple is evaluated as one clause.
+func writeConditionSatisfied(cond *filer_pb.WriteCondition, current *filer.Entry) bool {
+	if len(cond.Clauses) > 0 {
+		for _, c := range cond.Clauses {
+			if !clauseSatisfied(c.Kind, c.Etags, c.UnixTime, c.AllowWeak, current) {
+				return false
+			}
+		}
+		return true
+	}
+	return clauseSatisfied(cond.Kind, []string{cond.Etag}, cond.UnixTime, false, current)
+}
+
+// clauseSatisfied evaluates one primitive against the current entry. For the
+// ETag kinds, etags is a set: IF_ETAG_MATCH holds when the current ETag equals
+// any member, IF_ETAG_NOT_MATCH when it equals none.
+func clauseSatisfied(kind filer_pb.WriteCondition_Kind, etags []string, unixTime int64, allowWeak bool, current *filer.Entry) bool {
+	exists := current != nil
+	switch kind {
+	case filer_pb.WriteCondition_IF_NOT_EXISTS:
+		return !exists
+	case filer_pb.WriteCondition_IF_EXISTS:
+		return exists
+	case filer_pb.WriteCondition_IF_ETAG_MATCH:
+		return exists && etagInSet(storedEntryETag(current), etags, allowWeak)
+	case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
+		return !exists || !etagInSet(storedEntryETag(current), etags, allowWeak)
+	case filer_pb.WriteCondition_IF_UNMODIFIED_SINCE:
+		return !exists || current.Attr.Mtime.Unix() <= unixTime
+	case filer_pb.WriteCondition_IF_MODIFIED_SINCE:
+		return !exists || current.Attr.Mtime.Unix() > unixTime
+	default:
+		return true
+	}
+}
+
+// etagInSet reports whether stored matches any candidate. A strong comparison
+// (allowWeak false) treats a weak ETag as never equal; a weak comparison
+// ignores the W/ marker on both sides.
+func etagInSet(stored string, candidates []string, allowWeak bool) bool {
+	for _, c := range candidates {
+		if etagEqual(stored, c, allowWeak) {
+			return true
+		}
+	}
+	return false
+}
+
+func etagEqual(stored, expected string, allowWeak bool) bool {
+	sv, sWeak := canonicalETag(stored)
+	ev, eWeak := canonicalETag(expected)
+	// RFC 7232 strong comparison: a weak ETag on either side never matches.
+	if !allowWeak && (sWeak || eWeak) {
+		return false
+	}
+	return sv == ev
+}
+
+// canonicalETag splits off the weak (W/) marker before stripping quotes, so a
+// weak ETag like W/"abc" yields ("abc", true).
+func canonicalETag(etag string) (value string, weak bool) {
+	etag = strings.TrimSpace(etag)
+	if strings.HasPrefix(etag, "W/") {
+		return strings.Trim(etag[len("W/"):], `"`), true
+	}
+	return strings.Trim(etag, `"`), false
+}
+
+// storedEntryETag mirrors the S3 gateway's ETag precedence (the stored
+// Seaweed ETag extended attribute, then the chunk/Md5 fallback) so conditional
+// comparisons match what the gateway computes, without coupling the filer to
+// S3 request handling.
+func storedEntryETag(entry *filer.Entry) string {
+	if v, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(v) > 0 {
+		return normalizeETag(string(v))
+	}
+	return normalizeETag(filer.ETagEntry(entry))
+}
+
+func normalizeETag(etag string) string {
+	return strings.Trim(etag, `"`)
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {

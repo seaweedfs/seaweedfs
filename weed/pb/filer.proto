@@ -222,6 +222,48 @@ message CreateEntryRequest {
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
     bool skip_check_parent_directory = 6;
+    // Optional precondition evaluated against the current entry atomically with
+    // the write, under the filer's per-path lock. The caller must route the
+    // key's writes to this entry's owner filer for the check to be authoritative.
+    WriteCondition condition = 7;
+}
+
+// WriteCondition is the precondition the filer evaluates against the existing
+// entry before writing, under the per-path lock. A failed condition returns
+// FilerError PRECONDITION_FAILED. The client maps request semantics (e.g. RFC
+// 7232) to clauses; the filer just compares.
+//
+// Two forms are supported. The legacy single-primitive form (kind/etag/
+// unix_time) is honored when clauses is empty. The rich form is a list of
+// clauses that ALL must hold (logical AND); it supersedes the legacy fields
+// when non-empty, and expresses what a single primitive cannot: an ETag set
+// (If-Match / If-None-Match with multiple values), weak-ETag comparison, and
+// compound conditions (e.g. If-Match + If-Unmodified-Since together).
+message WriteCondition {
+    enum Kind {
+        NONE                = 0; // unconditional
+        IF_NOT_EXISTS       = 1; // fail if the entry exists (If-None-Match: *)
+        IF_EXISTS           = 2; // fail if the entry is absent (If-Match: *)
+        IF_ETAG_MATCH       = 3; // fail if absent or etag matches none of the set (If-Match)
+        IF_ETAG_NOT_MATCH   = 4; // fail if present and etag matches any of the set (If-None-Match)
+        IF_UNMODIFIED_SINCE = 5; // fail if present and mtime > unix_time
+        IF_MODIFIED_SINCE   = 6; // fail if present and mtime <= unix_time
+    }
+    // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
+    // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
+    // equals none. allow_weak permits weak-comparison (ignoring the W/ prefix).
+    message Clause {
+        Kind kind = 1;
+        repeated string etags = 2; // ETag set for IF_ETAG_* kinds
+        int64 unix_time = 3;       // bound (unix seconds) for IF_*_SINCE kinds
+        bool allow_weak = 4;       // compare ETags ignoring the weak (W/) marker
+    }
+    // Legacy single-primitive form, honored only when clauses is empty.
+    Kind kind = 1;
+    string etag = 2;      // expected ETag for IF_ETAG_* kinds
+    int64 unix_time = 3;  // bound (unix seconds) for IF_*_SINCE kinds
+    // Rich form: all clauses must hold. Supersedes the legacy fields above.
+    repeated Clause clauses = 4;
 }
 
 // Structured error codes for filer entry operations.
@@ -233,6 +275,7 @@ enum FilerError {
     EXISTING_IS_DIRECTORY = 3; // cannot overwrite directory with file
     EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
+    PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
 }
 
 message CreateEntryResponse {
