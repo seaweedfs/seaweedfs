@@ -80,12 +80,15 @@ type PlaceResult struct {
 type PlacementMode int
 
 const (
-	// PlaceStrict (encode): caps and ReplicaPlacement are hard. Place fails rather
-	// than violate them, so the caller can leave the volume unencoded and retry.
+	// PlaceStrict: caps and ReplicaPlacement are hard. Place fails rather than
+	// violate them, so the caller can defer (leave the volume as-is and retry).
 	PlaceStrict PlacementMode = iota
-	// PlaceDurabilityFirst (repair): relax per-type caps -> data/parity
-	// anti-affinity -> ReplicaPlacement, in that order, until each shard lands.
-	// Fail only if no disk has free capacity at all.
+	// PlaceDurabilityFirst (used by both encode and repair): relax per-type caps ->
+	// data/parity anti-affinity -> ReplicaPlacement, in that order, until each shard
+	// lands, reporting what was relaxed in PlaceResult.Relaxed. The per-disk
+	// durability cap (<= parityShards per disk) is never relaxed. Fails only if no
+	// disk has free capacity. Encode places best-effort this way and rebalancing
+	// tightens the spread afterward.
 	PlaceDurabilityFirst
 )
 
