@@ -297,7 +297,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r.ContentLength)
-			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil)
+			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil, false)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -359,7 +359,12 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 // pass 0 because their own keys aren't the user-visible object the rule
 // targets and a part write would otherwise bind a TTL clock starting
 // before CompleteMultipartUpload.
-func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+// uniqueVersionPath marks writes whose target path never collides (an S3 object
+// version file under <object>/.versions/<versionId>). For those, putToFiler
+// skips the object write lock and the gateway precondition: the afterCreate hook
+// finalizes the version atomically on the .versions owner (precondition + demote
+// + pointer flip) and rolls back the file if that fails.
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode, uniqueVersionPath bool) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -840,29 +845,38 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// owner is unreachable.
 	var createCode s3err.ErrorCode
 	routed := false
-	if owner, cond, ok := s3a.routedObjectWrite(r, bucket, object, afterCreate != nil); ok {
-		req := &filer_pb.CreateEntryRequest{
-			Directory: path.Dir(filePath),
-			Entry:     entry,
-			Condition: cond,
-		}
-		resp, err := s3a.createEntryOnFiler(owner, req)
-		switch {
-		case err != nil:
-			glog.Warningf("putToFiler: routed create to %s failed for %s, falling back to lock: %v", owner, filePath, err)
-		case resp.ErrorCode != filer_pb.FilerError_OK:
-			// Map known filer error codes to the same S3 errors the lock path
-			// would produce; fall back for any code this does not recognize.
-			if code, mapped := filerErrorCodeToS3Error(resp.ErrorCode); mapped {
-				createCode, routed = code, true
-			} else {
-				glog.Warningf("putToFiler: routed create to %s returned code %v for %s, falling back to lock", owner, resp.ErrorCode, filePath)
+	if uniqueVersionPath {
+		// The version-file path never collides, so no object write lock is needed.
+		// createUnderLock creates the file and runs afterCreate, which finalizes
+		// the version (precondition + demote + pointer flip) atomically on the
+		// .versions owner and rolls back the file on failure.
+		createCode, routed = createUnderLock(), true
+	}
+	if !routed {
+		if owner, cond, ok := s3a.routedObjectWrite(r, bucket, object, afterCreate != nil); ok {
+			req := &filer_pb.CreateEntryRequest{
+				Directory: path.Dir(filePath),
+				Entry:     entry,
+				Condition: cond,
 			}
-		case resp.Error != "":
-			// In-band error without a code: fall back so the lock path maps it.
-			glog.Warningf("putToFiler: routed create to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
-		default:
-			entryCreated, createCode, routed = true, s3err.ErrNone, true
+			resp, err := s3a.createEntryOnFiler(owner, req)
+			switch {
+			case err != nil:
+				glog.Warningf("putToFiler: routed create to %s failed for %s, falling back to lock: %v", owner, filePath, err)
+			case resp.ErrorCode != filer_pb.FilerError_OK:
+				// Map known filer error codes to the same S3 errors the lock path
+				// would produce; fall back for any code this does not recognize.
+				if code, mapped := filerErrorCodeToS3Error(resp.ErrorCode); mapped {
+					createCode, routed = code, true
+				} else {
+					glog.Warningf("putToFiler: routed create to %s returned code %v for %s, falling back to lock", owner, resp.ErrorCode, filePath)
+				}
+			case resp.Error != "":
+				// In-band error without a code: fall back so the lock path maps it.
+				glog.Warningf("putToFiler: routed create to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
+			default:
+				entryCreated, createCode, routed = true, s3err.ErrNone, true
+			}
 		}
 	}
 	if !routed {
@@ -1323,7 +1337,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 			glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
 		}
 		return s3err.ErrNone
-	})
+	}, false)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
@@ -1489,13 +1503,13 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Versioned bucket: resolver returns 0 by construction. Pass 0
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0, func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName, versionEntry); err != nil {
-			glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
-			return s3err.ErrInternalError
-		}
-		return s3err.ErrNone
-	})
+	//
+	// The version file lives at a unique <object>/.versions/<versionId> path, so
+	// when the .versions owner is known the finalize (precondition + demote +
+	// pointer flip) routes there to run atomically under one local lock, and
+	// putToFiler skips the object write lock. Otherwise it stays on the lock path.
+	finalize, routedVersioned := s3a.versionedAfterCreate(r, bucket, normalizedObject, versionId, versionFileName)
+	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0, finalize, routedVersioned)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}

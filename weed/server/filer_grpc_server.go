@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -274,6 +275,122 @@ func storedEntryETag(entry *filer.Entry) string {
 
 func normalizeETag(etag string) string {
 	return strings.Trim(etag, `"`)
+}
+
+// versionedConditionSatisfied evaluates a precondition against the current
+// latest version, derived from the .versions directory entry's cached metadata
+// (whether a latest exists and isn't a delete marker, and its ETag). It mirrors
+// writeConditionSatisfied but reads the cached pointer fields instead of a plain
+// object entry.
+func versionedConditionSatisfied(req *filer_pb.FinalizeVersionedWriteRequest, versionsEntry *filer.Entry) bool {
+	exists := false
+	etag := ""
+	if versionsEntry != nil && versionsEntry.Extended != nil {
+		latestFile := string(versionsEntry.Extended[req.PriorLatestKey])
+		isDeleteMarker := req.LatestDeleteMarkerKey != "" && string(versionsEntry.Extended[req.LatestDeleteMarkerKey]) == "true"
+		exists = latestFile != "" && !isDeleteMarker
+		if req.LatestEtagKey != "" {
+			etag = normalizeETag(string(versionsEntry.Extended[req.LatestEtagKey]))
+		}
+	}
+	want := normalizeETag(req.Condition.Etag)
+	switch req.Condition.Kind {
+	case filer_pb.WriteCondition_IF_NOT_EXISTS:
+		return !exists
+	case filer_pb.WriteCondition_IF_EXISTS:
+		return exists
+	case filer_pb.WriteCondition_IF_ETAG_MATCH:
+		return exists && etag == want
+	case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
+		return !exists || etag != want
+	default:
+		return true
+	}
+}
+
+// FinalizeVersionedWrite performs an S3 versioned-write finalize atomically on
+// the owner of the object's .versions directory: it creates the new version
+// file, stamps the previous latest as noncurrent (before the pointer flip so the
+// lifecycle router observes it), then merges the latest-pointer / cached
+// metadata into the .versions directory entry. A single exclusive lock on the
+// .versions directory serializes the whole sequence against concurrent versioned
+// writes to the same object, replacing the distributed lock. Key names come from
+// the caller so the filer carries no S3 versioning semantics.
+func (fs *FilerServer) FinalizeVersionedWrite(ctx context.Context, req *filer_pb.FinalizeVersionedWriteRequest) (*filer_pb.FinalizeVersionedWriteResponse, error) {
+	resp := &filer_pb.FinalizeVersionedWriteResponse{}
+	versionsDir := util.FullPath(req.VersionsDir)
+
+	// Serialize on the object key — the same lock all of this object's writes
+	// (normal, suspended, versioned) share — not the .versions directory, so a
+	// versioned write and a non-versioned write to the same object can't run on
+	// different owners during a versioning-state change. Fall back to the
+	// .versions directory for older callers that don't set lock_key.
+	lockKey := util.FullPath(req.LockKey)
+	if lockKey == "" {
+		lockKey = versionsDir
+	}
+	lock := fs.entryLockTable.AcquireLock("FinalizeVersionedWrite", lockKey, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(lockKey, lock)
+
+	// The caller already created the new version file under this .versions
+	// directory, so it exists; read the directory entry that holds the pointer.
+	versionsEntry, err := fs.filer.FindEntry(ctx, versionsDir)
+	if err != nil {
+		resp.Error = err.Error()
+		return resp, nil
+	}
+
+	// 1. Evaluate the optional precondition against the current latest version
+	// (the .versions directory's cached pointer metadata) before the flip, so the
+	// check and the flip are atomic under this lock.
+	if req.Condition != nil && req.Condition.Kind != filer_pb.WriteCondition_NONE {
+		if !versionedConditionSatisfied(req, versionsEntry) {
+			glog.V(3).InfofCtx(ctx, "FinalizeVersionedWrite %s: precondition %v failed", versionsDir, req.Condition.Kind)
+			resp.Error = "precondition failed"
+			resp.ErrorCode = filer_pb.FilerError_PRECONDITION_FAILED
+			return resp, nil
+		}
+	}
+
+	// 2. Stamp the previously-latest version as noncurrent BEFORE the pointer
+	// flip (so the lifecycle router observes it). Best-effort.
+	newFileName := string(req.SetExtended[req.PriorLatestKey])
+	if req.NoncurrentSinceNs > 0 && req.PriorLatestKey != "" && req.NoncurrentSinceKey != "" {
+		prior := string(versionsEntry.Extended[req.PriorLatestKey])
+		if prior != "" && prior != newFileName {
+			demotedPath := util.NewFullPath(req.VersionsDir, prior)
+			if demoted, derr := fs.filer.FindEntry(ctx, demotedPath); derr == nil {
+				if demoted.Extended == nil {
+					demoted.Extended = make(map[string][]byte)
+				}
+				demoted.Extended[req.NoncurrentSinceKey] = []byte(strconv.FormatInt(req.NoncurrentSinceNs, 10))
+				if uerr := fs.filer.UpdateEntry(ctx, demoted, demoted); uerr != nil {
+					glog.Warningf("FinalizeVersionedWrite: demote stamp %s: %v", demotedPath, uerr)
+				}
+			} else {
+				glog.V(2).InfofCtx(ctx, "FinalizeVersionedWrite: demote target %s not found: %v", demotedPath, derr)
+			}
+		}
+	}
+
+	// 3. Flip the latest pointer: merge the requested Extended keys into the
+	// .versions directory entry and write it back (emits the meta-log event the
+	// lifecycle router consumes).
+	if versionsEntry.Extended == nil {
+		versionsEntry.Extended = make(map[string][]byte)
+	}
+	for _, k := range req.DeleteExtended {
+		delete(versionsEntry.Extended, k)
+	}
+	for k, v := range req.SetExtended {
+		versionsEntry.Extended[k] = v
+	}
+	if err := fs.filer.CreateEntry(ctx, versionsEntry, false, req.IsFromOtherCluster, req.Signatures, true, fs.filer.MaxFilenameLength); err != nil {
+		resp.Error = err.Error()
+		return resp, nil
+	}
+
+	return resp, nil
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {

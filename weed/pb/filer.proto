@@ -22,6 +22,9 @@ service SeaweedFiler {
     rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
+    rpc FinalizeVersionedWrite (FinalizeVersionedWriteRequest) returns (FinalizeVersionedWriteResponse) {
+    }
+
     rpc TouchAccessTime (TouchAccessTimeRequest) returns (TouchAccessTimeResponse) {
     }
 
@@ -274,6 +277,39 @@ message UpdateEntryRequest {
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
+}
+
+// FinalizeVersionedWrite atomically finalizes an S3 versioned write on the
+// object's owner filer, after the caller has created the new version file: under
+// one exclusive lock on lock_key (the object path — the same key all of this
+// object's writes serialize on, regardless of versioning state) it evaluates the
+// precondition against the current latest, stamps the previously-latest version
+// as noncurrent (before the pointer flip, so the lifecycle router observes it),
+// then merges the latest-pointer / cached metadata into the .versions directory
+// entry. The caller routes the object's writes to this owner so the whole
+// sequence shares one local lock — no distributed lock. Key names are passed in
+// so the filer stays free of S3 semantics; the new version's file name is read
+// from set_extended[prior_latest_key].
+message FinalizeVersionedWriteRequest {
+    string lock_key = 13;                // object path; the per-path lock all of this object's writes share
+    string versions_dir = 1;             // full path of <object>/.versions
+    map<string, bytes> set_extended = 3; // merge into the .versions directory entry
+    repeated string delete_extended = 4; // remove from the .versions directory entry
+    string prior_latest_key = 5;         // .versions entry key holding the latest file name (prior value = demote target)
+    string noncurrent_since_key = 6;     // key to stamp on the demoted previous version
+    int64 noncurrent_since_ns = 7;       // stamp value; <=0 skips the demote stamp
+    bool is_from_other_cluster = 8;
+    repeated int32 signatures = 9;
+    // Optional precondition, evaluated against the current latest version
+    // (derived from the .versions directory entry's cached metadata) before
+    // anything is written, so the check and the write are atomic on this owner.
+    WriteCondition condition = 10;
+    string latest_etag_key = 11;          // .versions entry key holding the latest version's ETag
+    string latest_delete_marker_key = 12; // .versions entry key; "true" means the latest is a delete marker
+}
+message FinalizeVersionedWriteResponse {
+    string error = 1;
+    FilerError error_code = 2;
 }
 
 message TouchAccessTimeRequest {
