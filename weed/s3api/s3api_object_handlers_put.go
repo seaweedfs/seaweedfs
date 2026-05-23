@@ -802,7 +802,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
-	createCode := s3a.withObjectWriteLock(bucket, object, preconditionFn, func() s3err.ErrorCode {
+	createUnderLock := func() s3err.ErrorCode {
 		createErr = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
@@ -831,7 +831,37 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 		}
 		return s3err.ErrNone
-	})
+	}
+
+	// Fast path: route the create to the object key's owner filer, which
+	// serializes it with its local per-path lock and evaluates the precondition,
+	// avoiding the distributed lock. Restricted to the safe subset by
+	// routedObjectWrite; falls back to the lock for everything else and if the
+	// owner is unreachable.
+	var createCode s3err.ErrorCode
+	routed := false
+	if owner, cond, ok := s3a.routedObjectWrite(r, bucket, object, afterCreate != nil); ok {
+		req := &filer_pb.CreateEntryRequest{
+			Directory: path.Dir(filePath),
+			Entry:     entry,
+			Condition: cond,
+		}
+		resp, err := s3a.createEntryOnFiler(owner, req)
+		switch {
+		case err != nil:
+			glog.Warningf("putToFiler: routed create to %s failed for %s, falling back to lock: %v", owner, filePath, err)
+		case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+			createCode, routed = s3err.ErrPreconditionFailed, true
+		case resp.Error != "":
+			createErr = fmt.Errorf("%s", resp.Error)
+			createCode, routed = filerErrorToS3Error(createErr), true
+		default:
+			entryCreated, createCode, routed = true, s3err.ErrNone, true
+		}
+	}
+	if !routed {
+		createCode = s3a.withObjectWriteLock(bucket, object, preconditionFn, createUnderLock)
+	}
 	if createCode != s3err.ErrNone {
 		if createErr != nil {
 			glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)

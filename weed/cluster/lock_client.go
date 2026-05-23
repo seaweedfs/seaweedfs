@@ -70,6 +70,18 @@ func (lc *LockClient) hostForKey(key string) pb.ServerAddress {
 	return lc.seedFiler
 }
 
+// PrimaryForKey returns the filer that owns key per the current ring view, or
+// "" when no ring view has been received yet. Callers use it to route a key's
+// operations to a single owner so that owner's local lock serializes them.
+func (lc *LockClient) PrimaryForKey(key string) pb.ServerAddress {
+	lc.ringMu.RLock()
+	defer lc.ringMu.RUnlock()
+	if lc.ring == nil {
+		return ""
+	}
+	return lc.ring.GetPrimary(key)
+}
+
 type LiveLock struct {
 	key                 string
 	renewToken          string

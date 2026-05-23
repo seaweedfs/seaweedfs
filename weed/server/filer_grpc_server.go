@@ -441,9 +441,35 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).InfofCtx(ctx, "DeleteEntry %v", req)
 
-	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
+	fullpath := util.JoinPath(req.Directory, req.Name)
 	resp = &filer_pb.DeleteEntryResponse{}
+
+	// A single-entry delete serializes against concurrent mutations to the same
+	// path so a conditional delete's check and the removal are atomic. Recursive
+	// deletes span many paths and keep the prior unlocked behavior.
+	if !req.IsRecursive {
+		pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
+		if req.Condition != nil && req.Condition.Kind != filer_pb.WriteCondition_NONE {
+			current, findErr := fs.filer.FindEntry(ctx, fullpath)
+			if findErr != nil && findErr != filer_pb.ErrNotFound {
+				return &filer_pb.DeleteEntryResponse{}, fmt.Errorf("DeleteEntry condition check %s: %w", fullpath, findErr)
+			}
+			if findErr == filer_pb.ErrNotFound {
+				current = nil
+			}
+			if !writeConditionSatisfied(req.Condition, current) {
+				glog.V(3).InfofCtx(ctx, "DeleteEntry %s: precondition %v failed", fullpath, req.Condition.Kind)
+				resp.Error = "precondition failed"
+				resp.ErrorCode = filer_pb.FilerError_PRECONDITION_FAILED
+				return resp, nil
+			}
+		}
+	}
+
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
 	} else {
