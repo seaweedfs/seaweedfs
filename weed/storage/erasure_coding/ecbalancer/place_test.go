@@ -186,6 +186,28 @@ func TestPlaceHDDRequestMatchesEmptyTypeDisks(t *testing.T) {
 	}
 }
 
+// TestPlaceDurabilityCapRejectsSkewed: in a near-full cluster where only one disk
+// has spare room, Place must not pile more than parityShards shards onto it (losing
+// it would then lose more than EC can recover). It fails instead, so the caller
+// leaves the volume unencoded rather than minting an unrecoverable layout.
+func TestPlaceDurabilityCapRejectsSkewed(t *testing.T) {
+	topo := NewTopology()
+	// One spacious node plus four nearly-full ones, all in a single rack.
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+	a.AddDisk(0, "", 100, 0)
+	for i := 0; i < 4; i++ {
+		n := topo.AddNode(fmt.Sprintf("b%d:8080", i), "dc1", "dc1:rack0", 1)
+		n.AddDisk(0, "", 1, 0)
+	}
+
+	// 14 shards, parity 4: node a is capped at 4, the others hold 1 each -> at most
+	// 4+4=8 placeable without exceeding parityShards on a disk, so Place must fail.
+	// (Without the per-disk cap, a would greedily absorb 10 shards and "succeed".)
+	if _, err := topo.Place(1, "c1", allShards(), Constraints{}, PlaceDurabilityFirst); err == nil {
+		t.Fatal("expected Place to fail rather than pile >parityShards shards on one disk")
+	}
+}
+
 // TestClearShardAccounting: dropping one disk's copy of a shard preserves a kept
 // copy of the same shard on another disk of the same node, and credits no capacity.
 func TestClearShardAccounting(t *testing.T) {
@@ -216,28 +238,34 @@ func TestClearShardAccounting(t *testing.T) {
 }
 
 // TestPlaceDiskTypePreferSpills: DiskTypePrefer fills the preferred type first and
-// spills the remainder to other types, reporting SpilledToOtherDiskType.
+// spills the remainder to other types, reporting SpilledToOtherDiskType. SSD is
+// scarce (one tiny SSD per node) so the volume must spill to HDD, but there are
+// enough disks to keep each within the parityShards durability cap.
 func TestPlaceDiskTypePreferSpills(t *testing.T) {
 	topo := NewTopology()
-	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 100)
-	n.AddDisk(0, "ssd", 4, 0) // small SSD: only 4 shards fit
-	n.AddDisk(1, "", 50, 0)   // large HDD
+	for r := 0; r < 8; r++ {
+		n := topo.AddNode(fmt.Sprintf("n%d:8080", r), "dc1", fmt.Sprintf("dc1:rack%d", r), 100)
+		n.AddDisk(0, "ssd", 1, 0) // tiny SSD: 1 shard
+		n.AddDisk(1, "", 50, 0)   // roomy HDD
+	}
 
-	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypePrefer}, PlaceStrict)
+	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypePrefer}, PlaceDurabilityFirst)
 	if err != nil {
 		t.Fatalf("Place: %v", err)
 	}
 	if len(res.Destinations) != erasure_coding.TotalShardsCount {
 		t.Fatalf("placed %d, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
 	}
-	ssd := 0
+	ssd, hdd := 0, 0
 	for _, d := range res.Destinations {
-		if d.DiskID == 0 {
+		if topo.nodes[d.Node].disks[d.DiskID].diskType == "ssd" {
 			ssd++
+		} else {
+			hdd++
 		}
 	}
-	if ssd != 4 {
-		t.Errorf("expected SSD filled to its 4-slot capacity, got %d", ssd)
+	if ssd == 0 || hdd == 0 {
+		t.Errorf("expected prefer-then-spill: some shards on SSD and some on HDD, got ssd=%d hdd=%d", ssd, hdd)
 	}
 	if !res.SpilledToOtherDiskType {
 		t.Error("expected SpilledToOtherDiskType when SSD cannot hold every shard")
@@ -301,16 +329,19 @@ func TestPlacePreferredTagsSpillWhenInsufficient(t *testing.T) {
 // some racks still place successfully.
 func TestPlaceStrictCapsCountEligibleRacks(t *testing.T) {
 	topo := NewTopology()
+	// SSDs live in only 2 of 4 racks, with several SSD nodes per rack so 14 shards
+	// fit at <= parityShards per disk. The even per-rack cap must divide by the 2
+	// eligible racks (ceil(10/2)=5 data/rack), not all 4 (ceil(10/4)=3 -> infeasible).
 	for r := 0; r < 4; r++ {
 		rackKey := fmt.Sprintf("dc1:rack%d", r)
-		n := topo.AddNode(fmt.Sprintf("n-%d:8080", r), "dc1", rackKey, 100)
-		n.AddDisk(0, "", 50, 0) // HDD on every rack
+		topo.AddNode(fmt.Sprintf("hdd-%d:8080", r), "dc1", rackKey, 50).AddDisk(0, "", 50, 0)
 		if r < 2 {
-			n.AddDisk(1, "ssd", 50, 0) // SSD only in 2 of 4 racks
+			for n := 0; n < 4; n++ {
+				topo.AddNode(fmt.Sprintf("ssd-%d-%d:8080", r, n), "dc1", rackKey, 50).AddDisk(0, "ssd", 50, 0)
+			}
 		}
 	}
 
-	// 10 data shards over 2 SSD racks need ceil(10/2)=5 per rack; ceil(10/4)=3 would fail.
 	res, err := topo.Place(1, "c1", allShards(), Constraints{DiskType: "ssd", DiskTypePolicy: DiskTypeRequire}, PlaceStrict)
 	if err != nil {
 		t.Fatalf("Place ssd in 2/4 racks: %v", err)
@@ -319,8 +350,8 @@ func TestPlaceStrictCapsCountEligibleRacks(t *testing.T) {
 		t.Fatalf("placed %d, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
 	}
 	for sid, d := range res.Destinations {
-		if d.DiskID != 1 {
-			t.Errorf("shard %d not on the SSD disk (disk 1): node=%s disk=%d", sid, d.Node, d.DiskID)
+		if disk := topo.nodes[d.Node].disks[d.DiskID]; disk == nil || disk.diskType != "ssd" {
+			t.Errorf("shard %d not on an SSD disk: node=%s disk=%d", sid, d.Node, d.DiskID)
 		}
 	}
 }

@@ -809,9 +809,11 @@ func reserveShard(node *Node, vk volKey, shardID int, diskID uint32) {
 	info.diskShardBits[diskID] = info.diskShardBits[diskID].Set(sid)
 	if d, ok := node.disks[diskID]; ok {
 		d.shardCount++
-		if d.freeSlots > 0 {
-			d.freeSlots--
-		}
+		// Decrement unconditionally so reserve/release stay symmetric (releaseShard
+		// credits a slot unconditionally). Callers only reserve onto disks
+		// pickBestDisk* already vetted as having free slots, so this won't go
+		// negative; if it ever did, freeSlots<=0 correctly reads as full.
+		d.freeSlots--
 	}
 }
 

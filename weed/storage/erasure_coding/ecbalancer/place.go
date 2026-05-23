@@ -260,7 +260,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -316,7 +316,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 // anti-affinity to the opposite type), then the least-loaded eligible node, then
 // the best eligible disk. The third return reports whether the disk spilled off
 // the soft-preferred type. ok=false when no rack/node/disk fits.
-func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
+func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks, maxPerDisk int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
 	maxPerRack := numEligibleRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
 		if maxPerRack = ceilDivide(typeTotal, numEligibleRacks); maxPerRack < 1 {
@@ -354,7 +354,7 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 	if node == nil {
 		return nil, 0, false, false
 	}
-	diskID, ok, spilled := pickBestDiskEligible(node, vk, eligible, prefer, sid, dataShards)
+	diskID, ok, spilled := pickBestDiskEligible(node, vk, eligible, prefer, sid, dataShards, maxPerDisk)
 	if !ok {
 		return nil, 0, false, false
 	}
@@ -411,7 +411,7 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 // Prefer uses the preferred type when available but spills otherwise. Returns the
 // disk id, whether one was found, and whether the chosen disk spilled off the
 // preferred type.
-func pickBestDiskEligible(node *Node, vk volKey, eligible func(*disk) bool, prefer func(*disk) bool, shardID, dataShardCount int) (uint32, bool, bool) {
+func pickBestDiskEligible(node *Node, vk volKey, eligible func(*disk) bool, prefer func(*disk) bool, shardID, dataShardCount, maxPerDisk int) (uint32, bool, bool) {
 	isDataShard := dataShardCount > 0 && shardID < dataShardCount
 	info := node.shards[vk]
 	var bestDiskID uint32
@@ -437,6 +437,12 @@ func pickBestDiskEligible(node *Node, vk volKey, eligible func(*disk) bool, pref
 					}
 				}
 			}
+		}
+		// Durability: never put more than maxPerDisk (parityShards) shards of this
+		// volume on one disk, or losing that disk would lose more than EC can
+		// recover. Hard cap, enforced even under durability-first relaxation.
+		if maxPerDisk > 0 && existingShards >= maxPerDisk {
+			continue
 		}
 		score := d.shardCount*10 + existingShards*100
 		if dataShardCount > 0 {
