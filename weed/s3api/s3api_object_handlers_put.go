@@ -850,11 +850,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		switch {
 		case err != nil:
 			glog.Warningf("putToFiler: routed create to %s failed for %s, falling back to lock: %v", owner, filePath, err)
-		case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
-			createCode, routed = s3err.ErrPreconditionFailed, true
+		case resp.ErrorCode != filer_pb.FilerError_OK:
+			// Map known filer error codes to the same S3 errors the lock path
+			// would produce; fall back for any code this does not recognize.
+			if code, mapped := filerErrorCodeToS3Error(resp.ErrorCode); mapped {
+				createCode, routed = code, true
+			} else {
+				glog.Warningf("putToFiler: routed create to %s returned code %v for %s, falling back to lock", owner, resp.ErrorCode, filePath)
+			}
 		case resp.Error != "":
-			createErr = fmt.Errorf("%s", resp.Error)
-			createCode, routed = filerErrorToS3Error(createErr), true
+			// In-band error without a code: fall back so the lock path maps it.
+			glog.Warningf("putToFiler: routed create to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
 		default:
 			entryCreated, createCode, routed = true, s3err.ErrNone, true
 		}

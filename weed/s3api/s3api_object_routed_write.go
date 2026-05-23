@@ -128,6 +128,25 @@ func (s3a *S3ApiServer) createEntryOnFiler(owner pb.ServerAddress, req *filer_pb
 	return resp, err
 }
 
+// filerErrorCodeToS3Error maps a routed response's machine-readable FilerError
+// to the same S3 error the lock path produces via filerErrorToS3Error, so the
+// fast path keeps identical semantics. ok is false for codes it does not map,
+// signalling the caller to fall back to the lock path for exact behavior.
+func filerErrorCodeToS3Error(code filer_pb.FilerError) (s3err.ErrorCode, bool) {
+	switch code {
+	case filer_pb.FilerError_PRECONDITION_FAILED:
+		return s3err.ErrPreconditionFailed, true
+	case filer_pb.FilerError_ENTRY_NAME_TOO_LONG:
+		return s3err.ErrKeyTooLongError, true
+	case filer_pb.FilerError_PARENT_IS_FILE, filer_pb.FilerError_EXISTING_IS_FILE:
+		return s3err.ErrExistingObjectIsFile, true
+	case filer_pb.FilerError_EXISTING_IS_DIRECTORY:
+		return s3err.ErrExistingObjectIsDirectory, true
+	default:
+		return s3err.ErrNone, false
+	}
+}
+
 // buildDeleteCondition reduces a DeleteObject's If-Match header to a primitive.
 // DeleteObject only honors If-Match (matching checkDeleteIfMatch), so other
 // conditional headers are ignored here as they are on the existing path.

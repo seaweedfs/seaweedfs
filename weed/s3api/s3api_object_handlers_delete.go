@@ -231,8 +231,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 				case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
 					deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
 				case resp.Error != "":
-					glog.Errorf("DeleteObjectHandler: routed delete failed for %s/%s: %s", bucket, object, resp.Error)
-					deleteCode, deleteHandled = s3err.ErrInternalError, true
+					// Fall back to the lock path, which carries extra handling the
+					// raw DeleteEntry lacks (e.g. demoting a directory marker that
+					// still has children instead of failing on a non-empty folder).
+					glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
 				default:
 					deleteCode, deleteHandled = s3err.ErrNone, true
 				}
