@@ -166,7 +166,7 @@ func GetConfigSpec() base.ConfigSpec {
 				Required:     false,
 				DisplayName:  "Replica Placement",
 				Description:  "EC shard replica placement constraint (e.g. 020)",
-				HelpText:     "Leave empty to use the master default replication. When set, the 2nd/3rd digits cap EC shards per rack and per node; the 1st (data-center) digit is ignored for EC placement, which spreads shards evenly across racks and nodes instead",
+				HelpText:     "Leave empty to use the master default replication. When set, the 2nd/3rd digits cap EC shards per rack and per node (best-effort during encode: relaxed rather than failing if the cluster can't satisfy them, then enforced by rebalancing). The 1st (data-center) digit is ignored for EC placement",
 				Placeholder:  "020",
 				InputType:    "text",
 				CSSClasses:   "form-control",

@@ -141,7 +141,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "replica_placement",
 							Label:       "Replica Placement",
-							Description: "EC shard placement (e.g. 020): 2nd/3rd digits cap shards per rack/node; the data-center digit is ignored. Empty uses the master default.",
+							Description: "EC shard placement (e.g. 020): 2nd/3rd digits cap shards per rack/node (best-effort during encode, enforced by rebalancing); the data-center digit is ignored. Empty uses the master default.",
 							Placeholder: "020",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,

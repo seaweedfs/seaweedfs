@@ -754,6 +754,12 @@ func planECDestinations(at *topology.ActiveTopology, metric *types.VolumeHealthM
 	if res.SpilledOutsidePreferredTags {
 		glog.Warningf("EC volume %d: placed shards outside preferred tags %v", metric.VolumeID, ecConfig.PreferredTags)
 	}
+	if len(res.Relaxed) > 0 {
+		// Encode is best-effort (PlaceDurabilityFirst): it relaxes these constraints
+		// rather than defer when the cluster can't satisfy them. Surface it so a tight
+		// replica placement isn't silently weakened; rebalancing tightens the spread.
+		glog.Warningf("EC volume %d: placed with relaxed constraints %v; replica placement not fully satisfied (rebalancing will adjust)", metric.VolumeID, res.Relaxed)
+	}
 
 	// Group the per-shard destinations into one plan per (node,disk), iterating
 	// shard ids in order for determinism.
