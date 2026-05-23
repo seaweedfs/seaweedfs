@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,9 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, shardsPerPlan, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, shardsPerPlan, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	requireAllShardsPlaced(t, plan, shardsPerPlan)
@@ -273,7 +276,9 @@ func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, shardsPerPlan, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, shardsPerPlan, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	requireAllShardsPlaced(t, plan, shardsPerPlan)
@@ -289,7 +294,9 @@ func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 		Collection: "",
 	}
 
-	_, _, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	_, _, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.Error(t, err)
 }
 
@@ -338,7 +345,9 @@ func TestPlanECDestinationsPacksWhenFewerDisksThanShards(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, shardsPerPlan, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, shardsPerPlan, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	// Packed onto the available disks: more than one shard per disk but never more

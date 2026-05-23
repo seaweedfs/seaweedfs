@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,9 @@ func TestPlanECDestinationsPrefersSourceDiskType_FullCluster(t *testing.T) {
 		DiskType:   "ssd", // the property being plumbed end-to-end
 	}
 
-	plan, _, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, _, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.Len(t, plan.Plans, erasure_coding.TotalShardsCount)
 
@@ -72,7 +75,9 @@ func TestPlanECDestinationsSpillsToOtherDiskType_WhenPreferredScarce(t *testing.
 		DiskType:   "ssd",
 	}
 
-	plan, _, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, _, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.Len(t, plan.Plans, erasure_coding.TotalShardsCount)
 
