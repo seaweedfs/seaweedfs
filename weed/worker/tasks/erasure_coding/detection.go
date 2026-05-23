@@ -63,6 +63,12 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	if clusterInfo != nil {
 		replicaPlacement = super_block.ResolveReplicaPlacement(ecConfig.ReplicaPlacement, clusterInfo.DefaultReplicaPlacement)
 	}
+	// EC placement honors only the rack/node digits; the data-center digit can't
+	// express a useful per-DC EC shard cap (it maxes at 2). Warn once per cycle so a
+	// 1xx/2xx setting isn't silently ineffective.
+	if replicaPlacement != nil && replicaPlacement.DiffDataCenterCount > 0 {
+		glog.Warningf("EC Detection: replica placement data-center digit (%d) is ignored for EC; only rack/node digits are honored", replicaPlacement.DiffDataCenterCount)
+	}
 
 	allowedCollections := wildcard.CompileWildcardMatchers(ecConfig.CollectionFilter)
 
@@ -723,6 +729,11 @@ func planECDestinations(at *topology.ActiveTopology, metric *types.VolumeHealthM
 	expectedShardSize := uint64(metric.Size) / uint64(dataShards)
 
 	snap := ecbalancer.FromActiveTopology(at, dataShards)
+	// Encode is greenfield: any EC shards already present for this volume are stale
+	// leftovers from a prior failed attempt, which the task deletes
+	// (cleanupStaleEcShards) before distributing the new shards. Release them so they
+	// don't occupy capacity or skew anti-affinity / per-disk caps during planning.
+	snap.ReleaseVolumeShards(metric.Collection, metric.VolumeID)
 	need := make([]int, totalShards)
 	for i := range need {
 		need[i] = i
