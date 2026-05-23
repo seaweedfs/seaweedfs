@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,14 @@ type LockClient struct {
 	maxLockDuration time.Duration
 	sleepDuration   time.Duration
 	seedFiler       pb.ServerAddress
+
+	// ring is an optional client-side view of the filer lock hash ring. When
+	// populated, a new lock starts at the key's primary filer instead of the
+	// seed filer, avoiding the seed->primary forward hop. A stale view stays
+	// correct: the filer forwards to the real primary as a fallback.
+	ringMu      sync.RWMutex
+	ring        *lock_manager.HashRing
+	ringVersion int64
 }
 
 func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *LockClient {
@@ -28,6 +37,37 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 		sleepDuration:   2473 * time.Millisecond,
 		seedFiler:       seedFiler,
 	}
+}
+
+// SetRing updates the client-side view of the filer lock ring. It mirrors the
+// master's LockRingUpdate broadcasts so the client computes the same primary
+// the filers do. Updates older than the current version are ignored to tolerate
+// reordered broadcasts; version 0 is always accepted (bootstrap).
+func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
+	lc.ringMu.Lock()
+	defer lc.ringMu.Unlock()
+	if version != 0 && version < lc.ringVersion {
+		return
+	}
+	lc.ringVersion = version
+	if lc.ring == nil {
+		lc.ring = lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
+	}
+	lc.ring.SetServers(servers)
+}
+
+// hostForKey returns the filer that should own key per the current ring view,
+// falling back to the seed filer when no view has been received yet.
+func (lc *LockClient) hostForKey(key string) pb.ServerAddress {
+	lc.ringMu.RLock()
+	defer lc.ringMu.RUnlock()
+	if lc.ring == nil {
+		return lc.seedFiler
+	}
+	if primary := lc.ring.GetPrimary(key); primary != "" {
+		return primary
+	}
+	return lc.seedFiler
 }
 
 type LiveLock struct {
@@ -51,7 +91,7 @@ type LiveLock struct {
 func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
-		hostFiler:      lc.seedFiler,
+		hostFiler:      lc.hostForKey(key),
 		cancelCh:       make(chan struct{}),
 		expireAtNs:     time.Now().Add(5 * time.Second).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
@@ -72,7 +112,7 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 	}
 	lock := &LiveLock{
 		key:            key,
-		hostFiler:      lc.seedFiler,
+		hostFiler:      lc.hostForKey(key),
 		cancelCh:       make(chan struct{}),
 		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
@@ -110,7 +150,7 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string), lockTTL time.Duration) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
-		hostFiler:      lc.seedFiler,
+		hostFiler:      lc.hostForKey(key),
 		cancelCh:       make(chan struct{}),
 		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
