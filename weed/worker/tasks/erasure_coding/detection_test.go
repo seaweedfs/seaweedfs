@@ -47,8 +47,6 @@ func TestECPlacementPlannerApplyReservations(t *testing.T) {
 
 func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0)
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
 
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   1,
@@ -57,10 +55,10 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	plan, shardsPerPlan, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
-	assert.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
+	requireAllShardsPlaced(t, plan, shardsPerPlan)
 }
 
 func TestECPlacementPlannerPrefersTaggedDisks(t *testing.T) {
@@ -363,9 +361,6 @@ func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 		}},
 	}))
 
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
-
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   42,
 		Server:     "127.0.0.1:8081",
@@ -373,23 +368,14 @@ func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	plan, shardsPerPlan, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
-	require.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
-
-	seen := make(map[string]bool, len(plan.Plans))
-	for _, p := range plan.Plans {
-		key := fmt.Sprintf("%s:%d", p.TargetNode, p.TargetDisk)
-		assert.False(t, seen[key], "duplicate (server,disk_id) target %s", key)
-		seen[key] = true
-	}
+	requireAllShardsPlaced(t, plan, shardsPerPlan)
 }
 
 func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 1, 1)
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
 
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   2,
@@ -398,7 +384,7 @@ func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 		Collection: "",
 	}
 
-	_, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	_, _, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.Error(t, err)
 }
 
@@ -440,9 +426,6 @@ func TestPlanECDestinationsPacksWhenFewerDisksThanShards(t *testing.T) {
 		DataCenterInfos: []*master_pb.DataCenterInfo{{Id: "dc1", RackInfos: rackInfos}},
 	}))
 
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
-
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   4569,
 		Server:     "192.168.1.145:8081",
@@ -450,16 +433,18 @@ func TestPlanECDestinationsPacksWhenFewerDisksThanShards(t *testing.T) {
 		Collection: "",
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	plan, shardsPerPlan, err := planECDestinations(activeTopology, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
-	// One plan entry per available disk; fewer than the 14 shards.
-	require.Equal(t, numServers, len(plan.Plans))
+	// Packed onto the available disks: more than one shard per disk but never more
+	// than the 8 disks, and at least the durability floor of distinct disks.
+	require.LessOrEqual(t, len(plan.Plans), numServers)
+	require.GreaterOrEqual(t, len(plan.Plans), (erasure_coding.TotalShardsCount+erasure_coding.ParityShardsCount-1)/erasure_coding.ParityShardsCount)
 
 	// createECTargets must cover all 14 shards exactly once, packing onto the
 	// available disks without any disk exceeding parityShards shards.
-	targets := createECTargets(plan, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
-	require.Equal(t, numServers, len(targets))
+	targets := createECTargets(plan, shardsPerPlan)
+	require.Equal(t, len(plan.Plans), len(targets))
 
 	seenShards := make(map[uint32]bool)
 	for _, target := range targets {
@@ -471,6 +456,28 @@ func TestPlanECDestinationsPacksWhenFewerDisksThanShards(t *testing.T) {
 		}
 	}
 	require.Len(t, seenShards, erasure_coding.TotalShardsCount, "every shard must be placed exactly once")
+}
+
+// requireAllShardsPlaced asserts every EC shard landed exactly once, on a distinct
+// (node,disk) target, with no disk holding more than parityShards shards (so losing
+// any one disk cannot lose the volume). shardsPerPlan is parallel to plan.Plans.
+func requireAllShardsPlaced(t *testing.T, plan *topology.MultiDestinationPlan, shardsPerPlan [][]uint32) {
+	t.Helper()
+	require.Equal(t, len(plan.Plans), len(shardsPerPlan), "one shard list per plan entry")
+	keys := make(map[string]bool, len(plan.Plans))
+	seen := make(map[uint32]bool)
+	for i, p := range plan.Plans {
+		key := fmt.Sprintf("%s:%d", p.TargetNode, p.TargetDisk)
+		require.False(t, keys[key], "duplicate (node,disk) target %s", key)
+		keys[key] = true
+		require.LessOrEqual(t, len(shardsPerPlan[i]), erasure_coding.ParityShardsCount,
+			"disk %s holds %d shards, over parityShards", key, len(shardsPerPlan[i]))
+		for _, s := range shardsPerPlan[i] {
+			require.False(t, seen[s], "shard %d placed more than once", s)
+			seen[s] = true
+		}
+	}
+	require.Len(t, seen, erasure_coding.TotalShardsCount, "every shard must be placed exactly once")
 }
 
 func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {

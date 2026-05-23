@@ -271,8 +271,17 @@ func (t *ErasureCodingTask) Validate(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("invalid parity shards: %d (must be >= 1)", ecParams.ParityShards)
 	}
 
-	if len(params.Targets) < int(ecParams.DataShards+ecParams.ParityShards) {
-		return fmt.Errorf("insufficient targets: got %d, need %d", len(params.Targets), ecParams.DataShards+ecParams.ParityShards)
+	// Count distinct shard ids across targets, not target rows: Place packs several
+	// shards onto one (node,disk) target when there are fewer disks than shards, so
+	// a valid plan can have fewer target rows than total shards.
+	distinctShards := make(map[uint32]struct{})
+	for _, target := range params.Targets {
+		for _, sid := range target.ShardIds {
+			distinctShards[sid] = struct{}{}
+		}
+	}
+	if total := int(ecParams.DataShards + ecParams.ParityShards); len(distinctShards) < total {
+		return fmt.Errorf("insufficient shard targets: got %d distinct shards across %d targets, need %d", len(distinctShards), len(params.Targets), total)
 	}
 
 	return nil
