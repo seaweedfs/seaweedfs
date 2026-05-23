@@ -43,6 +43,15 @@ func (s3a *S3ApiServer) objectWriteOwner(bucket, object string) pb.ServerAddress
 	if s3a.objectWriteLockClient == nil {
 		return ""
 	}
+	// Object-lock (WORM) buckets keep ALL of their writes on the distributed
+	// lock. Retention enforcement is a gateway-side check that the per-path-locked
+	// filer ops don't perform, so routing only some of such a bucket's writes
+	// would split serialization between the entry lock and the distributed lock
+	// (they don't serialize against each other). Excluding the bucket entirely
+	// keeps it internally consistent.
+	if locked, err := s3a.isObjectLockEnabled(bucket); err != nil || locked {
+		return ""
+	}
 	return s3a.objectWriteLockClient.PrimaryForKey("s3.object.write:" + s3a.toFilerPath(bucket, object))
 }
 

@@ -28,9 +28,8 @@ func (s3a *S3ApiServer) routedObjectOwner(bucket, object string) (pb.ServerAddre
 	if enabled, err := s3a.isVersioningEnabled(bucket); err != nil || enabled {
 		return "", false
 	}
-	if locked, err := s3a.isObjectLockEnabled(bucket); err != nil || locked {
-		return "", false
-	}
+	// objectWriteOwner already excludes object-lock buckets (they stay fully on
+	// the distributed lock), returning "" for them.
 	owner := s3a.objectWriteOwner(bucket, object)
 	if owner == "" {
 		return "", false
