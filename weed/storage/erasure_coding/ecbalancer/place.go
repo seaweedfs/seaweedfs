@@ -520,6 +520,14 @@ func (t *Topology) ReleaseVolumeShards(collection string, vid uint32) {
 		if !ok {
 			continue
 		}
+		// freed is the total disk-slots the volume occupies on this node (a shard may
+		// sit on more than one disk). releaseShard credits each disk's freeSlots;
+		// credit the node's freeSlots by the same total, since rack capacity is summed
+		// from node freeSlots (buildRacks) and node freeSlots gates node eligibility.
+		freed := 0
+		for _, bits := range info.diskShardBits {
+			freed += bits.Count()
+		}
 		sids := make([]int, 0, info.shardBits.Count())
 		for sid := range info.shardBits.All() {
 			sids = append(sids, int(sid))
@@ -527,6 +535,7 @@ func (t *Topology) ReleaseVolumeShards(collection string, vid uint32) {
 		for _, sid := range sids {
 			releaseShard(n, vk, sid)
 		}
+		n.freeSlots += freed
 		delete(n.shards, vk)
 	}
 }

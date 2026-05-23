@@ -209,28 +209,32 @@ func TestPlaceDurabilityCapRejectsSkewed(t *testing.T) {
 }
 
 // TestReleaseVolumeShards: removes all of a volume's shards from the snapshot and
-// credits the freed disk capacity (greenfield-encode reconciliation of stale shards).
+// credits the freed capacity at BOTH disk and node level (rack capacity sums node
+// freeSlots), mirroring how FromActiveTopology accounts stale shards.
 func TestReleaseVolumeShards(t *testing.T) {
 	topo := NewTopology()
-	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 50)
+	// Node total 20 = two disks of 10. Two stale shards occupy one slot each, so the
+	// snapshot would show disk0/disk1 at 9 and node at 18 (as FromActiveTopology does).
+	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 20)
 	n.AddDisk(0, "", 10, 0)
 	n.AddDisk(1, "", 10, 0)
 	vk := volKey{collection: "c1", vid: 1}
-	free0, free1 := n.disks[0].freeSlots, n.disks[1].freeSlots
-	reserveShard(n, vk, 3, 0)
-	reserveShard(n, vk, 7, 1)
-	if n.disks[0].freeSlots == free0 || n.disks[1].freeSlots == free1 {
-		t.Fatal("reserveShard should have decremented freeSlots")
-	}
+	n.AddShards(1, "c1", 0, erasure_coding.ShardBits(uint32(1)<<3))
+	n.AddShards(1, "c1", 1, erasure_coding.ShardBits(uint32(1)<<7))
+	n.disks[0].freeSlots = 9
+	n.disks[1].freeSlots = 9
+	n.freeSlots = 18
 
 	topo.ReleaseVolumeShards("c1", 1)
 
 	if _, ok := n.shards[vk]; ok {
 		t.Error("volume shards should be gone after ReleaseVolumeShards")
 	}
-	if n.disks[0].freeSlots != free0 || n.disks[1].freeSlots != free1 {
-		t.Errorf("freeSlots not restored: disk0=%d (want %d), disk1=%d (want %d)",
-			n.disks[0].freeSlots, free0, n.disks[1].freeSlots, free1)
+	if n.disks[0].freeSlots != 10 || n.disks[1].freeSlots != 10 {
+		t.Errorf("disk freeSlots not restored: disk0=%d, disk1=%d (want 10, 10)", n.disks[0].freeSlots, n.disks[1].freeSlots)
+	}
+	if n.freeSlots != 20 {
+		t.Errorf("node freeSlots = %d, want 20 (must be credited at node level too)", n.freeSlots)
 	}
 }
 
