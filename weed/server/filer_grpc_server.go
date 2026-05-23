@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -14,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -191,6 +193,25 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
+	// Evaluate the optional precondition against the current entry while the
+	// path lock is held, so the check and the write are atomic on this filer.
+	if req.Condition != nil && req.Condition.Kind != filer_pb.WriteCondition_NONE {
+		current, findErr := fs.filer.FindEntry(ctx, fullpath)
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry condition check %s: %w", fullpath, findErr)
+		}
+		if findErr == filer_pb.ErrNotFound {
+			current = nil
+		}
+		if !writeConditionSatisfied(req.Condition, current) {
+			glog.V(3).InfofCtx(ctx, "CreateEntry %s: precondition %v failed", fullpath, req.Condition.Kind)
+			return &filer_pb.CreateEntryResponse{
+				Error:     "precondition failed",
+				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+			}, nil
+		}
+	}
+
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
@@ -215,6 +236,44 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	}
 
 	return
+}
+
+// writeConditionSatisfied reports whether the precondition holds against the
+// current entry (nil if absent). The caller reduces request semantics to one
+// primitive; each kind is a single comparison evaluated under the path lock.
+func writeConditionSatisfied(cond *filer_pb.WriteCondition, current *filer.Entry) bool {
+	exists := current != nil
+	switch cond.Kind {
+	case filer_pb.WriteCondition_IF_NOT_EXISTS:
+		return !exists
+	case filer_pb.WriteCondition_IF_EXISTS:
+		return exists
+	case filer_pb.WriteCondition_IF_ETAG_MATCH:
+		return exists && storedEntryETag(current) == normalizeETag(cond.Etag)
+	case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
+		return !exists || storedEntryETag(current) != normalizeETag(cond.Etag)
+	case filer_pb.WriteCondition_IF_UNMODIFIED_SINCE:
+		return !exists || current.Attr.Mtime.Unix() <= cond.UnixTime
+	case filer_pb.WriteCondition_IF_MODIFIED_SINCE:
+		return !exists || current.Attr.Mtime.Unix() > cond.UnixTime
+	default:
+		return true
+	}
+}
+
+// storedEntryETag mirrors the S3 gateway's ETag precedence (the stored
+// Seaweed ETag extended attribute, then the chunk/Md5 fallback) so conditional
+// comparisons match what the gateway computes, without coupling the filer to
+// S3 request handling.
+func storedEntryETag(entry *filer.Entry) string {
+	if v, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(v) > 0 {
+		return normalizeETag(string(v))
+	}
+	return normalizeETag(filer.ETagEntry(entry))
+}
+
+func normalizeETag(etag string) string {
+	return strings.Trim(etag, `"`)
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {

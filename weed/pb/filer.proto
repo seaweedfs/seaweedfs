@@ -222,6 +222,29 @@ message CreateEntryRequest {
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
     bool skip_check_parent_directory = 6;
+    // Optional precondition evaluated against the current entry atomically with
+    // the write, under the filer's per-path lock. The caller must route the
+    // key's writes to this entry's owner filer for the check to be authoritative.
+    WriteCondition condition = 7;
+}
+
+// WriteCondition is a single precondition the filer evaluates against the
+// existing entry before writing. The client reduces request semantics (e.g.
+// RFC 7232 precedence) to one primitive; the filer just compares. A failed
+// condition returns FilerError PRECONDITION_FAILED.
+message WriteCondition {
+    enum Kind {
+        NONE                = 0; // unconditional
+        IF_NOT_EXISTS       = 1; // fail if the entry exists (If-None-Match: *)
+        IF_EXISTS           = 2; // fail if the entry is absent (If-Match: *)
+        IF_ETAG_MATCH       = 3; // fail if absent or etag != expected (If-Match: <etag>)
+        IF_ETAG_NOT_MATCH   = 4; // fail if present and etag == expected (If-None-Match: <etag>)
+        IF_UNMODIFIED_SINCE = 5; // fail if present and mtime > unix_time
+        IF_MODIFIED_SINCE   = 6; // fail if present and mtime <= unix_time
+    }
+    Kind kind = 1;
+    string etag = 2;      // expected ETag for IF_ETAG_* kinds
+    int64 unix_time = 3;  // bound (unix seconds) for IF_*_SINCE kinds
 }
 
 // Structured error codes for filer entry operations.
@@ -233,6 +256,7 @@ enum FilerError {
     EXISTING_IS_DIRECTORY = 3; // cannot overwrite directory with file
     EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
+    PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
 }
 
 message CreateEntryResponse {
