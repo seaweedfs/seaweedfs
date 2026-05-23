@@ -30,6 +30,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -553,9 +554,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 	entryName, dirName := s3a.getEntryNameAndDir(input)
 	var completionState *multipartCompletionState
-	finalizeCode := s3a.withObjectWriteLock(*input.Bucket, *input.Key, func() s3err.ErrorCode {
-		return s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key)
-	}, func() s3err.ErrorCode {
+	// Non-versioned destination: the final write is a single CreateEntry, so route
+	// it (with the precondition) to the object's owner and skip the distributed
+	// lock. Assembly and the idempotency replay below are read-only and safe
+	// outside any lock. Versioned/suspended completions keep the lock path.
+	mpuCond, mpuCondOk := buildWriteCondition(r)
+	var nvOwner pb.ServerAddress
+	if vs, vErr := s3a.getVersioningState(*input.Bucket); vErr == nil && vs == "" && mpuCondOk {
+		nvOwner, _ = s3a.routedObjectOwner(*input.Bucket, *input.Key)
+	}
+	finalizeBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
 		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
 		if prepCode != s3err.ErrNone || output != nil {
@@ -739,7 +747,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// For non-versioned buckets, create main object file
-		if err := s3a.mkFile(dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
+		nvModifier := func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
@@ -787,7 +795,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			if completionState.entityWithTtl {
 				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			}
-		}); err != nil {
+		}
+		if nvOwner != "" {
+			// Routed path: the owner evaluates the precondition and writes under
+			// its local lock, so the lock wrapper below is skipped.
+			if code := s3a.mkFileRouted(nvOwner, dirName, entryName, completionState.finalParts, mpuCond, nvModifier); code != s3err.ErrNone {
+				return code
+			}
+		} else if err := s3a.mkFile(dirName, entryName, completionState.finalParts, nvModifier); err != nil {
 			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
 			return s3err.ErrInternalError
 		}
@@ -802,7 +817,17 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			ChecksumValue:      completionState.checksumValue,
 		}
 		return s3err.ErrNone
-	})
+	}
+	var finalizeCode s3err.ErrorCode
+	if nvOwner != "" {
+		// Routed non-versioned completion: no distributed lock, no gateway
+		// precondition here — the routed write carries the condition.
+		finalizeCode = finalizeBody()
+	} else {
+		finalizeCode = s3a.withObjectWriteLock(*input.Bucket, *input.Key, func() s3err.ErrorCode {
+			return s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key)
+		}, finalizeBody)
+	}
 	if finalizeCode != s3err.ErrNone {
 		return nil, finalizeCode
 	}

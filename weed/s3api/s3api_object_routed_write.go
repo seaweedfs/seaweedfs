@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -113,6 +115,53 @@ func singleStrongETag(v string) (string, bool) {
 		return "", false
 	}
 	return strings.Trim(v, `"`), true
+}
+
+// mkFileRouted builds a file entry the way filer_pb.MkFile does, applies fn, and
+// routes the CreateEntry (with an optional precondition) to the given owner filer
+// so its local per-path lock serializes the write. Used by callers that build an
+// object via a modifier (e.g. multipart completion) but want the routed,
+// distributed-lock-free write path.
+func (s3a *S3ApiServer) mkFileRouted(owner pb.ServerAddress, dir, name string, chunks []*filer_pb.FileChunk, cond *filer_pb.WriteCondition, fn func(*filer_pb.Entry)) s3err.ErrorCode {
+	now := time.Now().Unix()
+	entry := &filer_pb.Entry{
+		Name:        name,
+		IsDirectory: false,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now,
+			Crtime:   now,
+			FileMode: uint32(0770),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+		},
+		Chunks: chunks,
+	}
+	if fn != nil {
+		fn(entry)
+	}
+	resp, err := s3a.createEntryOnFiler(owner, &filer_pb.CreateEntryRequest{
+		Directory: dir,
+		Entry:     entry,
+		Condition: cond,
+	})
+	switch {
+	case err != nil:
+		glog.Errorf("mkFileRouted: %s/%s on %s: %v", dir, name, owner, err)
+		return s3err.ErrInternalError
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		return s3err.ErrPreconditionFailed
+	case resp.ErrorCode != filer_pb.FilerError_OK:
+		if code, ok := filerErrorCodeToS3Error(resp.ErrorCode); ok {
+			return code
+		}
+		glog.Errorf("mkFileRouted: %s/%s unexpected code %v", dir, name, resp.ErrorCode)
+		return s3err.ErrInternalError
+	case resp.Error != "":
+		glog.Errorf("mkFileRouted: %s/%s: %s", dir, name, resp.Error)
+		return s3err.ErrInternalError
+	default:
+		return s3err.ErrNone
+	}
 }
 
 // createEntryOnFiler sends a CreateEntry directly to the given owner filer so
