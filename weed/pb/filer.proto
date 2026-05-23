@@ -31,6 +31,9 @@ service SeaweedFiler {
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
+    rpc ObjectTransaction (ObjectTransactionRequest) returns (ObjectTransactionResponse) {
+    }
+
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
@@ -269,6 +272,46 @@ enum FilerError {
     EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
     PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
+}
+
+// ObjectMutation is one entry-level change applied by ObjectTransaction. All
+// mutations of a transaction run under a single per-path lock (the request's
+// lock_key) and in order, so the gateway can describe a multi-entry object
+// operation as one request instead of holding a distributed lock across
+// several RPCs. Data-bearing writes (entries with chunks) should be written
+// before the transaction; mutations here are metadata-scoped.
+message ObjectMutation {
+    enum Type {
+        PUT            = 0; // create or replace the entry (entry field)
+        DELETE         = 1; // delete the entry at directory/name (no error if absent)
+        PATCH_EXTENDED = 2; // merge set_extended / remove delete_extended on the entry
+    }
+    Type type = 1;
+    string directory = 2;
+    string name = 3;                       // entry name for DELETE / PATCH_EXTENDED
+    Entry entry = 4;                        // full entry for PUT
+    map<string, bytes> set_extended = 5;   // PATCH_EXTENDED: keys to set
+    repeated string delete_extended = 6;   // PATCH_EXTENDED: keys to remove
+    bool is_delete_data = 7;               // DELETE: also delete chunk data
+    bool is_recursive = 8;                 // DELETE: recurse into a directory
+}
+
+// ObjectTransactionRequest applies an ordered list of mutations atomically with
+// respect to other writers of the same object, by holding the filer's per-path
+// lock on lock_key for the whole transaction. The optional condition is checked
+// first, against the entry at lock_key. Callers must route the object's writes
+// to its owner filer for the lock to be authoritative.
+message ObjectTransactionRequest {
+    string lock_key = 1;               // object path to lock and to evaluate the condition against
+    WriteCondition condition = 2;      // optional precondition, checked under the lock
+    repeated ObjectMutation mutations = 3;
+    bool is_from_other_cluster = 4;
+    repeated int32 signatures = 5;
+}
+
+message ObjectTransactionResponse {
+    string error = 1;
+    FilerError error_code = 2;
 }
 
 message CreateEntryResponse {
