@@ -103,7 +103,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	// the full node map on every call).
 	var ecSnapshot *ecbalancer.Topology
 	var nodeAddresses map[string]string
-	if clusterInfo.ActiveTopology != nil {
+	if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
 		ecSnapshot = ecbalancer.FromActiveTopology(clusterInfo.ActiveTopology, erasure_coding.DataShardsCount)
 		nodeAddresses = buildNodeAddressMap(clusterInfo.ActiveTopology)
 	}
