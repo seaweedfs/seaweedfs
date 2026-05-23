@@ -413,7 +413,7 @@ func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node 
 			continue
 		}
 		count := volumeShardCount(node, vk)
-		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount+1 {
+		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
 		if best == nil || count < bestCount {
@@ -489,7 +489,7 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 			func(n string) bool { return n != pm.src.id && r.nodes[n].freeSlots > 0 },
 			func(n string) bool {
 				if rp != nil && rp.SameRackCount > 0 {
-					return nodeShardCount[n] < rp.SameRackCount+1
+					return nodeShardCount[n] < rp.SameRackCount
 				}
 				return true
 			})

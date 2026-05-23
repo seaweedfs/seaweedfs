@@ -126,6 +126,41 @@ func TestPlaceDurabilityFirstRelaxesRP(t *testing.T) {
 	}
 }
 
+// TestPlaceSameRackCountIsDirectPerNodeCap: the 3rd ReplicaPlacement digit
+// (SameRackCount) caps shards per node directly (max == digit), matching the
+// per-rack DiffRackCount cap rather than allowing digit+1 per node.
+func TestPlaceSameRackCountIsDirectPerNodeCap(t *testing.T) {
+	rp := &super_block.ReplicaPlacement{SameRackCount: 2} // <=2 shards per node
+
+	// 5 single-node racks: 5 nodes * 2 = 10 < 14, so a strict 10+4 placement
+	// cannot satisfy the per-node cap and must fail. Under the old digit+1 reading
+	// the cap would be 3/node => 15 slots and this would have wrongly succeeded.
+	topo := buildPlaceTopo(5, 1, 50)
+	if _, err := topo.Place(1, "c1", allShards(), Constraints{ReplicaPlacement: rp}, PlaceStrict); err == nil {
+		t.Fatal("strict Place should fail: 5 nodes cannot hold 14 shards at <=2 per node")
+	}
+
+	// Durability-first relaxes the unsatisfiable per-node cap, still places every
+	// shard, and reports the relaxation so it isn't silently weakened.
+	topo = buildPlaceTopo(5, 1, 50)
+	res, err := topo.Place(1, "c1", allShards(), Constraints{ReplicaPlacement: rp}, PlaceDurabilityFirst)
+	if err != nil {
+		t.Fatalf("durability-first Place: %v", err)
+	}
+	if len(res.Destinations) != erasure_coding.TotalShardsCount {
+		t.Fatalf("placed %d shards, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
+	}
+	relaxedRP := false
+	for _, r := range res.Relaxed {
+		if r == "replica-placement" {
+			relaxedRP = true
+		}
+	}
+	if !relaxedRP {
+		t.Errorf("expected replica-placement relaxation, got %v", res.Relaxed)
+	}
+}
+
 // TestPlaceDiskTypeHardFilter: with DiskType set, shards land only on disks of
 // that type, even though the snapshot also contains other-typed disks.
 func TestPlaceDiskTypeHardFilter(t *testing.T) {

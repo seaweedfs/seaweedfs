@@ -12,8 +12,9 @@ import (
 
 // Constraints configures a Place call. Ratio resolves a collection's
 // (dataShards, parityShards); nil uses the standard scheme. ReplicaPlacement,
-// when non-nil, caps shards per rack (DiffRackCount) and per node within a rack
-// (SameRackCount). The data-center digit (DiffDataCenterCount) is not honored:
+// when non-nil, caps shards per rack (DiffRackCount = max shards/rack) and per
+// node within a rack (SameRackCount = max shards/node); both digits are direct
+// hard caps. The data-center digit (DiffDataCenterCount) is not honored:
 // the 1-byte volume ReplicaPlacement can only encode 0-2 there, too small to be a
 // meaningful per-DC EC shard cap, so EC relies on the rack/node even spread instead.
 //
@@ -399,7 +400,7 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 			continue
 		}
 		count := volumeShardCount(node, vk)
-		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount+1 {
+		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
 		if best == nil || count < bestCount {
