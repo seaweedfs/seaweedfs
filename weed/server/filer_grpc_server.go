@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -185,6 +184,13 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	} else {
 		newEntry.TtlSec = 0
 	}
+
+	// Serialize concurrent mutations to the same path on this filer so the
+	// read (existence/condition) and the write are atomic. Callers route a
+	// key's writes to this owner filer, making this local lock sufficient.
+	fullpath := newEntry.FullPath
+	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
