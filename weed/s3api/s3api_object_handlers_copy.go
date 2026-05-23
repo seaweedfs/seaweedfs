@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -337,16 +338,34 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var dstVersionId string
 	var etag string
 
-	finalizeCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
-		return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
-	}, func() s3err.ErrorCode {
-		var finalizeErr error
-		dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry)
-		if finalizeErr != nil {
-			return filerErrorToS3Error(finalizeErr)
+	// Fast path: for a non-versioned destination, the finalize is a single
+	// CreateEntry, so route it to the destination key's owner filer with the
+	// precondition and let it serialize the write locally, skipping the
+	// distributed lock. Versioned destinations (multi-entry: version file +
+	// latest pointer) keep the lock path below.
+	var finalizeCode s3err.ErrorCode
+	routed := false
+	if dstVersioningState == "" {
+		if cond, condOk := buildWriteCondition(r); condOk {
+			if owner, ownerOk := s3a.routedObjectOwner(dstBucket, dstObject); ownerOk {
+				if code, e, handled := s3a.routedCopyFinalize(owner, dstBucket, dstObject, dstEntry, cond); handled {
+					finalizeCode, etag, routed = code, e, true
+				}
+			}
 		}
-		return s3err.ErrNone
-	})
+	}
+	if !routed {
+		finalizeCode = s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+			return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+		}, func() s3err.ErrorCode {
+			var finalizeErr error
+			dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry)
+			if finalizeErr != nil {
+				return filerErrorToS3Error(finalizeErr)
+			}
+			return s3err.ErrNone
+		})
+	}
 	if finalizeCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, finalizeCode)
 		return
@@ -410,6 +429,53 @@ func copyEntryToTarget(dst, src *filer_pb.Entry) {
 	dst.HardLinkCounter = src.HardLinkCounter
 	dst.Quota = src.Quota
 	dst.WormEnforcedAtTsNs = src.WormEnforcedAtTsNs
+}
+
+// routedCopyFinalize writes a non-versioned copy destination as a single
+// CreateEntry routed to the destination key's owner filer, building the same
+// entry that finalizeCopyDestination's default branch produces via mkFile. It
+// returns handled=false to fall back to the lock path on a transport error or an
+// unmapped in-band error.
+func (s3a *S3ApiServer) routedCopyFinalize(owner pb.ServerAddress, dstBucket, dstObject string, dstEntry *filer_pb.Entry, cond *filer_pb.WriteCondition) (errCode s3err.ErrorCode, etag string, handled bool) {
+	normalizedObject := s3_constants.NormalizeObjectKey(dstObject)
+	dstPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), normalizedObject))
+	dstDir, dstName := dstPath.DirAndName()
+
+	if dstEntry.Attributes == nil {
+		dstEntry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	if dstEntry.Extended == nil {
+		dstEntry.Extended = make(map[string][]byte)
+	}
+	etag = copyEntryETag(dstPath, dstEntry)
+	cleanupVersioningMetadata(dstEntry.Extended)
+	dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+	// Build the destination entry exactly as mkFile + copyEntryToTarget would.
+	entry := &filer_pb.Entry{Name: dstName, Chunks: dstEntry.Chunks}
+	copyEntryToTarget(entry, dstEntry)
+
+	resp, err := s3a.createEntryOnFiler(owner, &filer_pb.CreateEntryRequest{
+		Directory: dstDir,
+		Entry:     entry,
+		Condition: cond,
+	})
+	switch {
+	case err != nil:
+		glog.Warningf("CopyObjectHandler: routed finalize to %s failed for %s/%s, falling back to lock: %v", owner, dstBucket, dstObject, err)
+		return s3err.ErrNone, "", false
+	case resp.ErrorCode != filer_pb.FilerError_OK:
+		if code, mapped := filerErrorCodeToS3Error(resp.ErrorCode); mapped {
+			return code, "", true
+		}
+		glog.Warningf("CopyObjectHandler: routed finalize to %s returned code %v for %s/%s, falling back to lock", owner, resp.ErrorCode, dstBucket, dstObject)
+		return s3err.ErrNone, "", false
+	case resp.Error != "":
+		glog.Warningf("CopyObjectHandler: routed finalize to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, dstBucket, dstObject)
+		return s3err.ErrNone, "", false
+	default:
+		return s3err.ErrNone, etag, true
+	}
 }
 
 func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersioningState string, dstEntry *filer_pb.Entry) (versionId string, etag string, err error) {
