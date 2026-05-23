@@ -234,3 +234,42 @@ func TestCreateEntryConditionEnforced(t *testing.T) {
 		t.Fatalf("matching etag should overwrite, got error %q", resp.Error)
 	}
 }
+
+// CreateEntry reuses a provided existing entry instead of reading the store
+// again; passing nil makes it look the path up itself.
+func TestCreateEntryReusesProvidedExisting(t *testing.T) {
+	existing := &filer.Entry{
+		FullPath: "/test/obj",
+		Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Crtime: time.Unix(1700000000, 0)},
+		Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
+	}
+	newEntry := func() *filer.Entry {
+		return &filer.Entry{
+			FullPath: "/test/obj",
+			Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000001, 0)},
+		}
+	}
+
+	// Provided existing vs nil: the only difference is CreateEntry's own lookup,
+	// so providing it must save exactly one path read (other store-layer reads
+	// during the overwrite are the same in both runs).
+	store := newRenameTestStore()
+	store.entries["/test/obj"] = existing.ShallowClone()
+	f := newRenameTestFiler(store)
+	if err := f.CreateEntry(context.Background(), newEntry(), existing, false, false, nil, true, f.MaxFilenameLength); err != nil {
+		t.Fatalf("create with existing: %v", err)
+	}
+	withExisting := store.findEntryCallCount("/test/obj")
+
+	store2 := newRenameTestStore()
+	store2.entries["/test/obj"] = existing.ShallowClone()
+	f2 := newRenameTestFiler(store2)
+	if err := f2.CreateEntry(context.Background(), newEntry(), nil, false, false, nil, true, f2.MaxFilenameLength); err != nil {
+		t.Fatalf("create with nil: %v", err)
+	}
+	withNil := store2.findEntryCallCount("/test/obj")
+
+	if withNil != withExisting+1 {
+		t.Fatalf("providing existing should save one path lookup: existing=%d nil=%d", withExisting, withNil)
+	}
+}
