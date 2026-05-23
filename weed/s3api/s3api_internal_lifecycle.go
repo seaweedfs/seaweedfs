@@ -69,9 +69,14 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			}
 			return retryLater("TRANSPORT_ERROR: versioning lookup: " + vErr.Error()), nil
 		}
+		// Route the pointer flip to the object's owner so it serializes on the
+		// object key against routed versioned/suspended writes (it would otherwise
+		// flip the latest pointer off that lock). Falls back to the lock path when
+		// the owner is unknown.
+		markerOwner := s3a.objectWriteOwner(req.Bucket, req.ObjectPath)
 		switch state {
 		case s3_constants.VersioningEnabled:
-			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath, "", nil, ""); err != nil {
+			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath, markerOwner, nil, ""); err != nil {
 				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}
 			return done(), nil
@@ -82,7 +87,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
 				}
 			}
-			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath, "", nil, ""); err != nil {
+			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath, markerOwner, nil, ""); err != nil {
 				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}
 			return done(), nil
