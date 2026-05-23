@@ -507,6 +507,30 @@ func (t *Topology) ClearShardAccounting(nodeID, collection string, vid uint32, s
 	clearShardAccounting(n, volKey{collection: collection, vid: vid}, shardID, diskID)
 }
 
+// ReleaseVolumeShards removes every shard of a volume from the snapshot and
+// credits the freed disk capacity. A greenfield encode calls this so any stale
+// EC shards left by a prior failed attempt (which the encode task deletes before
+// distributing the new shards) neither occupy capacity nor skew anti-affinity /
+// per-disk caps during planning. Unlike repair's ClearShardAccounting, it credits
+// freeSlots because the deletes run before the new writes.
+func (t *Topology) ReleaseVolumeShards(collection string, vid uint32) {
+	vk := volKey{collection: collection, vid: vid}
+	for _, n := range t.nodes {
+		info, ok := n.shards[vk]
+		if !ok {
+			continue
+		}
+		sids := make([]int, 0, info.shardBits.Count())
+		for sid := range info.shardBits.All() {
+			sids = append(sids, int(sid))
+		}
+		for _, sid := range sids {
+			releaseShard(n, vk, sid)
+		}
+		delete(n.shards, vk)
+	}
+}
+
 // shardsOfType returns the sorted subset of need that are data shards (id <
 // dataShards) when isData, else the parity subset.
 func shardsOfType(need []int, isData bool, dataShards int) []int {

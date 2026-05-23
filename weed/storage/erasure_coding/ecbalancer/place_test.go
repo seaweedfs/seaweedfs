@@ -208,6 +208,32 @@ func TestPlaceDurabilityCapRejectsSkewed(t *testing.T) {
 	}
 }
 
+// TestReleaseVolumeShards: removes all of a volume's shards from the snapshot and
+// credits the freed disk capacity (greenfield-encode reconciliation of stale shards).
+func TestReleaseVolumeShards(t *testing.T) {
+	topo := NewTopology()
+	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 50)
+	n.AddDisk(0, "", 10, 0)
+	n.AddDisk(1, "", 10, 0)
+	vk := volKey{collection: "c1", vid: 1}
+	free0, free1 := n.disks[0].freeSlots, n.disks[1].freeSlots
+	reserveShard(n, vk, 3, 0)
+	reserveShard(n, vk, 7, 1)
+	if n.disks[0].freeSlots == free0 || n.disks[1].freeSlots == free1 {
+		t.Fatal("reserveShard should have decremented freeSlots")
+	}
+
+	topo.ReleaseVolumeShards("c1", 1)
+
+	if _, ok := n.shards[vk]; ok {
+		t.Error("volume shards should be gone after ReleaseVolumeShards")
+	}
+	if n.disks[0].freeSlots != free0 || n.disks[1].freeSlots != free1 {
+		t.Errorf("freeSlots not restored: disk0=%d (want %d), disk1=%d (want %d)",
+			n.disks[0].freeSlots, free0, n.disks[1].freeSlots, free1)
+	}
+}
+
 // TestClearShardAccounting: dropping one disk's copy of a shard preserves a kept
 // copy of the same shard on another disk of the same node, and credits no capacity.
 func TestClearShardAccounting(t *testing.T) {
