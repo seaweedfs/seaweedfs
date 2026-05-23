@@ -1330,17 +1330,21 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// it runs while withObjectWriteLock is still held in putToFiler.
 	// Doing it after putToFiler returns would race a concurrent PUT
 	// promoting a newer latest, which we'd then incorrectly wipe.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, func(_ *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
-			// Best-effort: a stale IsLatest flag is recoverable on the
-			// next list-versions resync, so don't fail the PUT.
-			glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
-		}
-		return s3err.ErrNone
-	}, false)
+	// The null version is written to the main object path, so this is a
+	// single-entry object write — route it on the object key like a normal PUT
+	// (no afterCreate, so putToFiler can take the route-by-key path and skip the
+	// distributed lock). The IsLatest flag rewrite over existing versions is
+	// best-effort bookkeeping, so it runs after the write rather than inside the
+	// atomic boundary.
+	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, nil, false)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
+	}
+	if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
+		// Best-effort: a stale IsLatest flag is recoverable on the next
+		// list-versions resync, so don't fail the PUT.
+		glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
 	}
 
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)

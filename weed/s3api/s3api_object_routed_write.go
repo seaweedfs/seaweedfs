@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -16,22 +15,23 @@ import (
 )
 
 // routedObjectOwner returns the filer that owns this object's metadata for
-// route-by-key, or ok=false when the object's writes must keep the distributed
-// lock. Versioned and object-lock buckets stay on the lock path: their
-// mutations span multiple entries / extra metadata checks a single conditional
-// create or delete does not cover. On any lookup error it falls back to be safe.
+// route-by-key on a single-entry object write, or ok=false when the write must
+// keep the distributed lock. Only versioning-*enabled* buckets are excluded:
+// their writes go to <obj>/.versions and flip the latest pointer (the versioned
+// finalize path handles those). Suspended and unversioned writes both go to the
+// main object path, so they route here. Object-lock buckets stay on the lock
+// path. On any lookup error it falls back to be safe.
 func (s3a *S3ApiServer) routedObjectOwner(bucket, object string) (pb.ServerAddress, bool) {
-	if object == "" || s3a.objectWriteLockClient == nil {
+	if object == "" {
 		return "", false
 	}
-	if configured, err := s3a.isVersioningConfigured(bucket); err != nil || configured {
+	if enabled, err := s3a.isVersioningEnabled(bucket); err != nil || enabled {
 		return "", false
 	}
 	if locked, err := s3a.isObjectLockEnabled(bucket); err != nil || locked {
 		return "", false
 	}
-	lockKey := fmt.Sprintf("s3.object.write:%s", s3a.toFilerPath(bucket, object))
-	owner := s3a.objectWriteLockClient.PrimaryForKey(lockKey)
+	owner := s3a.objectWriteOwner(bucket, object)
 	if owner == "" {
 		return "", false
 	}
