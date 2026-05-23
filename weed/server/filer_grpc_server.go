@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -186,6 +184,13 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		newEntry.TtlSec = 0
 	}
 
+	// Serialize concurrent mutations to the same path on this filer so the
+	// read (existence/condition) and the write are atomic. Callers route a
+	// key's writes to this owner filer, making this local lock sufficient.
+	fullpath := util.NewFullPath(req.Directory, req.Entry.Name)
+	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
@@ -328,9 +333,11 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	glog.V(4).InfofCtx(ctx, "AppendToEntry %v", req)
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
-	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
-	lock := lockClient.NewShortLivedLock(string(fullpath), string(fs.option.Host))
-	defer lock.StopShortLivedLock()
+	// Serialize the read-modify-write against concurrent mutations to the same
+	// path on this filer. The append must route to this entry's owner filer for
+	// this local lock to be authoritative.
+	pathLock := fs.entryLockTable.AcquireLock("AppendToEntry", fullpath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, fullpath)

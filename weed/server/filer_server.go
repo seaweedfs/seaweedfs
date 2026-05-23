@@ -124,6 +124,13 @@ type FilerServer struct {
 	// mountPeerRegistry backs the MountRegister / MountList RPCs for peer
 	// chunk sharing (tier 1). Always populated.
 	mountPeerRegistry *filer.MountPeerRegistry
+
+	// entryLockTable serializes mutations to the same entry path on this filer.
+	// It is the local serialization point for read-modify-write operations
+	// (conditional create, append) once writers for a key are routed to this
+	// node, replacing the distributed lock for that purpose. Idle keys are
+	// evicted automatically, so the table stays bounded.
+	entryLockTable *util.LockTable[util.FullPath]
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -162,6 +169,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		recentCopyRequests:    make(map[string]recentCopyRequest),
 		CredentialManager:     option.CredentialManager,
+		entryLockTable:        util.NewLockTable[util.FullPath](),
 	}
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
