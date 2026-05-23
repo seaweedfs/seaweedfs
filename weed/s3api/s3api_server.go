@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -152,6 +153,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Uses the battle-tested vidMap with filer-based lookups
 	// Supports multiple filer addresses with automatic failover for high availability
 	var filerClient *wdclient.FilerClient
+	var masterClient *wdclient.MasterClient
 	if len(option.Masters) > 0 {
 		// Enable filer discovery via master
 		masterMap := make(map[string]pb.ServerAddress)
@@ -162,7 +164,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if clientHost == "0.0.0.0" || clientHost == "" {
 			clientHost = util.DetectedHostAddress()
 		}
-		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())
 
@@ -264,6 +266,18 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	if len(option.Filers) > 0 {
 		objectWriteLockClient := cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+		// Mirror the master's lock-ring view so each object lock dials the key's
+		// primary filer directly instead of forwarding through the seed filer.
+		// The masterClient already filters updates to this server's filer group.
+		if masterClient != nil {
+			masterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
+				servers := make([]pb.ServerAddress, 0, len(update.Servers))
+				for _, s := range update.Servers {
+					servers = append(servers, pb.ServerAddress(s))
+				}
+				objectWriteLockClient.SetRing(servers, update.Version)
+			})
+		}
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) objectWriteLock {
 			lockKey := fmt.Sprintf("s3.object.write:%s", s3ApiServer.toFilerPath(bucket, object))
 			owner := fmt.Sprintf("s3api-%d", s3ApiServer.randomClientId)
