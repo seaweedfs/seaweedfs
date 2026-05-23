@@ -133,7 +133,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 		return result, s3err.ErrNone
 
 	case versioningState == s3_constants.VersioningEnabled:
-		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
+		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object, "", nil)
 		if err != nil {
 			glog.Errorf("deleteVersionedObject: failed to create delete marker for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
@@ -152,7 +152,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
-		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
+		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object, "", nil)
 		if err != nil {
 			glog.Errorf("deleteVersionedObject: failed to create delete marker for suspended versioning %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
@@ -237,6 +237,27 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 					glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
 				default:
 					deleteCode, deleteHandled = s3err.ErrNone, true
+				}
+			}
+		}
+	}
+
+	// Fast path: a versioning-enabled delete (no specific version) creates a
+	// delete marker — a unique marker file plus an atomic latest-pointer flip. We
+	// route it to the .versions owner, off the distributed lock. Suspended
+	// versioning (multi-step) and version-specific deletes keep the lock path.
+	if !deleteHandled && versionId == "" && versioningState == s3_constants.VersioningEnabled {
+		if cond, condOk := buildDeleteCondition(r); condOk {
+			if owner := s3a.objectWriteOwner(bucket, s3_constants.NormalizeObjectKey(object)); owner != "" {
+				vid, err := s3a.createDeleteMarker(bucket, object, owner, cond)
+				switch {
+				case err == nil:
+					deleteResult = deleteMutationResult{versionId: vid, deleteMarker: true}
+					deleteCode, deleteHandled = s3err.ErrNone, true
+				case errors.Is(err, errVersionedPreconditionFailed):
+					deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
+				default:
+					glog.Warningf("DeleteObjectHandler: routed delete marker for %s/%s failed, falling back to lock: %v", bucket, object, err)
 				}
 			}
 		}

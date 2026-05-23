@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,6 +14,24 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+// errVersionedPreconditionFailed is returned by versioned finalize helpers whose
+// contract is (…, error) when the routed FinalizeVersionedWrite reports a failed
+// precondition, so callers can surface it as 412 rather than a generic 500.
+var errVersionedPreconditionFailed = errors.New("versioned write precondition failed")
+
+// finalizeCodeToError adapts a routedVersionedFinalize result to an error: nil on
+// success, the precondition sentinel on 412, else a generic error.
+func finalizeCodeToError(code s3err.ErrorCode) error {
+	switch code {
+	case s3err.ErrNone:
+		return nil
+	case s3err.ErrPreconditionFailed:
+		return errVersionedPreconditionFailed
+	default:
+		return fmt.Errorf("versioned finalize failed: code %v", code)
+	}
+}
 
 // objectWriteOwner returns the filer that owns all of an object's writes, or ""
 // when no ring view is available. It hashes the object key with the same prefix

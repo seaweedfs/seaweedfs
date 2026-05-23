@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 		}
 		switch state {
 		case s3_constants.VersioningEnabled:
-			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
+			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath, "", nil); err != nil {
 				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}
 			return done(), nil
@@ -82,7 +82,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
 				}
 			}
-			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
+			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath, "", nil); err != nil {
 				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}
 			return done(), nil

@@ -19,6 +19,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	s3_constants "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -191,7 +192,13 @@ type ObjectVersion struct {
 }
 
 // createDeleteMarker creates a delete marker for versioned delete operations
-func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error) {
+// createDeleteMarker writes a delete-marker version and makes it the latest.
+// When routedOwner is set, the latest-pointer update (and the optional cond) run
+// atomically via FinalizeVersionedWrite on that owner, off the distributed lock;
+// otherwise it uses the lock-based updateLatestVersionInDirectory. A failed
+// routed finalize rolls back the marker file and returns
+// errVersionedPreconditionFailed for a precondition miss.
+func (s3a *S3ApiServer) createDeleteMarker(bucket, object string, routedOwner pb.ServerAddress, cond *filer_pb.WriteCondition) (string, error) {
 	// Clean up the object path first
 	cleanObject := strings.TrimPrefix(object, "/")
 
@@ -242,6 +249,19 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		},
 		Extended: deleteMarkerExtended,
 	}
+	if routedOwner != "" {
+		// Routed: precondition + demote + pointer flip run atomically on the
+		// .versions owner. Roll back the marker file if it does not succeed.
+		if code := s3a.routedVersionedFinalize(routedOwner, bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry, cond); code != s3err.ErrNone {
+			if rbErr := s3a.rmObject(versionsDir, versionFileName, true, false); rbErr != nil {
+				glog.Errorf("createDeleteMarker: rollback %s/%s: %v", versionsDir, versionFileName, rbErr)
+			}
+			return "", finalizeCodeToError(code)
+		}
+		glog.V(2).Infof("createDeleteMarker: routed delete marker %s for %s/%s", versionId, bucket, object)
+		return versionId, nil
+	}
+
 	err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry)
 	if err != nil {
 		glog.Errorf("createDeleteMarker: failed to update latest version in directory: %v", err)

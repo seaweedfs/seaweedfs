@@ -183,7 +183,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			updatedEntry.Attributes.Mtime = t.Unix()
 
-			dstVersionId, etag, currentErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
+			dstVersionId, etag, currentErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry, "", nil)
 			if currentErr != nil {
 				return filerErrorToS3Error(currentErr)
 			}
@@ -338,19 +338,34 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var dstVersionId string
 	var etag string
 
-	// Fast path: for a non-versioned destination, the finalize is a single
-	// CreateEntry, so route it to the destination key's owner filer with the
-	// precondition and let it serialize the write locally, skipping the
-	// distributed lock. Versioned destinations (multi-entry: version file +
-	// latest pointer) keep the lock path below.
+	// Fast path: route the finalize to the destination's owner filer and skip the
+	// distributed lock. A non-versioned destination is a single CreateEntry; a
+	// versioning-enabled destination is a unique version file plus an atomic
+	// latest-pointer update on the .versions owner (FinalizeVersionedWrite).
+	// Suspended versioning (multi-version IsLatest rewrite) keeps the lock path.
 	var finalizeCode s3err.ErrorCode
 	routed := false
-	if dstVersioningState == "" {
-		if cond, condOk := buildWriteCondition(r); condOk {
+	if cond, condOk := buildWriteCondition(r); condOk {
+		switch dstVersioningState {
+		case "":
 			if owner, ownerOk := s3a.routedObjectOwner(dstBucket, dstObject); ownerOk {
 				if code, e, handled := s3a.routedCopyFinalize(owner, dstBucket, dstObject, dstEntry, cond); handled {
 					finalizeCode, etag, routed = code, e, true
 				}
+			}
+		case s3_constants.VersioningEnabled:
+			if owner := s3a.objectWriteOwner(dstBucket, s3_constants.NormalizeObjectKey(dstObject)); owner != "" {
+				var finalizeErr error
+				dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry, owner, cond)
+				switch {
+				case finalizeErr == nil:
+					finalizeCode = s3err.ErrNone
+				case errors.Is(finalizeErr, errVersionedPreconditionFailed):
+					finalizeCode = s3err.ErrPreconditionFailed
+				default:
+					finalizeCode = filerErrorToS3Error(finalizeErr)
+				}
+				routed = true
 			}
 		}
 	}
@@ -359,7 +374,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
 		}, func() s3err.ErrorCode {
 			var finalizeErr error
-			dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry)
+			dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry, "", nil)
 			if finalizeErr != nil {
 				return filerErrorToS3Error(finalizeErr)
 			}
@@ -478,7 +493,11 @@ func (s3a *S3ApiServer) routedCopyFinalize(owner pb.ServerAddress, dstBucket, ds
 	}
 }
 
-func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersioningState string, dstEntry *filer_pb.Entry) (versionId string, etag string, err error) {
+// finalizeCopyDestination writes the copy destination. When routedOwner is set
+// (versioning-enabled destination routed off the distributed lock), the latest-
+// pointer update goes through FinalizeVersionedWrite on that owner, which also
+// evaluates cond; otherwise it uses the lock-based updateLatestVersionInDirectory.
+func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersioningState string, dstEntry *filer_pb.Entry, routedOwner pb.ServerAddress, cond *filer_pb.WriteCondition) (versionId string, etag string, err error) {
 	normalizedObject := s3_constants.NormalizeObjectKey(dstObject)
 	dstPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), normalizedObject))
 	dstDir, dstName := dstPath.DirAndName()
@@ -508,6 +527,18 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 			copyEntryToTarget(entry, dstEntry)
 		}); err != nil {
 			return "", "", err
+		}
+
+		if routedOwner != "" {
+			// Routed: precondition + demote + pointer flip run atomically on the
+			// .versions owner. Roll back the version file if it does not succeed.
+			if code := s3a.routedVersionedFinalize(routedOwner, dstBucket, normalizedObject, versionId, versionFileName, dstEntry, cond); code != s3err.ErrNone {
+				if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+					glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
+				}
+				return "", "", finalizeCodeToError(code)
+			}
+			return versionId, etag, nil
 		}
 
 		if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
