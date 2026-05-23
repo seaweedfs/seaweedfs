@@ -768,14 +768,18 @@ func planECDestinations(at *topology.ActiveTopology, metric *types.VolumeHealthM
 		diskID         uint32
 		shards         []uint32
 	}
-	groups := make(map[string]*diskGroup)
-	var order []string
+	type diskKey struct {
+		node   string
+		diskID uint32
+	}
+	groups := make(map[diskKey]*diskGroup, totalShards)
+	order := make([]diskKey, 0, totalShards)
 	for sid := 0; sid < totalShards; sid++ {
 		d, ok := res.Destinations[sid]
 		if !ok {
 			return nil, nil, fmt.Errorf("EC volume %d: shard %d was not placed", metric.VolumeID, sid)
 		}
-		key := fmt.Sprintf("%s:%d", d.Node, d.DiskID)
+		key := diskKey{node: d.Node, diskID: d.DiskID}
 		g := groups[key]
 		if g == nil {
 			g = &diskGroup{node: d.Node, rack: d.Rack, dc: d.DataCenter, diskID: d.DiskID}
