@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -333,9 +334,75 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		fs.filer.NotifyUpdateEvent(ctx, oldEntry, newEntry, true, fromOtherCluster, signatures)
 		return nil
 
+	case filer_pb.ObjectMutation_RECOMPUTE_LATEST:
+		return fs.applyRecomputeLatest(ctx, m)
+
 	default:
 		return fmt.Errorf("unknown mutation type %v", m.Type)
 	}
+}
+
+// applyRecomputeLatest re-derives the pointer entry (m.Directory/m.Name) from the
+// current contents of recompute.scan_dir, under the transaction's lock. It is
+// mechanical: pick the child that sorts last (descending) or first by name, copy
+// the mapped extended keys from it into the pointer, and store its name under
+// name_to_key. When the scanned directory is empty the pointer keys are cleared.
+// The caller, which knows the versioning scheme, supplies the direction and the
+// key mappings. A missing pointer entry is a no-op (idempotent on replay).
+func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.ObjectMutation) error {
+	rc := m.Recompute
+	if rc == nil {
+		return fmt.Errorf("RECOMPUTE_LATEST requires recompute parameters")
+	}
+
+	pointer, err := fs.filer.FindEntry(ctx, util.NewFullPath(m.Directory, m.Name))
+	if err == filer_pb.ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if pointer.Extended == nil {
+		pointer.Extended = make(map[string][]byte)
+	}
+
+	// The store streams entries ascending by name. For the lowest-name pick we
+	// only need the first entry, so cap the listing at one; for the highest-name
+	// pick we must scan all and keep the last (the store has no reverse order).
+	limit := int64(math.MaxInt32)
+	if !rc.Descending {
+		limit = 1
+	}
+	var chosen *filer.Entry
+	_, listErr := fs.filer.StreamListDirectoryEntries(ctx, util.FullPath(rc.ScanDir), "", false, limit, "", "", "", func(entry *filer.Entry) (bool, error) {
+		chosen = entry
+		return rc.Descending, nil
+	})
+	if listErr != nil {
+		return listErr
+	}
+
+	if chosen == nil {
+		for pointerKey := range rc.CopyExtended {
+			delete(pointer.Extended, pointerKey)
+		}
+		if rc.NameToKey != "" {
+			delete(pointer.Extended, rc.NameToKey)
+		}
+	} else {
+		for pointerKey, sourceKey := range rc.CopyExtended {
+			if v, ok := chosen.Extended[sourceKey]; ok {
+				pointer.Extended[pointerKey] = v
+			} else {
+				delete(pointer.Extended, pointerKey)
+			}
+		}
+		if rc.NameToKey != "" {
+			pointer.Extended[rc.NameToKey] = []byte(chosen.Name())
+		}
+	}
+
+	return fs.filer.UpdateEntry(ctx, pointer, pointer)
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
