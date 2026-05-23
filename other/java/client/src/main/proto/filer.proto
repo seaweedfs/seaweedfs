@@ -292,6 +292,7 @@ message UpdateEntryResponse {
 // from set_extended[prior_latest_key].
 message FinalizeVersionedWriteRequest {
     string lock_key = 13;                // object path; the per-path lock all of this object's writes share
+    string delete_path = 14;             // optional entry to delete under the lock first (suspended delete: the null version)
     string versions_dir = 1;             // full path of <object>/.versions
     map<string, bytes> set_extended = 3; // merge into the .versions directory entry
     repeated string delete_extended = 4; // remove from the .versions directory entry

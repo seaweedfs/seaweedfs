@@ -98,10 +98,11 @@ func versionedPointerExtended(versionId, versionFileName string, versionEntry *f
 // version file and skips the object write lock and gateway precondition. A
 // transport/in-band error maps to InternalError (the client retries); there is
 // no silent non-atomic fallback.
-func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object, versionId, versionFileName string, versionEntry *filer_pb.Entry, cond *filer_pb.WriteCondition) s3err.ErrorCode {
+func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object, versionId, versionFileName string, versionEntry *filer_pb.Entry, cond *filer_pb.WriteCondition, deletePath string) s3err.ErrorCode {
 	set, del := versionedPointerExtended(versionId, versionFileName, versionEntry)
 	req := &filer_pb.FinalizeVersionedWriteRequest{
 		LockKey:               s3a.toFilerPath(bucket, object),
+		DeletePath:            deletePath,
 		VersionsDir:           s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder),
 		SetExtended:           set,
 		DeleteExtended:        del,
@@ -148,7 +149,7 @@ func (s3a *S3ApiServer) versionedAfterCreate(r *http.Request, bucket, object, ve
 	cond, condOk := buildWriteCondition(r)
 	if owner != "" && condOk {
 		return func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-			return s3a.routedVersionedFinalize(owner, bucket, object, versionId, versionFileName, versionEntry, cond)
+			return s3a.routedVersionedFinalize(owner, bucket, object, versionId, versionFileName, versionEntry, cond, "")
 		}, true
 	}
 	return func(versionEntry *filer_pb.Entry) s3err.ErrorCode {

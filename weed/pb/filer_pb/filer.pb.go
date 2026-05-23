@@ -1558,6 +1558,7 @@ func (x *UpdateEntryResponse) GetMetadataEvent() *SubscribeMetadataResponse {
 type FinalizeVersionedWriteRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	LockKey            string                 `protobuf:"bytes,13,opt,name=lock_key,json=lockKey,proto3" json:"lock_key,omitempty"`                                                                                      // object path; the per-path lock all of this object's writes share
+	DeletePath         string                 `protobuf:"bytes,14,opt,name=delete_path,json=deletePath,proto3" json:"delete_path,omitempty"`                                                                             // optional entry to delete under the lock first (suspended delete: the null version)
 	VersionsDir        string                 `protobuf:"bytes,1,opt,name=versions_dir,json=versionsDir,proto3" json:"versions_dir,omitempty"`                                                                           // full path of <object>/.versions
 	SetExtended        map[string][]byte      `protobuf:"bytes,3,rep,name=set_extended,json=setExtended,proto3" json:"set_extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // merge into the .versions directory entry
 	DeleteExtended     []string               `protobuf:"bytes,4,rep,name=delete_extended,json=deleteExtended,proto3" json:"delete_extended,omitempty"`                                                                  // remove from the .versions directory entry
@@ -1609,6 +1610,13 @@ func (*FinalizeVersionedWriteRequest) Descriptor() ([]byte, []int) {
 func (x *FinalizeVersionedWriteRequest) GetLockKey() string {
 	if x != nil {
 		return x.LockKey
+	}
+	return ""
+}
+
+func (x *FinalizeVersionedWriteRequest) GetDeletePath() string {
+	if x != nil {
+		return x.DeletePath
 	}
 	return ""
 }
@@ -5983,9 +5991,11 @@ const file_filer_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"a\n" +
 	"\x13UpdateEntryResponse\x12J\n" +
-	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\x9b\x05\n" +
+	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\xbc\x05\n" +
 	"\x1dFinalizeVersionedWriteRequest\x12\x19\n" +
-	"\block_key\x18\r \x01(\tR\alockKey\x12!\n" +
+	"\block_key\x18\r \x01(\tR\alockKey\x12\x1f\n" +
+	"\vdelete_path\x18\x0e \x01(\tR\n" +
+	"deletePath\x12!\n" +
 	"\fversions_dir\x18\x01 \x01(\tR\vversionsDir\x12[\n" +
 	"\fset_extended\x18\x03 \x03(\v28.filer_pb.FinalizeVersionedWriteRequest.SetExtendedEntryR\vsetExtended\x12'\n" +
 	"\x0fdelete_extended\x18\x04 \x03(\tR\x0edeleteExtended\x12(\n" +

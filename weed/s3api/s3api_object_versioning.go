@@ -198,7 +198,7 @@ type ObjectVersion struct {
 // otherwise it uses the lock-based updateLatestVersionInDirectory. A failed
 // routed finalize rolls back the marker file and returns
 // errVersionedPreconditionFailed for a precondition miss.
-func (s3a *S3ApiServer) createDeleteMarker(bucket, object string, routedOwner pb.ServerAddress, cond *filer_pb.WriteCondition) (string, error) {
+func (s3a *S3ApiServer) createDeleteMarker(bucket, object string, routedOwner pb.ServerAddress, cond *filer_pb.WriteCondition, deleteNullPath string) (string, error) {
 	// Clean up the object path first
 	cleanObject := strings.TrimPrefix(object, "/")
 
@@ -252,7 +252,7 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string, routedOwner pb
 	if routedOwner != "" {
 		// Routed: precondition + demote + pointer flip run atomically on the
 		// .versions owner. Roll back the marker file if it does not succeed.
-		if code := s3a.routedVersionedFinalize(routedOwner, bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry, cond); code != s3err.ErrNone {
+		if code := s3a.routedVersionedFinalize(routedOwner, bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry, cond, deleteNullPath); code != s3err.ErrNone {
 			if rbErr := s3a.rmObject(versionsDir, versionFileName, true, false); rbErr != nil {
 				glog.Errorf("createDeleteMarker: rollback %s/%s: %v", versionsDir, versionFileName, rbErr)
 			}

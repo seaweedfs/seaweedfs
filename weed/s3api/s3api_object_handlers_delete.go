@@ -133,7 +133,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 		return result, s3err.ErrNone
 
 	case versioningState == s3_constants.VersioningEnabled:
-		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object, "", nil)
+		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object, "", nil, "")
 		if err != nil {
 			glog.Errorf("deleteVersionedObject: failed to create delete marker for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
@@ -152,7 +152,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
-		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object, "", nil)
+		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object, "", nil, "")
 		if err != nil {
 			glog.Errorf("deleteVersionedObject: failed to create delete marker for suspended versioning %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
@@ -249,7 +249,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	if !deleteHandled && versionId == "" && versioningState == s3_constants.VersioningEnabled {
 		if cond, condOk := buildDeleteCondition(r); condOk {
 			if owner := s3a.objectWriteOwner(bucket, s3_constants.NormalizeObjectKey(object)); owner != "" {
-				vid, err := s3a.createDeleteMarker(bucket, object, owner, cond)
+				vid, err := s3a.createDeleteMarker(bucket, object, owner, cond, "")
 				switch {
 				case err == nil:
 					deleteResult = deleteMutationResult{versionId: vid, deleteMarker: true}
@@ -258,6 +258,27 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 					deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
 				default:
 					glog.Warningf("DeleteObjectHandler: routed delete marker for %s/%s failed, falling back to lock: %v", bucket, object, err)
+				}
+			}
+		}
+	}
+
+	// Fast path: a suspended-versioning delete (no specific version) removes the
+	// null version (the main object entry) and adds a delete marker — the op does
+	// both atomically under the object-key lock, so it serializes with the (also
+	// routed) suspended PUT. Routed only without If-Match: that condition targets
+	// the main object, not the .versions pointer the op evaluates, so a
+	// conditional suspended delete stays on the lock path.
+	if !deleteHandled && versionId == "" && versioningState == s3_constants.VersioningSuspended {
+		if cond, condOk := buildDeleteCondition(r); condOk && cond.Kind == filer_pb.WriteCondition_NONE {
+			if owner := s3a.objectWriteOwner(bucket, s3_constants.NormalizeObjectKey(object)); owner != "" {
+				nullPath := s3a.toFilerPath(bucket, s3_constants.NormalizeObjectKey(object))
+				vid, err := s3a.createDeleteMarker(bucket, object, owner, cond, nullPath)
+				if err == nil {
+					deleteResult = deleteMutationResult{versionId: vid, deleteMarker: true}
+					deleteCode, deleteHandled = s3err.ErrNone, true
+				} else {
+					glog.Warningf("DeleteObjectHandler: routed suspended delete for %s/%s failed, falling back to lock: %v", bucket, object, err)
 				}
 			}
 		}

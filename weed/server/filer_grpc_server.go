@@ -352,6 +352,16 @@ func (fs *FilerServer) FinalizeVersionedWrite(ctx context.Context, req *filer_pb
 		}
 	}
 
+	// Optional: delete an entry under the same lock first (suspended delete
+	// removes the "null" version at the main object path before adding the
+	// marker). Not-found is fine (idempotent).
+	if req.DeletePath != "" {
+		if derr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(req.DeletePath), false, false, true, req.IsFromOtherCluster, req.Signatures, 0); derr != nil && derr != filer_pb.ErrNotFound {
+			resp.Error = derr.Error()
+			return resp, nil
+		}
+	}
+
 	// 2. Stamp the previously-latest version as noncurrent BEFORE the pointer
 	// flip (so the lifecycle router observes it). Best-effort.
 	newFileName := string(req.SetExtended[req.PriorLatestKey])
