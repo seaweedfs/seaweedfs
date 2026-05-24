@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -254,6 +255,39 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	if req.LockKey == "" {
 		return &filer_pb.ObjectTransactionResponse{Error: "lock_key is required"}, nil
+	}
+
+	// Route-by-key: if this filer is not the ring owner of route_key, forward the
+	// whole transaction to the owner so its per-path lock is the single
+	// serialization point — even when the caller's ring view was stale. is_moved
+	// bounds this to one hop: a forwarded transaction is applied locally, so two
+	// filers that disagree on the owner during a ring change cannot loop.
+	if req.RouteKey != "" && !req.IsMoved && fs.filer.Dlm != nil {
+		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.RouteKey); owner != "" && owner != fs.option.Host {
+			// Rebuild rather than copy the request struct (it carries a mutex);
+			// the pointer/slice fields are shared since the original is not mutated.
+			forwarded := &filer_pb.ObjectTransactionRequest{
+				LockKey:            req.LockKey,
+				Condition:          req.Condition,
+				Mutations:          req.Mutations,
+				IsFromOtherCluster: req.IsFromOtherCluster,
+				Signatures:         req.Signatures,
+				ConditionKey:       req.ConditionKey,
+				RouteKey:           req.RouteKey,
+				IsMoved:            true,
+			}
+			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
+			var resp *filer_pb.ObjectTransactionResponse
+			err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				var e error
+				resp, e = client.ObjectTransaction(ctx, forwarded)
+				return e
+			})
+			if err != nil {
+				return &filer_pb.ObjectTransactionResponse{}, err
+			}
+			return resp, nil
+		}
 	}
 
 	lockPath := util.FullPath(req.LockKey)

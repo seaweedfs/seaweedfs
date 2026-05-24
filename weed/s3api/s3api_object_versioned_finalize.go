@@ -20,7 +20,7 @@ func (s3a *S3ApiServer) objectWriteOwner(bucket, object string) pb.ServerAddress
 	if s3a.objectWriteLockClient == nil {
 		return ""
 	}
-	return s3a.objectWriteLockClient.PrimaryForKey("s3.object.write:" + s3a.toFilerPath(bucket, object))
+	return s3a.objectWriteLockClient.PrimaryForKey(s3a.objectRouteKey(bucket, object))
 }
 
 // latestPointerRecompute builds the RECOMPUTE_LATEST mutation that re-derives an
@@ -65,6 +65,7 @@ func (s3a *S3ApiServer) latestPointerRecompute(bucket, object string, useInverte
 func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool) s3err.ErrorCode {
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   s3a.toFilerPath(bucket, object),
+		RouteKey:  s3a.objectRouteKey(bucket, object),
 		Mutations: []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)},
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)
@@ -116,6 +117,7 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 	cond := wormDeleteCondition(worm, bypass)
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:      s3a.toFilerPath(bucket, object),
+		RouteKey:     s3a.objectRouteKey(bucket, object),
 		ConditionKey: versionsPath + "/" + versionFileName,
 		Condition:    cond,
 		Mutations: []*filer_pb.ObjectMutation{
@@ -148,6 +150,7 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 	dir, name := fullpath.DirAndName()
 	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
 		LockKey:   string(fullpath),
+		RouteKey:  s3a.objectRouteKey(bucket, object),
 		Condition: wormDeleteCondition(worm, bypass),
 		Mutations: []*filer_pb.ObjectMutation{
 			{Type: filer_pb.ObjectMutation_DELETE, Directory: dir, Name: name, IsDeleteData: true},
