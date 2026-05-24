@@ -39,14 +39,14 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 	}
 }
 
-// SetRing updates the client-side view of the filer lock ring. It mirrors the
-// master's LockRingUpdate broadcasts so the client computes the same primary
-// the filers do. Updates older than the current version are ignored to tolerate
-// reordered broadcasts; version 0 is always accepted (bootstrap).
+// SetRing mirrors the master's LockRingUpdate so the client computes the same
+// primary the filers do. A non-zero version at or below the current one is
+// ignored once a ring exists, dropping reordered and redundant broadcasts;
+// version 0 always applies (bootstrap).
 func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
 	lc.ringMu.Lock()
 	defer lc.ringMu.Unlock()
-	if version != 0 && version < lc.ringVersion {
+	if version != 0 && version <= lc.ringVersion && lc.ring != nil {
 		return
 	}
 	lc.ringVersion = version
