@@ -16,22 +16,26 @@ import (
 
 // routableWriteOwner returns the owner filer for an object's writes, or "" to
 // keep them on the distributed lock. All writes to one object (versioned,
-// suspended, non-versioned) share the owner; object-lock buckets stay on the
-// lock until WORM-guard routing. Any lookup error also falls back.
+// suspended, non-versioned) share the owner. Any lookup error falls back.
 func (s3a *S3ApiServer) routableWriteOwner(bucket, object string) pb.ServerAddress {
 	if object == "" || s3a.objectWriteLockClient == nil {
 		return ""
 	}
-	if locked, err := s3a.isObjectLockEnabled(bucket); err != nil || locked {
-		return ""
-	}
+	// Object-lock PUTs route: a versioned PUT creates a new version (never an
+	// overwrite of a locked one), and a non-versioned overwrite is WORM-checked
+	// gateway-side before dispatch. WORM-checked deletes use routedObjectOwner.
 	return s3a.objectWriteLockClient.PrimaryForKey(fmt.Sprintf("s3.object.write:%s", s3a.toFilerPath(bucket, object)))
 }
 
-// routedObjectOwner is routableWriteOwner restricted to non-versioned buckets,
-// for the unversioned DELETE fast path.
+// routedObjectOwner is routableWriteOwner restricted to non-versioned,
+// non-object-lock buckets, for the unversioned DELETE fast path.
 func (s3a *S3ApiServer) routedObjectOwner(bucket, object string) (pb.ServerAddress, bool) {
 	if configured, err := s3a.isVersioningConfigured(bucket); err != nil || configured {
+		return "", false
+	}
+	// An unversioned object-lock delete enforces WORM in the lock path; keep it
+	// on the lock rather than routing past the check.
+	if locked, err := s3a.isObjectLockEnabled(bucket); err != nil || locked {
 		return "", false
 	}
 	owner := s3a.routableWriteOwner(bucket, object)
