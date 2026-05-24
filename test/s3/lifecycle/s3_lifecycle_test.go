@@ -89,19 +89,51 @@ var clusterWritableOnce sync.Once
 func ensureClusterWritable(t *testing.T, c *s3.Client) {
 	t.Helper()
 	clusterWritableOnce.Do(func() {
-		ctx := context.Background()
 		bucket := uniqueBucket("warmup")
-		if _, err := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)}); err != nil {
-			return // bucket create is a metadata op, not gated on volumes; leave diagnosis to the test
-		}
-		defer c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
 		deadline := time.Now().Add(60 * time.Second)
+
+		// Bound each call so a single hung request can't run past the deadline.
+		try := func(fn func(ctx context.Context) error) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			return fn(ctx)
+		}
+
+		// CreateBucket is a metadata op, but on a cold cluster the filer itself may
+		// not be ready yet, so retry it within the deadline rather than abandoning
+		// the whole warmup (and the PutObject probe) on the first error.
+		created := false
 		for attempt := 1; time.Now().Before(deadline); attempt++ {
-			_, err := c.PutObject(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(bucket), Key: aws.String("warmup"), Body: strings.NewReader("ok"),
+			if err := try(func(ctx context.Context) error {
+				_, e := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+				return e
+			}); err == nil {
+				created = true
+				break
+			}
+			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+		}
+		if !created {
+			t.Logf("warmup: could not create probe bucket within 60s; proceeding")
+			return
+		}
+		defer try(func(ctx context.Context) error {
+			_, e := c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+			return e
+		})
+
+		for attempt := 1; time.Now().Before(deadline); attempt++ {
+			err := try(func(ctx context.Context) error {
+				_, e := c.PutObject(ctx, &s3.PutObjectInput{
+					Bucket: aws.String(bucket), Key: aws.String("warmup"), Body: strings.NewReader("ok"),
+				})
+				return e
 			})
 			if err == nil {
-				c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String("warmup")})
+				try(func(ctx context.Context) error {
+					_, e := c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String("warmup")})
+					return e
+				})
 				if attempt > 1 {
 					t.Logf("cluster became writable after %d probe(s)", attempt)
 				}
