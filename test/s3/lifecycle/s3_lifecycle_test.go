@@ -92,45 +92,77 @@ func ensureClusterWritable(t *testing.T, c *s3.Client) {
 		bucket := uniqueBucket("warmup")
 		deadline := time.Now().Add(60 * time.Second)
 
-		// Bound each call so a single hung request can't run past the deadline.
-		try := func(fn func(ctx context.Context) error) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// try runs fn under a bounded context so a single hung call can't block.
+		try := func(timeout time.Duration, fn func(ctx context.Context) error) error {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			return fn(ctx)
+		}
+		// probe is a try whose timeout is clamped to the time left before the
+		// deadline, so the whole warmup stays within the budget; ok=false means
+		// the budget is exhausted and the caller should stop.
+		probe := func(fn func(ctx context.Context) error) (err error, ok bool) {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return nil, false
+			}
+			if remaining > 10*time.Second {
+				remaining = 10 * time.Second
+			}
+			return try(remaining, fn), true
+		}
+		// backoff sleeps attempt*250ms, never past the deadline.
+		backoff := func(attempt int) {
+			d := time.Duration(attempt) * 250 * time.Millisecond
+			if left := time.Until(deadline); d > left {
+				d = left
+			}
+			if d > 0 {
+				time.Sleep(d)
+			}
 		}
 
 		// CreateBucket is a metadata op, but on a cold cluster the filer itself may
 		// not be ready yet, so retry it within the deadline rather than abandoning
 		// the whole warmup (and the PutObject probe) on the first error.
 		created := false
-		for attempt := 1; time.Now().Before(deadline); attempt++ {
-			if err := try(func(ctx context.Context) error {
+		for attempt := 1; ; attempt++ {
+			err, ok := probe(func(ctx context.Context) error {
 				_, e := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 				return e
-			}); err == nil {
+			})
+			if !ok {
+				break
+			}
+			if err == nil {
 				created = true
 				break
 			}
-			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+			backoff(attempt)
 		}
 		if !created {
 			t.Logf("warmup: could not create probe bucket within 60s; proceeding")
 			return
 		}
-		defer try(func(ctx context.Context) error {
+		// Cleanup gets a fresh timeout (not the warmup budget) so teardown runs
+		// even when the probe loop used the full window.
+		defer try(10*time.Second, func(ctx context.Context) error {
 			_, e := c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
 			return e
 		})
 
-		for attempt := 1; time.Now().Before(deadline); attempt++ {
-			err := try(func(ctx context.Context) error {
+		for attempt := 1; ; attempt++ {
+			err, ok := probe(func(ctx context.Context) error {
 				_, e := c.PutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(bucket), Key: aws.String("warmup"), Body: strings.NewReader("ok"),
 				})
 				return e
 			})
+			if !ok {
+				break
+			}
 			if err == nil {
-				try(func(ctx context.Context) error {
+				try(10*time.Second, func(ctx context.Context) error {
 					_, e := c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String("warmup")})
 					return e
 				})
@@ -139,7 +171,7 @@ func ensureClusterWritable(t *testing.T, c *s3.Client) {
 				}
 				return
 			}
-			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+			backoff(attempt)
 		}
 		t.Logf("warmup: cluster not confirmed writable within 60s; proceeding")
 	})
