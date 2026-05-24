@@ -171,3 +171,38 @@ func TestHashRing_GetPrimary(t *testing.T) {
 	primary, _ := hr.GetPrimaryAndBackup("mykey")
 	assert.Equal(t, primary, hr.GetPrimary("mykey"))
 }
+
+// The ring must be identical on every node holding the same server set,
+// regardless of the order servers were added or supplied. Build rings several
+// ways and assert they agree on the primary for a wide range of keys.
+func TestHashRing_OrderIndependent(t *testing.T) {
+	servers := []pb.ServerAddress{
+		"filer-a:8888", "filer-b:8888", "filer-c:8888", "filer-d:8888", "filer-e:8888",
+	}
+
+	bySet := NewHashRing(50)
+	bySet.SetServers(servers)
+
+	byReverse := NewHashRing(50)
+	rev := append([]pb.ServerAddress(nil), servers...)
+	for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+		rev[i], rev[j] = rev[j], rev[i]
+	}
+	byReverse.SetServers(rev)
+
+	byAdd := NewHashRing(50)
+	for _, s := range []pb.ServerAddress{"filer-c:8888", "filer-e:8888", "filer-a:8888", "filer-d:8888", "filer-b:8888"} {
+		byAdd.AddServer(s)
+	}
+
+	for i := 0; i < 5000; i++ {
+		key := fmt.Sprintf("s3.object.write:/buckets/b/obj-%d", i)
+		p := bySet.GetPrimary(key)
+		if got := byReverse.GetPrimary(key); got != p {
+			t.Fatalf("reverse-order ring disagrees on %q: %s vs %s", key, got, p)
+		}
+		if got := byAdd.GetPrimary(key); got != p {
+			t.Fatalf("add-order ring disagrees on %q: %s vs %s", key, got, p)
+		}
+	}
+}
