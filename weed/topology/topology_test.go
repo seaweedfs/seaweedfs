@@ -573,3 +573,56 @@ func TestLookupDataNodeByAddress(t *testing.T) {
 		t.Fatalf("address must be unregistered after UnRegisterDataNode, got %v", got)
 	}
 }
+
+// TestSyncDataNodeRegistrationReRegistersMissingVolume reproduces the divergence
+// where a volume present on a data node (shown by volume.list / admin UI) is
+// missing from the lookup index, which surfaces as "volume id not found" on
+// LookupVolume. SetVolumeUnavailable (used by
+// UnRegisterDataNode on a disconnect) drops the volume from the index, and the
+// reconnecting full heartbeat used to skip it because it was no longer "new" to
+// the disk map. The full heartbeat now self-heals.
+func TestSyncDataNodeRegistrationReRegistersMissingVolume(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+
+	vid := needle.VolumeId(18994)
+	volumeMessage := &master_pb.VolumeInformationMessage{
+		Id:               uint32(vid),
+		Size:             100,
+		Collection:       "drr",
+		ReplicaPlacement: uint32(0),
+		Version:          uint32(needle.GetCurrentVersion()),
+		Ttl:              0,
+	}
+
+	// Initial full heartbeat registers the volume in the lookup index.
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{volumeMessage}, dn)
+	if got := topo.Lookup("", vid); len(got) != 1 {
+		t.Fatalf("after registration: lookup %d got %v, want 1 location", vid, got)
+	}
+
+	// Drop the volume from the index the way UnRegisterDataNode does, but leave
+	// it in the data node's disk map (the reconnecting heartbeat did not report
+	// it as new).
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("drr", rp, needle.EMPTY_TTL, types.HardDriveType)
+	vl.SetVolumeUnavailable(dn, vid)
+
+	// The empty entry must be removed, otherwise Lookup returns a non-nil empty
+	// list that still reads as "not found".
+	if got := topo.Lookup("", vid); got != nil {
+		t.Fatalf("after SetVolumeUnavailable: expected lookup miss, got %v", got)
+	}
+	if _, err := dn.GetVolumesById(vid); err != nil {
+		t.Fatalf("volume %d should still be in the data node disk map: %v", vid, err)
+	}
+
+	// The next full heartbeat re-registers the volume even though it is not new.
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{volumeMessage}, dn)
+	if got := topo.Lookup("", vid); len(got) != 1 {
+		t.Fatalf("after self-heal: lookup %d got %v, want 1 location", vid, got)
+	}
+}
