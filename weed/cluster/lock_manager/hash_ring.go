@@ -145,7 +145,18 @@ func (hr *HashRing) rebuildRing() {
 	hr.vnodeToServer = make(map[uint32]pb.ServerAddress, len(hr.servers)*hr.vnodeCount)
 	hr.sortedHashes = make([]uint32, 0, len(hr.servers)*hr.vnodeCount)
 
+	// Iterate servers in a deterministic order. Map iteration order is randomized
+	// per process, so on the rare vnode-hash collision the last writer into
+	// vnodeToServer would otherwise differ between nodes, making them disagree on
+	// the primary for keys near that slot. Sorting keeps the ring identical on
+	// every node that holds the same server set.
+	servers := make([]pb.ServerAddress, 0, len(hr.servers))
 	for server := range hr.servers {
+		servers = append(servers, server)
+	}
+	sort.Slice(servers, func(i, j int) bool { return servers[i] < servers[j] })
+
+	for _, server := range servers {
 		for i := 0; i < hr.vnodeCount; i++ {
 			vnodeKey := vnodeKeyFor(server, i)
 			hash := hashKey(vnodeKey)
