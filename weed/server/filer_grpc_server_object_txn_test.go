@@ -490,3 +490,73 @@ func TestObjectTransactionRecomputeDemoteAndAttrs(t *testing.T) {
 		t.Errorf("new latest v2.ver should not be demoted")
 	}
 }
+
+// A version-specific delete locks the object (condition_key checks WORM on the
+// version), recomputes the pointer excluding the version (repoint-before-delete),
+// then deletes it. A legal-hold guard blocks the delete and preserves the entry.
+func TestObjectTransactionVersionDeleteWithWorm(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	ver := func(inode uint64, ext map[string][]byte) *filer.Entry {
+		return &filer.Entry{Attr: filer.Attr{Inode: inode, Mtime: now, Crtime: now, Mode: 0644}, Extended: ext}
+	}
+	seed := func(latestLocked bool) map[string]*filer.Entry {
+		vcExt := map[string][]byte{"vid": []byte("v3")}
+		if latestLocked {
+			vcExt["legalhold"] = []byte("ON")
+		}
+		return map[string]*filer.Entry{
+			"/buckets/b/obj/.versions": {
+				Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
+				Extended: map[string][]byte{"latestName": []byte("v_c"), "latestVid": []byte("v3")},
+			},
+			"/buckets/b/obj/.versions/v_a": ver(10, map[string][]byte{"vid": []byte("v1")}),
+			"/buckets/b/obj/.versions/v_b": ver(11, map[string][]byte{"vid": []byte("v2")}),
+			"/buckets/b/obj/.versions/v_c": ver(12, vcExt),
+		}
+	}
+	mkReq := func() *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey:      "/buckets/b/obj",
+			ConditionKey: "/buckets/b/obj/.versions/v_c",
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+				{Kind: filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL, ExtKey: "legalhold", ExtValue: "ON"},
+			}},
+			Mutations: []*filer_pb.ObjectMutation{
+				{Type: filer_pb.ObjectMutation_RECOMPUTE_LATEST, Directory: "/buckets/b/obj", Name: ".versions",
+					Recompute: &filer_pb.Recompute{ScanDir: "/buckets/b/obj/.versions", Descending: true, ExcludeName: "v_c",
+						NameToKey: "latestName", CopyExtended: map[string]string{"latestVid": "vid"}}},
+				{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b/obj/.versions", Name: "v_c"},
+			},
+		}
+	}
+
+	// Legal hold ON: the WORM guard blocks; version and pointer untouched.
+	fs, store := newTxnTestServer(seed(true))
+	resp, err := fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("locked version delete should fail precondition, got code=%v err=%q", resp.ErrorCode, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions/v_c"]; !ok {
+		t.Errorf("locked version must not be deleted")
+	}
+	if got := string(store.entries["/buckets/b/obj/.versions"].Extended["latestName"]); got != "v_c" {
+		t.Errorf("pointer must be unchanged when delete is blocked, got %s", got)
+	}
+
+	// No legal hold: pointer recomputes to v_b (excluding v_c), then v_c is deleted.
+	fs, store = newTxnTestServer(seed(false))
+	resp, err = fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("unlocked delete failed: err=%v resp=%q", err, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions/v_c"]; ok {
+		t.Errorf("unlocked version should be deleted")
+	}
+	ptr := store.entries["/buckets/b/obj/.versions"].Extended
+	if string(ptr["latestName"]) != "v_b" || string(ptr["latestVid"]) != "v2" {
+		t.Errorf("pointer should recompute to v_b/v2, got name=%s vid=%s", ptr["latestName"], ptr["latestVid"])
+	}
+}

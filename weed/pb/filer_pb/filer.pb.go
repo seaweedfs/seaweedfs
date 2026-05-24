@@ -1559,6 +1559,7 @@ type Recompute struct {
 	MtimeToKey    string                 `protobuf:"bytes,6,opt,name=mtime_to_key,json=mtimeToKey,proto3" json:"mtime_to_key,omitempty"`                                                                               // if set, store the chosen child's Mtime (decimal) under this pointer key
 	DemoteKey     string                 `protobuf:"bytes,7,opt,name=demote_key,json=demoteKey,proto3" json:"demote_key,omitempty"`                                                                                    // if set, stamp demote_value on the prior name_to_key target when it changes
 	DemoteValue   []byte                 `protobuf:"bytes,8,opt,name=demote_value,json=demoteValue,proto3" json:"demote_value,omitempty"`                                                                              // value for demote_key
+	ExcludeName   string                 `protobuf:"bytes,9,opt,name=exclude_name,json=excludeName,proto3" json:"exclude_name,omitempty"`                                                                              // if set, skip this child when scanning (e.g. a version about to be deleted)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1649,6 +1650,13 @@ func (x *Recompute) GetDemoteValue() []byte {
 	return nil
 }
 
+func (x *Recompute) GetExcludeName() string {
+	if x != nil {
+		return x.ExcludeName
+	}
+	return ""
+}
+
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
 // respect to other writers of the same object, by holding the filer's per-path
 // lock on lock_key for the whole transaction. The optional condition is checked
@@ -1661,6 +1669,7 @@ type ObjectTransactionRequest struct {
 	Mutations          []*ObjectMutation      `protobuf:"bytes,3,rep,name=mutations,proto3" json:"mutations,omitempty"`
 	IsFromOtherCluster bool                   `protobuf:"varint,4,opt,name=is_from_other_cluster,json=isFromOtherCluster,proto3" json:"is_from_other_cluster,omitempty"`
 	Signatures         []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
+	ConditionKey       string                 `protobuf:"bytes,6,opt,name=condition_key,json=conditionKey,proto3" json:"condition_key,omitempty"` // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1728,6 +1737,13 @@ func (x *ObjectTransactionRequest) GetSignatures() []int32 {
 		return x.Signatures
 	}
 	return nil
+}
+
+func (x *ObjectTransactionRequest) GetConditionKey() string {
+	if x != nil {
+		return x.ConditionKey
+	}
+	return ""
 }
 
 type ObjectTransactionResponse struct {
@@ -5935,6 +5951,8 @@ type WriteCondition_Clause struct {
 	AllowWeak     bool                   `protobuf:"varint,4,opt,name=allow_weak,json=allowWeak,proto3" json:"allow_weak,omitempty"` // compare ETags ignoring the weak (W/) marker
 	ExtKey        string                 `protobuf:"bytes,5,opt,name=ext_key,json=extKey,proto3" json:"ext_key,omitempty"`           // extended attribute name for IF_EXTENDED_* kinds
 	ExtValue      string                 `protobuf:"bytes,6,opt,name=ext_value,json=extValue,proto3" json:"ext_value,omitempty"`     // blocking value for IF_EXTENDED_NOT_EQUAL
+	GateKey       string                 `protobuf:"bytes,7,opt,name=gate_key,json=gateKey,proto3" json:"gate_key,omitempty"`        // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
+	GateValue     string                 `protobuf:"bytes,8,opt,name=gate_value,json=gateValue,proto3" json:"gate_value,omitempty"`  // gate value (e.g. retention mode COMPLIANCE for governance bypass)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6007,6 +6025,20 @@ func (x *WriteCondition_Clause) GetExtKey() string {
 func (x *WriteCondition_Clause) GetExtValue() string {
 	if x != nil {
 		return x.ExtValue
+	}
+	return ""
+}
+
+func (x *WriteCondition_Clause) GetGateKey() string {
+	if x != nil {
+		return x.GateKey
+	}
+	return ""
+}
+
+func (x *WriteCondition_Clause) GetGateValue() string {
+	if x != nil {
+		return x.GateValue
 	}
 	return ""
 }
@@ -6343,9 +6375,9 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x12=\n" +
 	"\x1bskip_check_parent_directory\x18\x06 \x01(\bR\x18skipCheckParentDirectory\x126\n" +
-	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\"\xd9\x03\n" +
+	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\"\x93\x04\n" +
 	"\x0eWriteCondition\x129\n" +
-	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\xc3\x01\n" +
+	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\xfd\x01\n" +
 	"\x06Clause\x121\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1d.filer_pb.WriteCondition.KindR\x04kind\x12\x14\n" +
 	"\x05etags\x18\x02 \x03(\tR\x05etags\x12\x1b\n" +
@@ -6353,7 +6385,10 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"allow_weak\x18\x04 \x01(\bR\tallowWeak\x12\x17\n" +
 	"\aext_key\x18\x05 \x01(\tR\x06extKey\x12\x1b\n" +
-	"\text_value\x18\x06 \x01(\tR\bextValue\"\xc5\x01\n" +
+	"\text_value\x18\x06 \x01(\tR\bextValue\x12\x19\n" +
+	"\bgate_key\x18\a \x01(\tR\agateKey\x12\x1d\n" +
+	"\n" +
+	"gate_value\x18\b \x01(\tR\tgateValue\"\xc5\x01\n" +
 	"\x04Kind\x12\b\n" +
 	"\x04NONE\x10\x00\x12\x11\n" +
 	"\rIF_NOT_EXISTS\x10\x01\x12\r\n" +
@@ -6386,7 +6421,7 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"\x06DELETE\x10\x01\x12\x12\n" +
 	"\x0ePATCH_EXTENDED\x10\x02\x12\x14\n" +
-	"\x10RECOMPUTE_LATEST\x10\x03\"\xf7\x02\n" +
+	"\x10RECOMPUTE_LATEST\x10\x03\"\x9a\x03\n" +
 	"\tRecompute\x12\x19\n" +
 	"\bscan_dir\x18\x01 \x01(\tR\ascanDir\x12\x1e\n" +
 	"\n" +
@@ -6399,10 +6434,11 @@ const file_filer_proto_rawDesc = "" +
 	"mtimeToKey\x12\x1d\n" +
 	"\n" +
 	"demote_key\x18\a \x01(\tR\tdemoteKey\x12!\n" +
-	"\fdemote_value\x18\b \x01(\fR\vdemoteValue\x1a?\n" +
+	"\fdemote_value\x18\b \x01(\fR\vdemoteValue\x12!\n" +
+	"\fexclude_name\x18\t \x01(\tR\vexcludeName\x1a?\n" +
 	"\x11CopyExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf8\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9d\x02\n" +
 	"\x18ObjectTransactionRequest\x12\x19\n" +
 	"\block_key\x18\x01 \x01(\tR\alockKey\x126\n" +
 	"\tcondition\x18\x02 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x126\n" +
@@ -6410,7 +6446,8 @@ const file_filer_proto_rawDesc = "" +
 	"\x15is_from_other_cluster\x18\x04 \x01(\bR\x12isFromOtherCluster\x12\x1e\n" +
 	"\n" +
 	"signatures\x18\x05 \x03(\x05R\n" +
-	"signatures\"f\n" +
+	"signatures\x12#\n" +
+	"\rcondition_key\x18\x06 \x01(\tR\fconditionKey\"f\n" +
 	"\x19ObjectTransactionResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x123\n" +
 	"\n" +
