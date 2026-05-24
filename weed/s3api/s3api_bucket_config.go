@@ -573,6 +573,7 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 	m.Name = bucket
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   bucketPath,
+		RouteKey:  "s3.object.write:" + bucketPath,
 		Mutations: []*filer_pb.ObjectMutation{m},
 	}
 	txn := func(client filer_pb.SeaweedFilerClient) error {

@@ -351,6 +351,8 @@ message ObjectTransactionRequest {
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
     string condition_key = 6;
+    string route_key = 7;              // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
+    bool is_moved = 8;                 // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
 }
 
 message ObjectTransactionResponse {

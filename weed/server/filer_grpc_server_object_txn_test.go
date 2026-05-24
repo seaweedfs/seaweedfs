@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -593,5 +595,69 @@ func TestObjectTransactionPatchTouchMtime(t *testing.T) {
 	}
 	if string(e.Extended["X-Amz-Meta-new"]) != "2" {
 		t.Errorf("new meta not set: %v", e.Extended)
+	}
+}
+
+// withRing attaches a Dlm whose ring contains exactly the given servers and sets
+// the filer's own host, so route_key resolution in ObjectTransaction is decided
+// by who owns the single-server ring.
+func withRing(fs *FilerServer, self pb.ServerAddress, servers ...pb.ServerAddress) {
+	dlm := lock_manager.NewDistributedLockManager(self)
+	dlm.LockRing.SetSnapshot(servers, 1)
+	fs.filer.Dlm = dlm
+	fs.option.Host = self
+}
+
+// When this filer owns route_key, the transaction applies locally rather than
+// forwarding to itself.
+func TestObjectTransactionRouteKeyOwnerAppliesLocally(t *testing.T) {
+	self := pb.ServerAddress("localhost:1")
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
+	})
+	withRing(fs, self, self)
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey:  "/buckets/b/obj",
+		RouteKey: "s3.object.write:/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets/b", Name: "obj",
+			SetExtended: map[string][]byte{"X-Amz-Meta-k": []byte("v")},
+		}},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if string(store.entries["/buckets/b/obj"].Extended["X-Amz-Meta-k"]) != "v" {
+		t.Errorf("mutation should have applied locally: %v", store.entries["/buckets/b/obj"].Extended)
+	}
+}
+
+// A forwarded transaction (is_moved) applies locally even when the ring names a
+// different owner: is_moved bounds forwarding to a single hop, so two filers that
+// disagree on the owner during a ring change cannot loop. If is_moved were
+// ignored, this would attempt to dial the bogus owner instead of applying.
+func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
+	self := pb.ServerAddress("localhost:1")
+	other := pb.ServerAddress("localhost:2")
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
+	})
+	withRing(fs, self, other) // ring owner is "other", not self
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey:  "/buckets/b/obj",
+		RouteKey: "s3.object.write:/buckets/b/obj",
+		IsMoved:  true,
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets/b", Name: "obj",
+			SetExtended: map[string][]byte{"X-Amz-Meta-k": []byte("v")},
+		}},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if string(store.entries["/buckets/b/obj"].Extended["X-Amz-Meta-k"]) != "v" {
+		t.Errorf("forwarded txn should apply locally: %v", store.entries["/buckets/b/obj"].Extended)
 	}
 }

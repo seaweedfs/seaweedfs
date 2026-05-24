@@ -1678,6 +1678,8 @@ type ObjectTransactionRequest struct {
 	IsFromOtherCluster bool                   `protobuf:"varint,4,opt,name=is_from_other_cluster,json=isFromOtherCluster,proto3" json:"is_from_other_cluster,omitempty"`
 	Signatures         []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
 	ConditionKey       string                 `protobuf:"bytes,6,opt,name=condition_key,json=conditionKey,proto3" json:"condition_key,omitempty"` // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
+	RouteKey           string                 `protobuf:"bytes,7,opt,name=route_key,json=routeKey,proto3" json:"route_key,omitempty"`             // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
+	IsMoved            bool                   `protobuf:"varint,8,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`               // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1752,6 +1754,20 @@ func (x *ObjectTransactionRequest) GetConditionKey() string {
 		return x.ConditionKey
 	}
 	return ""
+}
+
+func (x *ObjectTransactionRequest) GetRouteKey() string {
+	if x != nil {
+		return x.RouteKey
+	}
+	return ""
+}
+
+func (x *ObjectTransactionRequest) GetIsMoved() bool {
+	if x != nil {
+		return x.IsMoved
+	}
+	return false
 }
 
 type ObjectTransactionResponse struct {
@@ -6448,7 +6464,7 @@ const file_filer_proto_rawDesc = "" +
 	"\fexclude_name\x18\t \x01(\tR\vexcludeName\x1a?\n" +
 	"\x11CopyExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9d\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd5\x02\n" +
 	"\x18ObjectTransactionRequest\x12\x19\n" +
 	"\block_key\x18\x01 \x01(\tR\alockKey\x126\n" +
 	"\tcondition\x18\x02 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x126\n" +
@@ -6457,7 +6473,9 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x12#\n" +
-	"\rcondition_key\x18\x06 \x01(\tR\fconditionKey\"f\n" +
+	"\rcondition_key\x18\x06 \x01(\tR\fconditionKey\x12\x1b\n" +
+	"\troute_key\x18\a \x01(\tR\brouteKey\x12\x19\n" +
+	"\bis_moved\x18\b \x01(\bR\aisMoved\"f\n" +
 	"\x19ObjectTransactionResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x123\n" +
 	"\n" +
