@@ -238,6 +238,17 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
+	// Versioned/suspended delete with no specific version: route off the lock when
+	// the bucket has an owner. createDeleteMarker routes its own pointer flip;
+	// object-lock buckets are excluded by routableWriteOwner and stay on the lock,
+	// and the If-Match precondition was already checked above. A specific-version
+	// delete keeps the lock (its recompute-after-delete is a separate change).
+	if !deleteHandled && versioningConfigured && versionId == "" {
+		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
+			deleteResult, deleteCode = s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
+			deleteHandled = true
+		}
+	}
 	if !deleteHandled {
 		deleteCode = s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
 			return s3a.checkDeleteIfMatch(bucket, object, versionId, versioningState, r.Header.Get(s3_constants.IfMatch), s3err.ErrPreconditionFailed)
