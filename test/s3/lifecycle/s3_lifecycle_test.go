@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,7 +70,47 @@ func s3Client(t *testing.T) *s3.Client {
 			})),
 	)
 	require.NoError(t, err)
-	return s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })
+	ensureClusterWritable(t, client)
+	return client
+}
+
+var clusterWritableOnce sync.Once
+
+// ensureClusterWritable blocks until the cluster can actually serve a write,
+// absorbing the volume-growth warmup window after a fresh start. The Makefile
+// only waits for the server process to be up ("server up after N s"); it does
+// not wait for a writable volume, so the first PutObject can race volume growth
+// and fail with a transient 500 (assign volume: DeadlineExceeded) — the source
+// of the lifecycle-test flakes. Probing one throwaway write here, once per
+// process, warms growth so every test's first real write is past that window.
+// Best-effort: if it never becomes writable, the test's own PutObject surfaces
+// the failure normally.
+func ensureClusterWritable(t *testing.T, c *s3.Client) {
+	t.Helper()
+	clusterWritableOnce.Do(func() {
+		ctx := context.Background()
+		bucket := uniqueBucket("warmup")
+		if _, err := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)}); err != nil {
+			return // bucket create is a metadata op, not gated on volumes; leave diagnosis to the test
+		}
+		defer c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+		deadline := time.Now().Add(60 * time.Second)
+		for attempt := 1; time.Now().Before(deadline); attempt++ {
+			_, err := c.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(bucket), Key: aws.String("warmup"), Body: strings.NewReader("ok"),
+			})
+			if err == nil {
+				c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String("warmup")})
+				if attempt > 1 {
+					t.Logf("cluster became writable after %d probe(s)", attempt)
+				}
+				return
+			}
+			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+		}
+		t.Logf("warmup: cluster not confirmed writable within 60s; proceeding")
+	})
 }
 
 func filerClient(t *testing.T) (filer_pb.SeaweedFilerClient, func()) {
