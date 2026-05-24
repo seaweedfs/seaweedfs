@@ -143,6 +143,109 @@ func TestObjectTransactionPreconditionAborts(t *testing.T) {
 	}
 }
 
+// Deleting the latest version and recomputing re-points the pointer at the new
+// highest-named remaining version; the scan runs under the transaction lock.
+func TestObjectTransactionRecomputeLatest(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	ver := func(id string) *filer.Entry {
+		return &filer.Entry{
+			Attr:     filer.Attr{Inode: 10, Mtime: now, Crtime: now, Mode: 0644},
+			Extended: map[string][]byte{"vid": []byte(id), "etag": []byte("etag-" + id)},
+		}
+	}
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj/.versions": {
+			Attr: filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
+			Extended: map[string][]byte{
+				"latestVid": []byte("v3"), "latestEtag": []byte("etag-v3"), "latestName": []byte("v3.ver"),
+			},
+		},
+		"/buckets/b/obj/.versions/v1.ver": ver("v1"),
+		"/buckets/b/obj/.versions/v2.ver": ver("v2"),
+		"/buckets/b/obj/.versions/v3.ver": ver("v3"),
+	})
+
+	recompute := func() *filer_pb.ObjectMutation {
+		return &filer_pb.ObjectMutation{
+			Type: filer_pb.ObjectMutation_RECOMPUTE_LATEST, Directory: "/buckets/b/obj", Name: ".versions",
+			Recompute: &filer_pb.Recompute{
+				ScanDir:      "/buckets/b/obj/.versions",
+				Descending:   true,
+				CopyExtended: map[string]string{"latestVid": "vid", "latestEtag": "etag"},
+				NameToKey:    "latestName",
+			},
+		}
+	}
+
+	// Delete the latest (v3); recompute should pick v2.
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b/obj/.versions", Name: "v3.ver"},
+			recompute(),
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	ptr := store.entries["/buckets/b/obj/.versions"].Extended
+	if string(ptr["latestVid"]) != "v2" || string(ptr["latestEtag"]) != "etag-v2" || string(ptr["latestName"]) != "v2.ver" {
+		t.Fatalf("after deleting v3, pointer = vid:%s etag:%s name:%s; want v2",
+			ptr["latestVid"], ptr["latestEtag"], ptr["latestName"])
+	}
+
+	// Delete the remaining versions; recompute on an empty dir clears the pointer.
+	resp, err = fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b/obj/.versions", Name: "v2.ver"},
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b/obj/.versions", Name: "v1.ver"},
+			recompute(),
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	ptr = store.entries["/buckets/b/obj/.versions"].Extended
+	for _, k := range []string{"latestVid", "latestEtag", "latestName"} {
+		if _, ok := ptr[k]; ok {
+			t.Errorf("pointer key %q should be cleared when no versions remain", k)
+		}
+	}
+}
+
+// With descending=false the lowest-named child is chosen (the listing is capped
+// at one entry).
+func TestObjectTransactionRecomputeAscending(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	ver := func(id string) *filer.Entry {
+		return &filer.Entry{Attr: filer.Attr{Inode: 10, Mtime: now, Crtime: now, Mode: 0644}, Extended: map[string][]byte{"vid": []byte(id)}}
+	}
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj/.versions":        {Attr: filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)}, Extended: map[string][]byte{}},
+		"/buckets/b/obj/.versions/v1.ver": ver("v1"),
+		"/buckets/b/obj/.versions/v2.ver": ver("v2"),
+	})
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_RECOMPUTE_LATEST, Directory: "/buckets/b/obj", Name: ".versions",
+				Recompute: &filer_pb.Recompute{
+					ScanDir:      "/buckets/b/obj/.versions",
+					Descending:   false,
+					CopyExtended: map[string]string{"latestVid": "vid"},
+				}},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if got := string(store.entries["/buckets/b/obj/.versions"].Extended["latestVid"]); got != "v1" {
+		t.Fatalf("ascending recompute latestVid = %q, want v1 (lowest)", got)
+	}
+}
+
 // DELETE and PATCH of an absent entry are no-ops, so a replayed transaction
 // does not error.
 func TestObjectTransactionIdempotentNoops(t *testing.T) {

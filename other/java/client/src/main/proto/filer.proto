@@ -282,18 +282,35 @@ enum FilerError {
 // before the transaction; mutations here are metadata-scoped.
 message ObjectMutation {
     enum Type {
-        PUT            = 0; // create or replace the entry (entry field)
-        DELETE         = 1; // delete the entry at directory/name (no error if absent)
-        PATCH_EXTENDED = 2; // merge set_extended / remove delete_extended on the entry
+        PUT              = 0; // create or replace the entry (entry field)
+        DELETE           = 1; // delete the entry at directory/name (no error if absent)
+        PATCH_EXTENDED   = 2; // merge set_extended / remove delete_extended on the entry
+        RECOMPUTE_LATEST = 3; // scan a directory and re-point a parent entry (recompute)
     }
     Type type = 1;
     string directory = 2;
-    string name = 3;                       // entry name for DELETE / PATCH_EXTENDED
+    string name = 3;                       // entry name for DELETE / PATCH_EXTENDED / RECOMPUTE_LATEST (the pointer entry)
     Entry entry = 4;                        // full entry for PUT
     map<string, bytes> set_extended = 5;   // PATCH_EXTENDED: keys to set
     repeated string delete_extended = 6;   // PATCH_EXTENDED: keys to remove
     bool is_delete_data = 7;               // DELETE: also delete chunk data
     bool is_recursive = 8;                 // DELETE: recurse into a directory
+    Recompute recompute = 9;               // RECOMPUTE_LATEST parameters
+}
+
+// Recompute re-derives a pointer entry (directory/name on the mutation) from the
+// current contents of a scanned directory, atomically under the transaction's
+// lock. It is mechanical: the filer picks the child that sorts first or last by
+// name and copies the requested fields into the pointer; it has no knowledge of
+// what the entries mean. The caller (which does know the versioning scheme)
+// supplies the sort direction and the key mappings. This covers re-pointing the
+// latest version after a specific version is deleted, where the scan must run
+// under the lock.
+message Recompute {
+    string scan_dir = 1;                   // directory whose direct children are scanned
+    bool descending = 2;                   // pick the child that sorts last by name (else first)
+    map<string, string> copy_extended = 3; // pointer extended key -> source extended key on the chosen child
+    string name_to_key = 4;                // if set, store the chosen child's name under this pointer key
 }
 
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
