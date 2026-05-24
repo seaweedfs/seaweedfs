@@ -177,7 +177,7 @@ func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, filePath str
 // routedMkFile builds an entry like filer_pb.MkFile and writes it through a
 // routed PUT on the owner filer, for callers that would otherwise mkFile to the
 // default filer (e.g. multipart completion of a non-versioned object).
-func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, parentDir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
+func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
 	now := time.Now().Unix()
 	entry := &filer_pb.Entry{
 		Name: name,
@@ -193,7 +193,7 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, parentDir, name str
 	if fn != nil {
 		fn(entry)
 	}
-	resp, err := s3a.routedPut(owner, objectWriteRouteKeyPrefix+parentDir+"/"+name, parentDir+"/"+name, entry, nil)
+	resp, err := s3a.routedPut(owner, routeKey, parentDir+"/"+name, entry, nil)
 	if err != nil {
 		return err
 	}
@@ -205,10 +205,11 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, parentDir, name str
 
 // writeMultipartObject writes a completed multipart object entry, routed to the
 // owner when known (so it serializes with concurrent writes to the same key)
-// and falling back to a plain mkFile otherwise.
-func (s3a *S3ApiServer) writeMultipartObject(owner pb.ServerAddress, dir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
+// and falling back to a plain mkFile otherwise. routeKey must be the same key the
+// caller used to resolve owner, so owner selection and forwarding stay consistent.
+func (s3a *S3ApiServer) writeMultipartObject(owner pb.ServerAddress, routeKey, dir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
 	if owner != "" {
-		return s3a.routedMkFile(owner, dir, name, chunks, fn)
+		return s3a.routedMkFile(owner, routeKey, dir, name, chunks, fn)
 	}
 	return s3a.mkFile(dir, name, chunks, fn)
 }

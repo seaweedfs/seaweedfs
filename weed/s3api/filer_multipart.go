@@ -559,6 +559,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	// object already carries this UploadId), so the lock is not needed to dedupe
 	// retries. With no owner yet (no ring), keep the lock as the bootstrap path.
 	owner := s3a.objectWriteOwner(*input.Bucket, *input.Key)
+	routeKey := s3a.objectRouteKey(*input.Bucket, *input.Key)
 	completionBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
 		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
@@ -688,7 +689,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		if versioningState == s3_constants.VersioningSuspended {
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
-			if err := s3a.writeMultipartObject(owner, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
+			if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
 					entry.Extended = make(map[string][]byte)
 				}
@@ -752,7 +753,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// For non-versioned buckets, create main object file
-		if err := s3a.writeMultipartObject(owner, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
+		if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}

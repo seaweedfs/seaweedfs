@@ -1668,8 +1668,9 @@ func (x *Recompute) GetExcludeName() string {
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
 // respect to other writers of the same object, by holding the filer's per-path
 // lock on lock_key for the whole transaction. The optional condition is checked
-// first, against the entry at lock_key. Callers must route the object's writes
-// to its owner filer for the lock to be authoritative.
+// first, against condition_key when set, else lock_key. Callers set route_key to
+// the object's stable owner ring key; a filer that is not the owner forwards the
+// transaction one hop to the owner, so a stale ring view is tolerated.
 type ObjectTransactionRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	LockKey            string                 `protobuf:"bytes,1,opt,name=lock_key,json=lockKey,proto3" json:"lock_key,omitempty"` // object path to lock and to evaluate the condition against

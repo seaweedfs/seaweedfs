@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func newTxnTestServer(seed map[string]*filer.Entry) (*FilerServer, *renameTestStore) {
@@ -659,5 +662,59 @@ func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 	}
 	if string(store.entries["/buckets/b/obj"].Extended["X-Amz-Meta-k"]) != "v" {
 		t.Errorf("forwarded txn should apply locally: %v", store.entries["/buckets/b/obj"].Extended)
+	}
+}
+
+// End-to-end forward hop: a non-owner filer dials the ring owner and the owner
+// applies the transaction. The owner's own ring points back at the (bogus)
+// sender, so it would re-forward and fail to dial unless is_moved is set on the
+// forwarded request — making this also assert that one-hop bound over the wire.
+func TestObjectTransactionForwardsToOwner(t *testing.T) {
+	owner, ownerStore := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
+	})
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	// Pin the grpc port to the real listener (ToGrpcAddress otherwise adds the
+	// +10000 convention, which dials nothing).
+	port := lis.Addr().(*net.TCPAddr).Port
+	ownerAddr := pb.NewServerAddressWithGrpcPort(lis.Addr().String(), port)
+	sender := pb.ServerAddress("127.0.0.1:1") // bogus: nothing listens here
+
+	// owner's ring points back at the sender; only is_moved keeps it from
+	// re-forwarding to (and failing to dial) that bogus address.
+	withRing(owner, ownerAddr, sender)
+	owner.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, owner)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	self, selfStore := newTxnTestServer(nil)
+	withRing(self, sender, ownerAddr) // ring owner is the real owner; self forwards
+	self.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := self.ObjectTransaction(ctx, &filer_pb.ObjectTransactionRequest{
+		LockKey:  "/buckets/b/obj",
+		RouteKey: "s3.object.write:/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets/b", Name: "obj",
+			SetExtended: map[string][]byte{"X-Amz-Meta-k": []byte("v")},
+		}},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("forwarded txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if string(ownerStore.entries["/buckets/b/obj"].Extended["X-Amz-Meta-k"]) != "v" {
+		t.Errorf("owner should have applied the forwarded mutation: %v", ownerStore.entries["/buckets/b/obj"].Extended)
+	}
+	if _, ok := selfStore.entries["/buckets/b/obj"]; ok {
+		t.Errorf("non-owner must forward, not apply locally")
 	}
 }
