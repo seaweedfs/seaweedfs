@@ -298,6 +298,49 @@ User Request → Load Balancer → Any S3 Gateway Instance
                               Allow/Deny Request
 ```
 
+## Trust Policy Conditions
+
+Step 5 above evaluates the role's trust policy against context keys derived from the
+OIDC token's claims. The available keys are:
+
+| Condition key | Source |
+|---------------|--------|
+| `oidc:iss` | `iss` claim (issuer URL) |
+| `oidc:sub` | `sub` claim |
+| `oidc:aud` | `aud` claim |
+| `oidc:<claim>` | any other token claim, e.g. `oidc:roles`, `oidc:groups`, `oidc:email` |
+| `aws:FederatedProvider` | the provider `name` (e.g. `keycloak-oidc`) when its configured issuer matches the token, otherwise the raw issuer URL |
+| `aws:userid` | `sub` claim |
+| `sts:DurationSeconds` | requested session duration, when supplied |
+
+Custom claims are always exposed under the `oidc:` prefix, so a trust policy must use
+`oidc:roles` (not a bare `roles`) to match a `roles` claim:
+
+```json
+"Condition": {
+  "StringEquals": {
+    "oidc:roles": "s3-admin"
+  }
+}
+```
+
+A multi-valued claim (such as a `roles` array) matches when any of its values equals
+the condition value. The same `oidc:` keys can be interpolated into policy resources,
+e.g. `arn:aws:s3:::bucket/${oidc:sub}/*`.
+
+### roleMapping vs. trust policy
+
+A provider's `roleMapping` and a role's trust policy apply to two different entry
+points and are not interchangeable:
+
+- **Direct OIDC** — an S3 request carrying `Authorization: Bearer <OIDC-JWT>`. The
+  gateway applies `roleMapping` to choose the caller's role from the token claims; the
+  first matching rule (or `defaultRole`) wins.
+- **STS `AssumeRoleWithWebIdentity`** — the caller names the role explicitly via
+  `RoleArn`, and that role's trust policy decides whether the assumption is allowed.
+  `roleMapping` does not select the role on this path; instead the token claims are
+  surfaced as the `oidc:` condition keys above for the trust policy to evaluate.
+
 ## Configuration Management
 
 ### Development Environment
