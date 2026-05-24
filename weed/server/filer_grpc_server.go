@@ -328,6 +328,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		}
 		if m.SetContent {
 			newEntry.Content = m.Content
+			if !newEntry.IsDirectory() {
+				newEntry.FileSize = uint64(len(m.Content))
+			}
 		}
 		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
 			return err
