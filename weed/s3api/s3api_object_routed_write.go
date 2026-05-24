@@ -215,3 +215,41 @@ func (s3a *S3ApiServer) routedDelete(owner pb.ServerAddress, bucket, object stri
 		}},
 	})
 }
+
+// routedMetadataReplace applies a metadata-only self-copy (REPLACE directive) to
+// an existing object in place via a routed PATCH_EXTENDED. The owner merges the
+// new managed metadata onto a fresh read of the entry under its per-path lock —
+// so a concurrent change to non-managed keys (legal hold, retention, version id)
+// is preserved rather than clobbered by a whole-entry rewrite — and bumps mtime.
+// updatedMetadata is the full managed-metadata set (processMetadataBytes); the
+// delete list is the managed keys the replace dropped.
+func (s3a *S3ApiServer) routedMetadataReplace(owner pb.ServerAddress, bucket, object string, current *filer_pb.Entry, updatedMetadata map[string][]byte) error {
+	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
+	dir, name := fullpath.DirAndName()
+	var del []string
+	for k := range current.Extended {
+		if isManagedCopyMetadataKey(k) {
+			if _, keep := updatedMetadata[k]; !keep {
+				del = append(del, k)
+			}
+		}
+	}
+	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+		LockKey: string(fullpath),
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:           filer_pb.ObjectMutation_PATCH_EXTENDED,
+			Directory:      dir,
+			Name:           name,
+			SetExtended:    updatedMetadata,
+			DeleteExtended: del,
+			TouchMtime:     true,
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("routed metadata replace %s/%s: %s", bucket, object, resp.Error)
+	}
+	return nil
+}

@@ -379,6 +379,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 				newEntry.FileSize = uint64(len(m.Content))
 			}
 		}
+		if m.TouchMtime {
+			newEntry.Attr.Mtime = time.Now()
+		}
 		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
 			return err
 		}

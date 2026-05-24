@@ -1430,6 +1430,7 @@ type ObjectMutation struct {
 	Recompute      *Recompute             `protobuf:"bytes,9,opt,name=recompute,proto3" json:"recompute,omitempty"`                                                                                                  // RECOMPUTE_LATEST parameters
 	SetContent     bool                   `protobuf:"varint,10,opt,name=set_content,json=setContent,proto3" json:"set_content,omitempty"`                                                                            // PATCH_EXTENDED: replace Entry.content with content
 	Content        []byte                 `protobuf:"bytes,11,opt,name=content,proto3" json:"content,omitempty"`                                                                                                     // PATCH_EXTENDED: new Entry.content when set_content
+	TouchMtime     bool                   `protobuf:"varint,12,opt,name=touch_mtime,json=touchMtime,proto3" json:"touch_mtime,omitempty"`                                                                            // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1539,6 +1540,13 @@ func (x *ObjectMutation) GetContent() []byte {
 		return x.Content
 	}
 	return nil
+}
+
+func (x *ObjectMutation) GetTouchMtime() bool {
+	if x != nil {
+		return x.TouchMtime
+	}
+	return false
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
@@ -6398,7 +6406,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x13IF_UNMODIFIED_SINCE\x10\x05\x12\x15\n" +
 	"\x11IF_MODIFIED_SINCE\x10\x06\x12\x19\n" +
 	"\x15IF_EXTENDED_NOT_EQUAL\x10\a\x12\x1c\n" +
-	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\"\xd1\x04\n" +
+	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\"\xf2\x04\n" +
 	"\x0eObjectMutation\x121\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1d.filer_pb.ObjectMutation.TypeR\x04type\x12\x1c\n" +
 	"\tdirectory\x18\x02 \x01(\tR\tdirectory\x12\x12\n" +
@@ -6412,7 +6420,9 @@ const file_filer_proto_rawDesc = "" +
 	"\vset_content\x18\n" +
 	" \x01(\bR\n" +
 	"setContent\x12\x18\n" +
-	"\acontent\x18\v \x01(\fR\acontent\x1a>\n" +
+	"\acontent\x18\v \x01(\fR\acontent\x12\x1f\n" +
+	"\vtouch_mtime\x18\f \x01(\bR\n" +
+	"touchMtime\x1a>\n" +
 	"\x10SetExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"E\n" +
