@@ -553,9 +553,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 	entryName, dirName := s3a.getEntryNameAndDir(input)
 	var completionState *multipartCompletionState
-	finalizeCode := s3a.withObjectWriteLock(*input.Bucket, *input.Key, func() s3err.ErrorCode {
-		return s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key)
-	}, func() s3err.ErrorCode {
+	// Route the completion's writes to the object's owner filer when known, off
+	// the distributed lock. Idempotent replay is handled gateway-side in
+	// prepareMultipartCompletionState (it returns the existing result when the
+	// object already carries this UploadId), so the lock is not needed to dedupe
+	// retries. With no owner yet (no ring), keep the lock as the bootstrap path.
+	owner := s3a.objectWriteOwner(*input.Bucket, *input.Key)
+	completionBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
 		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
 		if prepCode != s3err.ErrNone || output != nil {
@@ -651,7 +655,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 			// Update the .versions directory metadata to indicate this is the latest version
 			// Pass entry to cache its metadata for single-scan list efficiency
-			if err := s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache); err != nil {
+			// Route the pointer flip to the owner (off the lock) via
+			// RECOMPUTE_LATEST; the just-written version file is the newest.
+			if owner != "" {
+				if code := s3a.routedVersionedFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat); code != s3err.ErrNone {
+					if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
+						glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+					}
+					return code
+				}
+			} else if err := s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache); err != nil {
 				if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
 					glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
 				}
@@ -675,7 +688,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		if versioningState == s3_constants.VersioningSuspended {
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
-			if err := s3a.mkFile(dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
+			if err := s3a.writeMultipartObject(owner, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
 					entry.Extended = make(map[string][]byte)
 				}
@@ -739,7 +752,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// For non-versioned buckets, create main object file
-		if err := s3a.mkFile(dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
+		if err := s3a.writeMultipartObject(owner, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
@@ -802,7 +815,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			ChecksumValue:      completionState.checksumValue,
 		}
 		return s3err.ErrNone
-	})
+	}
+	var finalizeCode s3err.ErrorCode
+	if owner != "" {
+		if code := s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key); code != s3err.ErrNone {
+			finalizeCode = code
+		} else {
+			finalizeCode = completionBody()
+		}
+	} else {
+		finalizeCode = s3a.withObjectWriteLock(*input.Bucket, *input.Key, func() s3err.ErrorCode {
+			return s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key)
+		}, completionBody)
+	}
 	if finalizeCode != s3err.ErrNone {
 		return nil, finalizeCode
 	}
