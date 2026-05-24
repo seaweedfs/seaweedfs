@@ -326,6 +326,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		for _, k := range m.DeleteExtended {
 			delete(newEntry.Extended, k)
 		}
+		if m.SetContent {
+			newEntry.Content = m.Content
+		}
 		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
 			return err
 		}

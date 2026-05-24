@@ -111,6 +111,59 @@ func TestObjectTransactionPatchNotifies(t *testing.T) {
 	}
 }
 
+// PATCH_EXTENDED with set_content replaces Entry.Content while merging Extended
+// and preserving the rest; without set_content, Content is left untouched.
+func TestObjectTransactionPatchContent(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b": {
+			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
+			Extended: map[string][]byte{"versioning": []byte("Enabled")},
+			Content:  []byte("old-content"),
+		},
+	})
+
+	// set_content replaces Content and merges an Extended key, preserving the
+	// existing versioning key.
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets", Name: "b",
+				SetContent: true, Content: []byte("encryption-blob"),
+				SetExtended: map[string][]byte{"cors": []byte("yes")}},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("patch set_content failed: err=%v resp=%q", err, resp.Error)
+	}
+	e := store.entries["/buckets/b"]
+	if string(e.Content) != "encryption-blob" {
+		t.Fatalf("content = %q, want encryption-blob", e.Content)
+	}
+	if string(e.Extended["versioning"]) != "Enabled" || string(e.Extended["cors"]) != "yes" {
+		t.Fatalf("extended not merged: %v", e.Extended)
+	}
+
+	// A PATCH without set_content must not disturb Content.
+	resp, err = fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets", Name: "b",
+				SetExtended: map[string][]byte{"versioning": []byte("Suspended")}},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("patch extended-only failed: err=%v resp=%q", err, resp.Error)
+	}
+	e = store.entries["/buckets/b"]
+	if string(e.Content) != "encryption-blob" {
+		t.Fatalf("content clobbered by extended-only patch: %q", e.Content)
+	}
+	if string(e.Extended["versioning"]) != "Suspended" {
+		t.Fatalf("versioning = %q, want Suspended", e.Extended["versioning"])
+	}
+}
+
 // A failing precondition aborts before any mutation is applied.
 func TestObjectTransactionPreconditionAborts(t *testing.T) {
 	now := time.Unix(1700000000, 0)
