@@ -139,13 +139,15 @@ func (FilerError) EnumDescriptor() ([]byte, []int) {
 type WriteCondition_Kind int32
 
 const (
-	WriteCondition_NONE                WriteCondition_Kind = 0 // unconditional
-	WriteCondition_IF_NOT_EXISTS       WriteCondition_Kind = 1 // fail if the entry exists (If-None-Match: *)
-	WriteCondition_IF_EXISTS           WriteCondition_Kind = 2 // fail if the entry is absent (If-Match: *)
-	WriteCondition_IF_ETAG_MATCH       WriteCondition_Kind = 3 // fail if absent or etag matches none of the set (If-Match)
-	WriteCondition_IF_ETAG_NOT_MATCH   WriteCondition_Kind = 4 // fail if present and etag matches any of the set (If-None-Match)
-	WriteCondition_IF_UNMODIFIED_SINCE WriteCondition_Kind = 5 // fail if present and mtime > unix_time
-	WriteCondition_IF_MODIFIED_SINCE   WriteCondition_Kind = 6 // fail if present and mtime <= unix_time
+	WriteCondition_NONE                     WriteCondition_Kind = 0 // unconditional
+	WriteCondition_IF_NOT_EXISTS            WriteCondition_Kind = 1 // fail if the entry exists (If-None-Match: *)
+	WriteCondition_IF_EXISTS                WriteCondition_Kind = 2 // fail if the entry is absent (If-Match: *)
+	WriteCondition_IF_ETAG_MATCH            WriteCondition_Kind = 3 // fail if absent or etag matches none of the set (If-Match)
+	WriteCondition_IF_ETAG_NOT_MATCH        WriteCondition_Kind = 4 // fail if present and etag matches any of the set (If-None-Match)
+	WriteCondition_IF_UNMODIFIED_SINCE      WriteCondition_Kind = 5 // fail if present and mtime > unix_time
+	WriteCondition_IF_MODIFIED_SINCE        WriteCondition_Kind = 6 // fail if present and mtime <= unix_time
+	WriteCondition_IF_EXTENDED_NOT_EQUAL    WriteCondition_Kind = 7 // fail if present and extended[ext_key] == ext_value
+	WriteCondition_IF_EXTENDED_TIME_ELAPSED WriteCondition_Kind = 8 // fail if present and extended[ext_key] (unix seconds) is in the future
 )
 
 // Enum value maps for WriteCondition_Kind.
@@ -158,15 +160,19 @@ var (
 		4: "IF_ETAG_NOT_MATCH",
 		5: "IF_UNMODIFIED_SINCE",
 		6: "IF_MODIFIED_SINCE",
+		7: "IF_EXTENDED_NOT_EQUAL",
+		8: "IF_EXTENDED_TIME_ELAPSED",
 	}
 	WriteCondition_Kind_value = map[string]int32{
-		"NONE":                0,
-		"IF_NOT_EXISTS":       1,
-		"IF_EXISTS":           2,
-		"IF_ETAG_MATCH":       3,
-		"IF_ETAG_NOT_MATCH":   4,
-		"IF_UNMODIFIED_SINCE": 5,
-		"IF_MODIFIED_SINCE":   6,
+		"NONE":                     0,
+		"IF_NOT_EXISTS":            1,
+		"IF_EXISTS":                2,
+		"IF_ETAG_MATCH":            3,
+		"IF_ETAG_NOT_MATCH":        4,
+		"IF_UNMODIFIED_SINCE":      5,
+		"IF_MODIFIED_SINCE":        6,
+		"IF_EXTENDED_NOT_EQUAL":    7,
+		"IF_EXTENDED_TIME_ELAPSED": 8,
 	}
 )
 
@@ -5771,12 +5777,23 @@ func (x *MountInfo) GetDataCenter() string {
 // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
 // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
 // equals none. allow_weak permits weak-comparison (ignoring the W/ prefix).
+//
+// The IF_EXTENDED_* kinds are generic guards on an extended attribute, used
+// to enforce object-lock without teaching the filer S3 semantics:
+// IF_EXTENDED_NOT_EQUAL expresses a legal hold (block while a key equals a
+// value), and IF_EXTENDED_TIME_ELAPSED expresses retention (block while a
+// stored unix-second deadline is in the future, compared to the filer's
+// clock). The caller composes these and, for governance-bypass, simply omits
+// the retention clause when the bypass is authorized — the filer makes no
+// authorization decision.
 type WriteCondition_Clause struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          WriteCondition_Kind    `protobuf:"varint,1,opt,name=kind,proto3,enum=filer_pb.WriteCondition_Kind" json:"kind,omitempty"`
 	Etags         []string               `protobuf:"bytes,2,rep,name=etags,proto3" json:"etags,omitempty"`                           // ETag set for IF_ETAG_* kinds
 	UnixTime      int64                  `protobuf:"varint,3,opt,name=unix_time,json=unixTime,proto3" json:"unix_time,omitempty"`    // bound (unix seconds) for IF_*_SINCE kinds
 	AllowWeak     bool                   `protobuf:"varint,4,opt,name=allow_weak,json=allowWeak,proto3" json:"allow_weak,omitempty"` // compare ETags ignoring the weak (W/) marker
+	ExtKey        string                 `protobuf:"bytes,5,opt,name=ext_key,json=extKey,proto3" json:"ext_key,omitempty"`           // extended attribute name for IF_EXTENDED_* kinds
+	ExtValue      string                 `protobuf:"bytes,6,opt,name=ext_value,json=extValue,proto3" json:"ext_value,omitempty"`     // blocking value for IF_EXTENDED_NOT_EQUAL
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5837,6 +5854,20 @@ func (x *WriteCondition_Clause) GetAllowWeak() bool {
 		return x.AllowWeak
 	}
 	return false
+}
+
+func (x *WriteCondition_Clause) GetExtKey() string {
+	if x != nil {
+		return x.ExtKey
+	}
+	return ""
+}
+
+func (x *WriteCondition_Clause) GetExtValue() string {
+	if x != nil {
+		return x.ExtValue
+	}
+	return ""
 }
 
 // if found, send the exact address
@@ -6171,15 +6202,17 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x12=\n" +
 	"\x1bskip_check_parent_directory\x18\x06 \x01(\bR\x18skipCheckParentDirectory\x126\n" +
-	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\"\xea\x02\n" +
+	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\"\xd9\x03\n" +
 	"\x0eWriteCondition\x129\n" +
-	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\x8d\x01\n" +
+	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\xc3\x01\n" +
 	"\x06Clause\x121\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1d.filer_pb.WriteCondition.KindR\x04kind\x12\x14\n" +
 	"\x05etags\x18\x02 \x03(\tR\x05etags\x12\x1b\n" +
 	"\tunix_time\x18\x03 \x01(\x03R\bunixTime\x12\x1d\n" +
 	"\n" +
-	"allow_weak\x18\x04 \x01(\bR\tallowWeak\"\x8c\x01\n" +
+	"allow_weak\x18\x04 \x01(\bR\tallowWeak\x12\x17\n" +
+	"\aext_key\x18\x05 \x01(\tR\x06extKey\x12\x1b\n" +
+	"\text_value\x18\x06 \x01(\tR\bextValue\"\xc5\x01\n" +
 	"\x04Kind\x12\b\n" +
 	"\x04NONE\x10\x00\x12\x11\n" +
 	"\rIF_NOT_EXISTS\x10\x01\x12\r\n" +
@@ -6187,7 +6220,9 @@ const file_filer_proto_rawDesc = "" +
 	"\rIF_ETAG_MATCH\x10\x03\x12\x15\n" +
 	"\x11IF_ETAG_NOT_MATCH\x10\x04\x12\x17\n" +
 	"\x13IF_UNMODIFIED_SINCE\x10\x05\x12\x15\n" +
-	"\x11IF_MODIFIED_SINCE\x10\x06\"\x96\x04\n" +
+	"\x11IF_MODIFIED_SINCE\x10\x06\x12\x19\n" +
+	"\x15IF_EXTENDED_NOT_EQUAL\x10\a\x12\x1c\n" +
+	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\"\x96\x04\n" +
 	"\x0eObjectMutation\x121\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1d.filer_pb.ObjectMutation.TypeR\x04type\x12\x1c\n" +
 	"\tdirectory\x18\x02 \x01(\tR\tdirectory\x12\x12\n" +

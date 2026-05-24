@@ -1,7 +1,9 @@
 package weed_server
 
 import (
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -27,10 +29,14 @@ func writeConditionSatisfied(cond *filer_pb.WriteCondition, current *filer.Entry
 
 // clauseSatisfied evaluates one primitive against the current entry. For the
 // ETag kinds, etags is a set: IF_ETAG_MATCH holds when the current ETag equals
-// any member, IF_ETAG_NOT_MATCH when it equals none.
+// any member, IF_ETAG_NOT_MATCH when it equals none. The IF_EXTENDED_* kinds are
+// generic guards on an extended attribute used to enforce object-lock (legal
+// hold and retention) without S3 knowledge in the filer.
 func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bool {
 	exists := current != nil
 	switch c.Kind {
+	case filer_pb.WriteCondition_NONE:
+		return true
 	case filer_pb.WriteCondition_IF_NOT_EXISTS:
 		return !exists
 	case filer_pb.WriteCondition_IF_EXISTS:
@@ -43,8 +49,32 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 		return !exists || current.Attr.Mtime.Unix() <= c.UnixTime
 	case filer_pb.WriteCondition_IF_MODIFIED_SINCE:
 		return !exists || current.Attr.Mtime.Unix() > c.UnixTime
+	case filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL:
+		if !exists {
+			return true
+		}
+		v, ok := current.Extended[c.ExtKey]
+		return !ok || string(v) != c.ExtValue
+	case filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED:
+		if !exists {
+			return true
+		}
+		v, ok := current.Extended[c.ExtKey]
+		if !ok {
+			return true
+		}
+		deadline, err := strconv.ParseInt(strings.TrimSpace(string(v)), 10, 64)
+		if err != nil {
+			// An unparseable retention deadline is treated as still in force, so
+			// a malformed attribute fails safe (write blocked) rather than open.
+			return false
+		}
+		return deadline <= time.Now().Unix()
 	default:
-		return true
+		// An unrecognized clause kind (e.g. from a newer client) must not be
+		// treated as satisfied, which would silently bypass the guard. Fail
+		// closed so the write is blocked rather than slipping through.
+		return false
 	}
 }
 

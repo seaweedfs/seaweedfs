@@ -242,22 +242,35 @@ message CreateEntryRequest {
 // compound conditions (e.g. If-Match + If-Unmodified-Since together).
 message WriteCondition {
     enum Kind {
-        NONE                = 0; // unconditional
-        IF_NOT_EXISTS       = 1; // fail if the entry exists (If-None-Match: *)
-        IF_EXISTS           = 2; // fail if the entry is absent (If-Match: *)
-        IF_ETAG_MATCH       = 3; // fail if absent or etag matches none of the set (If-Match)
-        IF_ETAG_NOT_MATCH   = 4; // fail if present and etag matches any of the set (If-None-Match)
-        IF_UNMODIFIED_SINCE = 5; // fail if present and mtime > unix_time
-        IF_MODIFIED_SINCE   = 6; // fail if present and mtime <= unix_time
+        NONE                  = 0; // unconditional
+        IF_NOT_EXISTS         = 1; // fail if the entry exists (If-None-Match: *)
+        IF_EXISTS             = 2; // fail if the entry is absent (If-Match: *)
+        IF_ETAG_MATCH         = 3; // fail if absent or etag matches none of the set (If-Match)
+        IF_ETAG_NOT_MATCH     = 4; // fail if present and etag matches any of the set (If-None-Match)
+        IF_UNMODIFIED_SINCE   = 5; // fail if present and mtime > unix_time
+        IF_MODIFIED_SINCE     = 6; // fail if present and mtime <= unix_time
+        IF_EXTENDED_NOT_EQUAL = 7; // fail if present and extended[ext_key] == ext_value
+        IF_EXTENDED_TIME_ELAPSED = 8; // fail if present and extended[ext_key] (unix seconds) is in the future
     }
     // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
     // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
     // equals none. allow_weak permits weak-comparison (ignoring the W/ prefix).
+    //
+    // The IF_EXTENDED_* kinds are generic guards on an extended attribute, used
+    // to enforce object-lock without teaching the filer S3 semantics:
+    // IF_EXTENDED_NOT_EQUAL expresses a legal hold (block while a key equals a
+    // value), and IF_EXTENDED_TIME_ELAPSED expresses retention (block while a
+    // stored unix-second deadline is in the future, compared to the filer's
+    // clock). The caller composes these and, for governance-bypass, simply omits
+    // the retention clause when the bypass is authorized — the filer makes no
+    // authorization decision.
     message Clause {
         Kind kind = 1;
         repeated string etags = 2; // ETag set for IF_ETAG_* kinds
         int64 unix_time = 3;       // bound (unix seconds) for IF_*_SINCE kinds
         bool allow_weak = 4;       // compare ETags ignoring the weak (W/) marker
+        string ext_key = 5;        // extended attribute name for IF_EXTENDED_* kinds
+        string ext_value = 6;      // blocking value for IF_EXTENDED_NOT_EQUAL
     }
     repeated Clause clauses = 1;   // all must hold (logical AND)
 }

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -102,6 +103,80 @@ func TestWriteConditionClauses(t *testing.T) {
 		if got := writeConditionSatisfied(tc.cond, tc.cur); got != tc.want {
 			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The generic IF_EXTENDED_* guards express object-lock without S3 knowledge in
+// the filer: a legal hold (IF_EXTENDED_NOT_EQUAL) and a retention deadline
+// (IF_EXTENDED_TIME_ELAPSED).
+func TestWriteConditionObjectLockGuards(t *testing.T) {
+	now := time.Now()
+	withExt := func(ext map[string]string) *filer.Entry {
+		e := &filer.Entry{FullPath: "/test/obj", Attr: filer.Attr{Mtime: now}, Extended: map[string][]byte{}}
+		for k, v := range ext {
+			e.Extended[k] = []byte(v)
+		}
+		return e
+	}
+	legalHold := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+		{Kind: filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL, ExtKey: "lock-hold", ExtValue: "ON"},
+	}}
+	retention := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+		{Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "retain-until"},
+	}}
+	future := strconv.FormatInt(now.Add(time.Hour).Unix(), 10)
+	past := strconv.FormatInt(now.Add(-time.Hour).Unix(), 10)
+
+	cases := []struct {
+		name string
+		cond *filer_pb.WriteCondition
+		cur  *filer.Entry
+		want bool
+	}{
+		{"hold-on-blocks", legalHold, withExt(map[string]string{"lock-hold": "ON"}), false},
+		{"hold-off-allows", legalHold, withExt(map[string]string{"lock-hold": "OFF"}), true},
+		{"hold-absent-allows", legalHold, withExt(nil), true},
+		{"hold-on-new-object", legalHold, nil, true}, // nothing to protect yet
+		{"retain-future-blocks", retention, withExt(map[string]string{"retain-until": future}), false},
+		{"retain-past-allows", retention, withExt(map[string]string{"retain-until": past}), true},
+		{"retain-absent-allows", retention, withExt(nil), true},
+		{"retain-malformed-blocks", retention, withExt(map[string]string{"retain-until": "soon"}), false},
+		// Composed WORM guard: legal hold AND retention, both clear -> allowed.
+		{"worm-both-clear", &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL, ExtKey: "lock-hold", ExtValue: "ON"},
+			{Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "retain-until"},
+		}}, withExt(map[string]string{"lock-hold": "OFF", "retain-until": past}), true},
+		// Either guard tripping blocks the whole WORM condition.
+		{"worm-hold-trips", &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL, ExtKey: "lock-hold", ExtValue: "ON"},
+			{Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "retain-until"},
+		}}, withExt(map[string]string{"lock-hold": "ON", "retain-until": past}), false},
+	}
+	for _, tc := range cases {
+		if got := writeConditionSatisfied(tc.cond, tc.cur); got != tc.want {
+			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// An unrecognized clause kind (e.g. from a newer client) fails closed, so a
+// guard can't be silently bypassed by an older filer. NONE stays a no-op.
+func TestWriteConditionUnknownKindFailsClosed(t *testing.T) {
+	present := entryWithETag("abc", time.Now())
+	unknown := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+		{Kind: filer_pb.WriteCondition_Kind(9999)},
+	}}
+	if writeConditionSatisfied(unknown, present) {
+		t.Error("unknown clause kind must not be satisfied (fail closed) for an existing entry")
+	}
+	if writeConditionSatisfied(unknown, nil) {
+		t.Error("unknown clause kind must not be satisfied (fail closed) for an absent entry")
+	}
+	none := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+		{Kind: filer_pb.WriteCondition_NONE},
+	}}
+	if !writeConditionSatisfied(none, present) {
+		t.Error("a NONE clause must be satisfied (no-op)")
 	}
 }
 
