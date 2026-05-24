@@ -162,6 +162,30 @@ func TestObjectTransactionPatchContent(t *testing.T) {
 	if string(e.Extended["versioning"]) != "Suspended" {
 		t.Fatalf("versioning = %q, want Suspended", e.Extended["versioning"])
 	}
+	if e.FileSize != 0 {
+		t.Fatalf("directory FileSize must stay 0, got %d", e.FileSize)
+	}
+
+	// For a file, set_content syncs FileSize to the new content length, even when
+	// the content shrinks.
+	store.entries["/file"] = &filer.Entry{
+		FullPath: "/file",
+		Attr:     filer.Attr{Inode: 9, Mtime: now, Crtime: now, Mode: 0644, FileSize: 100},
+		Content:  []byte("xxxxxxxxxxxxxxx"),
+	}
+	resp, err = fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/file",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/", Name: "file",
+				SetContent: true, Content: []byte("short")},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("file patch failed: err=%v resp=%q", err, resp.Error)
+	}
+	if f := store.entries["/file"]; string(f.Content) != "short" || f.FileSize != uint64(len("short")) {
+		t.Fatalf("file content=%q FileSize=%d, want short/5", f.Content, f.FileSize)
+	}
 }
 
 // A failing precondition aborts before any mutation is applied.

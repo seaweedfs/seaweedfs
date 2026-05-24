@@ -328,6 +328,8 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		}
 		if m.SetContent {
 			newEntry.Content = m.Content
+			// Keep FileSize consistent with content for files; some stores and
+			// tools read the attribute directly. Directories carry no file size.
 			if !newEntry.IsDirectory() {
 				newEntry.FileSize = uint64(len(m.Content))
 			}

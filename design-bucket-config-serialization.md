@@ -112,19 +112,23 @@ Move the writers off whole-entry rewrites:
   the entry fresh under its per-path lock and merges only the named keys, so the
   gateway never sends a whole-entry snapshot — this dissolves *both* ingredients for
   these fields.
-- **`Content`-based config** (encryption, CORS, policy, notification) — `Content` has
-  no field-level mutation today. Two options:
-  - (b1) Conditional write: read the entry + its ETag, set `Content`, write via the
-    `CreateEntry` overwrite path with `IF_ETAG_MATCH <etag>` (#9640); on
-    `PRECONDITION_FAILED`, re-read and retry. Optimistic concurrency, no lock; the
-    filer per-path lock makes the check-then-write atomic. Bucket config writes are
-    rare, so retries are negligible.
-  - (b2) Longer term: migrate per-feature config out of the single `Content` blob
-    into individual `Extended` keys, so everything becomes `PATCH_EXTENDED` and the
-    whole-entry write disappears for buckets entirely.
+- **`Content`-based config** (encryption, CORS, tags blob) — **chosen and
+  implemented (b3): extend `PATCH_EXTENDED` with `set_content`.** Under the same
+  per-path lock the filer reads the entry fresh, merges extended attributes, and
+  replaces `Content`, preserving the rest. So a content write becomes a field-level
+  patch too — `setBucketMetadata` patches `Content`, `updateBucketConfig` patches
+  extended keys, and the two serialize on the lock instead of racing whole-entry
+  rewrites. This is cleaner than the alternatives below: no client-side retry, no
+  storage migration, and it reuses `ObjectTransaction`'s existing atomic lock.
+  - (b1, rejected) Conditional `CreateEntry` overwrite with `IF_ETAG_MATCH` + retry
+    (#9640): correct but needs client-side retry, and the bucket directory entry has
+    no reliable ETag to compare on.
+  - (b2, future) Migrate each per-feature config out of the single `Content` blob
+    into its own `Extended` key. Then even *intra-blob* writes (tags vs encryption)
+    stop racing. Larger migration; tracked separately.
 
-Once all paths are field-level or CAS, the phase-1 gateway lock can be dropped — the
-filer enforces atomicity.
+Once all paths are field-level patches, the phase-1 gateway lock is unnecessary —
+the filer enforces atomicity. (This is the path taken: phase 1 was skipped.)
 
 ### Phase 3 — multi-filer (only if needed)
 
