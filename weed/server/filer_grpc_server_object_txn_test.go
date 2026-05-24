@@ -560,3 +560,38 @@ func TestObjectTransactionVersionDeleteWithWorm(t *testing.T) {
 		t.Errorf("pointer should recompute to v_b/v2, got name=%s vid=%s", ptr["latestName"], ptr["latestVid"])
 	}
 }
+
+// PATCH_EXTENDED with touch_mtime bumps the entry's Mtime (a metadata-replace
+// copy) while merging Extended.
+func TestObjectTransactionPatchTouchMtime(t *testing.T) {
+	old := time.Unix(1600000000, 0)
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj": {
+			FullPath: "/buckets/b/obj",
+			Attr:     filer.Attr{Inode: 1, Mtime: old, Crtime: old, Mode: 0644},
+			Extended: map[string][]byte{"X-Amz-Meta-old": []byte("1")},
+		},
+	})
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets/b", Name: "obj",
+			SetExtended:    map[string][]byte{"X-Amz-Meta-new": []byte("2")},
+			DeleteExtended: []string{"X-Amz-Meta-old"},
+			TouchMtime:     true,
+		}},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("patch failed: err=%v resp=%q", err, resp.Error)
+	}
+	e := store.entries["/buckets/b/obj"]
+	if !e.Attr.Mtime.After(old) {
+		t.Errorf("touch_mtime should bump Mtime past %v, got %v", old, e.Attr.Mtime)
+	}
+	if _, ok := e.Extended["X-Amz-Meta-old"]; ok {
+		t.Errorf("old meta should be deleted")
+	}
+	if string(e.Extended["X-Amz-Meta-new"]) != "2" {
+		t.Errorf("new meta not set: %v", e.Extended)
+	}
+}

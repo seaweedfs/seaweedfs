@@ -316,6 +316,7 @@ message ObjectMutation {
     Recompute recompute = 9;               // RECOMPUTE_LATEST parameters
     bool set_content = 10;                 // PATCH_EXTENDED: replace Entry.content with content
     bytes content = 11;                    // PATCH_EXTENDED: new Entry.content when set_content
+    bool touch_mtime = 12;                 // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
