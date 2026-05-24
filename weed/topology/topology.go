@@ -594,7 +594,10 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			t.RegisterVolumeLayout(v, dn)
+			// vl is already resolved above; call it directly instead of
+			// RegisterVolumeLayout, which would repeat the GetVolumeLayout lookup.
+			vl.RegisterVolume(&v, dn)
+			vl.EnsureCorrectWritables(&v)
 		}
 		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
