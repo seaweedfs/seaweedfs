@@ -15,13 +15,11 @@ import (
 )
 
 // routableWriteOwner returns the owner filer for an object's writes, or "" to
-// keep them on the distributed lock. Versioned and object-lock buckets stay on
-// the lock (handled by later routing PRs); any lookup error also falls back.
+// keep them on the distributed lock. All writes to one object (versioned,
+// suspended, non-versioned) share the owner; object-lock buckets stay on the
+// lock until WORM-guard routing. Any lookup error also falls back.
 func (s3a *S3ApiServer) routableWriteOwner(bucket, object string) pb.ServerAddress {
 	if object == "" || s3a.objectWriteLockClient == nil {
-		return ""
-	}
-	if configured, err := s3a.isVersioningConfigured(bucket); err != nil || configured {
 		return ""
 	}
 	if locked, err := s3a.isObjectLockEnabled(bucket); err != nil || locked {
@@ -30,8 +28,12 @@ func (s3a *S3ApiServer) routableWriteOwner(bucket, object string) pb.ServerAddre
 	return s3a.objectWriteLockClient.PrimaryForKey(fmt.Sprintf("s3.object.write:%s", s3a.toFilerPath(bucket, object)))
 }
 
-// routedObjectOwner resolves the owner for the unversioned DELETE fast path.
+// routedObjectOwner is routableWriteOwner restricted to non-versioned buckets,
+// for the unversioned DELETE fast path.
 func (s3a *S3ApiServer) routedObjectOwner(bucket, object string) (pb.ServerAddress, bool) {
+	if configured, err := s3a.isVersioningConfigured(bucket); err != nil || configured {
+		return "", false
+	}
 	owner := s3a.routableWriteOwner(bucket, object)
 	return owner, owner != ""
 }

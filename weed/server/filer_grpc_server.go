@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -411,6 +412,12 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		pointer.Extended = make(map[string][]byte)
 	}
 
+	// Remember the prior chosen child so it can be demoted once the pointer moves.
+	var priorName string
+	if rc.NameToKey != "" {
+		priorName = string(pointer.Extended[rc.NameToKey])
+	}
+
 	// The store streams entries ascending by name. For the lowest-name pick we
 	// only need the first entry, so cap the listing at one; for the highest-name
 	// pick we must scan all and keep the last (the store has no reverse order).
@@ -427,12 +434,15 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		return listErr
 	}
 
+	cleared := []string{rc.NameToKey, rc.SizeToKey, rc.MtimeToKey}
 	if chosen == nil {
 		for pointerKey := range rc.CopyExtended {
 			delete(pointer.Extended, pointerKey)
 		}
-		if rc.NameToKey != "" {
-			delete(pointer.Extended, rc.NameToKey)
+		for _, k := range cleared {
+			if k != "" {
+				delete(pointer.Extended, k)
+			}
 		}
 	} else {
 		for pointerKey, sourceKey := range rc.CopyExtended {
@@ -445,9 +455,39 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		if rc.NameToKey != "" {
 			pointer.Extended[rc.NameToKey] = []byte(chosen.Name())
 		}
+		if rc.SizeToKey != "" {
+			pointer.Extended[rc.SizeToKey] = []byte(strconv.FormatUint(chosen.FileSize, 10))
+		}
+		if rc.MtimeToKey != "" {
+			pointer.Extended[rc.MtimeToKey] = []byte(strconv.FormatInt(chosen.Mtime.Unix(), 10))
+		}
 	}
 
-	return fs.filer.UpdateEntry(ctx, pointer, pointer)
+	if err := fs.filer.UpdateEntry(ctx, pointer, pointer); err != nil {
+		return err
+	}
+
+	// Stamp the displaced prior child (e.g. NoncurrentSinceNs for lifecycle).
+	newName := ""
+	if chosen != nil {
+		newName = chosen.Name()
+	}
+	if rc.DemoteKey != "" && priorName != "" && priorName != newName {
+		priorEntry, perr := fs.filer.FindEntry(ctx, util.NewFullPath(rc.ScanDir, priorName))
+		if perr == filer_pb.ErrNotFound {
+			return nil
+		}
+		if perr != nil {
+			return perr
+		}
+		if priorEntry.Extended == nil {
+			priorEntry.Extended = make(map[string][]byte)
+		}
+		priorEntry.Extended[rc.DemoteKey] = rc.DemoteValue
+		return fs.filer.UpdateEntry(ctx, priorEntry, priorEntry)
+	}
+
+	return nil
 }
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
