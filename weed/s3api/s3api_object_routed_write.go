@@ -15,12 +15,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// objectWriteRouteKeyPrefix namespaces an object's full path into the ring key
+// used to resolve and forward its writes. Shared by every routed builder so the
+// gateway and filer hash the same key.
+const objectWriteRouteKeyPrefix = "s3.object.write:"
+
 // objectRouteKey is the ring key the gateway hashes to resolve an object's owner
 // filer. It is also sent as route_key on each routed transaction, so a non-owner
 // filer (reached because the gateway's ring view was stale) forwards the
 // transaction to the owner. All of an object's writes share this key.
 func (s3a *S3ApiServer) objectRouteKey(bucket, object string) string {
-	return "s3.object.write:" + s3a.toFilerPath(bucket, object)
+	return objectWriteRouteKeyPrefix + s3a.toFilerPath(bucket, object)
 }
 
 // routableWriteOwner returns the owner filer for an object's writes, or "" to
@@ -188,7 +193,7 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, parentDir, name str
 	if fn != nil {
 		fn(entry)
 	}
-	resp, err := s3a.routedPut(owner, "s3.object.write:"+parentDir+"/"+name, parentDir+"/"+name, entry, nil)
+	resp, err := s3a.routedPut(owner, objectWriteRouteKeyPrefix+parentDir+"/"+name, parentDir+"/"+name, entry, nil)
 	if err != nil {
 		return err
 	}

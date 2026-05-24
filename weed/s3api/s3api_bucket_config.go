@@ -573,7 +573,7 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 	m.Name = bucket
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   bucketPath,
-		RouteKey:  "s3.object.write:" + bucketPath,
+		RouteKey:  objectWriteRouteKeyPrefix + bucketPath,
 		Mutations: []*filer_pb.ObjectMutation{m},
 	}
 	txn := func(client filer_pb.SeaweedFilerClient) error {
@@ -587,7 +587,7 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 		return nil
 	}
 	if s3a.objectWriteLockClient != nil {
-		if owner := s3a.objectWriteLockClient.PrimaryForKey("s3.object.write:" + bucketPath); owner != "" {
+		if owner := s3a.objectWriteLockClient.PrimaryForKey(objectWriteRouteKeyPrefix + bucketPath); owner != "" {
 			return pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, txn)
 		}
 	}

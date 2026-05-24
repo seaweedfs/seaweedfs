@@ -23,7 +23,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -265,8 +264,18 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	// filers that disagree on the owner during a ring change cannot loop.
 	if req.RouteKey != "" && !req.IsMoved && fs.filer.Dlm != nil {
 		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.RouteKey); owner != "" && owner != fs.option.Host {
-			forwarded := proto.Clone(req).(*filer_pb.ObjectTransactionRequest)
-			forwarded.IsMoved = true
+			// Rebuild rather than copy the request struct (it carries a mutex);
+			// the pointer/slice fields are shared since the original is not mutated.
+			forwarded := &filer_pb.ObjectTransactionRequest{
+				LockKey:            req.LockKey,
+				Condition:          req.Condition,
+				Mutations:          req.Mutations,
+				IsFromOtherCluster: req.IsFromOtherCluster,
+				Signatures:         req.Signatures,
+				ConditionKey:       req.ConditionKey,
+				RouteKey:           req.RouteKey,
+				IsMoved:            true,
+			}
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
 			var resp *filer_pb.ObjectTransactionResponse
 			err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
