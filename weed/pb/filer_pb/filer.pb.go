@@ -1555,6 +1555,10 @@ type Recompute struct {
 	Descending    bool                   `protobuf:"varint,2,opt,name=descending,proto3" json:"descending,omitempty"`                                                                                                  // pick the child that sorts last by name (else first)
 	CopyExtended  map[string]string      `protobuf:"bytes,3,rep,name=copy_extended,json=copyExtended,proto3" json:"copy_extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // pointer extended key -> source extended key on the chosen child
 	NameToKey     string                 `protobuf:"bytes,4,opt,name=name_to_key,json=nameToKey,proto3" json:"name_to_key,omitempty"`                                                                                  // if set, store the chosen child's name under this pointer key
+	SizeToKey     string                 `protobuf:"bytes,5,opt,name=size_to_key,json=sizeToKey,proto3" json:"size_to_key,omitempty"`                                                                                  // if set, store the chosen child's FileSize (decimal) under this pointer key
+	MtimeToKey    string                 `protobuf:"bytes,6,opt,name=mtime_to_key,json=mtimeToKey,proto3" json:"mtime_to_key,omitempty"`                                                                               // if set, store the chosen child's Mtime (decimal) under this pointer key
+	DemoteKey     string                 `protobuf:"bytes,7,opt,name=demote_key,json=demoteKey,proto3" json:"demote_key,omitempty"`                                                                                    // if set, stamp demote_value on the prior name_to_key target when it changes
+	DemoteValue   []byte                 `protobuf:"bytes,8,opt,name=demote_value,json=demoteValue,proto3" json:"demote_value,omitempty"`                                                                              // value for demote_key
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1615,6 +1619,34 @@ func (x *Recompute) GetNameToKey() string {
 		return x.NameToKey
 	}
 	return ""
+}
+
+func (x *Recompute) GetSizeToKey() string {
+	if x != nil {
+		return x.SizeToKey
+	}
+	return ""
+}
+
+func (x *Recompute) GetMtimeToKey() string {
+	if x != nil {
+		return x.MtimeToKey
+	}
+	return ""
+}
+
+func (x *Recompute) GetDemoteKey() string {
+	if x != nil {
+		return x.DemoteKey
+	}
+	return ""
+}
+
+func (x *Recompute) GetDemoteValue() []byte {
+	if x != nil {
+		return x.DemoteValue
+	}
+	return nil
 }
 
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
@@ -6354,14 +6386,20 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"\x06DELETE\x10\x01\x12\x12\n" +
 	"\x0ePATCH_EXTENDED\x10\x02\x12\x14\n" +
-	"\x10RECOMPUTE_LATEST\x10\x03\"\xf3\x01\n" +
+	"\x10RECOMPUTE_LATEST\x10\x03\"\xf7\x02\n" +
 	"\tRecompute\x12\x19\n" +
 	"\bscan_dir\x18\x01 \x01(\tR\ascanDir\x12\x1e\n" +
 	"\n" +
 	"descending\x18\x02 \x01(\bR\n" +
 	"descending\x12J\n" +
 	"\rcopy_extended\x18\x03 \x03(\v2%.filer_pb.Recompute.CopyExtendedEntryR\fcopyExtended\x12\x1e\n" +
-	"\vname_to_key\x18\x04 \x01(\tR\tnameToKey\x1a?\n" +
+	"\vname_to_key\x18\x04 \x01(\tR\tnameToKey\x12\x1e\n" +
+	"\vsize_to_key\x18\x05 \x01(\tR\tsizeToKey\x12 \n" +
+	"\fmtime_to_key\x18\x06 \x01(\tR\n" +
+	"mtimeToKey\x12\x1d\n" +
+	"\n" +
+	"demote_key\x18\a \x01(\tR\tdemoteKey\x12!\n" +
+	"\fdemote_value\x18\b \x01(\fR\vdemoteValue\x1a?\n" +
 	"\x11CopyExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf8\x01\n" +

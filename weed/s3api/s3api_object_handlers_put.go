@@ -1482,13 +1482,8 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Versioned bucket: resolver returns 0 by construction. Pass 0
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0, func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName, versionEntry); err != nil {
-			glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
-			return s3err.ErrInternalError
-		}
-		return s3err.ErrNone
-	}, false)
+	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0,
+		s3a.versionedAfterCreate(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}

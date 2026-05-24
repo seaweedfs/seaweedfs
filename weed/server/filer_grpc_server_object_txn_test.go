@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -429,5 +430,63 @@ func TestObjectTransactionIdempotentNoops(t *testing.T) {
 	}
 	if resp.Error != "" {
 		t.Fatalf("no-op mutations should not error: %q", resp.Error)
+	}
+}
+
+// RECOMPUTE_LATEST copies the chosen child's size/mtime to the pointer and
+// stamps the demote key on the prior latest when the pointer moves.
+func TestObjectTransactionRecomputeDemoteAndAttrs(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	t1 := time.Unix(1700000100, 0)
+	mk := func(inode uint64, mt time.Time, size uint64, id string) *filer.Entry {
+		return &filer.Entry{
+			Attr:     filer.Attr{Inode: inode, Mtime: mt, Crtime: mt, Mode: 0644, FileSize: size},
+			Extended: map[string][]byte{"vid": []byte(id)},
+		}
+	}
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj/.versions": {
+			Attr:     filer.Attr{Inode: 2, Mtime: t0, Crtime: t0, Mode: 0755 | (1 << 31)},
+			Extended: map[string][]byte{"latestName": []byte("v1.ver"), "latestVid": []byte("v1")},
+		},
+		"/buckets/b/obj/.versions/v1.ver": mk(10, t0, 100, "v1"),
+		"/buckets/b/obj/.versions/v2.ver": mk(11, t1, 250, "v2"),
+	})
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_RECOMPUTE_LATEST, Directory: "/buckets/b/obj", Name: ".versions",
+			Recompute: &filer_pb.Recompute{
+				ScanDir:      "/buckets/b/obj/.versions",
+				Descending:   true,
+				CopyExtended: map[string]string{"latestVid": "vid"},
+				NameToKey:    "latestName",
+				SizeToKey:    "latestSize",
+				MtimeToKey:   "latestMtime",
+				DemoteKey:    "noncurrentSince",
+				DemoteValue:  []byte("999"),
+			},
+		}},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+
+	ptr := store.entries["/buckets/b/obj/.versions"].Extended
+	if string(ptr["latestName"]) != "v2.ver" || string(ptr["latestVid"]) != "v2" {
+		t.Fatalf("pointer not moved to v2: name=%s vid=%s", ptr["latestName"], ptr["latestVid"])
+	}
+	if string(ptr["latestSize"]) != "250" {
+		t.Errorf("latestSize = %s, want 250", ptr["latestSize"])
+	}
+	if want := strconv.FormatInt(t1.Unix(), 10); string(ptr["latestMtime"]) != want {
+		t.Errorf("latestMtime = %s, want %s", ptr["latestMtime"], want)
+	}
+	if got := store.entries["/buckets/b/obj/.versions/v1.ver"].Extended["noncurrentSince"]; string(got) != "999" {
+		t.Errorf("prior latest v1.ver noncurrentSince = %q, want 999", got)
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions/v2.ver"].Extended["noncurrentSince"]; ok {
+		t.Errorf("new latest v2.ver should not be demoted")
 	}
 }
