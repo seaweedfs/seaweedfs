@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -153,6 +154,45 @@ func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, filePath string, entry
 			Entry:     entry,
 		}},
 	})
+}
+
+// routedMkFile builds an entry like filer_pb.MkFile and writes it through a
+// routed PUT on the owner filer, for callers that would otherwise mkFile to the
+// default filer (e.g. multipart completion of a non-versioned object).
+func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, parentDir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
+	now := time.Now().Unix()
+	entry := &filer_pb.Entry{
+		Name: name,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now,
+			Crtime:   now,
+			FileMode: uint32(0770),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+		},
+		Chunks: chunks,
+	}
+	if fn != nil {
+		fn(entry)
+	}
+	resp, err := s3a.routedPut(owner, parentDir+"/"+name, entry, nil)
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("routed mkfile %s/%s: %s", parentDir, name, resp.Error)
+	}
+	return nil
+}
+
+// writeMultipartObject writes a completed multipart object entry, routed to the
+// owner when known (so it serializes with concurrent writes to the same key)
+// and falling back to a plain mkFile otherwise.
+func (s3a *S3ApiServer) writeMultipartObject(owner pb.ServerAddress, dir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
+	if owner != "" {
+		return s3a.routedMkFile(owner, dir, name, chunks, fn)
+	}
+	return s3a.mkFile(dir, name, chunks, fn)
 }
 
 func (s3a *S3ApiServer) routedDelete(owner pb.ServerAddress, bucket, object string, cond *filer_pb.WriteCondition) (*filer_pb.ObjectTransactionResponse, error) {
