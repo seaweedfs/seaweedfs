@@ -274,6 +274,8 @@ message WriteCondition {
         bool allow_weak = 4;       // compare ETags ignoring the weak (W/) marker
         string ext_key = 5;        // extended attribute name for IF_EXTENDED_* kinds
         string ext_value = 6;      // blocking value for IF_EXTENDED_NOT_EQUAL
+        string gate_key = 7;       // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
+        string gate_value = 8;     // gate value (e.g. retention mode COMPLIANCE for governance bypass)
     }
     repeated Clause clauses = 1;   // all must hold (logical AND)
 }
@@ -333,6 +335,7 @@ message Recompute {
     string mtime_to_key = 6;               // if set, store the chosen child's Mtime (decimal) under this pointer key
     string demote_key = 7;                 // if set, stamp demote_value on the prior name_to_key target when it changes
     bytes demote_value = 8;                // value for demote_key
+    string exclude_name = 9;               // if set, skip this child when scanning (e.g. a version about to be deleted)
 }
 
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
@@ -346,6 +349,7 @@ message ObjectTransactionRequest {
     repeated ObjectMutation mutations = 3;
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
+    string condition_key = 6;
 }
 
 message ObjectTransactionResponse {

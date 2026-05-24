@@ -261,15 +261,22 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
 	if conditionIsSet(req.Condition) {
-		current, findErr := fs.filer.FindEntry(ctx, lockPath)
+		// The condition is evaluated against condition_key when set (e.g. a
+		// version entry whose WORM guards gate the delete), while the lock stays
+		// on lock_key (the object, serializing the pointer recompute).
+		conditionPath := lockPath
+		if req.ConditionKey != "" {
+			conditionPath = util.FullPath(req.ConditionKey)
+		}
+		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", lockPath, findErr)
+			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
 		if !writeConditionSatisfied(req.Condition, current) {
-			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", lockPath)
+			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", conditionPath)
 			return &filer_pb.ObjectTransactionResponse{
 				Error:     "precondition failed",
 				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
@@ -421,12 +428,17 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 	// The store streams entries ascending by name. For the lowest-name pick we
 	// only need the first entry, so cap the listing at one; for the highest-name
 	// pick we must scan all and keep the last (the store has no reverse order).
+	// With exclude_name set the first child may be the excluded one, so the cap
+	// is lifted to find the first non-excluded entry.
 	limit := int64(math.MaxInt32)
-	if !rc.Descending {
+	if !rc.Descending && rc.ExcludeName == "" {
 		limit = 1
 	}
 	var chosen *filer.Entry
 	_, listErr := fs.filer.StreamListDirectoryEntries(ctx, util.FullPath(rc.ScanDir), "", false, limit, "", "", "", func(entry *filer.Entry) (bool, error) {
+		if rc.ExcludeName != "" && entry.Name() == rc.ExcludeName {
+			return true, nil
+		}
 		chosen = entry
 		return rc.Descending, nil
 	})

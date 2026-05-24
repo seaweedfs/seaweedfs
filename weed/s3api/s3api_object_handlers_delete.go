@@ -239,14 +239,40 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	// Versioned/suspended delete with no specific version: route off the lock when
-	// the bucket has an owner. createDeleteMarker routes its own pointer flip;
-	// object-lock buckets are excluded by routableWriteOwner and stay on the lock,
-	// and the If-Match precondition was already checked above. A specific-version
-	// delete keeps the lock (its recompute-after-delete is a separate change).
+	// the bucket has an owner. createDeleteMarker routes its own pointer flip; a
+	// delete marker never removes a locked version, so object-lock buckets route
+	// here too. The If-Match precondition was already checked above.
 	if !deleteHandled && versioningConfigured && versionId == "" {
 		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 			deleteResult, deleteCode = s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
 			deleteHandled = true
+		}
+	}
+	// Specific-version delete: route off the lock. A real version recomputes the
+	// .versions pointer excluding it and deletes the version file; the null
+	// version is the regular object entry, deleted directly. Object-lock buckets
+	// gate the delete on the version's WORM guards, evaluated on the owner — for
+	// governance bypass the retention guard is scoped to COMPLIANCE so the filer
+	// allows a governance-mode delete while still denying compliance and legal
+	// hold, without the gateway reading the version.
+	if !deleteHandled && versionId != "" {
+		worm, lockErr := s3a.isObjectLockEnabled(bucket)
+		bypass := worm && s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+		if lockErr == nil {
+			if owner := s3a.objectWriteOwner(bucket, object); owner != "" {
+				deleteResult.versionId = versionId
+				if ve, vErr := s3a.getSpecificObjectVersion(bucket, object, versionId); vErr == nil && ve != nil && ve.Extended != nil {
+					if dm, ok := ve.Extended[s3_constants.ExtDeleteMarkerKey]; ok && string(dm) == "true" {
+						deleteResult.deleteMarker = true
+					}
+				}
+				if versionId == "null" {
+					deleteCode = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass)
+				} else {
+					deleteCode = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass)
+				}
+				deleteHandled = true
+			}
 		}
 	}
 	if !deleteHandled {
