@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -280,6 +281,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		go server.monitorVacuumWorker(bgCtx)
 	}
 
+	go server.publishMaintenanceMetrics(bgCtx)
+
 	return server
 }
 
@@ -362,6 +365,58 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 			vacuumWorkerActive, retrying = syncVacuumState(hasWorker, vacuumWorkerActive, toggler, retrying)
 		}
 	}
+}
+
+// publishMaintenanceMetrics periodically snapshots the maintenance queue and
+// worker fleet into Prometheus gauges. Counters and durations are recorded at
+// their event sites; these gauges reflect current state at scrape resolution.
+func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
+	const interval = 15 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.collectMaintenanceMetrics()
+		}
+	}
+}
+
+func (s *AdminServer) collectMaintenanceMetrics() {
+	if s.maintenanceManager == nil {
+		return
+	}
+
+	stats := s.maintenanceManager.GetStats()
+
+	stats_collect.AdminMaintenanceTasksByStatus.Reset()
+	for status, count := range stats.TasksByStatus {
+		stats_collect.AdminMaintenanceTasksByStatus.WithLabelValues(string(status)).Set(float64(count))
+	}
+
+	stats_collect.AdminMaintenanceTasksByType.Reset()
+	for taskType, count := range stats.TasksByType {
+		stats_collect.AdminMaintenanceTasksByType.WithLabelValues(string(taskType)).Set(float64(count))
+	}
+
+	// NextScanTime is only meaningful while the scanner is actually running;
+	// GetStats computes it unconditionally, so gate it here.
+	if s.maintenanceManager.IsRunning() && !stats.NextScanTime.IsZero() {
+		stats_collect.AdminMaintenanceNextScanTimestampSeconds.Set(float64(stats.NextScanTime.Unix()))
+	}
+
+	workers := s.maintenanceManager.GetWorkers()
+	var usedSlots, maxSlots int
+	for _, w := range workers {
+		usedSlots += w.CurrentLoad
+		maxSlots += w.MaxConcurrent
+	}
+	stats_collect.AdminWorkersConnected.Set(float64(len(workers)))
+	stats_collect.AdminWorkerSlots.WithLabelValues("used").Set(float64(usedSlots))
+	stats_collect.AdminWorkerSlots.WithLabelValues("max").Set(float64(maxSlots))
 }
 
 // loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files

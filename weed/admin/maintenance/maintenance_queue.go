@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // NewMaintenanceQueue creates a new maintenance queue
@@ -482,12 +483,14 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 
 	// Calculate task duration
 	var duration time.Duration
-	if task.StartedAt != nil {
+	hadStart := task.StartedAt != nil
+	if hadStart {
 		duration = completedTime.Sub(*task.StartedAt)
 	}
 
 	// Capture workerID before it may be cleared during retry
 	originalWorkerID := task.WorkerID
+	taskType := string(task.Type)
 
 	var taskToSave *MaintenanceTask
 	var logFn func()
@@ -576,6 +579,18 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 		taskToSaveSnapshot = snapshotTask(taskToSave)
 	}
 	mq.mutex.Unlock()
+
+	// Record terminal-state metrics. A retry leaves the task pending, so it
+	// is not counted as completed or failed here.
+	switch taskStatus {
+	case TaskStatusCompleted:
+		stats_collect.AdminMaintenanceTasksCompletedTotal.WithLabelValues(taskType, "completed").Inc()
+	case TaskStatusFailed:
+		stats_collect.AdminMaintenanceTasksCompletedTotal.WithLabelValues(taskType, "failed").Inc()
+	}
+	if hadStart && (taskStatus == TaskStatusCompleted || taskStatus == TaskStatusFailed) {
+		stats_collect.AdminMaintenanceTaskDurationSeconds.WithLabelValues(taskType).Observe(duration.Seconds())
+	}
 
 	// Only persist non-terminal tasks (retries). Completed/failed tasks stay
 	// in memory for the UI but are not written to disk — they would just
