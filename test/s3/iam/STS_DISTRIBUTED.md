@@ -310,8 +310,13 @@ OIDC token's claims. The available keys are:
 | `oidc:aud` | `aud` claim |
 | `oidc:<claim>` | any other token claim, e.g. `oidc:roles`, `oidc:groups`, `oidc:email` |
 | `aws:FederatedProvider` | the provider `name` (e.g. `keycloak-oidc`) when its configured issuer matches the token, otherwise the raw issuer URL |
-| `aws:userid` | `sub` claim |
+| `aws:userid` | `sub` claim (same value as `oidc:sub` during trust-policy evaluation) |
 | `sts:DurationSeconds` | requested session duration, when supplied |
+
+During trust-policy evaluation `aws:userid` is the raw `sub` claim. Once the
+role has been assumed, the keys seen by request authorization differ: there
+`aws:userid` is a stable per-identity hash of `sub` and `iss` (see
+`ComputeParentUser`), so do not assume the two contexts carry the same value.
 
 Custom claims are always exposed under the `oidc:` prefix, so a trust policy must use
 `oidc:roles` (not a bare `roles`) to match a `roles` claim:
