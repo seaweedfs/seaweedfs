@@ -195,6 +195,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 	// Evaluate the optional precondition against the current entry while the
 	// path lock is held, so the check and the write are atomic on this filer.
+	// The fetched entry is then handed to CreateEntry below so it does not look
+	// the same path up again under the lock.
+	var existing *filer.Entry
 	if conditionIsSet(req.Condition) {
 		current, findErr := fs.filer.FindEntry(ctx, fullpath)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
@@ -210,10 +213,11 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
 			}, nil
 		}
+		existing = current
 	}
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
+	createErr := fs.filer.CreateEntry(ctx, newEntry, existing, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
 	if createErr == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
@@ -327,7 +331,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			return fmt.Errorf("PUT requires an entry")
 		}
 		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
-		return fs.filer.CreateEntry(ctx, newEntry, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
+		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
 
 	case filer_pb.ObjectMutation_DELETE:
 		fullpath := util.NewFullPath(m.Directory, m.Name)
@@ -592,7 +596,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.V(0).InfofCtx(ctx, "MaybeManifestize: %v", err)
 	}
 
-	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil, false, fs.filer.MaxFilenameLength)
+	err = fs.filer.CreateEntry(context.Background(), entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength)
 
 	return &filer_pb.AppendToEntryResponse{}, err
 }

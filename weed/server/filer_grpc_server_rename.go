@@ -245,7 +245,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 			return fmt.Errorf("insert entry %s: %v", newEntry.FullPath, createErr)
 		}
 	} else {
-		if createErr := fs.filer.CreateEntry(filer.WithSuppressedMetadataEvents(ctx), newEntry, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
+		if createErr := fs.filer.CreateEntry(filer.WithSuppressedMetadataEvents(ctx), newEntry, nil, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
 			return createErr
 		}
 	}

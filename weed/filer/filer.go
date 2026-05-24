@@ -209,7 +209,11 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool, maxFilenameLength uint32) error {
+// CreateEntry creates or replaces an entry. When existing is non-nil the caller
+// has already fetched the current entry at this path under a path lock, and it
+// is reused instead of looking the store up again; pass nil to have CreateEntry
+// look it up itself.
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool, maxFilenameLength uint32) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -227,7 +231,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		entry.Attr.Atime = entryInitialAtime(entry.Attr)
 	}
 
-	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
+	oldEntry := existing
+	if oldEntry == nil {
+		oldEntry, _ = f.FindEntry(ctx, entry.FullPath)
+	}
 
 	/*
 		if !hasWritePermission(lastDirectoryEntry, entry) {

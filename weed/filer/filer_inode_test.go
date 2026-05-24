@@ -28,7 +28,7 @@ func TestCreateEntryAssignsInodeWhenMissing(t *testing.T) {
 		},
 	}
 
-	err := f.CreateEntry(context.Background(), entry, false, false, nil, false, f.MaxFilenameLength)
+	err := f.CreateEntry(context.Background(), entry, nil, false, false, nil, false, f.MaxFilenameLength)
 	require.NoError(t, err)
 
 	stored, findErr := store.FindEntry(context.Background(), entry.FullPath)
@@ -48,7 +48,7 @@ func TestCreateEntryAssignsInodesToAutoCreatedParents(t *testing.T) {
 		},
 	}
 
-	err := f.CreateEntry(context.Background(), entry, false, false, nil, false, f.MaxFilenameLength)
+	err := f.CreateEntry(context.Background(), entry, nil, false, false, nil, false, f.MaxFilenameLength)
 	require.NoError(t, err)
 
 	for _, path := range []string{"/a", "/a/b", "/a/b/c.txt"} {

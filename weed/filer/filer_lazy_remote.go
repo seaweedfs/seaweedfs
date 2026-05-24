@@ -96,7 +96,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		persistBaseCtx, cancelPersist := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancelPersist()
 		persistCtx := context.WithValue(persistBaseCtx, lazyFetchContextKey{}, true)
-		saveErr := f.CreateEntry(persistCtx, entry, false, false, nil, true, f.MaxFilenameLength)
+		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
 			f.lazyFetchGroup.Forget(key)
