@@ -237,6 +237,107 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	return
 }
 
+// ObjectTransaction applies an ordered list of entry mutations atomically with
+// respect to other writers of the same object, by holding the per-path lock on
+// lock_key for the whole call. The optional condition is checked first, against
+// the entry at lock_key. This lets a caller describe a multi-entry object
+// operation (e.g. delete the null version + write a delete marker + flip the
+// latest pointer) as one request, replacing a distributed lock held across
+// several RPCs. Callers must route the object's writes to its owner filer for
+// the lock to be authoritative.
+func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	if req.LockKey == "" {
+		return &filer_pb.ObjectTransactionResponse{Error: "lock_key is required"}, nil
+	}
+
+	lockPath := util.FullPath(req.LockKey)
+	pathLock := fs.entryLockTable.AcquireLock("ObjectTransaction", lockPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
+
+	if conditionIsSet(req.Condition) {
+		current, findErr := fs.filer.FindEntry(ctx, lockPath)
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", lockPath, findErr)
+		}
+		if findErr == filer_pb.ErrNotFound {
+			current = nil
+		}
+		if !writeConditionSatisfied(req.Condition, current) {
+			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", lockPath)
+			return &filer_pb.ObjectTransactionResponse{
+				Error:     "precondition failed",
+				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+			}, nil
+		}
+	}
+
+	for i, m := range req.Mutations {
+		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
+			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
+			return &filer_pb.ObjectTransactionResponse{Error: fmt.Sprintf("mutation %d: %v", i, err)}, nil
+		}
+	}
+
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+// applyObjectMutation applies a single mutation while the transaction's path
+// lock is held. PUT entries are expected to be fully prepared by the caller
+// (chunks resolved); mutations here are metadata-scoped. A DELETE of an absent
+// entry and a PATCH of an absent entry are no-ops, so transactions are
+// idempotent on replay.
+func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.ObjectMutation, fromOtherCluster bool, signatures []int32) error {
+	switch m.Type {
+	case filer_pb.ObjectMutation_PUT:
+		if m.Entry == nil {
+			return fmt.Errorf("PUT requires an entry")
+		}
+		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
+		return fs.filer.CreateEntry(ctx, newEntry, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
+
+	case filer_pb.ObjectMutation_DELETE:
+		fullpath := util.NewFullPath(m.Directory, m.Name)
+		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
+		if err == filer_pb.ErrNotFound {
+			return nil
+		}
+		return err
+
+	case filer_pb.ObjectMutation_PATCH_EXTENDED:
+		fullpath := util.NewFullPath(m.Directory, m.Name)
+		oldEntry, err := fs.filer.FindEntry(ctx, fullpath)
+		if err == filer_pb.ErrNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		// Patch a copy so oldEntry still reflects the pre-update state for the
+		// metadata notification's diff.
+		newEntry := oldEntry.ShallowClone()
+		newEntry.Extended = make(map[string][]byte, len(oldEntry.Extended))
+		for k, v := range oldEntry.Extended {
+			newEntry.Extended[k] = v
+		}
+		for k, v := range m.SetExtended {
+			newEntry.Extended[k] = v
+		}
+		for _, k := range m.DeleteExtended {
+			delete(newEntry.Extended, k)
+		}
+		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
+			return err
+		}
+		// Emit the metadata event so the update replicates and subscribers see it,
+		// matching the UpdateEntry handler.
+		fs.filer.NotifyUpdateEvent(ctx, oldEntry, newEntry, true, fromOtherCluster, signatures)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown mutation type %v", m.Type)
+	}
+}
+
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
 	glog.V(4).InfofCtx(ctx, "UpdateEntry %v", req)
