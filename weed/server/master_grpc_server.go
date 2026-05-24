@@ -421,6 +421,13 @@ func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedRespo
 	ms.clientChansLock.RUnlock()
 }
 
+// broadcastVolumeLocationsToClients notifies connected clients about newly created volume locations.
+func (ms *MasterServer) broadcastVolumeLocationsToClients(locations []*master_pb.VolumeLocation) {
+	for _, location := range locations {
+		ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: location})
+	}
+}
+
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
 	leader, err := ms.Topo.Leader()
 	if err != nil {

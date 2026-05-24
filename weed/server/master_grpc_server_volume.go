@@ -42,9 +42,7 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 		glog.V(1).Infof("automatic volume grow failed: %+v", err)
 		return
 	}
-	for _, newVidLocation := range newVidLocations {
-		ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: newVidLocation})
-	}
+	ms.broadcastVolumeLocationsToClients(newVidLocations)
 }
 
 func (ms *MasterServer) ProcessGrowRequest() {
