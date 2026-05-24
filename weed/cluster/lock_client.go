@@ -70,6 +70,18 @@ func (lc *LockClient) hostForKey(key string) pb.ServerAddress {
 	return lc.seedFiler
 }
 
+// PrimaryForKey returns the ring owner for key, or "" before any ring arrives.
+// Unlike hostForKey it does not fall back to the seed, so a route-by-key caller
+// stays on the distributed lock until the ring is known.
+func (lc *LockClient) PrimaryForKey(key string) pb.ServerAddress {
+	lc.ringMu.RLock()
+	defer lc.ringMu.RUnlock()
+	if lc.ring == nil {
+		return ""
+	}
+	return lc.ring.GetPrimary(key)
+}
+
 type LiveLock struct {
 	key                 string
 	renewToken          string

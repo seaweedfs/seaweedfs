@@ -71,3 +71,22 @@ func TestLockClientSetRingVersionGuard(t *testing.T) {
 		t.Errorf("bootstrap update not applied, got %q", got)
 	}
 }
+
+// PrimaryForKey returns "" before any ring is received (so a route-by-key
+// caller falls back to the distributed lock) and the ring owner afterwards,
+// unlike hostForKey which falls back to the seed.
+func TestLockClientPrimaryForKey(t *testing.T) {
+	lc := NewLockClient(nil, "seed:8888")
+	if got := lc.PrimaryForKey("k"); got != "" {
+		t.Errorf("expected empty before ring, got %q", got)
+	}
+
+	lc.SetRing([]pb.ServerAddress{"filer-a:8888", "filer-b:8888"}, 1)
+	got := lc.PrimaryForKey("k")
+	if got == "" {
+		t.Fatal("expected an owner after ring set")
+	}
+	if got != lc.hostForKey("k") {
+		t.Errorf("PrimaryForKey %q disagrees with hostForKey %q", got, lc.hostForKey("k"))
+	}
+}

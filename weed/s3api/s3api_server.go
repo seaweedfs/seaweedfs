@@ -96,6 +96,8 @@ type S3ApiServer struct {
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
 	newObjectWriteLock    func(bucket, object string) objectWriteLock
+	// objectWriteLockClient resolves a key's owner filer for route-by-key.
+	objectWriteLockClient *cluster.LockClient
 	// Shared ReaderCache used by the S3 GET streaming path. It lives for the
 	// lifetime of the server so that concurrent and repeat reads share a
 	// single in-flight download per chunk, and so that no per-request
@@ -286,6 +288,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if objectWriteLockClient == nil {
 			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
 		}
+		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) objectWriteLock {
 			lockKey := fmt.Sprintf("s3.object.write:%s", s3ApiServer.toFilerPath(bucket, object))
 			owner := fmt.Sprintf("s3api-%d", s3ApiServer.randomClientId)
