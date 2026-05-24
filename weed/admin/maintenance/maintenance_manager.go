@@ -520,6 +520,11 @@ func (mm *MaintenanceManager) GetWorkers() []*MaintenanceWorker {
 	return mm.queue.GetWorkers()
 }
 
+// GetWorkerSlotTotals returns worker count and aggregate used/max task slots.
+func (mm *MaintenanceManager) GetWorkerSlotTotals() (workers, used, max int) {
+	return mm.queue.GetWorkerSlotTotals()
+}
+
 // TriggerScan manually triggers a maintenance scan
 func (mm *MaintenanceManager) TriggerScan() error {
 	return mm.triggerScanInternal(true)

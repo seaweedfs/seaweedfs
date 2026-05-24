@@ -402,19 +402,16 @@ func (s *AdminServer) collectMaintenanceMetrics() {
 		stats_collect.AdminMaintenanceTasksByType.WithLabelValues(string(taskType)).Set(float64(count))
 	}
 
-	// NextScanTime is only meaningful while the scanner is actually running;
-	// GetStats computes it unconditionally, so gate it here.
+	// NextScanTime is only meaningful while the scanner runs; GetStats computes
+	// it unconditionally, so clear the gauge when idle to avoid a stale value.
 	if s.maintenanceManager.IsRunning() && !stats.NextScanTime.IsZero() {
 		stats_collect.AdminMaintenanceNextScanTimestampSeconds.Set(float64(stats.NextScanTime.Unix()))
+	} else {
+		stats_collect.AdminMaintenanceNextScanTimestampSeconds.Set(0)
 	}
 
-	workers := s.maintenanceManager.GetWorkers()
-	var usedSlots, maxSlots int
-	for _, w := range workers {
-		usedSlots += w.CurrentLoad
-		maxSlots += w.MaxConcurrent
-	}
-	stats_collect.AdminWorkersConnected.Set(float64(len(workers)))
+	workers, usedSlots, maxSlots := s.maintenanceManager.GetWorkerSlotTotals()
+	stats_collect.AdminWorkersConnected.Set(float64(workers))
 	stats_collect.AdminWorkerSlots.WithLabelValues("used").Set(float64(usedSlots))
 	stats_collect.AdminWorkerSlots.WithLabelValues("max").Set(float64(maxSlots))
 }

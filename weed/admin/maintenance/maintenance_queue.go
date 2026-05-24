@@ -834,6 +834,20 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	return workers
 }
 
+// GetWorkerSlotTotals aggregates worker count and used/max task slots under the
+// lock, so callers don't read live worker fields that task updates mutate.
+func (mq *MaintenanceQueue) GetWorkerSlotTotals() (workers, used, max int) {
+	mq.mutex.RLock()
+	defer mq.mutex.RUnlock()
+
+	for _, worker := range mq.workers {
+		workers++
+		used += worker.CurrentLoad
+		max += worker.MaxConcurrent
+	}
+	return
+}
+
 // generateTaskID generates a unique ID for tasks
 func generateTaskID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
