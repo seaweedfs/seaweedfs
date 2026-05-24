@@ -76,7 +76,7 @@ func TestLDBIndexCompaction(t *testing.T) {
 func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err := NewVolume(dir, dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -119,7 +119,7 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 
 	v.Close()
 
-	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err = NewVolume(dir, dir, dir, "", 1, needleMapKind, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
@@ -153,10 +153,10 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 
 func TestCompactVolumeFilesOffline(t *testing.T) {
 	dir := t.TempDir()
-	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil)
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, dir, "", nil)
 	defer location.Close()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err := NewVolume(dir, dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestCompactVolumeFilesOffline(t *testing.T) {
 		t.Fatalf("CompactVolumeFiles: %v", err)
 	}
 
-	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
+	reloaded, err := NewVolume(dir, dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume reload: %v", err)
 	}
@@ -188,10 +188,10 @@ func TestCompactVolumeFilesOffline(t *testing.T) {
 
 func TestCleanupCompactRemovesTempFiles(t *testing.T) {
 	dir := t.TempDir()
-	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil)
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, dir, "", nil)
 	defer location.Close()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err := NewVolume(dir, dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestCleanupCompactRemovesTempFiles(t *testing.T) {
 func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err := NewVolume(dir, dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
