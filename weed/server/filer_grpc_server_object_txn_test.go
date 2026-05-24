@@ -246,6 +246,92 @@ func TestObjectTransactionRecomputeAscending(t *testing.T) {
 	}
 }
 
+// A batch applies each transaction independently: one failed precondition does
+// not abort the others, matching S3 multi-object delete semantics.
+func TestObjectTransactionBatchIndependent(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	obj := func(inode uint64) *filer.Entry {
+		return &filer.Entry{
+			Attr:     filer.Attr{Inode: inode, Mtime: now, Crtime: now, Mode: 0644},
+			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
+		}
+	}
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/a": obj(1),
+		"/buckets/b/c": obj(3),
+	})
+
+	del := func(name string, cond *filer_pb.WriteCondition) *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey:   "/buckets/b/" + name,
+			Condition: cond,
+			Mutations: []*filer_pb.ObjectMutation{
+				{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b", Name: name},
+			},
+		}
+	}
+
+	resp, err := fs.ObjectTransactionBatch(context.Background(), &filer_pb.ObjectTransactionBatchRequest{
+		Transactions: []*filer_pb.ObjectTransactionRequest{
+			del("a", nil),
+			del("c", &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+				{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{`"zzz"`}},
+			}}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(resp.Responses) != 2 {
+		t.Fatalf("want 2 responses, got %d", len(resp.Responses))
+	}
+	if resp.Responses[0].Error != "" {
+		t.Errorf("delete a should succeed: %q", resp.Responses[0].Error)
+	}
+	if resp.Responses[1].ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Errorf("delete c should fail precondition, got %v", resp.Responses[1].ErrorCode)
+	}
+	if _, ok := store.entries["/buckets/b/a"]; ok {
+		t.Errorf("a should be deleted")
+	}
+	if _, ok := store.entries["/buckets/b/c"]; !ok {
+		t.Errorf("c should survive its failed precondition")
+	}
+}
+
+// A nil transaction in a batch yields an error response in its slot rather than
+// panicking, keeping responses parallel to the requests.
+func TestObjectTransactionBatchNilTransaction(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/a": {Attr: filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644}},
+	})
+
+	resp, err := fs.ObjectTransactionBatch(context.Background(), &filer_pb.ObjectTransactionBatchRequest{
+		Transactions: []*filer_pb.ObjectTransactionRequest{
+			nil,
+			{LockKey: "/buckets/b/a", Mutations: []*filer_pb.ObjectMutation{
+				{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b", Name: "a"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(resp.Responses) != 2 {
+		t.Fatalf("want 2 responses (parallel to requests), got %d", len(resp.Responses))
+	}
+	if resp.Responses[0].Error == "" {
+		t.Errorf("nil transaction should produce an error response")
+	}
+	if resp.Responses[1].Error != "" {
+		t.Errorf("valid transaction should succeed: %q", resp.Responses[1].Error)
+	}
+	if _, ok := store.entries["/buckets/b/a"]; ok {
+		t.Errorf("a should be deleted by the valid transaction")
+	}
+}
+
 // DELETE and PATCH of an absent entry are no-ops, so a replayed transaction
 // does not error.
 func TestObjectTransactionIdempotentNoops(t *testing.T) {

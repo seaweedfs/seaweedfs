@@ -282,6 +282,39 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	return &filer_pb.ObjectTransactionResponse{}, nil
 }
 
+// ObjectTransactionBatch applies several object transactions in one round trip,
+// each under its own per-path lock and independent of the others. A failed
+// transaction (precondition or mutation error) is reported in its own response
+// without aborting the rest, matching S3 multi-object semantics where each key
+// succeeds or fails on its own.
+func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb.ObjectTransactionBatchRequest) (*filer_pb.ObjectTransactionBatchResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	resp := &filer_pb.ObjectTransactionBatchResponse{
+		Responses: make([]*filer_pb.ObjectTransactionResponse, 0, len(req.Transactions)),
+	}
+	for _, txn := range req.Transactions {
+		// Stop early if the caller went away; the request still holds the
+		// unprocessed transactions, so it is retried rather than lost.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if txn == nil {
+			resp.Responses = append(resp.Responses, &filer_pb.ObjectTransactionResponse{Error: "nil transaction"})
+			continue
+		}
+		one, err := fs.ObjectTransaction(ctx, txn)
+		if err != nil {
+			// A transport-level error on one transaction is surfaced as that
+			// transaction's error; the batch RPC itself still succeeds.
+			one = &filer_pb.ObjectTransactionResponse{Error: err.Error()}
+		}
+		resp.Responses = append(resp.Responses, one)
+	}
+	return resp, nil
+}
+
 // applyObjectMutation applies a single mutation while the transaction's path
 // lock is held. PUT entries are expected to be fully prepared by the caller
 // (chunks resolved); mutations here are metadata-scoped. A DELETE of an absent

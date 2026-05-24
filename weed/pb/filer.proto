@@ -34,6 +34,9 @@ service SeaweedFiler {
     rpc ObjectTransaction (ObjectTransactionRequest) returns (ObjectTransactionResponse) {
     }
 
+    rpc ObjectTransactionBatch (ObjectTransactionBatchRequest) returns (ObjectTransactionBatchResponse) {
+    }
+
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
@@ -342,6 +345,19 @@ message ObjectTransactionRequest {
 message ObjectTransactionResponse {
     string error = 1;
     FilerError error_code = 2;
+}
+
+// ObjectTransactionBatch applies several object transactions in one round trip,
+// each under its own per-path lock and independent of the others (no cross-key
+// atomicity). A caller groups keys that route to the same owner filer and sends
+// one batch per owner, e.g. for a multi-object delete. Each response is parallel
+// to its request.
+message ObjectTransactionBatchRequest {
+    repeated ObjectTransactionRequest transactions = 1;
+}
+
+message ObjectTransactionBatchResponse {
+    repeated ObjectTransactionResponse responses = 1;
 }
 
 message CreateEntryResponse {
