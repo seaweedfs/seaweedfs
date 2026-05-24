@@ -363,6 +363,14 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		for _, k := range m.DeleteExtended {
 			delete(newEntry.Extended, k)
 		}
+		if m.SetContent {
+			newEntry.Content = m.Content
+			// Keep FileSize consistent with content for files; some stores and
+			// tools read the attribute directly. Directories carry no file size.
+			if !newEntry.IsDirectory() {
+				newEntry.FileSize = uint64(len(m.Content))
+			}
+		}
 		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
 			return err
 		}

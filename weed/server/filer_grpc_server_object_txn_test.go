@@ -111,6 +111,83 @@ func TestObjectTransactionPatchNotifies(t *testing.T) {
 	}
 }
 
+// PATCH_EXTENDED with set_content replaces Entry.Content while merging Extended
+// and preserving the rest; without set_content, Content is left untouched.
+func TestObjectTransactionPatchContent(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b": {
+			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
+			Extended: map[string][]byte{"versioning": []byte("Enabled")},
+			Content:  []byte("old-content"),
+		},
+	})
+
+	// set_content replaces Content and merges an Extended key, preserving the
+	// existing versioning key.
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets", Name: "b",
+				SetContent: true, Content: []byte("encryption-blob"),
+				SetExtended: map[string][]byte{"cors": []byte("yes")}},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("patch set_content failed: err=%v resp=%q", err, resp.Error)
+	}
+	e := store.entries["/buckets/b"]
+	if string(e.Content) != "encryption-blob" {
+		t.Fatalf("content = %q, want encryption-blob", e.Content)
+	}
+	if string(e.Extended["versioning"]) != "Enabled" || string(e.Extended["cors"]) != "yes" {
+		t.Fatalf("extended not merged: %v", e.Extended)
+	}
+
+	// A PATCH without set_content must not disturb Content.
+	resp, err = fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/buckets", Name: "b",
+				SetExtended: map[string][]byte{"versioning": []byte("Suspended")}},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("patch extended-only failed: err=%v resp=%q", err, resp.Error)
+	}
+	e = store.entries["/buckets/b"]
+	if string(e.Content) != "encryption-blob" {
+		t.Fatalf("content clobbered by extended-only patch: %q", e.Content)
+	}
+	if string(e.Extended["versioning"]) != "Suspended" {
+		t.Fatalf("versioning = %q, want Suspended", e.Extended["versioning"])
+	}
+	if e.FileSize != 0 {
+		t.Fatalf("directory FileSize must stay 0, got %d", e.FileSize)
+	}
+
+	// For a file, set_content syncs FileSize to the new content length, even when
+	// the content shrinks.
+	store.entries["/file"] = &filer.Entry{
+		FullPath: "/file",
+		Attr:     filer.Attr{Inode: 9, Mtime: now, Crtime: now, Mode: 0644, FileSize: 100},
+		Content:  []byte("xxxxxxxxxxxxxxx"),
+	}
+	resp, err = fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/file",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PATCH_EXTENDED, Directory: "/", Name: "file",
+				SetContent: true, Content: []byte("short")},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("file patch failed: err=%v resp=%q", err, resp.Error)
+	}
+	if f := store.entries["/file"]; string(f.Content) != "short" || f.FileSize != uint64(len("short")) {
+		t.Fatalf("file content=%q FileSize=%d, want short/5", f.Content, f.FileSize)
+	}
+}
+
 // A failing precondition aborts before any mutation is applied.
 func TestObjectTransactionPreconditionAborts(t *testing.T) {
 	now := time.Unix(1700000000, 0)

@@ -1428,6 +1428,8 @@ type ObjectMutation struct {
 	IsDeleteData   bool                   `protobuf:"varint,7,opt,name=is_delete_data,json=isDeleteData,proto3" json:"is_delete_data,omitempty"`                                                                     // DELETE: also delete chunk data
 	IsRecursive    bool                   `protobuf:"varint,8,opt,name=is_recursive,json=isRecursive,proto3" json:"is_recursive,omitempty"`                                                                          // DELETE: recurse into a directory
 	Recompute      *Recompute             `protobuf:"bytes,9,opt,name=recompute,proto3" json:"recompute,omitempty"`                                                                                                  // RECOMPUTE_LATEST parameters
+	SetContent     bool                   `protobuf:"varint,10,opt,name=set_content,json=setContent,proto3" json:"set_content,omitempty"`                                                                            // PATCH_EXTENDED: replace Entry.content with content
+	Content        []byte                 `protobuf:"bytes,11,opt,name=content,proto3" json:"content,omitempty"`                                                                                                     // PATCH_EXTENDED: new Entry.content when set_content
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1521,6 +1523,20 @@ func (x *ObjectMutation) GetIsRecursive() bool {
 func (x *ObjectMutation) GetRecompute() *Recompute {
 	if x != nil {
 		return x.Recompute
+	}
+	return nil
+}
+
+func (x *ObjectMutation) GetSetContent() bool {
+	if x != nil {
+		return x.SetContent
+	}
+	return false
+}
+
+func (x *ObjectMutation) GetContent() []byte {
+	if x != nil {
+		return x.Content
 	}
 	return nil
 }
@@ -6315,7 +6331,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x13IF_UNMODIFIED_SINCE\x10\x05\x12\x15\n" +
 	"\x11IF_MODIFIED_SINCE\x10\x06\x12\x19\n" +
 	"\x15IF_EXTENDED_NOT_EQUAL\x10\a\x12\x1c\n" +
-	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\"\x96\x04\n" +
+	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\"\xd1\x04\n" +
 	"\x0eObjectMutation\x121\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1d.filer_pb.ObjectMutation.TypeR\x04type\x12\x1c\n" +
 	"\tdirectory\x18\x02 \x01(\tR\tdirectory\x12\x12\n" +
@@ -6325,7 +6341,11 @@ const file_filer_proto_rawDesc = "" +
 	"\x0fdelete_extended\x18\x06 \x03(\tR\x0edeleteExtended\x12$\n" +
 	"\x0eis_delete_data\x18\a \x01(\bR\fisDeleteData\x12!\n" +
 	"\fis_recursive\x18\b \x01(\bR\visRecursive\x121\n" +
-	"\trecompute\x18\t \x01(\v2\x13.filer_pb.RecomputeR\trecompute\x1a>\n" +
+	"\trecompute\x18\t \x01(\v2\x13.filer_pb.RecomputeR\trecompute\x12\x1f\n" +
+	"\vset_content\x18\n" +
+	" \x01(\bR\n" +
+	"setContent\x12\x18\n" +
+	"\acontent\x18\v \x01(\fR\acontent\x1a>\n" +
 	"\x10SetExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"E\n" +

@@ -312,6 +312,8 @@ message ObjectMutation {
     bool is_delete_data = 7;               // DELETE: also delete chunk data
     bool is_recursive = 8;                 // DELETE: recurse into a directory
     Recompute recompute = 9;               // RECOMPUTE_LATEST parameters
+    bool set_content = 10;                 // PATCH_EXTENDED: replace Entry.content with content
+    bytes content = 11;                    // PATCH_EXTENDED: new Entry.content when set_content
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
