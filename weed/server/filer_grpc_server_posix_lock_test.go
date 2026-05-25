@@ -149,3 +149,30 @@ func TestPosixLockForwardsToOwner(t *testing.T) {
 		t.Fatal("sender must forward, not apply locally")
 	}
 }
+
+func TestPosixLockWarmupDefersGrants(t *testing.T) {
+	fs := newPosixTestServer()
+	fs.posixLockReadyAt.Store(time.Now().UnixNano()) // warming up
+
+	// A would-be grant is deferred (not granted, no conflict) so the client retries.
+	r := posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 1, 1, 7, false))
+	if r.Granted {
+		t.Fatal("grant should be deferred during warm-up")
+	}
+	if r.HasConflict {
+		t.Fatalf("deferred grant should report no conflict, got %+v", r.Conflict)
+	}
+
+	// A lock the owner already knows about is still reported as a conflict.
+	fs.posixLocks.TryLock("s3.fuse.lock:/x", posixlock.Range{Start: 0, End: 99, Type: posixlock.Write, Sid: 9, Owner: 1, Pid: 5})
+	if r := posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(50, 60, posixlock.Write, 1, 1, 7, false)); r.Granted || !r.HasConflict {
+		t.Fatalf("known conflict should be reported during warm-up: %+v", r)
+	}
+
+	// After warm-up, grants resume.
+	posixOp(t, fs, filer_pb.PosixLockOp_UNLOCK, pbLock(0, 99, posixlock.Unlock, 9, 1, 5, false))
+	fs.posixLockReadyAt.Store(time.Now().Add(-2 * posixLockWarmup).UnixNano())
+	if r := posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 1, 1, 7, false)); !r.Granted {
+		t.Fatal("grant should succeed after warm-up")
+	}
+}

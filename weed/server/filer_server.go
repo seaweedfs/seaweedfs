@@ -141,6 +141,12 @@ type FilerServer struct {
 	posixLocks *posixlock.Manager
 	// posixLockSweeperStop stops the lease-reaping sweeper goroutine on Shutdown.
 	posixLockSweeperStop chan struct{}
+	// posixLockReadyAt is the unix-nanos when this filer began serving POSIX
+	// locks. For posixLockWarmup after it, the owner defers would-be grants while
+	// mounts re-assert, so a (re)started owner does not double-grant from empty
+	// state. Atomic so the handler reads it without locking; 0 means "not warming
+	// up" (e.g. in tests).
+	posixLockReadyAt atomic.Int64
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
