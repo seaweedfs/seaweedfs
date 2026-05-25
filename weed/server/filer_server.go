@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra2"
@@ -132,6 +133,12 @@ type FilerServer struct {
 	// the distributed lock for that key. Idle keys are evicted automatically, so
 	// the table stays bounded.
 	entryLockTable *util.LockTable[util.FullPath]
+
+	// posixLocks is the in-memory authority for cross-mount POSIX advisory locks
+	// on inodes this filer owns (per the route-by-key ring). Lock state is kept
+	// here rather than in replicated metadata: it is transient coordination, so
+	// keeping it off the meta-log avoids churn.
+	posixLocks *posixlock.Manager
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -171,6 +178,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		recentCopyRequests:    make(map[string]recentCopyRequest),
 		CredentialManager:     option.CredentialManager,
 		entryLockTable:        util.NewLockTable[util.FullPath](),
+		posixLocks:            posixlock.NewManager(),
 	}
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
