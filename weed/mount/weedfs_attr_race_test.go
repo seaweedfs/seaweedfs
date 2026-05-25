@@ -92,3 +92,61 @@ func TestAttrChunkRace(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestReadFromChunksRace guards the read path's chunk-slice access. The read
+// path holds fh.entryLock (which excludes SetAttr) but not the LockedEntry lock
+// the async uploader appends under, so readFromChunks used to compute FileSize
+// and walk entry.Chunks while AddChunks reallocated the slice. Run under -race.
+func TestReadFromChunksRace(t *testing.T) {
+	wfs := &WFS{
+		option:      &Option{},
+		inodeToPath: NewInodeToPath(util.FullPath("/"), 0),
+		fhMap:       NewFileHandleToInode(),
+	}
+
+	const inode = uint64(42)
+	fullPath := util.FullPath("/dir/sample.txt")
+	wfs.inodeToPath.Lookup(fullPath, 1, false, false, inode, true)
+
+	// FileSize 0 forces readFromChunks down the filer.FileSize(chunks) branch.
+	entry := &filer_pb.Entry{
+		Name:       "sample.txt",
+		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
+	}
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1)
+	if err != nil {
+		t.Fatalf("NewChunkGroup: %v", err)
+	}
+	fh := &FileHandle{
+		fh:              FileHandleId(1),
+		inode:           inode,
+		wfs:             wfs,
+		entry:           &LockedEntry{Entry: entry},
+		entryChunkGroup: chunkGroup,
+	}
+	wfs.fhMap.inode2fh[inode] = fh
+	wfs.fhMap.fh2inode[fh.fh] = inode
+
+	const iterations = 2000
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "x", Offset: int64(i), Size: 1}})
+		}
+	}()
+
+	// A read past EOF returns before touching the volume tier, but only after
+	// the racy size/chunk snapshot has run.
+	go func() {
+		defer wg.Done()
+		buff := make([]byte, 16)
+		for i := 0; i < iterations; i++ {
+			fh.readFromChunks(buff, 1<<62)
+		}
+	}()
+
+	wg.Wait()
+}
