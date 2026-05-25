@@ -1059,7 +1059,7 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if len(v.Rules) != 1 {
+	if len(v.Rules) != 1 || v.Rules[0] == nil || v.Rules[0].ObjectOwnership == nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
