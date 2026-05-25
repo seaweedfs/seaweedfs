@@ -28,9 +28,11 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		out.AttrValid = wfs.attrValidSec
 		// When an open handle owns the entry, async upload workers append
 		// chunks under the LockedEntry lock; take it for reading so FileSize
-		// does not iterate the chunk slice mid-reallocation.
+		// does not iterate the chunk slice mid-reallocation. Re-read under the
+		// lock in case SetEntry swapped the pointer since maybeReadEntry.
 		if fh != nil {
 			fh.entry.RLock()
+			entry = fh.entry.Entry
 		}
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		if fh != nil {
@@ -79,9 +81,12 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		// entry is the handle's shared LockedEntry.Entry. Async upload workers
 		// mutate its Chunks slice under the LockedEntry lock (AddChunks); hold
 		// that same lock so the truncate and FileSize reads below don't tear
-		// against a concurrent append.
+		// against a concurrent append. Re-read under the lock in case SetEntry
+		// swapped the pointer since maybeReadEntry, so we don't mutate an
+		// orphaned entry and lose the update.
 		fh.entry.Lock()
 		defer fh.entry.Unlock()
+		entry = fh.entry.Entry
 	}
 
 	wormEnforced, wormEnabled := wfs.wormEnforcedForEntry(path, entry)
