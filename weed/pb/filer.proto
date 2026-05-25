@@ -396,6 +396,7 @@ enum PosixLockOp {
     GET_LK = 2;             // report a conflicting lock, if any
     RELEASE_POSIX_OWNER = 3; // drop the owner's fcntl locks (flush-time)
     RELEASE_FLOCK_OWNER = 4; // drop the owner's flock locks (release-time)
+    KEEP_ALIVE = 5;         // renew the session's lease on this owner (lock.sid)
 }
 
 message PosixLockResponse {

@@ -88,6 +88,22 @@ func TestPosixLockReleasePosixOwnerKeepsFlock(t *testing.T) {
 	}
 }
 
+func TestPosixLockKeepAlive(t *testing.T) {
+	fs := newPosixTestServer()
+	resp, err := fs.PosixLock(context.Background(), &filer_pb.PosixLockRequest{
+		Key: "s3.fuse.lock:/x", Op: filer_pb.PosixLockOp_KEEP_ALIVE,
+		Lock: pbLock(0, 0, posixlock.Unlock, 7, 0, 0, false),
+	})
+	if err != nil || resp == nil {
+		t.Fatalf("keep_alive should succeed: err=%v", err)
+	}
+	// A renewed session that goes stale is reaped; a never-renewed one is not.
+	fs.posixLocks.TryLock("s3.fuse.lock:/x", posixlock.Range{Start: 0, End: 9, Type: posixlock.Write, Sid: 7, Owner: 1})
+	if reaped := fs.posixLocks.ReapExpired(0); len(reaped) != 1 || reaped[0] != 7 {
+		t.Fatalf("renewed session 7 should be reapable at ttl=0, got %v", reaped)
+	}
+}
+
 // A request whose key is owned by another filer is forwarded to it; the owner
 // applies it and the sender does not. The owner's ring points back at the bogus
 // sender, so without is_moved on the forwarded hop it would re-forward and fail.

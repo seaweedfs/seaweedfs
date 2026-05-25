@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestManagerGrantAndConflict(t *testing.T) {
@@ -106,6 +107,37 @@ func TestManagerReleaseSessionReapsAcrossKeys(t *testing.T) {
 	}
 	if !m.bySid[2]["b"] {
 		t.Fatal("session 2 index entry should remain")
+	}
+}
+
+func TestManagerReapsOnlyStaleLeasedSessions(t *testing.T) {
+	m := NewManager()
+	// Session 1: holds a lock, leased but stale (renewed long ago).
+	m.TryLock("a", Range{Start: 0, End: 99, Type: Write, Sid: 1, Owner: 1})
+	m.Renew(1)
+	m.lastSeen[1] = time.Now().Add(-time.Hour)
+	// Session 2: holds a lock, leased and fresh.
+	m.TryLock("b", Range{Start: 0, End: 99, Type: Write, Sid: 2, Owner: 1})
+	m.Renew(2)
+	// Session 3: holds a lock but never renewed (no lease) — must not be reaped.
+	m.TryLock("c", Range{Start: 0, End: 99, Type: Write, Sid: 3, Owner: 1})
+
+	reaped := m.ReapExpired(30 * time.Second)
+
+	if len(reaped) != 1 || reaped[0] != 1 {
+		t.Fatalf("only the stale leased session should be reaped, got %v", reaped)
+	}
+	if _, ok := m.byKey["a"]; ok {
+		t.Fatal("stale session's lock should be gone")
+	}
+	if _, ok := m.byKey["b"]; !ok {
+		t.Fatal("fresh session's lock must remain")
+	}
+	if _, ok := m.byKey["c"]; !ok {
+		t.Fatal("never-renewed session must not be reaped")
+	}
+	if _, ok := m.lastSeen[1]; ok {
+		t.Fatal("reaped session's lease entry should be cleared")
 	}
 }
 
