@@ -1,73 +1,58 @@
 package posixlock
 
 import (
-	"encoding/binary"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
-// marshalVersion guards the on-disk format of a serialized Set so a later change
-// is detected rather than silently misread. The lock set rides in an inode's
-// entry metadata, so the format must stay stable across filer versions.
-const marshalVersion byte = 1
-
-// recordSize is the fixed encoded width of one Range: Start, End, Sid, Owner
-// (8 each), Pid (4), Type (1), IsFlock (1).
-const recordSize = 8 + 8 + 8 + 8 + 4 + 1 + 1
+// The held lock set rides in an inode's entry metadata, so the wire format must
+// stay backward compatible across filer versions. It is a protobuf message
+// (LockSetProto), so new fields can be added without breaking old readers.
 
 // Marshal encodes the held locks for storage in the inode's entry metadata. A
 // lock-free set encodes to nil, so an inode that holds no locks carries no blob.
-func (s *Set) Marshal() []byte {
+func (s *Set) Marshal() ([]byte, error) {
 	if len(s.locks) == 0 {
-		return nil
+		return nil, nil
 	}
-	b := make([]byte, 5+len(s.locks)*recordSize)
-	b[0] = marshalVersion
-	binary.BigEndian.PutUint32(b[1:], uint32(len(s.locks)))
-	off := 5
-	for _, l := range s.locks {
-		binary.BigEndian.PutUint64(b[off:], l.Start)
-		binary.BigEndian.PutUint64(b[off+8:], l.End)
-		binary.BigEndian.PutUint64(b[off+16:], l.Sid)
-		binary.BigEndian.PutUint64(b[off+24:], l.Owner)
-		binary.BigEndian.PutUint32(b[off+32:], l.Pid)
-		b[off+36] = byte(l.Type)
-		if l.IsFlock {
-			b[off+37] = 1
+	pb := &LockSetProto{Locks: make([]*LockProto, len(s.locks))}
+	for i, l := range s.locks {
+		pb.Locks[i] = &LockProto{
+			Start:   l.Start,
+			End:     l.End,
+			Type:    l.Type,
+			Sid:     l.Sid,
+			Owner:   l.Owner,
+			Pid:     l.Pid,
+			IsFlock: l.IsFlock,
 		}
-		off += recordSize
 	}
-	return b
+	return proto.Marshal(pb)
 }
 
 // Unmarshal decodes a Set produced by Marshal. Empty input is an empty set, so a
-// missing metadata key reads back as "no locks held".
+// missing metadata key reads back as "no locks held". A malformed blob is
+// rejected rather than silently misread.
 func Unmarshal(b []byte) (*Set, error) {
 	if len(b) == 0 {
 		return &Set{}, nil
 	}
-	if b[0] != marshalVersion {
-		return nil, fmt.Errorf("posixlock: unknown format version %d", b[0])
+	pb := &LockSetProto{}
+	if err := proto.Unmarshal(b, pb); err != nil {
+		return nil, fmt.Errorf("posixlock: %w", err)
 	}
-	if len(b) < 5 {
-		return nil, fmt.Errorf("posixlock: truncated header (%d bytes)", len(b))
-	}
-	n := int(binary.BigEndian.Uint32(b[1:]))
-	if len(b) != 5+n*recordSize {
-		return nil, fmt.Errorf("posixlock: %d bytes does not match %d records", len(b), n)
-	}
-	locks := make([]Range, n)
-	off := 5
-	for i := range locks {
+	locks := make([]Range, len(pb.Locks))
+	for i, l := range pb.Locks {
 		locks[i] = Range{
-			Start:   binary.BigEndian.Uint64(b[off:]),
-			End:     binary.BigEndian.Uint64(b[off+8:]),
-			Sid:     binary.BigEndian.Uint64(b[off+16:]),
-			Owner:   binary.BigEndian.Uint64(b[off+24:]),
-			Pid:     binary.BigEndian.Uint32(b[off+32:]),
-			Type:    uint32(b[off+36]),
-			IsFlock: b[off+37] == 1,
+			Start:   l.Start,
+			End:     l.End,
+			Type:    l.Type,
+			Sid:     l.Sid,
+			Owner:   l.Owner,
+			Pid:     l.Pid,
+			IsFlock: l.IsFlock,
 		}
-		off += recordSize
 	}
 	return &Set{locks: locks}, nil
 }

@@ -8,7 +8,11 @@ import (
 
 func TestMarshalEmptyIsNil(t *testing.T) {
 	s := &Set{}
-	if b := s.Marshal(); b != nil {
+	b, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	if b != nil {
 		t.Fatalf("empty set should marshal to nil, got %d bytes", len(b))
 	}
 	got, err := Unmarshal(nil)
@@ -27,7 +31,10 @@ func TestMarshalRoundTrip(t *testing.T) {
 	mustAcquire(t, s, Range{Start: 200, End: math.MaxUint64, Type: Read, Sid: 2, Owner: 7, Pid: 20})
 	mustAcquire(t, s, Range{Start: 0, End: math.MaxUint64, Type: Write, Sid: 2, Owner: 9, Pid: 30, IsFlock: true})
 
-	b := s.Marshal()
+	b, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	got, err := Unmarshal(b)
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -37,18 +44,11 @@ func TestMarshalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestUnmarshalRejectsBadVersion(t *testing.T) {
-	b := (&Set{locks: []Range{{Start: 0, End: 1, Type: Write, Owner: 1}}}).Marshal()
-	b[0] = 0xFF
-	if _, err := Unmarshal(b); err == nil {
-		t.Fatal("expected an error on unknown version")
-	}
-}
-
-func TestUnmarshalRejectsLengthMismatch(t *testing.T) {
-	b := (&Set{locks: []Range{{Start: 0, End: 1, Type: Write, Owner: 1}}}).Marshal()
-	if _, err := Unmarshal(b[:len(b)-3]); err == nil {
-		t.Fatal("expected an error on truncated record")
+func TestUnmarshalRejectsMalformed(t *testing.T) {
+	// field 1 (locks), wire type 2 (length-delimited) declaring 5 bytes that
+	// are not there: a corrupt blob must fail loudly, not read back as empty.
+	if _, err := Unmarshal([]byte{0x0A, 0x05}); err == nil {
+		t.Fatal("expected an error on malformed input")
 	}
 }
 
@@ -57,7 +57,11 @@ func TestRoundTripPreservesConflict(t *testing.T) {
 	s := &Set{}
 	mustAcquire(t, s, Range{Start: 0, End: 99, Type: Write, Sid: 1, Owner: 1, Pid: 10})
 
-	decoded, err := Unmarshal(s.Marshal())
+	b, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(b)
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
