@@ -23,12 +23,18 @@ const (
 // that stopped sending keepalives. Sessions that never renew are never reaped, so
 // this is inert until mounts run with -posixLock.
 func (fs *FilerServer) startPosixLockSweeper() {
+	fs.posixLockSweeperStop = make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(posixLockSweepInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			if reaped := fs.posixLocks.ReapExpired(posixLockSessionTTL); len(reaped) > 0 {
-				glog.V(2).Infof("posix lock: reaped %d expired session(s): %v", len(reaped), reaped)
+		for {
+			select {
+			case <-fs.posixLockSweeperStop:
+				return
+			case <-ticker.C:
+				if reaped := fs.posixLocks.ReapExpired(posixLockSessionTTL); len(reaped) > 0 {
+					glog.V(2).Infof("posix lock: reaped %d expired session(s): %v", len(reaped), reaped)
+				}
 			}
 		}
 	}()

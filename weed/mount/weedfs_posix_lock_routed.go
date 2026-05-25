@@ -33,6 +33,11 @@ const (
 	posixLockMinBackoff = 5 * time.Millisecond
 	posixLockMaxBackoff = 200 * time.Millisecond
 	posixLockKeyPrefix  = "s3.fuse.lock:"
+	// posixLockReleaseTimeout bounds the background unlock/release RPCs. They run
+	// off the syscall path (close/flush) and must not be cancelled by an
+	// interrupt, but a deadline keeps a slow or unreachable filer from blocking
+	// close indefinitely.
+	posixLockReleaseTimeout = 5 * time.Second
 )
 
 // posixLockHint records, per inode, which owners this mount has taken fcntl locks
@@ -234,8 +239,11 @@ func (wfs *WFS) routedSetLkw(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status 
 
 func (wfs *WFS) routedUnlock(key string, lk posixlock.Range) fuse.Status {
 	// A release must complete even if the syscall was interrupted; cancelling it
-	// would leak the lock on the owner filer.
-	if _, err := wfs.callPosixLock(context.Background(), key, filer_pb.PosixLockOp_UNLOCK, lk); err != nil {
+	// would leak the lock on the owner filer. Bound it so a stuck filer can't
+	// hang close() forever.
+	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
+	defer cancel()
+	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_UNLOCK, lk); err != nil {
 		glog.Warningf("routed unlock %s: %v", key, err)
 		return fuse.EIO
 	}
@@ -284,7 +292,9 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
-	if _, err := wfs.callPosixLock(context.Background(), key, filer_pb.PosixLockOp_RELEASE_POSIX_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
+	defer cancel()
+	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_POSIX_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
 		glog.Warningf("routed release posix owner %s: %v", key, err)
 	}
 }
@@ -294,7 +304,9 @@ func (wfs *WFS) routedReleaseFlockOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
-	if _, err := wfs.callPosixLock(context.Background(), key, filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
+	defer cancel()
+	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
 		glog.Warningf("routed release flock owner %s: %v", key, err)
 	}
 }

@@ -139,6 +139,8 @@ type FilerServer struct {
 	// here rather than in replicated metadata: it is transient coordination, so
 	// keeping it off the meta-log avoids churn.
 	posixLocks *posixlock.Manager
+	// posixLockSweeperStop stops the lease-reaping sweeper goroutine on Shutdown.
+	posixLockSweeperStop chan struct{}
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -323,6 +325,9 @@ func (fs *FilerServer) checkWithMaster() {
 // This prevents data corruption when the process receives SIGTERM during active uploads.
 func (fs *FilerServer) Shutdown() {
 	glog.V(0).Infof("Shutting down filer")
+	if fs.posixLockSweeperStop != nil {
+		close(fs.posixLockSweeperStop)
+	}
 	fs.filer.Shutdown()
 }
 
