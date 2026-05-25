@@ -287,7 +287,6 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
 	if !wfs.posixHint.has(inode, owner) {
 		return
 	}
-	wfs.posixHint.drop(inode, owner)
 	key, ok := wfs.posixLockKeyForInode(inode)
 	if !ok {
 		return
@@ -295,8 +294,13 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_POSIX_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
+		// Keep the hint so a later flush retries the release; dropping it on a
+		// transient failure would strand the lock until the owner filer's
+		// session-lease reaping expires it.
 		glog.Warningf("routed release posix owner %s: %v", key, err)
+		return
 	}
+	wfs.posixHint.drop(inode, owner)
 }
 
 func (wfs *WFS) routedReleaseFlockOwner(inode, owner uint64) {
