@@ -37,6 +37,9 @@ service SeaweedFiler {
     rpc ObjectTransactionBatch (ObjectTransactionBatchRequest) returns (ObjectTransactionBatchResponse) {
     }
 
+    rpc PosixLock (PosixLockRequest) returns (PosixLockResponse) {
+    }
+
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
@@ -359,6 +362,46 @@ message ObjectTransactionRequest {
 message ObjectTransactionResponse {
     string error = 1;
     FilerError error_code = 2;
+}
+
+// PosixLockRange is one advisory byte-range lock. Owner identity is (sid, owner):
+// sid is the mount session, owner the FUSE lock owner within it, so owners from
+// different mounts never alias. end is inclusive (max uint64 = to EOF); is_flock
+// separates the flock and fcntl namespaces, which never conflict.
+message PosixLockRange {
+    uint64 start = 1;
+    uint64 end = 2;
+    uint32 type = 3;       // 1=read, 2=write, 3=unlock
+    uint64 sid = 4;
+    uint64 owner = 5;
+    uint32 pid = 6;        // holder pid, for get_lk reporting only
+    bool is_flock = 7;
+}
+
+// PosixLock routes an advisory lock operation to the inode's owner filer, which
+// holds the authoritative in-memory lock table. key is the inode identity ring
+// key (the file path, or hl:<HardLinkId> for a hardlink) used both to resolve the
+// owner and to index the table. A non-owner filer forwards the request one hop;
+// is_moved bounds it so a stale ring view cannot loop.
+message PosixLockRequest {
+    string key = 1;
+    bool is_moved = 2;
+    PosixLockOp op = 3;
+    PosixLockRange lock = 4;
+}
+
+enum PosixLockOp {
+    TRY_LOCK = 0;             // grant lock or report conflict (non-blocking)
+    UNLOCK = 1;              // release lock's owner's locks over its range
+    GET_LK = 2;             // report a conflicting lock, if any
+    RELEASE_POSIX_OWNER = 3; // drop the owner's fcntl locks (flush-time)
+    RELEASE_FLOCK_OWNER = 4; // drop the owner's flock locks (release-time)
+}
+
+message PosixLockResponse {
+    bool granted = 1;            // for TRY_LOCK: whether the lock was granted
+    bool has_conflict = 2;       // whether conflict is populated
+    PosixLockRange conflict = 3; // the blocking lock (TRY_LOCK conflict / GET_LK result)
 }
 
 // ObjectTransactionBatch applies several object transactions in one round trip,

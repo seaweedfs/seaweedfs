@@ -28,6 +28,7 @@ const (
 	SeaweedFiler_DeleteEntry_FullMethodName                     = "/filer_pb.SeaweedFiler/DeleteEntry"
 	SeaweedFiler_ObjectTransaction_FullMethodName               = "/filer_pb.SeaweedFiler/ObjectTransaction"
 	SeaweedFiler_ObjectTransactionBatch_FullMethodName          = "/filer_pb.SeaweedFiler/ObjectTransactionBatch"
+	SeaweedFiler_PosixLock_FullMethodName                       = "/filer_pb.SeaweedFiler/PosixLock"
 	SeaweedFiler_AtomicRenameEntry_FullMethodName               = "/filer_pb.SeaweedFiler/AtomicRenameEntry"
 	SeaweedFiler_StreamRenameEntry_FullMethodName               = "/filer_pb.SeaweedFiler/StreamRenameEntry"
 	SeaweedFiler_StreamMutateEntry_FullMethodName               = "/filer_pb.SeaweedFiler/StreamMutateEntry"
@@ -66,6 +67,7 @@ type SeaweedFilerClient interface {
 	DeleteEntry(ctx context.Context, in *DeleteEntryRequest, opts ...grpc.CallOption) (*DeleteEntryResponse, error)
 	ObjectTransaction(ctx context.Context, in *ObjectTransactionRequest, opts ...grpc.CallOption) (*ObjectTransactionResponse, error)
 	ObjectTransactionBatch(ctx context.Context, in *ObjectTransactionBatchRequest, opts ...grpc.CallOption) (*ObjectTransactionBatchResponse, error)
+	PosixLock(ctx context.Context, in *PosixLockRequest, opts ...grpc.CallOption) (*PosixLockResponse, error)
 	AtomicRenameEntry(ctx context.Context, in *AtomicRenameEntryRequest, opts ...grpc.CallOption) (*AtomicRenameEntryResponse, error)
 	StreamRenameEntry(ctx context.Context, in *StreamRenameEntryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamRenameEntryResponse], error)
 	StreamMutateEntry(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamMutateEntryRequest, StreamMutateEntryResponse], error)
@@ -195,6 +197,16 @@ func (c *seaweedFilerClient) ObjectTransactionBatch(ctx context.Context, in *Obj
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ObjectTransactionBatchResponse)
 	err := c.cc.Invoke(ctx, SeaweedFiler_ObjectTransactionBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedFilerClient) PosixLock(ctx context.Context, in *PosixLockRequest, opts ...grpc.CallOption) (*PosixLockResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PosixLockResponse)
+	err := c.cc.Invoke(ctx, SeaweedFiler_PosixLock_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +495,7 @@ type SeaweedFilerServer interface {
 	DeleteEntry(context.Context, *DeleteEntryRequest) (*DeleteEntryResponse, error)
 	ObjectTransaction(context.Context, *ObjectTransactionRequest) (*ObjectTransactionResponse, error)
 	ObjectTransactionBatch(context.Context, *ObjectTransactionBatchRequest) (*ObjectTransactionBatchResponse, error)
+	PosixLock(context.Context, *PosixLockRequest) (*PosixLockResponse, error)
 	AtomicRenameEntry(context.Context, *AtomicRenameEntryRequest) (*AtomicRenameEntryResponse, error)
 	StreamRenameEntry(*StreamRenameEntryRequest, grpc.ServerStreamingServer[StreamRenameEntryResponse]) error
 	StreamMutateEntry(grpc.BidiStreamingServer[StreamMutateEntryRequest, StreamMutateEntryResponse]) error
@@ -545,6 +558,9 @@ func (UnimplementedSeaweedFilerServer) ObjectTransaction(context.Context, *Objec
 }
 func (UnimplementedSeaweedFilerServer) ObjectTransactionBatch(context.Context, *ObjectTransactionBatchRequest) (*ObjectTransactionBatchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ObjectTransactionBatch not implemented")
+}
+func (UnimplementedSeaweedFilerServer) PosixLock(context.Context, *PosixLockRequest) (*PosixLockResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PosixLock not implemented")
 }
 func (UnimplementedSeaweedFilerServer) AtomicRenameEntry(context.Context, *AtomicRenameEntryRequest) (*AtomicRenameEntryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AtomicRenameEntry not implemented")
@@ -787,6 +803,24 @@ func _SeaweedFiler_ObjectTransactionBatch_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedFilerServer).ObjectTransactionBatch(ctx, req.(*ObjectTransactionBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedFiler_PosixLock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PosixLockRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).PosixLock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedFiler_PosixLock_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).PosixLock(ctx, req.(*PosixLockRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1204,6 +1238,10 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ObjectTransactionBatch",
 			Handler:    _SeaweedFiler_ObjectTransactionBatch_Handler,
+		},
+		{
+			MethodName: "PosixLock",
+			Handler:    _SeaweedFiler_PosixLock_Handler,
 		},
 		{
 			MethodName: "AtomicRenameEntry",
