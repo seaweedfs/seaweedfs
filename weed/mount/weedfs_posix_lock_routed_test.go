@@ -92,27 +92,3 @@ func TestPosixLockHint(t *testing.T) {
 		t.Fatal("inode entry should be removed when its last owner drops")
 	}
 }
-
-func TestPosixKeepaliveTracksHeldKeys(t *testing.T) {
-	k := newPosixKeepalive()
-	if len(k.snapshot()) != 0 {
-		t.Fatal("new tracker should be empty")
-	}
-	// Two holds on the same key (fcntl + flock for one owner) and one on another.
-	k.add("a", 1, false)
-	k.add("a", 1, true)
-	k.add("b", 2, false)
-	if got := len(k.snapshot()); got != 2 {
-		t.Fatalf("expected 2 distinct keys, got %d", got)
-	}
-	// Dropping one namespace keeps the key while the other hold remains.
-	k.remove("a", 1, false)
-	if got := len(k.snapshot()); got != 2 {
-		t.Fatalf("key a still has a flock hold; expected 2 keys, got %d", got)
-	}
-	k.remove("a", 1, true)
-	keys := k.snapshot()
-	if len(keys) != 1 || keys[0] != "b" {
-		t.Fatalf("only key b should remain, got %v", keys)
-	}
-}

@@ -61,6 +61,7 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 				IsMoved: true,
 				Op:      req.Op,
 				Lock:    req.Lock,
+				Locks:   req.Locks,
 			}
 			glog.V(4).InfofCtx(ctx, "PosixLock %s op=%v: forwarding to owner %s", req.Key, req.Op, owner)
 			var resp *filer_pb.PosixLockResponse
@@ -107,11 +108,36 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 	case filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER:
 		fs.posixLocks.ReleaseFlockOwner(req.Key, lk.Sid, lk.Owner)
 	case filer_pb.PosixLockOp_KEEP_ALIVE:
-		fs.posixLocks.Renew(lk.Sid)
+		// A re-assertion carries the mount's held locks on this key so the owner
+		// can rebuild its in-memory state after an ownership change or restart; a
+		// bare keepalive just renews the lease.
+		if len(req.Locks) > 0 {
+			held := make([]posixlock.Range, 0, len(req.Locks))
+			for _, l := range req.Locks {
+				held = append(held, posixRangeFromPb(l))
+			}
+			if conflicts := fs.posixLocks.Reassert(req.Key, lk.Sid, held); len(conflicts) > 0 {
+				glog.Warningf("posix reassert %s sid %d: %d lock(s) lost to another session: %+v", req.Key, lk.Sid, len(conflicts), conflicts)
+			}
+		} else {
+			fs.posixLocks.Renew(lk.Sid)
+		}
 	default:
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("unknown posix lock op %v", req.Op)
 	}
 	return resp, nil
+}
+
+func posixRangeFromPb(l *filer_pb.PosixLockRange) posixlock.Range {
+	return posixlock.Range{
+		Start:   l.GetStart(),
+		End:     l.GetEnd(),
+		Type:    l.GetType(),
+		Sid:     l.GetSid(),
+		Owner:   l.GetOwner(),
+		Pid:     l.GetPid(),
+		IsFlock: l.GetIsFlock(),
+	}
 }
 
 func posixRangeToPb(r posixlock.Range) *filer_pb.PosixLockRange {
