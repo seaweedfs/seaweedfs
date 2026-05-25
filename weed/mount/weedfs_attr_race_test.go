@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -33,11 +34,16 @@ func TestAttrChunkRace(t *testing.T) {
 		Name:       "sample.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 	}
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1)
+	if err != nil {
+		t.Fatalf("NewChunkGroup: %v", err)
+	}
 	fh := &FileHandle{
-		fh:    FileHandleId(1),
-		inode: inode,
-		wfs:   wfs,
-		entry: &LockedEntry{Entry: entry},
+		fh:              FileHandleId(1),
+		inode:           inode,
+		wfs:             wfs,
+		entry:           &LockedEntry{Entry: entry},
+		entryChunkGroup: chunkGroup,
 	}
 	wfs.fhMap.inode2fh[inode] = fh
 	wfs.fhMap.fh2inode[fh.fh] = inode
@@ -54,14 +60,20 @@ func TestAttrChunkRace(t *testing.T) {
 		}
 	}()
 
-	// SetAttr touching only mtime recomputes FileSize by iterating chunks.
+	// SetAttr: mtime-only recomputes FileSize by iterating chunks; a shrinking
+	// size takes the truncate path that rewrites entry.Chunks under the lock.
 	go func() {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
 			in := &fuse.SetAttrIn{}
 			in.NodeId = inode
-			in.Valid = fuse.FATTR_MTIME
-			in.Mtime = uint64(i)
+			if i%2 == 0 {
+				in.Valid = fuse.FATTR_MTIME
+				in.Mtime = uint64(i)
+			} else {
+				in.Valid = fuse.FATTR_SIZE
+				in.Size = uint64(i % 8)
+			}
 			var out fuse.AttrOut
 			wfs.SetAttr(nil, in, &out)
 		}
