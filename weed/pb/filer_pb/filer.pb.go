@@ -144,6 +144,7 @@ const (
 	PosixLockOp_GET_LK              PosixLockOp = 2 // report a conflicting lock, if any
 	PosixLockOp_RELEASE_POSIX_OWNER PosixLockOp = 3 // drop the owner's fcntl locks (flush-time)
 	PosixLockOp_RELEASE_FLOCK_OWNER PosixLockOp = 4 // drop the owner's flock locks (release-time)
+	PosixLockOp_KEEP_ALIVE          PosixLockOp = 5 // renew the session's lease on this owner (lock.sid)
 )
 
 // Enum value maps for PosixLockOp.
@@ -154,6 +155,7 @@ var (
 		2: "GET_LK",
 		3: "RELEASE_POSIX_OWNER",
 		4: "RELEASE_FLOCK_OWNER",
+		5: "KEEP_ALIVE",
 	}
 	PosixLockOp_value = map[string]int32{
 		"TRY_LOCK":            0,
@@ -161,6 +163,7 @@ var (
 		"GET_LK":              2,
 		"RELEASE_POSIX_OWNER": 3,
 		"RELEASE_FLOCK_OWNER": 4,
+		"KEEP_ALIVE":          5,
 	}
 )
 
@@ -7153,7 +7156,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x15EXISTING_IS_DIRECTORY\x10\x03\x12\x14\n" +
 	"\x10EXISTING_IS_FILE\x10\x04\x12\x18\n" +
 	"\x14ENTRY_ALREADY_EXISTS\x10\x05\x12\x17\n" +
-	"\x13PRECONDITION_FAILED\x10\x06*e\n" +
+	"\x13PRECONDITION_FAILED\x10\x06*u\n" +
 	"\vPosixLockOp\x12\f\n" +
 	"\bTRY_LOCK\x10\x00\x12\n" +
 	"\n" +
@@ -7161,7 +7164,9 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"\x06GET_LK\x10\x02\x12\x17\n" +
 	"\x13RELEASE_POSIX_OWNER\x10\x03\x12\x17\n" +
-	"\x13RELEASE_FLOCK_OWNER\x10\x042\xbc\x16\n" +
+	"\x13RELEASE_FLOCK_OWNER\x10\x04\x12\x0e\n" +
+	"\n" +
+	"KEEP_ALIVE\x10\x052\xbc\x16\n" +
 	"\fSeaweedFiler\x12g\n" +
 	"\x14LookupDirectoryEntry\x12%.filer_pb.LookupDirectoryEntryRequest\x1a&.filer_pb.LookupDirectoryEntryResponse\"\x00\x12N\n" +
 	"\vListEntries\x12\x1c.filer_pb.ListEntriesRequest\x1a\x1d.filer_pb.ListEntriesResponse\"\x000\x01\x12L\n" +

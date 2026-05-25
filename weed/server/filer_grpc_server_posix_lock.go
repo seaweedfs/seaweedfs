@@ -3,12 +3,42 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
+
+const (
+	// posixLockSessionTTL is how long a mount's lease survives without a
+	// keepalive before its locks are reaped; posixLockSweepInterval is how often
+	// each filer checks. The mount renews well within the TTL.
+	posixLockSessionTTL    = 15 * time.Second
+	posixLockSweepInterval = 5 * time.Second
+)
+
+// startPosixLockSweeper periodically reaps the locks of leased sessions (mounts)
+// that stopped sending keepalives. Sessions that never renew are never reaped, so
+// this is inert until mounts run with -posixLock.
+func (fs *FilerServer) startPosixLockSweeper() {
+	fs.posixLockSweeperStop = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(posixLockSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-fs.posixLockSweeperStop:
+				return
+			case <-ticker.C:
+				if reaped := fs.posixLocks.ReapExpired(posixLockSessionTTL); len(reaped) > 0 {
+					glog.V(2).Infof("posix lock: reaped %d expired session(s): %v", len(reaped), reaped)
+				}
+			}
+		}
+	}()
+}
 
 // PosixLock applies one advisory lock operation against the in-memory lock table
 // of the inode's owner filer. The owner is resolved from req.Key on the same
@@ -76,6 +106,8 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 		fs.posixLocks.ReleasePosixOwner(req.Key, lk.Sid, lk.Owner)
 	case filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER:
 		fs.posixLocks.ReleaseFlockOwner(req.Key, lk.Sid, lk.Owner)
+	case filer_pb.PosixLockOp_KEEP_ALIVE:
+		fs.posixLocks.Renew(lk.Sid)
 	default:
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("unknown posix lock op %v", req.Op)
 	}
