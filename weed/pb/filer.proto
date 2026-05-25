@@ -392,6 +392,10 @@ message PosixLockRequest {
     // re-assertion, so the current owner filer can rebuild its in-memory state
     // after an ownership change or restart. lock.sid identifies the session.
     repeated PosixLockRange locks = 5;
+    // cooling_probe marks a dual-read a new owner sends to the previous owner
+    // during a ring change, so the previous owner answers from local state
+    // without itself cooling-off (no recursion).
+    bool cooling_probe = 6;
 }
 
 enum PosixLockOp {

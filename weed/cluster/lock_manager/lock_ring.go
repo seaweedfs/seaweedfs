@@ -12,6 +12,7 @@ import (
 type LockRingSnapshot struct {
 	servers []pb.ServerAddress
 	ts      time.Time
+	ring    *HashRing // prebuilt ring for servers, so PriorOwner need not rebuild per call
 }
 
 type LockRing struct {
@@ -58,9 +59,11 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 	// are always consistent — prevents a concurrent SetSnapshot from
 	// seeing the new version but applying its servers to the old ring.
 	r.Ring.SetServers(servers)
+	// Append the snapshot under the same lock as the ring update so a concurrent
+	// PriorOwner always sees snapshots[0] matching r.Ring (and snapshots[1] as the
+	// true prior); otherwise it could pair a new ring with a stale prior snapshot.
+	r.addOneSnapshotLocked(servers)
 	r.Unlock()
-
-	r.addOneSnapshot(servers)
 
 	r.cleanupWg.Add(1)
 	go func() {
@@ -78,14 +81,16 @@ func (r *LockRing) Version() int64 {
 	return r.version
 }
 
-func (r *LockRing) addOneSnapshot(servers []pb.ServerAddress) {
-	r.Lock()
-	defer r.Unlock()
-
+// addOneSnapshotLocked appends a new snapshot (newest at index 0). The caller
+// must hold r.Lock(), so the ring update and snapshot append are one atomic step.
+func (r *LockRing) addOneSnapshotLocked(servers []pb.ServerAddress) {
 	ts := time.Now()
+	ring := NewHashRing(DefaultVnodeCount)
+	ring.SetServers(servers)
 	t := &LockRingSnapshot{
 		servers: servers,
 		ts:      ts,
+		ring:    ring,
 	}
 	r.snapshots = append(r.snapshots, t)
 	for i := len(r.snapshots) - 2; i >= 0; i-- {
@@ -146,6 +151,35 @@ func (r *LockRing) GetPrimaryAndBackup(key string) (primary, backup pb.ServerAdd
 // GetPrimary returns the primary server for a key using the consistent hash ring.
 func (r *LockRing) GetPrimary(key string) pb.ServerAddress {
 	return r.Ring.GetPrimary(key)
+}
+
+// PriorOwner returns the key's owner from the previous ring snapshot, but only
+// while the ring changed within the last snapshotInterval and that owner differs
+// from the current primary. This is the cooling-off window in which the previous
+// owner may still hold locks the new owner has not yet rebuilt — a caller can
+// consult it before granting so a fresh owner does not double-grant during a
+// rebalance. Returns "" outside the window or when ownership did not move. It
+// uses the snapshot's prebuilt ring, so it does not rebuild a hash ring per call.
+func (r *LockRing) PriorOwner(key string) pb.ServerAddress {
+	r.RLock()
+	defer r.RUnlock()
+	if len(r.snapshots) < 2 {
+		return ""
+	}
+	if time.Since(r.snapshots[0].ts) > r.snapshotInterval {
+		return ""
+	}
+	current := r.Ring.GetPrimary(key)
+	var prior pb.ServerAddress
+	if pr := r.snapshots[1].ring; pr != nil {
+		prior = pr.GetPrimary(key)
+	} else {
+		prior = hashKeyToServer(key, r.snapshots[1].servers)
+	}
+	if prior != "" && prior != current {
+		return prior
+	}
+	return ""
 }
 
 // hashKeyToServer uses a temporary consistent hash ring for the given server list.

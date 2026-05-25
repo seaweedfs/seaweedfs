@@ -388,6 +388,8 @@ message PosixLockRequest {
     bool is_moved = 2;
     PosixLockOp op = 3;
     PosixLockRange lock = 4;
+    repeated PosixLockRange locks = 5;
+    bool cooling_probe = 6;
 }
 
 enum PosixLockOp {

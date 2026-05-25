@@ -1991,7 +1991,11 @@ type PosixLockRequest struct {
 	// locks carries the full set a mount holds on key for a KEEP_ALIVE
 	// re-assertion, so the current owner filer can rebuild its in-memory state
 	// after an ownership change or restart. lock.sid identifies the session.
-	Locks         []*PosixLockRange `protobuf:"bytes,5,rep,name=locks,proto3" json:"locks,omitempty"`
+	Locks []*PosixLockRange `protobuf:"bytes,5,rep,name=locks,proto3" json:"locks,omitempty"`
+	// cooling_probe marks a dual-read a new owner sends to the previous owner
+	// during a ring change, so the previous owner answers from local state
+	// without itself cooling-off (no recursion).
+	CoolingProbe  bool `protobuf:"varint,6,opt,name=cooling_probe,json=coolingProbe,proto3" json:"cooling_probe,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2059,6 +2063,13 @@ func (x *PosixLockRequest) GetLocks() []*PosixLockRange {
 		return x.Locks
 	}
 	return nil
+}
+
+func (x *PosixLockRequest) GetCoolingProbe() bool {
+	if x != nil {
+		return x.CoolingProbe
+	}
+	return false
 }
 
 type PosixLockResponse struct {
@@ -6786,13 +6797,14 @@ const file_filer_proto_rawDesc = "" +
 	"\x03sid\x18\x04 \x01(\x04R\x03sid\x12\x14\n" +
 	"\x05owner\x18\x05 \x01(\x04R\x05owner\x12\x10\n" +
 	"\x03pid\x18\x06 \x01(\rR\x03pid\x12\x19\n" +
-	"\bis_flock\x18\a \x01(\bR\aisFlock\"\xc4\x01\n" +
+	"\bis_flock\x18\a \x01(\bR\aisFlock\"\xe9\x01\n" +
 	"\x10PosixLockRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x19\n" +
 	"\bis_moved\x18\x02 \x01(\bR\aisMoved\x12%\n" +
 	"\x02op\x18\x03 \x01(\x0e2\x15.filer_pb.PosixLockOpR\x02op\x12,\n" +
 	"\x04lock\x18\x04 \x01(\v2\x18.filer_pb.PosixLockRangeR\x04lock\x12.\n" +
-	"\x05locks\x18\x05 \x03(\v2\x18.filer_pb.PosixLockRangeR\x05locks\"\x86\x01\n" +
+	"\x05locks\x18\x05 \x03(\v2\x18.filer_pb.PosixLockRangeR\x05locks\x12#\n" +
+	"\rcooling_probe\x18\x06 \x01(\bR\fcoolingProbe\"\x86\x01\n" +
 	"\x11PosixLockResponse\x12\x18\n" +
 	"\agranted\x18\x01 \x01(\bR\agranted\x12!\n" +
 	"\fhas_conflict\x18\x02 \x01(\bR\vhasConflict\x124\n" +
