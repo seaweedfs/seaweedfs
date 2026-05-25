@@ -82,6 +82,12 @@ func (s *Set) Acquire(lk Range) (Range, bool) {
 	return Range{}, true
 }
 
+// Grant inserts lk without a conflict check. It is for a client mirroring locks
+// the server already granted (so they are conflict-free), not for arbitration.
+func (s *Set) Grant(lk Range) {
+	s.insert(lk)
+}
+
 // insert adds lk, absorbing same-owner same-type overlaps and merging adjacent
 // same-type ranges, and truncating/splitting a same-owner range of a different
 // type that overlaps (an in-place type change).

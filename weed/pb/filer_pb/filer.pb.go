@@ -1983,11 +1983,15 @@ func (x *PosixLockRange) GetIsFlock() bool {
 // owner and to index the table. A non-owner filer forwards the request one hop;
 // is_moved bounds it so a stale ring view cannot loop.
 type PosixLockRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	IsMoved       bool                   `protobuf:"varint,2,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`
-	Op            PosixLockOp            `protobuf:"varint,3,opt,name=op,proto3,enum=filer_pb.PosixLockOp" json:"op,omitempty"`
-	Lock          *PosixLockRange        `protobuf:"bytes,4,opt,name=lock,proto3" json:"lock,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Key     string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	IsMoved bool                   `protobuf:"varint,2,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`
+	Op      PosixLockOp            `protobuf:"varint,3,opt,name=op,proto3,enum=filer_pb.PosixLockOp" json:"op,omitempty"`
+	Lock    *PosixLockRange        `protobuf:"bytes,4,opt,name=lock,proto3" json:"lock,omitempty"`
+	// locks carries the full set a mount holds on key for a KEEP_ALIVE
+	// re-assertion, so the current owner filer can rebuild its in-memory state
+	// after an ownership change or restart. lock.sid identifies the session.
+	Locks         []*PosixLockRange `protobuf:"bytes,5,rep,name=locks,proto3" json:"locks,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2046,6 +2050,13 @@ func (x *PosixLockRequest) GetOp() PosixLockOp {
 func (x *PosixLockRequest) GetLock() *PosixLockRange {
 	if x != nil {
 		return x.Lock
+	}
+	return nil
+}
+
+func (x *PosixLockRequest) GetLocks() []*PosixLockRange {
+	if x != nil {
+		return x.Locks
 	}
 	return nil
 }
@@ -6775,12 +6786,13 @@ const file_filer_proto_rawDesc = "" +
 	"\x03sid\x18\x04 \x01(\x04R\x03sid\x12\x14\n" +
 	"\x05owner\x18\x05 \x01(\x04R\x05owner\x12\x10\n" +
 	"\x03pid\x18\x06 \x01(\rR\x03pid\x12\x19\n" +
-	"\bis_flock\x18\a \x01(\bR\aisFlock\"\x94\x01\n" +
+	"\bis_flock\x18\a \x01(\bR\aisFlock\"\xc4\x01\n" +
 	"\x10PosixLockRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x19\n" +
 	"\bis_moved\x18\x02 \x01(\bR\aisMoved\x12%\n" +
 	"\x02op\x18\x03 \x01(\x0e2\x15.filer_pb.PosixLockOpR\x02op\x12,\n" +
-	"\x04lock\x18\x04 \x01(\v2\x18.filer_pb.PosixLockRangeR\x04lock\"\x86\x01\n" +
+	"\x04lock\x18\x04 \x01(\v2\x18.filer_pb.PosixLockRangeR\x04lock\x12.\n" +
+	"\x05locks\x18\x05 \x03(\v2\x18.filer_pb.PosixLockRangeR\x05locks\"\x86\x01\n" +
 	"\x11PosixLockResponse\x12\x18\n" +
 	"\agranted\x18\x01 \x01(\bR\agranted\x12!\n" +
 	"\fhas_conflict\x18\x02 \x01(\bR\vhasConflict\x124\n" +
@@ -7349,113 +7361,114 @@ var file_filer_proto_depIdxs = []int32{
 	1,   // 23: filer_pb.ObjectTransactionResponse.error_code:type_name -> filer_pb.FilerError
 	2,   // 24: filer_pb.PosixLockRequest.op:type_name -> filer_pb.PosixLockOp
 	23,  // 25: filer_pb.PosixLockRequest.lock:type_name -> filer_pb.PosixLockRange
-	23,  // 26: filer_pb.PosixLockResponse.conflict:type_name -> filer_pb.PosixLockRange
-	21,  // 27: filer_pb.ObjectTransactionBatchRequest.transactions:type_name -> filer_pb.ObjectTransactionRequest
-	22,  // 28: filer_pb.ObjectTransactionBatchResponse.responses:type_name -> filer_pb.ObjectTransactionResponse
-	59,  // 29: filer_pb.CreateEntryResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
-	1,   // 30: filer_pb.CreateEntryResponse.error_code:type_name -> filer_pb.FilerError
-	10,  // 31: filer_pb.UpdateEntryRequest.entry:type_name -> filer_pb.Entry
-	97,  // 32: filer_pb.UpdateEntryRequest.expected_extended:type_name -> filer_pb.UpdateEntryRequest.ExpectedExtendedEntry
-	59,  // 33: filer_pb.UpdateEntryResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
-	13,  // 34: filer_pb.AppendToEntryRequest.chunks:type_name -> filer_pb.FileChunk
-	59,  // 35: filer_pb.DeleteEntryResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
-	12,  // 36: filer_pb.StreamRenameEntryResponse.event_notification:type_name -> filer_pb.EventNotification
-	45,  // 37: filer_pb.AssignVolumeResponse.location:type_name -> filer_pb.Location
-	45,  // 38: filer_pb.Locations.locations:type_name -> filer_pb.Location
-	98,  // 39: filer_pb.LookupVolumeResponse.locations_map:type_name -> filer_pb.LookupVolumeResponse.LocationsMapEntry
-	47,  // 40: filer_pb.CollectionListResponse.collections:type_name -> filer_pb.Collection
-	12,  // 41: filer_pb.SubscribeMetadataResponse.event_notification:type_name -> filer_pb.EventNotification
-	59,  // 42: filer_pb.SubscribeMetadataResponse.events:type_name -> filer_pb.SubscribeMetadataResponse
-	60,  // 43: filer_pb.SubscribeMetadataResponse.log_file_refs:type_name -> filer_pb.LogFileChunkRef
-	13,  // 44: filer_pb.LogFileChunkRef.chunks:type_name -> filer_pb.FileChunk
-	10,  // 45: filer_pb.TraverseBfsMetadataResponse.entry:type_name -> filer_pb.Entry
-	99,  // 46: filer_pb.LocateBrokerResponse.resources:type_name -> filer_pb.LocateBrokerResponse.Resource
-	100, // 47: filer_pb.FilerConf.locations:type_name -> filer_pb.FilerConf.PathConf
-	10,  // 48: filer_pb.CacheRemoteObjectToLocalClusterResponse.entry:type_name -> filer_pb.Entry
-	59,  // 49: filer_pb.CacheRemoteObjectToLocalClusterResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
-	81,  // 50: filer_pb.TransferLocksRequest.locks:type_name -> filer_pb.Lock
-	17,  // 51: filer_pb.StreamMutateEntryRequest.create_request:type_name -> filer_pb.CreateEntryRequest
-	29,  // 52: filer_pb.StreamMutateEntryRequest.update_request:type_name -> filer_pb.UpdateEntryRequest
-	35,  // 53: filer_pb.StreamMutateEntryRequest.delete_request:type_name -> filer_pb.DeleteEntryRequest
-	39,  // 54: filer_pb.StreamMutateEntryRequest.rename_request:type_name -> filer_pb.StreamRenameEntryRequest
-	28,  // 55: filer_pb.StreamMutateEntryResponse.create_response:type_name -> filer_pb.CreateEntryResponse
-	30,  // 56: filer_pb.StreamMutateEntryResponse.update_response:type_name -> filer_pb.UpdateEntryResponse
-	36,  // 57: filer_pb.StreamMutateEntryResponse.delete_response:type_name -> filer_pb.DeleteEntryResponse
-	40,  // 58: filer_pb.StreamMutateEntryResponse.rename_response:type_name -> filer_pb.StreamRenameEntryResponse
-	92,  // 59: filer_pb.MountListResponse.mounts:type_name -> filer_pb.MountInfo
-	3,   // 60: filer_pb.WriteCondition.Clause.kind:type_name -> filer_pb.WriteCondition.Kind
-	44,  // 61: filer_pb.LookupVolumeResponse.LocationsMapEntry.value:type_name -> filer_pb.Locations
-	5,   // 62: filer_pb.SeaweedFiler.LookupDirectoryEntry:input_type -> filer_pb.LookupDirectoryEntryRequest
-	7,   // 63: filer_pb.SeaweedFiler.ListEntries:input_type -> filer_pb.ListEntriesRequest
-	17,  // 64: filer_pb.SeaweedFiler.CreateEntry:input_type -> filer_pb.CreateEntryRequest
-	29,  // 65: filer_pb.SeaweedFiler.UpdateEntry:input_type -> filer_pb.UpdateEntryRequest
-	31,  // 66: filer_pb.SeaweedFiler.TouchAccessTime:input_type -> filer_pb.TouchAccessTimeRequest
-	33,  // 67: filer_pb.SeaweedFiler.AppendToEntry:input_type -> filer_pb.AppendToEntryRequest
-	35,  // 68: filer_pb.SeaweedFiler.DeleteEntry:input_type -> filer_pb.DeleteEntryRequest
-	21,  // 69: filer_pb.SeaweedFiler.ObjectTransaction:input_type -> filer_pb.ObjectTransactionRequest
-	26,  // 70: filer_pb.SeaweedFiler.ObjectTransactionBatch:input_type -> filer_pb.ObjectTransactionBatchRequest
-	24,  // 71: filer_pb.SeaweedFiler.PosixLock:input_type -> filer_pb.PosixLockRequest
-	37,  // 72: filer_pb.SeaweedFiler.AtomicRenameEntry:input_type -> filer_pb.AtomicRenameEntryRequest
-	39,  // 73: filer_pb.SeaweedFiler.StreamRenameEntry:input_type -> filer_pb.StreamRenameEntryRequest
-	86,  // 74: filer_pb.SeaweedFiler.StreamMutateEntry:input_type -> filer_pb.StreamMutateEntryRequest
-	41,  // 75: filer_pb.SeaweedFiler.AssignVolume:input_type -> filer_pb.AssignVolumeRequest
-	43,  // 76: filer_pb.SeaweedFiler.LookupVolume:input_type -> filer_pb.LookupVolumeRequest
-	48,  // 77: filer_pb.SeaweedFiler.CollectionList:input_type -> filer_pb.CollectionListRequest
-	50,  // 78: filer_pb.SeaweedFiler.DeleteCollection:input_type -> filer_pb.DeleteCollectionRequest
-	52,  // 79: filer_pb.SeaweedFiler.Statistics:input_type -> filer_pb.StatisticsRequest
-	54,  // 80: filer_pb.SeaweedFiler.Ping:input_type -> filer_pb.PingRequest
-	56,  // 81: filer_pb.SeaweedFiler.GetFilerConfiguration:input_type -> filer_pb.GetFilerConfigurationRequest
-	61,  // 82: filer_pb.SeaweedFiler.TraverseBfsMetadata:input_type -> filer_pb.TraverseBfsMetadataRequest
-	58,  // 83: filer_pb.SeaweedFiler.SubscribeMetadata:input_type -> filer_pb.SubscribeMetadataRequest
-	58,  // 84: filer_pb.SeaweedFiler.SubscribeLocalMetadata:input_type -> filer_pb.SubscribeMetadataRequest
-	68,  // 85: filer_pb.SeaweedFiler.KvGet:input_type -> filer_pb.KvGetRequest
-	70,  // 86: filer_pb.SeaweedFiler.KvPut:input_type -> filer_pb.KvPutRequest
-	73,  // 87: filer_pb.SeaweedFiler.CacheRemoteObjectToLocalCluster:input_type -> filer_pb.CacheRemoteObjectToLocalClusterRequest
-	75,  // 88: filer_pb.SeaweedFiler.DistributedLock:input_type -> filer_pb.LockRequest
-	77,  // 89: filer_pb.SeaweedFiler.DistributedUnlock:input_type -> filer_pb.UnlockRequest
-	79,  // 90: filer_pb.SeaweedFiler.FindLockOwner:input_type -> filer_pb.FindLockOwnerRequest
-	82,  // 91: filer_pb.SeaweedFiler.TransferLocks:input_type -> filer_pb.TransferLocksRequest
-	84,  // 92: filer_pb.SeaweedFiler.ReplicateLock:input_type -> filer_pb.ReplicateLockRequest
-	88,  // 93: filer_pb.SeaweedFiler.MountRegister:input_type -> filer_pb.MountRegisterRequest
-	90,  // 94: filer_pb.SeaweedFiler.MountList:input_type -> filer_pb.MountListRequest
-	6,   // 95: filer_pb.SeaweedFiler.LookupDirectoryEntry:output_type -> filer_pb.LookupDirectoryEntryResponse
-	8,   // 96: filer_pb.SeaweedFiler.ListEntries:output_type -> filer_pb.ListEntriesResponse
-	28,  // 97: filer_pb.SeaweedFiler.CreateEntry:output_type -> filer_pb.CreateEntryResponse
-	30,  // 98: filer_pb.SeaweedFiler.UpdateEntry:output_type -> filer_pb.UpdateEntryResponse
-	32,  // 99: filer_pb.SeaweedFiler.TouchAccessTime:output_type -> filer_pb.TouchAccessTimeResponse
-	34,  // 100: filer_pb.SeaweedFiler.AppendToEntry:output_type -> filer_pb.AppendToEntryResponse
-	36,  // 101: filer_pb.SeaweedFiler.DeleteEntry:output_type -> filer_pb.DeleteEntryResponse
-	22,  // 102: filer_pb.SeaweedFiler.ObjectTransaction:output_type -> filer_pb.ObjectTransactionResponse
-	27,  // 103: filer_pb.SeaweedFiler.ObjectTransactionBatch:output_type -> filer_pb.ObjectTransactionBatchResponse
-	25,  // 104: filer_pb.SeaweedFiler.PosixLock:output_type -> filer_pb.PosixLockResponse
-	38,  // 105: filer_pb.SeaweedFiler.AtomicRenameEntry:output_type -> filer_pb.AtomicRenameEntryResponse
-	40,  // 106: filer_pb.SeaweedFiler.StreamRenameEntry:output_type -> filer_pb.StreamRenameEntryResponse
-	87,  // 107: filer_pb.SeaweedFiler.StreamMutateEntry:output_type -> filer_pb.StreamMutateEntryResponse
-	42,  // 108: filer_pb.SeaweedFiler.AssignVolume:output_type -> filer_pb.AssignVolumeResponse
-	46,  // 109: filer_pb.SeaweedFiler.LookupVolume:output_type -> filer_pb.LookupVolumeResponse
-	49,  // 110: filer_pb.SeaweedFiler.CollectionList:output_type -> filer_pb.CollectionListResponse
-	51,  // 111: filer_pb.SeaweedFiler.DeleteCollection:output_type -> filer_pb.DeleteCollectionResponse
-	53,  // 112: filer_pb.SeaweedFiler.Statistics:output_type -> filer_pb.StatisticsResponse
-	55,  // 113: filer_pb.SeaweedFiler.Ping:output_type -> filer_pb.PingResponse
-	57,  // 114: filer_pb.SeaweedFiler.GetFilerConfiguration:output_type -> filer_pb.GetFilerConfigurationResponse
-	62,  // 115: filer_pb.SeaweedFiler.TraverseBfsMetadata:output_type -> filer_pb.TraverseBfsMetadataResponse
-	59,  // 116: filer_pb.SeaweedFiler.SubscribeMetadata:output_type -> filer_pb.SubscribeMetadataResponse
-	59,  // 117: filer_pb.SeaweedFiler.SubscribeLocalMetadata:output_type -> filer_pb.SubscribeMetadataResponse
-	69,  // 118: filer_pb.SeaweedFiler.KvGet:output_type -> filer_pb.KvGetResponse
-	71,  // 119: filer_pb.SeaweedFiler.KvPut:output_type -> filer_pb.KvPutResponse
-	74,  // 120: filer_pb.SeaweedFiler.CacheRemoteObjectToLocalCluster:output_type -> filer_pb.CacheRemoteObjectToLocalClusterResponse
-	76,  // 121: filer_pb.SeaweedFiler.DistributedLock:output_type -> filer_pb.LockResponse
-	78,  // 122: filer_pb.SeaweedFiler.DistributedUnlock:output_type -> filer_pb.UnlockResponse
-	80,  // 123: filer_pb.SeaweedFiler.FindLockOwner:output_type -> filer_pb.FindLockOwnerResponse
-	83,  // 124: filer_pb.SeaweedFiler.TransferLocks:output_type -> filer_pb.TransferLocksResponse
-	85,  // 125: filer_pb.SeaweedFiler.ReplicateLock:output_type -> filer_pb.ReplicateLockResponse
-	89,  // 126: filer_pb.SeaweedFiler.MountRegister:output_type -> filer_pb.MountRegisterResponse
-	91,  // 127: filer_pb.SeaweedFiler.MountList:output_type -> filer_pb.MountListResponse
-	95,  // [95:128] is the sub-list for method output_type
-	62,  // [62:95] is the sub-list for method input_type
-	62,  // [62:62] is the sub-list for extension type_name
-	62,  // [62:62] is the sub-list for extension extendee
-	0,   // [0:62] is the sub-list for field type_name
+	23,  // 26: filer_pb.PosixLockRequest.locks:type_name -> filer_pb.PosixLockRange
+	23,  // 27: filer_pb.PosixLockResponse.conflict:type_name -> filer_pb.PosixLockRange
+	21,  // 28: filer_pb.ObjectTransactionBatchRequest.transactions:type_name -> filer_pb.ObjectTransactionRequest
+	22,  // 29: filer_pb.ObjectTransactionBatchResponse.responses:type_name -> filer_pb.ObjectTransactionResponse
+	59,  // 30: filer_pb.CreateEntryResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
+	1,   // 31: filer_pb.CreateEntryResponse.error_code:type_name -> filer_pb.FilerError
+	10,  // 32: filer_pb.UpdateEntryRequest.entry:type_name -> filer_pb.Entry
+	97,  // 33: filer_pb.UpdateEntryRequest.expected_extended:type_name -> filer_pb.UpdateEntryRequest.ExpectedExtendedEntry
+	59,  // 34: filer_pb.UpdateEntryResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
+	13,  // 35: filer_pb.AppendToEntryRequest.chunks:type_name -> filer_pb.FileChunk
+	59,  // 36: filer_pb.DeleteEntryResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
+	12,  // 37: filer_pb.StreamRenameEntryResponse.event_notification:type_name -> filer_pb.EventNotification
+	45,  // 38: filer_pb.AssignVolumeResponse.location:type_name -> filer_pb.Location
+	45,  // 39: filer_pb.Locations.locations:type_name -> filer_pb.Location
+	98,  // 40: filer_pb.LookupVolumeResponse.locations_map:type_name -> filer_pb.LookupVolumeResponse.LocationsMapEntry
+	47,  // 41: filer_pb.CollectionListResponse.collections:type_name -> filer_pb.Collection
+	12,  // 42: filer_pb.SubscribeMetadataResponse.event_notification:type_name -> filer_pb.EventNotification
+	59,  // 43: filer_pb.SubscribeMetadataResponse.events:type_name -> filer_pb.SubscribeMetadataResponse
+	60,  // 44: filer_pb.SubscribeMetadataResponse.log_file_refs:type_name -> filer_pb.LogFileChunkRef
+	13,  // 45: filer_pb.LogFileChunkRef.chunks:type_name -> filer_pb.FileChunk
+	10,  // 46: filer_pb.TraverseBfsMetadataResponse.entry:type_name -> filer_pb.Entry
+	99,  // 47: filer_pb.LocateBrokerResponse.resources:type_name -> filer_pb.LocateBrokerResponse.Resource
+	100, // 48: filer_pb.FilerConf.locations:type_name -> filer_pb.FilerConf.PathConf
+	10,  // 49: filer_pb.CacheRemoteObjectToLocalClusterResponse.entry:type_name -> filer_pb.Entry
+	59,  // 50: filer_pb.CacheRemoteObjectToLocalClusterResponse.metadata_event:type_name -> filer_pb.SubscribeMetadataResponse
+	81,  // 51: filer_pb.TransferLocksRequest.locks:type_name -> filer_pb.Lock
+	17,  // 52: filer_pb.StreamMutateEntryRequest.create_request:type_name -> filer_pb.CreateEntryRequest
+	29,  // 53: filer_pb.StreamMutateEntryRequest.update_request:type_name -> filer_pb.UpdateEntryRequest
+	35,  // 54: filer_pb.StreamMutateEntryRequest.delete_request:type_name -> filer_pb.DeleteEntryRequest
+	39,  // 55: filer_pb.StreamMutateEntryRequest.rename_request:type_name -> filer_pb.StreamRenameEntryRequest
+	28,  // 56: filer_pb.StreamMutateEntryResponse.create_response:type_name -> filer_pb.CreateEntryResponse
+	30,  // 57: filer_pb.StreamMutateEntryResponse.update_response:type_name -> filer_pb.UpdateEntryResponse
+	36,  // 58: filer_pb.StreamMutateEntryResponse.delete_response:type_name -> filer_pb.DeleteEntryResponse
+	40,  // 59: filer_pb.StreamMutateEntryResponse.rename_response:type_name -> filer_pb.StreamRenameEntryResponse
+	92,  // 60: filer_pb.MountListResponse.mounts:type_name -> filer_pb.MountInfo
+	3,   // 61: filer_pb.WriteCondition.Clause.kind:type_name -> filer_pb.WriteCondition.Kind
+	44,  // 62: filer_pb.LookupVolumeResponse.LocationsMapEntry.value:type_name -> filer_pb.Locations
+	5,   // 63: filer_pb.SeaweedFiler.LookupDirectoryEntry:input_type -> filer_pb.LookupDirectoryEntryRequest
+	7,   // 64: filer_pb.SeaweedFiler.ListEntries:input_type -> filer_pb.ListEntriesRequest
+	17,  // 65: filer_pb.SeaweedFiler.CreateEntry:input_type -> filer_pb.CreateEntryRequest
+	29,  // 66: filer_pb.SeaweedFiler.UpdateEntry:input_type -> filer_pb.UpdateEntryRequest
+	31,  // 67: filer_pb.SeaweedFiler.TouchAccessTime:input_type -> filer_pb.TouchAccessTimeRequest
+	33,  // 68: filer_pb.SeaweedFiler.AppendToEntry:input_type -> filer_pb.AppendToEntryRequest
+	35,  // 69: filer_pb.SeaweedFiler.DeleteEntry:input_type -> filer_pb.DeleteEntryRequest
+	21,  // 70: filer_pb.SeaweedFiler.ObjectTransaction:input_type -> filer_pb.ObjectTransactionRequest
+	26,  // 71: filer_pb.SeaweedFiler.ObjectTransactionBatch:input_type -> filer_pb.ObjectTransactionBatchRequest
+	24,  // 72: filer_pb.SeaweedFiler.PosixLock:input_type -> filer_pb.PosixLockRequest
+	37,  // 73: filer_pb.SeaweedFiler.AtomicRenameEntry:input_type -> filer_pb.AtomicRenameEntryRequest
+	39,  // 74: filer_pb.SeaweedFiler.StreamRenameEntry:input_type -> filer_pb.StreamRenameEntryRequest
+	86,  // 75: filer_pb.SeaweedFiler.StreamMutateEntry:input_type -> filer_pb.StreamMutateEntryRequest
+	41,  // 76: filer_pb.SeaweedFiler.AssignVolume:input_type -> filer_pb.AssignVolumeRequest
+	43,  // 77: filer_pb.SeaweedFiler.LookupVolume:input_type -> filer_pb.LookupVolumeRequest
+	48,  // 78: filer_pb.SeaweedFiler.CollectionList:input_type -> filer_pb.CollectionListRequest
+	50,  // 79: filer_pb.SeaweedFiler.DeleteCollection:input_type -> filer_pb.DeleteCollectionRequest
+	52,  // 80: filer_pb.SeaweedFiler.Statistics:input_type -> filer_pb.StatisticsRequest
+	54,  // 81: filer_pb.SeaweedFiler.Ping:input_type -> filer_pb.PingRequest
+	56,  // 82: filer_pb.SeaweedFiler.GetFilerConfiguration:input_type -> filer_pb.GetFilerConfigurationRequest
+	61,  // 83: filer_pb.SeaweedFiler.TraverseBfsMetadata:input_type -> filer_pb.TraverseBfsMetadataRequest
+	58,  // 84: filer_pb.SeaweedFiler.SubscribeMetadata:input_type -> filer_pb.SubscribeMetadataRequest
+	58,  // 85: filer_pb.SeaweedFiler.SubscribeLocalMetadata:input_type -> filer_pb.SubscribeMetadataRequest
+	68,  // 86: filer_pb.SeaweedFiler.KvGet:input_type -> filer_pb.KvGetRequest
+	70,  // 87: filer_pb.SeaweedFiler.KvPut:input_type -> filer_pb.KvPutRequest
+	73,  // 88: filer_pb.SeaweedFiler.CacheRemoteObjectToLocalCluster:input_type -> filer_pb.CacheRemoteObjectToLocalClusterRequest
+	75,  // 89: filer_pb.SeaweedFiler.DistributedLock:input_type -> filer_pb.LockRequest
+	77,  // 90: filer_pb.SeaweedFiler.DistributedUnlock:input_type -> filer_pb.UnlockRequest
+	79,  // 91: filer_pb.SeaweedFiler.FindLockOwner:input_type -> filer_pb.FindLockOwnerRequest
+	82,  // 92: filer_pb.SeaweedFiler.TransferLocks:input_type -> filer_pb.TransferLocksRequest
+	84,  // 93: filer_pb.SeaweedFiler.ReplicateLock:input_type -> filer_pb.ReplicateLockRequest
+	88,  // 94: filer_pb.SeaweedFiler.MountRegister:input_type -> filer_pb.MountRegisterRequest
+	90,  // 95: filer_pb.SeaweedFiler.MountList:input_type -> filer_pb.MountListRequest
+	6,   // 96: filer_pb.SeaweedFiler.LookupDirectoryEntry:output_type -> filer_pb.LookupDirectoryEntryResponse
+	8,   // 97: filer_pb.SeaweedFiler.ListEntries:output_type -> filer_pb.ListEntriesResponse
+	28,  // 98: filer_pb.SeaweedFiler.CreateEntry:output_type -> filer_pb.CreateEntryResponse
+	30,  // 99: filer_pb.SeaweedFiler.UpdateEntry:output_type -> filer_pb.UpdateEntryResponse
+	32,  // 100: filer_pb.SeaweedFiler.TouchAccessTime:output_type -> filer_pb.TouchAccessTimeResponse
+	34,  // 101: filer_pb.SeaweedFiler.AppendToEntry:output_type -> filer_pb.AppendToEntryResponse
+	36,  // 102: filer_pb.SeaweedFiler.DeleteEntry:output_type -> filer_pb.DeleteEntryResponse
+	22,  // 103: filer_pb.SeaweedFiler.ObjectTransaction:output_type -> filer_pb.ObjectTransactionResponse
+	27,  // 104: filer_pb.SeaweedFiler.ObjectTransactionBatch:output_type -> filer_pb.ObjectTransactionBatchResponse
+	25,  // 105: filer_pb.SeaweedFiler.PosixLock:output_type -> filer_pb.PosixLockResponse
+	38,  // 106: filer_pb.SeaweedFiler.AtomicRenameEntry:output_type -> filer_pb.AtomicRenameEntryResponse
+	40,  // 107: filer_pb.SeaweedFiler.StreamRenameEntry:output_type -> filer_pb.StreamRenameEntryResponse
+	87,  // 108: filer_pb.SeaweedFiler.StreamMutateEntry:output_type -> filer_pb.StreamMutateEntryResponse
+	42,  // 109: filer_pb.SeaweedFiler.AssignVolume:output_type -> filer_pb.AssignVolumeResponse
+	46,  // 110: filer_pb.SeaweedFiler.LookupVolume:output_type -> filer_pb.LookupVolumeResponse
+	49,  // 111: filer_pb.SeaweedFiler.CollectionList:output_type -> filer_pb.CollectionListResponse
+	51,  // 112: filer_pb.SeaweedFiler.DeleteCollection:output_type -> filer_pb.DeleteCollectionResponse
+	53,  // 113: filer_pb.SeaweedFiler.Statistics:output_type -> filer_pb.StatisticsResponse
+	55,  // 114: filer_pb.SeaweedFiler.Ping:output_type -> filer_pb.PingResponse
+	57,  // 115: filer_pb.SeaweedFiler.GetFilerConfiguration:output_type -> filer_pb.GetFilerConfigurationResponse
+	62,  // 116: filer_pb.SeaweedFiler.TraverseBfsMetadata:output_type -> filer_pb.TraverseBfsMetadataResponse
+	59,  // 117: filer_pb.SeaweedFiler.SubscribeMetadata:output_type -> filer_pb.SubscribeMetadataResponse
+	59,  // 118: filer_pb.SeaweedFiler.SubscribeLocalMetadata:output_type -> filer_pb.SubscribeMetadataResponse
+	69,  // 119: filer_pb.SeaweedFiler.KvGet:output_type -> filer_pb.KvGetResponse
+	71,  // 120: filer_pb.SeaweedFiler.KvPut:output_type -> filer_pb.KvPutResponse
+	74,  // 121: filer_pb.SeaweedFiler.CacheRemoteObjectToLocalCluster:output_type -> filer_pb.CacheRemoteObjectToLocalClusterResponse
+	76,  // 122: filer_pb.SeaweedFiler.DistributedLock:output_type -> filer_pb.LockResponse
+	78,  // 123: filer_pb.SeaweedFiler.DistributedUnlock:output_type -> filer_pb.UnlockResponse
+	80,  // 124: filer_pb.SeaweedFiler.FindLockOwner:output_type -> filer_pb.FindLockOwnerResponse
+	83,  // 125: filer_pb.SeaweedFiler.TransferLocks:output_type -> filer_pb.TransferLocksResponse
+	85,  // 126: filer_pb.SeaweedFiler.ReplicateLock:output_type -> filer_pb.ReplicateLockResponse
+	89,  // 127: filer_pb.SeaweedFiler.MountRegister:output_type -> filer_pb.MountRegisterResponse
+	91,  // 128: filer_pb.SeaweedFiler.MountList:output_type -> filer_pb.MountListResponse
+	96,  // [96:129] is the sub-list for method output_type
+	63,  // [63:96] is the sub-list for method input_type
+	63,  // [63:63] is the sub-list for extension type_name
+	63,  // [63:63] is the sub-list for extension extendee
+	0,   // [0:63] is the sub-list for field type_name
 }
 
 func init() { file_filer_proto_init() }

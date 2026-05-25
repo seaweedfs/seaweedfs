@@ -388,6 +388,10 @@ message PosixLockRequest {
     bool is_moved = 2;
     PosixLockOp op = 3;
     PosixLockRange lock = 4;
+    // locks carries the full set a mount holds on key for a KEEP_ALIVE
+    // re-assertion, so the current owner filer can rebuild its in-memory state
+    // after an ownership change or restart. lock.sid identifies the session.
+    repeated PosixLockRange locks = 5;
 }
 
 enum PosixLockOp {

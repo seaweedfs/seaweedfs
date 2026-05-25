@@ -36,8 +36,11 @@ const (
 	// posixLockReleaseTimeout bounds the background unlock/release RPCs. They run
 	// off the syscall path (close/flush) and must not be cancelled by an
 	// interrupt, but a deadline keeps a slow or unreachable filer from blocking
-	// close indefinitely.
+	// close indefinitely. It also bounds each keepalive RPC.
 	posixLockReleaseTimeout = 5 * time.Second
+	// posixKeepaliveInterval renews the session lease well within the filer's
+	// posixLockSessionTTL (15s) so a live mount is never reaped.
+	posixKeepaliveInterval = 5 * time.Second
 )
 
 // posixLockHint records, per inode, which owners this mount has taken fcntl locks
@@ -207,9 +210,7 @@ func (wfs *WFS) routedSetLk(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
 	if !resp.GetGranted() {
 		return fuse.EAGAIN
 	}
-	if !lk.IsFlock {
-		wfs.posixHint.add(in.NodeId, in.Owner)
-	}
+	wfs.recordPosixGrant(key, in.NodeId, lk)
 	return fuse.OK
 }
 
@@ -231,13 +232,27 @@ func (wfs *WFS) routedSetLkw(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status 
 		}
 		return resp.GetGranted(), nil
 	})
-	if status == fuse.OK && !lk.IsFlock {
-		wfs.posixHint.add(in.NodeId, in.Owner)
+	if status == fuse.OK {
+		wfs.recordPosixGrant(key, in.NodeId, lk)
 	}
 	return status
 }
 
+// recordPosixGrant notes a newly granted lock: the flush hint (fcntl only) and
+// the own-lock mirror, which the keepalive re-asserts to the key's owner so the
+// lease is renewed and the owner can rebuild after a takeover or restart.
+func (wfs *WFS) recordPosixGrant(key string, inode uint64, lk posixlock.Range) {
+	if !lk.IsFlock {
+		wfs.posixHint.add(inode, lk.Owner)
+	}
+	wfs.posixOwn.Track(key, lk)
+}
+
 func (wfs *WFS) routedUnlock(key string, lk posixlock.Range) fuse.Status {
+	// Drop the range from the mirror first so a keepalive re-assertion can't
+	// resurrect it; if the RPC below fails, the next re-assertion reconciles the
+	// owner to this (released) state anyway.
+	wfs.posixOwn.Unlock(key, lk)
 	// A release must complete even if the syscall was interrupted; cancelling it
 	// would leak the lock on the owner filer. Bound it so a stuck filer can't
 	// hang close() forever.
@@ -291,6 +306,7 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
+	wfs.posixOwn.ReleasePosixOwner(key, wfs.posixSid, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_POSIX_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
@@ -308,6 +324,7 @@ func (wfs *WFS) routedReleaseFlockOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
+	wfs.posixOwn.ReleaseFlockOwner(key, wfs.posixSid, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
@@ -348,4 +365,62 @@ func (wfs *WFS) hasPosixOwner(inode, owner uint64) bool {
 		return owner != 0 && wfs.posixHint.has(inode, owner)
 	}
 	return wfs.posixLocks.HasPosixOwner(inode, owner)
+}
+
+// callPosixReassert sends the mount's held locks on key to the key's current
+// owner filer as a KEEP_ALIVE, which renews the lease and lets the owner rebuild
+// its in-memory state after a takeover or restart.
+func (wfs *WFS) callPosixReassert(ctx context.Context, key string, locks []posixlock.Range) error {
+	pbLocks := make([]*filer_pb.PosixLockRange, 0, len(locks))
+	for _, l := range locks {
+		pbLocks = append(pbLocks, &filer_pb.PosixLockRange{
+			Start: l.Start, End: l.End, Type: l.Type,
+			Sid: l.Sid, Owner: l.Owner, Pid: l.Pid, IsFlock: l.IsFlock,
+		})
+	}
+	return wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, e := client.PosixLock(ctx, &filer_pb.PosixLockRequest{
+			Key:   key,
+			Op:    filer_pb.PosixLockOp_KEEP_ALIVE,
+			Lock:  &filer_pb.PosixLockRange{Sid: wfs.posixSid},
+			Locks: pbLocks,
+		})
+		return e
+	})
+}
+
+// posixKeepaliveConcurrency bounds the parallel keepalive RPCs per tick. A mount
+// holding locks on many inodes must renew every lease well within the filer TTL;
+// dispatching them concurrently keeps the round trip from scaling with lock count.
+const posixKeepaliveConcurrency = 32
+
+// loopRenewPosixLeases re-asserts this mount's held locks to the owner filer of
+// every key, which renews the session lease and rebuilds the owner's state after
+// a ring change or owner restart. A dead mount stops re-asserting and the owners'
+// sweepers reclaim its locks after the TTL.
+func (wfs *WFS) loopRenewPosixLeases() {
+	ticker := time.NewTicker(posixKeepaliveInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		held := wfs.posixOwn.Snapshot()
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, posixKeepaliveConcurrency)
+		for key, locks := range held {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				// Bound each re-assertion so a stuck filer can't block wg.Wait and
+				// stall the whole tick, which would let other keys' leases expire
+				// and get reaped.
+				ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
+				defer cancel()
+				if err := wfs.callPosixReassert(ctx, key, locks); err != nil {
+					glog.V(2).Infof("posix reassert %s: %v", key, err)
+				}
+			}()
+		}
+		wg.Wait()
+	}
 }

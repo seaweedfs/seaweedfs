@@ -15,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
@@ -140,8 +141,9 @@ type WFS struct {
 	fhLockTable          *util.LockTable[FileHandleId]
 	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
-	posixSid             uint64         // this mount's session id, for routed-lock owner identity
-	posixHint            *posixLockHint // local fcntl-lock hint for routed mode
+	posixSid             uint64             // this mount's session id, for routed-lock owner identity
+	posixHint            *posixLockHint     // local fcntl-lock hint for routed mode
+	posixOwn             *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
 	rdmaClient           *RDMAMountClient
 	peerRegistrar        *PeerRegistrar
 	peerDirectory        *PeerDirectory
@@ -248,6 +250,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		posixLocks:        NewPosixLockTable(),
 		posixSid:          randomPosixSid(),
 		posixHint:         newPosixLockHint(),
+		posixOwn:          posixlock.NewManager(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
 		openMtimeCache:    make(map[uint64][2]int64, 8192),
@@ -511,6 +514,9 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
 	go wfs.loopProactiveFlush()
+	if wfs.crossMountLocks() {
+		go wfs.loopRenewPosixLeases()
+	}
 
 	return nil
 }

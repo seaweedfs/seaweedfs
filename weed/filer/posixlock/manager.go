@@ -87,6 +87,69 @@ func (m *Manager) TryLock(key string, lk Range) (Range, bool) {
 	return Range{}, true
 }
 
+// Track records a lock the server already granted, without arbitration. A mount
+// uses it to mirror its own held locks so it can re-assert them to the inode's
+// current owner filer after an ownership change or owner restart.
+func (m *Manager) Track(key string, lk Range) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.byKey[key]
+	if !ok {
+		s = &Set{}
+		m.byKey[key] = s
+	}
+	s.Grant(lk)
+	m.index(lk.Sid, key)
+}
+
+// Snapshot returns a copy of the held locks per key. A mount calls it to drive
+// re-assertion keepalives; the filer never does.
+func (m *Manager) Snapshot() map[string][]Range {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string][]Range, len(m.byKey))
+	for key, s := range m.byKey {
+		out[key] = append([]Range(nil), s.locks...)
+	}
+	return out
+}
+
+// Reassert rebuilds session sid's locks on key from the client's authoritative
+// list, renewing the lease. It replaces sid's existing locks on the key, then
+// re-acquires each asserted lock — arbitrating against other sessions so it never
+// double-grants. Locks that lost to another session in a migration window are
+// returned as conflicts. The owner filer calls this on a re-assertion keepalive.
+func (m *Manager) Reassert(key string, sid uint64, locks []Range) (conflicts []Range) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastSeen[sid] = time.Now()
+
+	s := m.byKey[key]
+	if s == nil {
+		if len(locks) == 0 {
+			return nil
+		}
+		s = &Set{}
+		m.byKey[key] = s
+	}
+	s.ReleaseSession(sid)
+	for _, lk := range locks {
+		lk.Sid = sid
+		if c, granted := s.Acquire(lk); !granted {
+			conflicts = append(conflicts, c)
+		}
+	}
+	if setHasSession(s, sid) {
+		m.index(sid, key)
+	} else {
+		m.deindex(sid, key)
+	}
+	if s.Empty() {
+		delete(m.byKey, key)
+	}
+	return conflicts
+}
+
 // Unlock releases lk's owner's locks within its namespace over lk's range.
 func (m *Manager) Unlock(key string, lk Range) {
 	m.mu.Lock()
