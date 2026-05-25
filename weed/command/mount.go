@@ -61,7 +61,8 @@ type MountOptions struct {
 
 	dirIdleEvictSec *int
 
-	// Distributed lock for cross-mount write coordination
+	// Distributed locking for cross-mount write coordination and POSIX
+	// advisory locks (flock/fcntl)
 	distributedLock *bool
 
 	// POSIX compliance options
@@ -152,7 +153,7 @@ func init() {
 	mountReadRetryTime = cmdMount.Flag.Duration("readRetryTime", 6*time.Second, "maximum read retry wait time")
 
 	// Distributed lock for cross-mount write coordination
-	mountOptions.distributedLock = cmdMount.Flag.Bool("dlm", false, "enable distributed lock for cross-mount write coordination (only one mount can write a file at a time)")
+	mountOptions.distributedLock = cmdMount.Flag.Bool("dlm", false, "coordinate writes across mounts (only one mount writes a file at a time) and honor POSIX advisory locks (flock/fcntl) across mounts by routing them to the owner filer")
 
 	// POSIX compliance options
 	mountOptions.posixDirNlink = cmdMount.Flag.Bool("posix.dirNLink", false, "report POSIX-compliant directory nlink (2 + subdirectory count); costs one directory listing per stat")
