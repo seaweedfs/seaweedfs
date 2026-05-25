@@ -23,10 +23,21 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	}
 
 	inode := input.NodeId
-	path, _, entry, status := wfs.maybeReadEntry(inode)
+	path, fh, entry, status := wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
 		out.AttrValid = wfs.attrValidSec
+		// When an open handle owns the entry, async upload workers append
+		// chunks under the LockedEntry lock; take it for reading so FileSize
+		// does not iterate the chunk slice mid-reallocation. Re-read under the
+		// lock in case SetEntry swapped the pointer since maybeReadEntry.
+		if fh != nil {
+			fh.entry.RLock()
+			entry = fh.entry.Entry
+		}
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
+		if fh != nil {
+			fh.entry.RUnlock()
+		}
 		wfs.applyInMemoryAtime(&out.Attr, inode)
 		if entry.IsDirectory {
 			wfs.applyInMemoryDirMtime(&out.Attr, inode)
@@ -40,7 +51,9 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 			out.AttrValid = wfs.attrValidSec
 			// Use shared lock to prevent race with Write operations
 			fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
-			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.GetEntry(), true)
+			fh.entry.RLock()
+			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.Entry, true)
+			fh.entry.RUnlock()
 			wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 			wfs.applyInMemoryAtime(&out.Attr, inode)
 			out.Nlink = 0
@@ -65,6 +78,15 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if fh != nil {
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
+		// entry is the handle's shared LockedEntry.Entry. Async upload workers
+		// mutate its Chunks slice under the LockedEntry lock (AddChunks); hold
+		// that same lock so the truncate and FileSize reads below don't tear
+		// against a concurrent append. Re-read under the lock in case SetEntry
+		// swapped the pointer since maybeReadEntry, so we don't mutate an
+		// orphaned entry and lose the update.
+		fh.entry.Lock()
+		defer fh.entry.Unlock()
+		entry = fh.entry.Entry
 	}
 
 	wormEnforced, wormEnabled := wfs.wormEnforcedForEntry(path, entry)
