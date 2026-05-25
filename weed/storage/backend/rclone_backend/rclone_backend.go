@@ -165,6 +165,10 @@ func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func
 	return
 }
 
+var createRcloneDownloadFile = func(filename string) (io.WriteCloser, error) {
+	return os.Create(filename)
+}
+
 func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
 	ctx := context.TODO()
 
@@ -179,14 +183,18 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 	}
 	defer rc.Close()
 
-	file, err := os.Create(filename)
+	file, err := createRcloneDownloadFile(filename)
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
 
 	tr := accounting.NewStats(ctx).NewTransfer(obj, fs)
-	defer tr.Done(ctx, err)
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		tr.Done(ctx, err)
+	}()
 	acc := tr.Account(ctx, rc)
 	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
 

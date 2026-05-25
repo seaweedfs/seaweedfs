@@ -51,6 +51,29 @@ func TestDownloadViaRcloneReturnsCreateErrorWithoutPanic(t *testing.T) {
 	}
 }
 
+func TestDownloadViaRcloneReturnsFileCloseError(t *testing.T) {
+	closeErr := errors.New("close failed")
+	rfs := newTestRcloneFs(t, &testRcloneObject{
+		remote: "key",
+		body:   "data",
+	})
+
+	previousCreateFile := createRcloneDownloadFile
+	createRcloneDownloadFile = func(string) (io.WriteCloser, error) {
+		return &closeErrorWriter{closeErr: closeErr}, nil
+	}
+	t.Cleanup(func() {
+		createRcloneDownloadFile = previousCreateFile
+	})
+
+	_, err := downloadViaRclone(rfs, "ignored", "key", func(int64, float32) error {
+		return nil
+	})
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("expected %v, got %v", closeErr, err)
+	}
+}
+
 func TestRcloneBackendStorageFileReadAtReturnsOpenErrorWithoutPanic(t *testing.T) {
 	openErr := errors.New("range open failed")
 	rfs := newTestRcloneFs(t, &testRcloneObject{remote: "key", openErr: openErr})
@@ -135,4 +158,16 @@ func (o *testRcloneObject) Update(context.Context, io.Reader, fs.ObjectInfo, ...
 
 func (o *testRcloneObject) Remove(context.Context) error {
 	return nil
+}
+
+type closeErrorWriter struct {
+	closeErr error
+}
+
+func (w *closeErrorWriter) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (w *closeErrorWriter) Close() error {
+	return w.closeErr
 }
