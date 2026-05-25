@@ -129,16 +129,10 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 	ctx := context.TODO()
 
 	file, err := os.Open(filename)
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			return
-		}
-	}(file)
-
 	if err != nil {
 		return 0, err
 	}
+	defer file.Close()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -180,24 +174,16 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 	}
 
 	rc, err := obj.Open(ctx)
-	defer func(rc io.ReadCloser) {
-		err := rc.Close()
-		if err != nil {
-			return
-		}
-	}(rc)
-
 	if err != nil {
 		return 0, err
 	}
+	defer rc.Close()
 
 	file, err := os.Create(filename)
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			return
-		}
-	}(file)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
 
 	tr := accounting.NewStats(ctx).NewTransfer(obj, fs)
 	defer tr.Done(ctx, err)
@@ -251,16 +237,10 @@ func (rcloneBackendStorageFile RcloneBackendStorageFile) ReadAt(p []byte, off in
 	opt := fs.RangeOption{Start: off, End: off + int64(len(p)) - 1}
 
 	rc, err := obj.Open(ctx, &opt)
-	defer func(rc io.ReadCloser) {
-		err := rc.Close()
-		if err != nil {
-			return
-		}
-	}(rc)
-
 	if err != nil {
 		return 0, err
 	}
+	defer rc.Close()
 
 	return io.ReadFull(rc, p)
 }
