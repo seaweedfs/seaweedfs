@@ -140,8 +140,9 @@ type WFS struct {
 	fhLockTable          *util.LockTable[FileHandleId]
 	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
-	posixSid             uint64         // this mount's session id, for routed-lock owner identity
-	posixHint            *posixLockHint // local fcntl-lock hint for routed mode
+	posixSid             uint64          // this mount's session id, for routed-lock owner identity
+	posixHint            *posixLockHint  // local fcntl-lock hint for routed mode
+	posixKeep            *posixKeepalive // keys this mount holds locks on, renewed via keepalive
 	rdmaClient           *RDMAMountClient
 	peerRegistrar        *PeerRegistrar
 	peerDirectory        *PeerDirectory
@@ -248,6 +249,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		posixLocks:        NewPosixLockTable(),
 		posixSid:          randomPosixSid(),
 		posixHint:         newPosixLockHint(),
+		posixKeep:         newPosixKeepalive(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
 		openMtimeCache:    make(map[uint64][2]int64, 8192),
@@ -511,6 +513,9 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
 	go wfs.loopProactiveFlush()
+	if wfs.crossMountLocks() {
+		go wfs.loopRenewPosixLeases()
+	}
 
 	return nil
 }

@@ -36,8 +36,11 @@ const (
 	// posixLockReleaseTimeout bounds the background unlock/release RPCs. They run
 	// off the syscall path (close/flush) and must not be cancelled by an
 	// interrupt, but a deadline keeps a slow or unreachable filer from blocking
-	// close indefinitely.
+	// close indefinitely. It also bounds each keepalive RPC.
 	posixLockReleaseTimeout = 5 * time.Second
+	// posixKeepaliveInterval renews the session lease well within the filer's
+	// posixLockSessionTTL (15s) so a live mount is never reaped.
+	posixKeepaliveInterval = 5 * time.Second
 )
 
 // posixLockHint records, per inode, which owners this mount has taken fcntl locks
@@ -207,9 +210,7 @@ func (wfs *WFS) routedSetLk(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
 	if !resp.GetGranted() {
 		return fuse.EAGAIN
 	}
-	if !lk.IsFlock {
-		wfs.posixHint.add(in.NodeId, in.Owner)
-	}
+	wfs.recordPosixGrant(key, in.NodeId, in.Owner, lk.IsFlock)
 	return fuse.OK
 }
 
@@ -231,10 +232,19 @@ func (wfs *WFS) routedSetLkw(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status 
 		}
 		return resp.GetGranted(), nil
 	})
-	if status == fuse.OK && !lk.IsFlock {
-		wfs.posixHint.add(in.NodeId, in.Owner)
+	if status == fuse.OK {
+		wfs.recordPosixGrant(key, in.NodeId, in.Owner, lk.IsFlock)
 	}
 	return status
+}
+
+// recordPosixGrant notes a newly granted lock for the flush hint (fcntl only) and
+// the keepalive set (both namespaces), so the lease loop renews this key's owner.
+func (wfs *WFS) recordPosixGrant(key string, inode, owner uint64, isFlock bool) {
+	if !isFlock {
+		wfs.posixHint.add(inode, owner)
+	}
+	wfs.posixKeep.add(key, owner, isFlock)
 }
 
 func (wfs *WFS) routedUnlock(key string, lk posixlock.Range) fuse.Status {
@@ -291,6 +301,7 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
+	wfs.posixKeep.remove(key, owner, false)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_POSIX_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
@@ -308,6 +319,7 @@ func (wfs *WFS) routedReleaseFlockOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
+	wfs.posixKeep.remove(key, owner, true)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
@@ -348,4 +360,91 @@ func (wfs *WFS) hasPosixOwner(inode, owner uint64) bool {
 		return owner != 0 && wfs.posixHint.has(inode, owner)
 	}
 	return wfs.posixLocks.HasPosixOwner(inode, owner)
+}
+
+type posixHoldID struct {
+	owner   uint64
+	isFlock bool
+}
+
+// posixKeepalive tracks the inode keys this mount currently holds locks on, so
+// the renewal loop keeps the session's lease alive with each key's owner filer.
+// It is a superset: a key lingers until its holds are explicitly released (only
+// on owner release, not a partial range unlock), and an extra keepalive to an
+// owner the mount no longer holds is harmless, while a missed one would let a
+// still-held lock be wrongly reaped.
+type posixKeepalive struct {
+	mu   sync.Mutex
+	keys map[string]map[posixHoldID]struct{}
+}
+
+func newPosixKeepalive() *posixKeepalive {
+	return &posixKeepalive{keys: make(map[string]map[posixHoldID]struct{})}
+}
+
+func (k *posixKeepalive) add(key string, owner uint64, isFlock bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	holds := k.keys[key]
+	if holds == nil {
+		holds = make(map[posixHoldID]struct{})
+		k.keys[key] = holds
+	}
+	holds[posixHoldID{owner, isFlock}] = struct{}{}
+}
+
+func (k *posixKeepalive) remove(key string, owner uint64, isFlock bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if holds := k.keys[key]; holds != nil {
+		delete(holds, posixHoldID{owner, isFlock})
+		if len(holds) == 0 {
+			delete(k.keys, key)
+		}
+	}
+}
+
+func (k *posixKeepalive) snapshot() []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	keys := make([]string, 0, len(k.keys))
+	for key := range k.keys {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// posixKeepaliveConcurrency bounds the parallel keepalive RPCs per tick. A mount
+// holding locks on many inodes must renew every lease well within the filer TTL;
+// dispatching them concurrently keeps the round trip from scaling with lock count.
+const posixKeepaliveConcurrency = 32
+
+// loopRenewPosixLeases renews this mount's session lease with the owner filer of
+// every key it holds locks on, so a live mount is never reaped. A dead mount
+// stops renewing and the owners' sweepers reclaim its locks after the TTL.
+func (wfs *WFS) loopRenewPosixLeases() {
+	ticker := time.NewTicker(posixKeepaliveInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		keys := wfs.posixKeep.snapshot()
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, posixKeepaliveConcurrency)
+		for _, key := range keys {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				// Bound each keepalive so a stuck filer can't block wg.Wait and
+				// stall the whole renewal tick, which would let other keys' leases
+				// expire and get reaped.
+				ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
+				defer cancel()
+				if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_KEEP_ALIVE, posixlock.Range{Sid: wfs.posixSid}); err != nil {
+					glog.V(2).Infof("posix keepalive %s: %v", key, err)
+				}
+			}()
+		}
+		wg.Wait()
+	}
 }
