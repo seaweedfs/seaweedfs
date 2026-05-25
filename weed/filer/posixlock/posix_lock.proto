@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package posixlock;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/filer/posixlock";
+
+// LockSetProto is the serialized set of advisory locks held on one inode. It
+// rides in the inode's entry metadata, so the schema must stay backward
+// compatible across filer versions.
+message LockSetProto {
+  repeated LockProto locks = 1;
+}
+
+// LockProto mirrors Range. Owner identity is the (sid, owner) pair; end is
+// inclusive and max uint64 means EOF; is_flock separates the flock and fcntl
+// namespaces, which never conflict.
+message LockProto {
+  uint64 start = 1;
+  uint64 end = 2;
+  uint32 type = 3;
+  uint64 sid = 4;
+  uint64 owner = 5;
+  uint32 pid = 6;
+  bool is_flock = 7;
+}
