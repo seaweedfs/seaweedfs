@@ -17,6 +17,9 @@ const (
 	// each filer checks. The mount renews well within the TTL.
 	posixLockSessionTTL    = 15 * time.Second
 	posixLockSweepInterval = 5 * time.Second
+	// posixCoolingProbeTimeout bounds the dual-read probe to the prior owner so a
+	// slow peer can't stall a non-blocking lock call during the cooling window.
+	posixCoolingProbeTimeout = 2 * time.Second
 )
 
 // startPosixLockSweeper periodically reaps the locks of leased sessions (mounts)
@@ -90,6 +93,15 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 	resp := &filer_pb.PosixLockResponse{}
 	switch req.Op {
 	case filer_pb.PosixLockOp_TRY_LOCK:
+		// During a ring change, a previous owner may still hold a conflicting lock
+		// this fresh owner has not rebuilt yet; consult it before granting.
+		if !req.CoolingProbe {
+			if c, found := fs.coolingConflict(ctx, req.Key, lk); found {
+				resp.HasConflict = true
+				resp.Conflict = c
+				break
+			}
+		}
 		if c, granted := fs.posixLocks.TryLock(req.Key, lk); granted {
 			resp.Granted = true
 		} else {
@@ -99,6 +111,13 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 	case filer_pb.PosixLockOp_UNLOCK:
 		fs.posixLocks.Unlock(req.Key, lk)
 	case filer_pb.PosixLockOp_GET_LK:
+		if !req.CoolingProbe {
+			if c, found := fs.coolingConflict(ctx, req.Key, lk); found {
+				resp.HasConflict = true
+				resp.Conflict = c
+				break
+			}
+		}
 		if c, found := fs.posixLocks.GetLk(req.Key, lk); found {
 			resp.HasConflict = true
 			resp.Conflict = posixRangeToPb(c)
@@ -126,6 +145,47 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("unknown posix lock op %v", req.Op)
 	}
 	return resp, nil
+}
+
+// coolingConflict asks the key's previous owner, during a ring-change cooling
+// window, whether it still holds a lock that blocks lk — so a fresh owner does
+// not double-grant before re-assertion rebuilds its local state. Best-effort: if
+// the previous owner is unreachable (e.g. it left, which caused the change, so
+// its locks are gone) the caller proceeds. The probe is marked cooling_probe so
+// the previous owner answers from local state without itself cooling off.
+func (fs *FilerServer) coolingConflict(ctx context.Context, key string, lk posixlock.Range) (*filer_pb.PosixLockRange, bool) {
+	if fs.filer.Dlm == nil {
+		return nil, false
+	}
+	prior := fs.filer.Dlm.LockRing.PriorOwner(key)
+	if prior == "" || prior == fs.option.Host {
+		return nil, false
+	}
+	// Bound the probe with its own short deadline: it runs on the non-blocking
+	// lock path, so a slow prior owner must not stall the caller. On timeout the
+	// probe is treated as unreachable (best-effort).
+	probeCtx, cancel := context.WithTimeout(ctx, posixCoolingProbeTimeout)
+	defer cancel()
+	var resp *filer_pb.PosixLockResponse
+	err := pb.WithFilerClient(false, 0, prior, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		var e error
+		resp, e = client.PosixLock(probeCtx, &filer_pb.PosixLockRequest{
+			Key:          key,
+			IsMoved:      true,
+			CoolingProbe: true,
+			Op:           filer_pb.PosixLockOp_GET_LK,
+			Lock:         posixRangeToPb(lk),
+		})
+		return e
+	})
+	if err != nil {
+		glog.V(2).InfofCtx(ctx, "posix cooling probe %s -> %s: %v", key, prior, err)
+		return nil, false
+	}
+	if resp.GetHasConflict() {
+		return resp.GetConflict(), true
+	}
+	return nil, false
 }
 
 func posixRangeFromPb(l *filer_pb.PosixLockRange) posixlock.Range {
