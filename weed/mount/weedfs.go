@@ -97,8 +97,10 @@ type Option struct {
 
 	// EnableDistributedLock enables DLM-based write coordination across mounts.
 	// When true, opening a file for write acquires a distributed lock that is
-	// held (with auto-renewal) until the file is closed. Only one mount can
-	// have a file open for writing at a time.
+	// held (with auto-renewal) until the file is closed, so only one mount can
+	// have a file open for writing at a time; POSIX advisory locks (flock/fcntl)
+	// are also routed to the inode's owner filer so they are honored across
+	// mounts. Disabled under writeback cache, which implies single-writer.
 	EnableDistributedLock bool
 
 	// WritebackCache enables async flush on close for improved small file write performance.
@@ -138,6 +140,8 @@ type WFS struct {
 	fhLockTable          *util.LockTable[FileHandleId]
 	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
+	posixSid             uint64         // this mount's session id, for routed-lock owner identity
+	posixHint            *posixLockHint // local fcntl-lock hint for routed mode
 	rdmaClient           *RDMAMountClient
 	peerRegistrar        *PeerRegistrar
 	peerDirectory        *PeerDirectory
@@ -242,6 +246,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fhLockTable:       util.NewLockTable[FileHandleId](),
 		hardLinkLockTable: util.NewLockTable[string](),
 		posixLocks:        NewPosixLockTable(),
+		posixSid:          randomPosixSid(),
+		posixHint:         newPosixLockHint(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
 		openMtimeCache:    make(map[uint64][2]int64, 8192),
