@@ -78,6 +78,14 @@ type VolumeServerOptions struct {
 	allowUntrustedRemoteEndpoints *bool
 	debug                         *bool
 	debugPort                     *int
+	diskIOProbe                   *bool
+	diskIOTimeout                 *time.Duration
+	diskIOLatencyAlpha            *float64
+	diskIOMinSlowLatency          *time.Duration
+	diskIOSlowLatencyFactor       *float64
+	diskIOSlowStddevFactor        *float64
+	diskIOMaxConsecutiveSlow      *int
+	diskIOMaxFailuresBeforeAlert  *int
 	// shutdownCtx, when non-nil, tells startVolumeServer to shut down once the
 	// ctx is cancelled. Used by integration tests and by weed mini; nil for
 	// standalone weed volume.
@@ -124,6 +132,14 @@ func init() {
 	v.allowUntrustedRemoteEndpoints = cmdVolume.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
+	v.diskIOProbe = cmdVolume.Flag.Bool("disk.io.probe", false, "enable disk IO latency probing to detect slow disks")
+	v.diskIOTimeout = cmdVolume.Flag.Duration("disk.io.timeout", 2*time.Second, "maximum time allowed for disk IO probe before considering disk as failed")
+	v.diskIOLatencyAlpha = cmdVolume.Flag.Float64("disk.io.latencyAlpha", 0.2, "EWMA smoothing factor for latency calculation (0-1), lower = smoother")
+	v.diskIOMinSlowLatency = cmdVolume.Flag.Duration("disk.io.minSlowLatency", 50*time.Millisecond, "minimum latency threshold to consider as potential slow operation")
+	v.diskIOSlowLatencyFactor = cmdVolume.Flag.Float64("disk.io.slowLatencyFactor", 3.0, "multiplier above average latency to flag as slow (current > avg * factor)")
+	v.diskIOSlowStddevFactor = cmdVolume.Flag.Float64("disk.io.slowStddevFactor", 2.0, "multiplier above standard deviation to flag as slow (current > avg + stddev * factor)")
+	v.diskIOMaxConsecutiveSlow = cmdVolume.Flag.Int("disk.io.maxConsecutiveSlow", 3, "number of consecutive slow operations required before reporting disk failure")
+	v.diskIOMaxFailuresBeforeAlert = cmdVolume.Flag.Int("disk.io.maxFailuresBeforeAlert", 3, "number of IO failures tolerated before setting disk.Error alert")
 }
 
 var cmdVolume = &Command{
@@ -306,7 +322,16 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Determine volume server ID: if not specified, use ip:port
 	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
-
+	diskProbeConfig := stats_collect.DiskIOProbeConfig{
+		Enabled:                *v.diskIOProbe,
+		Timeout:                *v.diskIOTimeout,
+		LatencyAlpha:           *v.diskIOLatencyAlpha,
+		MinSlowLatency:         *v.diskIOMinSlowLatency,
+		SlowLatencyFactor:      *v.diskIOSlowLatencyFactor,
+		SlowStddevFactor:       *v.diskIOSlowStddevFactor,
+		MaxConsecutiveSlow:     *v.diskIOMaxConsecutiveSlow,
+		MaxFailuresBeforeAlert: *v.diskIOMaxFailuresBeforeAlert,
+	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
@@ -326,6 +351,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.readBufferSizeMB,
 		*v.ldbTimeout,
 		*v.allowUntrustedRemoteEndpoints,
+		diskProbeConfig,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

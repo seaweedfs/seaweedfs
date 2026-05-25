@@ -486,6 +486,14 @@ func initMiniVolumeFlags() {
 	miniOptions.v.readBufferSizeMB = cmdMini.Flag.Int("volume.readBufferSizeMB", 4, "read buffer size in MB")
 	miniOptions.v.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
+	miniOptions.v.diskIOProbe = cmdMini.Flag.Bool("volume.disk.io.probe", false, "enable disk IO latency probing to detect slow disks")
+	miniOptions.v.diskIOTimeout = cmdMini.Flag.Duration("volume.disk.io.timeout", 2*time.Second, "maximum time allowed for disk IO probe before considering disk as failed")
+	miniOptions.v.diskIOLatencyAlpha = cmdMini.Flag.Float64("volume.disk.io.latencyAlpha", 0.2, "EWMA smoothing factor for latency calculation (0-1), lower = smoother")
+	miniOptions.v.diskIOMinSlowLatency = cmdMini.Flag.Duration("volume.disk.io.minSlowLatency", 50*time.Millisecond, "minimum latency threshold to consider as potential slow operation")
+	miniOptions.v.diskIOSlowLatencyFactor = cmdMini.Flag.Float64("volume.disk.io.slowLatencyFactor", 3.0, "multiplier above average latency to flag as slow (current > avg * factor)")
+	miniOptions.v.diskIOSlowStddevFactor = cmdMini.Flag.Float64("volume.disk.io.slowStddevFactor", 2.0, "multiplier above standard deviation to flag as slow (current > avg + stddev * factor)")
+	miniOptions.v.diskIOMaxConsecutiveSlow = cmdMini.Flag.Int("volume.disk.io.maxConsecutiveSlow", 3, "number of consecutive slow operations required before reporting disk failure")
+	miniOptions.v.diskIOMaxFailuresBeforeAlert = cmdMini.Flag.Int("volume.disk.io.maxFailuresBeforeAlert", 3, "number of IO failures tolerated before setting disk.Error alert")
 }
 
 // initMiniS3Flags initializes S3 server flag options

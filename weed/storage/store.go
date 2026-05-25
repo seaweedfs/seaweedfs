@@ -94,6 +94,7 @@ func NewStore(
 	diskTypes []DiskType,
 	diskTags [][]string,
 	ldbTimeout int64,
+	diskProbeConfig stats.DiskIOProbeConfig,
 ) (s *Store) {
 	s = &Store{
 		grpcDialOption: grpcDialOption,
@@ -118,7 +119,7 @@ func NewStore(
 		if i < len(diskTags) {
 			tags = diskTags[i]
 		}
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags)
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags, diskProbeConfig)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 

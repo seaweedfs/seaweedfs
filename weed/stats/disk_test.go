@@ -11,7 +11,7 @@ import (
 
 func TestSetDiskStatusSuccess(t *testing.T) {
 	disk := &volume_server_pb.DiskStatus{Dir: t.TempDir()}
-	setDiskStatus(disk)
+	diskProbe(disk, DefaultDiskIOProbeConfig())
 
 	if disk.Error != "" {
 		t.Fatalf("unexpected disk error: %s", disk.Error)
@@ -23,14 +23,14 @@ func TestSetDiskStatusSuccess(t *testing.T) {
 
 func TestSetDiskStatusReportsRepeatedFailures(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-
+	config := DefaultDiskIOProbeConfig()
 	var disk *volume_server_pb.DiskStatus
-	for i := 0; i < maxFailuresBeforeAlert; i++ {
+	for i := 0; i < config.MaxFailuresBeforeAlert; i++ {
 		disk = &volume_server_pb.DiskStatus{Dir: missing}
-		setDiskStatus(disk)
+		diskProbe(disk, config)
 	}
 
 	if disk.Error == "" {
-		t.Fatalf("expected disk error after %d failed checks", maxFailuresBeforeAlert)
+		t.Fatalf("expected disk error after %d failed checks", config.MaxFailuresBeforeAlert)
 	}
 }

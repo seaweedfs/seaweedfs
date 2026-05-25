@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -99,6 +100,8 @@ func TestLoadEcShardsWhenIndexFilesOnDifferentDisk(t *testing.T) {
 		t.Fatalf("save .vif: %v", err)
 	}
 
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
+
 	// Build the Store with both disks. NewStore triggers per-disk loading
 	// during construction, which is the codepath under test.
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
@@ -110,6 +113,7 @@ func TestLoadEcShardsWhenIndexFilesOnDifferentDisk(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 
 	// Drain heartbeat-style channels so loading does not block.
@@ -201,6 +205,7 @@ func TestLoadEcShardsOrphanWithoutSiblingEcx(t *testing.T) {
 		f.Close()
 	}
 
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
 		[]int32{100, 100},
@@ -210,6 +215,7 @@ func TestLoadEcShardsOrphanWithoutSiblingEcx(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {
@@ -303,6 +309,7 @@ func TestReconcileNoOpWhenEachDiskIsSelfContained(t *testing.T) {
 	// should leave them untouched.
 	writeFullEcLayout(dir0, []int{0, 4})
 	writeFullEcLayout(dir1, []int{8, 12})
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
@@ -313,6 +320,7 @@ func TestReconcileNoOpWhenEachDiskIsSelfContained(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {
@@ -413,6 +421,7 @@ func TestLoadEcShardsWhenOwnerEcxIsInDataDir(t *testing.T) {
 		t.Fatalf("save .vif in data dir: %v", err)
 	}
 
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 	// idxDir is configured but intentionally empty for this volume — we
 	// want IdxDirectory != Directory while the .ecx lives in Directory.
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
@@ -424,6 +433,7 @@ func TestLoadEcShardsWhenOwnerEcxIsInDataDir(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {
