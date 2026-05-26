@@ -279,13 +279,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// (issue #8928). The check piggybacks on MaxNeedleEnd, which the load
 		// walks below populate without a second linear scan.
 
-		// Loader helpers below return a typed-nil pointer alongside their
-		// error; assigning that to the v.nm NeedleMapper interface yields a
-		// non-nil interface wrapping a nil concrete value, so a later
-		// `v.nm != nil` check still dispatches methods on a nil receiver.
-		// Clear v.nm explicitly so `v.nm != nil` reliably means "loaded",
-		// and close indexFile here since the defer cleanup keys off v.nm and
-		// would otherwise leak the descriptor.
+		// Loaders can return a typed-nil pointer with err set; assigning that
+		// to v.nm yields a non-nil interface over a nil receiver. Clear v.nm
+		// and close indexFile so the defer cleanup keys off v.nm cleanly.
 		if v.noWriteOrDelete || v.noWriteCanDelete {
 			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
@@ -368,8 +364,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// MaximumNeedleEnd, so this is just a numeric comparison — no extra
 		// disk I/O. A violation marks the volume read-only so a corrupt
 		// .idx left over from a crashed batched write does not silently
-		// power vacuum to drop reachable data. See issue #8928. Skip on
-		// loader error: MaximumNeedleEnd reflects a partial walk.
+		// power vacuum to drop reachable data. See issue #8928. err == nil
+		// guards against a partial-walk MaximumNeedleEnd.
 		if err == nil && !v.HasRemoteFile() && v.nm != nil && v.DataBackend != nil {
 			if datSize, _, statErr := v.DataBackend.GetStat(); statErr == nil && datSize > 0 {
 				if maxEnd := v.nm.MaxNeedleEnd(); maxEnd > datSize {
