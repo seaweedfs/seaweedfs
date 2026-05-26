@@ -735,6 +735,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	corsMiddleware := s3a.getCORSMiddleware()
 
 	for _, bucket := range routers {
+		// Reject `..`/`.`/NUL in {bucket} or {object} vars before any handler
+		// runs. SkipClean(true) keeps `..` in the matched path; the filer would
+		// otherwise collapse it via filepath.Join and cross bucket boundaries.
+		bucket.Use(validateRequestPath)
+
 		// Apply CORS middleware to bucket routers for automatic CORS header handling
 		bucket.Use(corsMiddleware.Handler)
 
