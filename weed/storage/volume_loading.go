@@ -283,11 +283,14 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// error; assigning that to the v.nm NeedleMapper interface yields a
 		// non-nil interface wrapping a nil concrete value, so a later
 		// `v.nm != nil` check still dispatches methods on a nil receiver.
-		// Clear v.nm explicitly so `v.nm != nil` reliably means "loaded".
+		// Clear v.nm explicitly so `v.nm != nil` reliably means "loaded",
+		// and close indexFile here since the defer cleanup keys off v.nm and
+		// would otherwise leak the descriptor.
 		if v.noWriteOrDelete || v.noWriteCanDelete {
 			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 				v.nm = nil
+				indexFile.Close()
 			}
 		} else {
 			switch needleMapKind {
@@ -300,6 +303,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					if v.nm, err = LoadCompactNeedleMap(indexFile, v.Version()); err != nil {
 						glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
 						v.nm = nil
+						indexFile.Close()
 					}
 				}
 			case NeedleMapLevelDb:
@@ -317,6 +321,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 						v.nm = nil
+						indexFile.Close()
 					}
 				}
 			case NeedleMapLevelDbMedium:
@@ -334,6 +339,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 						v.nm = nil
+						indexFile.Close()
 					}
 				}
 			case NeedleMapLevelDbLarge:
@@ -351,6 +357,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout, v.Version()); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 						v.nm = nil
+						indexFile.Close()
 					}
 				}
 			}
