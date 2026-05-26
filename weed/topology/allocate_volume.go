@@ -10,15 +10,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-// allocateVolumeTimeout bounds the gRPC call so a hung volume server cannot
-// pin the volume-grow goroutine forever. The grow goroutine clears the
-// layout's growRequest flag in its defer; without a deadline a stalled
-// AllocateVolume would leave that flag stuck and silently block all future
-// automatic growth for the layout until the master restarts.
-//
-// Volume create/delete is sub-second normally — 1 minute is generous even
-// for a contended disk, and short enough to recover before too many client
-// Assign attempts have drained their own retry budget.
+// Cap the RPC so a hung volume server can't strand the layout's
+// growRequest flag and block all future automatic growth.
 const allocateVolumeTimeout = 1 * time.Minute
 
 type AllocateVolumeResult struct {
