@@ -2,12 +2,20 @@ package topology
 
 import (
 	"context"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 )
+
+// allocateVolumeTimeout bounds the gRPC call so a hung volume server cannot
+// pin the volume-grow goroutine forever. The grow goroutine clears the
+// layout's growRequest flag in its defer; without a deadline a stalled
+// AllocateVolume would leave that flag stuck and silently block all future
+// automatic growth for the layout until the master restarts.
+const allocateVolumeTimeout = 5 * time.Minute
 
 type AllocateVolumeResult struct {
 	Error string
@@ -17,7 +25,10 @@ func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid needle.Vol
 
 	return operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
-		_, allocateErr := client.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), allocateVolumeTimeout)
+		defer cancel()
+
+		_, allocateErr := client.AllocateVolume(ctx, &volume_server_pb.AllocateVolumeRequest{
 			VolumeId:           uint32(vid),
 			Collection:         option.Collection,
 			Replication:        option.ReplicaPlacement.String(),
@@ -36,7 +47,10 @@ func DeleteVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid needle.Volum
 
 	return operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
-		_, allocateErr := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), allocateVolumeTimeout)
+		defer cancel()
+
+		_, allocateErr := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
 			VolumeId: uint32(vid),
 		})
 		return allocateErr

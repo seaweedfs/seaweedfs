@@ -152,9 +152,14 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			// we have lock called inside vg
 			glog.V(0).Infof("volume grow %+v", req)
 			go func(req *topology.VolumeGrowRequest, vl *topology.VolumeLayout) {
+				// Always clear the layout's growRequest flag and the in-flight
+				// filter entry, even if DoAutomaticVolumeGrow panics. Otherwise
+				// a stuck grow leaves growRequest=true forever, silently
+				// blocking all future automatic growth for this layout until
+				// the master restarts.
+				defer filter.Delete(req)
+				defer vl.DoneGrowRequest()
 				ms.DoAutomaticVolumeGrow(req)
-				vl.DoneGrowRequest()
-				filter.Delete(req)
 			}(req, vl)
 		}
 	}()
