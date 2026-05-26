@@ -89,10 +89,10 @@ spec:
           service:
             name: {{ $serviceName }}
             port:
-              number: {{ .Values.filer.port }}
+              number: {{ .Values.filer.grpcPort }}
 {{- else }}
           serviceName: {{ $serviceName }}
-          servicePort: {{ .Values.filer.port }}
+          servicePort: {{ .Values.filer.grpcPort }}
 {{- end }}
 {{- if .Values.filer.ingresses.grpc.host }}
     host: {{ .Values.filer.ingresses.grpc.host }}
