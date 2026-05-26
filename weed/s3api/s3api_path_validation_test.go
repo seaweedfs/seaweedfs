@@ -1,0 +1,60 @@
+package s3api
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gorilla/mux"
+)
+
+func TestValidateRequestPath_RejectsTraversal(t *testing.T) {
+	tests := []struct {
+		name string
+		// rawPath is sent as the Request-URI; net/http.NewRequest does not
+		// rewrite the path, so `..` segments survive into mux when the router
+		// is built with SkipClean(true) — matching the production setup in
+		// weed/command/s3.go.
+		rawPath  string
+		wantCode int
+	}{
+		{"clean path passes", "/bucket-a/folder/file.txt", http.StatusOK},
+		{"empty object passes", "/bucket-a", http.StatusOK},
+		{"trailing slash passes", "/bucket-a/folder/", http.StatusOK},
+
+		{"leading dotdot rejected", "/bucket-a/../evil-bucket/test.txt", http.StatusBadRequest},
+		{"nested dotdot rejected", "/bucket-a/good/../evil/test.txt", http.StatusBadRequest},
+		{"backslash dotdot rejected", "/bucket-a/..\\evil\\test.txt", http.StatusBadRequest},
+		{"percent-encoded dotdot rejected", "/bucket-a/%2e%2e/evil/test.txt", http.StatusBadRequest},
+		{"bare dot object rejected", "/bucket-a/./evil/test.txt", http.StatusBadRequest},
+		{"dotdot bucket rejected", "/../buckets/evil", http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := mux.NewRouter().SkipClean(true)
+			sub := router.PathPrefix("/{bucket}").Subrouter()
+			sub.Use(validateRequestPath)
+			handlerCalled := false
+			pass := func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
+				w.WriteHeader(http.StatusOK)
+			}
+			// Mirror the production routes: /{bucket}/{object:(?s).+} for
+			// object-scoped requests, bare /{bucket} for bucket-scoped ones.
+			sub.Path("/{object:(?s).+}").HandlerFunc(pass)
+			sub.Path("").HandlerFunc(pass)
+
+			req := httptest.NewRequest(http.MethodGet, tt.rawPath, nil)
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantCode {
+				t.Fatalf("path %q: got status %d, want %d (body=%q)", tt.rawPath, rr.Code, tt.wantCode, rr.Body.String())
+			}
+			if tt.wantCode == http.StatusBadRequest && handlerCalled {
+				t.Fatalf("path %q: inner handler reached despite rejection", tt.rawPath)
+			}
+		})
+	}
+}
