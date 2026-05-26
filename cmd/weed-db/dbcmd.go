@@ -337,6 +337,9 @@ func parseAuthMethod(method string) (postgres.AuthMethod, error) {
 func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
 	users := make(map[string]string)
 
+	// Trim whitespace before checking for empty input.
+	usersStr = strings.TrimSpace(usersStr)
+
 	if usersStr == "" {
 		// No users specified.
 		if authMethod != postgres.AuthTrust {
@@ -344,9 +347,6 @@ func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]str
 		}
 		return users, nil
 	}
-
-	// Trim whitespace.
-	usersStr = strings.TrimSpace(usersStr)
 
 	// Determine format and parse accordingly.
 	if strings.HasPrefix(usersStr, "{") && strings.HasSuffix(usersStr, "}") {
