@@ -35,7 +35,12 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 
 	entry := fh.GetEntry()
 
-	if entry.IsInRemoteOnly() {
+	// IsInRemoteOnly inspects entry.Chunks, so take the LockedEntry lock the
+	// async uploader appends under.
+	entry.RLock()
+	remoteOnly := entry.Entry.IsInRemoteOnly()
+	entry.RUnlock()
+	if remoteOnly {
 		glog.V(4).Infof("download remote entry %s", fileFullPath)
 		err := fh.downloadRemoteEntry(entry)
 		if err != nil {
@@ -44,10 +49,21 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 		}
 	}
 
-	fileSize := int64(entry.Attributes.FileSize)
+	// Snapshot size, inline content, and the chunk list under the LockedEntry
+	// lock. Async upload workers append chunks under this lock (AddChunks), so
+	// reading entry.Chunks / FileSize without it races with the slice
+	// reallocation and can crash in filer.TotalSize. The captured slice headers
+	// stay valid afterwards: append never mutates the old backing array, and
+	// truncate is excluded by the fh.entryLock held for this whole read.
+	entry.RLock()
+	pbEntry := entry.Entry
+	fileSize := int64(pbEntry.Attributes.FileSize)
 	if fileSize == 0 {
-		fileSize = int64(filer.FileSize(entry.GetEntry()))
+		fileSize = int64(filer.FileSize(pbEntry))
 	}
+	content := pbEntry.Content
+	chunks := pbEntry.Chunks
+	entry.RUnlock()
 
 	if fileSize == 0 {
 		glog.V(1).Infof("empty fh %v", fileFullPath)
@@ -59,15 +75,15 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 		return 0, 0, io.EOF
 	}
 
-	if offset < int64(len(entry.Content)) {
-		totalRead := copy(buff, entry.Content[offset:])
+	if offset < int64(len(content)) {
+		totalRead := copy(buff, content[offset:])
 		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 		return int64(totalRead), 0, nil
 	}
 
 	// Try RDMA acceleration first if available
 	if fh.wfs.rdmaClient != nil && fh.wfs.option.RdmaEnabled {
-		totalRead, ts, err := fh.tryRDMARead(ctx, fileSize, buff, offset, entry)
+		totalRead, ts, err := fh.tryRDMARead(ctx, fileSize, buff, offset, chunks)
 		if err == nil {
 			glog.V(4).Infof("RDMA read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 			return int64(totalRead), ts, nil
@@ -79,7 +95,7 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	// Any failure falls through transparently. See design-weed-mount-
 	// peer-chunk-sharing.md §4.3.
 	if fh.wfs.option.PeerEnabled && fh.wfs.peerGrpcServer != nil {
-		totalRead, ts, err := fh.tryPeerRead(ctx, fileSize, buff, offset, entry)
+		totalRead, ts, err := fh.tryPeerRead(ctx, fileSize, buff, offset, chunks)
 		if err == nil {
 			glog.V(4).Infof("peer read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 			return int64(totalRead), ts, nil
@@ -104,13 +120,13 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	return int64(totalRead), ts, err
 }
 
-// tryRDMARead attempts to read file data using RDMA acceleration
-func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []byte, offset int64, entry *LockedEntry) (int64, int64, error) {
+// tryRDMARead attempts to read file data using RDMA acceleration. chunks is a
+// snapshot captured under the LockedEntry lock by the caller.
+func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []byte, offset int64, chunks []*filer_pb.FileChunk) (int64, int64, error) {
 	// For now, we'll try to read the chunks directly using RDMA
 	// This is a simplified approach - in a full implementation, we'd need to
 	// handle chunk boundaries, multiple chunks, etc.
 
-	chunks := entry.GetEntry().Chunks
 	if len(chunks) == 0 {
 		return 0, 0, fmt.Errorf("no chunks available for RDMA read")
 	}

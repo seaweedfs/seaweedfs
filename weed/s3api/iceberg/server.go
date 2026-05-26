@@ -71,6 +71,13 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Add middleware to log all requests/responses
 	router.Use(loggingMiddleware)
 
+	// Reject `..`/`.`/NUL in {prefix}/{namespace}/{table} vars before any
+	// handler runs. The router uses SkipClean(true), so traversal segments
+	// would otherwise reach path.Join in stage-marker / location builders.
+	// Registered after loggingMiddleware so rejected requests still get
+	// audit-logged.
+	router.Use(validateRequestPath)
+
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
 

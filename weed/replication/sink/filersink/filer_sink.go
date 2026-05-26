@@ -22,17 +22,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// ChunkTransferStatus tracks the progress of a single chunk being replicated.
-// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
-// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
-// read by ActiveTransfers.
-type ChunkTransferStatus struct {
-	mu            sync.RWMutex
+// ChunkTransferSnapshot is a lock-free, copyable view of a chunk transfer's
+// progress, returned by ActiveTransfers.
+type ChunkTransferSnapshot struct {
 	ChunkFileId   string
 	Path          string
 	BytesReceived int64
 	Status        string // "downloading", "uploading", or "waiting 10s" etc.
 	LastErr       string
+}
+
+// ChunkTransferStatus tracks the progress of a single chunk being replicated.
+// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
+// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
+// read by ActiveTransfers.
+type ChunkTransferStatus struct {
+	mu sync.RWMutex
+	ChunkTransferSnapshot
 }
 
 type FilerSink struct {
@@ -134,18 +140,12 @@ func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
 }
 
 // ActiveTransfers returns an immutable snapshot of all in-progress chunk transfers.
-func (fs *FilerSink) ActiveTransfers() []ChunkTransferStatus {
-	var transfers []ChunkTransferStatus
+func (fs *FilerSink) ActiveTransfers() []ChunkTransferSnapshot {
+	var transfers []ChunkTransferSnapshot
 	fs.activeTransfers.Range(func(key, value any) bool {
 		t := value.(*ChunkTransferStatus)
 		t.mu.RLock()
-		transfers = append(transfers, ChunkTransferStatus{
-			ChunkFileId:   t.ChunkFileId,
-			Path:          t.Path,
-			BytesReceived: t.BytesReceived,
-			Status:        t.Status,
-			LastErr:       t.LastErr,
-		})
+		transfers = append(transfers, t.ChunkTransferSnapshot)
 		t.mu.RUnlock()
 		return true
 	})

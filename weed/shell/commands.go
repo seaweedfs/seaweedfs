@@ -179,23 +179,6 @@ func handleHelpRequest(c command, args []string, writer io.Writer) bool {
 	return false
 }
 
-func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
-	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			if resp, err = client.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
-				VolumeId: volumeId,
-				NeedleId: uint64(needleValue.Key),
-				Offset:   needleValue.Offset.ToActualOffset(),
-				Size:     int32(needleValue.Size),
-			}); err != nil {
-				return err
-			}
-			return nil
-		},
-	)
-	return
-}
-
 func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
 	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {

@@ -3644,6 +3644,67 @@ mod tests {
     }
 
     #[test]
+    fn test_scrub_empty_volume() {
+        // Mirror of Go's TestScrubVolumeData "zero-size volume without index"
+        // case (weed/storage/volume_checking_test.go): a freshly created /
+        // pre-allocated volume has a superblock-only .dat and a zero-size .idx,
+        // and must scrub clean instead of being flagged as corrupt.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        // .dat holds only the superblock; .idx is empty.
+        assert_eq!(v.dat_file_size().unwrap(), SUPER_BLOCK_SIZE as u64);
+
+        let (files_checked, broken) = v.scrub().unwrap();
+        assert_eq!(files_checked, 0);
+        assert!(
+            broken.is_empty(),
+            "empty volume should scrub clean, got {:?}",
+            broken
+        );
+
+        // The index-only mode must agree.
+        let (idx_checked, idx_broken) = v.scrub_index().unwrap();
+        assert_eq!(idx_checked, 0);
+        assert!(
+            idx_broken.is_empty(),
+            "empty volume should scrub_index clean, got {:?}",
+            idx_broken
+        );
+    }
+
+    #[test]
+    fn test_scrub_healthy_volume() {
+        // Mirror of Go's TestScrubVolumeData "healthy volume" case: a volume
+        // with live needles scrubs clean and the .dat size accounting matches.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=5 {
+            let data = format!("needle data {}", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let (files_checked, broken) = v.scrub().unwrap();
+        assert_eq!(files_checked, 5);
+        assert!(
+            broken.is_empty(),
+            "healthy volume should scrub clean, got {:?}",
+            broken
+        );
+    }
+
+    #[test]
     fn test_volume_multiple_needles() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();

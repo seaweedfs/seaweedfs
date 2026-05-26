@@ -113,7 +113,7 @@ func cloneClusterContext(in *plugin_pb.ClusterContext) *plugin_pb.ClusterContext
 	}
 	out := &plugin_pb.ClusterContext{
 		MasterGrpcAddresses: in.MasterGrpcAddresses,
-		FilerGrpcAddresses:  in.FilerGrpcAddresses,
+		FilerAddresses:      in.FilerAddresses,
 		VolumeGrpcAddresses: in.VolumeGrpcAddresses,
 		S3GrpcAddresses:     in.S3GrpcAddresses,
 	}

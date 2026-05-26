@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
 // slowStream simulates a gRPC stream with configurable per-Send latency.
@@ -32,9 +33,13 @@ func (s *slowStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 
 type collectingStream struct {
 	messages []*filer_pb.SubscribeMetadataResponse
+	err      error
 }
 
 func (s *collectingStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	if s.err != nil {
+		return s.err
+	}
 	s.messages = append(s.messages, msg)
 	return nil
 }
@@ -408,4 +413,86 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 	if singleRate > 0 && parallelRate > 0 {
 		t.Logf("Speedup: %.1fx (%d parallel pipelined streams vs 1)", parallelRate/singleRate, numDirs)
 	}
+}
+
+func TestMaybeSendIdleHeartbeat(t *testing.T) {
+	lb := log_buffer.NewLogBuffer("test", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	fs := &FilerServer{}
+	const recentEvent = int64(1_000_000)
+
+	t.Run("not opted in", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: false}
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, recentEvent, recentEvent, 0)
+		if got != 0 || len(s.messages) != 0 {
+			t.Fatalf("expected no heartbeat, got lastHeartbeat=%d msgs=%d", got, len(s.messages))
+		}
+	})
+
+	t.Run("behind buffer head", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		// startTs and lastSeen both below the buffer head: still replaying.
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent-1, 0)
+		if got != 0 || len(s.messages) != 0 {
+			t.Fatalf("expected no heartbeat while behind, got lastHeartbeat=%d msgs=%d", got, len(s.messages))
+		}
+	})
+
+	t.Run("caught up via lastSeen", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent, 0)
+		if len(s.messages) != 1 {
+			t.Fatalf("expected one heartbeat, got %d", len(s.messages))
+		}
+		hb := s.messages[0]
+		if hb.EventNotification != nil || len(hb.Events) != 0 || hb.TsNs <= 0 {
+			t.Fatalf("heartbeat should be an empty timestamped response, got %+v", hb)
+		}
+		if got != hb.TsNs {
+			t.Fatalf("expected returned lastHeartbeat %d to equal sent ts %d", got, hb.TsNs)
+		}
+	})
+
+	t.Run("caught up via read position floor", func(t *testing.T) {
+		// The read cursor has advanced past the buffer head while lastSeen stayed
+		// 0. This is the idle-source case (subscribed from "now", read nothing) and
+		// also metadata-chunks mode, where persisted entries replay as log file
+		// refs and never reach eachLogEntryFn.
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		readPosition := time.Now().UnixNano()
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, readPosition, 0, 0)
+		if len(s.messages) != 1 || got <= 0 {
+			t.Fatalf("expected heartbeat for caught-up subscriber, got msgs=%d lastHeartbeat=%d", len(s.messages), got)
+		}
+	})
+
+	t.Run("throttled within interval", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		justSent := time.Now().UnixNano()
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent, justSent)
+		if got != justSent || len(s.messages) != 0 {
+			t.Fatalf("expected throttled (no send), got lastHeartbeat=%d msgs=%d", got, len(s.messages))
+		}
+	})
+
+	t.Run("send error keeps prior heartbeat time", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{err: fmt.Errorf("broken stream")}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent, 0)
+		if got != 0 {
+			t.Fatalf("expected lastHeartbeat unchanged on send error, got %d", got)
+		}
+	})
 }

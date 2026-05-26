@@ -297,7 +297,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r.ContentLength)
-			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil)
+			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil, false)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -359,7 +359,7 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 // pass 0 because their own keys aren't the user-visible object the rule
 // targets and a part write would otherwise bind a TTL clock starting
 // before CompleteMultipartUpload.
-func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode, uniqueWritePath bool) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -802,7 +802,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
-	createCode := s3a.withObjectWriteLock(bucket, object, preconditionFn, func() s3err.ErrorCode {
+	createUnderLock := func() s3err.ErrorCode {
 		createErr = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
@@ -831,7 +831,36 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 		}
 		return s3err.ErrNone
-	})
+	}
+
+	// Route the create to the object's owner filer, whose per-path lock
+	// serializes it, then run afterCreate (e.g. a versioned finalize that routes
+	// itself). Conditional/object-lock/non-reducible cases fall back to the
+	// distributed lock.
+	var createCode s3err.ErrorCode
+	routed := false
+	if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
+		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
+			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), filePath, entry, cond)
+			switch {
+			case err != nil:
+				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)
+			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+				createCode, routed = s3err.ErrPreconditionFailed, true
+			case resp.Error != "":
+				// Non-precondition mutation error: fall back so the lock path maps it.
+				glog.Warningf("putToFiler: routed PUT to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
+			default:
+				entryCreated, routed, createCode = true, true, s3err.ErrNone
+				if afterCreate != nil {
+					createCode = afterCreate(entry)
+				}
+			}
+		}
+	}
+	if !routed {
+		createCode = s3a.withObjectWriteLock(bucket, object, preconditionFn, createUnderLock)
+	}
 	if createCode != s3err.ErrNone {
 		if createErr != nil {
 			glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)
@@ -1287,7 +1316,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 			glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
 		}
 		return s3err.ErrNone
-	})
+	}, false)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
@@ -1453,13 +1482,8 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Versioned bucket: resolver returns 0 by construction. Pass 0
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0, func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName, versionEntry); err != nil {
-			glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
-			return s3err.ErrInternalError
-		}
-		return s3err.ErrNone
-	})
+	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0,
+		s3a.versionedAfterCreate(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}

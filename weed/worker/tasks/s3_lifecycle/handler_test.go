@@ -175,7 +175,7 @@ func TestDetect_NoFilerAddressesCompletesWithSkipActivity(t *testing.T) {
 		JobType: jobType,
 		ClusterContext: &plugin_pb.ClusterContext{
 			S3GrpcAddresses: []string{"s3a:8333"},
-			// no FilerGrpcAddresses
+			// no FilerAddresses
 		},
 	}, r)
 	require.NoError(t, err)
@@ -196,8 +196,10 @@ func TestDetect_HappyPathProposesOneJobWithFirstFilerAddress(t *testing.T) {
 	err := h.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType: jobType,
 		ClusterContext: &plugin_pb.ClusterContext{
-			S3GrpcAddresses:    []string{"s3a:8333"},
-			FilerGrpcAddresses: []string{"filer-a:18888", "filer-b:18888"},
+			S3GrpcAddresses: []string{"s3a:8333"},
+			// pb.ServerAddress dual-port form; the gRPC port is pinned off the
+			// +10000 convention so a raw-forwarding regression resurfaces here.
+			FilerAddresses: []string{"filer-a:8888.18890", "filer-b:8888.18890"},
 		},
 	}, r)
 	require.NoError(t, err)
@@ -210,7 +212,7 @@ func TestDetect_HappyPathProposesOneJobWithFirstFilerAddress(t *testing.T) {
 	assert.NotEmpty(t, prop.ProposalId, "proposal id must be unique-per-run")
 	require.Contains(t, prop.Parameters, "filer_grpc_address")
 	val := prop.Parameters["filer_grpc_address"].GetStringValue()
-	assert.Equal(t, "filer-a:18888", val, "first reachable filer is dialed")
+	assert.Equal(t, "filer-a:18890", val, "first filer resolved to its gRPC port, not host:28890")
 
 	require.Len(t, r.completes, 1)
 	assert.True(t, r.completes[0].Success)
@@ -224,8 +226,8 @@ func TestDetect_EmptyJobTypeAccepted(t *testing.T) {
 	r := &recordingSender{}
 	err := h.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		ClusterContext: &plugin_pb.ClusterContext{
-			S3GrpcAddresses:    []string{"s3a:8333"},
-			FilerGrpcAddresses: []string{"f:18888"},
+			S3GrpcAddresses: []string{"s3a:8333"},
+			FilerAddresses:  []string{"f:8888.18890"},
 		},
 	}, r)
 	require.NoError(t, err)
@@ -241,8 +243,8 @@ func TestDetect_PropagatesProposalsSendError(t *testing.T) {
 	err := h.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType: jobType,
 		ClusterContext: &plugin_pb.ClusterContext{
-			S3GrpcAddresses:    []string{"s3a:8333"},
-			FilerGrpcAddresses: []string{"f:18888"},
+			S3GrpcAddresses: []string{"s3a:8333"},
+			FilerAddresses:  []string{"f:8888.18890"},
 		},
 	}, r)
 	assert.ErrorIs(t, err, want)
@@ -261,8 +263,8 @@ func TestDetect_PropagatesCompleteSendError(t *testing.T) {
 	err := h.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType: jobType,
 		ClusterContext: &plugin_pb.ClusterContext{
-			S3GrpcAddresses:    []string{"s3a:8333"},
-			FilerGrpcAddresses: []string{"f:18888"},
+			S3GrpcAddresses: []string{"s3a:8333"},
+			FilerAddresses:  []string{"f:8888.18890"},
 		},
 	}, r)
 	assert.ErrorIs(t, err, want)

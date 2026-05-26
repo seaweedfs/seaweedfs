@@ -1,0 +1,60 @@
+services:
+  master:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 master -ip=master -ip.bind=0.0.0.0 -raftBootstrap"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "-I", "http://localhost:9333/cluster/healthz"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  volume:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 volume -master=master:9333 -ip=volume -ip.bind=0.0.0.0 -preStopSeconds=1"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "-I", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 10s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      master:
+        condition: service_healthy
+
+  filer:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 filer -master=master:9333 -ip=filer -ip.bind=0.0.0.0"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "-I", "http://localhost:8888/healthz"]
+      interval: 2s
+      timeout: 10s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      volume:
+        condition: service_healthy
+
+  samba:
+    image: chrislusf/seaweedfs:samba
+    build:
+      context: .
+    environment:
+      FILER: filer:8888
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "mountpoint -q /mnt/seaweedfs && mountpoint -q /mnt/seaweedfs2 && smbclient -L 127.0.0.1 -p 445 -U smbtest%smbtest -m SMB3 >/dev/null 2>&1"
+      interval: 3s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+    depends_on:
+      filer:
+        condition: service_healthy

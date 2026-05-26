@@ -376,10 +376,13 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 
 	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalMinutes.
 
-	// Get filer gRPC addresses from cluster context
+	// ClusterContext.FilerAddresses are pb.ServerAddress strings
+	// (host:httpPort.grpcPort); collapse each to a dialable gRPC address.
 	filerGrpcAddresses := make([]string, 0)
 	if request.ClusterContext != nil {
-		filerGrpcAddresses = append(filerGrpcAddresses, request.ClusterContext.FilerGrpcAddresses...)
+		for _, filer := range request.ClusterContext.FilerAddresses {
+			filerGrpcAddresses = append(filerGrpcAddresses, pb.ServerAddress(filer).ToGrpcAddress())
+		}
 	}
 	if len(filerGrpcAddresses) == 0 {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
@@ -640,12 +643,10 @@ func (h *Handler) sendEmptyDetection(sender pluginworker.DetectionSender) error 
 	})
 }
 
-// dialFiler connects to a filer at the given gRPC address. The address is
-// expected to be already dialable (host:grpcPort) as supplied via
-// ClusterContext.FilerGrpcAddresses or a job proposal parameter; we don't
-// run it through pb.ServerAddress.ToGrpcAddress because that helper's
-// fallback adds +10000 to any single-port address, turning a real gRPC
-// port like 18888 into a non-existent 28888.
+// dialFiler connects to a filer at the given gRPC address. The address must
+// already be a dialable host:grpcPort: Detect resolves it from
+// ClusterContext.FilerAddresses via ToGrpcAddress and stores that resolved form
+// in the job proposal parameter, so dialFiler dials it verbatim.
 func (h *Handler) dialFiler(ctx context.Context, grpcAddress string) (*grpc.ClientConn, error) {
 	opCtx, opCancel := context.WithTimeout(ctx, filerConnectTimeout)
 	defer opCancel()

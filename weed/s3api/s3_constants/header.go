@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gorilla/mux"
 )
@@ -176,6 +177,41 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	return
 }
 
+// IsValidObjectKey rejects S3 object keys that — after normalization
+// (backslash→slash, slash collapse) — contain a `.` or `..` path segment, or
+// embed a NUL byte. Such keys are collapsed by filepath.Join inside the filer
+// and would escape the bucket directory, so they must not reach the gRPC layer.
+// Gorilla mux URL-decodes captured vars before this runs, so `%2e%2e` is
+// already `..` here.
+func IsValidObjectKey(object string) bool {
+	if object == "" {
+		return true
+	}
+	if strings.ContainsRune(object, '\x00') {
+		return false
+	}
+	object = strings.ReplaceAll(object, "\\", "/")
+	for _, seg := range strings.Split(object, "/") {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// IsValidBucketName rejects bucket names captured from the URL path that are
+// unsafe to use in filer path construction (`.`, `..`, contain `/` or `\`, or
+// embed NUL). This is a path-safety check, not a full S3 naming-rule check.
+func IsValidBucketName(bucket string) bool {
+	if bucket == "" {
+		return true
+	}
+	if bucket == "." || bucket == ".." {
+		return false
+	}
+	return !strings.ContainsAny(bucket, "/\\\x00")
+}
+
 // NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
 // It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
@@ -248,23 +284,64 @@ type contextKey string
 const (
 	contextKeyIdentityName   contextKey = "s3-identity-name"
 	contextKeyIdentityObject contextKey = "s3-identity-object"
+	contextKeyIdentityHolder contextKey = "s3-identity-holder"
 )
+
+// identityHolder is a mutable container for the authenticated identity name,
+// stored by pointer in the request context. Authentication runs as an inner
+// handler that records the identity with r.WithContext, which returns a request
+// copy; that copy's new context values are invisible to outer middleware (e.g.
+// the audit logger) holding an earlier copy of the request. A pointer to a
+// holder installed before authentication is shared across all copies, so the
+// name written by the inner handler is readable by the outer middleware.
+type identityHolder struct {
+	name atomic.Pointer[string]
+}
+
+// EnsureIdentityHolder attaches a mutable identity holder to the request context
+// if one is not already present, returning the (possibly new) request. Install
+// it before authentication so the authenticated requester remains recoverable
+// from the original request, e.g. when emitting an audit entry for a handler
+// that does not log the requester itself.
+func EnsureIdentityHolder(r *http.Request) *http.Request {
+	if r == nil {
+		return nil
+	}
+	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), contextKeyIdentityHolder, &identityHolder{}))
+}
 
 // SetIdentityNameInContext stores the authenticated identity name in the request context
 // This is the secure way to propagate identity - headers can be spoofed, context cannot
 func SetIdentityNameInContext(ctx context.Context, identityName string) context.Context {
-	if identityName != "" {
-		return context.WithValue(ctx, contextKeyIdentityName, identityName)
+	if identityName == "" {
+		return ctx
 	}
-	return ctx
+	// Also record into the mutable holder (if installed) so the name survives the
+	// request-context copy and stays visible to outer middleware such as the
+	// audit logger.
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.name.Store(&identityName)
+	}
+	return context.WithValue(ctx, contextKeyIdentityName, identityName)
 }
 
 // GetIdentityNameFromContext retrieves the authenticated identity name from the request context
 // Returns empty string if no identity is set (unauthenticated request)
 // This is the secure way to retrieve identity - never read from headers directly
 func GetIdentityNameFromContext(r *http.Request) string {
-	if name, ok := r.Context().Value(contextKeyIdentityName).(string); ok {
+	// Prefer the per-request context value; fall back to the mutable holder for
+	// callers (e.g. the audit middleware) that hold a copy of the request taken
+	// before authentication set the identity.
+	if name, ok := r.Context().Value(contextKeyIdentityName).(string); ok && name != "" {
 		return name
+	}
+	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if name := h.name.Load(); name != nil {
+			return *name
+		}
 	}
 	return ""
 }

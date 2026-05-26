@@ -54,6 +54,70 @@ func (at *ActiveTopology) GetEffectiveAvailableCapacityDetailed(nodeID string, d
 	return at.getEffectiveAvailableCapacityUnsafe(disk)
 }
 
+// GetEffectiveAvailableEcShardSlots returns a disk's free EC shard slots,
+// accounting for in-flight task reservations at shard granularity. Unlike the
+// volume-slot views (GetDisksWithEffectiveCapacity / GetEffectiveAvailableCapacity),
+// this does not truncate sub-volume shard reservations: it subtracts the full
+// reservation impact (volume slots converted to shard slots, plus the raw shard
+// slots) so a reservation that is not a whole multiple of ShardsPerVolumeSlot is
+// not lost. It does NOT subtract the EC shards already persisted on the disk;
+// callers that track those (from EcShardInfos) subtract them separately.
+//
+// shardsPerVolume is the number of EC shards of the target collection that fit in
+// one volume slot (i.e. its data-shard count): a 4+2 volume's shards are ~1/4 of a
+// volume each, so one volume slot holds 4 of them, not the default
+// ShardsPerVolumeSlot. Pass <= 0 to use the default. Using the target ratio keeps
+// Place from over-filling a disk for low-data-shard layouts.
+func (at *ActiveTopology) GetEffectiveAvailableEcShardSlots(nodeID string, diskID uint32, shardsPerVolume int) int {
+	if shardsPerVolume <= 0 {
+		shardsPerVolume = ShardsPerVolumeSlot
+	}
+
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	diskKey := fmt.Sprintf("%s:%d", nodeID, diskID)
+	disk, exists := at.disks[diskKey]
+	if !exists || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return 0
+	}
+
+	info := disk.DiskInfo.DiskInfo
+	base := info.MaxVolumeCount - info.VolumeCount
+	if base <= 0 && info.MaxVolumeCount == 0 && info.VolumeCount == 0 &&
+		len(info.VolumeInfos) == 0 && len(info.EcShardInfos) == 0 {
+		// Freshly started empty servers can report max=0 before publishing concrete
+		// limits; keep one provisional slot so EC placement still sees the disk,
+		// mirroring getEffectiveAvailableCapacityUnsafe.
+		base = 1
+	}
+	if base < 0 {
+		base = 0
+	}
+	// calculateTaskStorageImpact reports consumption as positive, so subtract it.
+	// Volume-slot reservations scale by the target ratio; the sub-volume shard-slot
+	// remainder is in default units and subtracted as-is (a small approximation).
+	impact := at.getEffectiveCapacityUnsafe(disk)
+	// impact.ShardSlots is recorded in default ShardsPerVolumeSlot units; convert it
+	// to the target ratio's shard slots before subtracting (identity when
+	// shardsPerVolume == ShardsPerVolumeSlot). Round a positive reservation up so a
+	// sub-slot reservation (e.g. 1 default slot against a 4-shard target) is not
+	// truncated to zero and wrongly counted as free.
+	scaledShardImpact := int64(impact.ShardSlots) * int64(shardsPerVolume)
+	if scaledShardImpact > 0 {
+		scaledShardImpact = (scaledShardImpact + int64(ShardsPerVolumeSlot) - 1) / int64(ShardsPerVolumeSlot)
+	} else {
+		scaledShardImpact /= int64(ShardsPerVolumeSlot)
+	}
+	free := base*int64(shardsPerVolume) -
+		int64(impact.VolumeSlots)*int64(shardsPerVolume) -
+		scaledShardImpact
+	if free < 0 {
+		free = 0
+	}
+	return int(free)
+}
+
 // GetEffectiveCapacityImpact returns the StorageSlotChange impact for a disk
 // This shows the net impact from all pending and assigned tasks
 func (at *ActiveTopology) GetEffectiveCapacityImpact(nodeID string, diskID uint32) StorageSlotChange {

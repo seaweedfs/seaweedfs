@@ -2,6 +2,8 @@ package super_block
 
 import (
 	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 type ReplicaPlacement struct {
@@ -76,4 +78,28 @@ func (rp *ReplicaPlacement) String() string {
 
 func (rp *ReplicaPlacement) GetCopyCount() int {
 	return rp.DiffDataCenterCount + rp.DiffRackCount + rp.SameRackCount + 1
+}
+
+// ResolveReplicaPlacement picks the EC shard replica placement constraint: an
+// explicit spec wins; otherwise the cluster default (typically the master's
+// configured default replication). A missing, invalid, or zero-replication value
+// yields nil, meaning even spread / no constraint. Shared by EC encode, repair,
+// and balance so the three resolve replica placement identically.
+func ResolveReplicaPlacement(explicitSpec, clusterDefault string) *ReplicaPlacement {
+	spec := explicitSpec
+	if spec == "" {
+		spec = clusterDefault
+	}
+	if spec == "" {
+		return nil
+	}
+	rp, err := NewReplicaPlacementFromString(spec)
+	if err != nil {
+		glog.Warningf("ignoring invalid replica placement %q: %v", spec, err)
+		return nil
+	}
+	if !rp.HasReplication() {
+		return nil
+	}
+	return rp
 }

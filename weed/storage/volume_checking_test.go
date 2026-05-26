@@ -31,14 +31,59 @@ func TestScrubVolumeData(t *testing.T) {
 			wantErrs:  []error{},
 		},
 		{
+			name:      "zero-size volume without index",
+			dataPath:  "./test_files/empty_volume.dat",
+			indexPath: "./test_files/empty_volume.idx",
+			version:   needle.Version3,
+			want:      0,
+			wantErrs:  []error{},
+		},
+		{
+			name:      "zero-size volume with index",
+			dataPath:  "./test_files/empty_volume.dat",
+			indexPath: "./test_files/healthy_volume.idx",
+			version:   needle.Version3,
+			want:      27,
+			wantErrs: []error{
+				fmt.Errorf("failed to read needle 3 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 4 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 8 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 9 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 11 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 18 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 20 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 21 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 25 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 29 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 31 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 33 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 35 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 39 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 45 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 46 on volume 0: EOF"),
+				fmt.Errorf("failed to read needle 48 on volume 0: EOF"),
+				fmt.Errorf("data file for volume 0 is smaller (8) than the 27 needles it contains (942856)"),
+			},
+		},
+		{
+			name:      "volume without index",
+			dataPath:  "./test_files/healthy_volume.dat",
+			indexPath: "./test_files/empty_volume.idx",
+			version:   needle.Version3,
+			want:      0,
+			wantErrs: []error{
+				fmt.Errorf("data file size for volume 0 (942856) doesn't match the size for 0 needles read (8)"),
+			},
+		},
+		{
 			name:      "bitrot volume",
 			dataPath:  "./test_files/bitrot_volume.dat",
 			indexPath: "./test_files/bitrot_volume.idx",
 			version:   needle.Version3,
 			want:      27,
 			wantErrs: []error{
-				fmt.Errorf("needle 3 on volume 0: invalid CRC for needle 3 (got 0b243a0d, want 4af853fb), data on disk corrupted: needle data corrupted"),
-				fmt.Errorf("needle 48 on volume 0: invalid CRC for needle 30 (got 3c40e8d5, want 5077fea1), data on disk corrupted: needle data corrupted"),
+				fmt.Errorf("failed to read needle 3 on volume 0: invalid CRC for needle 3 (got 0b243a0d, want 4af853fb), data on disk corrupted: needle data corrupted"),
+				fmt.Errorf("failed to read needle 48 on volume 0: invalid CRC for needle 30 (got 3c40e8d5, want 5077fea1), data on disk corrupted: needle data corrupted"),
 				fmt.Errorf("data file size for volume 0 (942864) doesn't match the size for 27 needles read (942856)"),
 			},
 		},
@@ -64,12 +109,13 @@ func TestScrubVolumeData(t *testing.T) {
 			}
 
 			v := Volume{
+				DataBackend: backend.NewDiskFile(datFile),
 				volumeInfo: &volume_server_pb.VolumeInfo{
 					Version: uint32(tc.version),
 				},
 			}
 
-			got, gotErrs := v.scrubVolumeData(backend.NewDiskFile(datFile), idxFile, idxStat.Size())
+			got, gotErrs := v.scrubVolumeData(idxFile, idxStat.Size())
 
 			if got != tc.want {
 				t.Errorf("expected %d files processed, got %d", tc.want, got)

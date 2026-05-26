@@ -643,6 +643,79 @@ var (
 			Name:      "daily_run_last_walked_ns",
 			Help:      "Per-shard timestamp (UnixNano) of the most recent successful walker fire. 0 means the shard hasn't completed a walk yet.",
 		}, []string{"shard"})
+
+	AdminMaintenanceTasksByStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "maintenance_tasks_by_status",
+			Help:      "Current number of maintenance tasks by status (pending, assigned, in_progress, completed, failed, cancelled).",
+		}, []string{"status"})
+
+	AdminMaintenanceTasksByType = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "maintenance_tasks_by_type",
+			Help:      "Current number of maintenance tasks by type.",
+		}, []string{"type"})
+
+	AdminMaintenanceTasksCompletedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "maintenance_tasks_completed_total",
+			Help:      "Counter of maintenance tasks that reached a terminal state, by type and outcome (completed, failed).",
+		}, []string{"type", "outcome"})
+
+	AdminMaintenanceTaskDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "maintenance_task_duration_seconds",
+			Help:      "Execution time of maintenance tasks that reached a terminal state, by type.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
+		}, []string{"type"})
+
+	AdminMaintenanceLastScanTimestampSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "maintenance_last_scan_timestamp_seconds",
+			Help:      "Unix timestamp of the most recent maintenance scan. 0 means no scan has run yet.",
+		})
+
+	AdminMaintenanceNextScanTimestampSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "maintenance_next_scan_timestamp_seconds",
+			Help:      "Unix timestamp of the next expected maintenance scan.",
+		})
+
+	AdminWorkersConnected = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "workers_connected",
+			Help:      "Current number of maintenance workers known to the admin server.",
+		})
+
+	AdminWorkerSlots = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "worker_slots",
+			Help:      "Maintenance worker task slots aggregated across workers, by state (used, max).",
+		}, []string{"state"})
+
+	AdminWorkerEventsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "admin",
+			Name:      "worker_events_total",
+			Help:      "Counter of maintenance worker lifecycle events by type (registered, unregistered, stale_removed).",
+		}, []string{"event"})
 )
 
 func init() {
@@ -725,6 +798,16 @@ func init() {
 	Gather.MustRegister(S3LifecycleDailyRunLastWalkedNs)
 
 	Gather.MustRegister(UploadErrorCounter)
+
+	Gather.MustRegister(AdminMaintenanceTasksByStatus)
+	Gather.MustRegister(AdminMaintenanceTasksByType)
+	Gather.MustRegister(AdminMaintenanceTasksCompletedTotal)
+	Gather.MustRegister(AdminMaintenanceTaskDurationSeconds)
+	Gather.MustRegister(AdminMaintenanceLastScanTimestampSeconds)
+	Gather.MustRegister(AdminMaintenanceNextScanTimestampSeconds)
+	Gather.MustRegister(AdminWorkersConnected)
+	Gather.MustRegister(AdminWorkerSlots)
+	Gather.MustRegister(AdminWorkerEventsTotal)
 
 	go bucketMetricTTLControl()
 }

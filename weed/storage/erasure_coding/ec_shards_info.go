@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"iter"
 	"math/bits"
 	"sort"
 	"strings"
@@ -38,6 +39,20 @@ func (sb ShardBits) Clear(id ShardId) ShardBits {
 // Count returns the number of set bits using popcount
 func (sb ShardBits) Count() int {
 	return bits.OnesCount32(uint32(sb))
+}
+
+// All iterates the shard ids present in the bitmap, in ascending order. It walks
+// only the set bits (trailing-zero scan), so cost scales with the number of
+// shards present rather than the full id range. Prefer this over scanning
+// 0..MaxShardCount and calling Has on each id.
+func (sb ShardBits) All() iter.Seq[ShardId] {
+	return func(yield func(ShardId) bool) {
+		for b := uint32(sb); b != 0; b &= b - 1 {
+			if !yield(ShardId(bits.TrailingZeros32(b))) {
+				return
+			}
+		}
+	}
 }
 
 // ShardsInfo encapsulates information for EC shards with memory-efficient storage

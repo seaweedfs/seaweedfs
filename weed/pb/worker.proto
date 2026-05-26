@@ -374,6 +374,7 @@ message ErasureCodingTaskConfig {
   int32 min_volume_size_mb = 3;     // Minimum volume size for EC
   string collection_filter = 4;     // Only process volumes from specific collections
   repeated string preferred_tags = 5; // Disk tags to prioritize for EC shard placement
+  string replica_placement = 6;     // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 }
 
 // BalanceTaskConfig contains balance-specific configuration
@@ -413,6 +414,7 @@ message EcBalanceTaskConfig {
   string collection_filter = 3;           // Collection filter
   string disk_type = 4;                   // Disk type filter
   repeated string preferred_tags = 5;     // Preferred disk tags for placement
+  string replica_placement = 6;           // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 }
 
 // ========== Task Persistence Messages ==========

@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -95,6 +96,8 @@ type S3ApiServer struct {
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
 	newObjectWriteLock    func(bucket, object string) objectWriteLock
+	// objectWriteLockClient resolves a key's owner filer for route-by-key.
+	objectWriteLockClient *cluster.LockClient
 	// Shared ReaderCache used by the S3 GET streaming path. It lives for the
 	// lifetime of the server so that concurrent and repeat reads share a
 	// single in-flight download per chunk, and so that no per-request
@@ -152,6 +155,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Uses the battle-tested vidMap with filer-based lookups
 	// Supports multiple filer addresses with automatic failover for high availability
 	var filerClient *wdclient.FilerClient
+	var masterClient *wdclient.MasterClient
+	var objectWriteLockClient *cluster.LockClient
 	if len(option.Masters) > 0 {
 		// Enable filer discovery via master
 		masterMap := make(map[string]pb.ServerAddress)
@@ -162,7 +167,22 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if clientHost == "0.0.0.0" || clientHost == "" {
 			clientHost = util.DetectedHostAddress()
 		}
-		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		// Build the object-write lock client and subscribe to the master's
+		// lock-ring updates BEFORE starting the master loop, so the initial
+		// LockRingUpdate sent on connect isn't dropped (the master only delivers
+		// it once per connect). The masterClient already filters updates to this
+		// server's filer group.
+		if len(option.Filers) > 0 {
+			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			masterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
+				servers := make([]pb.ServerAddress, 0, len(update.Servers))
+				for _, s := range update.Servers {
+					servers = append(servers, pb.ServerAddress(s))
+				}
+				objectWriteLockClient.SetRing(servers, update.Version)
+			})
+		}
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())
 
@@ -263,9 +283,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	}
 
 	if len(option.Filers) > 0 {
-		objectWriteLockClient := cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+		// Reuse the lock client built in the masters block (already subscribed to
+		// ring updates); create a plain one when no masters are configured.
+		if objectWriteLockClient == nil {
+			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+		}
+		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) objectWriteLock {
-			lockKey := fmt.Sprintf("s3.object.write:%s", s3ApiServer.toFilerPath(bucket, object))
+			lockKey := objectWriteRouteKeyPrefix + s3ApiServer.toFilerPath(bucket, object)
 			owner := fmt.Sprintf("s3api-%d", s3ApiServer.randomClientId)
 			lock := objectWriteLockClient.NewShortLivedLock(lockKey, owner)
 			if err := lock.AttemptToLock(objectWriteLockTTL); err != nil {
@@ -323,6 +348,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// IAM config file. Without one, EnableIam is the implicit mini default
 			// and we must keep the "no credentials = allow all" startup behavior so
 			// `docker run seaweedfs` works out of the box (fixes #9557).
+			//
+			// SetIAMIntegration also flushes the policies already loaded from the
+			// credential store into this manager's engine. The earlier config
+			// loads (the synchronous one in NewIdentityAccessManagementWithStore
+			// and the async goroutine) may have run before iamIntegration was set,
+			// in which case their syncRuntimePoliciesToIAMManager call was a no-op
+			// and identities relying on policy_names would get AccessDenied.
 			iam.SetIAMIntegration(s3iam)
 			if option.IamConfig != "" {
 				iam.EnableAuthEnforcement()
@@ -703,6 +735,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	corsMiddleware := s3a.getCORSMiddleware()
 
 	for _, bucket := range routers {
+		// Reject `..`/`.`/NUL in {bucket} or {object} vars before any handler
+		// runs. SkipClean(true) keeps `..` in the matched path; the filer would
+		// otherwise collapse it via filepath.Join and cross bucket boundaries.
+		bucket.Use(validateRequestPath)
+
 		// Apply CORS middleware to bucket routers for automatic CORS header handling
 		bucket.Use(corsMiddleware.Handler)
 

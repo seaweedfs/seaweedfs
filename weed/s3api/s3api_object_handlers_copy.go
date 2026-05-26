@@ -158,9 +158,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if sameDestination && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
-		updateCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
-			return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
-		}, func() s3err.ErrorCode {
+		// A non-versioned in-place metadata replace routes to the owner as a
+		// serialized PATCH (off the distributed lock); versioned/suspended (which
+		// create a new version) and the no-owner bootstrap keep the lock.
+		owner := s3a.objectWriteOwner(dstBucket, dstObject)
+		routeInPlace := owner != "" && dstVersioningState == ""
+		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			if currentErr != nil || currentEntry.IsDirectory {
 				return s3err.ErrInvalidCopySource
@@ -168,26 +171,41 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
 				return errCode
 			}
-
-			updatedEntry := cloneProtoEntry(currentEntry)
-			updatedMetadata, metadataErr := processMetadataBytes(r.Header, updatedEntry.Extended, replaceMeta, replaceTagging)
-			currentErr = metadataErr
-			if currentErr != nil {
-				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, currentErr)
+			updatedMetadata, metadataErr := processMetadataBytes(r.Header, currentEntry.Extended, replaceMeta, replaceTagging)
+			if metadataErr != nil {
+				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, metadataErr)
 				return s3err.ErrInvalidTag
 			}
+			if routeInPlace {
+				if err := s3a.routedMetadataReplace(owner, dstBucket, dstObject, currentEntry, updatedMetadata); err != nil {
+					return filerErrorToS3Error(err)
+				}
+				etag = getEtagFromEntry(currentEntry)
+				return s3err.ErrNone
+			}
+			updatedEntry := cloneProtoEntry(currentEntry)
 			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
 			updatedEntry.Attributes.Mtime = t.Unix()
-
-			dstVersionId, etag, currentErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
-			if currentErr != nil {
-				return filerErrorToS3Error(currentErr)
+			var finErr error
+			dstVersionId, etag, finErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
+			if finErr != nil {
+				return filerErrorToS3Error(finErr)
 			}
 			return s3err.ErrNone
-		})
+		}
+		var updateCode s3err.ErrorCode
+		if routeInPlace {
+			if updateCode = s3a.checkConditionalHeaders(r, dstBucket, dstObject); updateCode == s3err.ErrNone {
+				updateCode = selfCopyBody()
+			}
+		} else {
+			updateCode = s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+				return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+			}, selfCopyBody)
+		}
 		if updateCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, updateCode)
 			return
@@ -444,7 +462,16 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 			return "", "", err
 		}
 
-		if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
+		// Route the pointer flip to the owner filer when known (off the
+		// distributed lock); RECOMPUTE_LATEST picks the just-written version.
+		if owner := s3a.objectWriteOwner(dstBucket, normalizedObject); owner != "" {
+			if code := s3a.routedVersionedFinalize(owner, dstBucket, normalizedObject, isNewFormatVersionId(versionId)); code != s3err.ErrNone {
+				if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+					glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
+				}
+				return "", "", fmt.Errorf("routed finalize for %s/%s: code %d", dstBucket, normalizedObject, code)
+			}
+		} else if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
 			if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
 				glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
 			}
@@ -625,6 +652,17 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 type CopyPartResult struct {
 	LastModified time.Time `xml:"LastModified"`
 	ETag         string    `xml:"ETag"`
+}
+
+// copyPartLocation returns the destination directory and filename for a
+// server-side copy part under the destination bucket's .uploads folder. Copy
+// parts carry a fixed "copy" suffix (rather than the random suffix
+// genPartUploadPath mints for client uploads) so re-copying a part replaces
+// its predecessor in place.
+func (s3a *S3ApiServer) copyPartLocation(dstBucket, uploadID string, partID int) (uploadDir, partName string) {
+	uploadDir = s3a.genUploadsFolder(dstBucket) + "/" + uploadID
+	partName = fmt.Sprintf("%04d_%s.part", partID, "copy")
+	return
 }
 
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
@@ -845,6 +883,15 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		Extended: make(map[string][]byte),
 	}
 
+	// The copied part lives under the destination bucket's .uploads folder.
+	// Assign destination volumes against that real filer path so they land in
+	// the destination bucket's collection. r.URL.Path is the S3 request URI
+	// (e.g. /bucket/key), not a filer path, so passing it would skip the
+	// filer's bucket-to-collection mapping and route the copied bytes to the
+	// default collection.
+	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
+	dstPartPath := uploadDir + "/" + partName
+
 	// Handle zero-size files or empty ranges
 	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
 		// For zero-size files or invalid ranges, create an empty part with size 0
@@ -852,7 +899,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		dstEntry.Chunks = nil
 	} else {
 		// Copy chunks that overlap with the range
-		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, r.URL.Path)
+		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstPartPath)
 		if err != nil {
 			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -862,9 +909,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Save the part entry to the multipart uploads folder
-	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
-	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
-
 	// Check if part exists and remove it first (allow re-copying same part)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
 		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
@@ -1279,10 +1323,9 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	// Calculate ETag for the source entry
-	srcPath := util.FullPath(fmt.Sprintf("%s/%s", r.URL.Path, entry.Name))
+	// Calculate ETag for the source entry. ETagEntry derives the tag from the
+	// chunks/Md5/remote-etag only, so no path is needed here.
 	filerEntry := &filer.Entry{
-		FullPath: srcPath,
 		Attr: filer.Attr{
 			FileSize: entry.Attributes.FileSize,
 			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
@@ -2276,7 +2319,10 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 // copyChunksWithSSEC handles SSE-C aware copying with smart fast/slow path selection
 // Returns chunks and destination metadata that should be applied to the destination entry
-func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+// dstPath is the destination object's filer path, so volume assignment targets
+// the destination bucket's collection. The caller must not pass r.URL.Path (the
+// S3 request URI), which would route copied chunks to the default collection.
+func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 
 	// Parse SSE-C headers
 	copySourceKey, err := ParseSSECCopySourceHeaders(r)
@@ -2304,7 +2350,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 
 	if isMultipartSSEC {
 		glog.V(2).Infof("Detected multipart SSE-C object with %d encrypted chunks for copy", sseCChunks)
-		return s3a.copyMultipartSSECChunks(entry, copySourceKey, destKey, r.URL.Path)
+		return s3a.copyMultipartSSECChunks(entry, copySourceKey, destKey, dstPath)
 	}
 
 	// Single-part SSE-C object: use original logic
@@ -2320,13 +2366,13 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 	case SSECCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy
 		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
-		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, dstPath)
 		return chunks, nil, err
 
 	case SSECCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt and re-encrypt
 		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
-		chunks, destIV, err := s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, r.URL.Path)
+		chunks, destIV, err := s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, dstPath)
 		if err != nil {
 			return nil, nil, err
 		}

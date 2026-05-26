@@ -1,0 +1,52 @@
+[global]
+    server role = standalone server
+    workgroup = WORKGROUP
+    server string = SeaweedFS FUSE Samba test
+    security = user
+    server min protocol = SMB2
+    smb ports = @SMB_PORT@
+    bind interfaces only = yes
+    interfaces = lo 127.0.0.1
+
+    # Self-contained state so smbd can run rootless and leaves nothing behind
+    # outside the test work directory.
+    private dir = @STATE_DIR@/private
+    state directory = @STATE_DIR@/state
+    cache directory = @STATE_DIR@/cache
+    lock directory = @STATE_DIR@/lock
+    pid directory = @STATE_DIR@/pid
+    ncalrpc dir = @STATE_DIR@/ncalrpc
+    log file = @STATE_DIR@/smbd.log
+    log level = 1
+    usershare max shares = 0
+
+    # No printing subsystem in a file-server test.
+    load printers = no
+    printing = bsd
+    printcap name = /dev/null
+    disable spoolss = yes
+
+    # The SeaweedFS FUSE mount does not implement the full xattr / DOS-attribute
+    # surface Samba uses by default. Disabling these avoids spurious
+    # NT_STATUS_NOT_SUPPORTED / EOPNOTSUPP errors unrelated to data integrity.
+    ea support = no
+    store dos attributes = no
+    map archive = no
+    map hidden = no
+    map system = no
+    map readonly = no
+
+    # A network-filesystem backend should not advertise local oplocks/leases.
+    oplocks = no
+    level2 oplocks = no
+    kernel oplocks = no
+    posix locking = no
+
+[seaweedfs]
+    path = @SHARE_PATH@
+    comment = SeaweedFS share backed by a FUSE mount
+    browseable = yes
+    read only = no
+    create mask = 0644
+    directory mask = 0755
+    force user = @FORCE_USER@

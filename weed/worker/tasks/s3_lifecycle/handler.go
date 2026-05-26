@@ -170,19 +170,22 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 	filerAddresses := []string{}
 	if request.ClusterContext != nil {
-		filerAddresses = append(filerAddresses, request.ClusterContext.FilerGrpcAddresses...)
+		filerAddresses = append(filerAddresses, request.ClusterContext.FilerAddresses...)
 	}
 	if len(filerAddresses) == 0 {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
 		return sender.SendComplete(&plugin_pb.DetectionComplete{JobType: jobType, Success: true})
 	}
 
+	// FilerAddresses are pb.ServerAddress strings (host:httpPort.grpcPort);
+	// Execute dials filer_grpc_address verbatim, so resolve it to a gRPC address.
+	filerGrpcAddress := pb.ServerAddress(filerAddresses[0]).ToGrpcAddress()
 	proposal := &plugin_pb.JobProposal{
 		JobType:    jobType,
 		ProposalId: fmt.Sprintf("s3-lifecycle-%d", time.Now().UnixNano()),
 		Priority:   plugin_pb.JobPriority_JOB_PRIORITY_NORMAL,
 		Parameters: map[string]*plugin_pb.ConfigValue{
-			"filer_grpc_address": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: filerAddresses[0]}},
+			"filer_grpc_address": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: filerGrpcAddress}},
 		},
 	}
 	if err := sender.SendProposals(&plugin_pb.DetectionProposals{

@@ -177,8 +177,10 @@ func testConcurrentReadWrite(t *testing.T, framework *FuseTestFramework) {
 			defer wg.Done()
 
 			for j := 0; j < 10; j++ {
-				_, err := os.ReadFile(mountPath)
-				if err != nil {
+				if err := retryTransientFUSE(func() error {
+					_, e := os.ReadFile(mountPath)
+					return e
+				}); err != nil {
 					addError(fmt.Errorf("reader %d: %v", readerID, err))
 					return
 				}
@@ -196,8 +198,9 @@ func testConcurrentReadWrite(t *testing.T, framework *FuseTestFramework) {
 
 			for j := 0; j < 5; j++ {
 				newData := bytes.Repeat([]byte(fmt.Sprintf("WRITER%d", writerID)), 1000)
-				err := os.WriteFile(mountPath, newData, 0644)
-				if err != nil {
+				if err := retryTransientFUSE(func() error {
+					return os.WriteFile(mountPath, newData, 0644)
+				}); err != nil {
 					addError(fmt.Errorf("writer %d: %v", writerID, err))
 					return
 				}
@@ -211,6 +214,21 @@ func testConcurrentReadWrite(t *testing.T, framework *FuseTestFramework) {
 
 	// Verify file still exists and is readable
 	framework.AssertFileExists(filename)
+}
+
+// retryTransientFUSE retries op a few times before giving up. A concurrent
+// truncating overwrite can leave a short-lived dentry/cache window where the
+// entry is momentarily invisible (ENOENT) to another opener; the last error is
+// returned so a genuine, persistent failure still surfaces.
+func retryTransientFUSE(op func() error) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = op(); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
 }
 
 // testConcurrentDirectoryOperations tests concurrent directory operations

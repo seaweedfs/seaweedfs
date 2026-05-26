@@ -73,6 +73,17 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 
 	isDedupDelete := ecParams != nil && isDedupPhase(params)
 
+	// Guard against a same-node, cross-disk "move". copyAndMountShard skips the
+	// copy when source and target addresses match, but deleteShard is node-wide
+	// (it removes the shard from every disk on the node), so this sequence would
+	// erase the shard after never copying it. EC shards also cannot be relocated
+	// between disks of one node via these RPCs, so such a move is meaningless.
+	// Reject it rather than lose data.
+	if source.Node == target.Node && source.DiskId != target.DiskId {
+		return fmt.Errorf("refusing same-node cross-disk EC shard move for volume %d shard(s) %v on %s (source disk %d, target disk %d): EC shard delete is node-wide and would erase the shard after a skipped copy",
+			params.VolumeId, source.ShardIds, source.Node, source.DiskId, target.DiskId)
+	}
+
 	glog.Infof("EC balance: moving shard(s) %v of volume %d from %s to %s",
 		source.ShardIds, params.VolumeId, source.Node, target.Node)
 
@@ -199,6 +210,14 @@ func (t *ECBalanceTask) Validate(params *worker_pb.TaskParams) error {
 	if len(params.Targets[0].ShardIds) == 0 {
 		return fmt.Errorf("ECBalanceTask.Validate: Targets[0].ShardIds is empty")
 	}
+	// A same-node, cross-disk move is unsafe: the node-wide EC shard delete would
+	// erase the shard after copyAndMountShard skips the same-address copy. Such a
+	// move cannot be expressed by these RPCs anyway. Dedup (same node and disk) is
+	// allowed.
+	if params.Sources[0].Node == params.Targets[0].Node && params.Sources[0].DiskId != params.Targets[0].DiskId {
+		return fmt.Errorf("ECBalanceTask.Validate: refusing same-node cross-disk move on %s (source disk %d, target disk %d): EC shard delete is node-wide",
+			params.Sources[0].Node, params.Sources[0].DiskId, params.Targets[0].DiskId)
+	}
 	return nil
 }
 
@@ -223,10 +242,16 @@ func (t *ECBalanceTask) reportProgress(progress float64, stage string) {
 	glog.Infof("EC balance volume %d: [%.2f] %s", t.volumeID, progress, stage)
 }
 
-// isDedupPhase checks if this is a dedup-phase task (source and target are the same node)
+// isDedupPhase checks if this is a dedup-phase task: an unmount+delete on a
+// single location, encoded by detection as source==target on the same node AND
+// the same disk. Comparing the disk too is essential — VolumeEcShardsDelete is
+// node-wide (it removes the shard from every disk on the node), so a same-node
+// but cross-disk request must NOT be treated as a benign dedup; see Validate
+// and Execute, which reject it outright.
 func isDedupPhase(params *worker_pb.TaskParams) bool {
 	if len(params.Sources) > 0 && len(params.Targets) > 0 {
-		return params.Sources[0].Node == params.Targets[0].Node
+		s, t := params.Sources[0], params.Targets[0]
+		return s.Node == t.Node && s.DiskId == t.DiskId
 	}
 	return false
 }
