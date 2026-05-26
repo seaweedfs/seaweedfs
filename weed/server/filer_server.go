@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra2"
@@ -132,6 +133,20 @@ type FilerServer struct {
 	// the distributed lock for that key. Idle keys are evicted automatically, so
 	// the table stays bounded.
 	entryLockTable *util.LockTable[util.FullPath]
+
+	// posixLocks is the in-memory authority for cross-mount POSIX advisory locks
+	// on inodes this filer owns (per the route-by-key ring). Lock state is kept
+	// here rather than in replicated metadata: it is transient coordination, so
+	// keeping it off the meta-log avoids churn.
+	posixLocks *posixlock.Manager
+	// posixLockSweeperStop stops the lease-reaping sweeper goroutine on Shutdown.
+	posixLockSweeperStop chan struct{}
+	// posixLockReadyAt is the unix-nanos when this filer began serving POSIX
+	// locks. For posixLockWarmup after it, the owner defers would-be grants while
+	// mounts re-assert, so a (re)started owner does not double-grant from empty
+	// state. Atomic so the handler reads it without locking; 0 means "not warming
+	// up" (e.g. in tests).
+	posixLockReadyAt atomic.Int64
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -171,7 +186,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		recentCopyRequests:    make(map[string]recentCopyRequest),
 		CredentialManager:     option.CredentialManager,
 		entryLockTable:        util.NewLockTable[util.FullPath](),
+		posixLocks:            posixlock.NewManager(),
 	}
+	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
@@ -314,6 +331,9 @@ func (fs *FilerServer) checkWithMaster() {
 // This prevents data corruption when the process receives SIGTERM during active uploads.
 func (fs *FilerServer) Shutdown() {
 	glog.V(0).Infof("Shutting down filer")
+	if fs.posixLockSweeperStop != nil {
+		close(fs.posixLockSweeperStop)
+	}
 	fs.filer.Shutdown()
 }
 

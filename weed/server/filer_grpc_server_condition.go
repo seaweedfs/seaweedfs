@@ -59,6 +59,16 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 		if !exists {
 			return true
 		}
+		// An optional gate scopes the guard: when gate_key is set, the time check
+		// only applies if extended[gate_key] == gate_value. This lets the gateway
+		// express governance bypass (enforce retention only for COMPLIANCE mode)
+		// without reading the entry — the filer decides under the lock.
+		if c.GateKey != "" {
+			gv, gok := current.Extended[c.GateKey]
+			if !gok || string(gv) != c.GateValue {
+				return true
+			}
+		}
 		v, ok := current.Extended[c.ExtKey]
 		if !ok {
 			return true

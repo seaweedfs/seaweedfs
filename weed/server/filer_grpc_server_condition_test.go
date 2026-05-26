@@ -124,6 +124,12 @@ func TestWriteConditionObjectLockGuards(t *testing.T) {
 	retention := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
 		{Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "retain-until"},
 	}}
+	// Governance bypass: the retention guard is gated to COMPLIANCE mode, so a
+	// governance-mode (or unmoded) entry is deletable while compliance stays
+	// protected.
+	gatedRetention := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+		{Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "retain-until", GateKey: "lock-mode", GateValue: "COMPLIANCE"},
+	}}
 	future := strconv.FormatInt(now.Add(time.Hour).Unix(), 10)
 	past := strconv.FormatInt(now.Add(-time.Hour).Unix(), 10)
 
@@ -141,6 +147,11 @@ func TestWriteConditionObjectLockGuards(t *testing.T) {
 		{"retain-past-allows", retention, withExt(map[string]string{"retain-until": past}), true},
 		{"retain-absent-allows", retention, withExt(nil), true},
 		{"retain-malformed-blocks", retention, withExt(map[string]string{"retain-until": "soon"}), false},
+		// Governance bypass (gated to COMPLIANCE): compliance still blocks, but
+		// governance and unmoded entries become deletable despite future retention.
+		{"bypass-compliance-blocks", gatedRetention, withExt(map[string]string{"retain-until": future, "lock-mode": "COMPLIANCE"}), false},
+		{"bypass-governance-allows", gatedRetention, withExt(map[string]string{"retain-until": future, "lock-mode": "GOVERNANCE"}), true},
+		{"bypass-no-mode-allows", gatedRetention, withExt(map[string]string{"retain-until": future}), true},
 		// Composed WORM guard: legal hold AND retention, both clear -> allowed.
 		{"worm-both-clear", &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
 			{Kind: filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL, ExtKey: "lock-hold", ExtValue: "ON"},

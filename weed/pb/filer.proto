@@ -37,6 +37,9 @@ service SeaweedFiler {
     rpc ObjectTransactionBatch (ObjectTransactionBatchRequest) returns (ObjectTransactionBatchResponse) {
     }
 
+    rpc PosixLock (PosixLockRequest) returns (PosixLockResponse) {
+    }
+
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
@@ -274,6 +277,8 @@ message WriteCondition {
         bool allow_weak = 4;       // compare ETags ignoring the weak (W/) marker
         string ext_key = 5;        // extended attribute name for IF_EXTENDED_* kinds
         string ext_value = 6;      // blocking value for IF_EXTENDED_NOT_EQUAL
+        string gate_key = 7;       // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
+        string gate_value = 8;     // gate value (e.g. retention mode COMPLIANCE for governance bypass)
     }
     repeated Clause clauses = 1;   // all must hold (logical AND)
 }
@@ -314,6 +319,7 @@ message ObjectMutation {
     Recompute recompute = 9;               // RECOMPUTE_LATEST parameters
     bool set_content = 10;                 // PATCH_EXTENDED: replace Entry.content with content
     bytes content = 11;                    // PATCH_EXTENDED: new Entry.content when set_content
+    bool touch_mtime = 12;                 // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
@@ -333,24 +339,78 @@ message Recompute {
     string mtime_to_key = 6;               // if set, store the chosen child's Mtime (decimal) under this pointer key
     string demote_key = 7;                 // if set, stamp demote_value on the prior name_to_key target when it changes
     bytes demote_value = 8;                // value for demote_key
+    string exclude_name = 9;               // if set, skip this child when scanning (e.g. a version about to be deleted)
 }
 
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
 // respect to other writers of the same object, by holding the filer's per-path
 // lock on lock_key for the whole transaction. The optional condition is checked
-// first, against the entry at lock_key. Callers must route the object's writes
-// to its owner filer for the lock to be authoritative.
+// first, against condition_key when set, else lock_key. Callers set route_key to
+// the object's stable owner ring key; a filer that is not the owner forwards the
+// transaction one hop to the owner, so a stale ring view is tolerated.
 message ObjectTransactionRequest {
     string lock_key = 1;               // object path to lock and to evaluate the condition against
     WriteCondition condition = 2;      // optional precondition, checked under the lock
     repeated ObjectMutation mutations = 3;
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
+    string condition_key = 6;          // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
+    string route_key = 7;              // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
+    bool is_moved = 8;                 // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
 }
 
 message ObjectTransactionResponse {
     string error = 1;
     FilerError error_code = 2;
+}
+
+// PosixLockRange is one advisory byte-range lock. Owner identity is (sid, owner):
+// sid is the mount session, owner the FUSE lock owner within it, so owners from
+// different mounts never alias. end is inclusive (max uint64 = to EOF); is_flock
+// separates the flock and fcntl namespaces, which never conflict.
+message PosixLockRange {
+    uint64 start = 1;
+    uint64 end = 2;
+    uint32 type = 3;       // 1=read, 2=write, 3=unlock
+    uint64 sid = 4;
+    uint64 owner = 5;
+    uint32 pid = 6;        // holder pid, for get_lk reporting only
+    bool is_flock = 7;
+}
+
+// PosixLock routes an advisory lock operation to the inode's owner filer, which
+// holds the authoritative in-memory lock table. key is the inode identity ring
+// key (the file path, or hl:<HardLinkId> for a hardlink) used both to resolve the
+// owner and to index the table. A non-owner filer forwards the request one hop;
+// is_moved bounds it so a stale ring view cannot loop.
+message PosixLockRequest {
+    string key = 1;
+    bool is_moved = 2;
+    PosixLockOp op = 3;
+    PosixLockRange lock = 4;
+    // locks carries the full set a mount holds on key for a KEEP_ALIVE
+    // re-assertion, so the current owner filer can rebuild its in-memory state
+    // after an ownership change or restart. lock.sid identifies the session.
+    repeated PosixLockRange locks = 5;
+    // cooling_probe marks a dual-read a new owner sends to the previous owner
+    // during a ring change, so the previous owner answers from local state
+    // without itself cooling-off (no recursion).
+    bool cooling_probe = 6;
+}
+
+enum PosixLockOp {
+    TRY_LOCK = 0;             // grant lock or report conflict (non-blocking)
+    UNLOCK = 1;              // release lock's owner's locks over its range
+    GET_LK = 2;             // report a conflicting lock, if any
+    RELEASE_POSIX_OWNER = 3; // drop the owner's fcntl locks (flush-time)
+    RELEASE_FLOCK_OWNER = 4; // drop the owner's flock locks (release-time)
+    KEEP_ALIVE = 5;         // renew the session's lease on this owner (lock.sid)
+}
+
+message PosixLockResponse {
+    bool granted = 1;            // for TRY_LOCK: whether the lock was granted
+    bool has_conflict = 2;       // whether conflict is populated
+    PosixLockRange conflict = 3; // the blocking lock (TRY_LOCK conflict / GET_LK result)
 }
 
 // ObjectTransactionBatch applies several object transactions in one round trip,

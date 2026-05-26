@@ -158,9 +158,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if sameDestination && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
-		updateCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
-			return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
-		}, func() s3err.ErrorCode {
+		// A non-versioned in-place metadata replace routes to the owner as a
+		// serialized PATCH (off the distributed lock); versioned/suspended (which
+		// create a new version) and the no-owner bootstrap keep the lock.
+		owner := s3a.objectWriteOwner(dstBucket, dstObject)
+		routeInPlace := owner != "" && dstVersioningState == ""
+		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			if currentErr != nil || currentEntry.IsDirectory {
 				return s3err.ErrInvalidCopySource
@@ -168,26 +171,41 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
 				return errCode
 			}
-
-			updatedEntry := cloneProtoEntry(currentEntry)
-			updatedMetadata, metadataErr := processMetadataBytes(r.Header, updatedEntry.Extended, replaceMeta, replaceTagging)
-			currentErr = metadataErr
-			if currentErr != nil {
-				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, currentErr)
+			updatedMetadata, metadataErr := processMetadataBytes(r.Header, currentEntry.Extended, replaceMeta, replaceTagging)
+			if metadataErr != nil {
+				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, metadataErr)
 				return s3err.ErrInvalidTag
 			}
+			if routeInPlace {
+				if err := s3a.routedMetadataReplace(owner, dstBucket, dstObject, currentEntry, updatedMetadata); err != nil {
+					return filerErrorToS3Error(err)
+				}
+				etag = getEtagFromEntry(currentEntry)
+				return s3err.ErrNone
+			}
+			updatedEntry := cloneProtoEntry(currentEntry)
 			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
 			updatedEntry.Attributes.Mtime = t.Unix()
-
-			dstVersionId, etag, currentErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
-			if currentErr != nil {
-				return filerErrorToS3Error(currentErr)
+			var finErr error
+			dstVersionId, etag, finErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
+			if finErr != nil {
+				return filerErrorToS3Error(finErr)
 			}
 			return s3err.ErrNone
-		})
+		}
+		var updateCode s3err.ErrorCode
+		if routeInPlace {
+			if updateCode = s3a.checkConditionalHeaders(r, dstBucket, dstObject); updateCode == s3err.ErrNone {
+				updateCode = selfCopyBody()
+			}
+		} else {
+			updateCode = s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+				return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+			}, selfCopyBody)
+		}
 		if updateCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, updateCode)
 			return
@@ -444,7 +462,16 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 			return "", "", err
 		}
 
-		if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
+		// Route the pointer flip to the owner filer when known (off the
+		// distributed lock); RECOMPUTE_LATEST picks the just-written version.
+		if owner := s3a.objectWriteOwner(dstBucket, normalizedObject); owner != "" {
+			if code := s3a.routedVersionedFinalize(owner, dstBucket, normalizedObject, isNewFormatVersionId(versionId)); code != s3err.ErrNone {
+				if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+					glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
+				}
+				return "", "", fmt.Errorf("routed finalize for %s/%s: code %d", dstBucket, normalizedObject, code)
+			}
+		} else if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
 			if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
 				glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
 			}

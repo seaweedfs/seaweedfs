@@ -841,7 +841,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	routed := false
 	if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
-			resp, err := s3a.routedPut(owner, filePath, entry, cond)
+			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), filePath, entry, cond)
 			switch {
 			case err != nil:
 				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)

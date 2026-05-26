@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -256,20 +257,60 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		return &filer_pb.ObjectTransactionResponse{Error: "lock_key is required"}, nil
 	}
 
+	// Route-by-key: if this filer is not the ring owner of route_key, forward the
+	// whole transaction to the owner so its per-path lock is the single
+	// serialization point — even when the caller's ring view was stale. is_moved
+	// bounds this to one hop: a forwarded transaction is applied locally, so two
+	// filers that disagree on the owner during a ring change cannot loop.
+	if req.RouteKey != "" && !req.IsMoved && fs.filer.Dlm != nil {
+		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.RouteKey); owner != "" && owner != fs.option.Host {
+			// Rebuild rather than copy the request struct (it carries a mutex);
+			// the pointer/slice fields are shared since the original is not mutated.
+			forwarded := &filer_pb.ObjectTransactionRequest{
+				LockKey:            req.LockKey,
+				Condition:          req.Condition,
+				Mutations:          req.Mutations,
+				IsFromOtherCluster: req.IsFromOtherCluster,
+				Signatures:         req.Signatures,
+				ConditionKey:       req.ConditionKey,
+				RouteKey:           req.RouteKey,
+				IsMoved:            true,
+			}
+			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
+			var resp *filer_pb.ObjectTransactionResponse
+			err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				var e error
+				resp, e = client.ObjectTransaction(ctx, forwarded)
+				return e
+			})
+			if err != nil {
+				return &filer_pb.ObjectTransactionResponse{}, err
+			}
+			return resp, nil
+		}
+	}
+
 	lockPath := util.FullPath(req.LockKey)
 	pathLock := fs.entryLockTable.AcquireLock("ObjectTransaction", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
 	if conditionIsSet(req.Condition) {
-		current, findErr := fs.filer.FindEntry(ctx, lockPath)
+		// The condition is evaluated against condition_key when set (e.g. a
+		// version entry whose WORM guards gate the delete), while the lock stays
+		// on lock_key (the object, serializing the pointer recompute).
+		conditionPath := lockPath
+		if req.ConditionKey != "" {
+			conditionPath = util.FullPath(req.ConditionKey)
+		}
+		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", lockPath, findErr)
+			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
 		if !writeConditionSatisfied(req.Condition, current) {
-			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", lockPath)
+			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", conditionPath)
 			return &filer_pb.ObjectTransactionResponse{
 				Error:     "precondition failed",
 				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
@@ -372,6 +413,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 				newEntry.FileSize = uint64(len(m.Content))
 			}
 		}
+		if m.TouchMtime {
+			newEntry.Attr.Mtime = time.Now()
+		}
 		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
 			return err
 		}
@@ -421,12 +465,17 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 	// The store streams entries ascending by name. For the lowest-name pick we
 	// only need the first entry, so cap the listing at one; for the highest-name
 	// pick we must scan all and keep the last (the store has no reverse order).
+	// With exclude_name set the first child may be the excluded one, so the cap
+	// is lifted to find the first non-excluded entry.
 	limit := int64(math.MaxInt32)
-	if !rc.Descending {
+	if !rc.Descending && rc.ExcludeName == "" {
 		limit = 1
 	}
 	var chosen *filer.Entry
 	_, listErr := fs.filer.StreamListDirectoryEntries(ctx, util.FullPath(rc.ScanDir), "", false, limit, "", "", "", func(entry *filer.Entry) (bool, error) {
+		if rc.ExcludeName != "" && entry.Name() == rc.ExcludeName {
+			return true, nil
+		}
 		chosen = entry
 		return rc.Descending, nil
 	})

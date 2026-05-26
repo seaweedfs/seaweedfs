@@ -290,7 +290,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) objectWriteLock {
-			lockKey := fmt.Sprintf("s3.object.write:%s", s3ApiServer.toFilerPath(bucket, object))
+			lockKey := objectWriteRouteKeyPrefix + s3ApiServer.toFilerPath(bucket, object)
 			owner := fmt.Sprintf("s3api-%d", s3ApiServer.randomClientId)
 			lock := objectWriteLockClient.NewShortLivedLock(lockKey, owner)
 			if err := lock.AttemptToLock(objectWriteLockTTL); err != nil {
@@ -735,6 +735,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	corsMiddleware := s3a.getCORSMiddleware()
 
 	for _, bucket := range routers {
+		// Reject `..`/`.`/NUL in {bucket} or {object} vars before any handler
+		// runs. SkipClean(true) keeps `..` in the matched path; the filer would
+		// otherwise collapse it via filepath.Join and cross bucket boundaries.
+		bucket.Use(validateRequestPath)
+
 		// Apply CORS middleware to bucket routers for automatic CORS header handling
 		bucket.Use(corsMiddleware.Handler)
 
