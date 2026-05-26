@@ -113,9 +113,6 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(httpStatus)
-	if httpStatus == http.StatusNotModified {
-		return
-	}
 	_, err = w.Write(bytes)
 	return
 }
