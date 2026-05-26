@@ -22,20 +22,31 @@ import (
 func validateRequestPath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		if !s3_constants.IsValidBucketName(vars["prefix"]) {
-			writeError(w, http.StatusBadRequest, "BadRequest", "invalid prefix")
-			return
+		// Use the comma-ok form so vars only checked when the matched route
+		// actually captures them; when captured, an empty value is itself a
+		// rejection because downstream path.Join would collapse it.
+		if prefix, ok := vars["prefix"]; ok {
+			if prefix == "" || !s3_constants.IsValidBucketName(prefix) {
+				writeError(w, http.StatusBadRequest, "BadRequest", "invalid prefix")
+				return
+			}
 		}
-		if !isValidNameSegment(vars["table"]) {
-			writeError(w, http.StatusBadRequest, "BadRequest", "invalid table name")
-			return
+		if table, ok := vars["table"]; ok {
+			if table == "" || !isValidNameSegment(table) {
+				writeError(w, http.StatusBadRequest, "BadRequest", "invalid table name")
+				return
+			}
 		}
-		if ns := vars["namespace"]; ns != "" {
+		if ns, ok := vars["namespace"]; ok {
+			if ns == "" {
+				writeError(w, http.StatusBadRequest, "BadRequest", "invalid namespace")
+				return
+			}
+			// Reject leading/trailing/consecutive unit separators so distinct
+			// inputs cannot collapse to the same parsed namespace via
+			// parseNamespace's empty-part filter.
 			for _, part := range strings.Split(ns, "\x1F") {
-				if part == "" {
-					continue
-				}
-				if !isValidNameSegment(part) {
+				if part == "" || !isValidNameSegment(part) {
 					writeError(w, http.StatusBadRequest, "BadRequest", "invalid namespace")
 					return
 				}

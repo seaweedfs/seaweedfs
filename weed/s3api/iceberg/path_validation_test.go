@@ -28,6 +28,9 @@ func TestValidateRequestPath_RejectsTraversal(t *testing.T) {
 		// Iceberg clients send the 0x1F unit separator percent-encoded; mux
 		// decodes it before the middleware sees the namespace var.
 		{"unit-sep namespace with dotdot part rejected", "/v1/namespaces/sales%1F..%1Fevil", http.StatusBadRequest},
+		{"leading unit-sep namespace rejected", "/v1/namespaces/%1Fsales", http.StatusBadRequest},
+		{"trailing unit-sep namespace rejected", "/v1/namespaces/sales%1F", http.StatusBadRequest},
+		{"consecutive unit-sep namespace rejected", "/v1/namespaces/sales%1F%1Fevil", http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -53,6 +56,34 @@ func TestValidateRequestPath_RejectsTraversal(t *testing.T) {
 			}
 			if tt.wantCode == http.StatusBadRequest && handlerCalled {
 				t.Fatalf("path %q: inner handler reached despite rejection", tt.rawPath)
+			}
+		})
+	}
+}
+
+// Defense-in-depth: if a future route or middleware ever leaves one of the
+// captured vars empty, the middleware must still reject the request. The
+// default mux regex won't normally allow this.
+func TestValidateRequestPath_RejectsEmptyCapturedVars(t *testing.T) {
+	tests := []struct {
+		name string
+		vars map[string]string
+	}{
+		{"empty prefix", map[string]string{"prefix": "", "namespace": "ns"}},
+		{"empty table", map[string]string{"namespace": "ns", "table": ""}},
+		{"empty namespace", map[string]string{"namespace": ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handlerCalled := false
+			h := validateRequestPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
+			}))
+			req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/", nil), tt.vars)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if handlerCalled {
+				t.Fatalf("vars %v: inner handler reached despite empty capture", tt.vars)
 			}
 		})
 	}

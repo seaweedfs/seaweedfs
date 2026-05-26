@@ -18,13 +18,20 @@ import (
 func validateRequestPath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		if !s3_constants.IsValidBucketName(vars["bucket"]) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			return
+		// When a var is in the matched route it must be non-empty: an empty
+		// bucket would let downstream path.Join collapse it and let the object
+		// key pick the bucket.
+		if bucket, ok := vars["bucket"]; ok {
+			if bucket == "" || !s3_constants.IsValidBucketName(bucket) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+				return
+			}
 		}
-		if !s3_constants.IsValidObjectKey(vars["object"]) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			return
+		if object, ok := vars["object"]; ok {
+			if object == "" || !s3_constants.IsValidObjectKey(object) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

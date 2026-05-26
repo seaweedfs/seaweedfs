@@ -68,13 +68,15 @@ func (s *Server) SetS3Endpoint(endpoint string) {
 
 // RegisterRoutes registers Iceberg REST API routes on the provided router.
 func (s *Server) RegisterRoutes(router *mux.Router) {
+	// Add middleware to log all requests/responses
+	router.Use(loggingMiddleware)
+
 	// Reject `..`/`.`/NUL in {prefix}/{namespace}/{table} vars before any
 	// handler runs. The router uses SkipClean(true), so traversal segments
 	// would otherwise reach path.Join in stage-marker / location builders.
+	// Registered after loggingMiddleware so rejected requests still get
+	// audit-logged.
 	router.Use(validateRequestPath)
-
-	// Add middleware to log all requests/responses
-	router.Use(loggingMiddleware)
 
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)

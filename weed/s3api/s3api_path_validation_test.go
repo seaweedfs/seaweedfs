@@ -19,7 +19,7 @@ func TestValidateRequestPath_RejectsTraversal(t *testing.T) {
 		wantCode int
 	}{
 		{"clean path passes", "/bucket-a/folder/file.txt", http.StatusOK},
-		{"empty object passes", "/bucket-a", http.StatusOK},
+		{"bucket only passes", "/bucket-a", http.StatusOK},
 		{"trailing slash passes", "/bucket-a/folder/", http.StatusOK},
 
 		{"leading dotdot rejected", "/bucket-a/../evil-bucket/test.txt", http.StatusBadRequest},
@@ -54,6 +54,33 @@ func TestValidateRequestPath_RejectsTraversal(t *testing.T) {
 			}
 			if tt.wantCode == http.StatusBadRequest && handlerCalled {
 				t.Fatalf("path %q: inner handler reached despite rejection", tt.rawPath)
+			}
+		})
+	}
+}
+
+// Defense-in-depth: a future router or middleware that captures the {bucket}
+// or {object} mux var as an empty string must still be rejected, even though
+// mux's default `[^/]+` regex won't match an empty segment from a real URL.
+func TestValidateRequestPath_RejectsEmptyCapturedVars(t *testing.T) {
+	tests := []struct {
+		name string
+		vars map[string]string
+	}{
+		{"empty bucket", map[string]string{"bucket": "", "object": "key"}},
+		{"empty object", map[string]string{"bucket": "bucket-a", "object": ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handlerCalled := false
+			h := validateRequestPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
+			}))
+			req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/", nil), tt.vars)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if handlerCalled {
+				t.Fatalf("vars %v: inner handler reached despite empty capture", tt.vars)
 			}
 		})
 	}
