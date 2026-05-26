@@ -350,6 +350,13 @@ func (fc *FilerClient) refreshFilerList() {
 		}
 	}
 
+	// Ignore snapshots whose addresses are all empty; reconciling against an
+	// empty set would wipe the in-memory list.
+	if len(discoveredFilers) == 0 {
+		glog.V(1).Infof("FilerClient: discovery snapshot for group '%s' had no usable addresses, keeping existing list", fc.filerGroup)
+		return
+	}
+
 	fc.applyDiscoveredFilers(discoveredFilers)
 }
 
