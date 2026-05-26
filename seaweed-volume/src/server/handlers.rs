@@ -838,8 +838,6 @@ pub struct ReadQueryParams {
     pub response_content_disposition: Option<String>,
     /// Pretty print JSON response
     pub pretty: Option<String>,
-    /// JSONP callback function name
-    pub callback: Option<String>,
 }
 
 // ============================================================================
@@ -3402,10 +3400,6 @@ fn json_response_with_params<T: Serialize>(
     let is_pretty = params
         .and_then(|params| params.pretty.as_ref())
         .is_some_and(|value| !value.is_empty());
-    let callback = params
-        .and_then(|params| params.callback.as_ref())
-        .filter(|value| !value.is_empty())
-        .cloned();
 
     let json_body = if is_pretty {
         to_pretty_json(body)
@@ -3413,24 +3407,15 @@ fn json_response_with_params<T: Serialize>(
         serde_json::to_string(body).unwrap()
     };
 
-    if let Some(callback) = callback {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(format!("{}({})", callback, json_body)))
-            .unwrap()
-    } else {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
 }
 
-/// Return a JSON error response with optional query string for pretty/JSONP support.
-/// Supports `?pretty=<any non-empty value>` for pretty-printed JSON and `?callback=fn` for JSONP,
-/// matching Go's writeJsonError behavior.
+/// Return a JSON error response, honoring `?pretty=<any non-empty value>` for pretty-printed JSON.
 pub(super) fn json_error_with_query(
     status: StatusCode,
     msg: impl Into<String>,
@@ -3438,18 +3423,10 @@ pub(super) fn json_error_with_query(
 ) -> Response {
     let body = serde_json::json!({"error": msg.into()});
 
-    let (is_pretty, callback) = if let Some(q) = query {
-        let pretty = q
-            .split('&')
-            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
-        let cb = q
-            .split('&')
-            .find_map(|p| p.strip_prefix("callback="))
-            .map(|s| s.to_string());
-        (pretty, cb)
-    } else {
-        (false, None)
-    };
+    let is_pretty = query.is_some_and(|q| {
+        q.split('&')
+            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len())
+    });
 
     let json_body = if is_pretty {
         to_pretty_json(&body)
@@ -3457,35 +3434,19 @@ pub(super) fn json_error_with_query(
         serde_json::to_string(&body).unwrap()
     };
 
-    if let Some(cb) = callback {
-        let jsonp = format!("{}({})", cb, json_body);
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(jsonp))
-            .unwrap()
-    } else {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
 }
 
-/// Return a JSON response with optional pretty/JSONP support from raw query string.
-/// Matches Go's writeJsonQuiet behavior for write success responses.
+/// Return a JSON response honoring `?pretty=<any non-empty value>` from a raw query string.
 fn json_result_with_query<T: Serialize>(status: StatusCode, body: &T, query: &str) -> Response {
-    let (is_pretty, callback) = {
-        let pretty = query
-            .split('&')
-            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
-        let cb = query
-            .split('&')
-            .find_map(|p| p.strip_prefix("callback="))
-            .map(|s| s.to_string());
-        (pretty, cb)
-    };
+    let is_pretty = query
+        .split('&')
+        .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
 
     let json_body = if is_pretty {
         to_pretty_json(body)
@@ -3493,20 +3454,12 @@ fn json_result_with_query<T: Serialize>(status: StatusCode, body: &T, query: &st
         serde_json::to_string(body).unwrap()
     };
 
-    if let Some(cb) = callback {
-        let jsonp = format!("{}({})", cb, json_body);
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(jsonp))
-            .unwrap()
-    } else {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
 }
 
 /// Extract JWT token from query param, Authorization header, or Cookie.

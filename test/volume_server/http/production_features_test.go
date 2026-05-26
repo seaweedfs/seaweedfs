@@ -75,7 +75,7 @@ func TestStatsEndpoints(t *testing.T) {
 	}
 }
 
-func TestStatusPrettyJsonAndJsonp(t *testing.T) {
+func TestStatusPrettyJsonAndCallbackIgnored(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -93,29 +93,29 @@ func TestStatusPrettyJsonAndJsonp(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("/status?pretty=y expected multi-line indented JSON, got %d lines: %s", len(lines), string(prettyBody))
 	}
-	// Verify the body is valid JSON
 	var prettyPayload map[string]interface{}
 	if err := json.Unmarshal(prettyBody, &prettyPayload); err != nil {
 		t.Fatalf("/status?pretty=y is not valid JSON: %v", err)
 	}
 
-	// ?callback=myFunc — expect JSONP wrapping
-	jsonpResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/status?callback=myFunc"))
-	jsonpBody := framework.ReadAllAndClose(t, jsonpResp)
-	if jsonpResp.StatusCode != http.StatusOK {
-		t.Fatalf("/status?callback=myFunc expected 200, got %d", jsonpResp.StatusCode)
+	// ?callback=myFunc — must be ignored; response is plain JSON with nosniff.
+	cbResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/status?callback=myFunc"))
+	cbBody := framework.ReadAllAndClose(t, cbResp)
+	if cbResp.StatusCode != http.StatusOK {
+		t.Fatalf("/status?callback=myFunc expected 200, got %d", cbResp.StatusCode)
 	}
-	bodyStr := string(jsonpBody)
-	if !strings.HasPrefix(bodyStr, "myFunc(") {
-		t.Fatalf("/status?callback=myFunc expected body to start with 'myFunc(', got prefix: %q", bodyStr[:min(len(bodyStr), 30)])
+	if ct := cbResp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("/status?callback=myFunc expected Content-Type application/json, got %q", ct)
 	}
-	trimmed := strings.TrimRight(bodyStr, "\n; ")
-	if !strings.HasSuffix(trimmed, ")") {
-		t.Fatalf("/status?callback=myFunc expected body to end with ')', got suffix: %q", trimmed[max(0, len(trimmed)-10):])
+	if nosniff := cbResp.Header.Get("X-Content-Type-Options"); nosniff != "nosniff" {
+		t.Fatalf("/status?callback=myFunc expected X-Content-Type-Options nosniff, got %q", nosniff)
 	}
-	// Content-Type should be application/javascript for JSONP
-	if ct := jsonpResp.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
-		t.Fatalf("/status?callback=myFunc expected Content-Type containing 'javascript', got %q", ct)
+	if strings.Contains(string(cbBody), "myFunc(") {
+		t.Fatalf("/status?callback=myFunc must not wrap response in callback; body: %q", string(cbBody))
+	}
+	var cbPayload map[string]interface{}
+	if err := json.Unmarshal(cbBody, &cbPayload); err != nil {
+		t.Fatalf("/status?callback=myFunc is not valid JSON: %v", err)
 	}
 }
 
