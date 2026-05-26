@@ -15,7 +15,11 @@ import (
 // layout's growRequest flag in its defer; without a deadline a stalled
 // AllocateVolume would leave that flag stuck and silently block all future
 // automatic growth for the layout until the master restarts.
-const allocateVolumeTimeout = 5 * time.Minute
+//
+// Volume create/delete is sub-second normally — 1 minute is generous even
+// for a contended disk, and short enough to recover before too many client
+// Assign attempts have drained their own retry budget.
+const allocateVolumeTimeout = 1 * time.Minute
 
 type AllocateVolumeResult struct {
 	Error string
