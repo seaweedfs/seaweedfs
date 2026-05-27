@@ -80,12 +80,16 @@ type VolumeServerOptions struct {
 	debugPort                     *int
 	diskIOProbe                   *bool
 	diskIOTimeout                 *time.Duration
-	diskIOLatencyAlpha            *float64
-	diskIOMinSlowLatency          *time.Duration
-	diskIOSlowLatencyFactor       *float64
-	diskIOSlowStddevFactor        *float64
-	diskIOMaxConsecutiveSlow      *int
-	diskIOMaxFailuresBeforeAlert  *int
+	diskIOInterval                *time.Duration
+	diskHDDIOSlowLatency          *time.Duration
+	diskSSDIOSlowLatency          *time.Duration
+	diskNVMEIOSlowLatency         *time.Duration
+	diskIOWindow                  *time.Duration
+	diskIOMinSamples              *int
+	diskIOSlowPercent             *float64
+	diskIOErrorPercent            *float64
+	diskIOMaxStatFailures         *int
+	diskRecoveryCoef              *float64
 	// shutdownCtx, when non-nil, tells startVolumeServer to shut down once the
 	// ctx is cancelled. Used by integration tests and by weed mini; nil for
 	// standalone weed volume.
@@ -132,14 +136,18 @@ func init() {
 	v.allowUntrustedRemoteEndpoints = cmdVolume.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
-	v.diskIOProbe = cmdVolume.Flag.Bool("disk.io.probe", false, "enable disk IO latency probing to detect slow disks")
-	v.diskIOTimeout = cmdVolume.Flag.Duration("disk.io.timeout", 2*time.Second, "maximum time allowed for disk IO probe before considering disk as failed")
-	v.diskIOLatencyAlpha = cmdVolume.Flag.Float64("disk.io.latencyAlpha", 0.2, "EWMA smoothing factor for latency calculation (0-1), lower = smoother")
-	v.diskIOMinSlowLatency = cmdVolume.Flag.Duration("disk.io.minSlowLatency", 50*time.Millisecond, "minimum latency threshold to consider as potential slow operation")
-	v.diskIOSlowLatencyFactor = cmdVolume.Flag.Float64("disk.io.slowLatencyFactor", 3.0, "multiplier above average latency to flag as slow (current > avg * factor)")
-	v.diskIOSlowStddevFactor = cmdVolume.Flag.Float64("disk.io.slowStddevFactor", 2.0, "multiplier above standard deviation to flag as slow (current > avg + stddev * factor)")
-	v.diskIOMaxConsecutiveSlow = cmdVolume.Flag.Int("disk.io.maxConsecutiveSlow", 3, "number of consecutive slow operations required before reporting disk failure")
-	v.diskIOMaxFailuresBeforeAlert = cmdVolume.Flag.Int("disk.io.maxFailuresBeforeAlert", 3, "number of IO failures tolerated before setting disk.Error alert")
+	v.diskIOProbe = cmdVolume.Flag.Bool("disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
+	v.diskIOTimeout = cmdVolume.Flag.Duration("disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
+	v.diskIOInterval = cmdVolume.Flag.Duration("disk.io.interval", 60*time.Second, "maximum time between a single disk IO probe")
+	v.diskHDDIOSlowLatency = cmdVolume.Flag.Duration("disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
+	v.diskSSDIOSlowLatency = cmdVolume.Flag.Duration("disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
+	v.diskNVMEIOSlowLatency = cmdVolume.Flag.Duration("disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
+	v.diskIOSlowPercent = cmdVolume.Flag.Float64("disk.io.slow.percent", 20, "percentage of slow IO probes required to mark disk degraded")
+	v.diskIOErrorPercent = cmdVolume.Flag.Float64("disk.io.error.percent", 10, "percentage of failed IO probes required to mark disk error")
+	v.diskIOWindow = cmdVolume.Flag.Duration("disk.io.window", time.Minute, "rolling observation window for disk IO health evaluation")
+	v.diskIOMinSamples = cmdVolume.Flag.Int("disk.io.min.samples", 10, "minimum number of IO samples required before evaluating disk health")
+	v.diskIOMaxStatFailures = cmdVolume.Flag.Int("disk.io.max.stat.failures", 5, "maximum number of failures required before evaluating disk health")
+	v.diskRecoveryCoef = cmdVolume.Flag.Float64("disk.io.recovery.coef", 0.5, "recovery coefficient (0.0-1.0). Lower = harder to recover (conservative), higher = easier (aggressive). Default 0.5 = recovery at 50% of degradation threshold")
 }
 
 var cmdVolume = &Command{
@@ -322,15 +330,34 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Determine volume server ID: if not specified, use ip:port
 	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
+	var slowLatency time.Duration
+
+	switch *v.diskType {
+	case "hdd":
+		slowLatency = *v.diskHDDIOSlowLatency
+	case "ssd":
+		slowLatency = *v.diskSSDIOSlowLatency
+	case "nvme":
+		slowLatency = *v.diskNVMEIOSlowLatency
+	default:
+		slowLatency = *v.diskHDDIOSlowLatency
+	}
 	diskProbeConfig := stats_collect.DiskIOProbeConfig{
-		Enabled:                *v.diskIOProbe,
-		Timeout:                *v.diskIOTimeout,
-		LatencyAlpha:           *v.diskIOLatencyAlpha,
-		MinSlowLatency:         *v.diskIOMinSlowLatency,
-		SlowLatencyFactor:      *v.diskIOSlowLatencyFactor,
-		SlowStddevFactor:       *v.diskIOSlowStddevFactor,
-		MaxConsecutiveSlow:     *v.diskIOMaxConsecutiveSlow,
-		MaxFailuresBeforeAlert: *v.diskIOMaxFailuresBeforeAlert,
+		Enabled:  *v.diskIOProbe,
+		Timeout:  *v.diskIOTimeout,
+		Interval: *v.diskIOInterval,
+
+		SlowLatency: slowLatency,
+
+		Window:     *v.diskIOWindow,
+		MinSamples: *v.diskIOMinSamples,
+
+		SlowPercent:  *v.diskIOSlowPercent,
+		ErrorPercent: *v.diskIOErrorPercent,
+
+		MaxStatFailures: *v.diskIOMaxStatFailures,
+
+		RecoveryCoef: *v.diskRecoveryCoef,
 	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,41 +15,60 @@ import (
 )
 
 type DiskIOProbeConfig struct {
-	// Enable/disable disk IO latency probing
+	// enable/disable disk io probing
 	Enabled bool
 
-	// EWMA smoothing factor for latency calculation (0-1), lower = smoother
-	LatencyAlpha float64
-
+	// timeout for a single io probe
 	Timeout time.Duration
 
-	// Minimum latency threshold to consider as potential slow operation
-	MinSlowLatency time.Duration
+	// probe interval
+	Interval time.Duration
 
-	// Multiplier above average latency to flag as slow (current > avg * factor)
-	SlowLatencyFactor float64
+	// latency above this threshold is considered slow
+	SlowLatency time.Duration
 
-	// Multiplier above standard deviation to flag as slow (current > avg + stddev * factor)
-	SlowStddevFactor float64
+	// rolling observation window
+	Window time.Duration
 
-	// Number of consecutive slow operations required before reporting disk failure
-	MaxConsecutiveSlow int
+	// minimum number of samples required before evaluating health
+	MinSamples int
 
-	// Number of IO failures tolerated before setting disk.Error alert
-	MaxFailuresBeforeAlert int
+	// percentage of slow operations required to mark disk degraded
+	SlowPercent float64
+
+	// percentage of failed operations required to mark disk degraded
+	ErrorPercent float64
+
+	// recovery coef defines the hysteresis threshold for recovering from degraded state.
+	RecoveryCoef float64
+
+	// statfs failures before alerting
+	MaxStatFailures int
 }
 
 func DefaultDiskIOProbeConfig() DiskIOProbeConfig {
 	return DiskIOProbeConfig{
-		Enabled:                false,
-		Timeout:                2 * time.Second,
-		LatencyAlpha:           0.2,
-		MinSlowLatency:         50 * time.Millisecond,
-		SlowLatencyFactor:      3.0,
-		SlowStddevFactor:       2.0,
-		MaxConsecutiveSlow:     3,
-		MaxFailuresBeforeAlert: 3,
+		Enabled:     false,
+		Timeout:     2 * time.Second,
+		Interval:    30 * time.Second,
+		SlowLatency: 100 * time.Millisecond,
+
+		Window:     time.Minute,
+		MinSamples: 10,
+
+		SlowPercent:  20,
+		ErrorPercent: 10,
+		RecoveryCoef: 0.5,
+
+		MaxStatFailures: 3,
 	}
+}
+
+type ioSample struct {
+	ts      time.Time
+	latency time.Duration
+	failed  bool
+	slow    bool
 }
 
 type diskState struct {
@@ -61,11 +79,7 @@ type diskState struct {
 	statFailureCount int
 	lastStatErr      error
 
-	// latency tracking
-	initialized     bool
-	avgLatency      float64
-	variance        float64
-	consecutiveSlow int
+	samples []ioSample
 
 	// IO probe
 	isIOChecking   bool
@@ -75,6 +89,7 @@ type diskState struct {
 	ioBuf          []byte
 	ioFailureCount int
 	lastIOErr      error
+	ioDegraded     bool
 }
 
 var diskRegistry sync.Map
@@ -82,9 +97,6 @@ var diskRegistry sync.Map
 const (
 	// statfs timeout
 	diskTimeout = 500 * time.Millisecond
-
-	// IO probe interval
-	ioCheckInterval = 30 * time.Second
 )
 
 func NewDiskStatus(path string) (disk *volume_server_pb.DiskStatus) {
@@ -166,14 +178,36 @@ func diskProbe(disk *volume_server_pb.DiskStatus, config DiskIOProbeConfig) {
 	disk.PercentFree = probe.PercentFree
 	disk.PercentUsed = probe.PercentUsed
 
+	if !config.Enabled {
+		state.ioFailureCount = 0
+		state.lastIOErr = nil
+		state.ioDegraded = false
+		state.updateErrorLocked(disk, config)
+		state.mu.Unlock()
+		return
+	}
+
 	shouldCheckIO := false
 	ioCheckID := uint64(0)
 
-	if config.Enabled && time.Since(state.lastIOCheck) >= ioCheckInterval {
+	if time.Since(state.lastIOCheck) >= config.Interval {
 		if state.isIOChecking {
-			state.ioFailureCount++
-			state.lastIOErr = errors.New("disk io still in progress")
+			degraded := state.observeLatencyLocked(
+				config.Timeout,
+				true,
+				config,
+			)
+
+			state.ioDegraded = degraded
 			state.lastIOCheck = time.Now()
+
+			if degraded {
+				state.ioFailureCount++
+				state.lastIOErr = errors.New("disk io still in progress")
+			} else {
+				state.ioFailureCount = 0
+				state.lastIOErr = nil
+			}
 		} else {
 			state.isIOChecking = true
 			state.ioCheckID++
@@ -224,18 +258,39 @@ func checkDiskIOLatency(state *diskState, disk *volume_server_pb.DiskStatus, che
 		state.lastIOCheck = time.Now()
 
 		if result.err != nil {
-			state.ioFailureCount++
-			state.lastIOErr = result.err
+			degraded := state.observeLatencyLocked(
+				config.Timeout,
+				true,
+				config,
+			)
+
+			state.ioDegraded = degraded
+
+			if degraded {
+				state.ioFailureCount++
+				state.lastIOErr = result.err
+			} else {
+				state.ioFailureCount = 0
+				state.lastIOErr = nil
+			}
+
 			state.updateErrorLocked(disk, config)
 			return
 		}
 
-		if state.observeLatencyLocked(result.latency, config) {
+		degraded := state.observeLatencyLocked(
+			result.latency,
+			false,
+			config,
+		)
+
+		state.ioDegraded = degraded
+
+		if degraded {
 			state.ioFailureCount++
 			state.lastIOErr = fmt.Errorf(
-				"disk io degradation detected latency=%v avg=%v",
+				"disk io degradation detected latency=%v",
 				result.latency,
-				time.Duration(state.avgLatency),
 			)
 		} else {
 			state.ioFailureCount = 0
@@ -245,19 +300,35 @@ func checkDiskIOLatency(state *diskState, disk *volume_server_pb.DiskStatus, che
 		state.updateErrorLocked(disk, config)
 
 		glog.V(0).Infof(
-			"disk io latency dir=%s latency=%v avg=%v stddev=%v",
+			"disk io latency dir=%s latency=%v ioFailureCount=%d degraded=%v samples=%d error=%v",
 			disk.Dir,
 			result.latency,
-			time.Duration(state.avgLatency),
-			time.Duration(math.Sqrt(state.variance)),
+			state.ioFailureCount,
+			degraded,
+			len(state.samples),
+			disk.Error,
 		)
 
 	case <-ctx.Done():
 		state.mu.Lock()
 
 		if state.ioCheckID == checkID {
-			state.ioFailureCount++
-			state.lastIOErr = errors.New("disk io timeout")
+			degraded := state.observeLatencyLocked(
+				config.Timeout,
+				true,
+				config,
+			)
+
+			state.ioDegraded = degraded
+
+			if degraded {
+				state.ioFailureCount++
+				state.lastIOErr = errors.New("disk io timeout")
+			} else {
+				state.ioFailureCount = 0
+				state.lastIOErr = nil
+			}
+
 			state.lastIOCheck = time.Now()
 			state.updateErrorLocked(disk, config)
 		}
@@ -316,45 +387,80 @@ func runIOProbe(state *diskState, dir string) error {
 	return f.Sync()
 }
 
-func (s *diskState) observeLatencyLocked(d time.Duration, c DiskIOProbeConfig) bool {
-	x := float64(d)
+func (s *diskState) observeLatencyLocked(latency time.Duration, failed bool, config DiskIOProbeConfig) bool {
+	now := time.Now()
 
-	if !s.initialized {
-		s.avgLatency = x
-		s.initialized = true
-		return false
+	sample := ioSample{
+		ts:      now,
+		latency: latency,
+		failed:  failed,
+		slow:    latency >= config.SlowLatency,
 	}
 
-	avg := s.avgLatency
-	stddev := math.Sqrt(s.variance)
+	s.samples = append(s.samples, sample)
 
-	isSlow := d > c.MinSlowLatency &&
-		x > avg*c.SlowLatencyFactor &&
-		x > avg+c.SlowStddevFactor*stddev
+	cutoff := now.Add(-config.Window)
 
-	if isSlow {
-		s.consecutiveSlow++
-		return s.consecutiveSlow >= c.MaxConsecutiveSlow
+	idx := 0
+	for _, sample := range s.samples {
+		if sample.ts.After(cutoff) {
+			s.samples[idx] = sample
+			idx++
+		}
 	}
 
-	s.consecutiveSlow = 0
+	s.samples = s.samples[:idx]
 
-	diff := x - avg
-	s.avgLatency = c.LatencyAlpha*x + (1-c.LatencyAlpha)*avg
-	s.variance = c.LatencyAlpha*(diff*diff) + (1-c.LatencyAlpha)*s.variance
+	total := len(s.samples)
 
-	return false
+	if total < config.MinSamples {
+		return s.ioDegraded
+	}
+
+	var slowCount int
+	var failedCount int
+
+	for _, sample := range s.samples {
+		if sample.slow {
+			slowCount++
+		}
+
+		if sample.failed {
+			failedCount++
+		}
+	}
+
+	slowPercent := float64(slowCount) / float64(total) * 100
+	errorPercent := float64(failedCount) / float64(total) * 100
+
+	if !s.ioDegraded {
+		return slowPercent >= config.SlowPercent ||
+			errorPercent >= config.ErrorPercent
+	}
+
+	recoverSlowPercent := config.SlowPercent * config.RecoveryCoef
+	recoverErrorPercent := config.ErrorPercent * config.RecoveryCoef
+
+	return slowPercent > recoverSlowPercent ||
+		errorPercent > recoverErrorPercent
 }
 
 func (s *diskState) updateErrorLocked(disk *volume_server_pb.DiskStatus, config DiskIOProbeConfig) {
 	var problems []string
 
-	if s.statFailureCount >= config.MaxFailuresBeforeAlert && s.lastStatErr != nil {
-		problems = append(problems, fmt.Sprintf("statfs: %v", s.lastStatErr))
+	if s.statFailureCount >= config.MaxStatFailures &&
+		s.lastStatErr != nil {
+		problems = append(
+			problems,
+			fmt.Sprintf("statfs: %v", s.lastStatErr),
+		)
 	}
 
-	if s.ioFailureCount >= config.MaxFailuresBeforeAlert && s.lastIOErr != nil {
-		problems = append(problems, fmt.Sprintf("io: %v", s.lastIOErr))
+	if config.Enabled && s.ioDegraded && s.lastIOErr != nil {
+		problems = append(
+			problems,
+			fmt.Sprintf("io: %v", s.lastIOErr),
+		)
 	}
 
 	if len(problems) == 0 {
@@ -362,5 +468,7 @@ func (s *diskState) updateErrorLocked(disk *volume_server_pb.DiskStatus, config 
 		return
 	}
 
-	disk.Error = "disk health check failed: " + strings.Join(problems, "; ")
+	disk.Error =
+		"disk health check failed: " +
+			strings.Join(problems, "; ")
 }
