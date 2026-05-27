@@ -19,9 +19,6 @@ import (
 
 func TestMain(m *testing.M) {
 	util_http.InitGlobalHttpClient()
-	// Shorten retry backoff so a fail-fast test that briefly enters the retry
-	// loop doesn't pay the production 1s+ wait.
-	util.RetryWaitTime = 100 * time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -96,53 +93,47 @@ func TestTargetPathToSourcePath(t *testing.T) {
 	}
 }
 
-// FilerSink must reject chunks whose read/upload byte count disagrees with the
+// FilerSink must reject chunks whose received byte count disagrees with the
 // source filer metadata, instead of silently writing 0-byte needles with the
 // source size in the destination metadata.
 func TestValidateReplicatedChunkSize(t *testing.T) {
 	const fid = "74,047d16a94aa581"
 
 	tests := []struct {
-		name             string
-		expectedSize     uint64
-		readSize         int
-		uploadResultSize uint32
-		wantErr          bool
+		name         string
+		expectedSize uint64
+		readSize     int
+		wantErr      bool
 	}{
 		{
-			name:             "healthy",
-			expectedSize:     5171,
-			readSize:         5171,
-			uploadResultSize: 5171,
-			wantErr:          false,
+			name:         "healthy",
+			expectedSize: 5171,
+			readSize:     5171,
+			wantErr:      false,
 		},
 		{
-			name:             "legitimately empty file",
-			expectedSize:     0,
-			readSize:         0,
-			uploadResultSize: 0,
-			wantErr:          false,
+			name:         "legitimately empty file",
+			expectedSize: 0,
+			readSize:     0,
+			wantErr:      false,
 		},
 		{
-			name:             "zero-byte read for non-empty source",
-			expectedSize:     5171,
-			readSize:         0,
-			uploadResultSize: 0,
-			wantErr:          true,
+			name:         "zero-byte read for non-empty source",
+			expectedSize: 5171,
+			readSize:     0,
+			wantErr:      true,
 		},
 		{
-			name:             "short read",
-			expectedSize:     5171,
-			readSize:         100,
-			uploadResultSize: 100,
-			wantErr:          true,
+			name:         "short read",
+			expectedSize: 5171,
+			readSize:     100,
+			wantErr:      true,
 		},
 		{
-			name:             "upload truncated",
-			expectedSize:     5171,
-			readSize:         5171,
-			uploadResultSize: 0,
-			wantErr:          true,
+			name:         "over-read (server returned more than metadata)",
+			expectedSize: 5171,
+			readSize:     8192,
+			wantErr:      true,
 		},
 	}
 
@@ -150,18 +141,12 @@ func TestValidateReplicatedChunkSize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			chunk := &filer_pb.FileChunk{FileId: fid, Size: tc.expectedSize}
 
-			readErr := validateReplicatedReadSize(chunk, tc.readSize)
-			uploadErr := validateReplicatedUploadSize(chunk, tc.uploadResultSize)
-
-			gotErr := readErr
-			if gotErr == nil {
-				gotErr = uploadErr
-			}
+			gotErr := validateReplicatedReadSize(chunk, tc.readSize)
 
 			if tc.wantErr {
 				if gotErr == nil {
-					t.Fatalf("expected error, got nil (read=%d upload=%d expected=%d)",
-						tc.readSize, tc.uploadResultSize, tc.expectedSize)
+					t.Fatalf("expected error, got nil (read=%d expected=%d)",
+						tc.readSize, tc.expectedSize)
 				}
 				if !errors.Is(gotErr, errChunkSizeMismatch) {
 					t.Fatalf("expected errChunkSizeMismatch, got %v", gotErr)
@@ -171,11 +156,8 @@ func TestValidateReplicatedChunkSize(t *testing.T) {
 				}
 				return
 			}
-			if readErr != nil {
-				t.Fatalf("unexpected read-size error: %v", readErr)
-			}
-			if uploadErr != nil {
-				t.Fatalf("unexpected upload-size error: %v", uploadErr)
+			if gotErr != nil {
+				t.Fatalf("unexpected read-size error: %v", gotErr)
 			}
 		})
 	}
@@ -189,6 +171,13 @@ func TestValidateReplicatedChunkSize(t *testing.T) {
 func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 	const fid = "74,047d16a94aa581"
 	const expectedSize uint64 = 5171
+
+	// Shorten retry backoff so a fail-fast test that briefly enters the retry
+	// loop doesn't pay the production 1s+ wait. Scoped to this test so any
+	// future test in the package keeps the production constant.
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
 
 	var hits atomic.Int32
 	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -250,5 +239,44 @@ func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("fetchAndWrite did not return within 5s (retry loop not aborted on size mismatch); hits=%d", hits.Load())
+	}
+}
+
+// Lock in that the errChunkSizeMismatch sentinel survives the wrap in
+// replicateOneChunk + pass-through in util.Retry, so filer_sink.go's
+// errors.Is check actually fires.
+func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
+	const fid = "74,047d16a94aa581"
+	const expectedSize uint64 = 5171
+
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sourceServer.Close()
+
+	serverAddr := strings.TrimPrefix(sourceServer.URL, "http://")
+
+	filerSrc := &source.FilerSource{}
+	if err := filerSrc.DoInitialize(serverAddr, serverAddr, "/", true); err != nil {
+		t.Fatalf("filerSource.DoInitialize: %v", err)
+	}
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		address:     serverAddr,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	sourceChunks := []*filer_pb.FileChunk{{FileId: fid, Size: expectedSize}}
+
+	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", 0)
+	if err == nil {
+		t.Fatal("expected error from replicateChunks, got nil")
+	}
+	if !errors.Is(err, errChunkSizeMismatch) {
+		t.Fatalf("error chain broken: errors.Is(err, errChunkSizeMismatch) = false; got %v", err)
 	}
 }

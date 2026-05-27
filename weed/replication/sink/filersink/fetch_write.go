@@ -120,7 +120,7 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 
 	fileId, err := fs.fetchAndWrite(sourceChunk, path, sourceMtime)
 	if err != nil {
-		return nil, fmt.Errorf("copy %s: %v", sourceChunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("copy %s: %w", sourceChunk.GetFileIdString(), err)
 	}
 
 	return &filer_pb.FileChunk{
@@ -333,10 +333,6 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			return fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
-		if err := validateReplicatedUploadSize(sourceChunk, uploadResult.Size); err != nil {
-			return err
-		}
-
 		eofBackoff = 0
 		fileId = currentFileId
 		return nil
@@ -410,15 +406,6 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 		return fmt.Errorf("%w: read %s got %d bytes, source metadata says %d",
 			errChunkSizeMismatch, sourceChunk.GetFileIdString(),
 			readSize, sourceChunk.Size)
-	}
-	return nil
-}
-
-func validateReplicatedUploadSize(sourceChunk *filer_pb.FileChunk, uploadResultSize uint32) error {
-	if uint64(uploadResultSize) != sourceChunk.Size {
-		return fmt.Errorf("%w: upload %s destination stored %d bytes, source metadata says %d",
-			errChunkSizeMismatch, sourceChunk.GetFileIdString(),
-			uploadResultSize, sourceChunk.Size)
 	}
 	return nil
 }
