@@ -130,7 +130,8 @@ func TestS3WriteFilePassesMimeAsContentType(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{Mime: "text/html"},
 	}
 
-	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("<html></html>")))
+	_, err := client.WriteFile(loc, entry, bytes.NewReader([]byte("<html></html>")))
+	require.NoError(t, err)
 
 	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
 	require.Equal(t, "text/html", rt.uploadContentType(), "Content-Type should match entry.Attributes.Mime")
@@ -147,7 +148,8 @@ func TestS3WriteFileOmitsContentTypeWhenMimeMissing(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{},
 	}
 
-	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	_, err := client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	require.NoError(t, err)
 
 	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
 	// When entry.Attributes.Mime is empty we don't force a Content-Type so the
