@@ -56,12 +56,15 @@ func BytesToUint32(b []byte) (v uint32) {
 	return
 }
 func BytesToUint16(b []byte) (v uint16) {
-	if len(b) < 2 {
+	length := uint(len(b))
+	if length == 0 {
 		return 0
 	}
-	v += uint16(b[0])
-	v <<= 8
-	v += uint16(b[1])
+	for i := uint(0); i < length-1; i++ {
+		v += uint16(b[i])
+		v <<= 8
+	}
+	v += uint16(b[length-1])
 	return
 }
 func Uint64toBytes(b []byte, v uint64) {
