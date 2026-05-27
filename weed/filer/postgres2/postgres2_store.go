@@ -62,6 +62,8 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	store.SupportBucketTable = true
 	if !enableUpsert {
 		upsertQuery = ""
+	} else if upsertQuery == "" {
+		upsertQuery = postgres.DefaultUpsertQuery
 	}
 	store.SqlGenerator = &postgres.SqlGenPostgres{
 		CreateTableSqlTemplate: createTable,
