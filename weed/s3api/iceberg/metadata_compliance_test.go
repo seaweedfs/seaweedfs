@@ -2,7 +2,6 @@ package iceberg
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -157,7 +156,7 @@ func TestEnsureMetadataSpecCompliance_EmptyObjectBackfilled(t *testing.T) {
 func TestEnsureMetadataSpecCompliance_AllPresentReturnsSameBytes(t *testing.T) {
 	input := []byte("{\n  \"current-snapshot-id\": 1,\n  \"snapshots\": [],\n  \"snapshot-log\": [],\n  \"metadata-log\": [],\n  \"refs\": {}\n}")
 	out := ensureMetadataSpecCompliance(input)
-	if !strings.HasPrefix(string(out), "{\n  ") {
-		t.Errorf("expected original bytes returned unchanged, got %q", string(out))
+	if string(out) != string(input) {
+		t.Errorf("expected original bytes returned unchanged\n got: %q\nwant: %q", string(out), string(input))
 	}
 }
