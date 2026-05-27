@@ -64,6 +64,8 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	store.SupportBucketTable = false
 	if !enableUpsert {
 		upsertQuery = ""
+	} else if upsertQuery == "" {
+		upsertQuery = DefaultUpsertQuery
 	}
 	store.SqlGenerator = &SqlGenMysql{
 		CreateTableSqlTemplate: "",
