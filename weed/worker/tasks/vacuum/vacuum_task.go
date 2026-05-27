@@ -181,36 +181,31 @@ func (t *VacuumTask) vacuumTimeout(base time.Duration) time.Duration {
 
 // Helper methods for real vacuum operations
 
-// checkVacuumEligibility checks each replica's garbage ratio. Returns the
-// subset of servers whose garbage is at or above the configured threshold,
-// alongside a per-server ratio map for logging. The returned error is
-// non-nil only when every replica check failed — partial check errors are
-// logged and treated as "ineligible" so the task can still vacuum the
-// replicas that responded.
+// checkVacuumEligibility queries every replica's current garbage ratio.
+// Mirrors topology.batchVacuumVolumeCheck's all-or-nothing contract: if
+// any replica's check fails (unreachable, RPC error, etc.) the entire
+// task aborts. Vacuuming only the replicas that responded while
+// silently skipping unreachable ones would compact the responders'
+// garbage but leave the unreachable replica still carrying it,
+// producing divergence the moment that replica comes back.
+//
+// Returns the subset of servers whose garbage is at or above the
+// configured threshold, alongside a per-server ratio map for logging.
 func (t *VacuumTask) checkVacuumEligibility(ctx context.Context) ([]string, map[string]float64, error) {
 	ratios := make(map[string]float64, len(t.servers))
-	var errCount int
-	var lastErr error
 	for _, server := range t.servers {
 		ratio, err := t.checkOneVacuumEligibility(ctx, server)
 		if err != nil {
-			glog.Warningf("vacuum check failed for volume %d on %s: %v", t.volumeID, server, err)
-			errCount++
-			lastErr = err
-			continue
+			return nil, ratios, fmt.Errorf("vacuum check on %s for volume %d: %w (aborting; refusing to vacuum subset of replicas)", server, t.volumeID, err)
 		}
 		ratios[server] = ratio
 		glog.V(1).Infof("Volume %d on %s garbage ratio: %.2f%%, threshold: %.2f%%",
 			t.volumeID, server, ratio*100, t.garbageThreshold*100)
 	}
 
-	if errCount == len(t.servers) {
-		return nil, ratios, fmt.Errorf("vacuum check failed on all replicas: %v", lastErr)
-	}
-
 	eligible := make([]string, 0, len(ratios))
 	for _, server := range t.servers {
-		if ratio, ok := ratios[server]; ok && ratio >= t.garbageThreshold {
+		if ratios[server] >= t.garbageThreshold {
 			eligible = append(eligible, server)
 		}
 	}
