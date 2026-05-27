@@ -30,6 +30,9 @@ func (store *PostgresStore) GetName() string {
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
 	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Default on so minimal configs are not exposed to duplicate-key tx
+	// poisoning on Postgres; an explicit false still disables it.
+	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
 		configuration.GetString(prefix+"upsertQuery"),
 		configuration.GetBool(prefix+"enableUpsert"),
@@ -56,6 +59,8 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	store.SupportBucketTable = false
 	if !enableUpsert {
 		upsertQuery = ""
+	} else if upsertQuery == "" {
+		upsertQuery = DefaultUpsertQuery
 	}
 	store.SqlGenerator = &SqlGenPostgres{
 		CreateTableSqlTemplate: "",

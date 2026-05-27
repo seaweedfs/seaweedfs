@@ -13,6 +13,11 @@ type SqlGenPostgres struct {
 	UpsertQueryTemplate    string
 }
 
+// DefaultUpsertQuery keeps INSERTs idempotent so a duplicate-key failure
+// (23505) cannot poison the surrounding transaction (25P02). Used when the
+// user enables upsert but does not provide their own template.
+const DefaultUpsertQuery = `INSERT INTO "%s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash, name) DO UPDATE SET directory=EXCLUDED.directory, meta=EXCLUDED.meta`
+
 var (
 	_ = abstract_sql.SqlGenerator(&SqlGenPostgres{})
 )
