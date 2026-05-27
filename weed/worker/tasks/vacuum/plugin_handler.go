@@ -395,9 +395,15 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		}
 	}
 
+	servers := make([]string, 0, len(params.Sources))
+	for _, src := range params.Sources {
+		if src != nil && src.Node != "" {
+			servers = append(servers, src.Node)
+		}
+	}
 	task := NewVacuumTask(
 		request.Job.JobId,
-		params.Sources[0].Node,
+		servers,
 		params.VolumeId,
 		params.Collection,
 		h.grpcDialOption,

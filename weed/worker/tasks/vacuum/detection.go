@@ -18,75 +18,86 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	}
 
 	vacuumConfig := config.(*Config)
-	var results []*types.TaskDetectionResult
 	minVolumeAge := time.Duration(vacuumConfig.MinVolumeAgeSeconds) * time.Second
 
-	debugCount := 0
+	type volumeBucket struct {
+		replicas []*types.VolumeHealthMetrics
+	}
+	buckets := make(map[uint32]*volumeBucket)
+	order := make([]uint32, 0)
+	for _, m := range metrics {
+		b, ok := buckets[m.VolumeID]
+		if !ok {
+			b = &volumeBucket{}
+			buckets[m.VolumeID] = b
+			order = append(order, m.VolumeID)
+		}
+		b.replicas = append(b.replicas, m)
+	}
+
+	var results []*types.TaskDetectionResult
 	skippedDueToGarbage := 0
 	skippedDueToAge := 0
+	debugCount := 0
 
-	for _, metric := range metrics {
-		// Check if volume needs vacuum
-		if metric.GarbageRatio >= vacuumConfig.GarbageThreshold && metric.Age >= minVolumeAge {
-			priority := types.TaskPriorityNormal
-			if metric.GarbageRatio > 0.6 {
-				priority = types.TaskPriorityHigh
-			}
+	for _, vid := range order {
+		replicas := buckets[vid].replicas
 
-			// Generate task ID for future ActiveTopology integration
-			taskID := fmt.Sprintf("vacuum_vol_%d_%d", metric.VolumeID, time.Now().Unix())
+		// Pick the replica with the highest garbage ratio that also satisfies
+		// the minimum-age gate as the "primary" used for priority + reason.
+		// Master built-in vacuum filters per-replica again inside
+		// batchVacuumVolumeCheck, so it's fine if only some replicas are
+		// above threshold here — the worker's checkVacuumEligibility will
+		// filter again at execute time.
+		primary := pickPrimaryReplica(replicas, vacuumConfig.GarbageThreshold, minVolumeAge)
+		if primary == nil {
+			recordSkipReasons(replicas, vacuumConfig.GarbageThreshold, minVolumeAge, &skippedDueToGarbage, &skippedDueToAge, &debugCount)
+			continue
+		}
 
-			result := &types.TaskDetectionResult{
-				TaskID:     taskID, // For future ActiveTopology integration
-				TaskType:   types.TaskTypeVacuum,
-				VolumeID:   metric.VolumeID,
-				Server:     metric.Server,
-				Collection: metric.Collection,
-				Priority:   priority,
-				Reason:     "Volume has excessive garbage requiring vacuum",
-				ScheduleAt: time.Now(),
-			}
+		priority := types.TaskPriorityNormal
+		if primary.GarbageRatio > 0.6 {
+			priority = types.TaskPriorityHigh
+		}
 
-			// Check if ANY task already exists in ActiveTopology for this volume
-			if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
-				if clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
-					glog.V(2).Infof("VACUUM: Skipping volume %d, task already exists in ActiveTopology", metric.VolumeID)
-					continue
-				}
-			}
+		taskID := fmt.Sprintf("vacuum_vol_%d_%d", vid, time.Now().Unix())
 
-			// Create typed parameters for vacuum task
-			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig, clusterInfo)
-			if result.TypedParams != nil {
-				results = append(results, result)
+		result := &types.TaskDetectionResult{
+			TaskID:     taskID,
+			TaskType:   types.TaskTypeVacuum,
+			VolumeID:   vid,
+			Server:     primary.Server,
+			Collection: primary.Collection,
+			Priority:   priority,
+			Reason:     "Volume has excessive garbage requiring vacuum",
+			ScheduleAt: time.Now(),
+		}
+
+		// Check if ANY task already exists in ActiveTopology for this volume
+		if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
+			if clusterInfo.ActiveTopology.HasAnyTask(vid) {
+				glog.V(2).Infof("VACUUM: Skipping volume %d, task already exists in ActiveTopology", vid)
+				continue
 			}
-		} else {
-			// Debug why volume was not selected
-			if debugCount < 5 { // Limit debug output to first 5 volumes
-				if metric.GarbageRatio < vacuumConfig.GarbageThreshold {
-					skippedDueToGarbage++
-				}
-				if metric.Age < minVolumeAge {
-					skippedDueToAge++
-				}
-			}
-			debugCount++
+		}
+
+		result.TypedParams = createVacuumTaskParams(result, replicas, vacuumConfig, clusterInfo)
+		if result.TypedParams != nil {
+			results = append(results, result)
 		}
 	}
 
-	// Log debug summary if no tasks were created
 	if len(results) == 0 && len(metrics) > 0 {
 		totalVolumes := len(metrics)
-		glog.V(1).Infof("VACUUM: No tasks created for %d volumes. Threshold=%.2f%%, MinAge=%s. Skipped: %d (garbage<threshold), %d (age<minimum)",
-			totalVolumes, vacuumConfig.GarbageThreshold*100, minVolumeAge, skippedDueToGarbage, skippedDueToAge)
+		glog.V(1).Infof("VACUUM: No tasks created for %d volume replicas across %d volumes. Threshold=%.2f%%, MinAge=%s. Skipped: %d (garbage<threshold), %d (age<minimum)",
+			totalVolumes, len(buckets), vacuumConfig.GarbageThreshold*100, minVolumeAge, skippedDueToGarbage, skippedDueToAge)
 
-		// Show details for first few volumes
 		for i, metric := range metrics {
-			if i >= 3 { // Limit to first 3 volumes
+			if i >= 3 {
 				break
 			}
-			glog.V(1).Infof("VACUUM: Volume %d: garbage=%.2f%% (need ≥%.2f%%), age=%s (need ≥%s)",
-				metric.VolumeID, metric.GarbageRatio*100, vacuumConfig.GarbageThreshold*100,
+			glog.V(1).Infof("VACUUM: Volume %d on %s: garbage=%.2f%% (need ≥%.2f%%), age=%s (need ≥%s)",
+				metric.VolumeID, metric.Server, metric.GarbageRatio*100, vacuumConfig.GarbageThreshold*100,
 				metric.Age.Truncate(time.Minute), minVolumeAge.Truncate(time.Minute))
 		}
 	}
@@ -94,54 +105,100 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	return results, nil
 }
 
-// createVacuumTaskParams creates typed parameters for vacuum tasks
-// This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
-func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
-	// Use configured values or defaults
-	garbageThreshold := 0.3  // Default 30%
-	verifyChecksum := true   // Default to verify
-	batchSize := int32(1000) // Default batch size
-	workingDir := ""         // Use worker-provided default if empty
+// pickPrimaryReplica returns the eligible replica with the highest garbage
+// ratio. Returns nil if no replica satisfies both gates.
+func pickPrimaryReplica(replicas []*types.VolumeHealthMetrics, garbageThreshold float64, minAge time.Duration) *types.VolumeHealthMetrics {
+	var best *types.VolumeHealthMetrics
+	for _, m := range replicas {
+		if m.GarbageRatio < garbageThreshold {
+			continue
+		}
+		if m.Age < minAge {
+			continue
+		}
+		if best == nil || m.GarbageRatio > best.GarbageRatio {
+			best = m
+		}
+	}
+	return best
+}
+
+// recordSkipReasons tallies skip counters for debug logging when no
+// replica of a volume qualified for vacuum.
+func recordSkipReasons(replicas []*types.VolumeHealthMetrics, garbageThreshold float64, minAge time.Duration, garbageSkip, ageSkip, debugCount *int) {
+	for _, m := range replicas {
+		if *debugCount >= 5 {
+			return
+		}
+		if m.GarbageRatio < garbageThreshold {
+			*garbageSkip++
+		}
+		if m.Age < minAge {
+			*ageSkip++
+		}
+		*debugCount++
+	}
+}
+
+// createVacuumTaskParams creates typed parameters for a vacuum task whose
+// Sources list contains every replica of the volume. Worker-side
+// performVacuum iterates over Sources and vacuums each replica.
+func createVacuumTaskParams(task *types.TaskDetectionResult, replicas []*types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
+	garbageThreshold := 0.3
+	verifyChecksum := true
+	batchSize := int32(1000)
+	workingDir := ""
 
 	if vacuumConfig != nil {
 		garbageThreshold = vacuumConfig.GarbageThreshold
-		// Note: VacuumTaskConfig has GarbageThreshold, MinVolumeAgeHours
-		// Other fields like VerifyChecksum, BatchSize, WorkingDir would need to be added
-		// to the protobuf definition if they should be configurable
 	}
 
-	// Use DC and rack information directly from VolumeHealthMetrics
-	sourceDC, sourceRack := metric.DataCenter, metric.Rack
-
-	// Get server address from topology (required for vacuum tasks)
 	if clusterInfo == nil || clusterInfo.ActiveTopology == nil {
 		glog.Errorf("Topology not available for vacuum task on volume %d, skipping", task.VolumeID)
 		return nil
 	}
-	address, err := util.ResolveServerAddress(task.Server, clusterInfo.ActiveTopology)
-	if err != nil {
-		glog.Errorf("Failed to resolve address for server %s for vacuum task on volume %d, skipping task: %v", task.Server, task.VolumeID, err)
+
+	sources := make([]*worker_pb.TaskSource, 0, len(replicas))
+	seen := make(map[string]struct{}, len(replicas))
+	for _, m := range replicas {
+		address, err := util.ResolveServerAddress(m.Server, clusterInfo.ActiveTopology)
+		if err != nil {
+			glog.Warningf("Failed to resolve address for server %s for vacuum task on volume %d, dropping replica: %v", m.Server, task.VolumeID, err)
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		sources = append(sources, &worker_pb.TaskSource{
+			Node:          address,
+			VolumeId:      task.VolumeID,
+			EstimatedSize: m.Size,
+			DataCenter:    m.DataCenter,
+			Rack:          m.Rack,
+		})
+	}
+
+	if len(sources) == 0 {
+		glog.Errorf("No resolvable replicas for vacuum task on volume %d, skipping", task.VolumeID)
 		return nil
 	}
 
-	// Create typed protobuf parameters with unified sources
+	// Use the primary replica (matches task.Server) for the canonical size
+	// recorded in TaskParams. Master built-in keeps a single volumeSizeLimit
+	// here so timeouts are stable across replicas.
+	canonical := primaryReplicaByServer(replicas, task.Server)
+	var canonicalSize uint64
+	if canonical != nil {
+		canonicalSize = canonical.Size
+	}
+
 	return &worker_pb.TaskParams{
-		TaskId:     task.TaskID, // Link to ActiveTopology pending task (if integrated)
+		TaskId:     task.TaskID,
 		VolumeId:   task.VolumeID,
 		Collection: task.Collection,
-		VolumeSize: metric.Size, // Store original volume size for tracking changes
-
-		// Unified sources array
-		Sources: []*worker_pb.TaskSource{
-			{
-				Node:          address,
-				VolumeId:      task.VolumeID,
-				EstimatedSize: metric.Size,
-				DataCenter:    sourceDC,
-				Rack:          sourceRack,
-			},
-		},
-
+		VolumeSize: canonicalSize,
+		Sources:    sources,
 		TaskParams: &worker_pb.TaskParams_VacuumParams{
 			VacuumParams: &worker_pb.VacuumTaskParams{
 				GarbageThreshold: garbageThreshold,
@@ -152,4 +209,16 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 			},
 		},
 	}
+}
+
+func primaryReplicaByServer(replicas []*types.VolumeHealthMetrics, server string) *types.VolumeHealthMetrics {
+	for _, m := range replicas {
+		if m.Server == server {
+			return m
+		}
+	}
+	if len(replicas) > 0 {
+		return replicas[0]
+	}
+	return nil
 }

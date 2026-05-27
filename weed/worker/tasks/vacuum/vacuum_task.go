@@ -16,23 +16,33 @@ import (
 	"google.golang.org/grpc"
 )
 
-// VacuumTask implements the Task interface
+// VacuumTask implements the Task interface.
+//
+// One task covers all replicas of a volume so behavior matches the master
+// built-in vacuum (see topology.Topology.vacuumOneVolumeId): Check across
+// every replica → filter to those whose garbage ratio meets the threshold
+// → Compact/Commit/Cleanup that subset. Treating one replica per task (the
+// prior behavior) drops the other N-1 replicas because the dispatcher
+// gates duplicate tasks per volume via ActiveTopology.HasAnyTask.
 type VacuumTask struct {
 	*base.BaseTask
-	server           string
+	servers          []string
 	volumeID         uint32
 	collection       string
 	garbageThreshold float64
 	progress         float64
 	grpcDialOption   grpc.DialOption
 	volumeSize       uint64
+	vacuumTargets    []string // populated by checkVacuumEligibility — subset of servers that pass the per-replica garbage re-check and proceed to Compact/Commit/Cleanup
 }
 
-// NewVacuumTask creates a new unified vacuum task instance
-func NewVacuumTask(id string, server string, volumeID uint32, collection string, grpcDialOption grpc.DialOption) *VacuumTask {
+// NewVacuumTask creates a new unified vacuum task instance covering every
+// replica server reported by the dispatcher.
+func NewVacuumTask(id string, servers []string, volumeID uint32, collection string, grpcDialOption grpc.DialOption) *VacuumTask {
+	deduped := dedupePreserveOrder(servers)
 	return &VacuumTask{
 		BaseTask:         base.NewBaseTask(id, types.TaskTypeVacuum),
-		server:           server,
+		servers:          deduped,
 		volumeID:         volumeID,
 		collection:       collection,
 		garbageThreshold: 0.3, // Default 30% threshold
@@ -56,40 +66,49 @@ func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) 
 
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":         t.volumeID,
-		"server":            t.server,
+		"servers":           t.servers,
 		"collection":        t.collection,
 		"garbage_threshold": t.garbageThreshold,
 	}).Info("Starting vacuum task")
 
-	// Step 1: Check volume status and garbage ratio
+	if len(t.servers) == 0 {
+		return fmt.Errorf("no source servers configured for vacuum task")
+	}
+
+	// Step 1: Check vacuum eligibility for each replica. Mirrors
+	// topology.batchVacuumVolumeCheck — only replicas whose garbage is at
+	// or above the threshold proceed to Compact/Commit/Cleanup.
 	t.ReportProgress(10.0)
 	t.GetLogger().Info("Checking volume status")
-	eligible, currentGarbageRatio, err := t.checkVacuumEligibility(ctx)
+	targets, currentGarbageRatios, err := t.checkVacuumEligibility(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check vacuum eligibility: %v", err)
 	}
 
-	if !eligible {
+	if len(targets) == 0 {
 		t.GetLogger().WithFields(map[string]interface{}{
-			"current_garbage_ratio": currentGarbageRatio,
-			"required_threshold":    t.garbageThreshold,
-		}).Info("Volume does not meet vacuum criteria, skipping")
+			"garbage_ratios":     currentGarbageRatios,
+			"required_threshold": t.garbageThreshold,
+		}).Info("No replica meets vacuum criteria, skipping")
 		t.ReportProgress(100.0)
 		return nil
 	}
+	t.vacuumTargets = targets
 
-	// Step 2: Perform vacuum operation
+	// Step 2: Perform vacuum (compact + commit + cleanup) across every
+	// target replica.
 	t.ReportProgress(50.0)
 	t.GetLogger().WithFields(map[string]interface{}{
-		"garbage_ratio": currentGarbageRatio,
-		"threshold":     t.garbageThreshold,
+		"vacuum_targets": targets,
+		"garbage_ratios": currentGarbageRatios,
+		"threshold":      t.garbageThreshold,
 	}).Info("Performing vacuum operation")
 
 	if err := t.performVacuum(ctx); err != nil {
 		return fmt.Errorf("failed to perform vacuum: %v", err)
 	}
 
-	// Step 3: Verify vacuum results
+	// Step 3: Verify vacuum results on each target replica.
 	t.ReportProgress(90.0)
 	t.GetLogger().Info("Verifying vacuum results")
 	if err := t.verifyVacuumResults(ctx); err != nil {
@@ -98,8 +117,8 @@ func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) 
 	}
 
 	t.ReportProgress(100.0)
-	glog.Infof("Vacuum task completed successfully: volume %d from %s (garbage ratio was %.2f%%)",
-		t.volumeID, t.server, currentGarbageRatio*100)
+	glog.Infof("Vacuum task completed successfully: volume %d on %v (garbage ratios %v)",
+		t.volumeID, targets, currentGarbageRatios)
 	return nil
 }
 
@@ -118,16 +137,17 @@ func (t *VacuumTask) Validate(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("volume ID mismatch: expected %d, got %d", t.volumeID, params.VolumeId)
 	}
 
-	// Validate that at least one source matches our server
-	found := false
+	// Every server the task was created with must appear in the params'
+	// Sources list. The dispatcher fills Sources from the detection-time
+	// replica set, so a mismatch means the worker received stale routing.
+	sourceSet := make(map[string]struct{}, len(params.Sources))
 	for _, source := range params.Sources {
-		if source.Node == t.server {
-			found = true
-			break
-		}
+		sourceSet[source.Node] = struct{}{}
 	}
-	if !found {
-		return fmt.Errorf("no source matches expected server %s", t.server)
+	for _, server := range t.servers {
+		if _, ok := sourceSet[server]; !ok {
+			return fmt.Errorf("task server %s not present in params.Sources", server)
+		}
 	}
 
 	if vacuumParams.GarbageThreshold < 0 || vacuumParams.GarbageThreshold > 1.0 {
@@ -161,11 +181,45 @@ func (t *VacuumTask) vacuumTimeout(base time.Duration) time.Duration {
 
 // Helper methods for real vacuum operations
 
-// checkVacuumEligibility checks if the volume meets vacuum criteria
-func (t *VacuumTask) checkVacuumEligibility(ctx context.Context) (bool, float64, error) {
-	var garbageRatio float64
+// checkVacuumEligibility checks each replica's garbage ratio. Returns the
+// subset of servers whose garbage is at or above the configured threshold,
+// alongside a per-server ratio map for logging. The returned error is
+// non-nil only when every replica check failed — partial check errors are
+// logged and treated as "ineligible" so the task can still vacuum the
+// replicas that responded.
+func (t *VacuumTask) checkVacuumEligibility(ctx context.Context) ([]string, map[string]float64, error) {
+	ratios := make(map[string]float64, len(t.servers))
+	var errCount int
+	var lastErr error
+	for _, server := range t.servers {
+		ratio, err := t.checkOneVacuumEligibility(ctx, server)
+		if err != nil {
+			glog.Warningf("vacuum check failed for volume %d on %s: %v", t.volumeID, server, err)
+			errCount++
+			lastErr = err
+			continue
+		}
+		ratios[server] = ratio
+		glog.V(1).Infof("Volume %d on %s garbage ratio: %.2f%%, threshold: %.2f%%",
+			t.volumeID, server, ratio*100, t.garbageThreshold*100)
+	}
 
-	err := operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
+	if errCount == len(t.servers) {
+		return nil, ratios, fmt.Errorf("vacuum check failed on all replicas: %v", lastErr)
+	}
+
+	eligible := make([]string, 0, len(ratios))
+	for _, server := range t.servers {
+		if ratio, ok := ratios[server]; ok && ratio >= t.garbageThreshold {
+			eligible = append(eligible, server)
+		}
+	}
+	return eligible, ratios, nil
+}
+
+func (t *VacuumTask) checkOneVacuumEligibility(ctx context.Context, server string) (float64, error) {
+	var garbageRatio float64
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			checkCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cancel()
@@ -175,29 +229,29 @@ func (t *VacuumTask) checkVacuumEligibility(ctx context.Context) (bool, float64,
 			if err != nil {
 				return fmt.Errorf("failed to check volume vacuum status: %v", err)
 			}
-
 			garbageRatio = resp.GarbageRatio
-
 			return nil
 		})
-
-	if err != nil {
-		return false, 0, err
-	}
-
-	eligible := garbageRatio >= t.garbageThreshold
-	glog.V(1).Infof("Volume %d garbage ratio: %.2f%%, threshold: %.2f%%, eligible: %v",
-		t.volumeID, garbageRatio*100, t.garbageThreshold*100, eligible)
-
-	return eligible, garbageRatio, nil
+	return garbageRatio, err
 }
 
-// performVacuum executes the actual vacuum operation
+// performVacuum runs Compact → Commit → Cleanup on every target replica.
+// Errors on any single replica fail the task (matches the strict semantics
+// expected of a batched vacuum cycle).
 func (t *VacuumTask) performVacuum(ctx context.Context) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
+	for _, server := range t.vacuumTargets {
+		if err := t.performVacuumOne(ctx, server); err != nil {
+			return fmt.Errorf("vacuum on %s: %w", server, err)
+		}
+	}
+	return nil
+}
+
+func (t *VacuumTask) performVacuumOne(ctx context.Context, server string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			// Step 1: Compact the volume (3 min per GB, matching topology vacuum)
-			t.GetLogger().Info("Compacting volume")
+			t.GetLogger().Info("Compacting volume on %s", server)
 			compactCtx, compactCancel := context.WithTimeout(ctx, t.vacuumTimeout(3*time.Minute))
 			defer compactCancel()
 			stream, err := client.VacuumVolumeCompact(compactCtx, &volume_server_pb.VacuumVolumeCompactRequest{
@@ -216,11 +270,11 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 					}
 					return fmt.Errorf("vacuum compact stream error: %v", recvErr)
 				}
-				glog.V(2).Infof("Volume %d compact progress: %d bytes processed", t.volumeID, resp.ProcessedBytes)
+				glog.V(2).Infof("Volume %d on %s compact progress: %d bytes processed", t.volumeID, server, resp.ProcessedBytes)
 			}
 
 			// Step 2: Commit the vacuum (1 min per GB)
-			t.GetLogger().Info("Committing vacuum operation")
+			t.GetLogger().Info("Committing vacuum operation on %s", server)
 			commitCtx, commitCancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer commitCancel()
 			_, err = client.VacuumVolumeCommit(commitCtx, &volume_server_pb.VacuumVolumeCommitRequest{
@@ -231,7 +285,7 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 			}
 
 			// Step 3: Cleanup old files (1 min per GB)
-			t.GetLogger().Info("Cleaning up vacuum files")
+			t.GetLogger().Info("Cleaning up vacuum files on %s", server)
 			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cleanupCancel()
 			_, err = client.VacuumVolumeCleanup(cleanupCtx, &volume_server_pb.VacuumVolumeCleanupRequest{
@@ -241,29 +295,53 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 				return fmt.Errorf("vacuum cleanup failed: %v", err)
 			}
 
-			glog.V(1).Infof("Volume %d vacuum operation completed successfully", t.volumeID)
+			glog.V(1).Infof("Volume %d on %s vacuum operation completed successfully", t.volumeID, server)
 			return nil
 		})
 }
 
-// verifyVacuumResults checks the volume status after vacuum
+// verifyVacuumResults checks each target replica's post-vacuum garbage
+// ratio. Failures are logged at WARN — the task does not fail because the
+// vacuum itself already succeeded.
 func (t *VacuumTask) verifyVacuumResults(ctx context.Context) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			verifyCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
-			defer cancel()
-			resp, err := client.VacuumVolumeCheck(verifyCtx, &volume_server_pb.VacuumVolumeCheckRequest{
-				VolumeId: t.volumeID,
+	for _, server := range t.vacuumTargets {
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				verifyCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
+				defer cancel()
+				resp, err := client.VacuumVolumeCheck(verifyCtx, &volume_server_pb.VacuumVolumeCheckRequest{
+					VolumeId: t.volumeID,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to verify vacuum results: %v", err)
+				}
+				glog.V(1).Infof("Volume %d on %s post-vacuum garbage ratio: %.2f%%",
+					t.volumeID, server, resp.GarbageRatio*100)
+				return nil
 			})
-			if err != nil {
-				return fmt.Errorf("failed to verify vacuum results: %v", err)
-			}
+		if err != nil {
+			glog.Warningf("post-vacuum verify on %s: %v", server, err)
+		}
+	}
+	return nil
+}
 
-			postVacuumGarbageRatio := resp.GarbageRatio
-
-			glog.V(1).Infof("Volume %d post-vacuum garbage ratio: %.2f%%",
-				t.volumeID, postVacuumGarbageRatio*100)
-
-			return nil
-		})
+// dedupePreserveOrder returns servers with duplicates removed, keeping the
+// first occurrence's position. Detection sometimes hands the same node
+// address in multiple Sources (e.g. EC variants); we coalesce them so each
+// physical replica is vacuumed exactly once.
+func dedupePreserveOrder(servers []string) []string {
+	seen := make(map[string]struct{}, len(servers))
+	out := make([]string, 0, len(servers))
+	for _, s := range servers {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
