@@ -299,6 +299,9 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 		Body:    reader,
 		Tagging: awsTags,
 	}
+	if entry.Attributes != nil && entry.Attributes.Mime != "" {
+		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
+	}
 	if s.conf.S3StorageClass != "" {
 		uploadInput.StorageClass = aws.String(s.conf.S3StorageClass)
 	}
