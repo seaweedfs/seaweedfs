@@ -35,6 +35,9 @@ func (store *MysqlStore) GetName() string {
 func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
 	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Default on so minimal configs avoid the duplicate-key roundtrip the
+	// inode-index KvPut would otherwise emit on every write.
+	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
 		configuration.GetString(prefix+"dsn"),
 		configuration.GetString(prefix+"upsertQuery"),

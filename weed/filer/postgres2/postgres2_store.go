@@ -35,6 +35,9 @@ func (store *PostgresStore2) GetName() string {
 func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
 	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
 	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Default on so minimal configs are not exposed to duplicate-key tx
+	// poisoning on Postgres; an explicit false still disables it.
+	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
 		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"upsertQuery"),
