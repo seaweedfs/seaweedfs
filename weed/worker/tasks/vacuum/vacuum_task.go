@@ -235,69 +235,113 @@ func (t *VacuumTask) checkOneVacuumEligibility(ctx context.Context, server strin
 	return garbageRatio, err
 }
 
-// performVacuum runs Compact → Commit → Cleanup on every target replica.
-// Errors on any single replica fail the task (matches the strict semantics
-// expected of a batched vacuum cycle).
+// performVacuum runs the two-phase vacuum protocol that master built-in
+// vacuum uses (topology.vacuumOneVolumeId):
+//
+//   Phase 1 (Compact): build the new .cpd/.cpx files on every target.
+//   If any replica fails, roll back by Cleanup'ing the .cp* temp files
+//   on every target and abort — no replica has yet swapped its active
+//   files, so no replica is committed.
+//
+//   Phase 2 (Commit): swap each target's active files with its .cp*
+//   files. Best-effort, matching batchVacuumVolumeCommit: per-replica
+//   errors are logged and surfaced together, but once any replica has
+//   swapped there is no clean rollback for the others, so we do not
+//   retry or undo. An operator must reconcile a partial commit
+//   failure.
+//
+// Interleaving Compact→Commit→Cleanup per replica (the prior behavior)
+// could leave a committed first replica beside an uncompacted second
+// replica when Compact on the second failed — replica divergence with
+// no automatic recovery.
 func (t *VacuumTask) performVacuum(ctx context.Context) error {
+	// Phase 1: Compact all targets.
 	for _, server := range t.vacuumTargets {
-		if err := t.performVacuumOne(ctx, server); err != nil {
-			return fmt.Errorf("vacuum on %s: %w", server, err)
+		if err := t.compactOne(ctx, server); err != nil {
+			t.cleanupAll(ctx)
+			return fmt.Errorf("vacuum compact on %s: %w", server, err)
 		}
+	}
+
+	// Phase 2: Commit all targets.
+	var commitErrors []error
+	for _, server := range t.vacuumTargets {
+		if err := t.commitOne(ctx, server); err != nil {
+			glog.Errorf("vacuum commit on %s for volume %d: %v", server, t.volumeID, err)
+			commitErrors = append(commitErrors, fmt.Errorf("%s: %w", server, err))
+		}
+	}
+	if len(commitErrors) > 0 {
+		return fmt.Errorf("vacuum commit failed on %d/%d replicas: %v",
+			len(commitErrors), len(t.vacuumTargets), commitErrors)
 	}
 	return nil
 }
 
-func (t *VacuumTask) performVacuumOne(ctx context.Context, server string) error {
+func (t *VacuumTask) compactOne(ctx context.Context, server string) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
-			// Step 1: Compact the volume (3 min per GB, matching topology vacuum)
 			t.GetLogger().Info("Compacting volume on %s", server)
-			compactCtx, compactCancel := context.WithTimeout(ctx, t.vacuumTimeout(3*time.Minute))
-			defer compactCancel()
+			compactCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(3*time.Minute))
+			defer cancel()
 			stream, err := client.VacuumVolumeCompact(compactCtx, &volume_server_pb.VacuumVolumeCompactRequest{
 				VolumeId: t.volumeID,
 			})
 			if err != nil {
-				return fmt.Errorf("vacuum compact failed: %v", err)
+				return fmt.Errorf("vacuum compact start: %v", err)
 			}
-
-			// Read compact progress
 			for {
 				resp, recvErr := stream.Recv()
 				if recvErr != nil {
 					if recvErr == io.EOF {
 						break
 					}
-					return fmt.Errorf("vacuum compact stream error: %v", recvErr)
+					return fmt.Errorf("vacuum compact stream: %v", recvErr)
 				}
-				glog.V(2).Infof("Volume %d on %s compact progress: %d bytes processed", t.volumeID, server, resp.ProcessedBytes)
+				glog.V(2).Infof("Volume %d on %s compact progress: %d bytes", t.volumeID, server, resp.ProcessedBytes)
 			}
-
-			// Step 2: Commit the vacuum (1 min per GB)
-			t.GetLogger().Info("Committing vacuum operation on %s", server)
-			commitCtx, commitCancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
-			defer commitCancel()
-			_, err = client.VacuumVolumeCommit(commitCtx, &volume_server_pb.VacuumVolumeCommitRequest{
-				VolumeId: t.volumeID,
-			})
-			if err != nil {
-				return fmt.Errorf("vacuum commit failed: %v", err)
-			}
-
-			// Step 3: Cleanup old files (1 min per GB)
-			t.GetLogger().Info("Cleaning up vacuum files on %s", server)
-			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
-			defer cleanupCancel()
-			_, err = client.VacuumVolumeCleanup(cleanupCtx, &volume_server_pb.VacuumVolumeCleanupRequest{
-				VolumeId: t.volumeID,
-			})
-			if err != nil {
-				return fmt.Errorf("vacuum cleanup failed: %v", err)
-			}
-
-			glog.V(1).Infof("Volume %d on %s vacuum operation completed successfully", t.volumeID, server)
 			return nil
 		})
+}
+
+func (t *VacuumTask) commitOne(ctx context.Context, server string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			t.GetLogger().Info("Committing vacuum on %s", server)
+			commitCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
+			defer cancel()
+			_, err := client.VacuumVolumeCommit(commitCtx, &volume_server_pb.VacuumVolumeCommitRequest{
+				VolumeId: t.volumeID,
+			})
+			if err != nil {
+				return fmt.Errorf("vacuum commit: %v", err)
+			}
+			return nil
+		})
+}
+
+func (t *VacuumTask) cleanupOne(ctx context.Context, server string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			cleanupCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
+			defer cancel()
+			_, err := client.VacuumVolumeCleanup(cleanupCtx, &volume_server_pb.VacuumVolumeCleanupRequest{
+				VolumeId: t.volumeID,
+			})
+			return err
+		})
+}
+
+// cleanupAll removes the .cpd/.cpx/.cpldb temp files on every target.
+// Used to roll back when Compact fails on one replica after others
+// have already created their temp files. Per-target failures are
+// logged but never bubble up — the rollback is best-effort.
+func (t *VacuumTask) cleanupAll(ctx context.Context) {
+	for _, server := range t.vacuumTargets {
+		if err := t.cleanupOne(ctx, server); err != nil {
+			glog.Warningf("rollback cleanup on %s for volume %d: %v", server, t.volumeID, err)
+		}
+	}
 }
 
 // verifyVacuumResults checks each target replica's post-vacuum garbage
