@@ -26,6 +26,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	buckets := make(map[uint32]*volumeBucket)
 	order := make([]uint32, 0)
 	for _, m := range metrics {
+		if m == nil {
+			continue
+		}
 		b, ok := buckets[m.VolumeID]
 		if !ok {
 			b = &volumeBucket{}

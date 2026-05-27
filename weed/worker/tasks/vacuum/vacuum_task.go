@@ -142,6 +142,9 @@ func (t *VacuumTask) Validate(params *worker_pb.TaskParams) error {
 	// replica set, so a mismatch means the worker received stale routing.
 	sourceSet := make(map[string]struct{}, len(params.Sources))
 	for _, source := range params.Sources {
+		if source == nil {
+			continue
+		}
 		sourceSet[source.Node] = struct{}{}
 	}
 	for _, server := range t.servers {
