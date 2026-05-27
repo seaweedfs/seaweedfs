@@ -227,6 +227,9 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 	metadata := toMetadata(entry.Extended)
 	wc := gcs.client.Bucket(loc.Bucket).Object(key).NewWriter(context.Background())
 	wc.Metadata = metadata
+	if entry.Attributes != nil && entry.Attributes.Mime != "" {
+		wc.ContentType = entry.Attributes.Mime
+	}
 	if _, err = io.Copy(wc, reader); err != nil {
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
