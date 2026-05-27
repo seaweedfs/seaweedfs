@@ -114,6 +114,10 @@ func TestEnsureMetadataSpecCompliance_EmptyInputReturnedUnchanged(t *testing.T) 
 	if out := ensureMetadataSpecCompliance([]byte{}); len(out) != 0 {
 		t.Errorf("empty input should be returned unchanged, got %v", out)
 	}
+	// A top-level JSON null literal must not panic on the slow path.
+	if out := ensureMetadataSpecCompliance([]byte("null")); string(out) != "null" {
+		t.Errorf("top-level null should be returned unchanged, got %s", string(out))
+	}
 }
 
 // Original iceberg-go key ordering must survive the backfill: appended

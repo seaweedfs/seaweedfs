@@ -58,6 +58,12 @@ func ensureMetadataSpecCompliance(raw []byte) []byte {
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return raw
 	}
+	// A top-level JSON null leaves obj == nil with no error; writes would
+	// panic on the slow path. It is not a valid TableMetadata document, so
+	// pass it through unchanged.
+	if obj == nil {
+		return raw
+	}
 
 	// A field is "missing" for spec purposes if it's absent OR encoded as
 	// JSON null. Some writers emit `"current-snapshot-id": null` for empty
