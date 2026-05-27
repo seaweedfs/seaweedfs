@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 func newMiscTestServer(t *testing.T, bucket string) *S3ApiServer {
@@ -99,6 +101,36 @@ func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "MalformedXML") {
 		t.Fatalf("body missing MalformedXML: %s", rec.Body.String())
+	}
+}
+
+func TestPutBucketOwnershipControlsRejectsRuleWithoutObjectOwnership(t *testing.T) {
+	ownerID := AccountAdmin.Id
+	s3a := &S3ApiServer{
+		bucketRegistry: &BucketRegistry{
+			metadataCache: map[string]*BucketMetaData{
+				"b": {
+					Name: "b",
+					Owner: &s3.Owner{
+						ID: &ownerID,
+					},
+				},
+			},
+			notFound: map[string]struct{}{},
+		},
+	}
+	body := `<OwnershipControls><Rule></Rule></OwnershipControls>`
+	req := newBucketRequest(http.MethodPut, "b", "ownershipControls=", body)
+	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	rec := httptest.NewRecorder()
+
+	s3a.PutBucketOwnershipControls(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "InvalidRequest") {
+		t.Fatalf("body missing InvalidRequest: %s", rec.Body.String())
 	}
 }
 
