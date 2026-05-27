@@ -133,6 +133,10 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			message: "Failed to apply statistics updates: " + err.Error(),
 		}
 	}
+	// Same spec-compliance fixup we apply on create-table; ensures
+	// v{N}.metadata.json files written through this create-on-commit path are
+	// also readable by strict Iceberg clients reading directly from S3.
+	metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 	newMetadata, err = table.ParseMetadataBytes(metadataBytes)
 	if err != nil {
 		return nil, &icebergRequestError{

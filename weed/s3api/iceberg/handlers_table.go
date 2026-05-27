@@ -161,6 +161,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
 		return
 	}
+	// Backfill Iceberg spec-required fields that iceberg-go v0.5.0 omits when
+	// empty (e.g. current-snapshot-id), so the persisted v*.metadata.json is
+	// readable by strict clients (Java/Spark/Trino) that go directly to S3.
+	metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 
 	tableName := req.Name
 	metadataFileName := "v1.metadata.json" // Initial version is always 1
