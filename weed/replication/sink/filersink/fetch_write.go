@@ -120,7 +120,7 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 
 	fileId, err := fs.fetchAndWrite(sourceChunk, path, sourceMtime)
 	if err != nil {
-		return nil, fmt.Errorf("copy %s: %v", sourceChunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("copy %s: %w", sourceChunk.GetFileIdString(), err)
 	}
 
 	return &filer_pb.FileChunk{
@@ -292,6 +292,10 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			fullData = data
 		}
 
+		if err := validateReplicatedReadSize(sourceChunk, len(fullData)); err != nil {
+			return err
+		}
+
 		transferStatus.mu.Lock()
 		transferStatus.BytesReceived = int64(len(fullData))
 		transferStatus.Status = "uploading"
@@ -335,6 +339,14 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		fileId = currentFileId
 		return nil
 	}, func(retryErr error) (shouldContinue bool) {
+		if errors.Is(retryErr, errChunkSizeMismatch) {
+			glog.V(0).Infof("permanent size mismatch replicating %s for %s: %v",
+				sourceChunk.GetFileIdString(), path, retryErr)
+			transferStatus.mu.Lock()
+			transferStatus.LastErr = retryErr.Error()
+			transferStatus.mu.Unlock()
+			return false
+		}
 		if fs.hasSourceNewerVersion(path, sourceMtime) {
 			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, retryErr)
 			return false
@@ -386,6 +398,18 @@ func isEofError(err error) bool {
 		return false
 	}
 	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
+}
+
+// errChunkSizeMismatch is a permanent (non-retriable) replication failure.
+var errChunkSizeMismatch = errors.New("chunk size mismatch")
+
+func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) error {
+	if uint64(readSize) != sourceChunk.Size {
+		return fmt.Errorf("%w: read %s got %d bytes, source metadata says %d",
+			errChunkSizeMismatch, sourceChunk.GetFileIdString(),
+			readSize, sourceChunk.Size)
+	}
+	return nil
 }
 
 func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
