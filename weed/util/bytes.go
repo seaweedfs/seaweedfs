@@ -33,6 +33,9 @@ func BytesToHumanReadable(b uint64) string {
 
 func BytesToUint64(b []byte) (v uint64) {
 	length := uint(len(b))
+	if length == 0 {
+		return 0
+	}
 	for i := uint(0); i < length-1; i++ {
 		v += uint64(b[i])
 		v <<= 8
@@ -42,6 +45,9 @@ func BytesToUint64(b []byte) (v uint64) {
 }
 func BytesToUint32(b []byte) (v uint32) {
 	length := uint(len(b))
+	if length == 0 {
+		return 0
+	}
 	for i := uint(0); i < length-1; i++ {
 		v += uint32(b[i])
 		v <<= 8
@@ -50,6 +56,9 @@ func BytesToUint32(b []byte) (v uint32) {
 	return
 }
 func BytesToUint16(b []byte) (v uint16) {
+	if len(b) < 2 {
+		return 0
+	}
 	v += uint16(b[0])
 	v <<= 8
 	v += uint16(b[1])
