@@ -50,6 +50,8 @@ spec:
 {{- end }}
 {{- end }}
 
+---
+
 {{- /* gRPC Ingress */}}
 {{- if and $filerEnabled .Values.filer.ingresses.grpc.enabled }}
 {{- /* Determine service name based on deployment mode */}}
