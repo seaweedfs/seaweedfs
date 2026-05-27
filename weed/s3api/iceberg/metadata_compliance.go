@@ -5,9 +5,18 @@ import (
 	"encoding/json"
 )
 
+// specRequiredEmptyOrder is iterated in this fixed order so the byte-level
+// append in ensureMetadataSpecCompliance produces deterministic output.
+var specRequiredEmptyOrder = []string{
+	"current-snapshot-id",
+	"snapshots",
+	"snapshot-log",
+	"metadata-log",
+	"refs",
+}
+
 // specRequiredEmptyDefaults holds the sentinel values Iceberg requires when
-// the corresponding state is empty. Maintained at package scope so we don't
-// re-allocate per call.
+// the corresponding state is empty.
 var specRequiredEmptyDefaults = map[string]json.RawMessage{
 	"current-snapshot-id": json.RawMessage("-1"),
 	"snapshots":           json.RawMessage("[]"),
@@ -33,6 +42,12 @@ func isJSONNull(raw json.RawMessage) bool {
 // "Cannot parse missing long current-snapshot-id"). This helper rehydrates
 // the missing keys without overwriting any present real values.
 //
+// Missing keys are spliced in at the byte level just before the closing
+// brace so iceberg-go's struct-declared key order is preserved (a naive
+// map remarshal would alphabetize every key in the document). The slower
+// remarshal path is only used when an explicit JSON null needs replacing,
+// which iceberg-go itself never emits.
+//
 // Returns the original bytes unchanged when parsing fails or no key needs
 // to be added, to avoid corrupting an otherwise-valid payload.
 func ensureMetadataSpecCompliance(raw []byte) []byte {
@@ -47,20 +62,65 @@ func ensureMetadataSpecCompliance(raw []byte) []byte {
 	// A field is "missing" for spec purposes if it's absent OR encoded as
 	// JSON null. Some writers emit `"current-snapshot-id": null` for empty
 	// state instead of omitting; strict clients reject both the same way.
-	changed := false
-	for key, fallback := range specRequiredEmptyDefaults {
+	var toAppend []string
+	hasExplicitNull := false
+	for _, key := range specRequiredEmptyOrder {
 		v, present := obj[key]
-		if !present || isJSONNull(v) {
-			obj[key] = fallback
-			changed = true
+		switch {
+		case !present:
+			toAppend = append(toAppend, key)
+		case isJSONNull(v):
+			hasExplicitNull = true
 		}
 	}
-	if !changed {
+	if len(toAppend) == 0 && !hasExplicitNull {
 		return raw
+	}
+
+	if !hasExplicitNull {
+		return appendMissingObjectKeys(raw, toAppend, len(obj) > 0)
+	}
+
+	// Slow path: replace explicit nulls. Rare in practice, so the
+	// alphabetical key reordering inherent to map remarshal is acceptable.
+	for key, v := range obj {
+		if _, required := specRequiredEmptyDefaults[key]; required && isJSONNull(v) {
+			obj[key] = specRequiredEmptyDefaults[key]
+		}
+	}
+	for _, key := range toAppend {
+		obj[key] = specRequiredEmptyDefaults[key]
 	}
 	fixed, err := json.Marshal(obj)
 	if err != nil {
 		return raw
 	}
 	return fixed
+}
+
+// appendMissingObjectKeys splices the given keys into raw just before the
+// closing brace of the top-level JSON object. raw is assumed to be a valid
+// JSON object (the caller has already unmarshalled it). hasMembers tells us
+// whether the object had any existing members, so we know whether to emit a
+// leading comma for the first appended key.
+func appendMissingObjectKeys(raw []byte, keys []string, hasMembers bool) []byte {
+	closeIdx := bytes.LastIndexByte(raw, '}')
+	if closeIdx < 0 {
+		return raw
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(raw) + len(keys)*48)
+	buf.Write(raw[:closeIdx])
+	for _, key := range keys {
+		if hasMembers {
+			buf.WriteByte(',')
+		}
+		buf.WriteByte('"')
+		buf.WriteString(key)
+		buf.WriteString(`":`)
+		buf.Write(specRequiredEmptyDefaults[key])
+		hasMembers = true
+	}
+	buf.Write(raw[closeIdx:])
+	return buf.Bytes()
 }

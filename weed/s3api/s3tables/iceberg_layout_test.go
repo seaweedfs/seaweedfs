@@ -69,6 +69,7 @@ func TestIcebergLayoutValidator_RejectsClearlyBadMetadataNames(t *testing.T) {
 		{"executable masquerading as avro path", "metadata/evil.sh"},
 		{"subdirectory under metadata is not allowed", "metadata/sub/file.avro"},
 		{"top-level dir other than metadata or data", "garbage/file.avro"},
+		{"catch-all anchors must reject trailing extension", "metadata/file.avro.txt"},
 	}
 
 	v := NewIcebergLayoutValidator()

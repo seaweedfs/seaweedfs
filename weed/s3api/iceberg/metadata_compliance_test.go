@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -112,5 +113,47 @@ func TestEnsureMetadataSpecCompliance_EmptyInputReturnedUnchanged(t *testing.T) 
 	}
 	if out := ensureMetadataSpecCompliance([]byte{}); len(out) != 0 {
 		t.Errorf("empty input should be returned unchanged, got %v", out)
+	}
+}
+
+// Original iceberg-go key ordering must survive the backfill: appended
+// sentinels go at the end without disturbing prior fields. A map-based
+// remarshal would have sorted everything alphabetically.
+func TestEnsureMetadataSpecCompliance_PreservesOriginalKeyOrder(t *testing.T) {
+	// Compact JSON, keys in struct-declared order from iceberg-go.
+	input := []byte(`{"format-version":2,"table-uuid":"82e3eec4-3aee-414f-a444-94c03c641d20","location":"s3://x/t","last-sequence-number":0,"last-updated-ms":1,"last-column-id":2,"current-schema-id":0,"default-spec-id":0,"last-partition-id":999,"default-sort-order-id":0}`)
+
+	out := ensureMetadataSpecCompliance(input)
+
+	// Prior keys keep their order, sentinels appended at the end.
+	want := `{"format-version":2,"table-uuid":"82e3eec4-3aee-414f-a444-94c03c641d20","location":"s3://x/t","last-sequence-number":0,"last-updated-ms":1,"last-column-id":2,"current-schema-id":0,"default-spec-id":0,"last-partition-id":999,"default-sort-order-id":0,"current-snapshot-id":-1,"snapshots":[],"snapshot-log":[],"metadata-log":[],"refs":{}}`
+	if string(out) != want {
+		t.Errorf("unexpected output\n got: %s\nwant: %s", string(out), want)
+	}
+
+	// Sanity: still valid JSON.
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+}
+
+// An empty object {} must round-trip to a valid JSON object containing
+// only the spec sentinels (no leading comma).
+func TestEnsureMetadataSpecCompliance_EmptyObjectBackfilled(t *testing.T) {
+	out := ensureMetadataSpecCompliance([]byte(`{}`))
+	want := `{"current-snapshot-id":-1,"snapshots":[],"snapshot-log":[],"metadata-log":[],"refs":{}}`
+	if string(out) != want {
+		t.Errorf("unexpected output\n got: %s\nwant: %s", string(out), want)
+	}
+}
+
+// When all fields are already present, the original bytes must be returned
+// untouched (no whitespace normalization, no key reordering).
+func TestEnsureMetadataSpecCompliance_AllPresentReturnsSameBytes(t *testing.T) {
+	input := []byte("{\n  \"current-snapshot-id\": 1,\n  \"snapshots\": [],\n  \"snapshot-log\": [],\n  \"metadata-log\": [],\n  \"refs\": {}\n}")
+	out := ensureMetadataSpecCompliance(input)
+	if !strings.HasPrefix(string(out), "{\n  ") {
+		t.Errorf("expected original bytes returned unchanged, got %q", string(out))
 	}
 }

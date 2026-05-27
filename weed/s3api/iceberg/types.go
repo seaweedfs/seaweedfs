@@ -108,7 +108,7 @@ func (r LoadTableResult) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		MetadataLocation string             `json:"metadata-location,omitempty"`
 		Metadata         json.RawMessage    `json:"metadata"`
-		Config           iceberg.Properties `json:"config,omitempty"`
+		Config           iceberg.Properties `json:"config"`
 	}{
 		MetadataLocation: r.MetadataLocation,
 		Metadata:         metaBytes,
