@@ -265,8 +265,8 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// this usually happens when the messages are not ordered
 		glog.V(2).Infof("late updates %s", key)
 	} else {
-		// find out what changed
-		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs), oldEntry, newEntry)
+		// source-side chunks resolve via source filer; sink volume IDs may collide.
+		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
 		if err != nil {
 			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
 		}
