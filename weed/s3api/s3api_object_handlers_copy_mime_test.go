@@ -89,6 +89,43 @@ func TestIsManagedCopyMetadataKey_CoversSystemHeaders(t *testing.T) {
 	}
 }
 
+func TestIsManagedCopyMetadataKey_CaseInsensitive(t *testing.T) {
+	cases := []string{
+		"cache-control",
+		"CACHE-CONTROL",
+		"content-encoding",
+		"x-amz-meta-owner",
+		"X-AMZ-META-OWNER",
+		"x-amz-tagging-env",
+	}
+	for _, k := range cases {
+		t.Run(k, func(t *testing.T) {
+			if !isManagedCopyMetadataKey(k) {
+				t.Errorf("isManagedCopyMetadataKey(%q) = false, want true; legacy non-canonical keys must still be recognized so mergeCopyMetadata clears them", k)
+			}
+		})
+	}
+}
+
+func TestProcessMetadataBytes_CopyAcceptsLowercaseSourceKeys(t *testing.T) {
+	existing := map[string][]byte{
+		"cache-control":       []byte("max-age=60"),
+		"content-disposition": []byte(`attachment; filename="legacy.bin"`),
+	}
+	req := http.Header{}
+
+	out, err := processMetadataBytes(req, existing, false, false)
+	if err != nil {
+		t.Fatalf("processMetadataBytes error: %v", err)
+	}
+	if got := string(out["Cache-Control"]); got != "max-age=60" {
+		t.Errorf("Cache-Control = %q, want %q (lowercase source must be promoted to canonical)", got, "max-age=60")
+	}
+	if got := string(out["Content-Disposition"]); got != `attachment; filename="legacy.bin"` {
+		t.Errorf("Content-Disposition = %q, want legacy source value promoted to canonical", got)
+	}
+}
+
 func TestMergeCopyMetadata_ReplaceDropsStaleSystemHeader(t *testing.T) {
 	// End-to-end caller flow: source-populated Extended + REPLACE request
 	// must drop stale managed values, keep non-managed ones.

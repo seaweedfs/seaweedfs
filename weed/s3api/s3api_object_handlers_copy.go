@@ -605,11 +605,16 @@ func isManagedCopyMetadataKey(key string) bool {
 		return true
 	}
 	for _, h := range copyReplaceSystemHeaders {
-		if key == h {
+		if strings.EqualFold(key, h) {
 			return true
 		}
 	}
-	return strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) || strings.HasPrefix(key, s3_constants.AmzObjectTagging)
+	// Match X-Amz-Meta-* / X-Amz-Tagging case-insensitively so legacy
+	// non-canonical keys (written by non-S3 paths or older versions) are
+	// still recognized as managed.
+	lowerKey := strings.ToLower(key)
+	return strings.HasPrefix(lowerKey, strings.ToLower(s3_constants.AmzUserMetaPrefix)) ||
+		strings.HasPrefix(lowerKey, strings.ToLower(s3_constants.AmzObjectTagging))
 }
 
 func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject, operation string) (*filer_pb.Entry, error) {
@@ -1074,8 +1079,13 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			}
 		}
 	} else {
+		// Read source system headers tolerantly: prefer the canonical key,
+		// fall back to lowercase so legacy non-canonical entries still
+		// survive COPY. Always re-emit under the canonical name.
 		for _, h := range copyReplaceSystemHeaders {
 			if v, ok := existing[h]; ok {
+				metadata[h] = v
+			} else if v, ok := existing[strings.ToLower(h)]; ok {
 				metadata[h] = v
 			}
 		}
