@@ -145,6 +145,9 @@ const (
 	ErrNoSuchBucketEncryptionConfiguration
 	ErrInvalidStorageClass
 
+	ErrInvalidMetadataDirective
+	ErrInvalidTagDirective
+
 	ErrInvalidAttributeName
 
 	// Object key length errors
@@ -611,6 +614,18 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidStorageClass: {
 		Code:           "InvalidStorageClass",
 		Description:    "The storage class you specified is not valid",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrInvalidMetadataDirective: {
+		Code:           "InvalidArgument",
+		Description:    "Unknown metadata directive.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrInvalidTagDirective: {
+		Code:           "InvalidArgument",
+		Description:    "Unknown tag directive.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

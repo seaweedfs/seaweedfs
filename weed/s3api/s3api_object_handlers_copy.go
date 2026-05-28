@@ -32,6 +32,36 @@ const (
 	DirectiveReplace = "REPLACE"
 )
 
+// AWS/MinIO default when REPLACE is requested without a Content-Type.
+const defaultCopyContentType = "binary/octet-stream"
+
+// System-metadata headers that REPLACE must rewrite on the destination.
+// Content-Type lives on Attributes.Mime, tagging/storage-class have their
+// own handling, so they're not in this list.
+var copyReplaceSystemHeaders = []string{
+	"Cache-Control",
+	"Content-Encoding",
+	"Content-Disposition",
+	"Content-Language",
+	"Expires",
+}
+
+func resolveDestinationMime(reqHeader http.Header, sourceMime string, replaceMeta bool) string {
+	if replaceMeta {
+		if ct := reqHeader.Get("Content-Type"); ct != "" {
+			return ct
+		}
+		return defaultCopyContentType
+	}
+	return sourceMime
+}
+
+// Empty means default (COPY). Anything else outside {COPY, REPLACE} must be
+// rejected, not silently downgraded.
+func isValidDirective(value string) bool {
+	return value == "" || value == DirectiveCopy || value == DirectiveReplace
+}
+
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 	t := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -77,6 +107,15 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		glog.V(2).Infof("CopyObjectHandler validation error: %v", err)
 		errCode := MapCopyValidationError(err)
 		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if !isValidDirective(r.Header.Get(s3_constants.AmzUserMetaDirective)) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMetadataDirective)
+		return
+	}
+	if !isValidDirective(r.Header.Get(s3_constants.AmzObjectTaggingDirective)) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTagDirective)
 		return
 	}
 
@@ -242,7 +281,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			FileSize: entry.Attributes.FileSize,
 			Mtime:    t.Unix(),
 			Crtime:   entry.Attributes.Crtime,
-			Mime:     entry.Attributes.Mime,
+			Mime:     resolveDestinationMime(r.Header, entry.Attributes.Mime, replaceMeta),
 		},
 		Extended: make(map[string][]byte),
 	}
@@ -288,10 +327,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Apply processed metadata to destination entry
-	for k, v := range processedMetadata {
-		dstEntry.Extended[k] = v
-	}
+	// mergeCopyMetadata drops stale managed keys before applying the new set,
+	// so REPLACE doesn't leak source values through the merge. Mirrors the
+	// self-copy path's routedMetadataReplace.
+	dstEntry.Extended = mergeCopyMetadata(dstEntry.Extended, processedMetadata)
 
 	// For zero-size files or files without chunks, handle inline content
 	// This includes encrypted inline files that need decryption/re-encryption
@@ -564,6 +603,11 @@ func isManagedCopyMetadataKey(key string) bool {
 		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
 		s3_constants.AmzTagCount:
 		return true
+	}
+	for _, h := range copyReplaceSystemHeaders {
+		if key == h {
+			return true
+		}
 	}
 	return strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) || strings.HasPrefix(key, s3_constants.AmzObjectTagging)
 }
@@ -1024,7 +1068,17 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 				}
 			}
 		}
+		for _, h := range copyReplaceSystemHeaders {
+			if v := reqHeader.Get(h); v != "" {
+				metadata[h] = []byte(v)
+			}
+		}
 	} else {
+		for _, h := range copyReplaceSystemHeaders {
+			if v, ok := existing[h]; ok {
+				metadata[h] = v
+			}
+		}
 		// Copy existing metadata as-is
 		// Note: Metadata should already be normalized during storage (X-Amz-Meta-*),
 		// but we handle legacy non-canonical formats for backward compatibility
