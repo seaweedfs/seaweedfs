@@ -123,13 +123,10 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 		groupMetrics := volumeGroups[volumeID]
 
-		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
-		metric := groupMetrics[0]
-		for _, m := range groupMetrics {
-			if m.Server < metric.Server {
-				metric = m
-			}
-		}
+		// Prefer the lowest-server credible replica so a 0-byte stub or a
+		// leftover EC shard set on a lower server can't become canonical and
+		// strand the volume in skippedTooSmall / skippedAlreadyEC.
+		metric := selectCanonicalMetric(groupMetrics)
 
 		// Skip if already EC volume
 		if metric.IsECVolume {
