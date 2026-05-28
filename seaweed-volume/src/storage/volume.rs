@@ -3157,10 +3157,32 @@ impl Volume {
             }
         }
 
+        // A regular volume and an EC volume for the same id share <base>.vif.
+        // When EC artefacts coexist on this disk (e.g. shards distributed onto
+        // a source replica before it is deleted), keep the .vif so removing the
+        // regular volume does not strip the EC volume's info file.
+        let keep_vif = self.shares_vif_with_ec_volume();
         self.close();
-        remove_volume_files(&self.data_file_name());
-        remove_volume_files(&self.index_file_name());
+        remove_volume_files(&self.data_file_name(), keep_vif);
+        remove_volume_files(&self.index_file_name(), keep_vif);
         Ok(())
+    }
+
+    /// Reports whether an EC volume for this id has a sealed .ecx on the same
+    /// disk, in which case its .vif is the same file as the regular volume's
+    /// and must outlive the regular volume's deletion. Mirrors the on-disk
+    /// portion of Go's Volume.sharesVifWithEcVolume / HasEcxFileOnDisk.
+    fn shares_vif_with_ec_volume(&self) -> bool {
+        let has_ecx = |base: &str| -> bool {
+            fs::metadata(format!("{}.ecx", base))
+                .map(|m| !m.is_dir() && m.len() > 0)
+                .unwrap_or(false)
+        };
+        if has_ecx(&volume_file_name(&self.dir_idx, &self.collection, self.id)) {
+            return true;
+        }
+        self.dir != self.dir_idx
+            && has_ecx(&volume_file_name(&self.dir, &self.collection, self.id))
     }
 
     /// Check if an I/O error is EIO (errno 5) and record it for health monitoring.
@@ -3231,10 +3253,13 @@ fn get_append_at_ns(last: u64) -> u64 {
 
 /// Remove all files associated with a volume.
 /// .dat/.idx removals log at info level so destructive calls are traceable.
-pub(crate) fn remove_volume_files(base: &str) {
+pub(crate) fn remove_volume_files(base: &str, keep_vif: bool) {
     for ext in &[
         ".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb",
     ] {
+        if *ext == ".vif" && keep_vif {
+            continue;
+        }
         let path = format!("{}{}", base, ext);
         let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let existed = fs::remove_file(&path).is_ok();
@@ -4738,6 +4763,45 @@ mod tests {
         assert!(
             !std::path::Path::new(&vif_path).exists(),
             ".vif removed from data dir"
+        );
+    }
+
+    /// When an EC volume for the same id has a sealed .ecx on the same disk, the
+    /// .vif is shared with it and must survive the regular volume's deletion.
+    #[test]
+    fn test_destroy_keeps_vif_when_ec_coexists() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let mut v = make_test_volume(dir);
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"test".to_vec(),
+            data_size: 4,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        let vif_path = format!("{}/1.vif", dir);
+        std::fs::write(&vif_path, r#"{"version":3}"#).unwrap();
+        // A sealed .ecx marks a coexisting EC volume for the same id.
+        let ecx_path = format!("{}/1.ecx", dir);
+        std::fs::write(&ecx_path, b"ec-index").unwrap();
+
+        v.destroy(false, false).unwrap();
+
+        let dat_path = format!("{}/1.dat", dir);
+        let idx_path = format!("{}/1.idx", dir);
+        assert!(!std::path::Path::new(&dat_path).exists(), ".dat removed");
+        assert!(!std::path::Path::new(&idx_path).exists(), ".idx removed");
+        assert!(
+            std::path::Path::new(&vif_path).exists(),
+            ".vif kept: shared with the coexisting EC volume"
+        );
+        assert!(
+            std::path::Path::new(&ecx_path).exists(),
+            ".ecx is an EC sidecar, never touched here"
         );
     }
 }

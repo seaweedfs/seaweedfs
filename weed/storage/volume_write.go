@@ -94,13 +94,31 @@ func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 			}
 		}
 	}
+	// A regular volume and an EC volume for the same id share <base>.vif. When
+	// EC artefacts coexist on this disk (e.g. shards distributed onto a source
+	// replica before it is deleted), keep the .vif so removing the regular
+	// volume does not strip the EC volume's info file.
+	keepVif := v.sharesVifWithEcVolume()
 	v.doClose()
-	removeVolumeFiles(v.DataFileName())
-	removeVolumeFiles(v.IndexFileName())
+	removeVolumeFiles(v.DataFileName(), keepVif)
+	removeVolumeFiles(v.IndexFileName(), keepVif)
 	return
 }
 
-func removeVolumeFiles(filename string) {
+// sharesVifWithEcVolume reports whether an EC volume for this volume id lives
+// on the same disk, in which case its .vif is the same file as the regular
+// volume's and must outlive the regular volume's deletion.
+func (v *Volume) sharesVifWithEcVolume() bool {
+	if v.location == nil {
+		return false
+	}
+	if _, found := v.location.FindEcVolume(v.Id); found {
+		return true
+	}
+	return v.location.HasEcxFileOnDisk(v.Collection, v.Id)
+}
+
+func removeVolumeFiles(filename string, keepVif bool) {
 	// .dat/.idx removals log at V(0) so destructive calls are traceable.
 	deleteAndLog := func(ext string) {
 		fullFilename := filename + "." + ext
@@ -116,7 +134,9 @@ func removeVolumeFiles(filename string) {
 	}
 	deleteAndLog("dat")
 	deleteAndLog("idx")
-	deleteAndLog("vif")
+	if !keepVif {
+		deleteAndLog("vif")
+	}
 	// sorted index file
 	deleteAndLog("sdx")
 	// compaction
