@@ -6,11 +6,12 @@ import (
 )
 
 // isStubReplica reports whether a regular replica's .dat is too small to hold
-// any data — at most a superblock. An interrupted encode can leave a 0-byte
-// .dat behind; such a stub is not an encode source and must not be counted
-// toward size/fullness checks.
+// any data — at most a bare superblock. An interrupted encode or copy can
+// leave a 0-byte .dat, or write the 8-byte superblock and then fail; either
+// way the file is not an encode source and must not be counted toward
+// size/fullness checks.
 func isStubReplica(size uint64) bool {
-	return size < uint64(super_block.SuperBlockSize)
+	return size <= uint64(super_block.SuperBlockSize)
 }
 
 // selectCanonicalMetric picks the metric that drives the encode checks and

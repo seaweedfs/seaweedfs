@@ -18,7 +18,8 @@ import (
 func TestIsStubReplica(t *testing.T) {
 	assert.True(t, isStubReplica(0), "0-byte .dat is a stub")
 	assert.True(t, isStubReplica(uint64(super_block.SuperBlockSize)-1), "below a superblock is a stub")
-	assert.False(t, isStubReplica(uint64(super_block.SuperBlockSize)), "a bare superblock is an empty-but-real volume, not a stub")
+	assert.True(t, isStubReplica(uint64(super_block.SuperBlockSize)), "a bare superblock holds no data — a stub")
+	assert.False(t, isStubReplica(uint64(super_block.SuperBlockSize)+1), "data beyond the superblock is a real replica")
 	assert.False(t, isStubReplica(200*1024*1024), "a data-bearing replica is not a stub")
 }
 
