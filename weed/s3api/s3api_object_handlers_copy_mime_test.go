@@ -134,6 +134,41 @@ func TestProcessMetadataBytes_CopyAcceptsLowercaseSourceKeys(t *testing.T) {
 	}
 }
 
+func TestProcessMetadataBytes_CopyCanonicalSystemHeaderWinsOverLegacy(t *testing.T) {
+	// When both canonical and legacy-cased variants live on the source,
+	// COPY must deterministically prefer the canonical value. Run several
+	// times to exercise different Go map iteration orders.
+	for i := 0; i < 32; i++ {
+		existing := map[string][]byte{
+			"Cache-Control": []byte("canonical-wins"),
+			"cache-control": []byte("legacy-loses"),
+		}
+		out, err := processMetadataBytes(http.Header{}, existing, false, false)
+		if err != nil {
+			t.Fatalf("processMetadataBytes error: %v", err)
+		}
+		if got := string(out["Cache-Control"]); got != "canonical-wins" {
+			t.Fatalf("iter %d: Cache-Control = %q, want canonical-wins (canonical must beat legacy on COPY)", i, got)
+		}
+	}
+}
+
+func TestProcessMetadataBytes_CopyCanonicalTagWinsOverLegacy(t *testing.T) {
+	for i := 0; i < 32; i++ {
+		existing := map[string][]byte{
+			"X-Amz-Tagging-env": []byte("canonical-wins"),
+			"x-amz-tagging-env": []byte("legacy-loses"),
+		}
+		out, err := processMetadataBytes(http.Header{}, existing, false, false)
+		if err != nil {
+			t.Fatalf("processMetadataBytes error: %v", err)
+		}
+		if got := string(out["X-Amz-Tagging-env"]); got != "canonical-wins" {
+			t.Fatalf("iter %d: X-Amz-Tagging-env = %q, want canonical-wins (canonical tag must beat legacy on COPY)", i, got)
+		}
+	}
+}
+
 func TestProcessMetadataBytes_CopyAcceptsLowercaseTagKeys(t *testing.T) {
 	existing := map[string][]byte{
 		"x-amz-tagging-env":  []byte("prod"),
