@@ -57,6 +57,7 @@ func TestDestroyRemovesVifWhenNoEc(t *testing.T) {
 	require.NoError(t, v.Destroy(false, false))
 
 	assertFileExist(t, false, base+".dat")
+	assertFileExist(t, false, base+".idx")
 	assertFileExist(t, false, vifPath) // removed along with the regular volume
 }
 
