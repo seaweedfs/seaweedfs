@@ -448,6 +448,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	// MasterClient.GetLocations, so iterating per replica here (as the old
 	// code did) would issue N*N delete RPCs for N replicas.
 	if applyPurging {
+		var skippedVolumeIds []uint32
 		for volumeId, orphanReplicaFileIds := range volumeIdOrphanFileIds {
 			if len(orphanReplicaFileIds) == 0 {
 				continue
@@ -459,10 +460,17 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 			// Call out to a closure per volume so the deferred "mark
 			// readonly again" fires between volumes instead of piling up
 			// until findExtraChunksInVolumeServers returns. Per-volume
-			// failures shouldn't halt the rest of the run.
+			// failures (e.g. a replica stuck read-only) don't halt the
+			// rest of the run; the volume is remembered and its deletes
+			// are skipped.
 			if err := c.purgeOneVolume(volumeId, orphanReplicaFileIds, volumeReplicaCounts[volumeId], readOnlyServerReplicas[volumeId]); err != nil {
 				fmt.Fprintf(c.writer, "skip purging volume %d: %v\n", volumeId, err)
+				skippedVolumeIds = append(skippedVolumeIds, volumeId)
 			}
+		}
+		if len(skippedVolumeIds) > 0 {
+			sort.Slice(skippedVolumeIds, func(i, j int) bool { return skippedVolumeIds[i] < skippedVolumeIds[j] })
+			fmt.Fprintf(c.writer, "skipped purge on %d volume(s): %v\n", len(skippedVolumeIds), skippedVolumeIds)
 		}
 	}
 
