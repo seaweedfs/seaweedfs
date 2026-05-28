@@ -279,6 +279,24 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 			len(commitErrors), len(t.vacuumTargets), commitErrors)
 	}
 
+	// Wait for post-commit heartbeats from every replica to reach the
+	// master before re-notifying writable. The volume server reports the
+	// new ReadOnly/size state asynchronously, and the master's
+	// EnsureCorrectWritables path (triggered by a heartbeat whose
+	// ReadOnly value changed) re-evaluates isAllWritable against its
+	// per-replica cache. Calling VolumeMarkWritable too early lets
+	// SetVolumeWritable add the vid to writables, then a racing
+	// heartbeat lands while another replica's cache still shows
+	// ReadOnly=true and silently removes it again. Letting heartbeats
+	// settle first ensures the master cache is uniformly post-vacuum
+	// before our notify fires.
+	postCommitSettleDelay := 30 * time.Second
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(postCommitSettleDelay):
+	}
+
 	// Phase 3: Re-notify master so each replica returns to the writable
 	// layout. Master built-in vacuum does this via SetVolumeAvailable
 	// per replica after commit; the worker path had no equivalent, so
