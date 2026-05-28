@@ -1,0 +1,93 @@
+{
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "c2Vhd2VlZGZzLXNpZ25pbmcta2V5LTMyLWNoYXJzLWxvbmc="
+  },
+  "providers": [
+    {
+      "name": "keycloak",
+      "type": "oidc",
+      "enabled": true,
+      "config": {
+        "issuer": "http://keycloak:8180/realms/seaweedfs",
+        "clientId": "seaweedfs-s3",
+        "jwksUri": "http://keycloak:8180/realms/seaweedfs/protocol/openid-connect/certs",
+        "userInfoUri": "http://keycloak:8180/realms/seaweedfs/protocol/openid-connect/userinfo",
+        "scopes": ["openid", "profile", "email", "roles", "groups"],
+        "roleMapping": {
+          "rules": [
+            { "claim": "groups", "value": "/admins", "role": "arn:aws:iam::role/S3AdminRole" },
+            { "claim": "groups", "value": "/developers", "role": "arn:aws:iam::role/S3WriteRole" }
+          ],
+          "defaultRole": "arn:aws:iam::role/S3ReadOnlyRole"
+        }
+      }
+    }
+  ],
+  "policies": [
+    {
+      "name": "S3ReadOnlyPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [{ "Effect": "Allow", "Action": ["s3:List*", "s3:Get*"], "Resource": ["*"] }]
+      }
+    },
+    {
+      "name": "S3WritePolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [{ "Effect": "Allow", "Action": ["s3:List*", "s3:Get*", "s3:Put*", "s3:DeleteObject"], "Resource": ["*"] }]
+      }
+    },
+    {
+      "name": "S3AdminPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [{ "Effect": "Allow", "Action": ["s3:*"], "Resource": ["*"] }]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "roleName": "S3ReadOnlyRole",
+      "roleArn": "arn:aws:iam::role/S3ReadOnlyRole",
+      "attachedPolicies": ["S3ReadOnlyPolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Effect": "Allow",
+          "Principal": { "Federated": "keycloak" },
+          "Action": ["sts:AssumeRoleWithWebIdentity"]
+        }]
+      }
+    },
+    {
+      "roleName": "S3WriteRole",
+      "roleArn": "arn:aws:iam::role/S3WriteRole",
+      "attachedPolicies": ["S3WritePolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Effect": "Allow",
+          "Principal": { "Federated": "keycloak" },
+          "Action": ["sts:AssumeRoleWithWebIdentity"]
+        }]
+      }
+    },
+    {
+      "roleName": "S3AdminRole",
+      "roleArn": "arn:aws:iam::role/S3AdminRole",
+      "attachedPolicies": ["S3AdminPolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Effect": "Allow",
+          "Principal": { "Federated": "keycloak" },
+          "Action": ["sts:AssumeRoleWithWebIdentity"]
+        }]
+      }
+    }
+  ]
+}
