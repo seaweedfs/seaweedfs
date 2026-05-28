@@ -32,6 +32,41 @@ const (
 	DirectiveReplace = "REPLACE"
 )
 
+// AWS default when REPLACE is requested without a Content-Type.
+const defaultCopyContentType = "binary/octet-stream"
+
+// System-metadata headers that REPLACE must rewrite on the destination.
+// Content-Type lives on Attributes.Mime, tagging/storage-class have their
+// own handling, so they're not in this list.
+var copyReplaceSystemHeaders = []string{
+	"Cache-Control",
+	"Content-Encoding",
+	"Content-Disposition",
+	"Content-Language",
+	"Expires",
+}
+
+func resolveDestinationMime(reqHeader http.Header, sourceMime string, replaceMeta bool) string {
+	if replaceMeta {
+		if ct := reqHeader.Get("Content-Type"); ct != "" {
+			return ct
+		}
+		return defaultCopyContentType
+	}
+	return sourceMime
+}
+
+// Empty means default (COPY). Anything else outside {COPY, REPLACE} must be
+// rejected, not silently downgraded.
+func isValidDirective(value string) bool {
+	return value == "" || value == DirectiveCopy || value == DirectiveReplace
+}
+
+// hasPrefixFold reports whether s starts with prefix, ignoring case.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 	t := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -77,6 +112,15 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		glog.V(2).Infof("CopyObjectHandler validation error: %v", err)
 		errCode := MapCopyValidationError(err)
 		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if !isValidDirective(r.Header.Get(s3_constants.AmzUserMetaDirective)) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMetadataDirective)
+		return
+	}
+	if !isValidDirective(r.Header.Get(s3_constants.AmzObjectTaggingDirective)) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTagDirective)
 		return
 	}
 
@@ -161,8 +205,15 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// A non-versioned in-place metadata replace routes to the owner as a
 		// serialized PATCH (off the distributed lock); versioned/suspended (which
 		// create a new version) and the no-owner bootstrap keep the lock.
+		//
+		// REPLACE can also change Content-Type, which lives on Attributes.Mime,
+		// not Extended. The routed PATCH only carries Extended keys, so when the
+		// Mime actually changes keep the lock and take the clone path below: it is
+		// still metadata-only (reuses the source chunks) but can set the Mime.
 		owner := s3a.objectWriteOwner(dstBucket, dstObject)
-		routeInPlace := owner != "" && dstVersioningState == ""
+		sourceMime := entry.GetAttributes().GetMime()
+		mimeChanged := resolveDestinationMime(r.Header, sourceMime, replaceMeta) != sourceMime
+		routeInPlace := owner != "" && dstVersioningState == "" && !mimeChanged
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			if currentErr != nil || currentEntry.IsDirectory {
@@ -188,6 +239,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
+			updatedEntry.Attributes.Mime = resolveDestinationMime(r.Header, currentEntry.GetAttributes().GetMime(), replaceMeta)
 			updatedEntry.Attributes.Mtime = t.Unix()
 			var finErr error
 			dstVersionId, etag, finErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
@@ -242,7 +294,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			FileSize: entry.Attributes.FileSize,
 			Mtime:    t.Unix(),
 			Crtime:   entry.Attributes.Crtime,
-			Mime:     entry.Attributes.Mime,
+			Mime:     resolveDestinationMime(r.Header, entry.Attributes.Mime, replaceMeta),
 		},
 		Extended: make(map[string][]byte),
 	}
@@ -288,10 +340,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Apply processed metadata to destination entry
-	for k, v := range processedMetadata {
-		dstEntry.Extended[k] = v
-	}
+	// mergeCopyMetadata drops stale managed keys before applying the new set,
+	// so REPLACE doesn't leak source values through the merge. Mirrors the
+	// self-copy path's routedMetadataReplace.
+	dstEntry.Extended = mergeCopyMetadata(dstEntry.Extended, processedMetadata)
 
 	// For zero-size files or files without chunks, handle inline content
 	// This includes encrypted inline files that need decryption/re-encryption
@@ -565,7 +617,16 @@ func isManagedCopyMetadataKey(key string) bool {
 		s3_constants.AmzTagCount:
 		return true
 	}
-	return strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) || strings.HasPrefix(key, s3_constants.AmzObjectTagging)
+	for _, h := range copyReplaceSystemHeaders {
+		if strings.EqualFold(key, h) {
+			return true
+		}
+	}
+	// Match X-Amz-Meta-* / X-Amz-Tagging case-insensitively so legacy
+	// non-canonical keys (written by non-S3 paths or older versions) are
+	// still recognized as managed.
+	return hasPrefixFold(key, s3_constants.AmzUserMetaPrefix) ||
+		hasPrefixFold(key, s3_constants.AmzObjectTagging)
 }
 
 func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject, operation string) (*filer_pb.Entry, error) {
@@ -1024,7 +1085,34 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 				}
 			}
 		}
+		for _, h := range copyReplaceSystemHeaders {
+			if v := reqHeader.Get(h); v != "" {
+				metadata[h] = []byte(v)
+			}
+		}
 	} else {
+		// Two-pass copy keeps the result deterministic when both the
+		// canonical and a legacy-cased variant of the same header live on
+		// the source: canonical always wins, legacy only fills holes.
+		for _, h := range copyReplaceSystemHeaders {
+			if v, ok := existing[h]; ok {
+				metadata[h] = v
+			}
+		}
+		for k, v := range existing {
+			for _, h := range copyReplaceSystemHeaders {
+				if k == h {
+					continue
+				}
+				if !strings.EqualFold(k, h) {
+					continue
+				}
+				if _, present := metadata[h]; present {
+					continue
+				}
+				metadata[h] = v
+			}
+		}
 		// Copy existing metadata as-is
 		// Note: Metadata should already be normalized during storage (X-Amz-Meta-*),
 		// but we handle legacy non-canonical formats for backward compatibility
@@ -1066,10 +1154,28 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			}
 		}
 	} else {
+		// Two passes: canonical exact-prefix wins; legacy variants only
+		// fill in keys that no canonical entry already provided. Keeps
+		// the result deterministic when both variants coexist on the
+		// source.
+		prefixLen := len(s3_constants.AmzObjectTagging)
 		for k, v := range existing {
 			if strings.HasPrefix(k, s3_constants.AmzObjectTagging) {
 				metadata[k] = v
 			}
+		}
+		for k, v := range existing {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTagging) {
+				continue
+			}
+			if !hasPrefixFold(k, s3_constants.AmzObjectTagging) {
+				continue
+			}
+			canonicalKey := s3_constants.AmzObjectTagging + k[prefixLen:]
+			if _, present := metadata[canonicalKey]; present {
+				continue
+			}
+			metadata[canonicalKey] = v
 		}
 		delete(metadata, s3_constants.AmzTagCount)
 	}
