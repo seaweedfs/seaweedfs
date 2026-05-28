@@ -131,8 +131,8 @@ impl DiskLocation {
                     volume_id = vid.0,
                     "volume was not completed: {}, removing files", note
                 );
-                remove_volume_files(&volume_name);
-                remove_volume_files(&idx_name);
+                remove_volume_files(&volume_name, false);
+                remove_volume_files(&idx_name, false);
                 continue;
             }
 

@@ -209,8 +209,8 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if util.FileExists(noteFile) {
 		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
-		removeVolumeFiles(l.Directory + "/" + volumeName)
-		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
+		removeVolumeFiles(l.Directory+"/"+volumeName, false)
+		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, false)
 		return false
 	}
 
