@@ -32,7 +32,7 @@ const (
 	DirectiveReplace = "REPLACE"
 )
 
-// AWS/MinIO default when REPLACE is requested without a Content-Type.
+// AWS default when REPLACE is requested without a Content-Type.
 const defaultCopyContentType = "binary/octet-stream"
 
 // System-metadata headers that REPLACE must rewrite on the destination.
@@ -205,8 +205,15 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// A non-versioned in-place metadata replace routes to the owner as a
 		// serialized PATCH (off the distributed lock); versioned/suspended (which
 		// create a new version) and the no-owner bootstrap keep the lock.
+		//
+		// REPLACE can also change Content-Type, which lives on Attributes.Mime,
+		// not Extended. The routed PATCH only carries Extended keys, so when the
+		// Mime actually changes keep the lock and take the clone path below: it is
+		// still metadata-only (reuses the source chunks) but can set the Mime.
 		owner := s3a.objectWriteOwner(dstBucket, dstObject)
-		routeInPlace := owner != "" && dstVersioningState == ""
+		sourceMime := entry.GetAttributes().GetMime()
+		mimeChanged := resolveDestinationMime(r.Header, sourceMime, replaceMeta) != sourceMime
+		routeInPlace := owner != "" && dstVersioningState == "" && !mimeChanged
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			if currentErr != nil || currentEntry.IsDirectory {
@@ -232,6 +239,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
+			updatedEntry.Attributes.Mime = resolveDestinationMime(r.Header, currentEntry.GetAttributes().GetMime(), replaceMeta)
 			updatedEntry.Attributes.Mtime = t.Unix()
 			var finErr error
 			dstVersionId, etag, finErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)

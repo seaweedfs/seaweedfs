@@ -17,7 +17,7 @@ func TestResolveDestinationMime(t *testing.T) {
 		{"COPY without request CT", "", "image/png", false, "image/png"},
 		{"COPY with empty source mime", "text/plain", "", false, ""},
 		{"REPLACE with request CT wins", "text/plain", "image/png", true, "text/plain"},
-		{"REPLACE without request CT uses MinIO default", "", "image/png", true, defaultCopyContentType},
+		{"REPLACE without request CT uses default", "", "image/png", true, defaultCopyContentType},
 		{"REPLACE with request CT and empty source", "application/json", "", true, "application/json"},
 		{"REPLACE without request CT and empty source", "", "", true, defaultCopyContentType},
 	}
