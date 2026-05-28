@@ -18,14 +18,6 @@ var (
 	sessionsLock sync.RWMutex
 )
 
-func getSession(region string) (s3iface.S3API, bool) {
-	sessionsLock.RLock()
-	defer sessionsLock.RUnlock()
-
-	sess, found := s3Sessions[region]
-	return sess, found
-}
-
 func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, forcePathStyle bool) (s3iface.S3API, error) {
 
 	sessionsLock.Lock()
