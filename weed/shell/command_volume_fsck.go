@@ -458,9 +458,10 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 			}
 			// Call out to a closure per volume so the deferred "mark
 			// readonly again" fires between volumes instead of piling up
-			// until findExtraChunksInVolumeServers returns.
+			// until findExtraChunksInVolumeServers returns. Per-volume
+			// failures shouldn't halt the rest of the run.
 			if err := c.purgeOneVolume(volumeId, orphanReplicaFileIds, volumeReplicaCounts[volumeId], readOnlyServerReplicas[volumeId]); err != nil {
-				return err
+				fmt.Fprintf(c.writer, "skip purging volume %d: %v\n", volumeId, err)
 			}
 		}
 	}
@@ -510,7 +511,11 @@ func (c *commandVolumeFsck) purgeOneVolume(volumeId uint32, orphanReplicaFileIds
 	needleVID := needle.VolumeId(volumeId)
 	for _, server := range readOnlyReplicas {
 		if err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
-			return fmt.Errorf("mark volume %d on %v read/write: %v", volumeId, server, err)
+			// Don't halt the rest of the fsck run — log and skip this
+			// volume. Replicas flipped writable in earlier iterations
+			// roll back via the defer below.
+			fmt.Fprintf(c.writer, "skip purging volume %d: mark %v writable: %v\n", volumeId, server, err)
+			return nil
 		}
 		fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
 		defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
