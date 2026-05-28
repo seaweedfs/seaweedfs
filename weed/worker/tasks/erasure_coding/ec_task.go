@@ -45,6 +45,11 @@ type ErasureCodingTask struct {
 	sources          []*worker_pb.TaskSource // Unified sources for cleanup
 	shardAssignment  map[string][]string     // destination -> assigned shard types
 	readonlyReplicas []pb.ServerAddress      // replicas marked readonly, for rollback
+
+	// Replica servers whose original volume was an empty stub, deleted in the
+	// pre-distribute sweep. deleteOriginalVolume skips these so it does not
+	// re-delete and remove the now-EC .vif those servers share.
+	emptyReplicasDeleted map[string]bool
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -199,6 +204,15 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		t.rollbackReadonly(ctx)
 		return fmt.Errorf("failed to clear stale EC shards on destinations: %v", err)
 	}
+
+	// Delete 0-byte stub replicas left by an interrupted encode before the new
+	// EC files land. A stub shares the <collection>_<vid>.vif path the EC
+	// volume will use; deleting it after distribute (in deleteOriginalVolume)
+	// would remove that .vif and damage the freshly written shards. OnlyEmpty
+	// keeps data-bearing replicas, which are deleted later after verify.
+	t.ReportProgressWithStage(57.0, "Removing empty stub replicas")
+	t.GetLogger().Info("Removing empty stub replicas before distribute")
+	t.sweepEmptyReplicas(ctx)
 
 	// Step 4: Distribute shards to destinations
 	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
@@ -675,6 +689,14 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 		replicas = []string{t.server}
 	}
 
+	// Empty stub replicas were already removed before distribute; skip them so
+	// VolumeDelete does not run on a server that now holds only EC shards.
+	replicas = replicasPendingDelete(replicas, t.emptyReplicasDeleted)
+	if len(replicas) == 0 {
+		glog.V(0).Infof("EC volume %d: all original replicas were empty stubs removed before distribute", t.volumeID)
+		return nil
+	}
+
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":       t.volumeID,
 		"replica_count":   len(replicas),
@@ -760,6 +782,50 @@ func (t *ErasureCodingTask) getReplicas() []string {
 		replicas = append(replicas, source.Node)
 	}
 	return replicas
+}
+
+// sweepEmptyReplicas deletes any original replica that is an empty 0-byte stub
+// (OnlyEmpty so a data-bearing replica is refused and kept for the post-verify
+// delete). Run before distribute: a stub shares the <collection>_<vid>.vif the
+// EC volume reuses, so removing it afterwards would strip that .vif. Servers
+// whose stub was deleted are recorded so deleteOriginalVolume skips them.
+// Best-effort: a refused or unreachable server is left for the later delete.
+func (t *ErasureCodingTask) sweepEmptyReplicas(ctx context.Context) {
+	for _, node := range t.getReplicas() {
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(node), t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, e := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
+					VolumeId:  t.volumeID,
+					OnlyEmpty: true,
+				})
+				return e
+			})
+		if err != nil {
+			glog.V(1).Infof("EC volume %d: empty-replica sweep left %s in place: %v", t.volumeID, node, err)
+			continue
+		}
+		if t.emptyReplicasDeleted == nil {
+			t.emptyReplicasDeleted = make(map[string]bool)
+		}
+		t.emptyReplicasDeleted[node] = true
+		glog.V(0).Infof("EC volume %d: removed empty stub replica on %s before distribute", t.volumeID, node)
+	}
+}
+
+// replicasPendingDelete returns replicas not already removed by the
+// pre-distribute empty-stub sweep.
+func replicasPendingDelete(replicas []string, alreadyDeleted map[string]bool) []string {
+	if len(alreadyDeleted) == 0 {
+		return replicas
+	}
+	pending := make([]string, 0, len(replicas))
+	for _, r := range replicas {
+		if alreadyDeleted[r] {
+			continue
+		}
+		pending = append(pending, r)
+	}
+	return pending
 }
 
 // cleanupStaleEcShards unmounts and deletes any EC shards still mounted on
