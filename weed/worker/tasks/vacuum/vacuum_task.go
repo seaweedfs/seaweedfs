@@ -233,8 +233,8 @@ func (t *VacuumTask) checkOneVacuumEligibility(ctx context.Context, server strin
 	return garbageRatio, err
 }
 
-// performVacuum runs the two-phase vacuum protocol that master built-in
-// vacuum uses (topology.vacuumOneVolumeId):
+// performVacuum runs the three-phase vacuum protocol that mirrors
+// master built-in vacuum (topology.vacuumOneVolumeId):
 //
 //   Phase 1 (Compact): build the new .cpd/.cpx files on every target.
 //   If any replica fails, roll back by Cleanup'ing the .cp* temp files
@@ -247,6 +247,11 @@ func (t *VacuumTask) checkOneVacuumEligibility(ctx context.Context, server strin
 //   swapped there is no clean rollback for the others, so we do not
 //   retry or undo. An operator must reconcile a partial commit
 //   failure.
+//
+//   Phase 3 (Mark Writable): re-notify master per replica so the
+//   volume returns to the writables layout. Mirrors
+//   batchVacuumVolumeCommit's per-replica SetVolumeAvailable call.
+//   See upstream seaweedfs#9685.
 //
 // Interleaving Compact→Commit→Cleanup per replica (the prior behavior)
 // could leave a committed first replica beside an uncompacted second
@@ -272,6 +277,22 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 	if len(commitErrors) > 0 {
 		return fmt.Errorf("vacuum commit failed on %d/%d replicas: %v",
 			len(commitErrors), len(t.vacuumTargets), commitErrors)
+	}
+
+	// Phase 3: Re-notify master so each replica returns to the writable
+	// layout. Master built-in vacuum does this via SetVolumeAvailable
+	// per replica after commit; the worker path had no equivalent, so
+	// previously-full volumes stayed stuck out of writables. We
+	// piggy-back on VolumeMarkWritable, which on the volume server runs
+	// notifyMasterVolumeReadonly(false) with the full per-volume
+	// metadata. Failures are warned but never fail the task — the
+	// vacuum itself already succeeded. See upstream seaweedfs#9685.
+	for _, server := range t.vacuumTargets {
+		if err := t.markWritableOne(ctx, server); err != nil {
+			glog.Warningf("post-vacuum mark writable on %s for volume %d: %v", server, t.volumeID, err)
+			continue
+		}
+		glog.V(0).Infof("post-vacuum marked volume %d writable on %s", t.volumeID, server)
 	}
 	return nil
 }
@@ -324,6 +345,18 @@ func (t *VacuumTask) cleanupOne(ctx context.Context, server string) error {
 			cleanupCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cancel()
 			_, err := client.VacuumVolumeCleanup(cleanupCtx, &volume_server_pb.VacuumVolumeCleanupRequest{
+				VolumeId: t.volumeID,
+			})
+			return err
+		})
+}
+
+func (t *VacuumTask) markWritableOne(ctx context.Context, server string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			markCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
+			defer cancel()
+			_, err := client.VolumeMarkWritable(markCtx, &volume_server_pb.VolumeMarkWritableRequest{
 				VolumeId: t.volumeID,
 			})
 			return err

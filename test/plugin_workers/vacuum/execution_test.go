@@ -66,4 +66,7 @@ func TestVacuumExecutionIntegration(t *testing.T) {
 	// topology.vacuumOneVolumeId which only calls batchVacuumVolumeCleanup
 	// on the Compact-failure branch.
 	require.Equal(t, 0, cleanupCalls)
+	// Phase 3 marks each replica writable so master returns it to the
+	// writables layout. See upstream seaweedfs#9685.
+	require.GreaterOrEqual(t, source.MarkWritableCount(), 1)
 }
