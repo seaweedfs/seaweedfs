@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -26,6 +27,17 @@ func TestReplicasPendingDelete(t *testing.T) {
 	require.Empty(t,
 		replicasPendingDelete(replicas, map[string]bool{"a:8080": true, "b:8080": true, "c:8080": true}),
 		"all swept yields nothing left to delete")
+}
+
+// The sweep leaves a node in place only when VolumeDelete(OnlyEmpty) reports the
+// volume holds data or no longer exists. An unreachable node leaves its state
+// unknown and must propagate so the encode fails rather than force-deleting it
+// later over the shared .vif.
+func TestIsExpectedSweepSkip(t *testing.T) {
+	require.True(t, isExpectedSweepSkip(errors.New("DeleteVolume 5: volume not empty")))
+	require.True(t, isExpectedSweepSkip(errors.New("volume 5 not found on disk")))
+	require.False(t, isExpectedSweepSkip(errors.New("rpc error: code = Unavailable desc = connection refused")))
+	require.False(t, isExpectedSweepSkip(errors.New("context deadline exceeded")))
 }
 
 // The pre-distribute sweep must delete a 0-byte stub replica (so its shared
@@ -53,7 +65,7 @@ func TestSweepEmptyReplicasDeletesStubKeepsData(t *testing.T) {
 	framework.AllocateVolume(t, grpcClient, stubVol, "ec-stub")
 
 	stubTask := newSweepTaskForTest(server, stubVol, "ec-stub", dialOption)
-	stubTask.sweepEmptyReplicas(ctx)
+	require.NoError(t, stubTask.sweepEmptyReplicas(ctx))
 
 	require.True(t, stubTask.emptyReplicasDeleted[server], "stub server should be recorded as swept")
 	_, err := grpcClient.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: stubVol})
@@ -69,7 +81,7 @@ func TestSweepEmptyReplicasDeletesStubKeepsData(t *testing.T) {
 	require.Equal(t, http.StatusCreated, upResp.StatusCode)
 
 	dataTask := newSweepTaskForTest(server, dataVol, "ec-data", dialOption)
-	dataTask.sweepEmptyReplicas(ctx)
+	require.NoError(t, dataTask.sweepEmptyReplicas(ctx), "a not-empty refusal is expected, not an error")
 
 	require.False(t, dataTask.emptyReplicasDeleted[server], "data-bearing server must not be recorded as swept")
 	_, err = grpcClient.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: dataVol})

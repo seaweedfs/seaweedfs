@@ -212,7 +212,10 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	// keeps data-bearing replicas, which are deleted later after verify.
 	t.ReportProgressWithStage(57.0, "Removing empty stub replicas")
 	t.GetLogger().Info("Removing empty stub replicas before distribute")
-	t.sweepEmptyReplicas(ctx)
+	if err := t.sweepEmptyReplicas(ctx); err != nil {
+		t.rollbackReadonly(ctx)
+		return fmt.Errorf("failed to remove empty stub replicas: %w", err)
+	}
 
 	// Step 4: Distribute shards to destinations
 	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
@@ -789,8 +792,12 @@ func (t *ErasureCodingTask) getReplicas() []string {
 // delete). Run before distribute: a stub shares the <collection>_<vid>.vif the
 // EC volume reuses, so removing it afterwards would strip that .vif. Servers
 // whose stub was deleted are recorded so deleteOriginalVolume skips them.
-// Best-effort: a refused or unreachable server is left for the later delete.
-func (t *ErasureCodingTask) sweepEmptyReplicas(ctx context.Context) {
+//
+// A refusal (volume not empty) or an already-gone volume is expected and left
+// for the later delete. Any other error means the node's state is unknown; we
+// fail rather than proceed to distribute and a force-delete that could strip a
+// shared .vif.
+func (t *ErasureCodingTask) sweepEmptyReplicas(ctx context.Context) error {
 	for _, node := range t.getReplicas() {
 		err := operation.WithVolumeServerClient(false, pb.ServerAddress(node), t.grpcDialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
@@ -800,16 +807,29 @@ func (t *ErasureCodingTask) sweepEmptyReplicas(ctx context.Context) {
 				})
 				return e
 			})
-		if err != nil {
+		switch {
+		case err == nil:
+			if t.emptyReplicasDeleted == nil {
+				t.emptyReplicasDeleted = make(map[string]bool)
+			}
+			t.emptyReplicasDeleted[node] = true
+			glog.V(0).Infof("EC volume %d: removed empty stub replica on %s before distribute", t.volumeID, node)
+		case isExpectedSweepSkip(err):
 			glog.V(1).Infof("EC volume %d: empty-replica sweep left %s in place: %v", t.volumeID, node, err)
-			continue
+		default:
+			return fmt.Errorf("empty-replica sweep on %s: %w", node, err)
 		}
-		if t.emptyReplicasDeleted == nil {
-			t.emptyReplicasDeleted = make(map[string]bool)
-		}
-		t.emptyReplicasDeleted[node] = true
-		glog.V(0).Infof("EC volume %d: removed empty stub replica on %s before distribute", t.volumeID, node)
 	}
+	return nil
+}
+
+// isExpectedSweepSkip reports whether a VolumeDelete(OnlyEmpty) error is the
+// expected leave-in-place case: the replica still holds data (refused) or no
+// longer exists. Other errors (e.g. an unreachable node) leave its state
+// unknown and must not be swallowed.
+func isExpectedSweepSkip(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "volume not empty") || strings.Contains(s, "not found")
 }
 
 // replicasPendingDelete returns replicas not already removed by the
