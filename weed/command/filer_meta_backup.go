@@ -117,7 +117,7 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 		}
 		glog.V(0).Infof("metadata copied up to %v", startTime)
 		if err := metaBackup.setOffset(startTime); err != nil {
-			startTime = time.Now()
+			glog.Errorf("set metadata backup offset: %v", err)
 		}
 	}
 
