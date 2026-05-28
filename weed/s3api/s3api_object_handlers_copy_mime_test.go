@@ -1,0 +1,182 @@
+package s3api
+
+import (
+	"net/http"
+	"testing"
+)
+
+func TestResolveDestinationMime(t *testing.T) {
+	cases := []struct {
+		name        string
+		reqCT       string
+		srcMime     string
+		replaceMeta bool
+		want        string
+	}{
+		{"COPY keeps source mime", "text/plain", "image/png", false, "image/png"},
+		{"COPY without request CT", "", "image/png", false, "image/png"},
+		{"COPY with empty source mime", "text/plain", "", false, ""},
+		{"REPLACE with request CT wins", "text/plain", "image/png", true, "text/plain"},
+		{"REPLACE without request CT uses MinIO default", "", "image/png", true, defaultCopyContentType},
+		{"REPLACE with request CT and empty source", "application/json", "", true, "application/json"},
+		{"REPLACE without request CT and empty source", "", "", true, defaultCopyContentType},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := http.Header{}
+			if c.reqCT != "" {
+				h.Set("Content-Type", c.reqCT)
+			}
+			got := resolveDestinationMime(h, c.srcMime, c.replaceMeta)
+			if got != c.want {
+				t.Errorf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsValidDirective(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"", true},
+		{DirectiveCopy, true},
+		{DirectiveReplace, true},
+		{"copy", false},
+		{"replace", false},
+		{"FOO", false},
+		{"REPLACE ", false},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			if got := isValidDirective(c.value); got != c.want {
+				t.Errorf("isValidDirective(%q) = %v, want %v", c.value, got, c.want)
+			}
+		})
+	}
+}
+
+func TestProcessMetadataBytes_ReplaceSystemHeaders(t *testing.T) {
+	existing := map[string][]byte{
+		"Cache-Control":       []byte("max-age=60"),
+		"Content-Disposition": []byte(`attachment; filename="old.bin"`),
+	}
+	req := http.Header{}
+	req.Set("Cache-Control", "no-cache")
+	req.Set("Content-Encoding", "gzip")
+
+	out, err := processMetadataBytes(req, existing, true /* replaceMeta */, false /* replaceTagging */)
+	if err != nil {
+		t.Fatalf("processMetadataBytes returned error: %v", err)
+	}
+	if got := string(out["Cache-Control"]); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-cache")
+	}
+	if got := string(out["Content-Encoding"]); got != "gzip" {
+		t.Errorf("Content-Encoding = %q, want %q", got, "gzip")
+	}
+	if _, present := out["Content-Disposition"]; present {
+		t.Errorf("Content-Disposition should be dropped under REPLACE when not in request, got %q", string(out["Content-Disposition"]))
+	}
+}
+
+func TestIsManagedCopyMetadataKey_CoversSystemHeaders(t *testing.T) {
+	for _, h := range copyReplaceSystemHeaders {
+		if !isManagedCopyMetadataKey(h) {
+			t.Errorf("isManagedCopyMetadataKey(%q) = false, want true so mergeCopyMetadata drops stale source values", h)
+		}
+	}
+}
+
+func TestMergeCopyMetadata_ReplaceDropsStaleSystemHeader(t *testing.T) {
+	// End-to-end caller flow: source-populated Extended + REPLACE request
+	// must drop stale managed values, keep non-managed ones.
+	existing := map[string][]byte{
+		"Content-Disposition":          []byte(`attachment; filename="old.bin"`),
+		"Cache-Control":                []byte("max-age=60"),
+		"X-Amz-Meta-Owner":             []byte("old"),
+		"X-Amz-Meta-OnlyOnSource":      []byte("should-drop"),
+		"X-Custom-Non-Managed":         []byte("keep-me"),
+		"X-Amz-Server-Side-Encryption": []byte("aws:kms"),
+	}
+	req := http.Header{}
+	req.Set("Cache-Control", "no-cache")
+	req.Set("X-Amz-Meta-Owner", "new")
+
+	processed, err := processMetadataBytes(req, existing, true, false)
+	if err != nil {
+		t.Fatalf("processMetadataBytes error: %v", err)
+	}
+
+	merged := mergeCopyMetadata(existing, processed)
+
+	if _, leak := merged["Content-Disposition"]; leak {
+		t.Errorf("Content-Disposition leaked through REPLACE merge: %q", string(merged["Content-Disposition"]))
+	}
+	if got := string(merged["Cache-Control"]); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-cache")
+	}
+	if got := string(merged["X-Amz-Meta-Owner"]); got != "new" {
+		t.Errorf("X-Amz-Meta-Owner = %q, want %q", got, "new")
+	}
+	if _, leak := merged["X-Amz-Meta-OnlyOnSource"]; leak {
+		t.Errorf("stale X-Amz-Meta-OnlyOnSource must be dropped under REPLACE, still present: %q", string(merged["X-Amz-Meta-OnlyOnSource"]))
+	}
+	if got := string(merged["X-Custom-Non-Managed"]); got != "keep-me" {
+		t.Errorf("non-managed key %q must survive REPLACE merge, got %q", "X-Custom-Non-Managed", got)
+	}
+}
+
+func TestMergeCopyMetadata_ReplaceTaggingDropsStaleTags(t *testing.T) {
+	// REPLACE tagging directive must drop old object tags that the new
+	// request doesn't redeclare.
+	existing := map[string][]byte{
+		"X-Amz-Tagging-old": []byte("v1"),
+		"X-Amz-Tagging-env": []byte("dev"),
+		"X-Amz-Meta-Author": []byte("alice"),
+	}
+	req := http.Header{}
+	req.Set("X-Amz-Tagging", "env=prod")
+
+	processed, err := processMetadataBytes(req, existing, false /* replaceMeta */, true /* replaceTagging */)
+	if err != nil {
+		t.Fatalf("processMetadataBytes error: %v", err)
+	}
+
+	merged := mergeCopyMetadata(existing, processed)
+
+	if _, leak := merged["X-Amz-Tagging-old"]; leak {
+		t.Errorf("stale tag X-Amz-Tagging-old must be dropped, still present: %q", string(merged["X-Amz-Tagging-old"]))
+	}
+	if got := string(merged["X-Amz-Tagging-env"]); got != "prod" {
+		t.Errorf("X-Amz-Tagging-env = %q, want %q", got, "prod")
+	}
+	if got := string(merged["X-Amz-Meta-Author"]); got != "alice" {
+		t.Errorf("COPY-mode user metadata must survive tag-only REPLACE: got %q", got)
+	}
+}
+
+func TestProcessMetadataBytes_CopyInheritsSystemHeaders(t *testing.T) {
+	existing := map[string][]byte{
+		"Cache-Control":       []byte("max-age=60"),
+		"Content-Disposition": []byte(`attachment; filename="src.bin"`),
+		"Content-Encoding":    []byte("gzip"),
+	}
+	req := http.Header{}
+	req.Set("Cache-Control", "no-cache")
+
+	out, err := processMetadataBytes(req, existing, false /* replaceMeta */, false /* replaceTagging */)
+	if err != nil {
+		t.Fatalf("processMetadataBytes returned error: %v", err)
+	}
+	if got := string(out["Cache-Control"]); got != "max-age=60" {
+		t.Errorf("Cache-Control = %q, want %q (source value, request ignored under COPY)", got, "max-age=60")
+	}
+	if got := string(out["Content-Disposition"]); got != `attachment; filename="src.bin"` {
+		t.Errorf("Content-Disposition = %q, want source value", got)
+	}
+	if got := string(out["Content-Encoding"]); got != "gzip" {
+		t.Errorf("Content-Encoding = %q, want %q", got, "gzip")
+	}
+}
