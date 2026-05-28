@@ -111,6 +111,8 @@ func TestProcessMetadataBytes_CopyAcceptsLowercaseSourceKeys(t *testing.T) {
 	existing := map[string][]byte{
 		"cache-control":       []byte("max-age=60"),
 		"content-disposition": []byte(`attachment; filename="legacy.bin"`),
+		"CONTENT-ENCODING":    []byte("gzip"),
+		"Content-language":    []byte("en"),
 	}
 	req := http.Header{}
 
@@ -123,6 +125,31 @@ func TestProcessMetadataBytes_CopyAcceptsLowercaseSourceKeys(t *testing.T) {
 	}
 	if got := string(out["Content-Disposition"]); got != `attachment; filename="legacy.bin"` {
 		t.Errorf("Content-Disposition = %q, want legacy source value promoted to canonical", got)
+	}
+	if got := string(out["Content-Encoding"]); got != "gzip" {
+		t.Errorf("Content-Encoding = %q, want %q (uppercase source must be promoted to canonical)", got, "gzip")
+	}
+	if got := string(out["Content-Language"]); got != "en" {
+		t.Errorf("Content-Language = %q, want %q (mixed-case source must be promoted to canonical)", got, "en")
+	}
+}
+
+func TestProcessMetadataBytes_CopyAcceptsLowercaseTagKeys(t *testing.T) {
+	existing := map[string][]byte{
+		"x-amz-tagging-env":  []byte("prod"),
+		"X-AMZ-TAGGING-team": []byte("infra"),
+	}
+	req := http.Header{}
+
+	out, err := processMetadataBytes(req, existing, false /* replaceMeta */, false /* replaceTagging */)
+	if err != nil {
+		t.Fatalf("processMetadataBytes error: %v", err)
+	}
+	if got := string(out["X-Amz-Tagging-env"]); got != "prod" {
+		t.Errorf("X-Amz-Tagging-env = %q, want %q (legacy lowercase tag must be promoted to canonical)", got, "prod")
+	}
+	if got := string(out["X-Amz-Tagging-team"]); got != "infra" {
+		t.Errorf("X-Amz-Tagging-team = %q, want %q (uppercase tag must be promoted to canonical)", got, "infra")
 	}
 }
 

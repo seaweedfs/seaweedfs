@@ -62,6 +62,11 @@ func isValidDirective(value string) bool {
 	return value == "" || value == DirectiveCopy || value == DirectiveReplace
 }
 
+// hasPrefixFold reports whether s starts with prefix, ignoring case.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 	t := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -1079,14 +1084,16 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			}
 		}
 	} else {
-		// Read source system headers tolerantly: prefer the canonical key,
-		// fall back to lowercase so legacy non-canonical entries still
-		// survive COPY. Always re-emit under the canonical name.
-		for _, h := range copyReplaceSystemHeaders {
-			if v, ok := existing[h]; ok {
-				metadata[h] = v
-			} else if v, ok := existing[strings.ToLower(h)]; ok {
-				metadata[h] = v
+		// Match every variant the source might have stored (CamelCase,
+		// lowercase, mixed) and re-emit under the canonical header name.
+		// Single pass over existing so any case folding works, not just
+		// strings.ToLower.
+		for k, v := range existing {
+			for _, h := range copyReplaceSystemHeaders {
+				if strings.EqualFold(k, h) {
+					metadata[h] = v
+					break
+				}
 			}
 		}
 		// Copy existing metadata as-is
@@ -1130,10 +1137,18 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			}
 		}
 	} else {
+		// Carry tags forward case-insensitively so legacy lowercase keys
+		// (x-amz-tagging-env) survive COPY, and re-emit them under the
+		// canonical X-Amz-Tagging-<suffix> form. Matches the X-Amz-Meta-*
+		// canonicalization above and prevents mergeCopyMetadata from
+		// permanently dropping them after case-insensitive isManagedCopyMetadataKey.
+		prefixLen := len(s3_constants.AmzObjectTagging)
 		for k, v := range existing {
-			if strings.HasPrefix(k, s3_constants.AmzObjectTagging) {
-				metadata[k] = v
+			if !hasPrefixFold(k, s3_constants.AmzObjectTagging) {
+				continue
 			}
+			canonicalKey := s3_constants.AmzObjectTagging + k[prefixLen:]
+			metadata[canonicalKey] = v
 		}
 		delete(metadata, s3_constants.AmzTagCount)
 	}
