@@ -397,7 +397,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
 	// Copy-part is an MPU part write under .uploads/<id>/<n>; lifecycle
 	// TTL only applies to the eventual completed object. Pass 0.
-	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil)
+	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false)
 	if code != s3err.ErrNone {
 		return "", SSEResponseMetadata{}, code
 	}

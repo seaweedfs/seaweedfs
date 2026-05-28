@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
@@ -315,6 +316,7 @@ func (mm *MaintenanceManager) performScan() {
 	glog.Infof("Starting maintenance scan...")
 
 	results, err := mm.scanner.ScanForMaintenanceTasks()
+	stats_collect.AdminMaintenanceLastScanTimestampSeconds.SetToCurrentTime()
 	if err != nil {
 		// Handle scan error
 		mm.mutex.Lock()
@@ -516,6 +518,11 @@ func (mm *MaintenanceManager) GetTasks(status MaintenanceTaskStatus, taskType Ma
 // GetWorkers returns all registered workers
 func (mm *MaintenanceManager) GetWorkers() []*MaintenanceWorker {
 	return mm.queue.GetWorkers()
+}
+
+// GetWorkerSlotTotals returns worker count and aggregate used/max task slots.
+func (mm *MaintenanceManager) GetWorkerSlotTotals() (workers, used, max int) {
+	return mm.queue.GetWorkerSlotTotals()
 }
 
 // TriggerScan manually triggers a maintenance scan

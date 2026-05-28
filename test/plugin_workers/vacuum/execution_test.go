@@ -59,5 +59,11 @@ func TestVacuumExecutionIntegration(t *testing.T) {
 	require.GreaterOrEqual(t, checkCalls, 2)
 	require.GreaterOrEqual(t, compactCalls, 1)
 	require.GreaterOrEqual(t, commitCalls, 1)
-	require.GreaterOrEqual(t, cleanupCalls, 1)
+	// Cleanup is only invoked when Phase 1 (Compact) fails to roll back
+	// the .cpd/.cpx/.cpldb temp files; on the success path Commit
+	// consumes them (rename .cpd → .dat, .cpx → .idx, .cpldb → .ldb via
+	// the leveldb needle map) so no Cleanup call is needed. Matches
+	// topology.vacuumOneVolumeId which only calls batchVacuumVolumeCleanup
+	// on the Compact-failure branch.
+	require.Equal(t, 0, cleanupCalls)
 }

@@ -53,7 +53,8 @@ const maxPeerFetchChunkBytes = 64 * 1024 * 1024
 //      end-to-end against FileChunk.ETag.
 //   4. On success, populate chunk_cache and enqueue an announce so
 //      other mounts can discover us as a new holder.
-func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []byte, offset int64, entry *LockedEntry) (int64, int64, error) {
+// chunks is a snapshot captured under the LockedEntry lock by the caller.
+func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []byte, offset int64, chunks []*filer_pb.FileChunk) (int64, int64, error) {
 	if fh.wfs.peerRegistrar == nil || fh.wfs.peerConnPool == nil {
 		return 0, 0, fmt.Errorf("peer sharing not configured")
 	}
@@ -63,7 +64,7 @@ func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []by
 	if readStop > fileSize {
 		readStop = fileSize
 	}
-	dataChunks, _, err := filer.ResolveChunkManifest(ctx, fh.wfs.LookupFn(), entry.GetEntry().Chunks, offset, readStop)
+	dataChunks, _, err := filer.ResolveChunkManifest(ctx, fh.wfs.LookupFn(), chunks, offset, readStop)
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve manifest: %w", err)
 	}

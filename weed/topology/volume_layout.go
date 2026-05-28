@@ -502,6 +502,25 @@ func (vl *VolumeLayout) Lookup(vid needle.VolumeId) []*DataNode {
 	return nil
 }
 
+// HasDataNode reports whether the layout already lists dn as a location for vid.
+// Used to detect a volume that is present on a data node but missing from the
+// lookup index, so it can be re-registered.
+func (vl *VolumeLayout) HasDataNode(vid needle.VolumeId, dn *DataNode) bool {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	location, ok := vl.vid2location[vid]
+	if !ok {
+		return false
+	}
+	for _, n := range location.list {
+		if n.Ip == dn.Ip && n.Port == dn.Port {
+			return true
+		}
+	}
+	return false
+}
+
 func (vl *VolumeLayout) ListVolumeServers() (nodes []*DataNode) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
@@ -750,10 +769,21 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 		if location.Remove(dn) {
 			vl.readonlyVolumes.Remove(vid, dn)
 			vl.oversizedVolumes.Remove(vid, dn)
+			wasWritable := false
 			if location.Length() < vl.rp.GetCopyCount() {
 				glog.V(0).Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
-				return vl.removeFromWritable(vid)
+				wasWritable = vl.removeFromWritable(vid)
 			}
+			if location.Length() == 0 {
+				// Drop the now-empty entry. Otherwise Lookup returns a non-nil
+				// empty location list, which surfaces as "volume id not found"
+				// even though the volume still appears in volume.list/admin UI.
+				// Mirrors UnRegisterVolume.
+				delete(vl.vid2location, vid)
+				delete(vl.sizeTracking, vid)
+				vl.removeFromCrowded(vid)
+			}
+			return wasWritable
 		}
 	}
 	return false

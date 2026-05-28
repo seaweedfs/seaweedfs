@@ -132,7 +132,7 @@ func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPat
 			Uid:    OS_UID,
 			Gid:    OS_GID,
 		},
-	}, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
+	}, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
 
@@ -167,7 +167,7 @@ func (fs *FilerServer) saveTusSession(ctx context.Context, session *TusSession) 
 		Content: sessionData,
 	}
 
-	if err := fs.filer.CreateEntry(ctx, entry, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
+	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("save session info entry: %w", err)
 	}
 
@@ -265,7 +265,7 @@ func (fs *FilerServer) saveTusChunk(ctx context.Context, uploadID string, chunk 
 			Uid:    OS_UID,
 			Gid:    OS_GID,
 		},
-	}, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
+	}, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("save chunk info: %w", err)
 	}
 
@@ -371,7 +371,7 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	}
 
 	// Ensure parent directory exists
-	if err := fs.filer.CreateEntry(ctx, entry, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
+	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("create final file entry: %w", err)
 	}
 

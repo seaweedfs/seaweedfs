@@ -152,7 +152,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 						entry.Attr.FileSize = uint64(remoteEntry.RemoteSize)
 					}
 				}
-				if saveErr := f.CreateEntry(persistCtx, entry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
+				if saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 					glog.Warningf("maybeLazyListFromRemote: persist %s: %v", childPath, saveErr)
 				}
 			}
@@ -193,7 +193,7 @@ func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullP
 			dirEntry.Extended = make(map[string][]byte)
 		}
 		dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", syncTime.Unix()))
-		if saveErr := f.CreateEntry(ctx, dirEntry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
+		if saveErr := f.CreateEntry(ctx, dirEntry, nil, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 			glog.Warningf("maybeLazyListFromRemote: create dir synced_at for %s: %v", p, saveErr)
 		}
 		return

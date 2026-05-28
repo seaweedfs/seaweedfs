@@ -13,6 +13,13 @@ type SqlGenMysql struct {
 	UpsertQueryTemplate    string
 }
 
+// DefaultUpsertQuery keeps INSERTs idempotent so the inode-index KvPut
+// after every entry write does not emit a duplicate-key roundtrip on
+// every mutation. The VALUES() form works on MariaDB and MySQL >=5.7;
+// the newer "AS new" alias from MySQL 8.0.19 errors on MariaDB, so it
+// is left for users to opt into via an explicit upsertQuery.
+const DefaultUpsertQuery = "INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE `meta` = VALUES(`meta`)"
+
 var (
 	_ = abstract_sql.SqlGenerator(&SqlGenMysql{})
 )

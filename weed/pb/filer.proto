@@ -31,6 +31,15 @@ service SeaweedFiler {
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
+    rpc ObjectTransaction (ObjectTransactionRequest) returns (ObjectTransactionResponse) {
+    }
+
+    rpc ObjectTransactionBatch (ObjectTransactionBatchRequest) returns (ObjectTransactionBatchResponse) {
+    }
+
+    rpc PosixLock (PosixLockRequest) returns (PosixLockResponse) {
+    }
+
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
@@ -222,6 +231,56 @@ message CreateEntryRequest {
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
     bool skip_check_parent_directory = 6;
+    // Optional precondition evaluated against the current entry atomically with
+    // the write, under the filer's per-path lock. The caller must route the
+    // key's writes to this entry's owner filer for the check to be authoritative.
+    WriteCondition condition = 7;
+}
+
+// WriteCondition is the precondition the filer evaluates against the existing
+// entry before writing, under the per-path lock. A failed condition returns
+// FilerError PRECONDITION_FAILED. The client maps request semantics (e.g. RFC
+// 7232) to clauses; the filer just compares.
+//
+// A condition is a list of clauses that ALL must hold (logical AND). One clause
+// is the common case; several express what a single comparison cannot: an ETag
+// set (If-Match / If-None-Match with multiple values), weak-ETag comparison, and
+// compound conditions (e.g. If-Match + If-Unmodified-Since together).
+message WriteCondition {
+    enum Kind {
+        NONE                  = 0; // unconditional
+        IF_NOT_EXISTS         = 1; // fail if the entry exists (If-None-Match: *)
+        IF_EXISTS             = 2; // fail if the entry is absent (If-Match: *)
+        IF_ETAG_MATCH         = 3; // fail if absent or etag matches none of the set (If-Match)
+        IF_ETAG_NOT_MATCH     = 4; // fail if present and etag matches any of the set (If-None-Match)
+        IF_UNMODIFIED_SINCE   = 5; // fail if present and mtime > unix_time
+        IF_MODIFIED_SINCE     = 6; // fail if present and mtime <= unix_time
+        IF_EXTENDED_NOT_EQUAL = 7; // fail if present and extended[ext_key] == ext_value
+        IF_EXTENDED_TIME_ELAPSED = 8; // fail if present and extended[ext_key] (unix seconds) is in the future
+    }
+    // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
+    // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
+    // equals none. allow_weak permits weak-comparison (ignoring the W/ prefix).
+    //
+    // The IF_EXTENDED_* kinds are generic guards on an extended attribute, used
+    // to enforce object-lock without teaching the filer S3 semantics:
+    // IF_EXTENDED_NOT_EQUAL expresses a legal hold (block while a key equals a
+    // value), and IF_EXTENDED_TIME_ELAPSED expresses retention (block while a
+    // stored unix-second deadline is in the future, compared to the filer's
+    // clock). The caller composes these and, for governance-bypass, simply omits
+    // the retention clause when the bypass is authorized — the filer makes no
+    // authorization decision.
+    message Clause {
+        Kind kind = 1;
+        repeated string etags = 2; // ETag set for IF_ETAG_* kinds
+        int64 unix_time = 3;       // bound (unix seconds) for IF_*_SINCE kinds
+        bool allow_weak = 4;       // compare ETags ignoring the weak (W/) marker
+        string ext_key = 5;        // extended attribute name for IF_EXTENDED_* kinds
+        string ext_value = 6;      // blocking value for IF_EXTENDED_NOT_EQUAL
+        string gate_key = 7;       // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
+        string gate_value = 8;     // gate value (e.g. retention mode COMPLIANCE for governance bypass)
+    }
+    repeated Clause clauses = 1;   // all must hold (logical AND)
 }
 
 // Structured error codes for filer entry operations.
@@ -233,6 +292,138 @@ enum FilerError {
     EXISTING_IS_DIRECTORY = 3; // cannot overwrite directory with file
     EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
+    PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
+}
+
+// ObjectMutation is one entry-level change applied by ObjectTransaction. All
+// mutations of a transaction run under a single per-path lock (the request's
+// lock_key) and in order, so the gateway can describe a multi-entry object
+// operation as one request instead of holding a distributed lock across
+// several RPCs. Data-bearing writes (entries with chunks) should be written
+// before the transaction; mutations here are metadata-scoped.
+message ObjectMutation {
+    enum Type {
+        PUT              = 0; // create or replace the entry (entry field)
+        DELETE           = 1; // delete the entry at directory/name (no error if absent)
+        PATCH_EXTENDED   = 2; // merge set_extended / remove delete_extended on the entry
+        RECOMPUTE_LATEST = 3; // scan a directory and re-point a parent entry (recompute)
+    }
+    Type type = 1;
+    string directory = 2;
+    string name = 3;                       // entry name for DELETE / PATCH_EXTENDED / RECOMPUTE_LATEST (the pointer entry)
+    Entry entry = 4;                        // full entry for PUT
+    map<string, bytes> set_extended = 5;   // PATCH_EXTENDED: keys to set
+    repeated string delete_extended = 6;   // PATCH_EXTENDED: keys to remove
+    bool is_delete_data = 7;               // DELETE: also delete chunk data
+    bool is_recursive = 8;                 // DELETE: recurse into a directory
+    Recompute recompute = 9;               // RECOMPUTE_LATEST parameters
+    bool set_content = 10;                 // PATCH_EXTENDED: replace Entry.content with content
+    bytes content = 11;                    // PATCH_EXTENDED: new Entry.content when set_content
+    bool touch_mtime = 12;                 // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
+}
+
+// Recompute re-derives a pointer entry (directory/name on the mutation) from the
+// current contents of a scanned directory, atomically under the transaction's
+// lock. It is mechanical: the filer picks the child that sorts first or last by
+// name and copies the requested fields into the pointer; it has no knowledge of
+// what the entries mean. The caller (which does know the versioning scheme)
+// supplies the sort direction and the key mappings. This covers re-pointing the
+// latest version after a specific version is deleted, where the scan must run
+// under the lock.
+message Recompute {
+    string scan_dir = 1;                   // directory whose direct children are scanned
+    bool descending = 2;                   // pick the child that sorts last by name (else first)
+    map<string, string> copy_extended = 3; // pointer extended key -> source extended key on the chosen child
+    string name_to_key = 4;                // if set, store the chosen child's name under this pointer key
+    string size_to_key = 5;                // if set, store the chosen child's FileSize (decimal) under this pointer key
+    string mtime_to_key = 6;               // if set, store the chosen child's Mtime (decimal) under this pointer key
+    string demote_key = 7;                 // if set, stamp demote_value on the prior name_to_key target when it changes
+    bytes demote_value = 8;                // value for demote_key
+    string exclude_name = 9;               // if set, skip this child when scanning (e.g. a version about to be deleted)
+}
+
+// ObjectTransactionRequest applies an ordered list of mutations atomically with
+// respect to other writers of the same object, by holding the filer's per-path
+// lock on lock_key for the whole transaction. The optional condition is checked
+// first, against condition_key when set, else lock_key. Callers set route_key to
+// the object's stable owner ring key; a filer that is not the owner forwards the
+// transaction one hop to the owner, so a stale ring view is tolerated.
+message ObjectTransactionRequest {
+    string lock_key = 1;               // object path to lock and to evaluate the condition against
+    WriteCondition condition = 2;      // optional precondition, checked under the lock
+    repeated ObjectMutation mutations = 3;
+    bool is_from_other_cluster = 4;
+    repeated int32 signatures = 5;
+    string condition_key = 6;          // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
+    string route_key = 7;              // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
+    bool is_moved = 8;                 // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
+}
+
+message ObjectTransactionResponse {
+    string error = 1;
+    FilerError error_code = 2;
+}
+
+// PosixLockRange is one advisory byte-range lock. Owner identity is (sid, owner):
+// sid is the mount session, owner the FUSE lock owner within it, so owners from
+// different mounts never alias. end is inclusive (max uint64 = to EOF); is_flock
+// separates the flock and fcntl namespaces, which never conflict.
+message PosixLockRange {
+    uint64 start = 1;
+    uint64 end = 2;
+    uint32 type = 3;       // 1=read, 2=write, 3=unlock
+    uint64 sid = 4;
+    uint64 owner = 5;
+    uint32 pid = 6;        // holder pid, for get_lk reporting only
+    bool is_flock = 7;
+}
+
+// PosixLock routes an advisory lock operation to the inode's owner filer, which
+// holds the authoritative in-memory lock table. key is the inode identity ring
+// key (the file path, or hl:<HardLinkId> for a hardlink) used both to resolve the
+// owner and to index the table. A non-owner filer forwards the request one hop;
+// is_moved bounds it so a stale ring view cannot loop.
+message PosixLockRequest {
+    string key = 1;
+    bool is_moved = 2;
+    PosixLockOp op = 3;
+    PosixLockRange lock = 4;
+    // locks carries the full set a mount holds on key for a KEEP_ALIVE
+    // re-assertion, so the current owner filer can rebuild its in-memory state
+    // after an ownership change or restart. lock.sid identifies the session.
+    repeated PosixLockRange locks = 5;
+    // cooling_probe marks a dual-read a new owner sends to the previous owner
+    // during a ring change, so the previous owner answers from local state
+    // without itself cooling-off (no recursion).
+    bool cooling_probe = 6;
+}
+
+enum PosixLockOp {
+    TRY_LOCK = 0;             // grant lock or report conflict (non-blocking)
+    UNLOCK = 1;              // release lock's owner's locks over its range
+    GET_LK = 2;             // report a conflicting lock, if any
+    RELEASE_POSIX_OWNER = 3; // drop the owner's fcntl locks (flush-time)
+    RELEASE_FLOCK_OWNER = 4; // drop the owner's flock locks (release-time)
+    KEEP_ALIVE = 5;         // renew the session's lease on this owner (lock.sid)
+}
+
+message PosixLockResponse {
+    bool granted = 1;            // for TRY_LOCK: whether the lock was granted
+    bool has_conflict = 2;       // whether conflict is populated
+    PosixLockRange conflict = 3; // the blocking lock (TRY_LOCK conflict / GET_LK result)
+}
+
+// ObjectTransactionBatch applies several object transactions in one round trip,
+// each under its own per-path lock and independent of the others (no cross-key
+// atomicity). A caller groups keys that route to the same owner filer and sends
+// one batch per owner, e.g. for a multi-object delete. Each response is parallel
+// to its request.
+message ObjectTransactionBatchRequest {
+    repeated ObjectTransactionRequest transactions = 1;
+}
+
+message ObjectTransactionBatchResponse {
+    repeated ObjectTransactionResponse responses = 1;
 }
 
 message CreateEntryResponse {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,9 +20,6 @@ func TestPlanECDestinationsPrefersSourceDiskType_FullCluster(t *testing.T) {
 	// for a 10+4 layout with one-shard-per-(server,disk) diversity.
 	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd", "ssd"}, 100, 0)
 
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
-
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   1,
 		Server:     "10.0.0.1:8080",
@@ -30,7 +28,9 @@ func TestPlanECDestinationsPrefersSourceDiskType_FullCluster(t *testing.T) {
 		DiskType:   "ssd", // the property being plumbed end-to-end
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, _, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.Len(t, plan.Plans, erasure_coding.TotalShardsCount)
 
@@ -67,9 +67,6 @@ func TestPlanECDestinationsSpillsToOtherDiskType_WhenPreferredScarce(t *testing.
 	}
 	require.NoError(t, activeTopology.UpdateTopology(topo))
 
-	planner := newECPlacementPlanner(activeTopology, nil)
-	require.NotNil(t, planner)
-
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   2,
 		Server:     "10.0.0.1:8080",
@@ -78,7 +75,9 @@ func TestPlanECDestinationsSpillsToOtherDiskType_WhenPreferredScarce(t *testing.
 		DiskType:   "ssd",
 	}
 
-	plan, err := planECDestinations(planner, metric, NewDefaultConfig(), erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	snap := ecbalancer.FromActiveTopology(activeTopology, erasure_coding.DataShardsCount)
+	nodeAddresses := buildNodeAddressMap(activeTopology)
+	plan, _, err := planECDestinations(snap, nodeAddresses, metric, NewDefaultConfig(), nil, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.NoError(t, err)
 	require.Len(t, plan.Plans, erasure_coding.TotalShardsCount)
 

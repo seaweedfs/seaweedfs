@@ -30,6 +30,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
@@ -50,6 +51,8 @@ type AdminOptions struct {
 	dataDir          *string
 	icebergPort      *int
 	urlPrefix        *string
+	metricsHttpPort  *int
+	metricsHttpIp    *string
 	debug            *bool
 	debugPort        *int
 	cpuProfile       *string
@@ -70,6 +73,8 @@ func init() {
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
+	a.metricsHttpPort = cmdAdmin.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	a.metricsHttpIp = cmdAdmin.Flag.String("metricsIp", "", "metrics listen ip. If empty, listens on all interfaces.")
 	a.debug = cmdAdmin.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	a.debugPort = cmdAdmin.Flag.Int("debug.port", 6060, "http port for debugging")
 	a.cpuProfile = cmdAdmin.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -159,6 +164,12 @@ var cmdAdmin = &Command{
     - Examples:
       weed admin -debug -debug.port=6060 -master="localhost:9333"
       weed admin -cpuprofile=cpu.prof -memprofile=mem.prof -master="localhost:9333"
+
+  Metrics:
+    - Use -metricsPort to expose Prometheus metrics at http://<host>:<metricsPort>/metrics
+    - Use -metricsIp to bind the metrics endpoint to a specific ip (default: all interfaces)
+    - Metrics are disabled when -metricsPort is 0 (the default)
+    - Example: weed admin -metricsPort=9327 -master="localhost:9333"
 
   Configuration File:
     - The security.toml file is read from ".", "$HOME/.seaweedfs/",
@@ -256,6 +267,12 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Printf("Authentication: Disabled\n")
 	}
 	fmt.Printf("Plugin: Enabled\n")
+
+	// Start Prometheus metrics endpoint if a port is configured
+	if *a.metricsHttpPort > 0 {
+		fmt.Printf("Metrics: http://%s/metrics\n", stats_collect.JoinHostPort(*a.metricsHttpIp, *a.metricsHttpPort))
+	}
+	go stats_collect.StartMetricsServer(*a.metricsHttpIp, *a.metricsHttpPort)
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

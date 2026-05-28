@@ -339,7 +339,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 	}
 
-	dbErr := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
+	dbErr := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
 	if dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
@@ -437,7 +437,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 		Name: util.FullPath(path).Name(),
 	}
 
-	if dbErr := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, false, false, nil, false, so.MaxFileNameLength); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, false, so.MaxFileNameLength); dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
 		glog.V(0).InfofCtx(ctx, "failing to create dir %s on filer server : %v", path, dbErr)

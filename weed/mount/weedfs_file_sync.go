@@ -60,7 +60,7 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		// If handle is not found, it might have been already released
 		// This is not an error condition for FLUSH
 		if in.LockOwner != 0 {
-			wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
+			wfs.releasePosixOwner(in.NodeId, in.LockOwner)
 		}
 		return fuse.OK
 	}
@@ -69,11 +69,11 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	// did not hold byte-range locks. Only force the synchronous close path when
 	// this owner actually has POSIX locks to release; otherwise writebackCache
 	// would silently degrade to a blocking flush for ordinary close().
-	hasPosixLocks := wfs.posixLocks.HasPosixOwner(in.NodeId, in.LockOwner)
+	hasPosixLocks := wfs.hasPosixOwner(in.NodeId, in.LockOwner)
 	allowAsync := !hasPosixLocks
 	status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync)
 	if in.LockOwner != 0 {
-		wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
+		wfs.releasePosixOwner(in.NodeId, in.LockOwner)
 	}
 	return status
 }

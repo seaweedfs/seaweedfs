@@ -43,6 +43,7 @@ type Node struct {
 type disk struct {
 	diskID     uint32
 	diskType   string
+	tags       []string // placement tags, for preferred-tag tiering
 	freeSlots  int
 	shardCount int // total EC shards on this disk across all volumes
 }
@@ -88,8 +89,8 @@ type Options struct {
 	GlobalMaxMovesPerRack int
 	// GlobalUtilizationBased selects the global phase's balance metric: when true,
 	// nodes are balanced by fractional fullness (shards/capacity), which suits
-	// heterogeneous-capacity racks; when false, by raw shard count. The worker
-	// uses utilization; the shell uses raw count.
+	// heterogeneous-capacity racks; when false, by raw shard count. Both the worker
+	// and the shell enable it; the two metrics agree when capacities are uniform.
 	GlobalUtilizationBased bool
 }
 
@@ -130,6 +131,14 @@ func (t *Topology) AddNode(id, dc, rackKey string, freeSlots int) *Node {
 // free EC shard slots.
 func (n *Node) AddDisk(diskID uint32, diskType string, freeSlots, shardCount int) {
 	n.disks[diskID] = &disk{diskID: diskID, diskType: diskType, freeSlots: freeSlots, shardCount: shardCount}
+}
+
+// AddDiskTags records placement tags (e.g. "ssd","fast") for a disk, used by
+// preferred-tag tiering in Place. Call after AddDisk; a no-op if the disk is unknown.
+func (n *Node) AddDiskTags(diskID uint32, tags []string) {
+	if d, ok := n.disks[diskID]; ok {
+		d.tags = append([]string(nil), tags...)
+	}
 }
 
 // AddShards records that the volume's shards in bits live on diskID. Call it
@@ -251,10 +260,8 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 		if !ok {
 			continue
 		}
-		for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
-			if info.shardBits.Has(erasure_coding.ShardId(shardID)) {
-				shardLocations[shardID] = append(shardLocations[shardID], node)
-			}
+		for sid := range info.shardBits.All() {
+			shardLocations[int(sid)] = append(shardLocations[int(sid)], node)
 		}
 	}
 
@@ -354,8 +361,11 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinity,
 			func(r string) bool { return racks[r].freeSlots > 0 },
 			func(r string) bool {
-				if rp != nil && rp.DiffRackCount > 0 {
-					return rackShardCount[r] < rp.DiffRackCount
+				if rp == nil {
+					return true
+				}
+				if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
+					return false
 				}
 				return true
 			})
@@ -403,7 +413,7 @@ func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node 
 			continue
 		}
 		count := volumeShardCount(node, vk)
-		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount+1 {
+		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
 		if best == nil || count < bestCount {
@@ -479,7 +489,7 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 			func(n string) bool { return n != pm.src.id && r.nodes[n].freeSlots > 0 },
 			func(n string) bool {
 				if rp != nil && rp.SameRackCount > 0 {
-					return nodeShardCount[n] < rp.SameRackCount+1
+					return nodeShardCount[n] < rp.SameRackCount
 				}
 				return true
 			})
@@ -610,13 +620,10 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					if pass == 1 && !volumeOnMin {
 						continue // pass 1: only volumes already on the destination
 					}
-					// Iterate the full shard-id space so custom ratios with more than
-					// the standard total (ids 14..MaxShardCount-1) are candidates too.
-					for shardID := 0; shardID < erasure_coding.MaxShardCount; shardID++ {
-						sid := erasure_coding.ShardId(shardID)
-						if !info.shardBits.Has(sid) {
-							continue
-						}
+					// Walk the volume's actual shard bitmap so custom ratios with more
+					// than the standard total (ids 14..MaxShardCount-1) are candidates too.
+					for sid := range info.shardBits.All() {
+						shardID := int(sid)
 						if minInfo != nil && minInfo.shardBits.Has(sid) {
 							continue
 						}
@@ -669,10 +676,8 @@ func shardsByGroup(vk volKey, nodes map[string]*Node, dataShards int, key func(*
 			continue
 		}
 		k := key(node)
-		for s := 0; s < erasure_coding.MaxShardCount; s++ {
-			if !info.shardBits.Has(erasure_coding.ShardId(s)) {
-				continue
-			}
+		for sid := range info.shardBits.All() {
+			s := int(sid)
 			if s < dataShards {
 				dataPer[k] = append(dataPer[k], s)
 			} else {
@@ -747,11 +752,8 @@ func pickBestDiskOnNode(node *Node, vk volKey, diskType string, shardID, dataSha
 			bits := info.diskShardBits[diskID]
 			existingShards = bits.Count()
 			if dataShardCount > 0 {
-				for s := 0; s < erasure_coding.MaxShardCount; s++ {
-					if !bits.Has(erasure_coding.ShardId(s)) {
-						continue
-					}
-					if s < dataShardCount {
+				for sid := range bits.All() {
+					if int(sid) < dataShardCount {
 						hasData = true
 					} else {
 						hasParity = true
@@ -807,9 +809,11 @@ func reserveShard(node *Node, vk volKey, shardID int, diskID uint32) {
 	info.diskShardBits[diskID] = info.diskShardBits[diskID].Set(sid)
 	if d, ok := node.disks[diskID]; ok {
 		d.shardCount++
-		if d.freeSlots > 0 {
-			d.freeSlots--
-		}
+		// Decrement unconditionally so reserve/release stay symmetric (releaseShard
+		// credits a slot unconditionally). Callers only reserve onto disks
+		// pickBestDisk* already vetted as having free slots, so this won't go
+		// negative; if it ever did, freeSlots<=0 correctly reads as full.
+		d.freeSlots--
 	}
 }
 

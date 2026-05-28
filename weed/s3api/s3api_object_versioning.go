@@ -242,8 +242,13 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		},
 		Extended: deleteMarkerExtended,
 	}
-	err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry)
-	if err != nil {
+	// Route the pointer flip to the owner filer when known (off the distributed
+	// lock); RECOMPUTE_LATEST picks the just-written marker as the new latest.
+	if owner := s3a.objectWriteOwner(bucket, cleanObject); owner != "" {
+		if code := s3a.routedVersionedFinalize(owner, bucket, cleanObject, useInvertedFormat); code != s3err.ErrNone {
+			return "", fmt.Errorf("createDeleteMarker: routed finalize failed for %s/%s: code %d", bucket, object, code)
+		}
+	} else if err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry); err != nil {
 		glog.Errorf("createDeleteMarker: failed to update latest version in directory: %v", err)
 		return "", fmt.Errorf("failed to update latest version in directory: %w", err)
 	}

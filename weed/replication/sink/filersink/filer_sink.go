@@ -2,6 +2,7 @@ package filersink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -191,7 +192,12 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtime(entry))
 
 		if err != nil {
-			// only warning here since the source chunk may have been deleted already
+			// Don't swallow size-mismatch: source bytes disagree with source
+			// metadata, so committing would propagate corruption silently.
+			if errors.Is(err, errChunkSizeMismatch) {
+				glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
+				return err
+			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return nil
 		}
@@ -259,8 +265,8 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// this usually happens when the messages are not ordered
 		glog.V(2).Infof("late updates %s", key)
 	} else {
-		// find out what changed
-		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs), oldEntry, newEntry)
+		// source-side chunks resolve via source filer; sink volume IDs may collide.
+		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
 		if err != nil {
 			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
 		}
@@ -274,6 +280,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// replicate the chunks that are new in the source
 		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, key, getEntryMtime(newEntry))
 		if err != nil {
+			if errors.Is(err, errChunkSizeMismatch) {
+				glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
+				return true, err
+			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
 		}

@@ -152,9 +152,10 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			// we have lock called inside vg
 			glog.V(0).Infof("volume grow %+v", req)
 			go func(req *topology.VolumeGrowRequest, vl *topology.VolumeLayout) {
+				// defer so a panic can't strand growRequest.
+				defer filter.Delete(req)
+				defer vl.DoneGrowRequest()
 				ms.DoAutomaticVolumeGrow(req)
-				vl.DoneGrowRequest()
-				filter.Delete(req)
 			}(req, vl)
 		}
 	}()
