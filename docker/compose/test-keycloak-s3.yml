@@ -1,0 +1,46 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: "http://keycloak:8080"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../test/s3/iam/seaweedfs-test-realm.json:/opt/keycloak/data/import/seaweedfs-test-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  s3:
+    image: chrislusf/seaweedfs:local
+    command:
+      - -v=9
+      - server
+      - -ip=s3
+      - -filer
+      - -master.volumeSizeLimitMB=16
+      - -volume
+      - -volume.max=0
+      - -volume.preStopSeconds=1
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3_config.json
+      - -s3.iam.config=/etc/seaweedfs/iam_config.json
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    volumes:
+      - ../../test/s3/iam/test_config.json:/etc/seaweedfs/s3_config.json:ro
+      - ../../test/s3/iam/iam_config_docker.json:/etc/seaweedfs/iam_config.json:ro
+    ports:
+      - "8333:8333"
+    depends_on:
+      keycloak:
+        condition: service_healthy
