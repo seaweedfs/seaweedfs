@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type HasLookupFileIdFunction interface {
@@ -21,10 +21,11 @@ type HasLookupFileIdFunction interface {
 type LookupFileIdFunctionType func(ctx context.Context, fileId string) (targetUrls []string, err error)
 
 type Location struct {
-	Url        string `json:"url,omitempty"`
-	PublicUrl  string `json:"publicUrl,omitempty"`
-	DataCenter string `json:"dataCenter,omitempty"`
-	GrpcPort   int    `json:"grpcPort,omitempty"`
+	Url          string `json:"url,omitempty"`
+	PublicUrl    string `json:"publicUrl,omitempty"`
+	DataCenter   string `json:"dataCenter,omitempty"`
+	GrpcPort     int    `json:"grpcPort,omitempty"`
+	DataInRemote bool   `json:"dataInRemote,omitempty"`
 }
 
 func (l Location) ServerAddress() pb.ServerAddress {
@@ -99,7 +100,15 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		return nil, fmt.Errorf("volume %d not found", id)
 	}
 	var sameDcServers, otherDcServers []string
+	localUrls := make(map[string]bool)
+
 	for _, loc := range locations {
+		glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", vid, loc.Url, loc.DataInRemote)
+
+		if !loc.DataInRemote {
+			localUrls[loc.Url] = true
+		}
+
 		if vc.isSameDataCenter(&loc) {
 			sameDcServers = append(sameDcServers, loc.Url)
 		} else {
@@ -112,6 +121,10 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	rand.Shuffle(len(otherDcServers), func(i, j int) {
 		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
 	})
+	if len(localUrls) > 0 {
+		sameDcServers = util.ReorderToFront(localUrls, sameDcServers)
+		otherDcServers = util.ReorderToFront(localUrls, otherDcServers)
+	}
 	// Prefer same data center
 	serverUrls = append(sameDcServers, otherDcServers...)
 	return

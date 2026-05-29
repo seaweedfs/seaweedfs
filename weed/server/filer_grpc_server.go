@@ -162,10 +162,11 @@ func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
 	locs := make([]*filer_pb.Location, 0, len(locations))
 	for _, loc := range locations {
 		locs = append(locs, &filer_pb.Location{
-			Url:        loc.Url,
-			PublicUrl:  loc.PublicUrl,
-			GrpcPort:   uint32(loc.GrpcPort),
-			DataCenter: loc.DataCenter,
+			Url:          loc.Url,
+			PublicUrl:    loc.PublicUrl,
+			GrpcPort:     uint32(loc.GrpcPort),
+			DataCenter:   loc.DataCenter,
+			DataInRemote: loc.DataInRemote,
 		})
 	}
 	return locs
