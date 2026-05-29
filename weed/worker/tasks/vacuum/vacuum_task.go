@@ -289,8 +289,10 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 	// heartbeat lands while another replica's cache still shows
 	// ReadOnly=true and silently removes it again. Letting heartbeats
 	// settle first ensures the master cache is uniformly post-vacuum
-	// before our notify fires.
-	postCommitSettleDelay := 30 * time.Second
+	// before our notify fires. Sized at 2x VolumePulsePeriod (5s) so
+	// even a replica that just started its tick window before our
+	// commit lands its next heartbeat within the wait.
+	postCommitSettleDelay := 10 * time.Second
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
