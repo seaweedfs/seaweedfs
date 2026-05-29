@@ -480,18 +480,12 @@ func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) ([]
 	var writableReplicaIndices []int
 	for i, replica := range replicas {
 		server := pb.NewServerAddressFromDataNode(replica.location.dataNode)
-		err := operation.WithVolumeServerClient(false, server, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-			resp, err := client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{VolumeId: replica.info.Id})
-			if err != nil {
-				return err
-			}
-			if !resp.IsReadOnly {
-				writableReplicaIndices = append(writableReplicaIndices, i)
-			}
-			return nil
-		})
+		status, err := readVolumeStatus(commandEnv.option.GrpcDialOption, server, needle.VolumeId(replica.info.Id))
 		if err != nil {
 			return nil, err
+		}
+		if !status.IsReadOnly {
+			writableReplicaIndices = append(writableReplicaIndices, i)
 		}
 	}
 	if len(writableReplicaIndices) > 0 {
