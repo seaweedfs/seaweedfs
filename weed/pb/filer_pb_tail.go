@@ -145,13 +145,18 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				pendingRefs = nil
 			}
 
-			// Idle heartbeat: the source is caught up and has no new events, so
-			// it sends an empty response carrying the current time. Surface it as
-			// a freshness signal but leave option.StartTsNs untouched so a restart
-			// still resumes from the last real event.
-			if resp.EventNotification == nil && len(resp.Events) == 0 && resp.TsNs > 0 {
+			// Freshness signals carry a timestamp but no entry: the idle heartbeat
+			// (nil EventNotification) and the MaxUnsyncedEvents marker (empty one).
+			// Route both to OnIdleHeartbeat, else the marker pins sync_offset to the
+			// stale processed watermark.
+			if len(resp.Events) == 0 && resp.TsNs > 0 && (resp.EventNotification == nil || filer_pb.IsEmpty(resp)) {
 				if option.OnIdleHeartbeat != nil {
 					option.OnIdleHeartbeat(resp.TsNs)
+				}
+				// Marker advances the resume cursor past the filtered range; the
+				// heartbeat leaves StartTsNs put so a restart cannot outrun a straggler.
+				if resp.EventNotification != nil {
+					option.StartTsNs = resp.TsNs
 				}
 				continue
 			}
