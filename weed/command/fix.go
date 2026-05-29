@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -190,15 +191,34 @@ func SaveToIdx(scaner *VolumeFileScanner4Fix, idxName string) (ret error) {
 		idxFile.Close()
 	}()
 
-	return scaner.nm.AscendingVisit(func(value needle_map.NeedleValue) error {
-		_, err := idxFile.Write(value.ToBytes())
-		if scaner.includeDeleted && err == nil {
-			if deleted, ok := scaner.nmDeleted.Get(value.Key); ok {
-				_, err = idxFile.Write(deleted.ToBytes())
-			}
-		}
+	// Emit entries in .dat offset (append) order so the .idx stays the
+	// append-ordered log the volume server writes at runtime — not sorted by
+	// key, which is the .sdx / .ecx shape. A key-sorted .idx puts the
+	// highest-key needle last instead of the .dat-tail needle, which used to
+	// flip volumes read-only on load. Every tombstone is included (including
+	// any whose live needle is gone) so the last entry is the real .dat tail.
+	var values []needle_map.NeedleValue
+	collect := func(value needle_map.NeedleValue) error {
+		values = append(values, value)
+		return nil
+	}
+	if err = scaner.nm.AscendingVisit(collect); err != nil {
 		return err
+	}
+	if scaner.includeDeleted {
+		if err = scaner.nmDeleted.AscendingVisit(collect); err != nil {
+			return err
+		}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].Offset.ToActualOffset() < values[j].Offset.ToActualOffset()
 	})
+	for _, value := range values {
+		if _, err = idxFile.Write(value.ToBytes()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64, fixIncludeDeleted bool) {
