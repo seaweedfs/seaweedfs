@@ -527,6 +527,20 @@ func isRetryableGrpcError(err error) bool {
 		strings.Contains(errStr, "unavailable")
 }
 
+// jitter returns a duration in the range [d/2, d) using equal jitter.
+// This prevents thundering herds when many clients retry simultaneously
+// after a transient failure (e.g., network partition healing).
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(rand.Int63n(int64(half)))
+}
+
 // shouldSkipUnhealthyFiler checks if we should skip a filer based on recent failures
 // Circuit breaker pattern: skip filers with multiple recent consecutive failures
 // shouldSkipUnhealthyFilerWithHealth checks if a filer should be skipped based on health
@@ -694,9 +708,10 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 		// Transient error - retry if we have attempts left
 		if retry < maxRetries-1 {
+			jitteredWait := jitter(waitTime)
 			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v",
-				n, retry+1, maxRetries, waitTime, lastErr)
-			time.Sleep(waitTime)
+				n, retry+1, maxRetries, jitteredWait, lastErr)
+			time.Sleep(jitteredWait)
 			waitTime = time.Duration(float64(waitTime) * fc.retryBackoffFactor)
 		}
 	}
