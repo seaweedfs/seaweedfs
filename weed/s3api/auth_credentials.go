@@ -1388,14 +1388,23 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		amzAuthType = "SigV4"
 	case authTypeStreamingUnsigned:
-		// An unsigned-streaming PUT may still be SigV4-signed (header/presigned) or
-		// fully anonymous; modern botocore adds a CRC32 trailer to plain PUTs, so an
-		// anonymous upload also lands here. Verify a signature only when one is present.
-		if isRequestSignatureV4(r) || isRequestPresignedSignatureV4(r) {
+		// STREAMING-UNSIGNED-PAYLOAD-TRAILER only describes the body encoding; the
+		// request may still be SigV4-signed (header/presigned), JWT-bearer, or fully
+		// anonymous. Modern botocore adds a CRC32 trailer to plain PUTs, so an
+		// anonymous upload also lands here. Dispatch on whatever credential is present.
+		switch {
+		case isRequestSignatureV4(r) || isRequestPresignedSignatureV4(r):
 			glog.V(4).Infof("unsigned streaming upload, signed request")
 			identity, s3Err = iam.reqSignatureV4Verify(r)
 			amzAuthType = "SigV4"
-		} else {
+		case isRequestJWT(r):
+			glog.V(4).Infof("unsigned streaming upload, jwt request")
+			if iam.iamIntegration == nil {
+				return identity, s3err.ErrNotImplemented, reqAuthType
+			}
+			identity, s3Err = iam.authenticateJWTWithIAM(r)
+			amzAuthType = "Jwt"
+		default:
 			glog.V(4).Infof("unsigned streaming upload, anonymous request")
 			amzAuthType = "Anonymous"
 			if identity, found = iam.LookupAnonymous(); !found {
