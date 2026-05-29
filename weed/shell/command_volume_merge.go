@@ -52,8 +52,9 @@ This command:
 	1) marks the volume readonly on replicas (if not already)
 	2) allocates a temporary copy on a third location
 	3) merges replicas in append timestamp order, skipping duplicates
-	4) replaces the original replicas with the merged volume
-	5) restores writable state if it was writable before
+	4) verifies the merged copy is not short before touching the replicas
+	5) replaces the original replicas with the merged volume
+	6) restores writable state if it was writable before
 `
 }
 
@@ -171,6 +172,13 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	})
 	if mergeErr != nil {
 		return mergeErr
+	}
+
+	// Verify the merged copy before overwriting any replica. A short or empty
+	// merge stamped over every replica at once is unrecoverable; on failure the
+	// originals are left intact and the bad merged copy is cleaned up.
+	if err = verifyMergedVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, replicas); err != nil {
+		return err
 	}
 
 	for _, replica := range replicas {
@@ -489,6 +497,66 @@ func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) ([]
 		}
 	}
 	return writableReplicaIndices, nil
+}
+
+// verifyMergedVolume checks the freshly merged copy is at least as complete as the
+// most complete source replica before the originals are overwritten.
+func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, targetServer pb.ServerAddress, replicas []*VolumeReplica) error {
+	merged, err := readVolumeStatus(grpcDialOption, targetServer, volumeId)
+	if err != nil {
+		return fmt.Errorf("read merged volume %d on %s: %w", volumeId, targetServer, err)
+	}
+	replicaLive := make(map[pb.ServerAddress]uint64, len(replicas))
+	for _, replica := range replicas {
+		server := pb.NewServerAddressFromDataNode(replica.location.dataNode)
+		status, err := readVolumeStatus(grpcDialOption, server, volumeId)
+		if err != nil {
+			return fmt.Errorf("read replica volume %d on %s: %w", volumeId, server, err)
+		}
+		replicaLive[server] = liveNeedleCount(status)
+	}
+	return evaluateMergedVolume(volumeId, liveNeedleCount(merged), replicaLive)
+}
+
+// evaluateMergedVolume reports why a merged copy with mergedLive live needles is
+// unsafe to overwrite replicas whose live counts are replicaLive. The merge is the
+// union of every replica's needles, so the merged copy must be non-empty and hold
+// at least as many live needles as the most complete replica.
+func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive uint64, replicaLive map[pb.ServerAddress]uint64) error {
+	if mergedLive == 0 {
+		return fmt.Errorf("merged volume %d is empty; keeping original replicas", volumeId)
+	}
+	var maxLive uint64
+	var maxFrom pb.ServerAddress
+	for server, live := range replicaLive {
+		if live > maxLive {
+			maxLive, maxFrom = live, server
+		}
+	}
+	if mergedLive < maxLive {
+		return fmt.Errorf("merged volume %d has %d live needles, fewer than replica %s with %d; refusing to overwrite replicas", volumeId, mergedLive, maxFrom, maxLive)
+	}
+	return nil
+}
+
+func liveNeedleCount(status *volume_server_pb.VolumeStatusResponse) uint64 {
+	if status.FileCount < status.FileDeletedCount {
+		return 0
+	}
+	return status.FileCount - status.FileDeletedCount
+}
+
+func readVolumeStatus(grpcDialOption grpc.DialOption, server pb.ServerAddress, volumeId needle.VolumeId) (*volume_server_pb.VolumeStatusResponse, error) {
+	var resp *volume_server_pb.VolumeStatusResponse
+	err := operation.WithVolumeServerClient(false, server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		r, statusErr := client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{VolumeId: uint32(volumeId)})
+		if statusErr != nil {
+			return statusErr
+		}
+		resp = r
+		return nil
+	})
+	return resp, err
 }
 
 func isReplicaServer(target pb.ServerAddress, replicas []*VolumeReplica) bool {
