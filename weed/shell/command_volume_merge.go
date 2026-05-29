@@ -537,7 +537,7 @@ func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive uint64, replicaLi
 }
 
 func liveNeedleCount(status *volume_server_pb.VolumeStatusResponse) uint64 {
-	if status.FileCount < status.FileDeletedCount {
+	if status == nil || status.FileCount < status.FileDeletedCount {
 		return 0
 	}
 	return status.FileCount - status.FileDeletedCount
@@ -553,6 +553,9 @@ func readVolumeStatus(grpcDialOption grpc.DialOption, server pb.ServerAddress, v
 		resp = r
 		return nil
 	})
+	if err == nil && resp == nil {
+		return nil, fmt.Errorf("empty volume status response from %s", server)
+	}
 	return resp, err
 }
 
