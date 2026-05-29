@@ -374,7 +374,12 @@ func (t *VacuumTask) cleanupOne(ctx context.Context, server string) error {
 func (t *VacuumTask) markWritableOne(ctx context.Context, server string) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
-			markCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
+			// VolumeMarkWritable is a metadata RPC (reopen idx + flags +
+			// notifyMasterVolumeReadonly heartbeat) — millisecond-scale and
+			// independent of volume size. A flat 1m cap prevents an
+			// unresponsive replica from blocking Phase 3 for hours on a
+			// TB-scale volume where vacuumTimeout() would balloon.
+			markCtx, cancel := context.WithTimeout(ctx, time.Minute)
 			defer cancel()
 			_, err := client.VolumeMarkWritable(markCtx, &volume_server_pb.VolumeMarkWritableRequest{
 				VolumeId: t.volumeID,
