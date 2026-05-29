@@ -1388,9 +1388,21 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		amzAuthType = "SigV4"
 	case authTypeStreamingUnsigned:
-		glog.V(4).Infof("unsigned streaming upload")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
-		amzAuthType = "SigV4"
+		// An unsigned-streaming PUT may still be SigV4-signed (header/presigned) or
+		// fully anonymous; modern botocore adds a CRC32 trailer to plain PUTs, so an
+		// anonymous upload also lands here. Verify a signature only when one is present.
+		if isRequestSignatureV4(r) || isRequestPresignedSignatureV4(r) {
+			glog.V(4).Infof("unsigned streaming upload, signed request")
+			identity, s3Err = iam.reqSignatureV4Verify(r)
+			amzAuthType = "SigV4"
+		} else {
+			glog.V(4).Infof("unsigned streaming upload, anonymous request")
+			amzAuthType = "Anonymous"
+			if identity, found = iam.LookupAnonymous(); !found {
+				r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
+				return identity, s3err.ErrAccessDenied, reqAuthType
+			}
+		}
 	case authTypeJWT:
 		glog.V(4).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
