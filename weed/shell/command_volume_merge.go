@@ -181,17 +181,20 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	for _, replica := range replicas {
+	// The merged copy is now the only authoritative copy. Keep it until every
+	// replica is rebuilt from it so a mid-loop failure can still be finished.
+	cleanupTarget = false
+
+	for i, replica := range replicas {
 		sourceServer := pb.NewServerAddressFromDataNode(replica.location.dataNode)
 		if _, err = copyVolume(commandEnv.option.GrpcDialOption, writer, volumeId, targetServer, sourceServer, "", 0, false); err != nil {
-			return err
+			return fmt.Errorf("rebuild replica %d/%d on %s from merged volume %d: %w; merged copy kept on %s, re-run to finish", i+1, len(replicas), sourceServer, volumeId, err, targetServer)
 		}
 	}
 
 	if err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, false, false); err != nil {
 		return err
 	}
-	cleanupTarget = false
 
 	fmt.Fprintf(writer, "merged volume %d from %d replicas via %s\n", volumeId, len(replicas), targetServer)
 	return nil
