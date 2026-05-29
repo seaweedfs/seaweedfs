@@ -109,6 +109,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 							PublicUrl:  masterLoc.PublicUrl,
 							GrpcPort:   int(masterLoc.GrpcPort),
 							DataCenter: masterLoc.DataCenter,
+							DataInRemote: masterLoc.DataInRemote,
 						}
 						// Update cache with the location
 						p.masterClient.addLocation(uint32(vid), loc)
@@ -384,6 +385,12 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
 		mc.addLocation(newVid, loc)
 	}
+	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
+		remoteLoc := loc
+		remoteLoc.DataInRemote = true
+		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
+		mc.addLocation(remoteVid, remoteLoc)
+	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		if _, moved := stillOnServer[deletedVid]; moved {
 			continue
@@ -403,10 +410,11 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
-	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
+	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
-		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
-		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
+		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.RemoteVids),
+		len(resp.VolumeLocation.DeletedVids), len(resp.VolumeLocation.NewEcVids),
+		len(resp.VolumeLocation.DeletedEcVids))
 }
 
 func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {

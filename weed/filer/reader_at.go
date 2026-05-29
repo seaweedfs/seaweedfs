@@ -117,9 +117,15 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 
 		fcDataCenter := filerClient.GetDataCenter()
 		var sameDcTargetUrls, otherTargetUrls []string
+		localUrls := make(map[string]bool)
 		for _, loc := range locations.Locations {
 			volumeServerAddress := filerClient.AdjustedUrl(loc)
 			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+			glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", fileId, targetUrl, loc.DataInRemote)
+
+			if !loc.DataInRemote {
+				localUrls[targetUrl] = true
+			}
 			if fcDataCenter == "" || fcDataCenter != loc.DataCenter {
 				otherTargetUrls = append(otherTargetUrls, targetUrl)
 			} else {
@@ -132,6 +138,10 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 		rand.Shuffle(len(otherTargetUrls), func(i, j int) {
 			otherTargetUrls[i], otherTargetUrls[j] = otherTargetUrls[j], otherTargetUrls[i]
 		})
+		if len(localUrls) > 0 {
+			sameDcTargetUrls = util.ReorderToFront(localUrls, sameDcTargetUrls)
+			otherTargetUrls = util.ReorderToFront(localUrls, otherTargetUrls)
+		}
 		// Prefer same data center
 		targetUrls = append(sameDcTargetUrls, otherTargetUrls...)
 		return

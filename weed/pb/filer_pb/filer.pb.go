@@ -3433,6 +3433,7 @@ type Location struct {
 	PublicUrl     string                 `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
 	GrpcPort      uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
 	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	DataInRemote  bool                   `protobuf:"varint,5,opt,name=data_in_remote,json=dataInRemote,proto3" json:"data_in_remote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3493,6 +3494,13 @@ func (x *Location) GetDataCenter() string {
 		return x.DataCenter
 	}
 	return ""
+}
+
+func (x *Location) GetDataInRemote() bool {
+	if x != nil {
+		return x.DataInRemote
+	}
+	return false
 }
 
 type LookupVolumeResponse struct {
@@ -7287,14 +7295,15 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"volume_ids\x18\x01 \x03(\tR\tvolumeIds\"=\n" +
 	"\tLocations\x120\n" +
-	"\tlocations\x18\x01 \x03(\v2\x12.filer_pb.LocationR\tlocations\"y\n" +
+	"\tlocations\x18\x01 \x03(\v2\x12.filer_pb.LocationR\tlocations\"\x9f\x01\n" +
 	"\bLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
 	"public_url\x18\x02 \x01(\tR\tpublicUrl\x12\x1b\n" +
 	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x12\x1f\n" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
-	"dataCenter\"\xc3\x01\n" +
+	"dataCenter\x12$\n" +
+	"\x0edata_in_remote\x18\x05 \x01(\bR\fdataInRemote\"\xc3\x01\n" +
 	"\x14LookupVolumeResponse\x12U\n" +
 	"\rlocations_map\x18\x01 \x03(\v20.filer_pb.LookupVolumeResponse.LocationsMapEntryR\flocationsMap\x1aT\n" +
 	"\x11LocationsMapEntry\x12\x10\n" +
