@@ -233,20 +233,26 @@ func (t *VacuumTask) checkOneVacuumEligibility(ctx context.Context, server strin
 	return garbageRatio, err
 }
 
-// performVacuum runs the two-phase vacuum protocol that master built-in
-// vacuum uses (topology.vacuumOneVolumeId):
+// performVacuum runs the three-phase vacuum protocol that mirrors
+// master built-in vacuum (topology.vacuumOneVolumeId):
 //
-//   Phase 1 (Compact): build the new .cpd/.cpx files on every target.
-//   If any replica fails, roll back by Cleanup'ing the .cp* temp files
-//   on every target and abort — no replica has yet swapped its active
-//   files, so no replica is committed.
+//	Phase 1 (Compact): build the new .cpd/.cpx files on every target.
+//	If any replica fails, roll back by Cleanup'ing the .cp* temp files
+//	on every target and abort — no replica has yet swapped its active
+//	files, so no replica is committed.
 //
-//   Phase 2 (Commit): swap each target's active files with its .cp*
-//   files. Best-effort, matching batchVacuumVolumeCommit: per-replica
-//   errors are logged and surfaced together, but once any replica has
-//   swapped there is no clean rollback for the others, so we do not
-//   retry or undo. An operator must reconcile a partial commit
-//   failure.
+//	Phase 2 (Commit): swap each target's active files with its .cp*
+//	files. Best-effort, matching batchVacuumVolumeCommit: per-replica
+//	errors are logged and surfaced together, but once any replica has
+//	swapped there is no clean rollback for the others, so we do not
+//	retry or undo. An operator must reconcile a partial commit
+//	failure.
+//
+//	Phase 3 (Mark Writable): re-notify the master per replica so the
+//	volume re-enters the writable set, the worker analog of
+//	batchVacuumVolumeCommit's per-replica SetVolumeAvailable. Skipped
+//	when a replica came back read-only. Best-effort; never fails the
+//	task.
 //
 // Interleaving Compact→Commit→Cleanup per replica (the prior behavior)
 // could leave a committed first replica beside an uncompacted second
@@ -261,17 +267,46 @@ func (t *VacuumTask) performVacuum(ctx context.Context) error {
 		}
 	}
 
-	// Phase 2: Commit all targets.
+	// Phase 2: Commit all targets, tracking whether any replica is still
+	// read-only after the swap.
 	var commitErrors []error
+	anyReadOnly := false
 	for _, server := range t.vacuumTargets {
-		if err := t.commitOne(ctx, server); err != nil {
+		resp, err := t.commitOne(ctx, server)
+		if err != nil {
 			glog.Errorf("vacuum commit on %s for volume %d: %v", server, t.volumeID, err)
 			commitErrors = append(commitErrors, fmt.Errorf("%s: %w", server, err))
+			continue
+		}
+		if resp.GetIsReadOnly() {
+			anyReadOnly = true
 		}
 	}
 	if len(commitErrors) > 0 {
 		return fmt.Errorf("vacuum commit failed on %d/%d replicas: %v",
 			len(commitErrors), len(t.vacuumTargets), commitErrors)
+	}
+
+	// Phase 3: re-notify the master so the volume re-enters the writable
+	// set. The worker's only lever is VolumeMarkWritable, which clears the
+	// read-only flag and runs notifyMasterVolumeReadonly(false). Gate on
+	// the commit's IsReadOnly exactly as SetVolumeAvailable does: a replica
+	// still read-only (operator-set, EIO-quarantined, or disk-space-low)
+	// must stay out, and recovers on its own via the next ReadOnly=false
+	// heartbeat — force-clearing the flag here would override that. The
+	// worker is not told the master's size limit, so the isFullCapacity
+	// guard is left to the next capacity heartbeat. Best-effort: the vacuum
+	// itself already succeeded.
+	if anyReadOnly {
+		glog.V(0).Infof("post-vacuum: volume %d still read-only on a replica, leaving it out of writables", t.volumeID)
+		return nil
+	}
+	for _, server := range t.vacuumTargets {
+		if err := t.markWritableOne(ctx, server); err != nil {
+			glog.Warningf("post-vacuum mark writable on %s for volume %d: %v", server, t.volumeID, err)
+			continue
+		}
+		glog.V(0).Infof("post-vacuum marked volume %d writable on %s", t.volumeID, server)
 	}
 	return nil
 }
@@ -302,13 +337,15 @@ func (t *VacuumTask) compactOne(ctx context.Context, server string) error {
 		})
 }
 
-func (t *VacuumTask) commitOne(ctx context.Context, server string) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
+func (t *VacuumTask) commitOne(ctx context.Context, server string) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
+	var resp *volume_server_pb.VacuumVolumeCommitResponse
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			t.GetLogger().Info("Committing vacuum on %s", server)
 			commitCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cancel()
-			_, err := client.VacuumVolumeCommit(commitCtx, &volume_server_pb.VacuumVolumeCommitRequest{
+			var err error
+			resp, err = client.VacuumVolumeCommit(commitCtx, &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: t.volumeID,
 			})
 			if err != nil {
@@ -316,6 +353,7 @@ func (t *VacuumTask) commitOne(ctx context.Context, server string) error {
 			}
 			return nil
 		})
+	return resp, err
 }
 
 func (t *VacuumTask) cleanupOne(ctx context.Context, server string) error {
@@ -324,6 +362,23 @@ func (t *VacuumTask) cleanupOne(ctx context.Context, server string) error {
 			cleanupCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cancel()
 			_, err := client.VacuumVolumeCleanup(cleanupCtx, &volume_server_pb.VacuumVolumeCleanupRequest{
+				VolumeId: t.volumeID,
+			})
+			return err
+		})
+}
+
+func (t *VacuumTask) markWritableOne(ctx context.Context, server string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), t.grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			// VolumeMarkWritable is a metadata RPC (reopen idx + flags +
+			// notifyMasterVolumeReadonly heartbeat) — millisecond-scale and
+			// independent of volume size. A flat 1m cap prevents an
+			// unresponsive replica from blocking Phase 3 for hours on a
+			// TB-scale volume where vacuumTimeout() would balloon.
+			markCtx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			_, err := client.VolumeMarkWritable(markCtx, &volume_server_pb.VolumeMarkWritableRequest{
 				VolumeId: t.volumeID,
 			})
 			return err
