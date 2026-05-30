@@ -47,13 +47,13 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 		return nil
 	}
 
-	// ErrNotFound is a valid application-level response (entry doesn't exist on this filer),
-	// not a filer health issue. Only record true failures (transport errors, timeouts, etc.)
-	// in the health tracker to avoid poisoning the circuit breaker with normal "not found"
-	// responses in multi-filer setups.
-	if !errors.Is(err, filer_pb.ErrNotFound) {
-		s3a.filerClient.RecordFilerFailure(currentFiler)
+	// A reachable filer answering ErrNotFound is authoritative; failover is for
+	// unreachable/unhealthy filers, not for re-asking about an absent entry.
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return err
 	}
+
+	s3a.filerClient.RecordFilerFailure(currentFiler)
 
 	// Current filer failed - try all other filers with health-aware selection
 	filers := s3a.filerClient.GetAllFilers()
@@ -83,10 +83,12 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 			return nil
 		}
 
-		// Only record real failures, not ErrNotFound
-		if !errors.Is(err, filer_pb.ErrNotFound) {
-			s3a.filerClient.RecordFilerFailure(filer)
+		// Authoritative not-found - stop failing over.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return err
 		}
+
+		s3a.filerClient.RecordFilerFailure(filer)
 		glog.V(2).Infof("WithFilerClient: failover to %s failed: %v", filer, err)
 		lastErr = err
 	}
