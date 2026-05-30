@@ -40,6 +40,7 @@ type UploadOption struct {
 	Md5               string
 	BytesBuffer       *bytes.Buffer
 	SourceUrl         string // optional: for logging when reading from a remote source
+	MaxAttempts       int    // <=0 uses the default
 }
 
 type UploadResult struct {
@@ -247,14 +248,25 @@ func (uploader *Uploader) doUpload(ctx context.Context, reader io.Reader, option
 }
 
 func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
-	for i := 0; i < 3; i++ {
+	maxAttempts := option.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	for i := 0; i < maxAttempts; i++ {
 		if i > 0 {
-			time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Millisecond * time.Duration(237*(i+1))):
+			}
 		}
 		uploadResult, err = uploader.doUploadData(ctx, data, option)
 		if err == nil {
 			uploadResult.RetryCount = i
 			return
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		glog.WarningfCtx(ctx, "uploading %d to %s: %v", i, option.UploadUrl, err)
 	}
