@@ -15,6 +15,24 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+func vacuumJobSpec(volumeID uint32, server string) *plugin_pb.JobSpec {
+	return &plugin_pb.JobSpec{
+		JobId:   fmt.Sprintf("vacuum-job-%d", volumeID),
+		JobType: "vacuum",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"volume_id": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(volumeID)},
+			},
+			"server": {
+				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: server},
+			},
+			"collection": {
+				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "vac-test"},
+			},
+		},
+	}
+}
+
 func TestVacuumExecutionIntegration(t *testing.T) {
 	volumeID := uint32(202)
 
@@ -31,26 +49,10 @@ func TestVacuumExecutionIntegration(t *testing.T) {
 	source := pluginworkers.NewVolumeServer(t, "")
 	source.SetVacuumGarbageRatio(0.6)
 
-	job := &plugin_pb.JobSpec{
-		JobId:   fmt.Sprintf("vacuum-job-%d", volumeID),
-		JobType: "vacuum",
-		Parameters: map[string]*plugin_pb.ConfigValue{
-			"volume_id": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(volumeID)},
-			},
-			"server": {
-				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: source.Address()},
-			},
-			"collection": {
-				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "vac-test"},
-			},
-		},
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := harness.Plugin().ExecuteJob(ctx, job, nil, 1)
+	result, err := harness.Plugin().ExecuteJob(ctx, vacuumJobSpec(volumeID, source.Address()), nil, 1)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Success)
@@ -69,4 +71,38 @@ func TestVacuumExecutionIntegration(t *testing.T) {
 	// Phase 3 marks each replica writable so master returns it to the
 	// writables layout. See upstream seaweedfs#9685.
 	require.GreaterOrEqual(t, source.MarkWritableCount(), 1)
+}
+
+// A replica that commits still read-only (operator-set, EIO-quarantined,
+// disk-space-low) must not be force-marked writable: master built-in vacuum
+// skips it via SetVolumeAvailable, and it recovers on its own ReadOnly=false
+// heartbeat.
+func TestVacuumExecutionSkipsMarkWritableWhenReadOnly(t *testing.T) {
+	volumeID := uint32(203)
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	handler := vacuum.NewVacuumHandler(dialOption, 1)
+	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
+		WorkerOptions: pluginworker.WorkerOptions{
+			GrpcDialOption: dialOption,
+		},
+		Handlers: []pluginworker.JobHandler{handler},
+	})
+	harness.WaitForJobType("vacuum")
+
+	source := pluginworkers.NewVolumeServer(t, "")
+	source.SetVacuumGarbageRatio(0.6)
+	source.SetVacuumCommitReadOnly(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := harness.Plugin().ExecuteJob(ctx, vacuumJobSpec(volumeID, source.Address()), nil, 1)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Success)
+
+	_, _, commitCalls, _ := source.VacuumStats()
+	require.GreaterOrEqual(t, commitCalls, 1)
+	require.Equal(t, 0, source.MarkWritableCount())
 }
