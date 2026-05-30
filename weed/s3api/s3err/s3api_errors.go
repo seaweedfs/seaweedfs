@@ -57,6 +57,7 @@ const (
 	ErrNoSuchCORSConfiguration
 	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
+	ErrNoSuchVersion
 	ErrNoSuchUpload
 	ErrInvalidBucketName
 	ErrInvalidBucketState
@@ -279,6 +280,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchKey: {
 		Code:           "NoSuchKey",
 		Description:    "The specified key does not exist.",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchVersion: {
+		Code:           "NoSuchVersion",
+		Description:    "The specified version does not exist.",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchUpload: {
