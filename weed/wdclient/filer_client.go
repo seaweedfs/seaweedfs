@@ -711,7 +711,13 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			jitteredWait := jitter(waitTime)
 			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v",
 				n, retry+1, maxRetries, jitteredWait, lastErr)
-			time.Sleep(jitteredWait)
+			timer := time.NewTimer(jitteredWait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 			waitTime = time.Duration(float64(waitTime) * fc.retryBackoffFactor)
 		}
 	}
