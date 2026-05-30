@@ -339,6 +339,46 @@ func TestEmbeddedIamGetUser(t *testing.T) {
 	assert.Equal(t, "TestUser", *out.GetUserResult.User.UserName)
 }
 
+// TestEmbeddedIamGetUserImplicitUsername verifies GetUser without a UserName defaults
+// to the user that signed the request rather than returning NoSuchEntity for an empty
+// username, matching documented AWS IAM behavior.
+func TestEmbeddedIamGetUserImplicitUsername(t *testing.T) {
+	const accessKey = UserAccessKeyPrefix + "TESTFAKEKEY000001"
+
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "TestUser",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: accessKey, SecretKey: "testsecretfake"},
+				},
+			},
+		},
+	}
+	// handleImplicitUsername resolves the username via iam.LookupByAccessKey,
+	// so the iam state must know about the credential.
+	if err := api.iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(api.mockConfig)); err != nil {
+		t.Fatalf("failed to load iam config: %v", err)
+	}
+
+	// GetUser request with NO UserName, but signed by accessKey.
+	form := url.Values{}
+	form.Set("Action", "GetUser")
+	req, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+accessKey+
+		"/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesig")
+
+	out := iamGetUserResponse{}
+	rr, err := executeEmbeddedIamRequest(api, req, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+
+	require.NotNil(t, out.GetUserResult.User.UserName)
+	assert.Equal(t, "TestUser", *out.GetUserResult.User.UserName)
+}
+
 // TestEmbeddedIamCreatePolicy tests creating a policy via the embedded IAM API
 func TestEmbeddedIamCreatePolicy(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
