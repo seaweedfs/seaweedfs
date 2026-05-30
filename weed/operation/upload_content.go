@@ -40,7 +40,7 @@ type UploadOption struct {
 	Md5               string
 	BytesBuffer       *bytes.Buffer
 	SourceUrl         string // optional: for logging when reading from a remote source
-	MaxAttempts       int    // optional: upload attempts before giving up; <=0 means the default
+	MaxAttempts       int    // <=0 uses the default
 }
 
 type UploadResult struct {

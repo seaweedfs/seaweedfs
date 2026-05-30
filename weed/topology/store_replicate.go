@@ -115,10 +115,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 				Jwt:               jwt,
 				Md5:               contentMd5,
 				BytesBuffer:       bytesBuffer,
-				// single attempt: a dead replica should fail this write fast
-				// rather than retrying through the dial timeout; the originating
-				// client write is what retries.
-				MaxAttempts: 1,
+				MaxAttempts:       1, // fail fast on a dead replica; the client write retries
 			}
 
 			uploader, err := operation.NewUploader()
@@ -164,10 +161,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
-		// not tied to r.Context(): the local needle is already deleted, so a
-		// client disconnect must not abandon the replica deletes and orphan
-		// their needles. Each delete is a single request bounded by the dial
-		// timeout.
+		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
@@ -203,8 +197,7 @@ func DistributedOperation(ctx context.Context, locations []operation.Location, o
 		return nil
 	}
 
-	// cancel outstanding replica operations as soon as the outcome is decided, so
-	// a healthy replica's result is not held hostage by one stalled in a dial.
+	// cancel outstanding replica ops once the outcome is decided
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
