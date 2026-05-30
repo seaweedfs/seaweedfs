@@ -195,29 +195,22 @@ func DistributedOperation(locations []operation.Location, op func(location opera
 		return nil
 	}
 
+	// buffered so a straggler (e.g. a replica stalled on a TCP dial timeout) can
+	// still deliver its result and exit after we have already returned.
 	resultCh := make(chan RemoteResult, length)
-	errCh := make(chan error, 1)
-
 	for _, location := range locations {
 		go func(location operation.Location) {
-			err := op(location)
-			if err != nil {
-				select {
-				case errCh <- fmt.Errorf("[%s]: %v", location.Url, err):
-				default:
-				}
-			}
-			resultCh <- RemoteResult{location.Url, err}
+			resultCh <- RemoteResult{location.Url, op(location)}
 		}(location)
 	}
 
 	ret := DistributedOperationResult(make(map[string]error))
 	for i := 0; i < length; i++ {
-		select {
-		case err := <-errCh:
-			return err
-		case result := <-resultCh:
-			ret[result.Host] = result.Error
+		result := <-resultCh
+		ret[result.Host] = result.Error
+		if result.Error != nil {
+			// fail fast on the first error instead of waiting for slow replicas
+			return ret.Error()
 		}
 	}
 	return ret.Error()
