@@ -70,7 +70,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		inFlightGauge.Inc()
 		defer inFlightGauge.Dec()
 
-		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
+		err = DistributedOperation(ctx, remoteLocations, func(ctx context.Context, location operation.Location) error {
 			u := url.URL{
 				Scheme: "http",
 				Host:   location.Url,
@@ -115,6 +115,10 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 				Jwt:               jwt,
 				Md5:               contentMd5,
 				BytesBuffer:       bytesBuffer,
+				// single attempt: a dead replica should fail this write fast
+				// rather than retrying through the dial timeout; the originating
+				// client write is what retries.
+				MaxAttempts: 1,
 			}
 
 			uploader, err := operation.NewUploader()
@@ -160,7 +164,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
-		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
+		if err = DistributedOperation(r.Context(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
 			size = 0
@@ -189,18 +193,23 @@ type RemoteResult struct {
 	Error error
 }
 
-func DistributedOperation(locations []operation.Location, op func(location operation.Location) error) error {
+func DistributedOperation(ctx context.Context, locations []operation.Location, op func(ctx context.Context, location operation.Location) error) error {
 	length := len(locations)
 	if length == 0 {
 		return nil
 	}
+
+	// cancel outstanding replica operations as soon as the outcome is decided, so
+	// a healthy replica's result is not held hostage by one stalled in a dial.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	// buffered so a straggler (e.g. a replica stalled on a TCP dial timeout) can
 	// still deliver its result and exit after we have already returned.
 	resultCh := make(chan RemoteResult, length)
 	for _, location := range locations {
 		go func(location operation.Location) {
-			resultCh <- RemoteResult{location.Url, op(location)}
+			resultCh <- RemoteResult{location.Url, op(ctx, location)}
 		}(location)
 	}
 
