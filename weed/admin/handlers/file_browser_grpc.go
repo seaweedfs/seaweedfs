@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -67,7 +69,7 @@ func (h *FileBrowserHandlers) fetchFileContentGrpc(ctx context.Context, filePath
 // response writer receives the canonical attachment headers and the raw
 // bytes; this replaces the HTTP-to-filer proxy that used to run in
 // DownloadFile.
-func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath string, w http.ResponseWriter) error {
+func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath string, w http.ResponseWriter, inline bool) error {
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
 		return err
@@ -84,16 +86,19 @@ func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath str
 	size := int64(filer.FileSize(entry))
 
 	fileName := path.Base(cleanFilePath)
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 
-	contentType := ""
-	if entry.Attributes != nil {
-		contentType = entry.Attributes.Mime
+	// Resolve mime like the viewer does so Content-Type and the inline check agree.
+	contentType := dash.ResolveEntryMime(entry)
+
+	// Only inline images and PDFs; serve the rest as attachments so a hostile upload
+	// (HTML, SVG) can't run as same-origin script. nosniff locks the declared type.
+	disposition := "attachment"
+	if inline && (strings.HasPrefix(contentType, "image/") || contentType == "application/pdf") {
+		disposition = "inline"
 	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": fileName}))
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
 
