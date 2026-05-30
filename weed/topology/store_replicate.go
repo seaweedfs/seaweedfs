@@ -164,7 +164,11 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
-		if err = DistributedOperation(r.Context(), remoteLocations, func(ctx context.Context, location operation.Location) error {
+		// not tied to r.Context(): the local needle is already deleted, so a
+		// client disconnect must not abandon the replica deletes and orphan
+		// their needles. Each delete is a single request bounded by the dial
+		// timeout.
+		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
 			size = 0
