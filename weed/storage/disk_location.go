@@ -546,7 +546,7 @@ func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 		if len(s.Error) != 0 {
 			l.isDiskUnavailable = true
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
-			glog.V(0).Infof("disk %s is not healthy: %s", dir, s.Error)
+			glog.V(1).Infof("disk %s is not healthy: %s", dir, s.Error)
 		} else {
 			l.isDiskUnavailable = false
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(0)

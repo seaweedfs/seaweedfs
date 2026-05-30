@@ -359,6 +359,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 		RecoveryCoef: *v.diskRecoveryCoef,
 	}
+	if diskProbeConfig.Enabled && len(v.folders) > 1 {
+		glog.Warningf("disk IO probe is disabled for multiple volume directories: %v", v.folders)
+		diskProbeConfig.Enabled = false
+	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,

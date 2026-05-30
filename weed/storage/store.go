@@ -327,6 +327,11 @@ func (s *Store) hasFreeDiskLocation(location *DiskLocation) bool {
 		return false
 	}
 
+	// Check if disk is available
+	if location.isDiskUnavailable {
+		return false
+	}
+
 	// If MaxVolumeCount is 0, it means unlimited volumes are allowed
 	if location.MaxVolumeCount == 0 {
 		return true
