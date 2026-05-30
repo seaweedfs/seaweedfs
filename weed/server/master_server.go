@@ -169,6 +169,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.guard = security.NewGuard(append(ms.option.WhiteList, whiteList...), signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources2(r)
+	r.HandleFunc("/healthz", requestIDMiddleware(ms.healthzHandler)).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc("/readyz", requestIDMiddleware(ms.readyzHandler)).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc("/", ms.proxyToLeader(requestIDMiddleware(ms.uiStatusHandler)))
 	r.HandleFunc("/ui/index.html", requestIDMiddleware(ms.uiStatusHandler))
 	if !ms.option.DisableHttp {
@@ -206,6 +208,31 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 
 	stats.MasterStartTimeSeconds.Set(float64(time.Now().Unix()))
 	return ms
+}
+
+func (ms *MasterServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
+	// Liveness: process is alive. Keep this fast and simple.
+	w.WriteHeader(http.StatusOK)
+}
+
+func (ms *MasterServer) readyzHandler(w http.ResponseWriter, r *http.Request) {
+	// Readiness: check we can serve traffic.
+	leader, err := ms.Topo.Leader()
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	if ms.option.Master.Equals(leader) {
+		isLocked, err := ms.Topo.IsChildLocked()
+		if err != nil {
+			glog.Errorf("readyzHandler: %+v", err)
+		}
+		if isLocked {
+			w.WriteHeader(http.StatusLocked)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
