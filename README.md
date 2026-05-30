@@ -655,7 +655,7 @@ Cluster Total: 3302.88 MiB/s, 550.51 obj/s over 43s.
 ## Enterprise ##
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
-which has advanced features, including data recovery, a self-healing storage format with better data protection, 
+which has advanced features, including data recovery, self-healing storage, 
 customizable erasure coding, EC vacuum and repair, etc.
 
 [Back to TOC](#table-of-contents)
