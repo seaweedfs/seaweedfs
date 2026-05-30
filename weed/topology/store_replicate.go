@@ -191,18 +191,28 @@ type RemoteResult struct {
 
 func DistributedOperation(locations []operation.Location, op func(location operation.Location) error) error {
 	length := len(locations)
-	results := make(chan RemoteResult)
-	for _, location := range locations {
-		go func(location operation.Location, results chan RemoteResult) {
-			results <- RemoteResult{location.Url, op(location)}
-		}(location, results)
-	}
-	ret := DistributedOperationResult(make(map[string]error))
-	for i := 0; i < length; i++ {
-		result := <-results
-		ret[result.Host] = result.Error
+	if length == 0 {
+		return nil
 	}
 
+	// buffered so a straggler (e.g. a replica stalled on a TCP dial timeout) can
+	// still deliver its result and exit after we have already returned.
+	resultCh := make(chan RemoteResult, length)
+	for _, location := range locations {
+		go func(location operation.Location) {
+			resultCh <- RemoteResult{location.Url, op(location)}
+		}(location)
+	}
+
+	ret := DistributedOperationResult(make(map[string]error))
+	for i := 0; i < length; i++ {
+		result := <-resultCh
+		ret[result.Host] = result.Error
+		if result.Error != nil {
+			// fail fast on the first error instead of waiting for slow replicas
+			return ret.Error()
+		}
+	}
 	return ret.Error()
 }
 
