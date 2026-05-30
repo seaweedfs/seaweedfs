@@ -191,18 +191,35 @@ type RemoteResult struct {
 
 func DistributedOperation(locations []operation.Location, op func(location operation.Location) error) error {
 	length := len(locations)
-	results := make(chan RemoteResult)
-	for _, location := range locations {
-		go func(location operation.Location, results chan RemoteResult) {
-			results <- RemoteResult{location.Url, op(location)}
-		}(location, results)
-	}
-	ret := DistributedOperationResult(make(map[string]error))
-	for i := 0; i < length; i++ {
-		result := <-results
-		ret[result.Host] = result.Error
+	if length == 0 {
+		return nil
 	}
 
+	resultCh := make(chan RemoteResult, length)
+	errCh := make(chan error, 1)
+
+	for _, location := range locations {
+		go func(location operation.Location) {
+			err := op(location)
+			if err != nil {
+				select {
+				case errCh <- fmt.Errorf("[%s]: %v", location.Url, err):
+				default:
+				}
+			}
+			resultCh <- RemoteResult{location.Url, err}
+		}(location)
+	}
+
+	ret := DistributedOperationResult(make(map[string]error))
+	for i := 0; i < length; i++ {
+		select {
+		case err := <-errCh:
+			return err
+		case result := <-resultCh:
+			ret[result.Host] = result.Error
+		}
+	}
 	return ret.Error()
 }
 
