@@ -132,7 +132,80 @@ func (c *commandVolumeList) writeTopologyInfo(writer io.Writer, t *master_pb.Top
 		s.add(c.writeDataCenterInfo(writer, dc, verbosityLevel))
 	}
 	output(verbosityLevel >= 0, writer, "%+v \n", s)
+	// Scan the full topology (ignoring any -collection/-volumeId/-dataCenter
+	// filters) so this cluster-health warning always fires.
+	writeDuplicateVolumeIdWarning(writer, findDuplicateVolumeIds(t))
 	return s
+}
+
+// findDuplicateVolumeIds returns volume ids that appear under more than one
+// collection, mapped to the sorted list of collections they live in. Volume
+// ids are meant to be globally unique; a duplicate means the master handed out
+// an id already in use by another collection (historically after losing its
+// max-volume-id counter on restart, see the master resumeState flag). Such ids
+// are dangerous: collection.delete on one collection destroys that collection's
+// copy, and any operation keyed on the bare id (lookup, move, vacuum) is
+// ambiguous. Both normal volumes and EC shards are scanned. Replicas of the
+// same volume share a collection, so they collapse into a single entry and do
+// not register as duplicates.
+func findDuplicateVolumeIds(t *master_pb.TopologyInfo) map[uint32][]string {
+	collectionsByVid := make(map[uint32]map[string]struct{})
+	note := func(vid uint32, collection string) {
+		if collectionsByVid[vid] == nil {
+			collectionsByVid[vid] = make(map[string]struct{})
+		}
+		collectionsByVid[vid][collection] = struct{}{}
+	}
+	for _, dc := range t.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, dn := range rack.DataNodeInfos {
+				for _, disk := range dn.DiskInfos {
+					for _, vi := range disk.VolumeInfos {
+						note(vi.Id, vi.Collection)
+					}
+					for _, ec := range disk.EcShardInfos {
+						note(ec.Id, ec.Collection)
+					}
+				}
+			}
+		}
+	}
+	duplicates := make(map[uint32][]string)
+	for vid, collections := range collectionsByVid {
+		if len(collections) < 2 {
+			continue
+		}
+		names := make([]string, 0, len(collections))
+		for name := range collections {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		duplicates[vid] = names
+	}
+	return duplicates
+}
+
+func writeDuplicateVolumeIdWarning(writer io.Writer, duplicates map[uint32][]string) {
+	if len(duplicates) == 0 {
+		return
+	}
+	vids := make([]uint32, 0, len(duplicates))
+	for vid := range duplicates {
+		vids = append(vids, vid)
+	}
+	sort.Slice(vids, func(i, j int) bool { return vids[i] < vids[j] })
+	fmt.Fprintf(writer, "\nWARNING: %d volume id(s) exist in more than one collection. "+
+		"Deleting one collection (e.g. collection.delete) will destroy that collection's data on these shared ids, "+
+		"and lookups/moves on the bare id are ambiguous. Verify before any destructive operation:\n", len(vids))
+	for _, vid := range vids {
+		collections := duplicates[vid]
+		for i, name := range collections {
+			if name == "" {
+				collections[i] = `"" (default)`
+			}
+		}
+		fmt.Fprintf(writer, "  volume %d in collections: %s\n", vid, strings.Join(collections, ", "))
+	}
 }
 
 func (c *commandVolumeList) writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo, verbosityLevel int) statistics {

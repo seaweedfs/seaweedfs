@@ -193,3 +193,89 @@ func TestWriteDataNodeInfo_SplitsCollapsedDisksByPhysicalDiskId(t *testing.T) {
 		t.Errorf("DataNode header callback ran %d times; want 1 (regression: header printed once per split disk)", rackInvocations)
 	}
 }
+
+// volNode builds a single-node topology from (volumeId, collection) pairs so the
+// duplicate-detection tests can describe a cluster compactly.
+func volNode(nodeId string, volumes ...*master_pb.VolumeInformationMessage) *master_pb.DataNodeInfo {
+	return &master_pb.DataNodeInfo{
+		Id: nodeId,
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"hdd": {Type: "hdd", VolumeInfos: volumes},
+		},
+	}
+}
+
+func topoFromNodes(nodes ...*master_pb.DataNodeInfo) *master_pb.TopologyInfo {
+	return &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id:        "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: nodes}},
+		}},
+	}
+}
+
+// TestFindDuplicateVolumeIds covers the dangerous condition where the master
+// reused a volume id across two collections (e.g. id 59788 in both infra-backup
+// and ai-news-data-infrastructure) — the state that lets collection.delete
+// destroy the wrong collection's data. The detector must flag exactly the shared
+// ids, while same-id replicas of one volume must NOT be flagged.
+func TestFindDuplicateVolumeIds(t *testing.T) {
+	t.Run("flags id shared across collections", func(t *testing.T) {
+		topo := topoFromNodes(
+			volNode("srv0487:8082", &master_pb.VolumeInformationMessage{Id: 59788, Collection: "infra-backup"}),
+			volNode("srv0502:8083", &master_pb.VolumeInformationMessage{Id: 59788, Collection: "ai-news-data-infrastructure"}),
+			// A clean, single-collection volume that must not be flagged.
+			volNode("srv0487:8085", &master_pb.VolumeInformationMessage{Id: 7069, Collection: "ai-news-data-infrastructure"}),
+		)
+		dup := findDuplicateVolumeIds(topo)
+		assert.Equal(t, map[uint32][]string{
+			59788: {"ai-news-data-infrastructure", "infra-backup"},
+		}, dup)
+	})
+
+	t.Run("replicas of one volume are not duplicates", func(t *testing.T) {
+		// Same id on three nodes, all the same collection: a normal replicated
+		// volume, not a cross-collection clash.
+		topo := topoFromNodes(
+			volNode("n1", &master_pb.VolumeInformationMessage{Id: 42, Collection: "c"}),
+			volNode("n2", &master_pb.VolumeInformationMessage{Id: 42, Collection: "c"}),
+			volNode("n3", &master_pb.VolumeInformationMessage{Id: 42, Collection: "c"}),
+		)
+		assert.Empty(t, findDuplicateVolumeIds(topo))
+	})
+
+	t.Run("default empty collection counts as its own collection", func(t *testing.T) {
+		topo := topoFromNodes(
+			volNode("n1", &master_pb.VolumeInformationMessage{Id: 1, Collection: ""}),
+			volNode("n2", &master_pb.VolumeInformationMessage{Id: 1, Collection: "x"}),
+		)
+		assert.Equal(t, map[uint32][]string{1: {"", "x"}}, findDuplicateVolumeIds(topo))
+	})
+
+	t.Run("normal volume and ec shard sharing an id across collections", func(t *testing.T) {
+		topo := topoFromNodes(volNode("n1", &master_pb.VolumeInformationMessage{Id: 5, Collection: "a"}))
+		topo.DataCenterInfos[0].RackInfos[0].DataNodeInfos[0].DiskInfos["hdd"].EcShardInfos =
+			[]*master_pb.VolumeEcShardInformationMessage{{Id: 5, Collection: "b", EcIndexBits: 1}}
+		assert.Equal(t, map[uint32][]string{5: {"a", "b"}}, findDuplicateVolumeIds(topo))
+	})
+}
+
+func TestWriteDuplicateVolumeIdWarning(t *testing.T) {
+	var buf bytes.Buffer
+	writeDuplicateVolumeIdWarning(&buf, map[uint32][]string{
+		59788: {"ai-news-data-infrastructure", "infra-backup"},
+		1:     {"", "x"},
+	})
+	out := buf.String()
+	assert.Contains(t, out, "WARNING: 2 volume id(s) exist in more than one collection")
+	assert.Contains(t, out, "volume 59788 in collections: ai-news-data-infrastructure, infra-backup")
+	// Empty collection name is rendered readably rather than as a blank.
+	assert.Contains(t, out, `volume 1 in collections: "" (default), x`)
+	// Lowest id first.
+	assert.Less(t, strings.Index(out, "volume 1 "), strings.Index(out, "volume 59788 "))
+
+	// Clean topology prints nothing.
+	var empty bytes.Buffer
+	writeDuplicateVolumeIdWarning(&empty, nil)
+	assert.Empty(t, empty.String())
+}
