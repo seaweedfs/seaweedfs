@@ -179,9 +179,10 @@ func runVolume(cmd *Command, args []string) bool {
 	erasure_coding.BitrotProtectionEnabled = *ecBitrotChecksum
 	// Validate the block size before multiplying so an absurd MiB value cannot
 	// overflow int64 and slip a bogus size past the power-of-two check. The
-	// upper bound keeps a sidecar from collapsing to a handful of huge blocks
-	// (1 GiB is already far beyond a single shard for any sane volume).
-	const maxBitrotBlockSizeMB = 1024
+	// block size also becomes the per-shard scratch buffer the scrub/backfill
+	// path allocates, so the upper bound caps that allocation (64 MiB per
+	// concurrent scrub worker) and keeps a typo from taking the server down.
+	const maxBitrotBlockSizeMB = 64
 	if mb := *ecBitrotBlockSizeMB; mb >= 1 && mb <= maxBitrotBlockSizeMB {
 		if blockSize := int64(mb) * 1024 * 1024; blockSize&(blockSize-1) == 0 {
 			erasure_coding.BitrotBlockSize = blockSize
