@@ -82,4 +82,8 @@ variable "jwt_length" {
   description = "Length of generated JWT keys (>= 32 hardened)."
   type        = number
   default     = 40
+  validation {
+    condition     = var.jwt_length >= 32
+    error_message = "jwt_length must be >= 32 (hardened minimum)."
+  }
 }
