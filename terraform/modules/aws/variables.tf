@@ -65,6 +65,12 @@ variable "cert_dir" {
   default     = "/usr/local/share/ca-certificates"
 }
 
+variable "kms_key_arn" {
+  description = "KMS key ARN the instance role may use to decrypt SSM SecureStrings. Defaults to \"*\" (the SSM default key); set to a specific CMK ARN in production."
+  type        = string
+  default     = "*"
+}
+
 variable "termination_protection" {
   description = "Set disable_api_termination on stateful instances (masters, volumes)."
   type        = bool

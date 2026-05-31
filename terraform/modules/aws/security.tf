@@ -106,7 +106,7 @@ data "aws_iam_policy_document" "ssm_read" {
   statement {
     sid       = "DecryptSecureStrings"
     actions   = ["kms:Decrypt"]
-    resources = ["*"] # scaffold: tighten to the SSM CMK ARN in production
+    resources = [var.kms_key_arn] # defaults to "*"; set a CMK ARN in production
     condition {
       test     = "StringEquals"
       variable = "kms:ViaService"
