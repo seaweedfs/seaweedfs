@@ -21,13 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// Admin file browser upload chunk sizing — kept in sync with the values
-// s3api uses so files end up split into the same fid-sized pieces the rest of
-// the cluster expects.
-const (
-	adminUploadChunkSize      = 8 * 1024 * 1024
-	adminUploadSmallFileLimit = 256 * 1024
-)
+// Admin upload chunk size, matching s3api so files split into the same fid-sized pieces.
+const adminUploadChunkSize = 8 * 1024 * 1024
 
 // File browser handlers backed by the filer gRPC service. They bypass the
 // filer's HTTP listener so the UI keeps working when the filer is started
@@ -105,11 +100,9 @@ func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath str
 	return h.streamEntryContent(ctx, entry, size, w)
 }
 
-// uploadFileGrpc streams the upload to volume servers in 8 MiB chunks via the
-// shared chunked-upload helper, then registers the assembled entry through the
-// filer gRPC service. Bytes never enter the admin process's heap as a whole —
-// each chunk is sized to adminUploadChunkSize. Small files (< 256 KiB) are
-// stored inline on the entry, matching the S3 server's behaviour.
+// uploadFileGrpc streams the upload to volumes in 8 MiB chunks via the shared
+// chunked-upload helper, then registers the entry over the filer gRPC service.
+// Content always lands in volumes, never inlined on the entry.
 func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath string, fileName string, mimeType string, reader io.Reader) error {
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
@@ -157,11 +150,9 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 	}
 
 	chunkResult, err := operation.UploadReaderInChunks(ctx, reader, &operation.ChunkedUploadOption{
-		ChunkSize:       adminUploadChunkSize,
-		SmallFileLimit:  adminUploadSmallFileLimit,
-		SaveSmallInline: true,
-		MimeType:        mimeType,
-		AssignFunc:      assignFunc,
+		ChunkSize:  adminUploadChunkSize,
+		MimeType:   mimeType,
+		AssignFunc: assignFunc,
 	})
 	if err != nil {
 		// Partial chunks come back even on error so we can clean them up rather
@@ -183,11 +174,7 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 			Mime:     mimeType,
 		},
 	}
-	if len(chunkResult.SmallContent) > 0 {
-		entry.Content = chunkResult.SmallContent
-	} else {
-		entry.Chunks = chunkResult.FileChunks
-	}
+	entry.Chunks = chunkResult.FileChunks
 
 	err = h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
