@@ -1,11 +1,16 @@
 # SeaweedFS on Terraform
 
+> **Experimental.** This Terraform support is an early scaffold under active
+> development. Interfaces (variables, outputs, module layout) may change without
+> notice, and not every tier is implemented yet. Not recommended for production
+> without your own review and testing.
+
 Self-contained Terraform/OpenTofu modules to deploy SeaweedFS on cloud VMs
 running the `weed` binary directly under systemd. No Helm and no Kubernetes
 required.
 
-This is an early scaffold. What works today is verified end-to-end against a
-real `weed` cluster (see "Test it locally" below).
+What works today is verified end-to-end against a real `weed` cluster (see
+"Test it locally" below).
 
 ## Layout
 
