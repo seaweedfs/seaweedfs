@@ -171,7 +171,7 @@ resource "aws_ebs_volume" "volume_data" {
   tags              = merge(var.tags, { Name = "${var.name}-volume-${each.key}-data", Role = "volume" })
 
   lifecycle {
-    prevent_destroy = true # break-glass: remove to allow destroy (see plan §5)
+    prevent_destroy = true # break-glass: remove to allow destroy
   }
 }
 

@@ -103,7 +103,7 @@ Implemented and verified:
   stay OUT of user_data. Proven end-to-end by `test/local-secure`.
 
 Not yet implemented:
-- sftp / admin / worker tiers (specified in the plan; core does not render them).
+- sftp / admin / worker tiers (core does not render them yet).
 - GCP/Azure wrappers, the data-plane provider, and the K8s-native module.
 - CA in Vault PKI (currently TF-generated, so the CA key lives in state). KMS
   decrypt in the IAM policy is scoped by
