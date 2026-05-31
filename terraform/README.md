@@ -9,7 +9,7 @@ real `weed` cluster (see "Test it locally" below).
 
 ## Layout
 
-```
+```text
 terraform/
   modules/
     core/        cloud-agnostic renderer (ZERO cloud resources): turns an
@@ -77,7 +77,7 @@ WEED=/path/to/weed ./run_local_secure.sh
 
 ```bash
 cd terraform/modules/core && tofu test
-# => 9 passed: peers list, -mserver vs -master, metrics gating,
+# => 11 passed: peers list, -mserver vs -master, metrics gating,
 #    security.toml conditions, all-in-one inheritance, ...
 ```
 
