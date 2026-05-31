@@ -127,8 +127,10 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId)
 		case volume_server_pb.VolumeScrubMode_CHECKSUM:
 			// Verify each local shard's raw bytes against the bitrot sidecar,
-			// exercising cold parity shards. Read-only.
-			files, shardInfos, serrs = v.ChecksumScrub()
+			// exercising cold parity shards. Read-only. ChecksumScrub's first
+			// return is blocks scanned, not files — discard it so TotalFiles
+			// (a needle/file count) isn't inflated by the block count.
+			_, shardInfos, serrs = v.ChecksumScrub()
 		default:
 			return nil, fmt.Errorf("unsupported EC volume scrub mode %d", m)
 		}
