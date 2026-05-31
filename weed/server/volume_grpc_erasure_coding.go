@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 			os.Remove(baseFileName + ecCtx.ToExt(i))
 		}
 		os.Remove(v.IndexFileName() + ".ecx")
+		os.Remove(erasure_coding.BitrotSidecarPath(baseFileName, 0))
 	}()
 
 	// IMPORTANT: Generate .ecx BEFORE EC shards to prevent a race condition.
@@ -106,8 +108,19 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	datSize, _, _ := v.FileStat()
 
 	// write .ec00 ~ .ec[TotalShards-1] files using context
-	if err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx); err != nil {
+	ecBitrot, err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx)
+	if err != nil {
 		return nil, fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
+	}
+	// Persist the generation-0 bitrot checksum sidecar (<base>.ecsum) alongside
+	// the shards so it travels with them during distribution (copy_ecsum_file).
+	// The source loading its own canonical sidecar is correct — it holds all
+	// shards and a complete manifest. Best-effort: a failed sidecar write leaves
+	// the generation unprotected rather than failing the encode.
+	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		if serr := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(baseFileName, 0), ecBitrot); serr != nil {
+			glog.Warningf("failed to write EC bitrot sidecar for volume %d: %v", req.VolumeId, serr)
+		}
 	}
 
 	// write .vif files
@@ -203,9 +216,11 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		additionalDirs = append(additionalDirs, otherLocation.Directory)
 	}
 
-	// Rebuild missing EC files, searching all disk locations for input shards
+	// Rebuild missing EC files, searching all disk locations for input shards.
+	// Present input shards are verified against the bitrot sidecar (when present)
+	// and corrupt ones are regenerated; unsafe_ignore_sidecar bypasses the guard.
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
-	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, additionalDirs...); err != nil {
+	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, req.UnsafeIgnoreSidecar, additionalDirs...); err != nil {
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
 	} else {
 		rebuiltShardIds = generatedShardIds
@@ -217,6 +232,30 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	}
 	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+	}
+
+	// Opportunistic bitrot backfill: if protection is enabled, no sidecar exists
+	// yet (a volume encoded before this feature), and this rebuilder can reach
+	// every shard, compute and write a generation-0 sidecar. The TOFU baseline
+	// blesses current bytes; ComputeProtectionFromShards refuses a partial
+	// manifest, so a multi-server rebuild that cannot reach all shards just skips.
+	if erasure_coding.BitrotProtectionEnabled {
+		sidecarPath := erasure_coding.BitrotSidecarPath(dataBaseFileName, 0)
+		if _, statErr := os.Stat(sidecarPath); os.IsNotExist(statErr) {
+			ctx := erasure_coding.NewDefaultECContext("", 0)
+			if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found && vi.EcShardConfig != nil {
+				if ds, ps := int(vi.EcShardConfig.DataShards), int(vi.EcShardConfig.ParityShards); ds > 0 && ps > 0 && ds+ps <= erasure_coding.MaxShardCount {
+					ctx = &erasure_coding.ECContext{DataShards: ds, ParityShards: ps}
+				}
+			}
+			if prot, berr := erasure_coding.ComputeProtectionFromShards(dataBaseFileName, ctx, 0, additionalDirs); berr != nil {
+				glog.V(2).Infof("bitrot backfill skipped for %s: %v", dataBaseFileName, berr)
+			} else if werr := erasure_coding.SaveBitrotSidecar(sidecarPath, prot); werr != nil {
+				glog.Warningf("bitrot backfill: write sidecar for %s: %v", dataBaseFileName, werr)
+			} else {
+				glog.V(0).Infof("bitrot backfill: wrote sidecar for %s after rebuild", dataBaseFileName)
+			}
+		}
 	}
 
 	return &volume_server_pb.VolumeEcShardsRebuildResponse{
@@ -330,6 +369,17 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 				return err
 			}
 		}
+
+		if req.CopyEcsumFile {
+			// Propagate the generation-0 bitrot checksum sidecar when the source
+			// has one. This non-2PC copy path (balance / fresh-encode / rebuild
+			// distribution) has no Prepare backstop, and fresh-encode sidecar
+			// writes are best-effort, so a missing source sidecar is a no-op
+			// (ignore-not-found): the holder is simply unprotected.
+			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.BitrotSidecarExt, false, true, nil); err != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: copy %s sidecar: %w", req.VolumeId, erasure_coding.BitrotSidecarExt, err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -405,6 +455,16 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 			os.Remove(dataBaseFilename + ".ecj")
 		}
 
+		// Remove the bitrot checksum sidecar(s) (.ecsum and any .ecsum.v<N>)
+		// from both dirs — only safe here, where the whole generation is gone
+		// (existingShardCount == 0). The per-shard-id delete that ec.rebuild
+		// uses for copied-survivor cleanup leaves shards behind, so this guard
+		// does not fire there.
+		removeBitrotSidecars(dataBaseFilename)
+		if location.IdxDirectory != location.Directory {
+			removeBitrotSidecars(indexBaseFilename)
+		}
+
 		if !hasIdxFile {
 			// .vif is used for ec volumes and normal volumes
 			os.Remove(dataBaseFilename + ".vif")
@@ -412,6 +472,17 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	}
 
 	return nil
+}
+
+// removeBitrotSidecars removes the legacy <base>.ecsum and any versioned
+// <base>.ecsum.v<N> sidecars. Best-effort; logs nothing on absence.
+func removeBitrotSidecars(baseFilename string) {
+	os.Remove(baseFilename + erasure_coding.BitrotSidecarExt)
+	if matches, _ := filepath.Glob(baseFilename + erasure_coding.BitrotSidecarExt + ".v*"); matches != nil {
+		for _, m := range matches {
+			os.Remove(m)
+		}
+	}
 }
 
 func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFile bool, hasIdxFile bool, existingShardCount int, err error) {
@@ -679,6 +750,13 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	// write .idx file from .ecx and .ecj files
 	if err := erasure_coding.WriteIdxFileFromEcIndex(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)
+	}
+
+	// The EC generation is gone; drop its bitrot sidecar(s) so a later EC
+	// re-encode cannot mistake a stale .ecsum for protection.
+	removeBitrotSidecars(dataBaseFileName)
+	if indexBaseFileName != dataBaseFileName {
+		removeBitrotSidecars(indexBaseFileName)
 	}
 
 	var volumeLocation *storage.DiskLocation
