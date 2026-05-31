@@ -397,8 +397,9 @@ func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
+	inline := r.URL.Query().Get("inline") == "true"
 	tracker := &responseWriteTracker{ResponseWriter: w}
-	if err := h.downloadFileGrpc(r.Context(), filePath, tracker); err != nil {
+	if err := h.downloadFileGrpc(r.Context(), filePath, tracker, inline); err != nil {
 		// Once bytes have been written we can't switch to a JSON error body
 		// without corrupting the partial response — log and stop. Before any
 		// write the response is still uncommitted, so a 502 with details is
