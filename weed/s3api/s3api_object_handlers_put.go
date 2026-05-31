@@ -352,13 +352,11 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 	return fn()
 }
 
-// putFinalize folds an object write's finalize step into its create. On the
-// routed path, mutations are appended to the entry's PUT in one ObjectTransaction
-// (taking lockKey, the object path) so the write and its finalize — e.g. flipping
-// the .versions latest pointer — commit atomically under one per-path lock. Off
-// the ring, afterCreate runs the equivalent under the object write lock after
-// CreateEntry. mutations is empty for a finalize with no routed form (e.g. the
-// suspended-versioning IsLatest fixups), which then always runs via afterCreate.
+// putFinalize folds an object write's finalize into its create. On the routed
+// path its mutations ride in the entry's PUT transaction under lockKey, committing
+// atomically (e.g. the .versions pointer flip); off the ring afterCreate does the
+// equivalent under the object write lock. A finalize with no routed form (suspended
+// IsLatest fixups) carries no mutations and runs only via afterCreate.
 type putFinalize struct {
 	lockKey     string
 	mutations   []*filer_pb.ObjectMutation
@@ -846,17 +844,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		return s3err.ErrNone
 	}
 
-	// Route the create to the object's owner filer, whose per-path lock
-	// serializes it, then run afterCreate (e.g. a versioned finalize that routes
-	// itself). Conditional/object-lock/non-reducible cases fall back to the
-	// distributed lock.
+	// Route the create to the object's owner filer (its per-path lock serializes
+	// it); conditional/object-lock/non-reducible cases fall back to the lock.
 	var createCode s3err.ErrorCode
 	routed := false
 	if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
-			// A finalize with routed mutations rides in the PUT's transaction, so
-			// the entry and its finalize commit atomically; lockKey is then the
-			// object path it carries (not the unique version file path).
+			// Routed mutations ride in the PUT's transaction (committing atomically),
+			// so lockKey is the object path they carry, not the version file path.
 			lockKey, finalizeMutations := filePath, []*filer_pb.ObjectMutation(nil)
 			if finalize != nil && len(finalize.mutations) > 0 {
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
@@ -1322,15 +1317,10 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		}
 	}
 
-	// Upload the file using putToFiler - this will create the file with version metadata.
-	// Versioned/suspended bucket → resolver returns 0 by construction;
-	// pass 0 directly so the path is explicit at the call site.
-	//
-	// Clear the prior latest-version pointer (and stamp the displaced
-	// entry with NoncurrentSinceNs) inside the afterCreate callback so
-	// it runs while withObjectWriteLock is still held in putToFiler.
-	// Doing it after putToFiler returns would race a concurrent PUT
-	// promoting a newer latest, which we'd then incorrectly wipe.
+	// Versioned/suspended bucket → resolver returns 0; pass it directly.
+	// afterCreate clears the prior latest pointer and stamps the displaced version
+	// with NoncurrentSinceNs — off-ring under the write lock, routed off-lock after
+	// the PUT. Best-effort either way: a stale flag self-heals on the next list.
 	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, &putFinalize{
 		afterCreate: func(_ *filer_pb.Entry) s3err.ErrorCode {
 			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {

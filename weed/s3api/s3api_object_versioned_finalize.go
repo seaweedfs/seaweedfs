@@ -170,11 +170,10 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 	}
 }
 
-// versionedFinalize describes how a versioned PutObject flips the .versions
-// latest pointer. On the routed path the RECOMPUTE_LATEST rides in the same
-// ObjectTransaction as the version file's PUT, so the new version and the pointer
-// commit atomically under the object's per-path lock. Off the ring the pointer is
-// updated by updateLatestVersionInDirectory under the object write lock.
+// versionedFinalize flips the .versions latest pointer for a versioned PutObject:
+// on the routed path RECOMPUTE_LATEST rides in the version file's PUT transaction,
+// committing atomically under the object's per-path lock; off the ring
+// updateLatestVersionInDirectory does it under the object write lock.
 func (s3a *S3ApiServer) versionedFinalize(bucket, object, versionId, versionFileName string, useInvertedFormat bool) *putFinalize {
 	return &putFinalize{
 		lockKey:   s3a.toFilerPath(bucket, object),

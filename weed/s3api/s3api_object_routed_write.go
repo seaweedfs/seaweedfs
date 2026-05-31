@@ -158,14 +158,12 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 	return resp, err
 }
 
-// routedPut writes an object entry as a PUT, optionally followed by finalize
-// mutations, as a single ObjectTransaction on the owner filer, applied in order
-// under lockKey. lockKey is normally the entry's own path so the transaction
-// shares the per-path lock with a concurrent create or delete of the same key; a
-// versioned add instead passes the object path (not the unique version file) plus
-// a RECOMPUTE_LATEST finalize, so the version's PUT and its .versions pointer flip
-// commit atomically — the recompute, applied after the PUT, scans the directory
-// and sees the just-written version.
+// routedPut writes an entry as a PUT, optionally followed by finalize mutations,
+// as one ObjectTransaction applied in order under lockKey on the owner filer.
+// lockKey is normally the entry's own path; a versioned add instead passes the
+// object path plus a RECOMPUTE_LATEST finalize, so the version's PUT and its
+// .versions pointer flip commit atomically (the recompute scans .versions/ after
+// the PUT and sees the new version).
 func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
 	mutations := make([]*filer_pb.ObjectMutation, 0, 1+len(finalize))
 	mutations = append(mutations, &filer_pb.ObjectMutation{
