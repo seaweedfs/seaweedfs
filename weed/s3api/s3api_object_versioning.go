@@ -984,7 +984,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 		bucketDir := s3a.bucketDir(bucket)
 		entry, err := s3a.getEntry(bucketDir, normalizedObject)
 		if err != nil {
-			return nil, fmt.Errorf("null version object %s not found: %v", normalizedObject, err)
+			return nil, fmt.Errorf("null version object %s not found: %w", normalizedObject, err)
 		}
 		return entry, nil
 	}
@@ -995,7 +995,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 
 	entry, err := s3a.getEntry(versionsDir, versionFile)
 	if err != nil {
-		return nil, fmt.Errorf("version %s not found: %v", versionId, err)
+		return nil, fmt.Errorf("version %s not found: %w", versionId, err)
 	}
 
 	return entry, nil

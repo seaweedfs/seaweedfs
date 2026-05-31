@@ -641,7 +641,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchVersion)
+				} else {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				}
 				return
 			}
 			targetVersionId = versionId
@@ -2149,7 +2153,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s for %s/%s: %v", versionId, bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchVersion)
+				} else {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				}
 				return
 			}
 			targetVersionId = versionId
