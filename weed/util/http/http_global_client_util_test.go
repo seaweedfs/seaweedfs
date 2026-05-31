@@ -70,3 +70,27 @@ func TestAppendQueryParameter(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Delete panicked before returning the request error: %v", r)
+		}
+	}()
+
+	if err := Delete("http://[::1", "jwt"); err == nil {
+		t.Fatal("expected invalid request error")
+	}
+}
+
+func TestDeleteProxiedReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("DeleteProxied panicked before returning the request error: %v", r)
+		}
+	}()
+
+	if _, _, err := DeleteProxied("http://[::1", "jwt"); err == nil {
+		t.Fatal("expected invalid request error")
+	}
+}

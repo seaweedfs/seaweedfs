@@ -144,10 +144,10 @@ func maybeAddAuth(req *http.Request, jwt string) {
 
 func Delete(url string, jwt string) error {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
-	maybeAddAuth(req, jwt)
 	if err != nil {
 		return err
 	}
+	maybeAddAuth(req, jwt)
 	resp, e := GetGlobalHttpClient().Do(req)
 	if e != nil {
 		return e
@@ -172,10 +172,10 @@ func Delete(url string, jwt string) error {
 
 func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err error) {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
-	maybeAddAuth(req, jwt)
 	if err != nil {
 		return
 	}
+	maybeAddAuth(req, jwt)
 	resp, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return
