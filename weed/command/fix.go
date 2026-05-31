@@ -381,7 +381,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	if !dataComplete {
 		ctx := &erasure_coding.ECContext{DataShards: dataShards, ParityShards: parityShards}
 		glog.Infof("volume %d: %d/%d shards present; reconstructing missing shards (%s) before index rebuild", volumeId, presentCount, dataShards+parityShards, ctx.String())
-		if _, err := erasure_coding.RebuildEcFilesWithContext(base, ctx); err != nil {
+		if _, err := erasure_coding.RebuildEcFilesWithContext(base, ctx, false); err != nil {
 			fail(fmt.Errorf("volume %d: reconstruct missing shards from %d survivors: %w", volumeId, presentCount, err))
 			return
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/klauspost/reedsolomon"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -57,21 +58,27 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	return nil
 }
 
-// WriteEcFiles generates .ec00 ~ .ec13 files using default EC context
-func WriteEcFiles(baseFileName string) error {
+// WriteEcFiles generates .ec00 ~ .ec13 files using default EC context.
+// It returns the bitrot protection (per-shard block CRC32C) computed during the
+// single encode pass; the caller persists it as a <base>.ecsum sidecar.
+func WriteEcFiles(baseFileName string) (*volume_server_pb.EcBitrotProtection, error) {
 	ctx := NewDefaultECContext("", 0)
 	return WriteEcFilesWithContext(baseFileName, ctx)
 }
 
-// WriteEcFilesWithContext generates EC files using the provided context
-func WriteEcFilesWithContext(baseFileName string, ctx *ECContext) error {
+// WriteEcFilesWithContext generates EC files using the provided context and
+// returns the bitrot protection computed inline during encoding (generation 0).
+func WriteEcFilesWithContext(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
 	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
 }
 
 // RebuildEcFiles rebuilds missing EC shard files.
 // additionalDirs are extra directories to search for existing shard files,
 // which handles multi-disk servers where shards may be spread across disks.
-func RebuildEcFiles(baseFileName string, additionalDirs ...string) ([]uint32, error) {
+// When a bitrot checksum sidecar is present for the (generation-0) volume,
+// present input shards are verified against it and corrupt ones are excluded
+// from Reed-Solomon and regenerated; unsafeIgnoreSidecar bypasses that guard.
+func RebuildEcFiles(baseFileName string, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
 	// Attempt to load EC config from .vif file to preserve original configuration
 	var ctx *ECContext
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
@@ -94,37 +101,43 @@ func RebuildEcFiles(baseFileName string, additionalDirs ...string) ([]uint32, er
 		ctx = NewDefaultECContext("", 0)
 	}
 
-	return RebuildEcFilesWithContext(baseFileName, ctx, additionalDirs...)
+	return RebuildEcFilesWithContext(baseFileName, ctx, unsafeIgnoreSidecar, additionalDirs...)
 }
 
 // RebuildEcFilesWithContext rebuilds missing EC files using the provided context.
 // additionalDirs are extra directories to search for existing shard files.
-func RebuildEcFilesWithContext(baseFileName string, ctx *ECContext, additionalDirs ...string) ([]uint32, error) {
-	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, additionalDirs)
+func RebuildEcFilesWithContext(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
+	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, unsafeIgnoreSidecar, additionalDirs)
 }
 
 func ToExt(ecIndex int) string {
 	return fmt.Sprintf(".ec%02d", ecIndex)
 }
 
-func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext) error {
+func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
 	file, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open dat file: %w", err)
+		return nil, fmt.Errorf("failed to open dat file: %w", err)
 	}
 	defer file.Close()
 
 	fi, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to stat dat file: %w", err)
+		return nil, fmt.Errorf("failed to stat dat file: %w", err)
+	}
+
+	// One rolling-CRC builder per shard; fed as each shard's bytes are written.
+	builders := make([]*shardChecksumBuilder, ctx.Total())
+	for i := range builders {
+		builders[i] = newShardChecksumBuilder(BitrotBlockSize)
 	}
 
 	glog.V(0).Infof("encodeDatFile %s.dat size:%d with EC context %s", baseFileName, fi.Size(), ctx.String())
-	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize, ctx)
+	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize, ctx, builders)
 	if err != nil {
-		return fmt.Errorf("encodeDatFile: %w", err)
+		return nil, fmt.Errorf("encodeDatFile: %w", err)
 	}
-	return nil
+	return buildProtectionFromBuilders(ctx, builders, BitrotBlockSize), nil
 }
 
 // findShardFile looks for a shard file at baseFileName+ext, then in additionalDirs.
@@ -143,12 +156,12 @@ func findShardFile(baseFileName string, ext string, additionalDirs []string) str
 	return ""
 }
 
-func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, additionalDirs []string) (generatedShardIds []uint32, err error) {
+func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs []string) (generatedShardIds []uint32, err error) {
 
 	// Pass 1: discover which shards exist and which are missing,
 	// opening input files but NOT creating output files yet.
 	shardHasData := make([]bool, ctx.Total())
-	shardPaths := make([]string, ctx.Total()) // non-empty for present shards
+	shardPaths := make([]string, ctx.Total()) // non-empty for present shards (also the in-place output for a reclassified-corrupt shard)
 	inputFiles := make([]*os.File, ctx.Total())
 	presentCount := 0
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
@@ -168,6 +181,67 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 		}
 	}
 
+	// Bitrot verify-and-exclude: when a generation-0 checksum sidecar is present
+	// and valid, verify each present input shard against it and reclassify
+	// corrupt ones as missing so Reed-Solomon regenerates them instead of
+	// silently consuming corrupt bytes. corruptOwned marks shards whose
+	// (corrupt) original file must be replaced in place at its discovered path.
+	corruptOwned := make([]bool, ctx.Total())
+	prot, status := loadRebuildSidecar(baseFileName, ctx, additionalDirs)
+	switch status {
+	case BitrotInvalid:
+		if !unsafeIgnoreSidecar {
+			return nil, fmt.Errorf("bitrot sidecar for %s is malformed/unverifiable; refusing to rebuild (pass unsafeIgnoreSidecar to override)", baseFileName)
+		}
+		glog.Warningf("bitrot sidecar for %s is malformed/unverifiable; proceeding because unsafeIgnoreSidecar is set", baseFileName)
+	case BitrotOn:
+		corrupt := make([]int, 0, ctx.Total())
+		for shardId := 0; shardId < ctx.Total(); shardId++ {
+			if !shardHasData[shardId] {
+				continue
+			}
+			entry := shardChecksums(prot, uint32(shardId))
+			if entry == nil {
+				continue
+			}
+			mismatched, verr := verifyShardFileBlocks(shardPaths[shardId], entry, int64(prot.BlockSize))
+			if verr != nil {
+				// A read error means we cannot trust this shard as a Reed-Solomon
+				// input. Exclude it (treat as corrupt) rather than silently
+				// feeding possibly-corrupt bytes into reconstruction.
+				glog.Warningf("bitrot: failed to verify present shard %d for %s: %v; excluding it", shardId, baseFileName, verr)
+				corrupt = append(corrupt, shardId)
+				continue
+			}
+			if len(mismatched) > 0 {
+				corrupt = append(corrupt, shardId)
+			}
+		}
+		if len(corrupt) > 0 {
+			// Wholesale-mismatch guard (RS-arbiter conservative form): localized
+			// bitrot touches a few shards; a stale/wrong sidecar mismatches more
+			// than parity_shards. In that case refuse rather than excluding good
+			// shards en masse.
+			if len(corrupt) > ctx.ParityShards && !unsafeIgnoreSidecar {
+				return nil, fmt.Errorf("bitrot sidecar suspect for %s: %d/%d present shards mismatch (> parity %d); refusing to rebuild (pass unsafeIgnoreSidecar to override)",
+					baseFileName, len(corrupt), presentCount, ctx.ParityShards)
+			}
+			if presentCount-len(corrupt) < ctx.DataShards && !unsafeIgnoreSidecar {
+				return nil, fmt.Errorf("bitrot: only %d verified-good shards for %s, need %d data shards; sidecar may be stale (pass unsafeIgnoreSidecar to override)",
+					presentCount-len(corrupt), baseFileName, ctx.DataShards)
+			}
+			if !unsafeIgnoreSidecar {
+				for _, shardId := range corrupt {
+					glog.Warningf("bitrot: present shard %d for %s fails checksum; excluding from rebuild inputs and regenerating", shardId, baseFileName)
+					shardHasData[shardId] = false
+					corruptOwned[shardId] = true
+					generatedShardIds = append(generatedShardIds, uint32(shardId))
+					presentCount--
+				}
+			}
+		}
+	}
+
 	// Pre-check: bail out before creating any output files.
 	if presentCount < ctx.DataShards {
 		return nil, fmt.Errorf("not enough shards to rebuild %s: found %d shards, need at least %d (data shards), missing shards: %v",
@@ -177,29 +251,131 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	glog.V(0).Infof("rebuilding %s: %d shards present, %d missing %v, config %s",
 		baseFileName, presentCount, len(generatedShardIds), generatedShardIds, ctx.String())
 
-	// Pass 2: create output files for missing shards now that we know
-	// reconstruction is possible.
+	// Pass 2: create output files for missing shards. A genuinely-absent shard
+	// is written at baseFileName+ext; a reclassified-corrupt shard is written to
+	// a temp file beside its discovered location and atomically renamed over the
+	// corrupt original after the rebuild (and checksum) succeed, so we never
+	// leave a duplicate shard id or a half-written file.
 	outputFiles := make([]*os.File, ctx.Total())
+	writePaths := make([]string, ctx.Total())
+	finalPaths := make([]string, ctx.Total())
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		if shardHasData[shardId] {
 			continue
 		}
-		outputFileName := baseFileName + ctx.ToExt(shardId)
-		outputFiles[shardId], err = os.OpenFile(outputFileName, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
+		finalPath := baseFileName + ctx.ToExt(shardId)
+		writePath := finalPath
+		if corruptOwned[shardId] && shardPaths[shardId] != "" {
+			finalPath = shardPaths[shardId]
+			writePath = shardPaths[shardId] + ".rebuilding"
+		}
+		outputFiles[shardId], err = os.OpenFile(writePath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
 			return nil, err
 		}
 		defer outputFiles[shardId].Close()
+		writePaths[shardId] = writePath
+		finalPaths[shardId] = finalPath
 	}
 
-	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx)
-	if err != nil {
+	if err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx); err != nil {
 		return nil, fmt.Errorf("rebuildEcFiles: %w", err)
+	}
+
+	// Verify regenerated shards against the sidecar. Reed-Solomon is
+	// deterministic, so a regenerated shard that does NOT match the sidecar
+	// means the sidecar is wrong/stale (not the shard) — fail closed rather than
+	// publishing bytes we cannot trust. On ANY verification failure (sync, read
+	// error, or mismatch) remove every generated output so the rebuild publishes
+	// nothing: a genuinely-missing shard returns to missing; a reclassified-
+	// corrupt shard keeps its untouched original.
+	if status == BitrotOn && !unsafeIgnoreSidecar {
+		for shardId := 0; shardId < ctx.Total(); shardId++ {
+			if writePaths[shardId] == "" {
+				continue
+			}
+			entry := shardChecksums(prot, uint32(shardId))
+			if entry == nil {
+				continue
+			}
+			if err = outputFiles[shardId].Sync(); err != nil {
+				cleanupRebuildOutputs(outputFiles, writePaths)
+				return nil, fmt.Errorf("sync regenerated shard %d: %w", shardId, err)
+			}
+			mismatched, verr := verifyShardFileBlocks(writePaths[shardId], entry, int64(prot.BlockSize))
+			if verr != nil {
+				cleanupRebuildOutputs(outputFiles, writePaths)
+				return nil, fmt.Errorf("bitrot: verify regenerated shard %d for %s: %w", shardId, baseFileName, verr)
+			}
+			if len(mismatched) > 0 {
+				cleanupRebuildOutputs(outputFiles, writePaths)
+				return nil, fmt.Errorf("bitrot: regenerated shard %d for %s does not match sidecar (%d blocks differ); sidecar likely stale — aborting (pass unsafeIgnoreSidecar to override)",
+					shardId, baseFileName, len(mismatched))
+			}
+		}
+	}
+
+	// Atomically move reclassified-corrupt rebuilds over their originals.
+	for shardId := 0; shardId < ctx.Total(); shardId++ {
+		if writePaths[shardId] != "" && writePaths[shardId] != finalPaths[shardId] {
+			outputFiles[shardId].Close()
+			if rerr := os.Rename(writePaths[shardId], finalPaths[shardId]); rerr != nil {
+				return nil, fmt.Errorf("bitrot: replace corrupt shard %d (%s -> %s): %w", shardId, writePaths[shardId], finalPaths[shardId], rerr)
+			}
+		}
 	}
 	return
 }
 
-func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File, ctx *ECContext) error {
+// cleanupRebuildOutputs removes every generated output on a failed fail-closed
+// rebuild: temp replacements AND genuinely-missing shards written directly at
+// their final path, so no unverified bytes are published. A reclassified-corrupt
+// shard's untouched original (at finalPath, distinct from its temp writePath) is
+// left in place; a genuinely-missing shard (writePath == finalPath) returns to
+// missing.
+func cleanupRebuildOutputs(outputFiles []*os.File, writePaths []string) {
+	for i := range writePaths {
+		if writePaths[i] == "" {
+			continue
+		}
+		if outputFiles[i] != nil {
+			outputFiles[i].Close()
+		}
+		os.Remove(writePaths[i])
+	}
+}
+
+// loadRebuildSidecar loads and validates the generation-0 checksum sidecar for a
+// rebuild. RebuildEcFiles operates on the un-suffixed (generation 0) shard
+// names, so only the legacy sidecar is relevant here. Returns BitrotOff when
+// absent or describing a different generation/config, BitrotInvalid on a
+// self-integrity/manifest failure, BitrotOn when usable.
+func loadRebuildSidecar(baseFileName string, ctx *ECContext, additionalDirs []string) (*volume_server_pb.EcBitrotProtection, BitrotStatus) {
+	path := findBitrotSidecar(0, baseFileName, baseFileName, additionalDirs...)
+	if path == "" {
+		return nil, BitrotOff
+	}
+	prot, err := LoadBitrotSidecar(path)
+	if err != nil {
+		glog.Warningf("bitrot: sidecar %s self-integrity failed: %v", path, err)
+		return nil, BitrotInvalid
+	}
+	if prot.Generation != 0 {
+		return nil, BitrotOff
+	}
+	if prot.EcShardConfig == nil ||
+		int(prot.EcShardConfig.DataShards) != ctx.DataShards ||
+		int(prot.EcShardConfig.ParityShards) != ctx.ParityShards {
+		return nil, BitrotOff
+	}
+	if err := ValidateBitrotManifest(prot, ctx.DataShards, ctx.ParityShards); err != nil {
+		glog.Warningf("bitrot: sidecar %s manifest invalid: %v", path, err)
+		return nil, BitrotInvalid
+	}
+	return prot, BitrotOn
+}
+
+func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File, ctx *ECContext, builders []*shardChecksumBuilder) error {
 
 	bufferSize := int64(len(buffers[0]))
 	if bufferSize == 0 {
@@ -212,7 +388,7 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 	}
 
 	for b := int64(0); b < batchCount; b++ {
-		err := encodeDataOneBatch(file, enc, startOffset+b*bufferSize, blockSize, buffers, outputs, ctx)
+		err := encodeDataOneBatch(file, enc, startOffset+b*bufferSize, blockSize, buffers, outputs, ctx, builders)
 		if err != nil {
 			return err
 		}
@@ -245,7 +421,7 @@ func closeEcFiles(files []*os.File) {
 	}
 }
 
-func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File, ctx *ECContext) error {
+func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File, ctx *ECContext, builders []*shardChecksumBuilder) error {
 
 	// read data into buffers
 	for i := 0; i < ctx.DataShards; i++ {
@@ -272,12 +448,16 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 		if err != nil {
 			return err
 		}
+		// Accumulate this shard's block CRC over exactly the bytes written.
+		if builders != nil && builders[i] != nil {
+			builders[i].write(buffers[i])
+		}
 	}
 
 	return nil
 }
 
-func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64, ctx *ECContext) error {
+func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64, ctx *ECContext, builders []*shardChecksumBuilder) error {
 
 	var processedSize int64
 
@@ -302,7 +482,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	smallRowSize := smallBlockSize * int64(ctx.DataShards)
 
 	for remainingSize >= largeRowSize {
-		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs, ctx)
+		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs, ctx, builders)
 		if err != nil {
 			return fmt.Errorf("failed to encode large chunk data: %w", err)
 		}
@@ -310,7 +490,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		processedSize += largeRowSize
 	}
 	for remainingSize > 0 {
-		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs, ctx)
+		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs, ctx, builders)
 		if err != nil {
 			return fmt.Errorf("failed to encode small chunk data: %w", err)
 		}

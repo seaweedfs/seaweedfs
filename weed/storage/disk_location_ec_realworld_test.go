@@ -86,7 +86,7 @@ func TestCalculateExpectedShardSizeWithRealEncoding(t *testing.T) {
 			expectedShardSize := calculateExpectedShardSize(tt.datFileSize, erasure_coding.DataShardsCount)
 
 			// Run actual EC encoding
-			err = erasure_coding.WriteEcFiles(baseFileName)
+			_, err = erasure_coding.WriteEcFiles(baseFileName)
 			if err != nil {
 				t.Fatalf("Failed to encode EC files: %v", err)
 			}
@@ -167,7 +167,7 @@ func TestCalculateExpectedShardSizeEdgeCases(t *testing.T) {
 			expectedShardSize := calculateExpectedShardSize(tt.datFileSize, erasure_coding.DataShardsCount)
 
 			// Run actual EC encoding
-			err = erasure_coding.WriteEcFiles(baseFileName)
+			_, err = erasure_coding.WriteEcFiles(baseFileName)
 			if err != nil {
 				t.Fatalf("Failed to encode EC files: %v", err)
 			}

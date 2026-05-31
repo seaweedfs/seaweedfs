@@ -299,7 +299,7 @@ func TestRemoteTier_ECEncode_RequiresLocalDat(t *testing.T) {
 	tierUpVolume(t, dir, vid, b)
 
 	baseFileName := filepath.Join(dir, fmt.Sprintf("%d", uint32(vid)))
-	err := erasure_coding.WriteEcFiles(baseFileName)
+	_, err := erasure_coding.WriteEcFiles(baseFileName)
 	require.Error(t, err, "EC encoder must not run with .dat missing — caller is expected to download first")
 	require.Contains(t, err.Error(), ".dat")
 }
@@ -321,7 +321,8 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"))
-	require.NoError(t, erasure_coding.WriteEcFiles(baseFileName))
+	_, ecErr := erasure_coding.WriteEcFiles(baseFileName)
+	require.NoError(t, ecErr)
 
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		shardPath := fmt.Sprintf("%s.ec%02d", baseFileName, i)
@@ -335,7 +336,7 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 		shardPath := fmt.Sprintf("%s.ec%02d", baseFileName, i)
 		require.NoError(t, os.Remove(shardPath))
 	}
-	rebuilt, err := erasure_coding.RebuildEcFiles(baseFileName)
+	rebuilt, err := erasure_coding.RebuildEcFiles(baseFileName, false)
 	require.NoError(t, err)
 	require.NotEmpty(t, rebuilt, "rebuild should report which parity shards were regenerated")
 	for i := erasure_coding.DataShardsCount; i < erasure_coding.TotalShardsCount; i++ {
