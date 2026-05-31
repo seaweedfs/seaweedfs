@@ -25,7 +25,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -229,10 +228,11 @@ func SaveBitrotSidecar(path string, prot *volume_server_pb.EcBitrotProtection) e
 	if err != nil {
 		return fmt.Errorf("marshal bitrot sidecar: %w", err)
 	}
-	// The header records payload_len as a uint32; refuse a payload that would
-	// not fit rather than truncating the length field (which would corrupt the
-	// sidecar). A real manifest is a few KB, so this never trips in practice.
-	if uint64(len(payload)) > math.MaxUint32 {
+	// The header records payload_len as a uint32 and the allocation below adds
+	// it to a constant. Bound the payload well under any overflow (a real
+	// manifest is a few KB) so neither the length field nor make() can wrap.
+	const maxBitrotPayloadSize = 1 << 30 // 1 GiB, vastly above any real sidecar
+	if len(payload) > maxBitrotPayloadSize {
 		return fmt.Errorf("bitrot sidecar payload too large: %d bytes", len(payload))
 	}
 	buf := make([]byte, bitrotHeaderSize+len(payload))
@@ -375,7 +375,14 @@ func verifyShardFileBlocks(path string, entry *volume_server_pb.EcShardChecksums
 		if rem := entry.CoveredSize - offset; rem < toRead {
 			toRead = rem
 		}
-		n, rerr := readFull(f, buf[:toRead], offset)
+		// os.File.ReadAt fills the slice or returns an error; a full read that
+		// lands exactly on EOF may still report io.EOF, which is not corruption.
+		// A short read (n < toRead) means the shard is truncated and the EOF is
+		// propagated as an error.
+		n, rerr := f.ReadAt(buf[:toRead], offset)
+		if rerr == io.EOF && int64(n) == toRead {
+			rerr = nil
+		}
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -385,21 +392,6 @@ func verifyShardFileBlocks(path string, entry *volume_server_pb.EcShardChecksums
 		offset += int64(n)
 	}
 	return mismatched, nil
-}
-
-func readFull(f *os.File, buf []byte, offset int64) (int, error) {
-	total := 0
-	for total < len(buf) {
-		n, err := f.ReadAt(buf[total:], offset+int64(total))
-		total += n
-		if err != nil {
-			if total == len(buf) {
-				return total, nil
-			}
-			return total, err
-		}
-	}
-	return total, nil
 }
 
 // ComputeProtectionFromShards builds a complete EcBitrotProtection by reading
