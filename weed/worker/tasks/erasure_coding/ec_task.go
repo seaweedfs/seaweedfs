@@ -634,6 +634,20 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		}
 	}
 
+	// Add the generation-0 bitrot checksum sidecar so it is distributed with
+	// the shards (DistributeEcShards only ships files present in shardFiles).
+	// Best-effort like the sidecar write above: if it is absent the holders
+	// are simply unprotected rather than failing the encode.
+	ecsumFile := erasure_coding.BitrotSidecarPath(baseName, 0)
+	if info, err := os.Stat(ecsumFile); err == nil {
+		shardFiles["ecsum"] = ecsumFile
+		t.GetLogger().WithFields(map[string]interface{}{
+			"file_type":  "ecsum",
+			"file_path":  ecsumFile,
+			"size_bytes": info.Size(),
+		}).Info("EC bitrot checksum sidecar generated")
+	}
+
 	// Log summary of generation
 	t.GetLogger().WithFields(map[string]interface{}{
 		"total_files":         len(shardFiles),
