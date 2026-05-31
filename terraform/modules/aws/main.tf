@@ -159,8 +159,8 @@ resource "aws_instance" "s3" {
 }
 
 # ---- step 4: protected data disks (decoupled; survive instance replacement) -
-# NOTE: cloud-init must mkfs+mount these at /data before the unit starts; that
-# mount-disks step is a documented follow-up (see terraform/README.md).
+# The core's mount-disks.sh (wired via disk_mounts above) mkfs+mounts these at
+# /data before the weed unit starts.
 resource "aws_ebs_volume" "volume_data" {
   for_each          = var.volumes
   availability_zone = each.value.availability_zone
