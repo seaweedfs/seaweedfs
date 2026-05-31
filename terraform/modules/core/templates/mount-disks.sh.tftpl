@@ -56,6 +56,10 @@ mount_one() {
   fi
   mkdir -p "$mountpoint"
   local uuid; uuid="$(blkid -s UUID -o value "$dev")"
+  if [ -z "$uuid" ]; then
+    echo "mount-disks: failed to read a filesystem UUID for $dev" >&2
+    return 1
+  fi
   if ! grep -q "$uuid" /etc/fstab; then
     printf 'UUID=%s %s %s defaults,nofail 0 2\n' "$uuid" "$mountpoint" "$fstype" >> /etc/fstab
   fi
