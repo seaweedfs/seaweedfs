@@ -177,11 +177,21 @@ func runVolume(cmd *Command, args []string) bool {
 
 	// Apply EC bitrot checksum settings.
 	erasure_coding.BitrotProtectionEnabled = *ecBitrotChecksum
-	if blockSize := int64(*ecBitrotBlockSizeMB) * 1024 * 1024; blockSize >= (1<<20) && (blockSize&(blockSize-1)) == 0 {
-		erasure_coding.BitrotBlockSize = blockSize
+	// Validate the block size before multiplying so an absurd MiB value cannot
+	// overflow int64 and slip a bogus size past the power-of-two check. The
+	// upper bound keeps a sidecar from collapsing to a handful of huge blocks
+	// (1 GiB is already far beyond a single shard for any sane volume).
+	const maxBitrotBlockSizeMB = 1024
+	if mb := *ecBitrotBlockSizeMB; mb >= 1 && mb <= maxBitrotBlockSizeMB {
+		if blockSize := int64(mb) * 1024 * 1024; blockSize&(blockSize-1) == 0 {
+			erasure_coding.BitrotBlockSize = blockSize
+		} else if mb != 16 {
+			glog.Warningf("ignoring invalid -ec.bitrotBlockSizeMB=%d (must be a power of two); using %d MiB",
+				mb, erasure_coding.BitrotBlockSize/(1024*1024))
+		}
 	} else if *ecBitrotBlockSizeMB != 16 {
-		glog.Warningf("ignoring invalid -ec.bitrotBlockSizeMB=%d (must be a power of two >= 1 MiB); using %d MiB",
-			*ecBitrotBlockSizeMB, erasure_coding.BitrotBlockSize/(1024*1024))
+		glog.Warningf("ignoring out-of-range -ec.bitrotBlockSizeMB=%d (must be a power of two in [1, %d] MiB); using %d MiB",
+			*ecBitrotBlockSizeMB, maxBitrotBlockSizeMB, erasure_coding.BitrotBlockSize/(1024*1024))
 	}
 
 	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
