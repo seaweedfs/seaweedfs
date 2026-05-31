@@ -145,7 +145,7 @@ func TestEncodeProducesVerifiableSidecar(t *testing.T) {
 	writeRandomDat(t, base, 6*1024*1024) // ~6 MiB
 
 	ctx := &ECContext{DataShards: 10, ParityShards: 4}
-	prot, err := WriteEcFilesWithContext(base, ctx)
+	prot, err := WriteEcFiles(base, ctx)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRebuildExcludesCorruptPresentShard(t *testing.T) {
 	writeRandomDat(t, base, 6*1024*1024)
 
 	ctx := &ECContext{DataShards: 10, ParityShards: 4}
-	prot, err := WriteEcFilesWithContext(base, ctx)
+	prot, err := WriteEcFiles(base, ctx)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestRebuildExcludesCorruptPresentShard(t *testing.T) {
 	}
 	corruptOneByte(t, base+ctx.ToExt(3))
 
-	generated, err := RebuildEcFilesWithContext(base, ctx, false)
+	generated, err := RebuildEcFiles(base, ctx, false)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestComputeProtectionFromShardsBackfill(t *testing.T) {
 	base := filepath.Join(dir, "11")
 	writeRandomDat(t, base, 6*1024*1024)
 	ctx := &ECContext{DataShards: 10, ParityShards: 4}
-	if _, err := WriteEcFilesWithContext(base, ctx); err != nil {
+	if _, err := WriteEcFiles(base, ctx); err != nil {
 		t.Fatalf("encode: %v", err)
 	}
 
@@ -277,7 +277,7 @@ func TestRebuildFailClosedCleansUpGeneratedShard(t *testing.T) {
 	base := filepath.Join(dir, "13")
 	writeRandomDat(t, base, 6*1024*1024)
 	ctx := &ECContext{DataShards: 10, ParityShards: 4}
-	prot, err := WriteEcFilesWithContext(base, ctx)
+	prot, err := WriteEcFiles(base, ctx)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestRebuildFailClosedCleansUpGeneratedShard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, rerr := RebuildEcFilesWithContext(base, ctx, false); rerr == nil {
+	if _, rerr := RebuildEcFiles(base, ctx, false); rerr == nil {
 		t.Fatalf("expected rebuild to fail closed on the stale sidecar")
 	}
 	// The genuinely-missing shard 0 must NOT be published: fail-closed cleanup
@@ -310,7 +310,7 @@ func TestRebuildFailClosedCleansUpGeneratedShard(t *testing.T) {
 	}
 
 	// With the unsafe override, the rebuild proceeds and regenerates shard 0.
-	if _, rerr := RebuildEcFilesWithContext(base, ctx, true); rerr != nil {
+	if _, rerr := RebuildEcFiles(base, ctx, true); rerr != nil {
 		t.Fatalf("rebuild with unsafeIgnoreSidecar should succeed: %v", rerr)
 	}
 	if _, err := os.Stat(shard0); err != nil {

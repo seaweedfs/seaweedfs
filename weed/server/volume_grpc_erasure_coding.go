@@ -108,9 +108,9 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	datSize, _, _ := v.FileStat()
 
 	// write .ec00 ~ .ec[TotalShards-1] files using context
-	ecBitrot, err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx)
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseFileName, ecCtx)
 	if err != nil {
-		return nil, fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
+		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
 	}
 	// Persist the generation-0 bitrot checksum sidecar (<base>.ecsum) alongside
 	// the shards so it travels with them during distribution (copy_ecsum_file).
@@ -220,7 +220,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// Present input shards are verified against the bitrot sidecar (when present)
 	// and corrupt ones are regenerated; unsafe_ignore_sidecar bypasses the guard.
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
-	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, req.UnsafeIgnoreSidecar, additionalDirs...); err != nil {
+	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, nil, req.UnsafeIgnoreSidecar, additionalDirs...); err != nil {
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
 	} else {
 		rebuiltShardIds = generatedShardIds

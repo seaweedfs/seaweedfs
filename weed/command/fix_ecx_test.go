@@ -92,7 +92,7 @@ func buildAndEncodeTestEcVolume(t *testing.T, dir, baseName string) (base string
 	idxFile.Close()
 	nm.Close()
 
-	if _, err := erasure_coding.WriteEcFiles(base); err != nil {
+	if _, err := erasure_coding.WriteEcFiles(base, nil); err != nil {
 		t.Fatalf("WriteEcFiles: %v", err)
 	}
 	if err := erasure_coding.WriteSortedFileFromIdx(base, ".ecx"); err != nil {

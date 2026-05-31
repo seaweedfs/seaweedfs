@@ -58,55 +58,50 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	return nil
 }
 
-// WriteEcFiles generates .ec00 ~ .ec13 files using default EC context.
-// It returns the bitrot protection (per-shard block CRC32C) computed during the
-// single encode pass; the caller persists it as a <base>.ecsum sidecar.
-func WriteEcFiles(baseFileName string) (*volume_server_pb.EcBitrotProtection, error) {
-	ctx := NewDefaultECContext("", 0)
-	return WriteEcFilesWithContext(baseFileName, ctx)
-}
-
-// WriteEcFilesWithContext generates EC files using the provided context and
-// returns the bitrot protection computed inline during encoding (generation 0).
-func WriteEcFilesWithContext(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
+// WriteEcFiles generates .ec00 ~ .ec13 files from baseFileName.dat. A nil ctx
+// uses the default EC context; pass an explicit ctx for a configured (e.g.
+// custom-ratio) layout. It returns the bitrot protection (per-shard block
+// CRC32C) computed during the single encode pass; the caller persists it as a
+// <base>.ecsum sidecar.
+func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
+	if ctx == nil {
+		ctx = NewDefaultECContext("", 0)
+	}
 	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
 }
 
-// RebuildEcFiles rebuilds missing EC shard files.
-// additionalDirs are extra directories to search for existing shard files,
-// which handles multi-disk servers where shards may be spread across disks.
-// When a bitrot checksum sidecar is present for the (generation-0) volume,
-// present input shards are verified against it and corrupt ones are excluded
-// from Reed-Solomon and regenerated; unsafeIgnoreSidecar bypasses that guard.
-func RebuildEcFiles(baseFileName string, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
-	// Attempt to load EC config from .vif file to preserve original configuration
-	var ctx *ECContext
-	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
-		ds := int(volumeInfo.EcShardConfig.DataShards)
-		ps := int(volumeInfo.EcShardConfig.ParityShards)
+// RebuildEcFiles rebuilds missing EC shard files. A nil ctx loads the EC config
+// from the .vif (falling back to the default ratio); pass an explicit ctx when
+// the caller already knows the shard layout. additionalDirs are extra
+// directories to search for existing shard files, which handles multi-disk
+// servers where shards may be spread across disks. When a bitrot checksum
+// sidecar is present for the (generation-0) volume, present input shards are
+// verified against it and corrupt ones are excluded from Reed-Solomon and
+// regenerated; unsafeIgnoreSidecar bypasses that guard.
+func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
+	if ctx == nil {
+		// Load EC config from the .vif to preserve the original configuration.
+		if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
+			ds := int(volumeInfo.EcShardConfig.DataShards)
+			ps := int(volumeInfo.EcShardConfig.ParityShards)
 
-		// Validate EC config before using it
-		if ds > 0 && ps > 0 && ds+ps <= MaxShardCount {
-			ctx = &ECContext{
-				DataShards:   ds,
-				ParityShards: ps,
+			// Validate EC config before using it
+			if ds > 0 && ps > 0 && ds+ps <= MaxShardCount {
+				ctx = &ECContext{
+					DataShards:   ds,
+					ParityShards: ps,
+				}
+				glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
+			} else {
+				glog.Warningf("Invalid EC config in .vif for %s (data=%d, parity=%d), using default", baseFileName, ds, ps)
+				ctx = NewDefaultECContext("", 0)
 			}
-			glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
 		} else {
-			glog.Warningf("Invalid EC config in .vif for %s (data=%d, parity=%d), using default", baseFileName, ds, ps)
+			glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
 			ctx = NewDefaultECContext("", 0)
 		}
-	} else {
-		glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
-		ctx = NewDefaultECContext("", 0)
 	}
 
-	return RebuildEcFilesWithContext(baseFileName, ctx, unsafeIgnoreSidecar, additionalDirs...)
-}
-
-// RebuildEcFilesWithContext rebuilds missing EC files using the provided context.
-// additionalDirs are extra directories to search for existing shard files.
-func RebuildEcFilesWithContext(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
 	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, unsafeIgnoreSidecar, additionalDirs)
 }
 

@@ -18,7 +18,7 @@ import (
 // existed in VolumeEcShardsGenerate before the fix in this PR.
 //
 // Previously, the order was:
-//  1. WriteEcFilesWithContext(baseFileName, ecCtx)        — EC shards from .dat
+//  1. WriteEcFiles(baseFileName, ecCtx)        — EC shards from .dat
 //  2. WriteSortedFileFromIdx(v.IndexFileName(), ".ecx")   — .ecx from .idx
 //
 // If a write appended data to .dat/.idx between steps 1 and 2, the .ecx would
