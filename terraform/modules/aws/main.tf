@@ -122,12 +122,13 @@ resource "aws_instance" "volume" {
 }
 
 resource "aws_instance" "filer" {
-  for_each             = var.filers
-  ami                  = var.ami_id
-  instance_type        = each.value.instance_type
-  key_name             = var.key_name
-  user_data            = module.core.cloud_init_by_node["filer-${each.key}"]
-  iam_instance_profile = var.enable_security ? aws_iam_instance_profile.node[0].name : null
+  for_each                = var.filers
+  ami                     = var.ami_id
+  instance_type           = each.value.instance_type
+  key_name                = var.key_name
+  user_data               = module.core.cloud_init_by_node["filer-${each.key}"]
+  iam_instance_profile    = var.enable_security ? aws_iam_instance_profile.node[0].name : null
+  disable_api_termination = var.termination_protection
 
   network_interface {
     network_interface_id = aws_network_interface.filer[each.key].id
