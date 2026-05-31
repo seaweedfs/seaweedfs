@@ -63,7 +63,8 @@ variable "security" {
     jwt_filer_signing_key      = optional(string, "")
     jwt_filer_signing_read_key = optional(string, "")
   })
-  default = {}
+  default   = {}
+  sensitive = true
 }
 
 variable "hardening" {
