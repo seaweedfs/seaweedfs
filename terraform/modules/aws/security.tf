@@ -80,7 +80,7 @@ locals {
   s3_config_source = !local.deliver_s3_config ? "" : (
     length(var.s3_nodes) > 0 ?
     module.core.secret_files_by_node["s3-${sort(keys(var.s3_nodes))[0]}"][local.s3_config_path] :
-    module.core.secret_files_by_node["filer-${sort(keys(var.filers))[0]}"][local.s3_config_path]
+    (length(var.filers) > 0 ? module.core.secret_files_by_node["filer-${sort(keys(var.filers))[0]}"][local.s3_config_path] : "")
   )
 }
 
