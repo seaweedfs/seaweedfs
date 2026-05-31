@@ -122,9 +122,10 @@ resource "aws_ebs_volume" "data" {
 }
 
 resource "aws_volume_attachment" "data" {
-  device_name = "/dev/xvdf"
-  volume_id   = aws_ebs_volume.data.id
-  instance_id = aws_instance.aio.id
+  device_name                    = "/dev/xvdf"
+  volume_id                      = aws_ebs_volume.data.id
+  instance_id                    = aws_instance.aio.id
+  stop_instance_before_detaching = true
 }
 
 output "instance_id" {
