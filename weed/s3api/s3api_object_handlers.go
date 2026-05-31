@@ -254,6 +254,10 @@ func isCanceledStreamingError(err error) bool {
 	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }
 
+func isRequestDoneError(err error) bool {
+	return isCanceledStreamingError(err) || errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded
+}
+
 func shouldWriteStreamingErrorResponse(err error) bool {
 	return err != nil && !isCanceledStreamingError(err)
 }
@@ -332,15 +336,16 @@ func (s3a *S3ApiServer) hasChildren(ctx context.Context, bucket, prefix string) 
 	bucketDir := s3a.bucketDir(bucket)
 	fullPath := bucketDir + "/" + cleanPrefix
 
-	// List one child object. filer_pb.List cancels the underlying ListEntries
-	// stream when it returns, so gRPC's per-stream client goroutine is not leaked.
-	// The caller's request context is propagated so the probe is cancelled if the
-	// client disconnects.
+	// List one child object. The caller's request context is used both for the
+	// RPC and for filer failover/connection-invalidation decisions, so client
+	// disconnects are treated as per-request cancellations.
 	found := false
-	err := filer_pb.List(ctx, s3a, fullPath, "", func(*filer_pb.Entry, bool) error {
-		found = true
-		return nil
-	}, "", true, 1)
+	err := s3a.WithFilerClientContext(ctx, false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.SeaweedList(ctx, client, fullPath, "", func(*filer_pb.Entry, bool) error {
+			found = true
+			return nil
+		}, "", true, 1)
+	})
 
 	if err == nil {
 		return found

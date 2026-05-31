@@ -311,7 +311,9 @@ func InvalidateGrpcConnection(address string) {
 
 // grpcMarshalErrorPrefix is the library-owned prefix gRPC prepends to every
 // client-side proto marshal failure; see grpc-go rpc_util.go encode():
-//   status.Errorf(codes.Internal, "grpc: error while marshaling: %v", ...)
+//
+//	status.Errorf(codes.Internal, "grpc: error while marshaling: %v", ...)
+//
 // The "grpc:" token is reserved for gRPC internal diagnostics and will not
 // collide with user-produced Internal statuses.
 const grpcMarshalErrorPrefix = "grpc: error while marshaling"
@@ -352,9 +354,39 @@ func isClientSideMarshalError(err error) bool {
 	return s.Code() == codes.Internal && strings.HasPrefix(s.Message(), grpcMarshalErrorPrefix)
 }
 
+type noConnectionInvalidationError struct {
+	err error
+}
+
+func (e noConnectionInvalidationError) Error() string {
+	return e.err.Error()
+}
+
+func (e noConnectionInvalidationError) Unwrap() error {
+	return e.err
+}
+
+// WithoutConnectionInvalidation marks a per-request callback error so it does
+// not poison a shared cached ClientConn.
+func WithoutConnectionInvalidation(err error) error {
+	if err == nil {
+		return nil
+	}
+	return noConnectionInvalidationError{err: err}
+}
+
+func shouldSkipConnectionInvalidation(err error) bool {
+	var noInvalidate noConnectionInvalidationError
+	return errors.As(err, &noInvalidate)
+}
+
 // shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
 func shouldInvalidateConnection(err error) bool {
 	if err == nil {
+		return false
+	}
+
+	if shouldSkipConnectionInvalidation(err) {
 		return false
 	}
 
@@ -423,7 +455,7 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 	}
 	defer grpcConnection.Close()
 	executionErr := fn(grpcConnection)
-	if executionErr != nil {
+	if executionErr != nil && !shouldSkipConnectionInvalidation(executionErr) {
 		// The streaming channel is dedicated to this caller, but unrelated
 		// request-path callers share a cached non-streaming ClientConn to the
 		// same peer. When the stream fails, drop that cached channel so the

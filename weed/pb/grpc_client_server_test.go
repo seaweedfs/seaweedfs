@@ -30,6 +30,23 @@ func TestShouldInvalidateConnection_MarshalErrorIsPerRequest(t *testing.T) {
 	}
 }
 
+func TestShouldInvalidateConnection_NoInvalidateWrapper(t *testing.T) {
+	canceledErr := status.Error(codes.Canceled, "caller request canceled")
+	wrapped := WithoutConnectionInvalidation(canceledErr)
+
+	if status.Code(wrapped) != codes.Canceled {
+		t.Fatalf("wrapped error status code = %v, want %v", status.Code(wrapped), codes.Canceled)
+	}
+	if shouldInvalidateConnection(wrapped) {
+		t.Fatalf("caller request cancellation must not invalidate the shared connection")
+	}
+
+	deadlineErr := status.Error(codes.DeadlineExceeded, "caller request timed out")
+	if shouldInvalidateConnection(WithoutConnectionInvalidation(deadlineErr)) {
+		t.Fatalf("caller request deadline must not invalidate the shared connection")
+	}
+}
+
 // TestShouldInvalidateConnection_GenuineInternalStillInvalidates ensures the
 // marshal-error carve-out does not swallow real server-side Internal errors,
 // which previously caused — and should continue to cause — connection

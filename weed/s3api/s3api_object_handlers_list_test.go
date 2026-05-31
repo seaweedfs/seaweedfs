@@ -3,16 +3,22 @@ package s3api
 import (
 	"context"
 	"io"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type testListEntriesStream struct {
@@ -63,6 +69,88 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 
 	return &testListEntriesStream{entries: entries}, nil
 }
+
+type contextCaptureFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	captured context.Context
+}
+
+func (c *contextCaptureFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	c.captured = ctx
+	return &testListEntriesStream{}, nil
+}
+
+type listEntriesErrorFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	err    error
+	called bool
+}
+
+func (c *listEntriesErrorFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	c.called = true
+	return nil, c.err
+}
+
+type recvErrorFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	err error
+}
+
+func (c *recvErrorFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	return &recvErrorListEntriesStream{err: c.err}, nil
+}
+
+type cancelingListEntriesFilerServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	cancel context.CancelFunc
+}
+
+func (s *cancelingListEntriesFilerServer) ListEntries(_ *filer_pb.ListEntriesRequest, _ grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
+	s.cancel()
+	return status.Error(codes.Canceled, "client disconnected")
+}
+
+func startCancelingListEntriesFilerServer(t *testing.T, cancel context.CancelFunc) pb.ServerAddress {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &cancelingListEntriesFilerServer{cancel: cancel})
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		listener.Close()
+	})
+
+	go func() {
+		_ = grpcServer.Serve(listener)
+	}()
+
+	host, grpcPort, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener address: %v", err)
+	}
+	return pb.ServerAddress(host + ":1." + grpcPort)
+}
+
+type recvErrorListEntriesStream struct {
+	err error
+}
+
+func (s *recvErrorListEntriesStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	return nil, s.err
+}
+
+func (s *recvErrorListEntriesStream) Header() (metadata.MD, error) { return metadata.MD{}, nil }
+func (s *recvErrorListEntriesStream) Trailer() metadata.MD         { return metadata.MD{} }
+func (s *recvErrorListEntriesStream) Close() error                 { return nil }
+func (s *recvErrorListEntriesStream) Context() context.Context     { return context.Background() }
+func (s *recvErrorListEntriesStream) SendMsg(m interface{}) error  { return nil }
+func (s *recvErrorListEntriesStream) RecvMsg(m interface{}) error  { return nil }
+func (s *recvErrorListEntriesStream) CloseSend() error             { return nil }
 
 type markerEchoFilerClient struct {
 	filer_pb.SeaweedFilerClient
@@ -884,4 +972,208 @@ func TestListObjectsV2_PrefixEndingWithSlash_WithDelimiter(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"fileA"}, results, "Should only return files under directory '1', not '1000'")
+}
+
+func TestDoListFilerEntriesUsesCallerContext(t *testing.T) {
+	type testKey string
+	ctx := context.WithValue(context.Background(), testKey("key"), "value")
+	client := &contextCaptureFilerClient{}
+	cursor := &ListingCursor{maxKeys: 1}
+
+	_, err := (&S3ApiServer{}).doListFilerEntriesWithContext(ctx, client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {})
+	assert.NoError(t, err)
+	if client.captured == nil {
+		t.Fatal("ListEntries was not called")
+	}
+	assert.Equal(t, "value", client.captured.Value(testKey("key")))
+}
+
+func TestDoListFilerEntriesReturnsCanceledContextBeforeListEntries(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := &listEntriesErrorFilerClient{err: context.Canceled}
+	cursor := &ListingCursor{maxKeys: 1}
+
+	_, err := (&S3ApiServer{}).doListFilerEntriesWithContext(ctx, client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {})
+
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.False(t, client.called)
+}
+
+func TestDoListFilerEntriesClassifiesCanceledListEntriesErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "context canceled", err: context.Canceled},
+		{name: "context deadline exceeded", err: context.DeadlineExceeded},
+		{name: "grpc canceled", err: status.Error(codes.Canceled, "client connection is closing")},
+		{name: "grpc deadline exceeded", err: status.Error(codes.DeadlineExceeded, "deadline exceeded")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &listEntriesErrorFilerClient{err: tt.err}
+			cursor := &ListingCursor{maxKeys: 1}
+
+			_, err := (&S3ApiServer{}).doListFilerEntriesWithContext(context.Background(), client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {})
+
+			assert.Error(t, err)
+			assert.True(t, isListEntriesRequestDoneError(err))
+			assert.True(t, client.called)
+		})
+	}
+}
+
+func TestDoListFilerEntriesClassifiesCanceledRecvErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "context canceled", err: context.Canceled},
+		{name: "context deadline exceeded", err: context.DeadlineExceeded},
+		{name: "grpc canceled", err: status.Error(codes.Canceled, "client connection is closing")},
+		{name: "grpc deadline exceeded", err: status.Error(codes.DeadlineExceeded, "deadline exceeded")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &recvErrorFilerClient{err: tt.err}
+			cursor := &ListingCursor{maxKeys: 1}
+
+			_, err := (&S3ApiServer{}).doListFilerEntriesWithContext(context.Background(), client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {})
+
+			assert.Error(t, err)
+			assert.True(t, isListEntriesRequestDoneError(err))
+		})
+	}
+}
+
+func TestListEntriesRequestDoneSuppressionRequiresEndedRequestContext(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "grpc canceled", err: status.Error(codes.Canceled, "filer stream canceled")},
+		{name: "context deadline exceeded", err: context.DeadlineExceeded},
+		{name: "grpc deadline exceeded", err: status.Error(codes.DeadlineExceeded, "filer deadline exceeded")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.True(t, isListEntriesRequestDoneError(tt.err))
+			assert.False(t, shouldSuppressListEntriesRequestDoneError(context.Background(), tt.err))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			assert.True(t, shouldSuppressListEntriesRequestDoneError(ctx, tt.err))
+		})
+	}
+}
+
+func TestWithFilerClientFailoverRetriesRequestDoneErrorsWhenCallerContextActive(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "grpc canceled", err: status.Error(codes.Canceled, "filer stream canceled")},
+		{name: "context deadline exceeded", err: context.DeadlineExceeded},
+		{name: "grpc deadline exceeded", err: status.Error(codes.DeadlineExceeded, "filer deadline exceeded")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filers := []pb.ServerAddress{"127.0.0.1:17171", "127.0.0.1:17172"}
+			dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+			filerClient := wdclient.NewFilerClient(filers, dialOption, "")
+			defer filerClient.Close()
+			for _, filer := range filers {
+				defer pb.InvalidateGrpcConnection(filer.ToGrpcAddress())
+			}
+
+			s3a := &S3ApiServer{
+				option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+				filerClient: filerClient,
+			}
+
+			calls := 0
+			err := s3a.withFilerClientFailover(context.Background(), false, func(client filer_pb.SeaweedFilerClient) error {
+				calls++
+				if calls == 1 {
+					return tt.err
+				}
+				return nil
+			})
+
+			assert.NoError(t, err)
+			assert.Equal(t, 2, calls)
+		})
+	}
+}
+
+func TestWithFilerClientFailoverStopsWhenCallerContextDone(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "context canceled", err: context.Canceled},
+		{name: "grpc canceled", err: status.Error(codes.Canceled, "client disconnected")},
+		{name: "context deadline exceeded", err: context.DeadlineExceeded},
+		{name: "grpc deadline exceeded", err: status.Error(codes.DeadlineExceeded, "request timed out")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filers := []pb.ServerAddress{"127.0.0.1:17173", "127.0.0.1:17174"}
+			dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+			filerClient := wdclient.NewFilerClient(filers, dialOption, "")
+			defer filerClient.Close()
+			for _, filer := range filers {
+				defer pb.InvalidateGrpcConnection(filer.ToGrpcAddress())
+			}
+
+			s3a := &S3ApiServer{
+				option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+				filerClient: filerClient,
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			calls := 0
+			err := s3a.withFilerClientFailover(ctx, false, func(client filer_pb.SeaweedFilerClient) error {
+				calls++
+				return tt.err
+			})
+
+			assert.Error(t, err)
+			assert.True(t, isRequestDoneError(err))
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestHasChildrenDoesNotMarkFilerUnhealthyWhenCallerContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	filer := startCancelingListEntriesFilerServer(t, cancel)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	filerClient := wdclient.NewFilerClient([]pb.ServerAddress{filer}, dialOption, "", &wdclient.FilerClientOption{
+		FailureThreshold: 1,
+	})
+	defer filerClient.Close()
+	defer pb.InvalidateGrpcConnection(filer.ToGrpcAddress())
+
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: dialOption,
+		},
+		filerClient: filerClient,
+	}
+
+	s3a.hasChildren(ctx, "bucket", "dir")
+
+	assert.True(t, ctx.Err() != nil)
+	assert.False(t, filerClient.ShouldSkipUnhealthyFiler(filer))
 }

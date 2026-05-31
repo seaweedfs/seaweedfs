@@ -112,6 +112,10 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
 
 	if err != nil {
+		if shouldSuppressListEntriesRequestDoneError(r.Context(), err) {
+			glog.V(3).Infof("ListObjectsV2Handler: request ended while listing %s: %v", bucket, err)
+			return
+		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -176,6 +180,10 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
+		if shouldSuppressListEntriesRequestDoneError(r.Context(), err) {
+			glog.V(3).Infof("ListObjectsV1Handler: request ended while listing %s: %v", bucket, err)
+			return
+		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -270,7 +278,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, ori
 	}
 
 	// check filer
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClientContext(ctx, false, func(client filer_pb.SeaweedFilerClient) error {
 		var lastEntryWasCommonPrefix bool
 		var lastCommonPrefixName string
 
@@ -298,7 +306,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, ori
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, bucket, func(dir string, entry *filer_pb.Entry) {
+			nextMarker, doErr = s3a.doListFilerEntriesWithContext(ctx, client, reqDir, prefix, cursor, marker, delimiter, false, bucket, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
@@ -558,6 +566,21 @@ func buildTruncatedNextMarker(requestDir, prefix, nextMarker string, lastEntryWa
 }
 
 func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+	return s3a.doListFilerEntriesWithContext(context.Background(), client, dir, prefix, cursor, marker, delimiter, inclusiveStartFrom, bucket, eachEntryFn)
+}
+
+func isListEntriesRequestDoneError(err error) bool {
+	return isRequestDoneError(err)
+}
+
+func shouldSuppressListEntriesRequestDoneError(ctx context.Context, err error) bool {
+	return isListEntriesRequestDoneError(err) && ctx.Err() != nil
+}
+
+func (s3a *S3ApiServer) doListFilerEntriesWithContext(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -571,7 +594,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
-		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, bucket, eachEntryFn)
+		subNextMarker, subErr := s3a.doListFilerEntriesWithContext(ctx, client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, bucket, eachEntryFn)
 		if subErr != nil {
 			err = subErr
 			return
@@ -593,9 +616,13 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		InclusiveStartFrom: inclusiveStartFrom,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	listCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, listErr := client.ListEntries(ctx, request)
+	stream, listErr := client.ListEntries(listCtx, request)
 	if listErr != nil {
 		if errors.Is(listErr, filer_pb.ErrNotFound) {
 			return
@@ -610,7 +637,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if recvErr == io.EOF {
 				break
 			} else {
-				err = fmt.Errorf("iterating entries %+v: %v", request, recvErr)
+				err = fmt.Errorf("iterating entries %+v: %w", request, recvErr)
 				return
 			}
 		}
@@ -693,7 +720,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// Recurse into subdirectory to list any children, noting whether the
 				// subtree produced any entries.
 				childEmitted := false
-				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, func(d string, e *filer_pb.Entry) {
+				subNextMarker, subErr := s3a.doListFilerEntriesWithContext(ctx, client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, func(d string, e *filer_pb.Entry) {
 					childEmitted = true
 					eachEntryFn(d, e)
 				})

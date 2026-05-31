@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -17,34 +18,39 @@ import (
 var _ = filer_pb.FilerClient(&S3ApiServer{})
 
 func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return s3a.WithFilerClientContext(context.Background(), streamingMode, fn)
+}
+
+func (s3a *S3ApiServer) WithFilerClientContext(ctx context.Context, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Use filerClient for proper connection management and failover
 	if s3a.filerClient != nil {
-		return s3a.withFilerClientFailover(streamingMode, fn)
+		return s3a.withFilerClientFailover(ctx, streamingMode, fn)
 	}
 
 	// Fallback to direct connection if filerClient not initialized
 	// This should only happen during initialization or testing
-	return pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
-	}, s3a.getFilerAddress().ToGrpcAddress(), false, s3a.option.GrpcDialOption)
-
+	return s3a.withGrpcFilerClient(ctx, streamingMode, s3a.getFilerAddress().ToGrpcAddress(), fn)
 }
 
 // withFilerClientFailover attempts to execute fn with automatic failover to other filers
-func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	// Get current filer as starting point
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 
 	// Try current filer first (fast path)
-	err := pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
-	}, currentFiler.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
+	err := s3a.withGrpcFilerClient(ctx, streamingMode, currentFiler.ToGrpcAddress(), fn)
 
 	if err == nil {
 		s3a.filerClient.RecordFilerSuccess(currentFiler)
 		return nil
+	}
+
+	if shouldStopFilerFailover(ctx, err) {
+		return err
 	}
 
 	// A reachable filer answering ErrNotFound is authoritative; failover is for
@@ -70,10 +76,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 			continue
 		}
 
-		err = pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-			return fn(client)
-		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
+		err = s3a.withGrpcFilerClient(ctx, streamingMode, filer.ToGrpcAddress(), fn)
 
 		if err == nil {
 			// Success! Record success and update current filer for future requests
@@ -81,6 +84,10 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 			s3a.filerClient.SetCurrentFiler(filer)
 			glog.V(1).Infof("WithFilerClient: failover from %s to %s succeeded", currentFiler, filer)
 			return nil
+		}
+
+		if shouldStopFilerFailover(ctx, err) {
+			return err
 		}
 
 		// Authoritative not-found - stop failing over.
@@ -95,6 +102,20 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 
 	// All filers failed
 	return fmt.Errorf("all filers failed, last error: %w", lastErr)
+}
+
+func (s3a *S3ApiServer) withGrpcFilerClient(ctx context.Context, streamingMode bool, address string, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+		err := fn(filer_pb.NewSeaweedFilerClient(grpcConnection))
+		if shouldStopFilerFailover(ctx, err) {
+			return pb.WithoutConnectionInvalidation(err)
+		}
+		return err
+	}, address, false, s3a.option.GrpcDialOption)
+}
+
+func shouldStopFilerFailover(ctx context.Context, err error) bool {
+	return err != nil && ctx.Err() != nil && isRequestDoneError(err)
 }
 
 func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
