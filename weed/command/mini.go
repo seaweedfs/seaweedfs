@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -1787,8 +1788,19 @@ func printWelcomeMessage() {
 		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
 	}
 
-	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
-	sb.WriteString("  Press Ctrl+C to stop all components")
+	fmt.Fprintf(&sb, "\n  Data Directory:   %s\n", *miniDataFolders)
+	firstDir := util.StringSplit(*miniDataFolders, ",")[0]
+	if ds := stats_collect.NewDiskStatus(firstDir); ds != nil && ds.All > 0 {
+		fmt.Fprintf(&sb, "  Free Space:       %s\n", util.BytesToHumanReadable(ds.Free))
+	}
+	if miniMasterOptions.volumeSizeLimitMB != nil {
+		fmt.Fprintf(&sb, "  Volume Size:      %s\n", util.BytesToHumanReadable(uint64(*miniMasterOptions.volumeSizeLimitMB)*bytesPerMB))
+	}
+	if max, free, ok := miniVolumeCounts(); ok {
+		fmt.Fprintf(&sb, "  Volume Count:     %d\n", max)
+		fmt.Fprintf(&sb, "  Free Volumes:     %d\n", free)
+	}
+	sb.WriteString("\n  Press Ctrl+C to stop all components")
 
 	switch {
 	case s3api.HasAnyIdentity():
@@ -1808,6 +1820,33 @@ func printWelcomeMessage() {
 
 	fmt.Print(sb.String())
 	fmt.Println("")
+}
+
+// miniVolumeCounts asks the local master for the total volume slots the data
+// directory supports (Topology.Max) and how many are still free (Topology.Free).
+// Best-effort: any error returns ok=false so the welcome banner simply omits
+// the lines.
+func miniVolumeCounts() (max, free int64, ok bool) {
+	url := getHealthCheckAddr(fmt.Sprintf("http://%s:%d/dir/status", *miniIp, *miniMasterOptions.port))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, false
+	}
+	var status struct {
+		Topology struct {
+			Max  int64
+			Free int64
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return 0, 0, false
+	}
+	return status.Topology.Max, status.Topology.Free, true
 }
 
 // ensureMiniBuckets creates each named bucket on the embedded filer if it does
