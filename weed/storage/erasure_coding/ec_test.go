@@ -194,6 +194,7 @@ func removeGeneratedFiles(baseFileName string, ctx *ECContext) {
 		os.Remove(fname)
 	}
 	os.Remove(baseFileName + ".ecx")
+	RemoveBitrotSidecars(baseFileName)
 }
 
 func TestLocateData(t *testing.T) {
