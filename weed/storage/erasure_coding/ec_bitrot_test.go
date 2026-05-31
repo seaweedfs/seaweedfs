@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -107,13 +108,15 @@ func TestValidateBitrotManifest(t *testing.T) {
 		t.Fatalf("valid manifest rejected: %v", err)
 	}
 	bad := map[string]func(*volume_server_pb.EcBitrotProtection){
-		"missing shard":    func(p *volume_server_pb.EcBitrotProtection) { p.Shards = p.Shards[:2] },
-		"out of range id":  func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 9 },
-		"duplicate id":     func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 0 },
-		"zero covered":     func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].CoveredSize = 0 },
-		"bad crc count":    func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].BlockCrc32C = []byte{1, 2, 3} },
-		"bad block size":   func(p *volume_server_pb.EcBitrotProtection) { p.BlockSize = 3 << 20 }, // not power of two
-		"bad algorithm":    func(p *volume_server_pb.EcBitrotProtection) { p.Algorithm = volume_server_pb.ChecksumAlgorithm_CHECKSUM_NONE },
+		"missing shard":   func(p *volume_server_pb.EcBitrotProtection) { p.Shards = p.Shards[:2] },
+		"out of range id": func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 9 },
+		"duplicate id":    func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 0 },
+		"zero covered":    func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].CoveredSize = 0 },
+		"bad crc count":   func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].BlockCrc32C = []byte{1, 2, 3} },
+		"bad block size":  func(p *volume_server_pb.EcBitrotProtection) { p.BlockSize = 3 << 20 }, // not power of two
+		"bad algorithm": func(p *volume_server_pb.EcBitrotProtection) {
+			p.Algorithm = volume_server_pb.ChecksumAlgorithm_CHECKSUM_NONE
+		},
 	}
 	for name, mut := range bad {
 		if err := ValidateBitrotManifest(mk(mut), 2, 1); err == nil {
@@ -207,7 +210,7 @@ func TestRebuildExcludesCorruptPresentShard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
-	if !containsU32(generated, 0) || !containsU32(generated, 3) {
+	if !slices.Contains(generated, 0) || !slices.Contains(generated, 3) {
 		t.Fatalf("expected shards 0 and 3 regenerated, got %v", generated)
 	}
 
@@ -356,13 +359,4 @@ func corruptOneByte(t *testing.T, path string) {
 	if _, err := f.WriteAt(b[:], 0); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func containsU32(s []uint32, v uint32) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
