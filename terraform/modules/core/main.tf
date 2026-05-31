@@ -57,8 +57,8 @@ locals {
   # ---- cluster discovery env (WEED_CLUSTER_*) ----
   cluster_env = merge(
     { WEED_CLUSTER_DEFAULT = var.cluster_name },
-    local.master_peers != "" ? { "WEED_CLUSTER_${upper(var.cluster_name)}_MASTER" = local.master_peers } : {},
-    local.first_filer != "" ? { "WEED_CLUSTER_${upper(var.cluster_name)}_FILER" = local.first_filer } : {},
+    local.master_peers != "" ? { "WEED_CLUSTER_${replace(upper(var.cluster_name), "/[^A-Z0-9_]/", "_")}_MASTER" = local.master_peers } : {},
+    local.first_filer != "" ? { "WEED_CLUSTER_${replace(upper(var.cluster_name), "/[^A-Z0-9_]/", "_")}_FILER" = local.first_filer } : {},
   )
 
   metrics_flags_master = var.monitoring_enabled ? compact([
