@@ -352,6 +352,19 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 	return fn()
 }
 
+// putFinalize folds an object write's finalize step into its create. On the
+// routed path, mutations are appended to the entry's PUT in one ObjectTransaction
+// (taking lockKey, the object path) so the write and its finalize — e.g. flipping
+// the .versions latest pointer — commit atomically under one per-path lock. Off
+// the ring, afterCreate runs the equivalent under the object write lock after
+// CreateEntry. mutations is empty for a finalize with no routed form (e.g. the
+// suspended-versioning IsLatest fixups), which then always runs via afterCreate.
+type putFinalize struct {
+	lockKey     string
+	mutations   []*filer_pb.ObjectMutation
+	afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode
+}
+
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
 // single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
 // only for top-level PutObject paths where the lifecycle XML's
@@ -359,7 +372,7 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 // pass 0 because their own keys aren't the user-visible object the rule
 // targets and a part write would otherwise bind a TTL clock starting
 // before CompleteMultipartUpload.
-func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode, uniqueWritePath bool) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, finalize *putFinalize, uniqueWritePath bool) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -819,8 +832,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			return filerErrorToS3Error(createErr)
 		}
 		entryCreated = true
-		if afterCreate != nil {
-			if afterCreateCode := afterCreate(entry); afterCreateCode != s3err.ErrNone {
+		if finalize != nil && finalize.afterCreate != nil {
+			if afterCreateCode := finalize.afterCreate(entry); afterCreateCode != s3err.ErrNone {
 				rollbackErr = s3a.rmObject(path.Dir(filePath), path.Base(filePath), true, false)
 				if rollbackErr != nil {
 					glog.Errorf("putToFiler: failed to rollback created entry for %s after post-create error: %v", filePath, rollbackErr)
@@ -841,7 +854,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	routed := false
 	if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
-			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), filePath, entry, cond)
+			// A finalize with routed mutations rides in the PUT's transaction, so
+			// the entry and its finalize commit atomically; lockKey is then the
+			// object path it carries (not the unique version file path).
+			lockKey, finalizeMutations := filePath, []*filer_pb.ObjectMutation(nil)
+			if finalize != nil && len(finalize.mutations) > 0 {
+				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
+			}
+			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, finalizeMutations)
 			switch {
 			case err != nil:
 				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)
@@ -852,8 +872,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				glog.Warningf("putToFiler: routed PUT to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
 			default:
 				entryCreated, routed, createCode = true, true, s3err.ErrNone
-				if afterCreate != nil {
-					createCode = afterCreate(entry)
+				// Bundled mutations already finalized in the transaction above;
+				// a finalize with none (suspended versioning) runs off the lock.
+				if len(finalizeMutations) == 0 && finalize != nil && finalize.afterCreate != nil {
+					createCode = finalize.afterCreate(entry)
 				}
 			}
 		}
@@ -1309,13 +1331,15 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// it runs while withObjectWriteLock is still held in putToFiler.
 	// Doing it after putToFiler returns would race a concurrent PUT
 	// promoting a newer latest, which we'd then incorrectly wipe.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, func(_ *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
-			// Best-effort: a stale IsLatest flag is recoverable on the
-			// next list-versions resync, so don't fail the PUT.
-			glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
-		}
-		return s3err.ErrNone
+	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, &putFinalize{
+		afterCreate: func(_ *filer_pb.Entry) s3err.ErrorCode {
+			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
+				// Best-effort: a stale IsLatest flag is recoverable on the
+				// next list-versions resync, so don't fail the PUT.
+				glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
+			}
+			return s3err.ErrNone
+		},
 	}, false)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
@@ -1483,7 +1507,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
 	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0,
-		s3a.versionedAfterCreate(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true)
+		s3a.versionedFinalize(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}
