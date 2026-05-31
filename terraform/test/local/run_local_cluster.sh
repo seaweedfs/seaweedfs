@@ -35,6 +35,7 @@ cleanup() {
 }
 
 info "cleaning $WORKDIR"
+case "$WORKDIR" in "" | "/" | "$HOME") echo "refusing to delete '$WORKDIR'" >&2; exit 2 ;; esac
 rm -rf "$WORKDIR"
 mkdir -p "$LOGDIR" "$RUNDIR"
 [ -x "$WEED" ] || { echo "weed binary not found/executable at $WEED" >&2; exit 2; }

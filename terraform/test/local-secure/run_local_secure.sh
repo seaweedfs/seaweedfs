@@ -29,6 +29,7 @@ cleanup() {
 }
 
 info "cleaning $WORKDIR"
+case "$WORKDIR" in "" | "/" | "$HOME") echo "refusing to delete '$WORKDIR'" >&2; exit 2 ;; esac
 rm -rf "$WORKDIR"
 mkdir -p "$LOGDIR" "$RUNDIR" "$WORKDIR/.seaweedfs"
 [ -x "$WEED" ] || { echo "weed not found at $WEED" >&2; exit 2; }
