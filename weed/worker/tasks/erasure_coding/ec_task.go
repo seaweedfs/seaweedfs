@@ -558,7 +558,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	}
 
 	// Generate EC shard files (.ec00 ~ .ec13)
-	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, nil)
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, erasure_coding.BackgroundECContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate EC shard files: %v", err)
 	}

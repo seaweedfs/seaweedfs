@@ -220,7 +220,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// Present input shards are verified against the bitrot sidecar (when present)
 	// and corrupt ones are regenerated; unsafe_ignore_sidecar bypasses the guard.
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
-	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, nil, req.UnsafeIgnoreSidecar, additionalDirs...); err != nil {
+	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, erasure_coding.BackgroundECContext, req.UnsafeIgnoreSidecar, additionalDirs...); err != nil {
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
 	} else {
 		rebuiltShardIds = generatedShardIds

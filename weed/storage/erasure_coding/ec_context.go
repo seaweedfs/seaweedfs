@@ -30,6 +30,14 @@ func NewDefaultECContext(collection string, volumeId needle.VolumeId) *ECContext
 	}
 }
 
+// BackgroundECContext is a non-nil placeholder EC context, analogous to
+// context.Background(): pass it to WriteEcFiles / RebuildEcFiles when the caller
+// has no specific layout, rather than a nil context. Its zero Total() is the
+// "unset" signal — WriteEcFiles resolves it to the default ratio and
+// RebuildEcFiles resolves it from the volume's .vif (falling back to default),
+// so the placeholder itself never reaches the encoder.
+var BackgroundECContext = &ECContext{}
+
 // CreateEncoder creates a Reed-Solomon encoder for this context
 func (ctx *ECContext) CreateEncoder() (reedsolomon.Encoder, error) {
 	return reedsolomon.New(ctx.DataShards, ctx.ParityShards)
