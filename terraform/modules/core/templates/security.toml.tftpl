@@ -31,9 +31,11 @@ key  = "${cert_dir}/filer/tls.key"
 cert = "${cert_dir}/client/tls.crt"
 key  = "${cert_dir}/client/tls.key"
 %{ endif ~}
+%{ if jwt_signing_key != "" ~}
 
 [jwt.signing]
 key = "${jwt_signing_key}"
+%{ endif ~}
 %{ if jwt_signing_read_key != "" ~}
 
 [jwt.signing.read]

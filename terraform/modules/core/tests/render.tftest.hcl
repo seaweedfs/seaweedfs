@@ -153,6 +153,24 @@ run "all_in_one_renders_server" {
 }
 
 # ---------------------------------------------------------------------------
+run "security_toml_mtls_only_no_jwt" {
+  command = plan
+  variables {
+    enable_security = true
+    master          = { nodes = { m0 = { address = "10.0.0.10" } } }
+    volume          = { enabled = false }
+    filer           = { enabled = false }
+  }
+  assert {
+    condition     = contains(keys(output.nodes["master-m0"].config_files), "/etc/seaweedfs/security.toml")
+    error_message = "security.toml must render for mTLS even without JWT keys"
+  }
+  assert {
+    condition     = !strcontains(output.nodes["master-m0"].config_files["/etc/seaweedfs/security.toml"], "[jwt.signing]")
+    error_message = "the jwt.signing block must be omitted when no signing key is set"
+  }
+}
+
 run "mount_fetch_and_secret_delivery" {
   command = plan
   variables {
