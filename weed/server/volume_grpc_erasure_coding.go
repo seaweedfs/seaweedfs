@@ -443,31 +443,37 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 		return err
 	}
 
-	if hasEcxFile && existingShardCount == 0 {
-		// Remove .ecx/.ecj from both idx and data directories
-		// since they may be in either location depending on when -dir.idx was configured
-		if err := os.Remove(indexBaseFilename + ".ecx"); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		os.Remove(indexBaseFilename + ".ecj")
-		if location.IdxDirectory != location.Directory {
-			os.Remove(dataBaseFilename + ".ecx")
-			os.Remove(dataBaseFilename + ".ecj")
-		}
+	if existingShardCount == 0 {
+		// The whole EC generation is gone on this disk.
 
 		// Remove the bitrot checksum sidecar(s) (.ecsum and any .ecsum.v<N>)
-		// from both dirs — only safe here, where the whole generation is gone
-		// (existingShardCount == 0). The per-shard-id delete that ec.rebuild
-		// uses for copied-survivor cleanup leaves shards behind, so this guard
-		// does not fire there.
+		// from both dirs. This is gated on the shards being gone, NOT on a
+		// stray .ecx still being present: a sidecar whose shards have all been
+		// deleted is orphaned and must go even when no .ecx remains, or it
+		// leaks. The per-shard-id delete that ec.rebuild uses for
+		// copied-survivor cleanup leaves shards behind, so this guard does not
+		// fire there.
 		removeBitrotSidecars(dataBaseFilename)
 		if location.IdxDirectory != location.Directory {
 			removeBitrotSidecars(indexBaseFilename)
 		}
 
-		if !hasIdxFile {
-			// .vif is used for ec volumes and normal volumes
-			os.Remove(dataBaseFilename + ".vif")
+		if hasEcxFile {
+			// Remove .ecx/.ecj from both idx and data directories
+			// since they may be in either location depending on when -dir.idx was configured
+			if err := os.Remove(indexBaseFilename + ".ecx"); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			os.Remove(indexBaseFilename + ".ecj")
+			if location.IdxDirectory != location.Directory {
+				os.Remove(dataBaseFilename + ".ecx")
+				os.Remove(dataBaseFilename + ".ecj")
+			}
+
+			if !hasIdxFile {
+				// .vif is used for ec volumes and normal volumes
+				os.Remove(dataBaseFilename + ".vif")
+			}
 		}
 	}
 
