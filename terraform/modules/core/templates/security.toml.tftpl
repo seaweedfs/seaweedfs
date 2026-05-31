@@ -1,0 +1,53 @@
+# SeaweedFS security.toml rendered by the Terraform core module.
+# Rendered when enable_security OR any non-default JWT signing option is set.
+# Presence of this file does NOT imply mTLS: the [grpc] TLS block is emitted
+# only under enable_security; a JWT-only config carries [jwt.*] and no TLS.
+
+%{ if enable_security ~}
+[grpc]
+ca = "${cert_dir}/ca/tls.crt"
+# Peer-identity authorization: without an allow-list, mTLS collapses to
+# "trusted the CA" with no authZ. Set allowed_wildcard_domain / commonNames.
+%{ if allowed_wildcard_domain != "" ~}
+allowed_wildcard_domain = "${allowed_wildcard_domain}"
+%{ endif ~}
+
+[grpc.master]
+cert = "${cert_dir}/master/tls.crt"
+key  = "${cert_dir}/master/tls.key"
+%{ if allowed_common_names != "" ~}
+allowed_commonNames = "${allowed_common_names}"
+%{ endif ~}
+
+[grpc.volume]
+cert = "${cert_dir}/volume/tls.crt"
+key  = "${cert_dir}/volume/tls.key"
+
+[grpc.filer]
+cert = "${cert_dir}/filer/tls.crt"
+key  = "${cert_dir}/filer/tls.key"
+
+[grpc.client]
+cert = "${cert_dir}/client/tls.crt"
+key  = "${cert_dir}/client/tls.key"
+%{ endif ~}
+%{ if jwt_signing_key != "" ~}
+
+[jwt.signing]
+key = "${jwt_signing_key}"
+%{ endif ~}
+%{ if jwt_signing_read_key != "" ~}
+
+[jwt.signing.read]
+key = "${jwt_signing_read_key}"
+%{ endif ~}
+%{ if jwt_filer_signing_key != "" ~}
+
+[jwt.filer_signing]
+key = "${jwt_filer_signing_key}"
+%{ endif ~}
+%{ if jwt_filer_signing_read_key != "" ~}
+
+[jwt.filer_signing.read]
+key = "${jwt_filer_signing_read_key}"
+%{ endif ~}
