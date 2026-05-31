@@ -149,12 +149,25 @@ func (c *commandVolumeList) writeTopologyInfo(writer io.Writer, t *master_pb.Top
 // same volume share a collection, so they collapse into a single entry and do
 // not register as duplicates.
 func findDuplicateVolumeIds(t *master_pb.TopologyInfo) map[uint32][]string {
+	// Duplicates are rare, so track only the first collection seen per id and
+	// allocate a set lazily on the first clash. Keeps allocations O(duplicates)
+	// rather than O(volumes), which matters on clusters with millions of ids.
+	firstCollectionByVid := make(map[uint32]string)
 	collectionsByVid := make(map[uint32]map[string]struct{})
 	note := func(vid uint32, collection string) {
-		if collectionsByVid[vid] == nil {
-			collectionsByVid[vid] = make(map[string]struct{})
+		if collections := collectionsByVid[vid]; collections != nil {
+			collections[collection] = struct{}{}
+			return
 		}
-		collectionsByVid[vid][collection] = struct{}{}
+		first, seen := firstCollectionByVid[vid]
+		if !seen {
+			firstCollectionByVid[vid] = collection
+			return
+		}
+		if first == collection {
+			return
+		}
+		collectionsByVid[vid] = map[string]struct{}{first: {}, collection: {}}
 	}
 	for _, dc := range t.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
@@ -172,9 +185,6 @@ func findDuplicateVolumeIds(t *master_pb.TopologyInfo) map[uint32][]string {
 	}
 	duplicates := make(map[uint32][]string)
 	for vid, collections := range collectionsByVid {
-		if len(collections) < 2 {
-			continue
-		}
 		names := make([]string, 0, len(collections))
 		for name := range collections {
 			names = append(names, name)
@@ -193,7 +203,7 @@ func writeDuplicateVolumeIdWarning(writer io.Writer, duplicates map[uint32][]str
 	for vid := range duplicates {
 		vids = append(vids, vid)
 	}
-	sort.Slice(vids, func(i, j int) bool { return vids[i] < vids[j] })
+	slices.Sort(vids)
 	fmt.Fprintf(writer, "\nWARNING: %d volume id(s) exist in more than one collection. "+
 		"Deleting one collection (e.g. collection.delete) will destroy that collection's data on these shared ids, "+
 		"and lookups/moves on the bare id are ambiguous. Verify before any destructive operation:\n", len(vids))
