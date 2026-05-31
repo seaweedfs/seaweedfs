@@ -166,6 +166,7 @@ resource "aws_ebs_volume" "volume_data" {
   size              = each.value.data_volume_size_gb
   type              = each.value.data_volume_type
   iops              = each.value.data_volume_iops
+  encrypted         = true
   tags              = merge(var.tags, { Name = "${var.name}-volume-${each.key}-data", Role = "volume" })
 
   lifecycle {
@@ -186,6 +187,7 @@ resource "aws_ebs_volume" "filer_data" {
   availability_zone = each.value.availability_zone
   size              = each.value.data_volume_size_gb
   type              = "gp3"
+  encrypted         = true
   tags              = merge(var.tags, { Name = "${var.name}-filer-${each.key}-data", Role = "filer" })
 
   lifecycle {

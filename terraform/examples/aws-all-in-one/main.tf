@@ -114,6 +114,7 @@ resource "aws_ebs_volume" "data" {
   availability_zone = var.availability_zone
   size              = 200
   type              = "gp3"
+  encrypted         = true
   tags              = { Name = "seaweedfs-all-in-one-data" }
   lifecycle {
     prevent_destroy = true
