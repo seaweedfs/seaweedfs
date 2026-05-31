@@ -858,8 +858,16 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount)
-			if unclaimedSpaces > int64(volumeSizeLimit) {
-				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
+			// One slot per full volume that fits in the unclaimed space.
+			// A "- 1" here used to zero the count when the disk had room for
+			// exactly one volume (free between 1x and 2x the limit), stranding
+			// auto-sized disks at maxVolumeCount 0 with no writable volume.
+			if unclaimedSpaces > 0 {
+				maxVolumeCount += int32(uint64(unclaimedSpaces) / volumeSizeLimit)
+			}
+			// An auto-sized disk with free space always hosts at least one volume.
+			if maxVolumeCount < 1 {
+				maxVolumeCount = 1
 			}
 			newMaxVolumeCount = newMaxVolumeCount + maxVolumeCount
 			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)
