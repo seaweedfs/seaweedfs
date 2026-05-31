@@ -41,6 +41,9 @@ variable "subnet_a" { type = string }
 variable "subnet_b" { type = string }
 variable "subnet_c" { type = string }
 
+# AZ defaults assume region us-east-1. When you change `region`, override az_a/az_b/az_c
+# (and the matching subnets) with AZs that belong to that region, or the volume/filer
+# EBS volumes will fail to create in a mismatched AZ.
 variable "az_a" {
   type    = string
   default = "us-east-1a"
