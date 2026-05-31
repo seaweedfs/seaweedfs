@@ -25,6 +25,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -227,6 +228,12 @@ func SaveBitrotSidecar(path string, prot *volume_server_pb.EcBitrotProtection) e
 	payload, err := proto.Marshal(prot)
 	if err != nil {
 		return fmt.Errorf("marshal bitrot sidecar: %w", err)
+	}
+	// The header records payload_len as a uint32; refuse a payload that would
+	// not fit rather than truncating the length field (which would corrupt the
+	// sidecar). A real manifest is a few KB, so this never trips in practice.
+	if uint64(len(payload)) > math.MaxUint32 {
+		return fmt.Errorf("bitrot sidecar payload too large: %d bytes", len(payload))
 	}
 	buf := make([]byte, bitrotHeaderSize+len(payload))
 	binary.BigEndian.PutUint32(buf[0:4], bitrotMagic)
