@@ -114,14 +114,11 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 		}
 	}
 
-	// Enforce per-bucket quotas off the same sizes: flip the read-only flag both
-	// ways so a bucket recovers automatically once it drops back under quota.
 	s3a.enforceBucketQuotas(ctx, buckets, collectionInfos)
 }
 
-// enforceBucketQuotas updates each bucket's read-only flag in filer.conf to match
-// its quota: read-only once usage exceeds the quota, writable again once it drops
-// back under. filer.conf is rewritten only when a flag actually changes.
+// enforceBucketQuotas flips each bucket's read-only flag to match its quota,
+// rewriting filer.conf only when a flag changes.
 func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo) {
 	if len(s3a.option.Filers) == 0 {
 		return
@@ -197,8 +194,7 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (ma
 	return collectionInfos, nil
 }
 
-// listBuckets returns all bucket directory entries using pagination. The entries
-// carry the per-bucket Quota used by quota enforcement.
+// listBuckets returns all bucket directory entries using pagination.
 func (s3a *S3ApiServer) listBuckets(ctx context.Context) ([]*filer_pb.Entry, error) {
 	var buckets []*filer_pb.Entry
 
