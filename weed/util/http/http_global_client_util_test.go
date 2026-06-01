@@ -78,7 +78,6 @@ func TestAppendQueryParameter(t *testing.T) {
 
 func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
 	InitGlobalHttpClient()
-	defer GetGlobalHttpClient().Close()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
