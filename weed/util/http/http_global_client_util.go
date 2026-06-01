@@ -397,6 +397,9 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
+		if err != nil {
+			return true, err
+		}
 		defer reader.Close()
 	default:
 		reader = r.Body
