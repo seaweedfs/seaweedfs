@@ -1007,7 +1007,6 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
-			// partETag := filer.ETag(entry)
 			partETag := getEtagFromEntry(entry)
 			part := &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
