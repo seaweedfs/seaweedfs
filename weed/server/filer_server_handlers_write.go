@@ -99,7 +99,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	)
 	if err != nil {
 		if errors.Is(err, ErrReadOnly) {
-			w.WriteHeader(http.StatusInsufficientStorage)
+			writeJsonError(w, r, http.StatusInsufficientStorage, err)
 		} else {
 			glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ":", err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
@@ -259,7 +259,8 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		// MatchStorageRule leaves LocationPrefix empty when several rules merge; fall back to the request path.
 		prefix := rule.LocationPrefix
 		if prefix == "" {
-			prefix = requestURI
+			// requestURI may carry a query string on the HTTP path; keep only the path.
+			prefix, _, _ = strings.Cut(requestURI, "?")
 		}
 		return nil, fmt.Errorf("%w: %s (e.g. bucket over quota)", ErrReadOnly, prefix)
 	}
