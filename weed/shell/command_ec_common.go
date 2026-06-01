@@ -350,6 +350,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 				CopyEcxFile:    true,
 				CopyEcjFile:    true,
 				CopyVifFile:    true,
+				CopyEcsumFile:  true, // propagate the bitrot sidecar with the shards (no-op if the source has none)
 				SourceDataNode: string(existingLocation),
 				DiskId:         destDiskId,
 			})

@@ -558,8 +558,17 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	}
 
 	// Generate EC shard files (.ec00 ~ .ec13)
-	if err := erasure_coding.WriteEcFiles(baseName); err != nil {
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, erasure_coding.BackgroundECContext())
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate EC shard files: %v", err)
+	}
+	// Persist the bitrot checksum sidecar (generation 0) alongside the shards so
+	// it travels with them during distribution. Best-effort: a failed sidecar
+	// write leaves the generation unprotected rather than failing the encode.
+	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		if serr := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(baseName, 0), ecBitrot); serr != nil {
+			glog.Warningf("failed to write EC bitrot sidecar for %s: %v", baseName, serr)
+		}
 	}
 
 	// Collect generated shard file paths and log details
@@ -623,6 +632,20 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 				"size_bytes": info.Size(),
 			}).Info("Volume info file generated")
 		}
+	}
+
+	// Add the generation-0 bitrot checksum sidecar so it is distributed with
+	// the shards (DistributeEcShards only ships files present in shardFiles).
+	// Best-effort like the sidecar write above: if it is absent the holders
+	// are simply unprotected rather than failing the encode.
+	ecsumFile := erasure_coding.BitrotSidecarPath(baseName, 0)
+	if info, err := os.Stat(ecsumFile); err == nil {
+		shardFiles["ecsum"] = ecsumFile
+		t.GetLogger().WithFields(map[string]interface{}{
+			"file_type":  "ecsum",
+			"file_path":  ecsumFile,
+			"size_bytes": info.Size(),
+		}).Info("EC bitrot checksum sidecar generated")
 	}
 
 	// Log summary of generation
