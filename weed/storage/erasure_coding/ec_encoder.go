@@ -81,7 +81,15 @@ func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitr
 func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
 	if ctx == nil || ctx.Total() == 0 {
 		// Resolve the layout from the .vif to preserve the original configuration.
-		if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
+		volumeInfo, _, foundVif, vifErr := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif")
+		if vifErr != nil {
+			// The .vif exists but cannot be read or parsed. Fail closed rather
+			// than silently falling back to the default ratio, which would
+			// rebuild a custom-ratio volume with the wrong layout. Pass an
+			// explicit ctx to override.
+			return nil, fmt.Errorf("RebuildEcFiles %s: cannot load .vif: %w", baseFileName, vifErr)
+		}
+		if foundVif && volumeInfo.EcShardConfig != nil {
 			ds := int(volumeInfo.EcShardConfig.DataShards)
 			ps := int(volumeInfo.EcShardConfig.ParityShards)
 
