@@ -301,7 +301,7 @@ func (r *runner) fetchVolumeList(ctx context.Context) (*master_pb.VolumeListResp
 		}
 
 		var response *master_pb.VolumeListResponse
-		err := pb.WithMasterClient(false, pb.ServerAddress(masterAddress), r.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		err := pb.WithMasterClient(context.Background(), false, pb.ServerAddress(masterAddress), r.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			callCtx, cancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
 			defer cancel()
 
