@@ -233,6 +233,37 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 	}
 }
 
+// ApplyBucketQuotaReadOnly flips the read-only flag for the bucket rule at
+// locationPrefix to match its quota: read-only once usedSize exceeds quota,
+// writable again once it drops back under. A non-positive quota means
+// enforcement is disabled and any read-only flag is cleared. It returns the
+// resulting flag and whether it changed; callers persist the conf only when
+// changed is true.
+func (fc *FilerConf) ApplyBucketQuotaReadOnly(locationPrefix string, usedSize, quota float64) (readOnly, changed bool) {
+	locConf := ClonePathConf(fc.MatchStorageRule(locationPrefix))
+	locConf.LocationPrefix = locationPrefix
+	wasReadOnly := locConf.ReadOnly
+
+	switch {
+	case quota <= 0:
+		locConf.ReadOnly = false
+	case wasReadOnly:
+		if usedSize < quota {
+			locConf.ReadOnly = false
+		}
+	default:
+		if usedSize > quota {
+			locConf.ReadOnly = true
+		}
+	}
+
+	if locConf.ReadOnly == wasReadOnly {
+		return wasReadOnly, false
+	}
+	fc.SetLocationConf(locConf)
+	return locConf.ReadOnly, true
+}
+
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {
 	ttls = make(map[string]string)
 	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {

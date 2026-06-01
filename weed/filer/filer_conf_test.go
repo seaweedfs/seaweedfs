@@ -128,3 +128,36 @@ func TestClonePathConfNil(t *testing.T) {
 	assert.NotNil(t, clone, "ClonePathConf(nil) should return a non-nil empty PathConf")
 	assert.Equal(t, "", clone.LocationPrefix, "ClonePathConf(nil) should return empty PathConf")
 }
+
+func TestApplyBucketQuotaReadOnly(t *testing.T) {
+	const prefix = "/buckets/b/"
+
+	// over quota: flips to read-only
+	fc := NewFilerConf()
+	readOnly, changed := fc.ApplyBucketQuotaReadOnly(prefix, 150, 100)
+	assert.True(t, changed)
+	assert.True(t, readOnly)
+	assert.True(t, fc.MatchStorageRule(prefix).ReadOnly)
+
+	// still over quota: no change
+	_, changed = fc.ApplyBucketQuotaReadOnly(prefix, 150, 100)
+	assert.False(t, changed)
+
+	// back under quota: flips to writable
+	readOnly, changed = fc.ApplyBucketQuotaReadOnly(prefix, 50, 100)
+	assert.True(t, changed)
+	assert.False(t, readOnly)
+	assert.False(t, fc.MatchStorageRule(prefix).ReadOnly)
+
+	// quota disabled while read-only clears it
+	fc = NewFilerConf()
+	fc.ApplyBucketQuotaReadOnly(prefix, 150, 100)
+	readOnly, changed = fc.ApplyBucketQuotaReadOnly(prefix, 150, -1)
+	assert.True(t, changed)
+	assert.False(t, readOnly)
+
+	// under quota and not read-only: no rule churn
+	fc = NewFilerConf()
+	_, changed = fc.ApplyBucketQuotaReadOnly(prefix, 50, 100)
+	assert.False(t, changed)
+}
