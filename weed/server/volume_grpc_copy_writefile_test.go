@@ -60,7 +60,7 @@ func TestWriteToFile_RemovesPartialFileOnStreamError(t *testing.T) {
 		finalErr: errors.New("simulated mid-stream failure"),
 	}
 
-	_, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, nil)
+	_, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, false, nil)
 	if err == nil {
 		t.Fatalf("writeToFile should propagate the stream error")
 	}
@@ -82,7 +82,7 @@ func TestWriteToFile_RemovesEmptyFileOnImmediateStreamError(t *testing.T) {
 		finalErr: errors.New("simulated immediate failure"),
 	}
 
-	_, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, nil)
+	_, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, false, nil)
 	if err == nil {
 		t.Fatalf("writeToFile should propagate the stream error")
 	}
@@ -106,7 +106,7 @@ func TestWriteToFile_PreservesAppendModeOnError(t *testing.T) {
 		finalErr: errors.New("simulated failure"),
 	}
 
-	_, err := writeToFile(stream, dst, util.NewWriteThrottler(0), true, nil)
+	_, err := writeToFile(stream, dst, util.NewWriteThrottler(0), true, false, nil)
 	if err == nil {
 		t.Fatalf("writeToFile should propagate the stream error")
 	}
@@ -131,7 +131,7 @@ func TestWriteToFile_SucceedsOnCleanStream(t *testing.T) {
 		},
 	}
 
-	if _, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, nil); err != nil {
+	if _, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, false, nil); err != nil {
 		t.Fatalf("writeToFile failed on clean stream: %v", err)
 	}
 
@@ -141,5 +141,69 @@ func TestWriteToFile_SucceedsOnCleanStream(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("contents = %q, want %q", got, want)
+	}
+}
+
+// TestWriteToFile_PreservesDestinationWhenOptionalSourceMissing covers the
+// ignoreSourceFileNotFound stage-then-commit path: when the optional source has
+// no file (stream ends with no responses, modifiedTsNs stays 0), a valid
+// pre-existing destination must be left untouched rather than truncated/deleted.
+func TestWriteToFile_PreservesDestinationWhenOptionalSourceMissing(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "vol_42.ecsum")
+
+	original := []byte("valid existing ecsum sidecar")
+	if err := os.WriteFile(dst, original, 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	stream := &fakeCopyFileStream{} // no responses -> source file absent
+
+	if _, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, true, nil); err != nil {
+		t.Fatalf("writeToFile should not error when an optional source is absent: %v", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("destination sidecar should be preserved; read: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Errorf("destination overwritten/truncated: got %q, want %q", got, original)
+	}
+	if _, statErr := os.Stat(dst + ".copying"); !os.IsNotExist(statErr) {
+		t.Errorf("temp .copying file should be cleaned up; stat err = %v", statErr)
+	}
+}
+
+// TestWriteToFile_CommitsOptionalCopyWhenSourcePresent covers the other half of
+// the stage-then-commit path: when the optional source does have the file, the
+// staged temp is atomically renamed over any (stale) destination.
+func TestWriteToFile_CommitsOptionalCopyWhenSourcePresent(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "vol_42.ecsum")
+
+	if err := os.WriteFile(dst, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	want := []byte("fresh ecsum from source")
+	stream := &fakeCopyFileStream{
+		responses: []*volume_server_pb.CopyFileResponse{
+			{FileContent: want, ModifiedTsNs: 42},
+		},
+	}
+
+	if _, err := writeToFile(stream, dst, util.NewWriteThrottler(0), false, true, nil); err != nil {
+		t.Fatalf("writeToFile failed on present optional source: %v", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("contents = %q, want %q", got, want)
+	}
+	if _, statErr := os.Stat(dst + ".copying"); !os.IsNotExist(statErr) {
+		t.Errorf("temp .copying file should be renamed away; stat err = %v", statErr)
 	}
 }

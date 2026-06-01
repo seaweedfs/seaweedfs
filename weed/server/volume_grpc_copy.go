@@ -233,7 +233,7 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 		return modifiedTsNs, fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
 	}
 
-	modifiedTsNs, err = writeToFile(copyFileClient, baseFileName+ext, throttler, isAppend, progressFn)
+	modifiedTsNs, err = writeToFile(copyFileClient, baseFileName+ext, throttler, isAppend, ignoreSourceFileNotFound, progressFn)
 	if err != nil {
 		return modifiedTsNs, fmt.Errorf("failed to copy %s file: %v", baseFileName+ext, err)
 	}
@@ -332,15 +332,30 @@ func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version 
 	return util.BytesToUint64(tail[needle.NeedleChecksumSize : needle.NeedleChecksumSize+types.TimestampSize]), nil
 }
 
-func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
+func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
 	glog.V(4).Infof("writing to %s", fileName)
+
+	// When the source file may legitimately be absent (ignoreSourceFileNotFound)
+	// and we are not appending, stage into a temp sibling and commit it with an
+	// atomic rename only once the source has actually delivered the file. This
+	// prevents a copy from an unprotected/old source from truncating or deleting
+	// a valid pre-existing destination — e.g. a per-volume .ecsum sidecar that a
+	// previous shard copy already established during EC rebalancing. Mandatory
+	// copies keep writing in place so the existing 0-byte-stub removal guarantees
+	// (notably .ecx) are preserved.
+	writePath := fileName
+	stageThenCommit := ignoreSourceFileNotFound && !isAppend
+	if stageThenCommit {
+		writePath = fileName + ".copying"
+	}
+
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if isAppend {
 		flags = os.O_WRONLY | os.O_CREATE
 	}
-	dst, err := os.OpenFile(fileName, flags, 0644)
+	dst, err := os.OpenFile(writePath, flags, 0644)
 	if err != nil {
-		return modifiedTsNs, fmt.Errorf("open file %s: %w", fileName, err)
+		return modifiedTsNs, fmt.Errorf("open file %s: %w", writePath, err)
 	}
 	// Track the destination handle through a closer that runs at most once.
 	// On Windows os.Remove fails while the file is still open, so any path
@@ -367,10 +382,10 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			return
 		}
 		closeDst()
-		if removeErr := os.Remove(fileName); removeErr != nil && !os.IsNotExist(removeErr) {
-			glog.Warningf("failed to remove incomplete file %s after %s: %v", fileName, reason, removeErr)
+		if removeErr := os.Remove(writePath); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.Warningf("failed to remove incomplete file %s after %s: %v", writePath, reason, removeErr)
 		} else if removeErr == nil {
-			glog.V(1).Infof("removed incomplete file %s after %s", fileName, reason)
+			glog.V(1).Infof("removed incomplete file %s after %s", writePath, reason)
 		}
 	}
 
@@ -405,11 +420,25 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	// Note: We check modifiedTsNs (not progressedBytes) because an empty source file
 	// is valid and should result in an empty destination file.
 	if modifiedTsNs == 0 && !isAppend {
+		// Source file did not exist. Remove what we wrote. In stage-then-commit
+		// mode this drops only the temp file, leaving any pre-existing
+		// destination intact, so the optional copy is a true no-op.
 		closeDst()
-		if removeErr := os.Remove(fileName); removeErr != nil {
-			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
-		} else {
-			glog.V(1).Infof("removed empty file %s (source file not found)", fileName)
+		if removeErr := os.Remove(writePath); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.V(1).Infof("failed to remove empty file %s: %v", writePath, removeErr)
+		} else if removeErr == nil {
+			glog.V(1).Infof("removed empty file %s (source file not found)", writePath)
+		}
+		return modifiedTsNs, nil
+	}
+
+	// Source delivered the file. In stage-then-commit mode, atomically move the
+	// fully-written temp into place over any existing destination.
+	if stageThenCommit {
+		closeDst()
+		if renameErr := os.Rename(writePath, fileName); renameErr != nil {
+			os.Remove(writePath)
+			return modifiedTsNs, fmt.Errorf("commit copied file %s: %w", fileName, renameErr)
 		}
 	}
 	return modifiedTsNs, nil

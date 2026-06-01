@@ -47,6 +47,10 @@ const (
 	// to a 16 MiB region.
 	DefaultBitrotBlockSize = 16 * 1024 * 1024
 
+	// MaxBitrotBlockSize caps the block granularity so a loaded sidecar cannot
+	// force a huge scrub/verify scratch buffer. Power-of-two multiple of 1 MiB.
+	MaxBitrotBlockSize = 64 * 1024 * 1024
+
 	bitrotMagic         uint32 = 0x45435355 // "ECSU"
 	bitrotFormatVersion uint16 = 1
 	bitrotHeaderSize           = 14 // magic(4)+version(2)+payload_len(4)+payload_crc32c(4)
@@ -117,10 +121,10 @@ func NewEncodeUUID() []byte {
 	return b
 }
 
-// isPow2MultipleOf1MiB reports whether block_size is a power-of-two multiple of
-// 1 MiB (i.e. a power of two that is at least 1 MiB).
+// isPow2MultipleOf1MiB reports whether block_size is a power of two in
+// [1 MiB, MaxBitrotBlockSize].
 func isPow2MultipleOf1MiB(blockSize uint32) bool {
-	return blockSize >= (1<<20) && bits.OnesCount32(blockSize) == 1
+	return blockSize >= (1<<20) && blockSize <= MaxBitrotBlockSize && bits.OnesCount32(blockSize) == 1
 }
 
 // shardChecksumBuilder accumulates the per-block CRC32C of a single shard's byte
@@ -300,7 +304,7 @@ func ValidateBitrotManifest(prot *volume_server_pb.EcBitrotProtection, dataShard
 	}
 	bs := int64(prot.BlockSize)
 	if !isPow2MultipleOf1MiB(prot.BlockSize) {
-		return fmt.Errorf("invalid block_size %d (must be a power-of-two multiple of 1 MiB)", prot.BlockSize)
+		return fmt.Errorf("invalid block_size %d (must be a power-of-two multiple of 1 MiB, at most %d)", prot.BlockSize, MaxBitrotBlockSize)
 	}
 	total := dataShards + parityShards
 	if total <= 0 || total > MaxShardCount {
