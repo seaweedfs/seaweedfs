@@ -1,3 +1,7 @@
+// Tests multipart upload ETag behavior when both stored S3 ETags and
+// MD5-derived ETags are present. The tests verify that SeaweedFS uses
+// the stored ETag for part validation and multipart ETag calculation,
+// while still falling back to the MD5-derived value when necessary.
 package s3api
 
 import (
