@@ -335,14 +335,9 @@ func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version 
 func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
 	glog.V(4).Infof("writing to %s", fileName)
 
-	// When the source file may legitimately be absent (ignoreSourceFileNotFound)
-	// and we are not appending, stage into a temp sibling and commit it with an
-	// atomic rename only once the source has actually delivered the file. This
-	// prevents a copy from an unprotected/old source from truncating or deleting
-	// a valid pre-existing destination — e.g. a per-volume .ecsum sidecar that a
-	// previous shard copy already established during EC rebalancing. Mandatory
-	// copies keep writing in place so the existing 0-byte-stub removal guarantees
-	// (notably .ecx) are preserved.
+	// For an optional copy (ignoreSourceFileNotFound), stage into a temp sibling
+	// and atomically rename on success, so a source that lacks the file cannot
+	// truncate a valid pre-existing destination. Mandatory copies write in place.
 	writePath := fileName
 	stageThenCommit := ignoreSourceFileNotFound && !isAppend
 	if stageThenCommit {
@@ -420,9 +415,6 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	// Note: We check modifiedTsNs (not progressedBytes) because an empty source file
 	// is valid and should result in an empty destination file.
 	if modifiedTsNs == 0 && !isAppend {
-		// Source file did not exist. Remove what we wrote. In stage-then-commit
-		// mode this drops only the temp file, leaving any pre-existing
-		// destination intact, so the optional copy is a true no-op.
 		closeDst()
 		if removeErr := os.Remove(writePath); removeErr != nil && !os.IsNotExist(removeErr) {
 			glog.V(1).Infof("failed to remove empty file %s: %v", writePath, removeErr)
@@ -432,8 +424,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 		return modifiedTsNs, nil
 	}
 
-	// Source delivered the file. In stage-then-commit mode, atomically move the
-	// fully-written temp into place over any existing destination.
+	// Commit the staged temp into place.
 	if stageThenCommit {
 		closeDst()
 		if renameErr := os.Rename(writePath, fileName); renameErr != nil {

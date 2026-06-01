@@ -144,10 +144,7 @@ func TestWriteToFile_SucceedsOnCleanStream(t *testing.T) {
 	}
 }
 
-// TestWriteToFile_PreservesDestinationWhenOptionalSourceMissing covers the
-// ignoreSourceFileNotFound stage-then-commit path: when the optional source has
-// no file (stream ends with no responses, modifiedTsNs stays 0), a valid
-// pre-existing destination must be left untouched rather than truncated/deleted.
+// An optional copy whose source lacks the file must leave a valid destination intact.
 func TestWriteToFile_PreservesDestinationWhenOptionalSourceMissing(t *testing.T) {
 	dir := t.TempDir()
 	dst := filepath.Join(dir, "vol_42.ecsum")
@@ -175,9 +172,7 @@ func TestWriteToFile_PreservesDestinationWhenOptionalSourceMissing(t *testing.T)
 	}
 }
 
-// TestWriteToFile_CommitsOptionalCopyWhenSourcePresent covers the other half of
-// the stage-then-commit path: when the optional source does have the file, the
-// staged temp is atomically renamed over any (stale) destination.
+// An optional copy whose source has the file commits it over any stale destination.
 func TestWriteToFile_CommitsOptionalCopyWhenSourcePresent(t *testing.T) {
 	dir := t.TempDir()
 	dst := filepath.Join(dir, "vol_42.ecsum")
