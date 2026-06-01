@@ -280,7 +280,7 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 
 func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errCount uint64, err error) {
 	timeNowAtSec := time.Now().Unix()
-	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false,
+	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if c.modifyTimeAgoAtSec > 0 {
 				if entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec < timeNowAtSec-entry.Entry.Attributes.Mtime {
