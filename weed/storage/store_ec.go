@@ -461,7 +461,7 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 
 	glog.V(3).Infof("lookup and cache ec volume %d locations", ecVolume.VolumeId)
 
-	err = operation.WithMasterServerClient(false, s.MasterAddress, s.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	err = operation.WithMasterServerClient(context.Background(), false, s.MasterAddress, s.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 		req := &master_pb.LookupEcVolumeRequest{
 			VolumeId: uint32(ecVolume.VolumeId),
 		}

@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -24,7 +25,7 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 
 	// Fallback to direct connection if filerClient not initialized
 	// This should only happen during initialization or testing
-	return pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, s3a.getFilerAddress().ToGrpcAddress(), false, s3a.option.GrpcDialOption)
@@ -37,7 +38,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 
 	// Try current filer first (fast path)
-	err := pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+	err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, currentFiler.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
@@ -70,7 +71,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 			continue
 		}
 
-		err = pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+		err = pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 			return fn(client)
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
