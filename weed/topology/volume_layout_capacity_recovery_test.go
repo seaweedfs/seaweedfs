@@ -67,3 +67,52 @@ func TestSetVolumeCapacityFullStampsFullSinceAndRecovers(t *testing.T) {
 		t.Fatalf("expected fullSince cleared after recovery")
 	}
 }
+
+func TestSetVolumeAvailableRestoresActiveCountForCapacityFullVolume(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":4000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 10000)
+
+	initialActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	if !vl.SetVolumeCapacityFull(1) {
+		t.Fatalf("SetVolumeCapacityFull should report the volume was writable")
+	}
+	vl.AdjustActiveVolumeCountForFull(1)
+	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive-1 {
+		t.Fatalf("expected activeVolumeCount decremented to %d, got %d", initialActive-1, got)
+	}
+
+	vl.accessLock.RLock()
+	dn := vl.vid2location[1].list[0]
+	vl.accessLock.RUnlock()
+
+	if !vl.SetVolumeAvailable(dn, 1, false, false) {
+		t.Fatalf("SetVolumeAvailable should report the volume became writable")
+	}
+	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
+		t.Fatalf("expected SetVolumeAvailable to restore activeVolumeCount to %d, got %d", initialActive, got)
+	}
+	if !vl.sizeTracking[1].fullSince.IsZero() {
+		t.Fatalf("expected SetVolumeAvailable to clear fullSince after restoring activeVolumeCount")
+	}
+
+	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
+	if vl.UpdateVolumeSize(1, 4000, 0) {
+		t.Fatalf("heartbeat recovery should not fire after SetVolumeAvailable already restored the volume")
+	}
+	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
+		t.Fatalf("expected activeVolumeCount to remain %d, got %d", initialActive, got)
+	}
+}
