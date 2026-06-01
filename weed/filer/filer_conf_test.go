@@ -149,12 +149,12 @@ func TestApplyBucketQuotaReadOnly(t *testing.T) {
 	assert.False(t, readOnly)
 	assert.False(t, fc.MatchStorageRule(prefix).ReadOnly)
 
-	// quota disabled while read-only clears it
+	// quota disabled leaves the flag untouched, so manual locks survive
 	fc = NewFilerConf()
 	fc.ApplyBucketQuotaReadOnly(prefix, 150, 100)
 	readOnly, changed = fc.ApplyBucketQuotaReadOnly(prefix, 150, -1)
-	assert.True(t, changed)
-	assert.False(t, readOnly)
+	assert.False(t, changed)
+	assert.True(t, readOnly)
 
 	// under quota and not read-only: no rule churn
 	fc = NewFilerConf()

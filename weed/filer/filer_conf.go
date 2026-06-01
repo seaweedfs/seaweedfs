@@ -235,23 +235,24 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 
 // ApplyBucketQuotaReadOnly flips the read-only flag for the bucket rule at
 // locationPrefix to match its quota: read-only once usedSize exceeds quota,
-// writable again once it drops back under. A non-positive quota means
-// enforcement is disabled and any read-only flag is cleared. It returns the
-// resulting flag and whether it changed; callers persist the conf only when
-// changed is true.
+// writable again once it drops back under. A non-positive quota leaves the flag
+// untouched, so a bucket an admin locked by hand (or one whose quota was
+// removed) is never silently reopened. It returns the resulting flag and
+// whether it changed; callers persist the conf only when changed is true.
 func (fc *FilerConf) ApplyBucketQuotaReadOnly(locationPrefix string, usedSize, quota float64) (readOnly, changed bool) {
+	if quota <= 0 {
+		return fc.MatchStorageRule(locationPrefix).ReadOnly, false
+	}
+
 	locConf := ClonePathConf(fc.MatchStorageRule(locationPrefix))
 	locConf.LocationPrefix = locationPrefix
 	wasReadOnly := locConf.ReadOnly
 
-	switch {
-	case quota <= 0:
-		locConf.ReadOnly = false
-	case wasReadOnly:
+	if wasReadOnly {
 		if usedSize < quota {
 			locConf.ReadOnly = false
 		}
-	default:
+	} else {
 		if usedSize > quota {
 			locConf.ReadOnly = true
 		}
