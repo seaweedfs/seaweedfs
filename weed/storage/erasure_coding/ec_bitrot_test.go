@@ -108,12 +108,13 @@ func TestValidateBitrotManifest(t *testing.T) {
 		t.Fatalf("valid manifest rejected: %v", err)
 	}
 	bad := map[string]func(*volume_server_pb.EcBitrotProtection){
-		"missing shard":   func(p *volume_server_pb.EcBitrotProtection) { p.Shards = p.Shards[:2] },
-		"out of range id": func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 9 },
-		"duplicate id":    func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 0 },
-		"zero covered":    func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].CoveredSize = 0 },
-		"bad crc count":   func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].BlockCrc32C = []byte{1, 2, 3} },
-		"bad block size":  func(p *volume_server_pb.EcBitrotProtection) { p.BlockSize = 3 << 20 }, // not power of two
+		"missing shard":        func(p *volume_server_pb.EcBitrotProtection) { p.Shards = p.Shards[:2] },
+		"out of range id":      func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 9 },
+		"duplicate id":         func(p *volume_server_pb.EcBitrotProtection) { p.Shards[2].ShardId = 0 },
+		"zero covered":         func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].CoveredSize = 0 },
+		"bad crc count":        func(p *volume_server_pb.EcBitrotProtection) { p.Shards[0].BlockCrc32C = []byte{1, 2, 3} },
+		"bad block size":       func(p *volume_server_pb.EcBitrotProtection) { p.BlockSize = 3 << 20 },   // not power of two
+		"oversized block size": func(p *volume_server_pb.EcBitrotProtection) { p.BlockSize = 128 << 20 }, // power of two but > MaxBitrotBlockSize
 		"bad algorithm": func(p *volume_server_pb.EcBitrotProtection) {
 			p.Algorithm = volume_server_pb.ChecksumAlgorithm_CHECKSUM_NONE
 		},
