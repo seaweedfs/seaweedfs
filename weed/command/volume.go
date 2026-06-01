@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/httpdown"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -96,6 +97,114 @@ type VolumeServerOptions struct {
 	shutdownCtx context.Context
 }
 
+func (v *VolumeServerOptions) setDiskIOProbeDefaults() {
+	if v.diskIOProbe == nil {
+		defaultValue := false
+		v.diskIOProbe = &defaultValue
+	}
+	if v.diskIOTimeout == nil {
+		defaultValue := 2 * time.Second
+		v.diskIOTimeout = &defaultValue
+	}
+	if v.diskIOInterval == nil {
+		defaultValue := 60 * time.Second
+		v.diskIOInterval = &defaultValue
+	}
+	if v.diskHDDIOSlowLatency == nil {
+		defaultValue := 500 * time.Millisecond
+		v.diskHDDIOSlowLatency = &defaultValue
+	}
+	if v.diskSSDIOSlowLatency == nil {
+		defaultValue := 100 * time.Millisecond
+		v.diskSSDIOSlowLatency = &defaultValue
+	}
+	if v.diskNVMEIOSlowLatency == nil {
+		defaultValue := 50 * time.Millisecond
+		v.diskNVMEIOSlowLatency = &defaultValue
+	}
+	if v.diskIOWindow == nil {
+		defaultValue := time.Minute
+		v.diskIOWindow = &defaultValue
+	}
+	if v.diskIOMinSamples == nil {
+		defaultValue := 10
+		v.diskIOMinSamples = &defaultValue
+	}
+	if v.diskIOSlowPercent == nil {
+		defaultValue := 20.0
+		v.diskIOSlowPercent = &defaultValue
+	}
+	if v.diskIOErrorPercent == nil {
+		defaultValue := 10.0
+		v.diskIOErrorPercent = &defaultValue
+	}
+	if v.diskIOMaxStatFailures == nil {
+		defaultValue := 5
+		v.diskIOMaxStatFailures = &defaultValue
+	}
+	if v.diskRecoveryCoef == nil {
+		defaultValue := 0.5
+		v.diskRecoveryCoef = &defaultValue
+	}
+}
+
+func (v *VolumeServerOptions) applyDiskIOProbeConfig(cmd *Command, flagPrefix string) {
+	v.setDiskIOProbeDefaults()
+
+	config := util.GetViper()
+
+	if config.IsSet("volume.disk.io.probe") && !isCommandFlagSet(cmd, flagPrefix+"disk.io.probe") {
+		*v.diskIOProbe = config.GetBool("volume.disk.io.probe")
+	}
+	if config.IsSet("volume.disk.io.timeout") && !isCommandFlagSet(cmd, flagPrefix+"disk.io.timeout") {
+		*v.diskIOTimeout = config.GetDuration("volume.disk.io.timeout")
+	}
+	if config.IsSet("volume.disk.io.slow.latency.hdd") && !isCommandFlagSet(cmd, flagPrefix+"disk.hdd.io.slow.latency") {
+		*v.diskHDDIOSlowLatency = config.GetDuration("volume.disk.io.slow.latency.hdd")
+	}
+	if config.IsSet("volume.disk.io.slow.latency.ssd") && !isCommandFlagSet(cmd, flagPrefix+"disk.ssd.io.slow.latency") {
+		*v.diskSSDIOSlowLatency = config.GetDuration("volume.disk.io.slow.latency.ssd")
+	}
+	if config.IsSet("volume.disk.io.slow.latency.nvme") && !isCommandFlagSet(cmd, flagPrefix+"disk.nvme.io.slow.latency") {
+		*v.diskNVMEIOSlowLatency = config.GetDuration("volume.disk.io.slow.latency.nvme")
+	}
+
+	if config.IsSet("volume.disk.io.interval") {
+		*v.diskIOInterval = config.GetDuration("volume.disk.io.interval")
+	}
+	if config.IsSet("volume.disk.io.window") {
+		*v.diskIOWindow = config.GetDuration("volume.disk.io.window")
+	}
+	if config.IsSet("volume.disk.io.min.samples") {
+		*v.diskIOMinSamples = config.GetInt("volume.disk.io.min.samples")
+	}
+	if config.IsSet("volume.disk.io.slow.percent") {
+		*v.diskIOSlowPercent = config.GetFloat64("volume.disk.io.slow.percent")
+	}
+	if config.IsSet("volume.disk.io.error.percent") {
+		*v.diskIOErrorPercent = config.GetFloat64("volume.disk.io.error.percent")
+	}
+	if config.IsSet("volume.disk.io.max.stat.failures") {
+		*v.diskIOMaxStatFailures = config.GetInt("volume.disk.io.max.stat.failures")
+	}
+	if config.IsSet("volume.disk.io.recovery.coef") {
+		*v.diskRecoveryCoef = config.GetFloat64("volume.disk.io.recovery.coef")
+	}
+}
+
+func isCommandFlagSet(cmd *Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	found := false
+	cmd.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
@@ -138,16 +247,10 @@ func init() {
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
 	v.diskIOProbe = cmdVolume.Flag.Bool("disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
 	v.diskIOTimeout = cmdVolume.Flag.Duration("disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
-	v.diskIOInterval = cmdVolume.Flag.Duration("disk.io.interval", 60*time.Second, "maximum time between a single disk IO probe")
 	v.diskHDDIOSlowLatency = cmdVolume.Flag.Duration("disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
 	v.diskSSDIOSlowLatency = cmdVolume.Flag.Duration("disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
 	v.diskNVMEIOSlowLatency = cmdVolume.Flag.Duration("disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
-	v.diskIOSlowPercent = cmdVolume.Flag.Float64("disk.io.slow.percent", 20, "percentage of slow IO probes required to mark disk degraded")
-	v.diskIOErrorPercent = cmdVolume.Flag.Float64("disk.io.error.percent", 10, "percentage of failed IO probes required to mark disk error")
-	v.diskIOWindow = cmdVolume.Flag.Duration("disk.io.window", time.Minute, "rolling observation window for disk IO health evaluation")
-	v.diskIOMinSamples = cmdVolume.Flag.Int("disk.io.min.samples", 10, "minimum number of IO samples required before evaluating disk health")
-	v.diskIOMaxStatFailures = cmdVolume.Flag.Int("disk.io.max.stat.failures", 5, "maximum number of failures required before evaluating disk health")
-	v.diskRecoveryCoef = cmdVolume.Flag.Float64("disk.io.recovery.coef", 0.5, "recovery coefficient (0.0-1.0). Lower = harder to recover (conservative), higher = easier (aggressive). Default 0.5 = recovery at 50% of degradation threshold")
+	v.setDiskIOProbeDefaults()
 }
 
 var cmdVolume = &Command{
@@ -175,6 +278,8 @@ func runVolume(cmd *Command, args []string) bool {
 	}
 
 	util.LoadSecurityConfiguration()
+	util.LoadConfiguration("volume", false)
+	v.applyDiskIOProbeConfig(cmd, "")
 
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof
@@ -225,6 +330,7 @@ func runVolume(cmd *Command, args []string) bool {
 }
 
 func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption string, minFreeSpaces []util.MinFreeSpace) {
+	v.setDiskIOProbeDefaults()
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")

@@ -45,8 +45,8 @@ type DiskLocation struct {
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
 
-	isDiskSpaceLow    bool
-	isDiskUnavailable bool
+	isDiskSpaceLow    atomic.Bool
+	isDiskUnavailable atomic.Bool
 	closeCh           chan struct{}
 }
 
@@ -544,11 +544,11 @@ func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
 		s := stats.NewDiskStatusOnStart(dir, config)
 		if len(s.Error) != 0 {
-			l.isDiskUnavailable = true
+			l.isDiskUnavailable.Store(true)
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
 			glog.V(1).Infof("disk %s is not healthy: %s", dir, s.Error)
 		} else {
-			l.isDiskUnavailable = false
+			l.isDiskUnavailable.Store(false)
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(0)
 		}
 		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
@@ -558,12 +558,12 @@ func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
 		l.AvailableSpace.Store(available)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
-		if isLow != l.isDiskSpaceLow {
-			l.isDiskSpaceLow = !l.isDiskSpaceLow
+		if isLow != l.isDiskSpaceLow.Load() {
+			l.isDiskSpaceLow.Store(isLow)
 		}
 
 		logLevel := glog.Level(4)
-		if l.isDiskSpaceLow {
+		if l.isDiskSpaceLow.Load() {
 			logLevel = glog.Level(0)
 		}
 

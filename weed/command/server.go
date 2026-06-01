@@ -158,16 +158,10 @@ func init() {
 	serverOptions.v.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	serverOptions.v.diskIOProbe = cmdServer.Flag.Bool("volume.disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
 	serverOptions.v.diskIOTimeout = cmdServer.Flag.Duration("volume.disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
-	serverOptions.v.diskIOInterval = cmdServer.Flag.Duration("volume.disk.io.interval", 60*time.Second, "maximum time between a single disk IO probe")
 	serverOptions.v.diskHDDIOSlowLatency = cmdServer.Flag.Duration("volume.disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
 	serverOptions.v.diskSSDIOSlowLatency = cmdServer.Flag.Duration("volume.disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
 	serverOptions.v.diskNVMEIOSlowLatency = cmdServer.Flag.Duration("volume.disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
-	serverOptions.v.diskIOSlowPercent = cmdServer.Flag.Float64("volume.disk.io.slow.percent", 20, "percentage of slow IO probes required to mark disk degraded")
-	serverOptions.v.diskIOErrorPercent = cmdServer.Flag.Float64("volume.disk.io.error.percent", 10, "percentage of failed IO probes required to mark disk error")
-	serverOptions.v.diskIOWindow = cmdServer.Flag.Duration("volume.disk.io.window", time.Minute, "rolling observation window for disk IO health evaluation")
-	serverOptions.v.diskIOMinSamples = cmdServer.Flag.Int("volume.disk.io.min.samples", 10, "minimum number of IO samples required before evaluating disk health")
-	serverOptions.v.diskIOMaxStatFailures = cmdServer.Flag.Int("volume.disk.io.max.stat.failures", 5, "maximum number of failures required before evaluating disk health")
-	serverOptions.v.diskRecoveryCoef = cmdServer.Flag.Float64("volume.disk.io.recovery.coef", 0.5, "recovery coefficient (0.0-1.0). Lower = harder to recover (conservative), higher = easier (aggressive). Default 0.5 = recovery at 50% of degradation threshold")
+	serverOptions.v.setDiskIOProbeDefaults()
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	s3Options.portHttps = cmdServer.Flag.Int("s3.port.https", 0, "s3 server https listen port")
@@ -236,6 +230,8 @@ func runServer(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+	util.LoadConfiguration("volume", false)
+	serverOptions.v.applyDiskIOProbeConfig(cmd, "volume.")
 
 	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
 	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)

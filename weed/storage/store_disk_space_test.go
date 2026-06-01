@@ -72,9 +72,9 @@ func TestHasFreeDiskLocation(t *testing.T) {
 			// setup
 			diskLocation := &DiskLocation{
 				volumes:        make(map[needle.VolumeId]*Volume),
-				isDiskSpaceLow: tc.isDiskSpaceLow,
 				MaxVolumeCount: tc.maxVolumeCount,
 			}
+			diskLocation.isDiskSpaceLow.Store(tc.isDiskSpaceLow)
 			for i := 0; i < tc.currentVolumes; i++ {
 				diskLocation.volumes[needle.VolumeId(i+1)] = &Volume{}
 			}
@@ -89,7 +89,7 @@ func TestHasFreeDiskLocation(t *testing.T) {
 			// assert
 			if result != tc.expected {
 				t.Errorf("Expected hasFreeDiskLocation() = %v; want %v for volumes:%d/%d, lowSpace:%v",
-					result, tc.expected, len(diskLocation.volumes), diskLocation.MaxVolumeCount, diskLocation.isDiskSpaceLow)
+					result, tc.expected, len(diskLocation.volumes), diskLocation.MaxVolumeCount, diskLocation.isDiskSpaceLow.Load())
 			}
 		})
 	}
@@ -101,8 +101,8 @@ func newTestLocation(maxCount int32, isDiskLow bool, volCount int) *DiskLocation
 		ecVolumes:      make(map[needle.VolumeId]*erasure_coding.EcVolume),
 		MaxVolumeCount: maxCount,
 		DiskType:       types.ToDiskType("hdd"),
-		isDiskSpaceLow: isDiskLow,
 	}
+	location.isDiskSpaceLow.Store(isDiskLow)
 	for i := 1; i <= volCount; i++ {
 		location.volumes[needle.VolumeId(i)] = &Volume{}
 	}

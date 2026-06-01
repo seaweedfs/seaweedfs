@@ -1,0 +1,27 @@
+# Put this file to one of the location, with descending priority
+#    ./volume.toml
+#    $HOME/.seaweedfs/volume.toml
+#    /etc/seaweedfs/volume.toml
+# this file is read by volume servers
+
+[volume.disk.io]
+# Disk IO probing is disabled by default. When enabled, a volume server can
+# stop advertising a disk after sustained IO errors or latency degradation.
+probe = false
+timeout = "2s"
+interval = "60s"
+window = "1m"
+min.samples = 10
+max.stat.failures = 5
+recovery.coef = 0.5
+
+[volume.disk.io.slow]
+percent = 20
+
+[volume.disk.io.error]
+percent = 10
+
+[volume.disk.io.slow.latency]
+hdd = "500ms"
+ssd = "100ms"
+nvme = "50ms"

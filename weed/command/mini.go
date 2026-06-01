@@ -488,16 +488,10 @@ func initMiniVolumeFlags() {
 	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
 	miniOptions.v.diskIOProbe = cmdMini.Flag.Bool("volume.disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
 	miniOptions.v.diskIOTimeout = cmdMini.Flag.Duration("volume.disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
-	miniOptions.v.diskIOInterval = cmdMini.Flag.Duration("volume.disk.io.interval", 60*time.Second, "maximum time between a single disk IO probe")
 	miniOptions.v.diskHDDIOSlowLatency = cmdMini.Flag.Duration("volume.disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
 	miniOptions.v.diskSSDIOSlowLatency = cmdMini.Flag.Duration("volume.disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
 	miniOptions.v.diskNVMEIOSlowLatency = cmdMini.Flag.Duration("volume.disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
-	miniOptions.v.diskIOSlowPercent = cmdMini.Flag.Float64("volume.disk.io.slow.percent", 20, "percentage of slow IO probes required to mark disk degraded")
-	miniOptions.v.diskIOErrorPercent = cmdMini.Flag.Float64("volume.disk.io.error.percent", 10, "percentage of failed IO probes required to mark disk error")
-	miniOptions.v.diskIOWindow = cmdMini.Flag.Duration("volume.disk.io.window", time.Minute, "rolling observation window for disk IO health evaluation")
-	miniOptions.v.diskIOMinSamples = cmdMini.Flag.Int("volume.disk.io.min.samples", 10, "minimum number of IO samples required before evaluating disk health")
-	miniOptions.v.diskIOMaxStatFailures = cmdMini.Flag.Int("volume.disk.io.max.stat.failures", 5, "maximum number of failures required before evaluating disk health")
-	miniOptions.v.diskRecoveryCoef = cmdMini.Flag.Float64("volume.disk.io.recovery.coef", 0.5, "recovery coefficient (0.0-1.0). Lower = harder to recover (conservative), higher = easier (aggressive). Default 0.5 = recovery at 50% of degradation threshold")
+	miniOptions.v.setDiskIOProbeDefaults()
 }
 
 // initMiniS3Flags initializes S3 server flag options
@@ -1149,6 +1143,8 @@ func runMini(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+	util.LoadConfiguration("volume", false)
+	miniOptions.v.applyDiskIOProbeConfig(cmd, "volume.")
 
 	// applyConfigFileOptions above may have overwritten -dir from the
 	// mini.options file, so re-resolve it here alongside the other paths.

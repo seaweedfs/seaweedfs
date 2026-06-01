@@ -14,7 +14,7 @@ func init() {
 }
 
 var cmdScaffold = &Command{
-	UsageLine: "scaffold -config=[filer|notification|replication|security|master|shell|credential]",
+	UsageLine: "scaffold -config=[filer|notification|replication|security|master|volume|shell|credential]",
 	Short:     "generate basic configuration files",
 	Long: `Generate configuration files with all possible configurations for you to customize.
 
@@ -31,7 +31,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security|master|shell|credential] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security|master|volume|shell|credential] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -48,6 +48,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = scaffold.Security
 	case "master":
 		content = scaffold.Master
+	case "volume":
+		content = scaffold.Volume
 	case "shell":
 		content = scaffold.Shell
 	case "credential":

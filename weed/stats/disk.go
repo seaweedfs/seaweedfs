@@ -319,6 +319,8 @@ func checkDiskIOLatency(state *diskState, disk *volume_server_pb.DiskStatus, che
 			result.latency,
 			state.ioFailureCount,
 			degraded,
+			len(state.samples),
+			state.lastIOErr,
 		)
 
 	case <-ctx.Done():
