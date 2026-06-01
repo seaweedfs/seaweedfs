@@ -467,7 +467,6 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			}
 
 			partStartChunk := len(finalParts)
-			// partETag := filer.ETag(entry)
 			partETag := getEtagFromEntry(entry)
 
 			for _, chunk := range entry.GetChunks() {
