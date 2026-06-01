@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -93,7 +95,7 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 	}
 
 	// Get list of buckets
-	buckets, err := s3a.listBucketNames(ctx)
+	buckets, err := s3a.listBuckets(ctx)
 	if err != nil {
 		glog.V(2).Infof("Failed to list buckets for size metrics: %v", err)
 		return
@@ -101,15 +103,60 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 
 	// Map collections to buckets and update metrics
 	for _, bucket := range buckets {
-		collection := s3a.getCollectionName(bucket)
+		collection := s3a.getCollectionName(bucket.Name)
 		if info, found := collectionInfos[collection]; found {
-			stats.UpdateBucketSizeMetrics(bucket, info.Size, info.PhysicalSize, info.FileCount)
+			stats.UpdateBucketSizeMetrics(bucket.Name, info.Size, info.PhysicalSize, info.FileCount)
 			glog.V(3).Infof("Updated bucket size metrics: bucket=%s, logicalSize=%.0f, physicalSize=%.0f, objects=%.0f",
-				bucket, info.Size, info.PhysicalSize, info.FileCount)
+				bucket.Name, info.Size, info.PhysicalSize, info.FileCount)
 		} else {
 			// Bucket exists but no collection data (empty bucket)
-			stats.UpdateBucketSizeMetrics(bucket, 0, 0, 0)
+			stats.UpdateBucketSizeMetrics(bucket.Name, 0, 0, 0)
 		}
+	}
+
+	s3a.enforceBucketQuotas(ctx, buckets, collectionInfos)
+}
+
+// enforceBucketQuotas flips each bucket's read-only flag to match its quota,
+// rewriting filer.conf only when a flag changes.
+func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo) {
+	if len(s3a.option.Filers) == 0 {
+		return
+	}
+
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
+		return
+	}
+
+	changed := false
+	for _, bucket := range buckets {
+		var size float64
+		if info, found := collectionInfos[s3a.getCollectionName(bucket.Name)]; found {
+			size = info.Size
+		}
+		locPrefix := s3a.option.BucketsPath + "/" + bucket.Name + "/"
+		readOnly, flipped := fc.ApplyBucketQuotaReadOnly(locPrefix, size, float64(bucket.Quota))
+		if flipped {
+			changed = true
+			glog.V(0).Infof("bucket %s quota enforcement: readOnly=%v (size=%.0f quota=%d)", bucket.Name, readOnly, size, bucket.Quota)
+		}
+	}
+
+	if !changed {
+		return
+	}
+
+	var buf bytes.Buffer
+	if err := fc.ToText(&buf); err != nil {
+		glog.Errorf("serialize filer.conf for quota enforcement: %v", err)
+		return
+	}
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(ctx, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+	}); err != nil {
+		glog.Errorf("save filer.conf for quota enforcement: %v", err)
 	}
 }
 
@@ -147,9 +194,9 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (ma
 	return collectionInfos, nil
 }
 
-// listBucketNames returns a list of all bucket names using pagination
-func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
-	var buckets []string
+// listBuckets returns all bucket directory entries using pagination.
+func (s3a *S3ApiServer) listBuckets(ctx context.Context) ([]*filer_pb.Entry, error) {
+	var buckets []*filer_pb.Entry
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		lastFileName := ""
@@ -181,7 +228,7 @@ func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
 					if resp.Entry.IsDirectory {
 						// Skip .uploads and other hidden directories
 						if !strings.HasPrefix(resp.Entry.Name, ".") {
-							buckets = append(buckets, resp.Entry.Name)
+							buckets = append(buckets, resp.Entry)
 						}
 					}
 				}
