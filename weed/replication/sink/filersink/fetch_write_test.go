@@ -2,6 +2,8 @@ package filersink
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -164,9 +166,9 @@ func TestValidateReplicatedChunkSize(t *testing.T) {
 }
 
 // End-to-end regression :
-// a source volume that responds 200 OK with Content-Length: 0 
-// for a chunk that filer metadata claims is 5171 bytes must be rejected 
-// by fetchAndWrite with a (non-retriable) size mismatch error, 
+// a source volume that responds 200 OK with Content-Length: 0
+// for a chunk that filer metadata claims is 5171 bytes must be rejected
+// by fetchAndWrite with a (non-retriable) size mismatch error,
 // instead of being silently propagated to the destination as a 0-byte needle.
 func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 	const fid = "74,047d16a94aa581"
@@ -239,6 +241,45 @@ func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("fetchAndWrite did not return within 5s (retry loop not aborted on size mismatch); hits=%d", hits.Load())
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "synthetic timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// A transient network failure (interrupted read, idle-deadline timeout while
+// the destination reads the upload body, reset/broken pipe) must route through
+// the escalating backoff so an overloaded destination can recover instead of
+// being hammered. The volume server returns its idle timeout as a JSON error
+// string, so the text path matters as much as the net.Error interface.
+func TestIsRetryableNetworkError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"eof", io.EOF, true},
+		{"unexpected eof", io.ErrUnexpectedEOF, true},
+		{"volume idle timeout json", fmt.Errorf("upload result: read tcp 10.0.0.1:8082->10.0.0.1:54848: i/o timeout"), true},
+		{"volume idle timeout capitalized", fmt.Errorf("Upload result: read tcp 10.0.0.1:8082->10.0.0.1:54848: I/O timeout"), true},
+		{"connection reset", fmt.Errorf("upload data: write tcp ...: connection reset by peer"), true},
+		{"connection reset capitalized", fmt.Errorf("Connection reset by peer"), true},
+		{"broken pipe", fmt.Errorf("broken pipe"), true},
+		{"broken pipe capitalized", fmt.Errorf("Broken pipe"), true},
+		{"net.Error timeout", fmt.Errorf("dial: %w", timeoutErr{}), true},
+		{"size mismatch is permanent", errChunkSizeMismatch, false},
+		{"unrelated error", errors.New("not found"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryableNetworkError(tc.err); got != tc.want {
+				t.Fatalf("isRetryableNetworkError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

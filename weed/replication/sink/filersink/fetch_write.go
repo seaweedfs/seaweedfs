@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -251,7 +252,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	fs.activeTransfers.Store(sourceChunk.GetFileIdString(), transferStatus)
 	defer fs.activeTransfers.Delete(sourceChunk.GetFileIdString())
 
-	eofBackoff := time.Duration(0)
+	transientBackoff := time.Duration(0)
 	var partialData []byte
 	var savedFilename string
 	var savedHeader http.Header
@@ -335,7 +336,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			return fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
-		eofBackoff = 0
+		transientBackoff = 0
 		fileId = currentFileId
 		return nil
 	}, func(retryErr error) (shouldContinue bool) {
@@ -354,15 +355,15 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		transferStatus.mu.Lock()
 		transferStatus.LastErr = retryErr.Error()
 		transferStatus.mu.Unlock()
-		if isEofError(retryErr) {
-			eofBackoff = nextEofBackoff(eofBackoff)
+		if isRetryableNetworkError(retryErr) {
+			transientBackoff = nextTransientBackoff(transientBackoff)
 			transferStatus.mu.Lock()
 			transferStatus.BytesReceived = int64(len(partialData))
-			transferStatus.Status = fmt.Sprintf("waiting %v", eofBackoff)
+			transferStatus.Status = fmt.Sprintf("waiting %v", transientBackoff)
 			transferStatus.mu.Unlock()
-			glog.V(0).Infof("source connection interrupted while replicating %s for %s (%d bytes received so far), backing off %v: %v",
-				sourceChunk.GetFileIdString(), path, len(partialData), eofBackoff, retryErr)
-			time.Sleep(eofBackoff)
+			glog.V(0).Infof("connection interrupted while replicating %s for %s (%d bytes received so far), backing off %v: %v",
+				sourceChunk.GetFileIdString(), path, len(partialData), transientBackoff, retryErr)
+			time.Sleep(transientBackoff)
 			transferStatus.mu.Lock()
 			transferStatus.Status = "downloading"
 			transferStatus.mu.Unlock()
@@ -378,17 +379,19 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	return fileId, nil
 }
 
-const maxEofBackoff = 2 * time.Minute
+const maxTransientBackoff = 2 * time.Minute
 
-// nextEofBackoff returns the next backoff duration for unexpected EOF errors.
-// It starts at 10s, doubles each time, and caps at 2 minutes.
-func nextEofBackoff(current time.Duration) time.Duration {
+// nextTransientBackoff returns the next backoff duration for a transient
+// network failure. It starts at 10s, doubles each time, and caps at 2 minutes
+// so an overloaded destination can recover instead of being hammered every
+// second by the surrounding RetryUntil loop.
+func nextTransientBackoff(current time.Duration) time.Duration {
 	if current < 10*time.Second {
 		return 10 * time.Second
 	}
 	current *= 2
-	if current > maxEofBackoff {
-		current = maxEofBackoff
+	if current > maxTransientBackoff {
+		current = maxTransientBackoff
 	}
 	return current
 }
@@ -398,6 +401,31 @@ func isEofError(err error) bool {
 		return false
 	}
 	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
+}
+
+// isRetryableNetworkError reports whether err is a transient network failure
+// worth a backoff-and-retry: an interrupted read (EOF), a timeout (e.g. the
+// destination volume server hitting its idle deadline while reading a large
+// upload body under load), or a reset/broken connection. The volume server
+// returns the timeout as a JSON error string, so match on text in addition to
+// the net.Error interface.
+func isRetryableNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isEofError(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	// lower-case so we also catch capitalized variants from other OSes,
+	// libraries, or custom error wrappers
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe")
 }
 
 // errChunkSizeMismatch is a permanent (non-retriable) replication failure.
