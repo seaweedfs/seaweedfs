@@ -135,6 +135,9 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 			if _, hasVif := shardFiles["vif"]; hasVif {
 				assignedShards = append(assignedShards, "vif")
 			}
+			if _, hasEcsum := shardFiles["ecsum"]; hasEcsum {
+				assignedShards = append(assignedShards, "ecsum")
+			}
 		}
 
 		if shardDisks[target.Node] == nil {
@@ -321,6 +324,9 @@ func sendShardFileToDestination(volumeID uint32, collection string, dialOption g
 				shardId = 0
 			} else if shardType == "vif" {
 				ext = ".vif"
+				shardId = 0
+			} else if shardType == "ecsum" {
+				ext = BitrotSidecarExt
 				shardId = 0
 			} else if strings.HasPrefix(shardType, "ec") && len(shardType) == 4 {
 				ext = "." + shardType
