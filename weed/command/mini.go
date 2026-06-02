@@ -486,11 +486,6 @@ func initMiniVolumeFlags() {
 	miniOptions.v.readBufferSizeMB = cmdMini.Flag.Int("volume.readBufferSizeMB", 4, "read buffer size in MB")
 	miniOptions.v.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
-	miniOptions.v.diskIOProbe = cmdMini.Flag.Bool("volume.disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
-	miniOptions.v.diskIOTimeout = cmdMini.Flag.Duration("volume.disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
-	miniOptions.v.diskHDDIOSlowLatency = cmdMini.Flag.Duration("volume.disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
-	miniOptions.v.diskSSDIOSlowLatency = cmdMini.Flag.Duration("volume.disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
-	miniOptions.v.diskNVMEIOSlowLatency = cmdMini.Flag.Duration("volume.disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
 	miniOptions.v.setDiskIOProbeDefaults()
 }
 
@@ -1144,7 +1139,7 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 	util.LoadConfiguration("volume", false)
-	miniOptions.v.applyDiskIOProbeConfig(cmd, "volume.")
+	miniOptions.v.applyDiskIOProbeConfig()
 
 	// applyConfigFileOptions above may have overwritten -dir from the
 	// mini.options file, so re-resolve it here alongside the other paths.

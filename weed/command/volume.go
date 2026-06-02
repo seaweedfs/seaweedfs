@@ -26,7 +26,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/httpdown"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -148,24 +147,24 @@ func (v *VolumeServerOptions) setDiskIOProbeDefaults() {
 	}
 }
 
-func (v *VolumeServerOptions) applyDiskIOProbeConfig(cmd *Command, flagPrefix string) {
+func (v *VolumeServerOptions) applyDiskIOProbeConfig() {
 	v.setDiskIOProbeDefaults()
 
 	config := util.GetViper()
 
-	if config.IsSet("volume.disk.io.probe") && !isCommandFlagSet(cmd, flagPrefix+"disk.io.probe") {
+	if config.IsSet("volume.disk.io.probe") {
 		*v.diskIOProbe = config.GetBool("volume.disk.io.probe")
 	}
-	if config.IsSet("volume.disk.io.timeout") && !isCommandFlagSet(cmd, flagPrefix+"disk.io.timeout") {
+	if config.IsSet("volume.disk.io.timeout") {
 		*v.diskIOTimeout = config.GetDuration("volume.disk.io.timeout")
 	}
-	if config.IsSet("volume.disk.io.slow.latency.hdd") && !isCommandFlagSet(cmd, flagPrefix+"disk.hdd.io.slow.latency") {
+	if config.IsSet("volume.disk.io.slow.latency.hdd") {
 		*v.diskHDDIOSlowLatency = config.GetDuration("volume.disk.io.slow.latency.hdd")
 	}
-	if config.IsSet("volume.disk.io.slow.latency.ssd") && !isCommandFlagSet(cmd, flagPrefix+"disk.ssd.io.slow.latency") {
+	if config.IsSet("volume.disk.io.slow.latency.ssd") {
 		*v.diskSSDIOSlowLatency = config.GetDuration("volume.disk.io.slow.latency.ssd")
 	}
-	if config.IsSet("volume.disk.io.slow.latency.nvme") && !isCommandFlagSet(cmd, flagPrefix+"disk.nvme.io.slow.latency") {
+	if config.IsSet("volume.disk.io.slow.latency.nvme") {
 		*v.diskNVMEIOSlowLatency = config.GetDuration("volume.disk.io.slow.latency.nvme")
 	}
 
@@ -190,19 +189,6 @@ func (v *VolumeServerOptions) applyDiskIOProbeConfig(cmd *Command, flagPrefix st
 	if config.IsSet("volume.disk.io.recovery.coef") {
 		*v.diskRecoveryCoef = config.GetFloat64("volume.disk.io.recovery.coef")
 	}
-}
-
-func isCommandFlagSet(cmd *Command, name string) bool {
-	if cmd == nil {
-		return false
-	}
-	found := false
-	cmd.Flag.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
 }
 
 func init() {
@@ -245,11 +231,6 @@ func init() {
 	v.allowUntrustedRemoteEndpoints = cmdVolume.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
-	v.diskIOProbe = cmdVolume.Flag.Bool("disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
-	v.diskIOTimeout = cmdVolume.Flag.Duration("disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
-	v.diskHDDIOSlowLatency = cmdVolume.Flag.Duration("disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
-	v.diskSSDIOSlowLatency = cmdVolume.Flag.Duration("disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
-	v.diskNVMEIOSlowLatency = cmdVolume.Flag.Duration("disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
 	v.setDiskIOProbeDefaults()
 }
 
@@ -279,7 +260,7 @@ func runVolume(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("volume", false)
-	v.applyDiskIOProbeConfig(cmd, "")
+	v.applyDiskIOProbeConfig()
 
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof

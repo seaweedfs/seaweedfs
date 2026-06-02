@@ -156,11 +156,6 @@ func init() {
 	serverOptions.v.hasSlowRead = cmdServer.Flag.Bool("volume.hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	serverOptions.v.readBufferSizeMB = cmdServer.Flag.Int("volume.readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally")
 	serverOptions.v.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
-	serverOptions.v.diskIOProbe = cmdServer.Flag.Bool("volume.disk.io.probe", false, "enable disk IO latency probing to detect degraded disks")
-	serverOptions.v.diskIOTimeout = cmdServer.Flag.Duration("volume.disk.io.timeout", 2*time.Second, "maximum time allowed for a single disk IO probe")
-	serverOptions.v.diskHDDIOSlowLatency = cmdServer.Flag.Duration("volume.disk.hdd.io.slow.latency", 500*time.Millisecond, "latency threshold above which HDD IO is considered slow")
-	serverOptions.v.diskSSDIOSlowLatency = cmdServer.Flag.Duration("volume.disk.ssd.io.slow.latency", 100*time.Millisecond, "latency threshold above which SSD IO is considered slow")
-	serverOptions.v.diskNVMEIOSlowLatency = cmdServer.Flag.Duration("volume.disk.nvme.io.slow.latency", 50*time.Millisecond, "latency threshold above which NVMe IO is considered slow")
 	serverOptions.v.setDiskIOProbeDefaults()
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
@@ -231,7 +226,7 @@ func runServer(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 	util.LoadConfiguration("volume", false)
-	serverOptions.v.applyDiskIOProbeConfig(cmd, "volume.")
+	serverOptions.v.applyDiskIOProbeConfig()
 
 	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
 	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)
