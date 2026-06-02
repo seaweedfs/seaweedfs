@@ -550,20 +550,31 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 // never holds the cluster EC config in memory. Falls back to the default
 // ratio when the .vif carries no EC shard config.
 func (l *DiskLocation) ecDataShardsFromVif(collection string, vid needle.VolumeId) int {
-	seen := map[string]bool{}
-	for _, dir := range []string{l.Directory, l.IdxDirectory} {
-		if dir == "" || seen[dir] {
-			continue
+	// At most two dirs to check; avoid slice/map allocations on this
+	// per-volume startup path.
+	if l.Directory != "" {
+		if ds := ecDataShardsFromVifDir(collection, l.Directory, vid); ds > 0 {
+			return ds
 		}
-		seen[dir] = true
-		vifName := erasure_coding.EcShardFileName(collection, dir, int(vid)) + ".vif"
-		if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifName); found && vi.EcShardConfig != nil {
-			if ds := int(vi.EcShardConfig.DataShards); ds > 0 {
-				return ds
-			}
+	}
+	if l.IdxDirectory != "" && l.IdxDirectory != l.Directory {
+		if ds := ecDataShardsFromVifDir(collection, l.IdxDirectory, vid); ds > 0 {
+			return ds
 		}
 	}
 	return erasure_coding.DataShardsCount
+}
+
+// ecDataShardsFromVifDir returns the .vif EcShardConfig data-shard count for
+// (collection, vid) under dir, or 0 when absent / not custom.
+func ecDataShardsFromVifDir(collection, dir string, vid needle.VolumeId) int {
+	vifName := erasure_coding.EcShardFileName(collection, dir, int(vid)) + ".vif"
+	if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifName); found && vi.EcShardConfig != nil {
+		if ds := int(vi.EcShardConfig.DataShards); ds > 0 {
+			return ds
+		}
+	}
+	return 0
 }
 
 // removeEcVolumeFiles removes all EC-related files for a volume
