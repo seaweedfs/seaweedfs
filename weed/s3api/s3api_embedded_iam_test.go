@@ -447,6 +447,8 @@ func TestEmbeddedIamCreatePolicyVersion(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.Code)
 	require.NotNil(t, out.CreatePolicyVersionResult.PolicyVersion.VersionId)
 	assert.Equal(t, "v1", *out.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	require.NotNil(t, out.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+	assert.True(t, *out.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
 
 	// The stored document must reflect the update.
 	gpvReq, _ := svc.GetPolicyVersionRequest(&iam.GetPolicyVersionInput{PolicyArn: policyArn, VersionId: aws.String("v1")})
@@ -475,6 +477,35 @@ func TestEmbeddedIamCreatePolicyVersionMissingPolicy(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.Code)
 	code, _ := extractEmbeddedIamErrorCodeAndMessage(resp)
 	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamCreatePolicyVersionRequiresSetAsDefault verifies the embedded
+// path also rejects a non-default version request given the single-version model.
+func TestEmbeddedIamCreatePolicyVersionRequiresSetAsDefault(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	svc := iam.New(session.New())
+	policyArn := aws.String("arn:aws:iam:::policy/tf-managed")
+
+	createReq, _ := svc.CreatePolicyRequest(&iam.CreatePolicyInput{
+		PolicyName:     aws.String("tf-managed"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = createReq.Build()
+	resp, err := executeEmbeddedIamRequest(api, createReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// SetAsDefault omitted must be rejected.
+	cpvReq, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      policyArn,
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Put*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = cpvReq.Build()
+	resp, err = executeEmbeddedIamRequest(api, cpvReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(resp)
+	assert.Equal(t, "InvalidInput", code)
 }
 
 // TestEmbeddedIamPutUserPolicy tests attaching a policy to a user
