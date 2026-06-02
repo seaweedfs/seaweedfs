@@ -23,6 +23,17 @@ use crate::pb::volume_server_pb;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
 
+/// Slack added over the configured file-size limit when bounding the raw
+/// request body, to allow for multipart/form-data framing overhead. The exact
+/// per-file limit is still enforced on the parsed data after multipart parsing.
+const UPLOAD_BODY_OVERHEAD: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Upper bound on bytes we will materialize in memory for a single request when
+/// expanding stored content (gzip decompression or chunk-manifest assembly).
+/// Guards against gzip bombs and crafted/oversized manifest sizes OOM-killing
+/// the server; legitimate large objects are read via client-side chunk fetches.
+const MAX_EXPANSION_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
+
 // ============================================================================
 // Inflight Throttle Guard
 // ============================================================================
@@ -1452,11 +1463,7 @@ async fn get_or_head_handler_inner(
     if is_compressed {
         if needs_image_ops {
             // Always decompress for image operations (Go decompresses before resize/crop)
-            use flate2::read::GzDecoder;
-            use std::io::Read as _;
-            let mut decoder = GzDecoder::new(&data[..]);
-            let mut decompressed = Vec::new();
-            if decoder.read_to_end(&mut decompressed).is_ok() {
+            if let Some(decompressed) = maybe_decompress_gzip(&data) {
                 data = decompressed;
             }
         } else {
@@ -1474,11 +1481,7 @@ async fn get_or_head_handler_inner(
                 response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
             } else {
                 // Decompress for client
-                use flate2::read::GzDecoder;
-                use std::io::Read as _;
-                let mut decoder = GzDecoder::new(&data[..]);
-                let mut decompressed = Vec::new();
-                if decoder.read_to_end(&mut decompressed).is_ok() {
+                if let Some(decompressed) = maybe_decompress_gzip(&data) {
                     data = decompressed;
                 }
             }
@@ -2134,15 +2137,26 @@ pub async fn post_handler(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Read body
-    let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
+    // Read body, bounded by the configured file-size limit so a single upload
+    // cannot buffer unbounded memory and OOM-kill the server (mirrors Go's
+    // io.LimitReader(r.Body, sizeLimit+1)). A margin covers multipart framing;
+    // the exact per-file limit is still enforced on the parsed data below.
+    let body_limit = if state.file_size_limit_bytes > 0 {
+        (state.file_size_limit_bytes as usize).saturating_add(UPLOAD_BODY_OVERHEAD)
+    } else {
+        usize::MAX
+    };
+    let body = match axum::body::to_bytes(request.into_body(), body_limit).await {
         Ok(b) => b,
         Err(e) => {
-            return json_error_with_query(
-                StatusCode::BAD_REQUEST,
-                format!("read body: {}", e),
-                Some(&query),
-            )
+            // With a limit configured, an error here means the body exceeded it
+            // before we buffered the whole thing; report it like the size check.
+            let msg = if state.file_size_limit_bytes > 0 {
+                format!("file over the limited {} bytes", state.file_size_limit_bytes)
+            } else {
+                format!("read body: {}", e)
+            };
+            return json_error_with_query(StatusCode::BAD_REQUEST, msg, Some(&query));
         }
     };
 
@@ -2761,15 +2775,7 @@ pub async fn delete_handler(
     // If this is a chunk manifest, delete child chunks first
     if n.is_chunk_manifest() {
         let manifest_data = if n.is_compressed() {
-            use flate2::read::GzDecoder;
-            use std::io::Read as _;
-            let mut decoder = GzDecoder::new(&n.data[..]);
-            let mut decompressed = Vec::new();
-            if decoder.read_to_end(&mut decompressed).is_ok() {
-                decompressed
-            } else {
-                n.data.clone()
-            }
+            maybe_decompress_gzip(&n.data).unwrap_or_else(|| n.data.clone())
         } else {
             n.data.clone()
         };
@@ -3124,14 +3130,7 @@ fn try_expand_chunk_manifest(
     last_modified_str: &Option<String>,
 ) -> Option<Response> {
     let data = if n.is_compressed() {
-        use flate2::read::GzDecoder;
-        use std::io::Read as _;
-        let mut decoder = GzDecoder::new(&n.data[..]);
-        let mut decompressed = Vec::new();
-        if decoder.read_to_end(&mut decompressed).is_err() {
-            return None;
-        }
-        decompressed
+        maybe_decompress_gzip(&n.data)?
     } else {
         n.data.clone()
     };
@@ -3140,6 +3139,13 @@ fn try_expand_chunk_manifest(
         Ok(m) => m,
         Err(_) => return None,
     };
+
+    // Guard the attacker-controlled manifest size before allocating: a negative
+    // value would wrap to a huge usize (capacity-overflow panic) and an oversized
+    // one would OOM-kill the server.
+    if manifest.size < 0 || manifest.size as u64 > MAX_EXPANSION_BYTES {
+        return None;
+    }
 
     // Read and concatenate all chunks
     let mut result = vec![0u8; manifest.size as usize];
@@ -3175,15 +3181,7 @@ fn try_expand_chunk_manifest(
             }
         }
         let chunk_data = if chunk_needle.is_compressed() {
-            use flate2::read::GzDecoder;
-            use std::io::Read as _;
-            let mut decoder = GzDecoder::new(&chunk_needle.data[..]);
-            let mut decompressed = Vec::new();
-            if decoder.read_to_end(&mut decompressed).is_ok() {
-                decompressed
-            } else {
-                chunk_needle.data.clone()
-            }
+            maybe_decompress_gzip(&chunk_needle.data).unwrap_or_else(|| chunk_needle.data.clone())
         } else {
             chunk_needle.data.clone()
         };
@@ -3567,9 +3565,15 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
 fn maybe_decompress_gzip(data: &[u8]) -> Option<Vec<u8>> {
     use flate2::read::GzDecoder;
     use std::io::Read;
-    let mut decoder = GzDecoder::new(data);
+    // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
+    // OOM the server when decompressed on read or upload. take(limit+1) lets us
+    // tell "exactly at the limit" apart from "over it".
+    let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
     let mut decompressed = Vec::new();
     decoder.read_to_end(&mut decompressed).ok()?;
+    if decompressed.len() as u64 > MAX_EXPANSION_BYTES {
+        return None;
+    }
     Some(decompressed)
 }
 
