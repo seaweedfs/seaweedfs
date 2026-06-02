@@ -3267,10 +3267,11 @@ fn try_expand_chunk_manifest(
             use flate2::read::GzDecoder;
             use std::io::Read as _;
             let mut decoder = GzDecoder::new(&chunk_needle.data[..]);
+            let window = &mut result[offset..];
             let mut written = 0usize;
             let mut decode_failed = false;
-            while offset + written < result.len() {
-                match decoder.read(&mut result[offset + written..]) {
+            while written < window.len() {
+                match decoder.read(&mut window[written..]) {
                     Ok(0) => break,
                     Ok(n) => written += n,
                     Err(_) => {
@@ -3279,11 +3280,12 @@ fn try_expand_chunk_manifest(
                     }
                 }
             }
-            // If the chunk wasn't decodable gzip at all, fall back to its raw
-            // bytes (truncated to the window), preserving prior behavior.
-            if written == 0 && decode_failed {
-                let copy_len = chunk_needle.data.len().min(result.len() - offset);
-                result[offset..offset + copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
+            // On any decode failure, drop the partial output and fall back to the
+            // chunk's raw bytes (truncated to the window), preserving prior behavior.
+            if decode_failed {
+                window[..written].fill(0);
+                let copy_len = chunk_needle.data.len().min(window.len());
+                window[..copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
             }
         } else {
             let copy_len = chunk_needle.data.len().min(result.len() - offset);
