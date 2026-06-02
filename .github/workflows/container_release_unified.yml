@@ -118,8 +118,9 @@ jobs:
     needs: [build-rust-binaries]
     runs-on: ubuntu-latest
     strategy:
-      # Build sequentially to avoid rate limits
-      max-parallel: 2
+      # All variants at once: pulls hit mirror.gcr.io and pushes go to GHCR only,
+      # so docker.io limits don't apply. Watch the 10 GB gha cache budget.
+      max-parallel: 5
       matrix:
         include:
           # Normal volume - multi-arch
