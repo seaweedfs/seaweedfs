@@ -682,6 +682,9 @@ func (wfs *WFS) ClearCacheDir() {
 	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
 }
 
+// markDirectoryReadThrough drops a hot directory's cached listing. Only safe
+// from the apply loop (onDirectoryUpdate), where it serializes with a build's
+// markCachedFn; off-loop callers must use purgeDirectoryCache.
 func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
 	if !wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now()) {
 		return
@@ -689,6 +692,15 @@ func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
 	if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dirPath); err != nil {
 		glog.V(2).Infof("clear dir cache %s: %v", dirPath, err)
 	}
+}
+
+// purgeDirectoryCache drops a directory's cached listing from off the apply loop
+// (idle eviction, kernel Forget, copy-range fallback), routing through it so a
+// stale wipe can't strand a concurrently-rebuilt directory cached-but-empty.
+func (wfs *WFS) purgeDirectoryCache(dirPath util.FullPath) {
+	wfs.metaCache.PurgeDirectoryChildren(dirPath, func() {
+		wfs.inodeToPath.InvalidateChildrenCache(dirPath)
+	})
 }
 
 func (wfs *WFS) loopEvictIdleDirCache() {
@@ -700,9 +712,7 @@ func (wfs *WFS) loopEvictIdleDirCache() {
 	for range ticker.C {
 		dirs := wfs.inodeToPath.CollectEvictableDirs(time.Now(), wfs.dirIdleEvict)
 		for _, dir := range dirs {
-			if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dir); err != nil {
-				glog.V(2).Infof("evict dir cache %s: %v", dir, err)
-			}
+			wfs.purgeDirectoryCache(dir)
 		}
 	}
 }
