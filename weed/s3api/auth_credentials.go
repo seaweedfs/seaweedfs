@@ -1496,7 +1496,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			if identity != nil {
 				claims = identity.Claims
 			}
-			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, claims, nil)
+			// List is bucket-level; the prefix promoted into object (for the
+			// legacy CanDo path) must not scope the resource ARN. Prefix is
+			// matched via the s3:prefix Condition.
+			policyObject := object
+			if action == s3_constants.ACTION_LIST {
+				policyObject = ""
+			}
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, policyObject, string(action), principal, r, claims, nil)
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
@@ -2174,9 +2181,16 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		return false
 	}
 
-	resource := buildResourceARN(bucket, object)
+	// List is bucket-level; the prefix promoted into object (for the legacy
+	// CanDo path) must not scope the resource ARN or the resolved action
+	// (e.g. ListBucketVersions on ?versions). Prefix is matched via s3:prefix.
+	resourceObject := object
+	if action == s3_constants.ACTION_LIST {
+		resourceObject = ""
+	}
+	resource := buildResourceARN(bucket, resourceObject)
 	principal := buildPrincipalARN(identity, r)
-	s3Action := ResolveS3Action(r, string(action), bucket, object)
+	s3Action := ResolveS3Action(r, string(action), bucket, resourceObject)
 	explicitAllow := false
 	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
 	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
