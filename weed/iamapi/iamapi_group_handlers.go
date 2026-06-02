@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -105,8 +106,8 @@ func (iama *IamApiServer) GetGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.
 		if g.Name == groupName {
 			resp.GetGroupResult.Group.GroupName = &g.Name
 			for _, member := range g.Members {
-				m := member
-				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &iam.User{UserName: &m})
+				user := iamlib.NewUser(member)
+				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &user)
 			}
 			return resp, nil
 		}

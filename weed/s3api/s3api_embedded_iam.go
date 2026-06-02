@@ -2014,8 +2014,8 @@ func (e *EmbeddedIamApi) GetGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.V
 		if g.Name == groupName {
 			resp.GetGroupResult.Group.GroupName = &g.Name
 			for _, member := range g.Members {
-				memberName := member
-				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &iam.User{UserName: &memberName})
+				user := iamlib.NewUser(member)
+				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &user)
 			}
 			return resp, nil
 		}
