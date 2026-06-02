@@ -338,17 +338,25 @@ func (si *ShardsInfo) Copy() *ShardsInfo {
 	}
 }
 
-// DeleteParityShards removes parity shards from a ShardInfo.
-func (si *ShardsInfo) DeleteParityShards() {
-	for id := DataShardsCount; id < TotalShardsCount; id++ {
+// DeleteParityShards removes parity shards (those with id >= dataShards) from
+// a ShardInfo. dataShards is the volume's data-shard count; passing <= 0 falls
+// back to DataShardsCount (the fixed 10+4 layout). The upper bound is
+// MaxShardCount, not TotalShardsCount, so a custom ratio's high parity ids
+// (e.g. 16+6 reaches id 21) are cleared too; Delete no-ops on absent ids.
+func (si *ShardsInfo) DeleteParityShards(dataShards int) {
+	if dataShards <= 0 {
+		dataShards = DataShardsCount
+	}
+	for id := dataShards; id < MaxShardCount; id++ {
 		si.Delete(ShardId(id))
 	}
 }
 
-// MinusParityShards creates a ShardInfo copy, but with parity shards removed.
-func (si *ShardsInfo) MinusParityShards() *ShardsInfo {
+// MinusParityShards creates a ShardInfo copy with parity shards removed for the
+// given data-shard count (<= 0 falls back to DataShardsCount).
+func (si *ShardsInfo) MinusParityShards(dataShards int) *ShardsInfo {
 	result := si.Copy()
-	result.DeleteParityShards()
+	result.DeleteParityShards(dataShards)
 	return result
 }
 
