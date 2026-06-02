@@ -34,6 +34,16 @@ const UPLOAD_BODY_OVERHEAD: usize = 16 * 1024 * 1024; // 16 MiB
 /// the server; legitimate large objects are read via client-side chunk fetches.
 const MAX_EXPANSION_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
 
+/// Why `maybe_decompress_gzip` failed, so callers can distinguish a recoverable
+/// "not valid gzip, use the raw bytes" from "the bomb cap was hit, reject it".
+#[derive(Debug)]
+enum GunzipError {
+    /// Input was not valid gzip / decode failed — callers may fall back to raw.
+    Decode,
+    /// Decompressed output would exceed `MAX_EXPANSION_BYTES` — must be rejected.
+    TooLarge,
+}
+
 // ============================================================================
 // Inflight Throttle Guard
 // ============================================================================
@@ -1463,8 +1473,16 @@ async fn get_or_head_handler_inner(
     if is_compressed {
         if needs_image_ops {
             // Always decompress for image operations (Go decompresses before resize/crop)
-            if let Some(decompressed) = maybe_decompress_gzip(&data) {
-                data = decompressed;
+            match maybe_decompress_gzip(&data) {
+                Ok(decompressed) => data = decompressed,
+                Err(GunzipError::TooLarge) => {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed object exceeds decompression limit",
+                    )
+                        .into_response()
+                }
+                Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
             }
         } else {
             let accept_encoding = headers
@@ -1481,8 +1499,16 @@ async fn get_or_head_handler_inner(
                 response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
             } else {
                 // Decompress for client
-                if let Some(decompressed) = maybe_decompress_gzip(&data) {
-                    data = decompressed;
+                match maybe_decompress_gzip(&data) {
+                    Ok(decompressed) => data = decompressed,
+                    Err(GunzipError::TooLarge) => {
+                        return (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "compressed object exceeds decompression limit",
+                        )
+                            .into_response()
+                    }
+                    Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
                 }
             }
         }
@@ -2142,7 +2168,11 @@ pub async fn post_handler(
     // io.LimitReader(r.Body, sizeLimit+1)). A margin covers multipart framing;
     // the exact per-file limit is still enforced on the parsed data below.
     let body_limit = if state.file_size_limit_bytes > 0 {
-        (state.file_size_limit_bytes as usize).saturating_add(UPLOAD_BODY_OVERHEAD)
+        // try_from (not `as usize`) so a >usize::MAX limit on 32-bit caps at
+        // usize::MAX instead of silently truncating/wrapping to a tiny value.
+        usize::try_from(state.file_size_limit_bytes)
+            .unwrap_or(usize::MAX)
+            .saturating_add(UPLOAD_BODY_OVERHEAD)
     } else {
         usize::MAX
     };
@@ -2296,7 +2326,17 @@ pub async fn post_handler(
     };
 
     let uncompressed_data = if is_gzipped {
-        maybe_decompress_gzip(&body_data_raw).unwrap_or_else(|| body_data_raw.clone())
+        match maybe_decompress_gzip(&body_data_raw) {
+            Ok(d) => d,
+            Err(GunzipError::TooLarge) => {
+                return json_error_with_query(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "compressed object exceeds decompression limit",
+                    Some(&query),
+                );
+            }
+            Err(GunzipError::Decode) => body_data_raw.clone(),
+        }
     } else {
         body_data_raw.clone()
     };
@@ -2775,7 +2815,17 @@ pub async fn delete_handler(
     // If this is a chunk manifest, delete child chunks first
     if n.is_chunk_manifest() {
         let manifest_data = if n.is_compressed() {
-            maybe_decompress_gzip(&n.data).unwrap_or_else(|| n.data.clone())
+            match maybe_decompress_gzip(&n.data) {
+                Ok(d) => d,
+                Err(GunzipError::TooLarge) => {
+                    return json_error_with_query(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed manifest exceeds decompression limit",
+                        Some(&del_query),
+                    );
+                }
+                Err(GunzipError::Decode) => n.data.clone(),
+            }
         } else {
             n.data.clone()
         };
@@ -3130,7 +3180,19 @@ fn try_expand_chunk_manifest(
     last_modified_str: &Option<String>,
 ) -> Option<Response> {
     let data = if n.is_compressed() {
-        maybe_decompress_gzip(&n.data)?
+        match maybe_decompress_gzip(&n.data) {
+            Ok(d) => d,
+            Err(GunzipError::TooLarge) => {
+                return Some(
+                    (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed manifest exceeds decompression limit",
+                    )
+                        .into_response(),
+                )
+            }
+            Err(GunzipError::Decode) => return None,
+        }
     } else {
         n.data.clone()
     };
@@ -3181,13 +3243,39 @@ fn try_expand_chunk_manifest(
             }
         }
         let chunk_data = if chunk_needle.is_compressed() {
-            maybe_decompress_gzip(&chunk_needle.data).unwrap_or_else(|| chunk_needle.data.clone())
+            match maybe_decompress_gzip(&chunk_needle.data) {
+                Ok(d) => d,
+                Err(GunzipError::TooLarge) => {
+                    return Some(
+                        (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "compressed chunk exceeds decompression limit",
+                        )
+                            .into_response(),
+                    )
+                }
+                Err(GunzipError::Decode) => chunk_needle.data.clone(),
+            }
         } else {
             chunk_needle.data.clone()
         };
+        // Validate the attacker-controlled chunk offset before indexing: a
+        // negative value would wrap to a huge usize and underflow `end - offset`.
+        if chunk.offset < 0 {
+            return Some(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("invalid negative chunk offset in {}", chunk.fid),
+                )
+                    .into_response(),
+            );
+        }
         let offset = chunk.offset as usize;
-        let end = std::cmp::min(offset + chunk_data.len(), result.len());
-        let copy_len = end - offset;
+        if offset >= result.len() {
+            continue;
+        }
+        let end = offset.saturating_add(chunk_data.len()).min(result.len());
+        let copy_len = end.saturating_sub(offset);
         if copy_len > 0 {
             result[offset..offset + copy_len].copy_from_slice(&chunk_data[..copy_len]);
         }
@@ -3562,19 +3650,22 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
     encoder.finish().ok()
 }
 
-fn maybe_decompress_gzip(data: &[u8]) -> Option<Vec<u8>> {
+fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
     use flate2::read::GzDecoder;
     use std::io::Read;
     // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
     // OOM the server when decompressed on read or upload. take(limit+1) lets us
-    // tell "exactly at the limit" apart from "over it".
+    // tell "exactly at the limit" apart from "over it", which we reject as
+    // TooLarge so callers fail the request instead of silently using raw bytes.
     let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
     let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).ok()?;
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(|_| GunzipError::Decode)?;
     if decompressed.len() as u64 > MAX_EXPANSION_BYTES {
-        return None;
+        return Err(GunzipError::TooLarge);
     }
-    Some(decompressed)
+    Ok(decompressed)
 }
 
 fn compute_md5_base64(data: &[u8]) -> String {
@@ -3816,7 +3907,11 @@ mod tests {
         let compressed = try_gzip_data(data).unwrap();
         let decompressed = maybe_decompress_gzip(&compressed).unwrap();
         assert_eq!(decompressed, data);
-        assert!(maybe_decompress_gzip(data).is_none());
+        // Non-gzip input is reported as a decode error (callers fall back to raw).
+        assert!(matches!(
+            maybe_decompress_gzip(data),
+            Err(GunzipError::Decode)
+        ));
     }
 
     #[test]
