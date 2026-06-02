@@ -115,7 +115,7 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	}
 
 	// find volume location
-	nodeToEcShardsInfo := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+	nodeToEcShardsInfo, dataShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
 
 	fmt.Printf("ec volume %d shard locations: %+v\n", vid, nodeToEcShardsInfo)
 
@@ -148,7 +148,7 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	}
 
 	// collect ec shards to the server with most space
-	targetNodeLocation, err := collectEcShards(commandEnv, nodeToEcShardsInfo, collection, vid, eligibleTargets)
+	targetNodeLocation, err := collectEcShards(commandEnv, nodeToEcShardsInfo, collection, vid, eligibleTargets, dataShards)
 	if err != nil {
 		return fmt.Errorf("collectEcShards for volume %d: %v", vid, err)
 	}
@@ -281,7 +281,7 @@ func generateNormalVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, c
 
 }
 
-func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, collection string, vid needle.VolumeId, eligibleTargets map[pb.ServerAddress]struct{}) (targetNodeLocation pb.ServerAddress, err error) {
+func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, collection string, vid needle.VolumeId, eligibleTargets map[pb.ServerAddress]struct{}, dataShards int) (targetNodeLocation pb.ServerAddress, err error) {
 
 	maxShardCount := -1
 	existingShardsInfo := erasure_coding.NewShardsInfo()
@@ -291,7 +291,7 @@ func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddre
 				continue
 			}
 		}
-		toBeCopiedShardCount := si.MinusParityShards().Count()
+		toBeCopiedShardCount := si.MinusParityShards(dataShards).Count()
 		if toBeCopiedShardCount > maxShardCount {
 			maxShardCount = toBeCopiedShardCount
 			targetNodeLocation = loc
@@ -310,7 +310,7 @@ func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddre
 			continue
 		}
 
-		needToCopyShardsInfo := si.Minus(existingShardsInfo).MinusParityShards()
+		needToCopyShardsInfo := si.Minus(existingShardsInfo).MinusParityShards(dataShards)
 
 		err = operation.WithVolumeServerClient(false, targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
@@ -401,7 +401,7 @@ func collectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionPattern strin
 	return
 }
 
-func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) map[pb.ServerAddress]*erasure_coding.ShardsInfo {
+func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) (map[pb.ServerAddress]*erasure_coding.ShardsInfo, int) {
 	res := make(map[pb.ServerAddress]*erasure_coding.ShardsInfo)
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
@@ -423,7 +423,8 @@ func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.Volume
 		}
 	})
 
-	return res
+	// OSS is always 10+4; the per-volume ratio override lives in the enterprise build.
+	return res, erasure_coding.DataShardsCount
 }
 
 type decodeDiskUsageState struct {

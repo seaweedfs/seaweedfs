@@ -389,11 +389,15 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			fakeDelNeedle.Id = key
 			fakeDelNeedle.Cookie = 0x12345678
 			fakeDelNeedle.AppendAtNs = uint64(time.Now().UnixNano())
-			_, _, _, err = fakeDelNeedle.Append(dstDatBackend, v.Version())
-			if err != nil {
-				return fmt.Errorf("append deleted %d failed: %v", key, err)
+			fakeDelOffset, _, _, appendErr := fakeDelNeedle.Append(dstDatBackend, v.Version())
+			if appendErr != nil {
+				return fmt.Errorf("append deleted %d failed: %v", key, appendErr)
 			}
-			util.Uint32toBytes(idxEntryBytes[8:12], uint32(0))
+			// Record the tombstone's real .dat offset, like the normal delete path,
+			// so a deletion left at the .dat tail stays visible to the integrity
+			// check on reload. Offset 0 hid the trailing tombstone and falsely
+			// flipped the volume read-only.
+			idxEntryBytes = needle_map.ToBytes(key, ToOffset(int64(fakeDelOffset)), increIdxEntry.size)
 		}
 
 		if _, err := idx.Seek(0, 2); err != nil {

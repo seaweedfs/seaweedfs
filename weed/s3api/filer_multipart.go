@@ -467,7 +467,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			}
 
 			partStartChunk := len(finalParts)
-			partETag := filer.ETag(entry)
+			partETag := getEtagFromEntry(entry)
 
 			for _, chunk := range entry.GetChunks() {
 				finalChunk, chunkErr := completedMultipartChunk(chunk, offset, sses3Info)
@@ -1007,12 +1007,13 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
-			partETag := filer.ETag(entry)
+
+			partETag := getEtagFromEntry(entry)
 			part := &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
 				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
 				Size:         aws.Int64(int64(filer.FileSize(entry))),
-				ETag:         aws.String("\"" + partETag + "\""),
+				ETag:         aws.String(partETag),
 			}
 			output.Part = append(output.Part, part)
 			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s",

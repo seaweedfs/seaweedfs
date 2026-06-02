@@ -788,9 +788,15 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) bool {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) (becameWritable bool) {
+	restoreActiveVolumeCount := false
 	vl.accessLock.Lock()
-	defer vl.accessLock.Unlock()
+	defer func() {
+		vl.accessLock.Unlock()
+		if restoreActiveVolumeCount {
+			vl.adjustActiveVolumeCount(vid, +1)
+		}
+	}()
 
 	vInfo, err := dn.GetVolumesById(vid)
 	if err != nil {
@@ -804,9 +810,17 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 
 	if vl.enoughCopies(vid) {
-		return vl.setVolumeWritable(vid)
+		becameWritable = vl.setVolumeWritable(vid)
+		if becameWritable {
+			if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() {
+				// fullSince marks a prior capacity-full removal that already
+				// decremented activeVolumeCount. Re-adding must pair it once.
+				st.fullSince = time.Time{}
+				restoreActiveVolumeCount = true
+			}
+		}
 	}
-	return false
+	return becameWritable
 }
 
 func (vl *VolumeLayout) enoughCopies(vid needle.VolumeId) bool {

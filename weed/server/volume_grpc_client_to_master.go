@@ -47,7 +47,7 @@ func (vs *VolumeServer) setCurrentMaster(master pb.ServerAddress) {
 func (vs *VolumeServer) checkWithMaster() (err error) {
 	for {
 		for _, master := range vs.SeedMasterNodes {
-			err = operation.WithMasterServerClient(false, master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			err = operation.WithMasterServerClient(context.Background(), false, master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)

@@ -297,7 +297,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false,
+	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))

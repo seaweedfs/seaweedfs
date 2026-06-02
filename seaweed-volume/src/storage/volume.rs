@@ -3071,11 +3071,15 @@ impl Volume {
                 let bytes = fake_del_needle.write_bytes(version);
                 dst_dat.write_all(&bytes)?;
 
+                // Record the tombstone's real .dat offset, like the normal delete path,
+                // so a deletion left at the .dat tail stays visible to the integrity
+                // check on reload. Offset 0 hid the trailing tombstone and falsely
+                // flipped the volume read-only.
                 let mut idx_entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
                 crate::storage::types::idx_entry_to_bytes(
                     &mut idx_entry_buf,
                     key,
-                    Offset::from_actual_offset(0),
+                    Offset::from_actual_offset(dat_offset as i64),
                     Size(crate::storage::types::TOMBSTONE_FILE_SIZE.into()),
                 );
                 dst_idx.write_all(&idx_entry_buf)?;

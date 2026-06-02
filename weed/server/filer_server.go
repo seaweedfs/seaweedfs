@@ -312,7 +312,7 @@ func (fs *FilerServer) checkWithMaster() {
 	for !isConnected {
 		fs.option.Masters.RefreshBySrvIfAvailable()
 		for _, master := range fs.option.Masters.GetInstances() {
-			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			readErr := operation.WithMasterServerClient(context.Background(), false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)

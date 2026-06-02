@@ -526,7 +526,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 		}
 	} else {
-		pb.WithMasterClient(false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
+		pb.WithMasterClient(context.Background(), false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
 			ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
 			defer cancel()
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {

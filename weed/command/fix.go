@@ -37,14 +37,15 @@ var cmdFix = &Command{
 }
 
 var (
-	fixVolumeCollection = cmdFix.Flag.String("collection", "", "an optional volume collection name, if specified only it will be processed")
-	fixVolumeId         = cmdFix.Flag.Int64("volumeId", 0, "an optional volume id, if not 0 (default) only it will be processed")
-	fixIncludeDeleted   = cmdFix.Flag.Bool("includeDeleted", true, "include deleted entries in the index file")
-	fixIgnoreError      = cmdFix.Flag.Bool("ignoreError", false, "an optional, if true will be processed despite errors")
-	fixRemoteFile       = cmdFix.Flag.Bool("remoteFile", false, "an optional, if true will not try to load the local .dat file, but only the remote file")
-	fixGenerateEcx      = cmdFix.Flag.Bool("ecx", false, "regenerate a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards (missing shards are reconstructed from parity when enough survive). Run with the volume server stopped.")
-	fixEcDataShards     = cmdFix.Flag.Int("ecDataShards", 0, "EC data shard count for -ecx (0 = read from .vif, otherwise default 10)")
-	fixEcParityShards   = cmdFix.Flag.Int("ecParityShards", 0, "EC parity shard count for -ecx (0 = read from .vif, infer from shard count, otherwise default 4)")
+	fixVolumeCollection      = cmdFix.Flag.String("collection", "", "an optional volume collection name, if specified only it will be processed")
+	fixVolumeId              = cmdFix.Flag.Int64("volumeId", 0, "an optional volume id, if not 0 (default) only it will be processed")
+	fixIncludeDeleted        = cmdFix.Flag.Bool("includeDeleted", true, "include deleted entries in the index file")
+	fixIgnoreError           = cmdFix.Flag.Bool("ignoreError", false, "an optional, if true will be processed despite errors")
+	fixRemoteFile            = cmdFix.Flag.Bool("remoteFile", false, "an optional, if true will not try to load the local .dat file, but only the remote file")
+	fixGenerateEcx           = cmdFix.Flag.Bool("ecx", false, "regenerate a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards (missing shards are reconstructed from parity when enough survive). Run with the volume server stopped.")
+	fixEcDataShards          = cmdFix.Flag.Int("ecDataShards", 0, "EC data shard count for -ecx (0 = read from .vif, otherwise default 10)")
+	fixEcParityShards        = cmdFix.Flag.Int("ecParityShards", 0, "EC parity shard count for -ecx (0 = read from .vif, infer from shard count, otherwise default 4)")
+	fixEcUnsafeIgnoreSidecar = cmdFix.Flag.Bool("ecUnsafeIgnoreSidecar", false, "for -ecx: proceed even when the EC bitrot checksum sidecar (.ecsum) is malformed or stale, instead of failing closed; the reconstructed shards are not verified against it")
 )
 
 type VolumeFileScanner4Fix struct {
@@ -381,7 +382,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	if !dataComplete {
 		ctx := &erasure_coding.ECContext{DataShards: dataShards, ParityShards: parityShards}
 		glog.Infof("volume %d: %d/%d shards present; reconstructing missing shards (%s) before index rebuild", volumeId, presentCount, dataShards+parityShards, ctx.String())
-		if _, err := erasure_coding.RebuildEcFilesWithContext(base, ctx); err != nil {
+		if _, err := erasure_coding.RebuildEcFiles(base, ctx, *fixEcUnsafeIgnoreSidecar); err != nil {
 			fail(fmt.Errorf("volume %d: reconstruct missing shards from %d survivors: %w", volumeId, presentCount, err))
 			return
 		}

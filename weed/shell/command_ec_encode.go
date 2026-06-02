@@ -359,7 +359,7 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 
 		lastErr = nil
 		for _, vid := range volumeIds {
-			nodeShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+			nodeShards, _ := collectEcNodeShardsInfo(topoInfo, vid, diskType)
 
 			var union erasure_coding.ShardBits
 			for _, info := range nodeShards {

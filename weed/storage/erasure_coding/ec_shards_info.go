@@ -338,17 +338,37 @@ func (si *ShardsInfo) Copy() *ShardsInfo {
 	}
 }
 
-// DeleteParityShards removes parity shards from a ShardInfo.
-func (si *ShardsInfo) DeleteParityShards() {
-	for id := DataShardsCount; id < TotalShardsCount; id++ {
-		si.Delete(ShardId(id))
+// DeleteParityShards removes parity shards (those with id >= dataShards) from
+// a ShardInfo. dataShards is the volume's data-shard count; passing <= 0 falls
+// back to DataShardsCount (the fixed 10+4 layout). The upper bound is
+// MaxShardCount, not TotalShardsCount, so a custom ratio's high parity ids
+// (e.g. 16+6 reaches id 21) are cleared too; Delete no-ops on absent ids.
+func (si *ShardsInfo) DeleteParityShards(dataShards int) {
+	if dataShards <= 0 {
+		dataShards = DataShardsCount
 	}
+	if dataShards >= MaxShardCount {
+		return // every id is a data shard; nothing to remove
+	}
+	si.mu.Lock()
+	defer si.mu.Unlock()
+
+	// Parity ids are >= dataShards. shards stays sorted by Id and shardBits is
+	// a bitmap, so clear them in one locked pass instead of a per-id Delete:
+	// mask off the high bits, then truncate the sorted slice at the first
+	// parity id via binary search.
+	si.shardBits &= ShardBits((uint32(1) << uint(dataShards)) - 1)
+	idx := sort.Search(len(si.shards), func(i int) bool {
+		return si.shards[i].Id >= ShardId(dataShards)
+	})
+	si.shards = si.shards[:idx]
 }
 
-// MinusParityShards creates a ShardInfo copy, but with parity shards removed.
-func (si *ShardsInfo) MinusParityShards() *ShardsInfo {
+// MinusParityShards creates a ShardInfo copy with parity shards removed for the
+// given data-shard count (<= 0 falls back to DataShardsCount).
+func (si *ShardsInfo) MinusParityShards(dataShards int) *ShardsInfo {
 	result := si.Copy()
-	result.DeleteParityShards()
+	result.DeleteParityShards(dataShards)
 	return result
 }
 
