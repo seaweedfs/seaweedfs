@@ -91,6 +91,9 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		} else {
 			var newVidLocations []*master_pb.VolumeLocation
 			newVidLocations, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, uint32(count), option, ms.Topo)
+			if len(newVidLocations) > 0 {
+				ms.broadcastVolumeLocationsToClients(newVidLocations)
+			}
 			count = uint64(len(newVidLocations))
 		}
 	} else {
