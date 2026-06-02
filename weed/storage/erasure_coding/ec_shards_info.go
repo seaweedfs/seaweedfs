@@ -347,9 +347,21 @@ func (si *ShardsInfo) DeleteParityShards(dataShards int) {
 	if dataShards <= 0 {
 		dataShards = DataShardsCount
 	}
-	for id := dataShards; id < MaxShardCount; id++ {
-		si.Delete(ShardId(id))
+	if dataShards >= MaxShardCount {
+		return // every id is a data shard; nothing to remove
 	}
+	si.mu.Lock()
+	defer si.mu.Unlock()
+
+	// Parity ids are >= dataShards. shards stays sorted by Id and shardBits is
+	// a bitmap, so clear them in one locked pass instead of a per-id Delete:
+	// mask off the high bits, then truncate the sorted slice at the first
+	// parity id via binary search.
+	si.shardBits &= ShardBits((uint32(1) << uint(dataShards)) - 1)
+	idx := sort.Search(len(si.shards), func(i int) bool {
+		return si.shards[i].Id >= ShardId(dataShards)
+	})
+	si.shards = si.shards[:idx]
 }
 
 // MinusParityShards creates a ShardInfo copy with parity shards removed for the
