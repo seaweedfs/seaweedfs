@@ -197,6 +197,96 @@ func TestCreatePolicy(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
+// TestCreatePolicyVersion reproduces issue #9785: the AWS Terraform provider
+// updates a managed policy in place via CreatePolicyVersion, which previously
+// returned 501 NotImplemented. The whole read/update surface Terraform relies on
+// is exercised here: GetPolicy (DefaultVersionId), CreatePolicyVersion,
+// GetPolicyVersion and ListPolicyVersions.
+func TestCreatePolicyVersion(t *testing.T) {
+	svc := iam.New(session.New())
+	policyName := "tf-managed-policy"
+	policyArn := aws.String("arn:aws:iam:::policy/" + policyName)
+
+	// Create the managed policy.
+	createReq, _ := svc.CreatePolicyRequest(&iam.CreatePolicyInput{
+		PolicyName:     aws.String(policyName),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*","s3:List*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = createReq.Build()
+	resp, err := executeRequest(createReq.HTTPRequest, CreatePolicyResponse{})
+	assert.Equal(t, nil, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// Update it in place (what Terraform does). This used to return 501.
+	cpvReq, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      policyArn,
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+		SetAsDefault:   aws.Bool(true),
+	})
+	_ = cpvReq.Build()
+	resp, err = executeRequest(cpvReq.HTTPRequest, nil)
+	assert.Equal(t, nil, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	var cpvResp CreatePolicyVersionResponse
+	require.NoError(t, xml.Unmarshal(resp.Body.Bytes(), &cpvResp))
+	require.NotNil(t, cpvResp.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	assert.Equal(t, "v1", *cpvResp.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	require.NotNil(t, cpvResp.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+	assert.True(t, *cpvResp.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+
+	// GetPolicy must advertise a default version so Terraform's read can chain
+	// into GetPolicyVersion.
+	gpReq, _ := svc.GetPolicyRequest(&iam.GetPolicyInput{PolicyArn: policyArn})
+	_ = gpReq.Build()
+	resp, err = executeRequest(gpReq.HTTPRequest, nil)
+	assert.Equal(t, nil, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	var gpResp GetPolicyResponse
+	require.NoError(t, xml.Unmarshal(resp.Body.Bytes(), &gpResp))
+	require.NotNil(t, gpResp.GetPolicyResult.Policy.DefaultVersionId)
+	assert.Equal(t, "v1", *gpResp.GetPolicyResult.Policy.DefaultVersionId)
+
+	// GetPolicyVersion must return the updated document (Get* only, List* gone).
+	gpvReq, _ := svc.GetPolicyVersionRequest(&iam.GetPolicyVersionInput{PolicyArn: policyArn, VersionId: aws.String("v1")})
+	_ = gpvReq.Build()
+	resp, err = executeRequest(gpvReq.HTTPRequest, nil)
+	assert.Equal(t, nil, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	var gpvResp GetPolicyVersionResponse
+	require.NoError(t, xml.Unmarshal(resp.Body.Bytes(), &gpvResp))
+	require.NotNil(t, gpvResp.GetPolicyVersionResult.PolicyVersion.Document)
+	assert.Contains(t, *gpvResp.GetPolicyVersionResult.PolicyVersion.Document, "s3:Get*")
+	assert.NotContains(t, *gpvResp.GetPolicyVersionResult.PolicyVersion.Document, "s3:List*")
+
+	// ListPolicyVersions must report exactly the single default version.
+	lpvReq, _ := svc.ListPolicyVersionsRequest(&iam.ListPolicyVersionsInput{PolicyArn: policyArn})
+	_ = lpvReq.Build()
+	resp, err = executeRequest(lpvReq.HTTPRequest, nil)
+	assert.Equal(t, nil, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	var lpvResp ListPolicyVersionsResponse
+	require.NoError(t, xml.Unmarshal(resp.Body.Bytes(), &lpvResp))
+	require.Len(t, lpvResp.ListPolicyVersionsResult.Versions, 1)
+	assert.Equal(t, "v1", *lpvResp.ListPolicyVersionsResult.Versions[0].VersionId)
+}
+
+// TestCreatePolicyVersionMissingPolicy verifies a NoSuchEntity (404) when the
+// target policy does not exist, matching AWS.
+func TestCreatePolicyVersionMissingPolicy(t *testing.T) {
+	svc := iam.New(session.New())
+	req, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String("arn:aws:iam:::policy/does-not-exist"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+		SetAsDefault:   aws.Bool(true),
+	})
+	_ = req.Build()
+	resp, err := executeRequest(req.HTTPRequest, nil)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusNotFound, resp.Code)
+	code, _ := extractErrorCodeAndMessage(resp)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
 func TestPutUserPolicy(t *testing.T) {
 	userName := aws.String("Test")
 	params := &iam.PutUserPolicyInput{
