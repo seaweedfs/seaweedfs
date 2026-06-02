@@ -183,7 +183,8 @@ func validateAccessKeyStatus(status string) error {
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *ListUsersResponse) {
 	resp = &ListUsersResponse{}
 	for _, ident := range s3cfg.Identities {
-		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &iam.User{UserName: &ident.Name})
+		user := iamlib.NewUser(ident.Name)
+		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &user)
 	}
 	return resp
 }
@@ -213,7 +214,7 @@ func (iama *IamApiServer) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, value
 func (iama *IamApiServer) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *CreateUserResponse) {
 	resp = &CreateUserResponse{}
 	userName := values.Get("UserName")
-	resp.CreateUserResult.User.UserName = &userName
+	resp.CreateUserResult.User = iamlib.NewUser(userName)
 	s3cfg.Identities = append(s3cfg.Identities, &iam_pb.Identity{Name: userName})
 	return resp
 }
@@ -248,7 +249,7 @@ func (iama *IamApiServer) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName str
 	resp = &GetUserResponse{}
 	for _, ident := range s3cfg.Identities {
 		if userName == ident.Name {
-			resp.GetUserResult.User = iam.User{UserName: &ident.Name}
+			resp.GetUserResult.User = iamlib.NewUser(ident.Name)
 			return resp, nil
 		}
 	}

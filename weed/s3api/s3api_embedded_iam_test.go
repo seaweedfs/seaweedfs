@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
@@ -189,6 +190,10 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 	assert.NotNil(t, out.CreateUserResult.User.UserName)
 	assert.Equal(t, "TestUser", *out.CreateUserResult.User.UserName)
 
+	// Issue #9786: terraform aws provider >= 6.41 blocks on a valid ARN.
+	assert.True(t, arn.IsARN(aws.StringValue(out.CreateUserResult.User.Arn)),
+		"CreateUser must return a valid ARN, got %q", aws.StringValue(out.CreateUserResult.User.Arn))
+
 	// Verify user was persisted in config
 	assert.Len(t, api.mockConfig.Identities, 1)
 	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
@@ -337,6 +342,11 @@ func TestEmbeddedIamGetUser(t *testing.T) {
 	// Verify response contains correct username
 	assert.NotNil(t, out.GetUserResult.User.UserName)
 	assert.Equal(t, "TestUser", *out.GetUserResult.User.UserName)
+
+	// Issue #9786: the terraform aws provider reads the user back after creating
+	// it and waits until GetUser returns a value that passes arn.IsARN.
+	assert.True(t, arn.IsARN(aws.StringValue(out.GetUserResult.User.Arn)),
+		"GetUser must return a valid ARN, got %q", aws.StringValue(out.GetUserResult.User.Arn))
 }
 
 // TestEmbeddedIamGetUserImplicitUsername verifies GetUser without a UserName defaults
