@@ -70,7 +70,7 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 		bestFree int32
 	)
 	for _, loc := range s.Locations {
-		if loc.isDiskSpaceLow {
+		if loc.isDiskSpaceLow.Load() {
 			continue
 		}
 		freeCount := ecFreeShardCount(loc, dataShardCount)

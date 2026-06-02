@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -114,7 +115,7 @@ func TestEc9plus3MultiDiskRebootLoadsAllShards(t *testing.T) {
 	}
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
-		dirs, maxCounts, minFree, "", NeedleMapInMemory, diskTypes, nil, 3)
+		dirs, maxCounts, minFree, "", NeedleMapInMemory, diskTypes, nil, 3, stats.DefaultDiskIOProbeConfig())
 	drainStoreChans(t, store)
 
 	missing := []int{}
@@ -216,7 +217,7 @@ func TestEc9plus3ValidateKeepsVolumeWithDat(t *testing.T) {
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir}, []int32{100}, []util.MinFreeSpace{{}}, "",
-		NeedleMapInMemory, []types.DiskType{types.HardDriveType}, nil, 3)
+		NeedleMapInMemory, []types.DiskType{types.HardDriveType}, nil, 3, stats.DefaultDiskIOProbeConfig())
 	drainStoreChans(t, store)
 
 	// HEAD: validateEcVolume uses the 9+3 ratio, the size check passes, and the
@@ -306,7 +307,7 @@ func TestEc9plus3PruneKeepsFullDataShardSet(t *testing.T) {
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1}, []int32{100, 100}, []util.MinFreeSpace{{}, {}}, "",
-		NeedleMapInMemory, []types.DiskType{types.HardDriveType, types.HardDriveType}, nil, 3)
+		NeedleMapInMemory, []types.DiskType{types.HardDriveType, types.HardDriveType}, nil, 3, stats.DefaultDiskIOProbeConfig())
 	drainStoreChans(t, store)
 
 	loc0 := store.Locations[0]

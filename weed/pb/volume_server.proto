@@ -542,6 +542,7 @@ message DiskStatus {
     float percent_free = 5;
     float percent_used = 6;
     string disk_type = 7;
+    string error = 8;
 }
 
 message MemStatus {

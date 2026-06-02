@@ -33,7 +33,7 @@ func TestMaybeAdjustVolumeMaxNoDeadZone(t *testing.T) {
 				t.Skip("free disk too small for this ratio")
 			}
 
-			loc := NewDiskLocation(dir, 0 /* auto */, util.MinFreeSpace{}, "", types.HddType, nil)
+			loc := NewDiskLocation(dir, 0 /* auto */, util.MinFreeSpace{}, "", types.HddType, nil, stats.DefaultDiskIOProbeConfig())
 			defer loc.Close()
 			s := &Store{Locations: []*DiskLocation{loc}}
 			s.SetVolumeSizeLimit(volumeSizeLimit)

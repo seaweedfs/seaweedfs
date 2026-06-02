@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -41,6 +42,7 @@ func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[
 	const dataShards, parityShards = 10, 4
 	const datSize int64 = 10 * 1024 * 1024
 	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 
 	store = NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{hddDir, ssdDir},
@@ -51,6 +53,7 @@ func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[
 		[]types.DiskType{types.HardDriveType, types.SsdType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 
 	captured := []master_pb.VolumeEcShardInformationMessage{}

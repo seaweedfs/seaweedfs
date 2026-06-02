@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -91,6 +92,7 @@ func TestVolumeEcShardsInfo_AggregatesAcrossDisks(t *testing.T) {
 	// cross-disk fallback in NewEcVolume.
 	shardsOnDisk0 := []erasure_coding.ShardId{0, 5}
 	shardsOnDisk1 := []erasure_coding.ShardId{7, 12}
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 
 	store := storage.NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
@@ -101,6 +103,7 @@ func TestVolumeEcShardsInfo_AggregatesAcrossDisks(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {

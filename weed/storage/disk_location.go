@@ -45,8 +45,9 @@ type DiskLocation struct {
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
 
-	isDiskSpaceLow bool
-	closeCh        chan struct{}
+	isDiskSpaceLow    atomic.Bool
+	isDiskUnavailable atomic.Bool
+	closeCh           chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -77,7 +78,7 @@ func writeNewUuid(fileName string) (string, error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string, config stats.DiskIOProbeConfig) *DiskLocation {
 	glog.V(4).Infof("Added new Disk %s: maxVolumes=%d", dir, maxVolumeCount)
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
@@ -109,13 +110,13 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	location.closeCh = make(chan struct{})
 	go func() {
-		location.CheckDiskSpace()
+		location.CheckDiskSpace(config)
 		for {
 			select {
 			case <-location.closeCh:
 				return
 			case <-time.After(time.Minute):
-				location.CheckDiskSpace()
+				location.CheckDiskSpace(config)
 			}
 		}
 	}()
@@ -539,9 +540,17 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 	return
 }
 
-func (l *DiskLocation) CheckDiskSpace() {
+func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
-		s := stats.NewDiskStatus(dir)
+		s := stats.NewDiskStatusOnStart(dir, config)
+		if len(s.Error) != 0 {
+			l.isDiskUnavailable.Store(true)
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
+			glog.V(1).Infof("disk %s is not healthy: %s", dir, s.Error)
+		} else {
+			l.isDiskUnavailable.Store(false)
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(0)
+		}
 		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
@@ -549,12 +558,12 @@ func (l *DiskLocation) CheckDiskSpace() {
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
 		l.AvailableSpace.Store(available)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
-		if isLow != l.isDiskSpaceLow {
-			l.isDiskSpaceLow = !l.isDiskSpaceLow
+		if isLow != l.isDiskSpaceLow.Load() {
+			l.isDiskSpaceLow.Store(isLow)
 		}
 
 		logLevel := glog.Level(4)
-		if l.isDiskSpaceLow {
+		if l.isDiskSpaceLow.Load() {
 			logLevel = glog.Level(0)
 		}
 

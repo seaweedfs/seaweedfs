@@ -94,6 +94,7 @@ func NewStore(
 	diskTypes []DiskType,
 	diskTags [][]string,
 	ldbTimeout int64,
+	diskProbeConfig stats.DiskIOProbeConfig,
 ) (s *Store) {
 	s = &Store{
 		grpcDialOption: grpcDialOption,
@@ -118,7 +119,7 @@ func NewStore(
 		if i < len(diskTags) {
 			tags = diskTags[i]
 		}
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags)
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags, diskProbeConfig)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
@@ -261,7 +262,7 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (re
 		if filterFn != nil && !filterFn(location) {
 			continue
 		}
-		if location.isDiskSpaceLow {
+		if location.isDiskSpaceLow.Load() {
 			continue
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
@@ -322,7 +323,12 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 // hasFreeDiskLocation checks if a disk location has free space
 func (s *Store) hasFreeDiskLocation(location *DiskLocation) bool {
 	// Check if disk space is low first
-	if location.isDiskSpaceLow {
+	if location.isDiskSpaceLow.Load() {
+		return false
+	}
+
+	// Check if disk is available
+	if location.isDiskUnavailable.Load() {
 		return false
 	}
 
@@ -381,7 +387,6 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 	s.DeleteCount = v.nm.DeletedCount()
 	s.DeletedByteCount = v.nm.DeletedSize()
 	s.Size = v.nm.ContentSize()
-
 	return
 }
 
@@ -406,9 +411,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
+		if location.isDiskUnavailable.Load() {
+			continue
+		}
 		var deleteVids []needle.VolumeId
 		effectiveMaxCount := location.MaxVolumeCount
-		if location.isDiskSpaceLow {
+		if location.isDiskSpaceLow.Load() {
 			usedSlots := int32(location.LocalVolumesLen())
 			ecShardCount := location.EcShardCount()
 			usedSlots += int32((ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount)
@@ -496,7 +504,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				if v.noWriteCanDelete {
 					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
 				}
-				if v.location.isDiskSpaceLow {
+				if v.location.isDiskSpaceLow.Load() {
 					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
 				}
 			}
@@ -571,6 +579,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
 	for diskId, location := range s.Locations {
+		if location.isDiskUnavailable.Load() {
+			continue
+		}
+
 		// Collect ecVolume to be deleted
 		var toDeleteEvs []*erasure_coding.EcVolume
 		location.ecVolumesLock.RLock()
