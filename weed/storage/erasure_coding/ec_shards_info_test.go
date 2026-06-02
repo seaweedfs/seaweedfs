@@ -243,7 +243,7 @@ func TestShardsInfo_DeleteParityShards(t *testing.T) {
 		si.Set(ShardInfo{Id: ShardId(i), Size: ShardSize((i + 1) * 1000)})
 	}
 
-	si.DeleteParityShards()
+	si.DeleteParityShards(DataShardsCount)
 
 	// Verify only data shards remain
 	for i := 0; i < DataShardsCount; i++ {
