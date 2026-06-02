@@ -1394,18 +1394,14 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 				latestIsDeleteMarker = pageDM
 			}
 		}
-		// Sample orphan entries (those without ExtVersionIdKey) for
-		// post-scan diagnostics. selectLatestVersion already filters them
-		// out for the latest-pick; we collect names separately so the
-		// anomaly warning has something concrete to point at.
+		// Count entries with no derivable version id as orphans for diagnostics,
+		// using the same detection as selectLatestVersion.
 		for _, e := range entries {
 			if e == nil {
 				continue
 			}
-			if e.Extended != nil {
-				if _, ok := e.Extended[s3_constants.ExtVersionIdKey]; ok {
-					continue
-				}
+			if versionIdFromEntry(e) != "" {
+				continue
 			}
 			orphanCount++
 			if len(orphanSamples) < orphanSampleCap {
@@ -1719,35 +1715,22 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 			}
 		}
 
-		// If still no metadata after retries, fall back to pre-versioning object
+		// No pointer after retries — the null object (pre/suspended versioning)
+		// wins if present; otherwise rescan in case the pointer was lost.
 		if versionsEntry.Extended == nil {
-			glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s/%s after retries, checking for pre-versioning object", bucket, object)
-
-			regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-			if regularErr != nil {
-				return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, normalizedObject)
-			}
-
-			glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s (no Extended metadata case)", bucket, object)
-			return regularEntry, nil
+			glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s/%s after retries, attempting rescan", bucket, object)
+			return s3a.recoverLatestVersionWithoutPointer(bucket, normalizedObject, versionsEntry)
 		}
 	}
 
 	latestVersionIdBytes, hasLatestVersionId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	latestVersionFileBytes, hasLatestVersionFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 
-	if !hasLatestVersionId || !hasLatestVersionFile {
-		// No version metadata means all versioned objects have been deleted.
-		// Fall back to checking for a pre-versioning object.
-		glog.V(2).Infof("getLatestObjectVersion: no version metadata in .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
-
-		regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-		if regularErr != nil {
-			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, normalizedObject)
-		}
-
-		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s after version deletion", bucket, object)
-		return regularEntry, nil
+	if !hasLatestVersionId || len(latestVersionIdBytes) == 0 || !hasLatestVersionFile || len(latestVersionFileBytes) == 0 {
+		// No usable pointer (suspended/all-deleted, or pointer lost/empty). The
+		// null object wins if present; otherwise rescan in case version files remain.
+		glog.V(2).Infof("getLatestObjectVersion: no usable latest-version pointer for %s/%s, recovering", bucket, object)
+		return s3a.recoverLatestVersionWithoutPointer(bucket, normalizedObject, versionsEntry)
 	}
 
 	latestVersionId := string(latestVersionIdBytes)
@@ -1775,10 +1758,54 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	return latestVersionEntry, nil
 }
 
+// recoverLatestVersionWithoutPointer handles a .versions directory that exists
+// but has no usable latest-version pointer. An absent pointer is the legitimate
+// signal that a pre-versioning or suspended-versioning "null" object at the
+// regular path is current, so that object wins; only when it is absent do we
+// rescan .versions/ to rebuild a pointer lost while real version files remain.
+func (s3a *S3ApiServer) recoverLatestVersionWithoutPointer(bucket, normalizedObject string, versionsEntry *filer_pb.Entry) (*filer_pb.Entry, error) {
+	bucketDir := s3a.bucketDir(bucket)
+
+	if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil {
+		return regularEntry, nil
+	}
+
+	// No null object — the pointer may have been lost while version files
+	// remain. Rescan to rebuild it, propagating transient rescan failures
+	// instead of masking them as a not-found miss.
+	healed, healErr := s3a.healStaleLatestVersionPointer(bucket, normalizedObject, versionsEntry, "")
+	if healErr == nil {
+		return healed, nil
+	}
+	if !errors.Is(healErr, filer_pb.ErrNotFound) && status.Code(healErr) != codes.NotFound {
+		return nil, healErr
+	}
+
+	return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, normalizedObject)
+}
+
+// versionIdFromEntry returns a .versions child entry's version id, preferring
+// the Seaweed-X-Amz-Version-Id attribute and falling back to the v_<versionId>
+// file name so entries written outside the normal PUT path still self-heal.
+func versionIdFromEntry(entry *filer_pb.Entry) string {
+	if entry == nil || entry.IsDirectory {
+		return ""
+	}
+	if entry.Extended != nil {
+		if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok && len(versionIdBytes) > 0 {
+			return string(versionIdBytes)
+		}
+	}
+	if versionId, ok := strings.CutPrefix(entry.Name, "v_"); ok {
+		return versionId
+	}
+	return ""
+}
+
 // selectLatestVersion returns the chronologically newest entry with a version
 // id, including delete markers. isDeleteMarker reflects whether the selected
 // entry is a delete marker. Returns nil for latestEntry when the directory
-// contains no version-id-tagged entries.
+// contains no version entries (see versionIdFromEntry for what qualifies).
 //
 // This is the correct selector for the self-heal path: the .versions pointer
 // tracks the current-version-regardless-of-type (see createDeleteMarker), and
@@ -1786,22 +1813,17 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 // ExtDeleteMarkerKey on the returned entry and respond with NoSuchKey.
 func selectLatestVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool) {
 	for _, entry := range entries {
-		if entry == nil || entry.Extended == nil {
+		versionId := versionIdFromEntry(entry)
+		if versionId == "" {
 			continue
 		}
 
-		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
-		if !hasVersionId {
-			continue
-		}
-
-		versionId := string(versionIdBytes)
 		// compareVersionIds returns negative when the first arg is newer
 		if latestVersionId == "" || compareVersionIds(versionId, latestVersionId) < 0 {
 			latestVersionId = versionId
 			latestVersionFileName = entry.Name
 			latestEntry = entry
-			isDeleteMarker = string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+			isDeleteMarker = entry.Extended != nil && string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
 		}
 	}
 	return
