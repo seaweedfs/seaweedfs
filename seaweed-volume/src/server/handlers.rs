@@ -3242,25 +3242,9 @@ fn try_expand_chunk_manifest(
                 )
             }
         }
-        let chunk_data = if chunk_needle.is_compressed() {
-            match maybe_decompress_gzip(&chunk_needle.data) {
-                Ok(d) => d,
-                Err(GunzipError::TooLarge) => {
-                    return Some(
-                        (
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            "compressed chunk exceeds decompression limit",
-                        )
-                            .into_response(),
-                    )
-                }
-                Err(GunzipError::Decode) => chunk_needle.data.clone(),
-            }
-        } else {
-            chunk_needle.data.clone()
-        };
         // Validate the attacker-controlled chunk offset before indexing: a
-        // negative value would wrap to a huge usize and underflow `end - offset`.
+        // negative value would wrap to a huge usize, and an out-of-range one has
+        // nowhere to land.
         if chunk.offset < 0 {
             return Some(
                 (
@@ -3274,10 +3258,36 @@ fn try_expand_chunk_manifest(
         if offset >= result.len() {
             continue;
         }
-        let end = offset.saturating_add(chunk_data.len()).min(result.len());
-        let copy_len = end.saturating_sub(offset);
-        if copy_len > 0 {
-            result[offset..offset + copy_len].copy_from_slice(&chunk_data[..copy_len]);
+        // Write the chunk into its window in `result`. Compressed chunks inflate
+        // directly into the destination slice (bounded by the remaining window),
+        // so a chunk never allocates a second large buffer — peak memory stays at
+        // ~manifest.size instead of doubling. Bytes past the window are dropped,
+        // matching the prior truncation behavior.
+        if chunk_needle.is_compressed() {
+            use flate2::read::GzDecoder;
+            use std::io::Read as _;
+            let mut decoder = GzDecoder::new(&chunk_needle.data[..]);
+            let mut written = 0usize;
+            let mut decode_failed = false;
+            while offset + written < result.len() {
+                match decoder.read(&mut result[offset + written..]) {
+                    Ok(0) => break,
+                    Ok(n) => written += n,
+                    Err(_) => {
+                        decode_failed = true;
+                        break;
+                    }
+                }
+            }
+            // If the chunk wasn't decodable gzip at all, fall back to its raw
+            // bytes (truncated to the window), preserving prior behavior.
+            if written == 0 && decode_failed {
+                let copy_len = chunk_needle.data.len().min(result.len() - offset);
+                result[offset..offset + copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
+            }
+        } else {
+            let copy_len = chunk_needle.data.len().min(result.len() - offset);
+            result[offset..offset + copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
         }
     }
 
