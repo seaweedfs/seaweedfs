@@ -1459,6 +1459,15 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		object = prefix
 	}
 
+	// Batch DeleteObjects keys arrive in the body, not the URL: a bucket-level check
+	// here can't match object-scoped policies. DeleteMultipleObjectsHandler authorizes
+	// each key via AuthorizeBatchDeleteKey.
+	if action == s3_constants.ACTION_WRITE && r.Method == http.MethodPost &&
+		object == "" && r.URL.Query().Has("delete") {
+		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+		return identity, s3err.ErrNone, reqAuthType
+	}
+
 	// For ListBuckets, authorization is performed in the handler by iterating
 	// through buckets and checking permissions for each. Skip the global check here.
 	policyAllows := false
@@ -2332,6 +2341,73 @@ func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identi
 	}
 
 	return iam.VerifyActionPermission(srcReq, identity, Action(action), srcBucket, srcObject)
+}
+
+// AuthorizeBatchDeleteKey authorizes one key from a DeleteObjects body. The route
+// Auth middleware only authenticated the caller (keys arrive in the body, not the
+// URL), so each key is checked here against a synthetic DELETE /<bucket>/<key> that
+// makes ResolveS3Action and buildResourceARN target the object. Mirrors AuthorizeCopySource.
+func (iam *IdentityAccessManagement) AuthorizeBatchDeleteKey(r *http.Request, identity *Identity, bucket, objectKey, versionId string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if bucket == "" || objectKey == "" {
+		return s3err.ErrNone
+	}
+	if identity == nil {
+		return s3err.ErrAccessDenied
+	}
+	if identity.isAdmin() {
+		return s3err.ErrNone
+	}
+
+	// Shallow copy: authorization only reads headers, and this runs once per key.
+	keyReq := new(http.Request)
+	*keyReq = *r
+	keyURL := &url.URL{
+		Scheme: r.URL.Scheme,
+		Host:   r.URL.Host,
+		Path:   "/" + bucket + "/" + objectKey,
+	}
+	// Build the query from scratch so the envelope's "delete" param can't steer
+	// ResolveS3Action; keep the STS token and per-key versionId for policy eval.
+	keyQuery := make(url.Values)
+	if versionId != "" {
+		keyQuery.Set("versionId", versionId)
+	}
+	if strings.Contains(r.URL.RawQuery, "X-Amz-Security-Token") {
+		if token := r.URL.Query().Get("X-Amz-Security-Token"); token != "" {
+			keyQuery.Set("X-Amz-Security-Token", token)
+		}
+	}
+	if len(keyQuery) > 0 {
+		keyURL.RawQuery = keyQuery.Encode()
+	}
+	keyReq.URL = keyURL
+	keyReq.Method = http.MethodDelete
+	keyReq.RequestURI = ""
+	keyReq.Body = nil
+	keyReq.GetBody = nil
+	keyReq.ContentLength = 0
+
+	action := s3_constants.ACTION_WRITE
+
+	if iam.policyEngine != nil {
+		principal := buildPrincipalARN(identity, keyReq)
+		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, action, principal, keyReq, identity.Claims, nil)
+		if err != nil {
+			glog.Errorf("DeleteObjects key policy evaluation failed for %s/%s: %v - denying", bucket, objectKey, err)
+			return s3err.ErrAccessDenied
+		}
+		if evaluated {
+			if allowed {
+				return s3err.ErrNone
+			}
+			return s3err.ErrAccessDenied
+		}
+	}
+
+	return iam.VerifyActionPermission(keyReq, identity, Action(action), bucket, objectKey)
 }
 
 // authorizeWithIAM authorizes requests using the IAM integration policy engine

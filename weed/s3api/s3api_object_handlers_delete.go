@@ -409,6 +409,13 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	versioningConfigured := (versioningState != "")
 	deletedCount := 0
 
+	// Per-key authorization: keys arrive in the body, so the route Auth middleware
+	// only authenticated. Authorize each key via AuthorizeBatchDeleteKey below.
+	var identity *Identity
+	if id := s3_constants.GetIdentityFromContext(r); id != nil {
+		identity, _ = id.(*Identity)
+	}
+
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
@@ -417,6 +424,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
+				continue
+			}
+			if authErr := s3a.iam.AuthorizeBatchDeleteKey(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
+				deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
 				continue
 			}
 
