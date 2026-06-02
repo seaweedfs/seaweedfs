@@ -75,7 +75,6 @@ func TestAppendQueryParameter(t *testing.T) {
 		})
 	}
 }
-
 func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
 	InitGlobalHttpClient()
 
@@ -89,5 +88,29 @@ func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
 	_, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {})
 	if err == nil {
 		t.Fatal("ReadUrlAsStream returned nil error for invalid gzip response")
+	}
+}
+
+func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Delete panicked before returning the request error: %v", r)
+		}
+	}()
+
+	if err := Delete("http://[::1", "jwt"); err == nil {
+		t.Fatal("expected invalid request error")
+	}
+}
+
+func TestDeleteProxiedReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("DeleteProxied panicked before returning the request error: %v", r)
+		}
+	}()
+
+	if _, _, err := DeleteProxied("http://[::1", "jwt"); err == nil {
+		t.Fatal("expected invalid request error")
 	}
 }
