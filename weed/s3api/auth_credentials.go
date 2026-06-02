@@ -1487,12 +1487,9 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			if identity != nil {
 				claims = identity.Claims
 			}
-			// For bucket-level List operations the AWS-canonical resource is the
-			// bucket ARN; the request's ?prefix= is evaluated via the s3:prefix
-			// Condition (see ExtractConditionValuesFromRequest). object may have
-			// been promoted from prefix above so the legacy CanDo path can honor
-			// prefix-scoped Action strings, but that promotion must not leak into
-			// the policy resource ARN.
+			// List is bucket-level; the prefix promoted into object (for the
+			// legacy CanDo path) must not scope the resource ARN. Prefix is
+			// matched via the s3:prefix Condition.
 			policyObject := object
 			if action == s3_constants.ACTION_LIST {
 				policyObject = ""
@@ -2175,18 +2172,16 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		return false
 	}
 
-	// For bucket-level List operations the IAM resource is the bucket ARN;
-	// the request's ?prefix= is evaluated via the s3:prefix Condition. The
-	// upstream prefix-into-object promotion (in authRequestWithAuthType) exists
-	// for legacy prefix-scoped CanDo Action strings and must not bleed into the
-	// IAM resource ARN.
+	// List is bucket-level; the prefix promoted into object (for the legacy
+	// CanDo path) must not scope the resource ARN or the resolved action
+	// (e.g. ListBucketVersions on ?versions). Prefix is matched via s3:prefix.
 	resourceObject := object
 	if action == s3_constants.ACTION_LIST {
 		resourceObject = ""
 	}
 	resource := buildResourceARN(bucket, resourceObject)
 	principal := buildPrincipalARN(identity, r)
-	s3Action := ResolveS3Action(r, string(action), bucket, object)
+	s3Action := ResolveS3Action(r, string(action), bucket, resourceObject)
 	explicitAllow := false
 	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
 	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {

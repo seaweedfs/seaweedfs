@@ -79,6 +79,33 @@ func TestEvaluateIAMPolicies_ListBucketPrefixCondition(t *testing.T) {
 		"prefix outside the s3:prefix condition must be denied")
 }
 
+// Listing variants keep their specific action even when a prefix is promoted
+// into object: ?versions resolves to s3:ListBucketVersions, not s3:ListBucket.
+func TestEvaluateIAMPolicies_ListBucketVersionsWithPrefix(t *testing.T) {
+	const bucket = "test-bucket"
+
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.PutPolicy("list-versions", mustPolicy(t, map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{{
+			"Effect":   "Allow",
+			"Action":   "s3:ListBucketVersions",
+			"Resource": "arn:aws:s3:::" + bucket,
+		}},
+	})))
+
+	identity := &Identity{
+		Name:        "carol",
+		Account:     &AccountAdmin,
+		PolicyNames: []string{"list-versions"},
+		Credentials: []*Credential{{AccessKey: "AKIAEXAMPLE", SecretKey: "secret"}},
+	}
+
+	r := httptest.NewRequest("GET", "/"+bucket+"?versions&prefix=foo/", nil)
+	require.True(t, iam.evaluateIAMPolicies(r, identity, s3_constants.ACTION_LIST, bucket, "foo/"),
+		"s3:ListBucketVersions must still resolve when listing with a prefix")
+}
+
 func mustPolicy(t *testing.T, doc map[string]any) string {
 	t.Helper()
 	b, err := json.Marshal(doc)
