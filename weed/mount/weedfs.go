@@ -505,10 +505,12 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), wfs.option.WritebackCache, func(lastTsNs int64, err error) {
 		glog.Warningf("meta events follow retry from %v: %v", time.Unix(0, lastTsNs), err)
-		if deleteErr := wfs.metaCache.DeleteFolderChildren(context.Background(), util.FullPath(wfs.option.FilerMountRootPath)); deleteErr != nil {
-			glog.Warningf("meta cache cleanup failed: %v", deleteErr)
-		}
+		// A subscription gap may have dropped events, so distrust every cached
+		// listing. Reset the flags first (safe — it never deletes entries), then
+		// wipe the root's stale children through the apply loop so the delete
+		// cannot strand a concurrent rebuild cached-but-empty.
 		wfs.inodeToPath.InvalidateAllChildrenCache()
+		wfs.purgeDirectoryCache(util.FullPath(wfs.option.FilerMountRootPath))
 	}, follower)
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
