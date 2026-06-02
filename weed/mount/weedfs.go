@@ -505,10 +505,12 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), wfs.option.WritebackCache, func(lastTsNs int64, err error) {
 		glog.Warningf("meta events follow retry from %v: %v", time.Unix(0, lastTsNs), err)
-		if deleteErr := wfs.metaCache.DeleteFolderChildren(context.Background(), util.FullPath(wfs.option.FilerMountRootPath)); deleteErr != nil {
-			glog.Warningf("meta cache cleanup failed: %v", deleteErr)
-		}
+		// A subscription gap may have dropped events, so distrust every cached
+		// listing. Reset the flags first (safe — it never deletes entries), then
+		// wipe the root's stale children through the apply loop so the delete
+		// cannot strand a concurrent rebuild cached-but-empty.
 		wfs.inodeToPath.InvalidateAllChildrenCache()
+		wfs.purgeDirectoryCache(util.FullPath(wfs.option.FilerMountRootPath))
 	}, follower)
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
@@ -682,6 +684,9 @@ func (wfs *WFS) ClearCacheDir() {
 	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
 }
 
+// markDirectoryReadThrough drops a hot directory's cached listing. Only safe
+// from the apply loop (onDirectoryUpdate), where it serializes with a build's
+// markCachedFn; off-loop callers must use purgeDirectoryCache.
 func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
 	if !wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now()) {
 		return
@@ -689,6 +694,15 @@ func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
 	if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dirPath); err != nil {
 		glog.V(2).Infof("clear dir cache %s: %v", dirPath, err)
 	}
+}
+
+// purgeDirectoryCache drops a directory's cached listing from off the apply loop
+// (idle eviction, kernel Forget, copy-range fallback), routing through it so a
+// stale wipe can't strand a concurrently-rebuilt directory cached-but-empty.
+func (wfs *WFS) purgeDirectoryCache(dirPath util.FullPath) {
+	wfs.metaCache.PurgeDirectoryChildren(dirPath, func() {
+		wfs.inodeToPath.InvalidateChildrenCache(dirPath)
+	})
 }
 
 func (wfs *WFS) loopEvictIdleDirCache() {
@@ -700,9 +714,7 @@ func (wfs *WFS) loopEvictIdleDirCache() {
 	for range ticker.C {
 		dirs := wfs.inodeToPath.CollectEvictableDirs(time.Now(), wfs.dirIdleEvict)
 		for _, dir := range dirs {
-			if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dir); err != nil {
-				glog.V(2).Infof("evict dir cache %s: %v", dir, err)
-			}
+			wfs.purgeDirectoryCache(dir)
 		}
 	}
 }
