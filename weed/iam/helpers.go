@@ -28,10 +28,9 @@ func UserArn(userName string) string {
 // blocks until GetUser returns a value that passes arn.IsARN, so an empty Arn
 // leaves apply hanging until it times out.
 func NewUser(userName string) iam.User {
-	name := userName
 	arn := UserArn(userName)
 	path := "/"
-	return iam.User{UserName: &name, Arn: &arn, Path: &path}
+	return iam.User{UserName: &userName, Arn: &arn, Path: &path}
 }
 
 // GenerateRandomString generates a cryptographically secure random string.
