@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 var (
@@ -466,13 +467,19 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	var expectedShardSize int64 = -1
 	datExists := false
 
+	// Resolve the data-shard count from the volume's own .vif, which is
+	// written at encode time and travels with the volume. The volume
+	// server never loads the cluster EC config into memory, so the OSS
+	// default (10) would size a custom-ratio volume's shards (e.g. 9+3)
+	// for 10 data shards, fail the size check, and wrongly delete a
+	// healthy volume on reboot. Fall back to the default only when the
+	// .vif carries no EC shard config.
+	dataShards := l.ecDataShardsFromVif(collection, vid)
+
 	// If .dat file exists, compute exact expected shard size from it.
-	// Pass the build's default data-shard count; calculateExpectedShardSize
-	// takes it as a parameter so tests / enterprise builds can supply
-	// their own.
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
 		datExists = true
-		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), erasure_coding.DataShardsCount)
+		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), dataShards)
 	} else if !os.IsNotExist(err) {
 		// If stat fails with unexpected error (permission, I/O), fail validation
 		// Don't treat this as "distributed EC" - it could be a temporary error
@@ -525,15 +532,49 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 		return true
 	}
 
-	// If .dat file exists, we need at least DataShardsCount shards locally
-	// Otherwise it's an incomplete EC encoding that should be cleaned up
-	if shardCount < erasure_coding.DataShardsCount {
+	// If .dat file exists, we need at least DataShards shards locally
+	// for the volume's configured ratio. Otherwise it's an incomplete
+	// EC encoding that should be cleaned up.
+	if shardCount < dataShards {
 		glog.Warningf("EC volume %d has .dat file but only %d shards (need at least %d for local EC)",
-			vid, shardCount, erasure_coding.DataShardsCount)
+			vid, shardCount, dataShards)
 		return false
 	}
 
 	return true
+}
+
+// ecDataShardsFromVif resolves the data-shard count for an EC volume from
+// its own .vif (EcShardConfig), checking the data dir then the idx dir. The
+// .vif is the source of truth for custom ratios on the volume server, which
+// never holds the cluster EC config in memory. Falls back to the default
+// ratio when the .vif carries no EC shard config.
+func (l *DiskLocation) ecDataShardsFromVif(collection string, vid needle.VolumeId) int {
+	// At most two dirs to check; avoid slice/map allocations on this
+	// per-volume startup path.
+	if l.Directory != "" {
+		if ds := ecDataShardsFromVifDir(collection, l.Directory, vid); ds > 0 {
+			return ds
+		}
+	}
+	if l.IdxDirectory != "" && l.IdxDirectory != l.Directory {
+		if ds := ecDataShardsFromVifDir(collection, l.IdxDirectory, vid); ds > 0 {
+			return ds
+		}
+	}
+	return erasure_coding.DataShardsCount
+}
+
+// ecDataShardsFromVifDir returns the .vif EcShardConfig data-shard count for
+// (collection, vid) under dir, or 0 when absent / not custom.
+func ecDataShardsFromVifDir(collection, dir string, vid needle.VolumeId) int {
+	vifName := erasure_coding.EcShardFileName(collection, dir, int(vid)) + ".vif"
+	if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifName); found && vi.EcShardConfig != nil {
+		if ds := int(vi.EcShardConfig.DataShards); ds > 0 {
+			return ds
+		}
+	}
+	return 0
 }
 
 // removeEcVolumeFiles removes all EC-related files for a volume
