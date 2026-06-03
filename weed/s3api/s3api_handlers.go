@@ -58,16 +58,16 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 		addCandidate(filer)
 	}
 
-	// An explicit preferred owner is tried first even if health-flagged: demoting it
-	// behind a healthy replica would let that replica's authoritative NotFound mask a
-	// write that has only reached the owner. Health-order the rest, unhealthy ones
-	// last so a request still progresses when all are flagged.
+	// preferred (the routed owner) is tried first even when health-flagged, so a
+	// replica's authoritative NotFound can't mask a write that only reached the owner.
+	// A recently-unreachable filer counts as unhealthy, deferring a dead owner that is
+	// also the current filer to the tail rather than dialing it before healthy replicas.
 	var healthy, unhealthy []pb.ServerAddress
 	for _, filer := range candidates {
 		if filer == preferred {
 			continue
 		}
-		if s3a.filerClient.ShouldSkipUnhealthyFiler(filer) {
+		if s3a.filerClient.ShouldSkipUnhealthyFiler(filer) || s3a.ownerRecentlyUnreachable(filer) {
 			unhealthy = append(unhealthy, filer)
 		} else {
 			healthy = append(healthy, filer)
