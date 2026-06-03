@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"os"
 
@@ -51,11 +52,19 @@ func NewCertificateAuthenticator(userStore user.Store, enabled bool, caKeysFile 
 	}
 	a.trustedCAs = cas
 
+	// Pre-marshal trusted CA keys once. IsUserAuthority runs on every
+	// authentication attempt, so caching the marshaled form avoids
+	// repeated allocations on the hot path.
+	trustedCAsMarshaled := make([][]byte, len(cas))
+	for i, ca := range cas {
+		trustedCAsMarshaled[i] = ca.Marshal()
+	}
+
 	a.checker = &ssh.CertChecker{
 		IsUserAuthority: func(auth ssh.PublicKey) bool {
 			marshaled := auth.Marshal()
-			for _, ca := range a.trustedCAs {
-				if subtle.ConstantTimeCompare(marshaled, ca.Marshal()) == 1 {
+			for _, caBytes := range trustedCAsMarshaled {
+				if subtle.ConstantTimeCompare(marshaled, caBytes) == 1 {
 					return true
 				}
 			}
@@ -99,7 +108,11 @@ func (a *CertificateAuthenticator) Authenticate(conn ssh.ConnMetadata, key ssh.P
 
 	// The SSH login user must exist in the SeaweedFS user store.
 	if _, err := a.userStore.GetUser(username); err != nil {
-		return nil, fmt.Errorf("user %q not found", username)
+		var notFound *user.UserNotFoundError
+		if errors.As(err, &notFound) {
+			return nil, fmt.Errorf("user %q not found", username)
+		}
+		return nil, fmt.Errorf("lookup user %q: %w", username, err)
 	}
 
 	if perms == nil {

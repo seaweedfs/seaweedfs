@@ -305,7 +305,8 @@ func TestNewCertificateAuthenticator_MissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 	// Sanity: not a not-found-user-style error.
-	if errors.Is(err, &user.UserNotFoundError{}) {
+	var notFound *user.UserNotFoundError
+	if errors.As(err, &notFound) {
 		t.Fatalf("unexpected error type: %v", err)
 	}
 }
