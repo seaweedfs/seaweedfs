@@ -54,10 +54,12 @@ func (s *captureTraverseStream) Send(resp *filer_pb.TraverseBfsMetadataResponse)
 
 func TestTraverseBfsMetadata(t *testing.T) {
 	store := newRenameTestStore()
-	for _, dir := range []string{"/", "/a", "/a/sub", "/b", "/.system"} {
+	// "/.system-data" shares the "/.system" byte prefix but is a different
+	// path component, so it must not be excluded.
+	for _, dir := range []string{"/", "/a", "/a/sub", "/b", "/.system", "/.system-data"} {
 		store.entries[dir] = newDirectoryEntry(dir, 1)
 	}
-	for _, file := range []string{"/a/f1", "/a/sub/f2", "/b/f3", "/.system/secret"} {
+	for _, file := range []string{"/a/f1", "/a/sub/f2", "/b/f3", "/.system/secret", "/.system-data/keep"} {
 		store.entries[file] = newFileEntry(file, 2)
 	}
 
@@ -70,8 +72,12 @@ func TestTraverseBfsMetadata(t *testing.T) {
 	}, stream)
 	assert.NoError(t, err)
 
-	// The excluded subtree is skipped; everything else is visited exactly once.
-	assert.ElementsMatch(t, []string{"/", "/a", "/a/f1", "/a/sub", "/a/sub/f2", "/b", "/b/f3"}, stream.visited)
+	// The excluded subtree is skipped; everything else (including the
+	// /.system-data sibling) is visited exactly once.
+	assert.ElementsMatch(t, []string{
+		"/", "/a", "/a/f1", "/a/sub", "/a/sub/f2", "/b", "/b/f3",
+		"/.system-data", "/.system-data/keep",
+	}, stream.visited)
 
 	// Each entry's parent must be streamed before the entry itself, so a
 	// consumer can apply the tree top-down.

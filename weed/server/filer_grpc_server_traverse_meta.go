@@ -23,9 +23,17 @@ func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequ
 	ctx := stream.Context()
 
 	isExcluded := func(path util.FullPath) bool {
-		return excludedTrie.MatchPrefix([]byte(path), func(key []byte, value bool) bool {
+		excluded := false
+		excludedTrie.MatchPrefix([]byte(path), func(key []byte, value bool) bool {
+			// Only exclude when the prefix ends on a path-component boundary,
+			// so /a/b does not also exclude a sibling like /a/bc.
+			if len(path) == len(key) || path[len(key)] == '/' {
+				excluded = true
+				return false
+			}
 			return true
 		})
+		return excluded
 	}
 
 	// Send each entry as it is visited and queue only directory paths to
