@@ -48,6 +48,9 @@ type SFTPServiceOptions struct {
 	// User Management
 	UserStoreFile string // Path to user store file
 
+	// Certificate Authentication
+	TrustedUserCAKeysFile string // Path to file with trusted user CA public keys (OpenSSH authorized_keys format)
+
 	// JWT Configuration for Filer
 	FilerSigningKey          []byte // JWT signing key for filer uploads
 	FilerSigningExpiresAfter int    // JWT token expiration time in seconds
@@ -65,7 +68,11 @@ func NewSFTPService(options *SFTPServiceOptions) *SFTPService {
 	service.userStore = userStore
 
 	// Initialize auth manager
-	service.authManager = auth.NewManager(userStore, options.AuthMethods)
+	authManager, err := auth.NewManager(userStore, options.AuthMethods, options.TrustedUserCAKeysFile)
+	if err != nil {
+		glog.Fatalf("Failed to initialize auth manager: %v", err)
+	}
+	service.authManager = authManager
 
 	return &service
 }
