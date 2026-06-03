@@ -32,9 +32,10 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 
 }
 
-// withFilerClientFailover runs fn against preferred (if set), then the current
-// filer, then the rest, trying healthy filers before unhealthy ones. Failover is
-// for transport errors only: a reached filer's ErrNotFound is authoritative (no
+// withFilerClientFailover runs fn against preferred (if set) first, then the
+// remaining filers (current, then the rest) with healthy ones before unhealthy.
+// Failover is for transport errors only: a reached filer's ErrNotFound is
+// authoritative (no
 // fan-out, no resurrecting a peer's not-yet-replicated tombstone). preferred lets a
 // caller route to a key's ring owner for read-after-write; it may be a filer outside
 // the static list (the bookkeeping no-ops for untracked addresses). A failover
@@ -57,19 +58,30 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 		addCandidate(filer)
 	}
 
-	// Healthy filers first (keeping their priority), unhealthy ones only as a last
-	// resort so a request still progresses when all are flagged.
+	// An explicit preferred owner is tried first even if health-flagged: demoting it
+	// behind a healthy replica would let that replica's authoritative NotFound mask a
+	// write that has only reached the owner. Health-order the rest, unhealthy ones
+	// last so a request still progresses when all are flagged.
 	var healthy, unhealthy []pb.ServerAddress
 	for _, filer := range candidates {
+		if filer == preferred {
+			continue
+		}
 		if s3a.filerClient.ShouldSkipUnhealthyFiler(filer) {
 			unhealthy = append(unhealthy, filer)
 		} else {
 			healthy = append(healthy, filer)
 		}
 	}
+	ordered := make([]pb.ServerAddress, 0, len(candidates))
+	if preferred != "" {
+		ordered = append(ordered, preferred)
+	}
+	ordered = append(ordered, healthy...)
+	ordered = append(ordered, unhealthy...)
 
 	var lastErr error
-	for _, filer := range append(healthy, unhealthy...) {
+	for _, filer := range ordered {
 		err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 			return fn(filer_pb.NewSeaweedFilerClient(grpcConnection))
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
