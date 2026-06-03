@@ -267,7 +267,8 @@ func (e *EmbeddedIamApi) ReloadConfiguration() error {
 func (e *EmbeddedIamApi) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) *iamListUsersResponse {
 	resp := &iamListUsersResponse{}
 	for _, ident := range s3cfg.Identities {
-		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &iam.User{UserName: &ident.Name})
+		user := iamlib.NewUser(ident.Name)
+		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &user)
 	}
 	return resp
 }
@@ -315,7 +316,7 @@ func (e *EmbeddedIamApi) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 		}
 	}
 
-	resp.CreateUserResult.User.UserName = &userName
+	resp.CreateUserResult.User = iamlib.NewUser(userName)
 	s3cfg.Identities = append(s3cfg.Identities, &iam_pb.Identity{Name: userName}) // Disabled defaults to false (enabled)
 	return resp, nil
 }
@@ -355,7 +356,7 @@ func (e *EmbeddedIamApi) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName stri
 	resp := &iamGetUserResponse{}
 	for _, ident := range s3cfg.Identities {
 		if userName == ident.Name {
-			resp.GetUserResult.User = iam.User{UserName: &ident.Name}
+			resp.GetUserResult.User = iamlib.NewUser(ident.Name)
 			return resp, nil
 		}
 	}
@@ -2096,8 +2097,8 @@ func (e *EmbeddedIamApi) GetGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.V
 		if g.Name == groupName {
 			resp.GetGroupResult.Group.GroupName = &g.Name
 			for _, member := range g.Members {
-				memberName := member
-				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &iam.User{UserName: &memberName})
+				user := iamlib.NewUser(member)
+				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &user)
 			}
 			return resp, nil
 		}
