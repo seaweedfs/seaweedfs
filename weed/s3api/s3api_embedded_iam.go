@@ -96,6 +96,8 @@ type (
 	iamGetPolicyResponse                = iamlib.GetPolicyResponse
 	iamListPolicyVersionsResponse       = iamlib.ListPolicyVersionsResponse
 	iamGetPolicyVersionResponse         = iamlib.GetPolicyVersionResponse
+	iamCreatePolicyVersionResponse      = iamlib.CreatePolicyVersionResponse
+	iamDeletePolicyVersionResponse      = iamlib.DeletePolicyVersionResponse
 	iamCreateUserResponse               = iamlib.CreateUserResponse
 	iamDeleteUserResponse               = iamlib.DeleteUserResponse
 	iamGetUserResponse                  = iamlib.GetUserResponse
@@ -827,6 +829,87 @@ func (e *EmbeddedIamApi) GetPolicyVersion(ctx context.Context, values url.Values
 		Document:         &document,
 	}
 	return resp, nil
+}
+
+// CreatePolicyVersion replaces a managed policy's document with a new version.
+// SeaweedFS keeps a single current document per managed policy (no version
+// history), so the new document always becomes version "v1" / the default. This
+// is what the AWS Terraform provider calls to update an aws_iam_policy in place.
+func (e *EmbeddedIamApi) CreatePolicyVersion(ctx context.Context, values url.Values) (*iamCreatePolicyVersionResponse, *iamError) {
+	resp := &iamCreatePolicyVersionResponse{}
+	policyName, err := iamPolicyNameFromArn(values.Get("PolicyArn"))
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	policyDocumentString := values.Get("PolicyDocument")
+	if policyDocumentString == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyDocument is required")}
+	}
+	// SeaweedFS stores a single, always-default managed policy version. On AWS,
+	// SetAsDefault=false stages a non-default version without activating it; we
+	// can't honor that, so reject it rather than silently changing permissions.
+	if !strings.EqualFold(values.Get("SetAsDefault"), "true") {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("SetAsDefault must be true: SeaweedFS stores a single managed policy version")}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+	if _, err := e.getActions(&policyDocument); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+	existing, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if existing == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	if err := e.credentialManager.UpdatePolicy(ctx, policyName, policyDocument); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	versionID := "v1"
+	isDefaultVersion := true
+	document := policyDocumentString
+	resp.CreatePolicyVersionResult.PolicyVersion = iam.PolicyVersion{
+		VersionId:        &versionID,
+		IsDefaultVersion: &isDefaultVersion,
+		Document:         &document,
+	}
+	return resp, nil
+}
+
+// DeletePolicyVersion is accepted for API completeness. With a single stored
+// version that is always the default, the only valid responses are NoSuchEntity
+// (unknown version) and the AWS "cannot delete the default version" conflict.
+func (e *EmbeddedIamApi) DeletePolicyVersion(ctx context.Context, values url.Values) (*iamDeletePolicyVersionResponse, *iamError) {
+	resp := &iamDeletePolicyVersionResponse{}
+	policyName, err := iamPolicyNameFromArn(values.Get("PolicyArn"))
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	versionID := values.Get("VersionId")
+	if versionID == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("VersionId is required")}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policy, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	if versionID == "v1" {
+		return resp, &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete the default version of policy %s", policyName)}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy version %s not found", versionID)}
 }
 
 func iamPolicyNameFromArn(policyArn string) (string, error) {
@@ -2680,6 +2763,21 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			return nil, iamErr
 		}
 		changed = false
+	case "CreatePolicyVersion":
+		var iamErr *iamError
+		response, iamErr = e.CreatePolicyVersion(ctx, values)
+		if iamErr != nil {
+			glog.Errorf("CreatePolicyVersion: %+v", iamErr.Error)
+			return nil, iamErr
+		}
+		changed = false
+	case "DeletePolicyVersion":
+		var iamErr *iamError
+		response, iamErr = e.DeletePolicyVersion(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
 	case "SetUserStatus":
 		var iamErr *iamError
 		response, iamErr = e.SetUserStatus(s3cfg, values)
@@ -2832,7 +2930,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy" || action == "CreateUser" || action == "PutGroupPolicy" || action == "DeleteGroupPolicy" {
+	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "CreatePolicyVersion" || action == "DeletePolicy" || action == "CreateUser" || action == "PutGroupPolicy" || action == "DeleteGroupPolicy" {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {

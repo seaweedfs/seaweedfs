@@ -416,6 +416,98 @@ func TestEmbeddedIamCreatePolicy(t *testing.T) {
 	assert.NotNil(t, out.CreatePolicyResult.Policy.PolicyId)
 }
 
+// TestEmbeddedIamCreatePolicyVersion covers the embedded IAM path for issue
+// #9785: updating a managed policy in place via CreatePolicyVersion (used by the
+// AWS Terraform provider) instead of returning 501 NotImplemented.
+func TestEmbeddedIamCreatePolicyVersion(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	svc := iam.New(session.New())
+	policyArn := aws.String("arn:aws:iam:::policy/tf-managed")
+
+	// Create the managed policy.
+	createReq, _ := svc.CreatePolicyRequest(&iam.CreatePolicyInput{
+		PolicyName:     aws.String("tf-managed"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*","s3:List*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = createReq.Build()
+	resp, err := executeEmbeddedIamRequest(api, createReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// Update it in place. This used to return 501 NotImplemented.
+	cpvReq, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      policyArn,
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+		SetAsDefault:   aws.Bool(true),
+	})
+	_ = cpvReq.Build()
+	out := iamCreatePolicyVersionResponse{}
+	resp, err = executeEmbeddedIamRequest(api, cpvReq.HTTPRequest, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.NotNil(t, out.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	assert.Equal(t, "v1", *out.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	require.NotNil(t, out.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+	assert.True(t, *out.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+
+	// The stored document must reflect the update.
+	gpvReq, _ := svc.GetPolicyVersionRequest(&iam.GetPolicyVersionInput{PolicyArn: policyArn, VersionId: aws.String("v1")})
+	_ = gpvReq.Build()
+	gpvOut := iamGetPolicyVersionResponse{}
+	resp, err = executeEmbeddedIamRequest(api, gpvReq.HTTPRequest, &gpvOut)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.NotNil(t, gpvOut.GetPolicyVersionResult.PolicyVersion.Document)
+	assert.Contains(t, *gpvOut.GetPolicyVersionResult.PolicyVersion.Document, "s3:Get*")
+	assert.NotContains(t, *gpvOut.GetPolicyVersionResult.PolicyVersion.Document, "s3:List*")
+}
+
+// TestEmbeddedIamCreatePolicyVersionMissingPolicy verifies NoSuchEntity when the
+// target policy does not exist.
+func TestEmbeddedIamCreatePolicyVersionMissingPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	req, _ := iam.New(session.New()).CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String("arn:aws:iam:::policy/does-not-exist"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+		SetAsDefault:   aws.Bool(true),
+	})
+	_ = req.Build()
+	resp, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(resp)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamCreatePolicyVersionRequiresSetAsDefault verifies the embedded
+// path also rejects a non-default version request given the single-version model.
+func TestEmbeddedIamCreatePolicyVersionRequiresSetAsDefault(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	svc := iam.New(session.New())
+	policyArn := aws.String("arn:aws:iam:::policy/tf-managed")
+
+	createReq, _ := svc.CreatePolicyRequest(&iam.CreatePolicyInput{
+		PolicyName:     aws.String("tf-managed"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = createReq.Build()
+	resp, err := executeEmbeddedIamRequest(api, createReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// SetAsDefault omitted must be rejected.
+	cpvReq, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      policyArn,
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Put*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = cpvReq.Build()
+	resp, err = executeEmbeddedIamRequest(api, cpvReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(resp)
+	assert.Equal(t, "InvalidInput", code)
+}
+
 // TestEmbeddedIamPutUserPolicy tests attaching a policy to a user
 func TestEmbeddedIamPutUserPolicy(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()

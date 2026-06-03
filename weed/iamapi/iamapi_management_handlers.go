@@ -46,6 +46,11 @@ var policyLock = sync.RWMutex{}
 
 const policyArnPrefix = "arn:aws:iam:::policy/"
 
+// policyDefaultVersionId is the single managed-policy version SeaweedFS exposes.
+// Managed policies are stored as one current document with no version history,
+// so the API presents exactly one version ("v1") which is always the default.
+const policyDefaultVersionId = "v1"
+
 // parsePolicyArn validates an IAM policy ARN and extracts the policy name.
 func parsePolicyArn(policyArn string) (string, *IamError) {
 	if !strings.HasPrefix(policyArn, policyArnPrefix) {
@@ -618,9 +623,15 @@ func (iama *IamApiServer) GetPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url
 	}
 
 	policyId := Hash(&policyName)
+	path := "/"
+	defaultVersionId := policyDefaultVersionId
+	isAttachable := true
 	resp.GetPolicyResult.Policy.PolicyName = &policyName
 	resp.GetPolicyResult.Policy.Arn = &policyArn
 	resp.GetPolicyResult.Policy.PolicyId = &policyId
+	resp.GetPolicyResult.Policy.Path = &path
+	resp.GetPolicyResult.Policy.DefaultVersionId = &defaultVersionId
+	resp.GetPolicyResult.Policy.IsAttachable = &isAttachable
 	return resp, nil
 }
 
@@ -690,6 +701,200 @@ func (iama *IamApiServer) ListPolicies(s3cfg *iam_pb.S3ApiConfiguration, values 
 		})
 	}
 	return resp, nil
+}
+
+// CreatePolicyVersion replaces a managed policy's document with a new version.
+// SeaweedFS keeps a single current document per managed policy (no version
+// history), so the new document always becomes version "v1" / the default. This
+// is what the AWS Terraform provider calls to update an aws_iam_policy in place.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicyVersion.html
+func (iama *IamApiServer) CreatePolicyVersion(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *CreatePolicyVersionResponse, iamError *IamError) {
+	resp = &CreatePolicyVersionResponse{}
+	policyArn := values.Get("PolicyArn")
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
+	policyDocumentString := values.Get("PolicyDocument")
+	if policyDocumentString == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyDocument is required")}
+	}
+	// SeaweedFS stores a single, always-default managed policy version. On AWS,
+	// SetAsDefault=false stages a non-default version without activating it; we
+	// can't honor that, so reject it rather than silently changing permissions.
+	if !strings.EqualFold(values.Get("SetAsDefault"), "true") {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("SetAsDefault must be true: SeaweedFS stores a single managed policy version")}
+	}
+	policyDocument, err := GetPolicyDocument(&policyDocumentString)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+	if _, err := GetActions(&policyDocument); err != nil {
+		return resp, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+
+	policies := Policies{}
+	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if _, exists := policies.Policies[policyName]; !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	policies.Policies[policyName] = policyDocument
+	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	// The denormalized Identity.Actions caches were derived from the old
+	// document; refresh every identity that has this managed policy attached
+	// (directly or via group membership) so the new document takes effect.
+	recomputeActionsForManagedPolicy(iama, s3cfg, &policies, policyName)
+
+	versionId := policyDefaultVersionId
+	isDefault := true
+	document := policyDocumentString
+	resp.CreatePolicyVersionResult.PolicyVersion = iam.PolicyVersion{
+		VersionId:        &versionId,
+		IsDefaultVersion: &isDefault,
+		Document:         &document,
+	}
+	return resp, nil
+}
+
+// ListPolicyVersions lists the versions of a managed policy. SeaweedFS stores a
+// single current document per policy, so exactly one version ("v1", the
+// default) is reported.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicyVersions.html
+func (iama *IamApiServer) ListPolicyVersions(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *ListPolicyVersionsResponse, iamError *IamError) {
+	resp = &ListPolicyVersionsResponse{}
+	policyName, iamError := parsePolicyArn(values.Get("PolicyArn"))
+	if iamError != nil {
+		return resp, iamError
+	}
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if _, exists := policies.Policies[policyName]; !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	versionId := policyDefaultVersionId
+	isDefault := true
+	resp.ListPolicyVersionsResult.Versions = []*iam.PolicyVersion{{
+		VersionId:        &versionId,
+		IsDefaultVersion: &isDefault,
+	}}
+	resp.ListPolicyVersionsResult.IsTruncated = false
+	return resp, nil
+}
+
+// GetPolicyVersion returns the document for a managed policy version. Only the
+// single stored version ("v1") exists.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicyVersion.html
+func (iama *IamApiServer) GetPolicyVersion(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *GetPolicyVersionResponse, iamError *IamError) {
+	resp = &GetPolicyVersionResponse{}
+	policyName, iamError := parsePolicyArn(values.Get("PolicyArn"))
+	if iamError != nil {
+		return resp, iamError
+	}
+	versionId := values.Get("VersionId")
+	if versionId == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("VersionId is required")}
+	}
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	policyDocument, exists := policies.Policies[policyName]
+	if !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	if versionId != policyDefaultVersionId {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy version %s not found", versionId)}
+	}
+	policyDocumentJSON, err := json.Marshal(policyDocument)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	isDefault := true
+	document := string(policyDocumentJSON)
+	resp.GetPolicyVersionResult.PolicyVersion = iam.PolicyVersion{
+		VersionId:        &versionId,
+		IsDefaultVersion: &isDefault,
+		Document:         &document,
+	}
+	return resp, nil
+}
+
+// DeletePolicyVersion is accepted for API completeness. With a single stored
+// version that is always the default, the only valid responses are NoSuchEntity
+// (unknown version) and the AWS "cannot delete the default version" conflict.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicyVersion.html
+func (iama *IamApiServer) DeletePolicyVersion(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *DeletePolicyVersionResponse, iamError *IamError) {
+	resp = &DeletePolicyVersionResponse{}
+	policyName, iamError := parsePolicyArn(values.Get("PolicyArn"))
+	if iamError != nil {
+		return resp, iamError
+	}
+	versionId := values.Get("VersionId")
+	if versionId == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("VersionId is required")}
+	}
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if _, exists := policies.Policies[policyName]; !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	if versionId == policyDefaultVersionId {
+		return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete the default version of policy %s", policyName)}
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy version %s not found", versionId)}
+}
+
+// recomputeActionsForManagedPolicy refreshes Identity.Actions for every identity
+// affected by a change to the managed policy named policyName: users with the
+// policy attached directly, and members of groups the policy is attached to.
+func recomputeActionsForManagedPolicy(iama *IamApiServer, s3cfg *iam_pb.S3ApiConfiguration, policies *Policies, policyName string) {
+	affected := make(map[string]*iam_pb.Identity)
+	identIndex := make(map[string]*iam_pb.Identity, len(s3cfg.Identities))
+	for _, ident := range s3cfg.Identities {
+		identIndex[ident.Name] = ident
+		for _, pn := range ident.PolicyNames {
+			if pn == policyName {
+				affected[ident.Name] = ident
+				break
+			}
+		}
+	}
+	for _, g := range s3cfg.Groups {
+		attached := false
+		for _, pn := range g.PolicyNames {
+			if pn == policyName {
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			continue
+		}
+		for _, member := range g.Members {
+			if ident, ok := identIndex[member]; ok {
+				affected[member] = ident
+			}
+		}
+	}
+	for name, ident := range affected {
+		aggregatedActions, err := computeAllActionsForUser(iama, name, policies, ident, s3cfg)
+		if err != nil {
+			glog.Warningf("Failed to recompute actions for user %s after managed policy %s change: %v", name, policyName, err)
+			continue
+		}
+		ident.Actions = aggregatedActions
+	}
 }
 
 // AttachUserPolicy attaches a managed policy to a user.
@@ -1241,6 +1446,40 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "ListPolicies":
 		var err *IamError
 		response, err = iama.ListPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "CreatePolicyVersion":
+		var err *IamError
+		response, err = iama.CreatePolicyVersion(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		// CreatePolicyVersion persists the new document via PutPolicies and
+		// recomputes affected Identity.Actions on s3cfg; keep changed=true so the
+		// updated identities are saved.
+	case "ListPolicyVersions":
+		var err *IamError
+		response, err = iama.ListPolicyVersions(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "GetPolicyVersion":
+		var err *IamError
+		response, err = iama.GetPolicyVersion(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "DeletePolicyVersion":
+		var err *IamError
+		response, err = iama.DeletePolicyVersion(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
