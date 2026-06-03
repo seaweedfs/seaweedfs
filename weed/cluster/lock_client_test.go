@@ -93,15 +93,14 @@ func TestLockClientPrimaryForKey(t *testing.T) {
 	}
 }
 
-// During a rebalance, a key whose ownership moved should report its previous owner
-// for the cooling-off window (so a route-by-key reader can consult it), while a key
-// whose ownership did not move reports none.
+// A moved key reports its previous owner within the cooling-off window; an unmoved
+// key reports none.
 func TestLockClientPriorOwnerForKey(t *testing.T) {
 	lc := NewLockClient(nil, "seed:8888")
 
 	setA := []pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888"}
 	lc.SetRing(setA, 1)
-	// Only one ring so far: nothing to fall back to.
+	// One ring: nothing to fall back to.
 	if got := lc.PriorOwnerForKey("any"); got != "" {
 		t.Fatalf("single ring should have no prior owner, got %q", got)
 	}

@@ -9,26 +9,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// getObjectEntryRoutedByKey resolves an object's entry, preferring the filer that
-// owns the object's key on the write ring — where routed writes land — so a read
-// observes a just-written object without waiting for cross-filer metadata
-// replication. It reuses the same route key as the write path, so reader and writer
-// resolve the same owner.
-//
-// Failover to the gateway's filer set happens only on transport errors; a NotFound
-// from the owner is authoritative (no fan-out, no resurrecting a peer's
-// not-yet-replicated tombstone). The owner is the home of the routed-write path, so
-// an object created via the non-routed lock path on another filer can briefly read
-// as absent until it replicates to the owner.
-//
-// During a rebalance the new owner may not have replicated a just-moved key yet, so
-// on the owner's NotFound — and only while the ring change is within the cooling-off
-// window — it consults the key's previous owner once. That trades the transient
-// scale-up 404 for a transient stale read if a delete routed to the new owner races
-// the same window.
-//
-// When no owner is resolvable (single filer, lock client unavailable) it behaves
-// exactly like getEntry.
+// getObjectEntryRoutedByKey resolves an object's entry preferring the key's write
+// owner (the same route key the write path hashes), so a read sees a just-written
+// object without waiting for cross-filer replication. On the owner's ErrNotFound it
+// probes the key's prior owner once during a rebalance window; falls back to
+// getEntry when no owner is resolvable.
 func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer_pb.Entry, error) {
 	fullPath := util.NewFullPath(s3a.bucketDir(bucket), object)
 
@@ -51,6 +36,8 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 		return nil
 	})
 
+	// A just-moved key may not have replicated to the new owner yet; consult its
+	// prior owner once while the ring change is within the cooling-off window.
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		if prior := s3a.priorWriteOwner(bucket, object); prior != "" && prior != owner {
 			if priorEntry, priorErr := s3a.lookupEntryOnFiler(prior, dir, name); priorErr == nil {
@@ -61,9 +48,6 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 	return entry, err
 }
 
-// priorWriteOwner returns the object key's previous ring owner during the
-// cooling-off window after a rebalance, or "" outside it. See
-// LockClient.PriorOwnerForKey.
 func (s3a *S3ApiServer) priorWriteOwner(bucket, object string) pb.ServerAddress {
 	if object == "" || s3a.objectWriteLockClient == nil {
 		return ""
@@ -71,8 +55,7 @@ func (s3a *S3ApiServer) priorWriteOwner(bucket, object string) pb.ServerAddress 
 	return s3a.objectWriteLockClient.PriorOwnerForKey(s3a.objectRouteKey(bucket, object))
 }
 
-// lookupEntryOnFiler resolves dir/name against a single filer, without failover —
-// a targeted probe used to consult a key's prior owner during a rebalance.
+// lookupEntryOnFiler resolves dir/name against a single filer, without failover.
 func (s3a *S3ApiServer) lookupEntryOnFiler(filer pb.ServerAddress, dir, name string) (*filer_pb.Entry, error) {
 	var entry *filer_pb.Entry
 	err := pb.WithFilerClient(false, 0, filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {

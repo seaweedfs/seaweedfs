@@ -29,10 +29,9 @@ type LockClient struct {
 	ring        *lock_manager.HashRing
 	ringVersion int64
 
-	// priorRing is the ring in effect before the most recent change, retained for
-	// priorWindow after ringChangedAt so a route-by-key caller can consult the
-	// previous owner of a just-moved key during a rebalance. Mirrors the master's
-	// lock_manager.LockRing.PriorOwner cooling-off.
+	// priorRing is the ring before the most recent change, kept for priorWindow so a
+	// route-by-key caller can consult a just-moved key's previous owner during a
+	// rebalance. Mirrors the master's lock_manager.LockRing.PriorOwner cooling-off.
 	priorRing     *lock_manager.HashRing
 	ringChangedAt time.Time
 	priorWindow   time.Duration
@@ -59,10 +58,10 @@ func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
 		return
 	}
 	lc.ringVersion = version
+	// Build a fresh ring (not an in-place mutation) so the outgoing ring survives as
+	// priorRing with its own servers for the cooling-off window.
 	newRing := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
 	newRing.SetServers(servers)
-	// Retain the outgoing ring as the prior view (a fresh ring, not an in-place
-	// mutation, so the prior keeps its own servers) for the cooling-off window.
 	if lc.ring != nil {
 		lc.priorRing = lc.ring
 		lc.ringChangedAt = time.Now()
@@ -96,12 +95,10 @@ func (lc *LockClient) PrimaryForKey(key string) pb.ServerAddress {
 	return lc.ring.GetPrimary(key)
 }
 
-// PriorOwnerForKey returns key's owner from the ring in effect before the most
-// recent change, but only while that change is within the cooling-off window and
-// the owner actually moved; otherwise "". It mirrors lock_manager.LockRing.PriorOwner
-// so a route-by-key reader can consult a just-moved key's previous owner before
-// treating the new owner's NotFound as authoritative — during a rebalance the new
-// owner may not have replicated the key yet.
+// PriorOwnerForKey returns key's owner from the prior ring while a rebalance is
+// within the cooling-off window and ownership actually moved, else "". Lets a
+// route-by-key reader consult a just-moved key's previous owner before the new
+// owner's NotFound is final (the new owner may not have replicated the key yet).
 func (lc *LockClient) PriorOwnerForKey(key string) pb.ServerAddress {
 	lc.ringMu.RLock()
 	defer lc.ringMu.RUnlock()
