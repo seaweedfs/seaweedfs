@@ -87,6 +87,11 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 		}
 
 		s3a.filerClient.RecordFilerFailure(filer)
+		// A preferred owner is often outside the static filer list, where the health
+		// tracking above no-ops; flag it so route-by-key reads skip it briefly.
+		if filer == preferred {
+			s3a.markOwnerUnreachable(filer)
+		}
 		glog.V(2).Infof("WithFilerClient: filer %s failed: %v", filer, err)
 		lastErr = err
 	}

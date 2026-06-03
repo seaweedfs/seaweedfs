@@ -3,11 +3,17 @@ package s3api
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// unreachableOwnerTTL is how long a route-by-key owner that just failed a read is
+// skipped before being retried — long enough to spare a dead owner per-request
+// dials, short enough to resume owner-first reads soon after it (or the ring) recovers.
+const unreachableOwnerTTL = 2 * time.Second
 
 // getObjectEntryRoutedByKey resolves an object's entry preferring the key's write
 // owner (the same route key the write path hashes), so a read sees a just-written
@@ -22,9 +28,16 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 		return filer_pb.GetEntry(context.Background(), s3a, fullPath)
 	}
 
+	// Skip an owner whose recent read hit a transport error; read local-first until
+	// it (or the ring) recovers, rather than re-dialing a dead owner every request.
+	preferred := owner
+	if s3a.ownerRecentlyUnreachable(owner) {
+		preferred = ""
+	}
+
 	dir, name := fullPath.DirAndName()
 	var entry *filer_pb.Entry
-	err := s3a.withFilerClientFailover(owner, false, func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.withFilerClientFailover(preferred, false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,
@@ -53,6 +66,17 @@ func (s3a *S3ApiServer) priorWriteOwner(bucket, object string) pb.ServerAddress 
 		return ""
 	}
 	return s3a.objectWriteLockClient.PriorOwnerForKey(s3a.objectRouteKey(bucket, object))
+}
+
+func (s3a *S3ApiServer) markOwnerUnreachable(owner pb.ServerAddress) {
+	s3a.unreachableOwners.Store(owner, time.Now().Add(unreachableOwnerTTL))
+}
+
+func (s3a *S3ApiServer) ownerRecentlyUnreachable(owner pb.ServerAddress) bool {
+	if v, ok := s3a.unreachableOwners.Load(owner); ok {
+		return time.Now().Before(v.(time.Time))
+	}
+	return false
 }
 
 // lookupEntryOnFiler resolves dir/name against a single filer, without failover.

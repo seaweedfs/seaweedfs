@@ -98,6 +98,12 @@ type S3ApiServer struct {
 	newObjectWriteLock    func(bucket, object string) objectWriteLock
 	// objectWriteLockClient resolves a key's owner filer for route-by-key.
 	objectWriteLockClient *cluster.LockClient
+	// unreachableOwners holds owners (pb.ServerAddress -> expiry time.Time) whose
+	// last owner-first read hit a transport error, so route-by-key reads briefly
+	// skip them instead of re-dialing a dead owner every request until the ring
+	// drops it. Bypasses the gateway's filer health tracking, which no-ops for an
+	// owner outside the static -filer list.
+	unreachableOwners sync.Map
 	// Shared ReaderCache used by the S3 GET streaming path. It lives for the
 	// lifetime of the server so that concurrent and repeat reads share a
 	// single in-flight download per chunk, and so that no per-request
