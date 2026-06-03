@@ -20,7 +20,7 @@ var _ = filer_pb.FilerClient(&S3ApiServer{})
 func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	// Use filerClient for proper connection management and failover
 	if s3a.filerClient != nil {
-		return s3a.withFilerClientFailover(streamingMode, fn)
+		return s3a.withFilerClientFailover("", streamingMode, fn)
 	}
 
 	// Fallback to direct connection if filerClient not initialized
@@ -32,69 +32,85 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 
 }
 
-// withFilerClientFailover attempts to execute fn with automatic failover to other filers
-func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	// Get current filer as starting point
+// withFilerClientFailover runs fn against preferred (if set) first, then the
+// remaining filers (current, then the rest) with healthy ones before unhealthy.
+// Failover is for transport errors only: a reached filer's ErrNotFound is
+// authoritative (no
+// fan-out, no resurrecting a peer's not-yet-replicated tombstone). preferred lets a
+// caller route to a key's ring owner for read-after-write; it may be a filer outside
+// the static list (the bookkeeping no-ops for untracked addresses). A failover
+// updates the current filer; a preferred read does not, as its owner is per-key.
+func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 
-	// Try current filer first (fast path)
-	err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		return fn(client)
-	}, currentFiler.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
-
-	if err == nil {
-		s3a.filerClient.RecordFilerSuccess(currentFiler)
-		return nil
-	}
-
-	// A reachable filer answering ErrNotFound is authoritative; failover is for
-	// unreachable/unhealthy filers, not for re-asking about an absent entry.
-	if errors.Is(err, filer_pb.ErrNotFound) {
-		return err
-	}
-
-	s3a.filerClient.RecordFilerFailure(currentFiler)
-
-	// Current filer failed - try all other filers with health-aware selection
-	filers := s3a.filerClient.GetAllFilers()
-	var lastErr error = err
-
-	for _, filer := range filers {
-		if filer == currentFiler {
-			continue // Already tried this one
+	candidates := make([]pb.ServerAddress, 0, 2+len(s3a.option.Filers))
+	seen := make(map[pb.ServerAddress]bool)
+	addCandidate := func(filer pb.ServerAddress) {
+		if filer == "" || seen[filer] {
+			return
 		}
+		seen[filer] = true
+		candidates = append(candidates, filer)
+	}
+	addCandidate(preferred)
+	addCandidate(currentFiler)
+	for _, filer := range s3a.filerClient.GetAllFilers() {
+		addCandidate(filer)
+	}
 
-		// Skip filers known to be unhealthy (circuit breaker pattern)
-		if s3a.filerClient.ShouldSkipUnhealthyFiler(filer) {
-			glog.V(2).Infof("WithFilerClient: skipping unhealthy filer %s", filer)
+	// An explicit preferred owner is tried first even if health-flagged: demoting it
+	// behind a healthy replica would let that replica's authoritative NotFound mask a
+	// write that has only reached the owner. Health-order the rest, unhealthy ones
+	// last so a request still progresses when all are flagged.
+	var healthy, unhealthy []pb.ServerAddress
+	for _, filer := range candidates {
+		if filer == preferred {
 			continue
 		}
+		if s3a.filerClient.ShouldSkipUnhealthyFiler(filer) {
+			unhealthy = append(unhealthy, filer)
+		} else {
+			healthy = append(healthy, filer)
+		}
+	}
+	ordered := make([]pb.ServerAddress, 0, len(candidates))
+	if preferred != "" {
+		ordered = append(ordered, preferred)
+	}
+	ordered = append(ordered, healthy...)
+	ordered = append(ordered, unhealthy...)
 
-		err = pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-			return fn(client)
+	var lastErr error
+	for _, filer := range ordered {
+		err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+			return fn(filer_pb.NewSeaweedFilerClient(grpcConnection))
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
 		if err == nil {
-			// Success! Record success and update current filer for future requests
 			s3a.filerClient.RecordFilerSuccess(filer)
-			s3a.filerClient.SetCurrentFiler(filer)
-			glog.V(1).Infof("WithFilerClient: failover from %s to %s succeeded", currentFiler, filer)
+			if filer != currentFiler && filer != preferred {
+				s3a.filerClient.SetCurrentFiler(filer)
+				glog.V(1).Infof("WithFilerClient: failover from %s to %s succeeded", currentFiler, filer)
+			}
 			return nil
 		}
-
-		// Authoritative not-found - stop failing over.
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return err
 		}
 
 		s3a.filerClient.RecordFilerFailure(filer)
-		glog.V(2).Infof("WithFilerClient: failover to %s failed: %v", filer, err)
+		// A preferred owner is often outside the static filer list, where the health
+		// tracking above no-ops; flag it so route-by-key reads skip it briefly.
+		if filer == preferred {
+			s3a.markOwnerUnreachable(filer)
+		}
+		glog.V(2).Infof("WithFilerClient: filer %s failed: %v", filer, err)
 		lastErr = err
 	}
 
-	// All filers failed
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no filer available")
+	}
 	return fmt.Errorf("all filers failed, last error: %w", lastErr)
 }
 

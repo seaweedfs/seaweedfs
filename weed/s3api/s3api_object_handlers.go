@@ -2408,8 +2408,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 // fetchObjectEntry fetches the filer entry for an object
 // Returns nil if not found (not an error), or propagates other errors
 func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
-	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
+	fetchedEntry, fetchErr := s3a.getObjectEntryRoutedByKey(bucket, object)
 	if fetchErr != nil {
 		if errors.Is(fetchErr, filer_pb.ErrNotFound) {
 			return nil, nil // Not found is not an error for SSE check
@@ -2422,8 +2421,7 @@ func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry
 // fetchObjectEntryRequired fetches the filer entry for an object
 // Returns an error if the object is not found or any other error occurs
 func (s3a *S3ApiServer) fetchObjectEntryRequired(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
-	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
+	fetchedEntry, fetchErr := s3a.getObjectEntryRoutedByKey(bucket, object)
 	if fetchErr != nil {
 		return nil, fetchErr // Return error for both not-found and other errors
 	}
