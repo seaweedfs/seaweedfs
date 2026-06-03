@@ -122,14 +122,16 @@ func loadAuthorizedKeysFile(path string) ([]ssh.PublicKey, error) {
 	}
 
 	var keys []ssh.PublicKey
-	rest := data
-	for len(bytes.TrimSpace(rest)) > 0 {
-		pub, _, _, next, err := ssh.ParseAuthorizedKey(rest)
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] == '#' {
+			continue
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey(line)
 		if err != nil {
 			return nil, err
 		}
 		keys = append(keys, pub)
-		rest = next
 	}
 	return keys, nil
 }
