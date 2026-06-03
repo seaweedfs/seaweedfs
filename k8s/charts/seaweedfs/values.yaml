@@ -1138,7 +1138,7 @@ sftp:
   # SSH server configuration
   sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
   hostKeysFolder: "/etc/sw/ssh"  # path to folder containing SSH private key files for host authentication
-  authMethods: "password,publickey"  # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
+  authMethods: "password,publickey"  # Comma-separated list of allowed auth methods: password, publickey, certificate
   maxAuthTries: 6  # Maximum number of authentication attempts per connection
   bannerMessage: "SeaweedFS SFTP Server"  # Message displayed before authentication
   loginGraceTime: "2m"  # Timeout for authentication
@@ -1154,6 +1154,18 @@ sftp:
   existingConfigSecret: null
   # Set to the name of an existing kubernetes Secret with the list of ssh private keys for sftp
   existingSshConfigSecret: null
+
+  # SSH user-certificate authentication (CA-signed user certs). Mirrors
+  # OpenSSH `TrustedUserCAKeys` and MinIO `--sftp=trusted-user-ca-key`.
+  # Add "certificate" to `authMethods` to activate; when active, plain
+  # public keys are rejected on the public-key channel.
+  #
+  # Inline CA public keys in OpenSSH authorized_keys format (one per
+  # line). Ignored when `existingCAKeysSecret` is set.
+  trustedUserCAKeys: ""
+  # Set to the name of an existing kubernetes Secret carrying the CA
+  # public keys under data key `ca_user.pub`.
+  existingCAKeysSecret: null
 
   # Additional resources
   sidecars: []
@@ -1545,6 +1557,10 @@ allInOne:
     existingConfigSecret: null
     # Set to the name of an existing kubernetes Secret with the SSH keys
     existingSshConfigSecret: null
+    # SSH user-certificate authentication. See sftp.trustedUserCAKeys above.
+    # (null on either field inherits from the top-level sftp.* setting.)
+    trustedUserCAKeys: null
+    existingCAKeysSecret: null
 
   # Service settings
   service:
