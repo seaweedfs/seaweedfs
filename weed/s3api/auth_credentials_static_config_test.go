@@ -23,7 +23,6 @@ func TestIamConfigWithoutIdentitiesIsNotStatic(t *testing.T) {
 	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
 		t.Fatalf("failed to load advanced iam config: %v", err)
 	}
-	s3a.iam.markStaticIdentities()
 
 	if s3a.iam.IsStaticConfig() {
 		t.Fatalf("advanced iam config without identities must not be treated as static")
@@ -50,7 +49,6 @@ func TestConfigWithIdentitiesIsStatic(t *testing.T) {
 	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
 		t.Fatalf("failed to load identity config: %v", err)
 	}
-	s3a.iam.markStaticIdentities()
 
 	if !s3a.iam.IsStaticConfig() {
 		t.Fatalf("config file with inline identities must be treated as static")
@@ -73,6 +71,48 @@ func TestConfigWithIdentitiesIsStatic(t *testing.T) {
 	if hasIdentity(s3a.iam, "alice") {
 		t.Fatalf("did not expect alice to load while running off a static identity file")
 	}
+}
+
+// Reloading the static config file (grace.OnReload) must mark newly added
+// identities as static so dynamic filer updates can't overwrite them, while
+// leaving already-loaded dynamic (filer-managed) identities untouched.
+func TestReloadStaticConfigMarksNewIdentitiesWithoutFreezingDynamic(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+
+	// A dynamic identity arrives from the filer; merge mode keeps it dynamic.
+	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "alice"}); err != nil {
+		t.Fatalf("failed to create alice: %v", err)
+	}
+	if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		t.Fatalf("failed to load from credential manager: %v", err)
+	}
+	if !hasIdentity(s3a.iam, "alice") {
+		t.Fatalf("expected alice to load dynamically")
+	}
+
+	// Reload the static file with a new identity bob.
+	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]},{"name":"bob","credentials":[{"accessKey":"AKBOB000","secretKey":"c2VjcmV0"}],"actions":["Read"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if !isStaticName(s3a.iam, "bob") {
+		t.Fatalf("expected reloaded identity bob to be marked static")
+	}
+	if isStaticName(s3a.iam, "alice") {
+		t.Fatalf("dynamic identity alice must not be frozen as static by a config reload")
+	}
+}
+
+func isStaticName(iam *IdentityAccessManagement, name string) bool {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	return iam.staticIdentityNames[name]
 }
 
 func writeTempIamConfig(t *testing.T, content string) string {

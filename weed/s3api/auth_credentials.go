@@ -267,8 +267,6 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 		if err := iam.loadS3ApiConfigurationFromFile(startConfigFile); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", startConfigFile, err)
 		}
-
-		iam.markStaticIdentities()
 	}
 
 	// Always try to load/merge config from credential manager (filer/db)
@@ -323,18 +321,26 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	return iam
 }
 
-// markStaticIdentities protects identities declared inline in a config file from
-// dynamic overwrites. -iam.config (advanced STS/OIDC/roles) loads through here too
-// but normally carries no identities, so useStaticConfig is gated on actual
-// identities: otherwise an OIDC-only deployment would freeze live reloads of
-// filer-backed identities/policies (e.g. operator-managed) created at runtime.
-func (iam *IdentityAccessManagement) markStaticIdentities() {
+// markStaticIdentities marks the identities declared in a static config file
+// (-config, or -iam.config when it carries inline identities) as immutable, so
+// dynamic filer reloads can't overwrite them. It is additive and scoped to the
+// file's identities: a reload protects newly added ones without un-protecting
+// the existing set or freezing dynamic filer-managed identities. useStaticConfig
+// stays gated on whether any static identity exists, so an advanced-IAM file
+// with no inline identities (OIDC/STS only) keeps the dynamic store live.
+func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiConfiguration) {
 	iam.m.Lock()
 	defer iam.m.Unlock()
-	iam.staticIdentityNames = make(map[string]bool)
+	if iam.staticIdentityNames == nil {
+		iam.staticIdentityNames = make(map[string]bool)
+	}
+	for _, ident := range config.Identities {
+		iam.staticIdentityNames[ident.Name] = true
+	}
 	for _, identity := range iam.identities {
-		iam.staticIdentityNames[identity.Name] = true
-		identity.IsStatic = true
+		if iam.staticIdentityNames[identity.Name] {
+			identity.IsStatic = true
+		}
 	}
 	iam.useStaticConfig = len(iam.staticIdentityNames) > 0
 }
@@ -484,24 +490,37 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		glog.Warningf("KMS initialization failed: %v", err)
 	}
 
-	return iam.LoadS3ApiConfigurationFromBytes(content)
+	config, err := iam.loadS3ApiConfigurationFromBytes(content)
+	if err != nil {
+		return err
+	}
+	// Identities listed in a config file are static (immutable). Mark them on
+	// every load so a reload protects newly added identities too, not just the
+	// set present at startup.
+	iam.markStaticIdentities(config)
+	return nil
 }
 
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
+	_, err := iam.loadS3ApiConfigurationFromBytes(content)
+	return err
+}
+
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte) (*iam_pb.S3ApiConfiguration, error) {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
-		return fmt.Errorf("unmarshal error: %w", err)
+		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}
 
 	if err := filer.CheckDuplicateAccessKey(s3ApiConfiguration); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return s3ApiConfiguration, nil
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
