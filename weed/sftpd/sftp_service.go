@@ -36,7 +36,7 @@ type SFTPServiceOptions struct {
 	// SSH Configuration
 	SshPrivateKey  string        // Legacy single host key
 	HostKeysFolder string        // Multiple host keys for different algorithms
-	AuthMethods    []string      // Enabled auth methods: "password", "publickey", "keyboard-interactive"
+	AuthMethods    []string      // Enabled auth methods: "password", "publickey", "certificate"
 	MaxAuthTries   int           // Limit authentication attempts
 	BannerMessage  string        // Pre-auth banner message
 	LoginGraceTime time.Duration // Timeout for authentication
