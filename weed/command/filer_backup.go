@@ -41,6 +41,7 @@ type FilerBackupOptions struct {
 	timeAgo             *time.Duration
 	retentionDays       *int
 	initialSnapshot     *bool
+	resetCheckpoint     *bool
 }
 
 var (
@@ -64,6 +65,7 @@ func init() {
 	filerBackupOptions.disableErrorRetry = cmdFilerBackup.Flag.Bool("disableErrorRetry", false, "disables errors retry, only logs will print")
 	filerBackupOptions.ignore404Error = cmdFilerBackup.Flag.Bool("ignore404Error", true, "ignore 404 errors from filer")
 	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination. Only runs on a fresh sync (no prior checkpoint and -timeAgo is 0). After the walk, subscription starts from the walk-start timestamp so concurrent changes are still captured.")
+	filerBackupOptions.resetCheckpoint = cmdFilerBackup.Flag.Bool("resetCheckpoint", false, "clear the persisted resume checkpoint for this sink before starting, forcing a fresh sync from the beginning (re-runs -initialSnapshot). Only effective when -timeAgo is 0. The checkpoint lives in the source filer's KV under a per-sink key.")
 }
 
 var cmdFilerBackup = &Command{
@@ -138,6 +140,22 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	isFreshSync := true
 	sinkId := util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory())
 	if timeAgo.Milliseconds() == 0 {
+		// resetCheckpoint clears the persisted resume offset so getOffset below
+		// returns 0 → isFreshSync stays true → -initialSnapshot re-runs a full
+		// walk. Writing 0 is equivalent to deleting the key for getOffset's
+		// purposes (it only resumes when lastOffsetTsNs > 0).
+		if *backupOption.resetCheckpoint {
+			if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), 0); err != nil {
+				return fmt.Errorf("resetCheckpoint: clear offset for sinkId %d: %w", sinkId, err)
+			}
+			// Clear only once. runFilerBackup retries doFilerBackup forever on
+			// error; leaving this set would re-zero the checkpoint on every retry
+			// and never make forward progress after a transient failure. Once the
+			// offset is cleared, later retries must resume from the persisted
+			// checkpoint.
+			*backupOption.resetCheckpoint = false
+			glog.V(0).Infof("resetCheckpoint: cleared checkpoint for sinkId %d — starting fresh", sinkId)
+		}
 		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
 		if err != nil {
 			// A KV read failure is ambiguous — a checkpoint may well exist but the
