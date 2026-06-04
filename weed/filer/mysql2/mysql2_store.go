@@ -63,11 +63,12 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	} else if upsertQuery == "" {
 		upsertQuery = mysql.DefaultUpsertQuery
 	}
-	store.SqlGenerator = &mysql.SqlGenMysql{
+	gen := &mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
+	store.SqlGenerator = gen
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
 	adaptedSqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, "<ADAPTED>", hostname, port, database)
@@ -95,6 +96,8 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil && !strings.Contains(err.Error(), "table already exist") {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
+
+	mysql.ConfigureListOrdering(store.DB, gen)
 
 	return nil
 }

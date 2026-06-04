@@ -11,6 +11,8 @@ type SqlGenMysql struct {
 	CreateTableSqlTemplate string
 	DropTableSqlTemplate   string
 	UpsertQueryTemplate    string
+	// Force byte ordering on a non-binary name column; see ConfigureListOrdering.
+	ForceBinaryCollation bool
 }
 
 // DefaultUpsertQuery keeps INSERTs idempotent so the inode-index KvPut
@@ -48,12 +50,22 @@ func (gen *SqlGenMysql) GetSqlDeleteFolderChildren(tableName string) string {
 	return fmt.Sprintf("DELETE FROM `%s` WHERE `dirhash` = ? AND `directory` = ?", tableName)
 }
 
+// nameExpr forces byte ordering on a non-binary column at the cost of a filesort.
+func (gen *SqlGenMysql) nameExpr() string {
+	if gen.ForceBinaryCollation {
+		return "BINARY `name`"
+	}
+	return "`name`"
+}
+
 func (gen *SqlGenMysql) GetSqlListExclusive(tableName string) string {
-	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND `name` > ? AND `directory` = ? AND `name` LIKE ? ORDER BY `name` ASC LIMIT ?", tableName)
+	name := gen.nameExpr()
+	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s > ? AND `directory` = ? AND %s LIKE ? ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
 }
 
 func (gen *SqlGenMysql) GetSqlListInclusive(tableName string) string {
-	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND `name` >= ? AND `directory` = ? AND `name` LIKE ? ORDER BY `name` ASC LIMIT ?", tableName)
+	name := gen.nameExpr()
+	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s >= ? AND `directory` = ? AND %s LIKE ? ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
 }
 
 func (gen *SqlGenMysql) GetSqlCreateTable(tableName string) string {
