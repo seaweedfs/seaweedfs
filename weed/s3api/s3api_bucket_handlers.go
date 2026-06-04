@@ -244,14 +244,17 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			objectLockRequested := strings.EqualFold(r.Header.Get(s3_constants.AmzBucketObjectLockEnabled), "true")
 			bucketConfig, errCode := s3a.getBucketConfig(bucket)
 			if errCode != s3err.ErrNone {
+				// Can't read the existing bucket's settings, so we can't tell whether
+				// this recreate conflicts; surface the failure instead of assuming
+				// idempotency and returning BucketAlreadyOwnedByYou.
 				glog.Errorf("PutBucketHandler: failed to get bucket config for %s: %v", bucket, errCode)
-				// Can't read config: assume no conflict and allow idempotent recreation.
-			} else {
-				currentObjectLockEnabled := bucketConfig.ObjectLockConfig != nil &&
-					bucketConfig.ObjectLockConfig.ObjectLockEnabled == s3_constants.ObjectLockEnabled
-				if objectLockRequested != currentObjectLockEnabled || len(bucketConfig.ACL) > 0 {
-					conflict = true
-				}
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
+			currentObjectLockEnabled := bucketConfig.ObjectLockConfig != nil &&
+				bucketConfig.ObjectLockConfig.ObjectLockEnabled == s3_constants.ObjectLockEnabled
+			if objectLockRequested != currentObjectLockEnabled || len(bucketConfig.ACL) > 0 {
+				conflict = true
 			}
 
 			if conflict {
