@@ -496,8 +496,11 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 	}
 	// Identities listed in a config file are static (immutable). Mark them on
 	// every load so a reload protects newly added identities too, not just the
-	// set present at startup.
+	// set present at startup, and push the updated set into the credential
+	// manager so reloaded identities still show up in listings and survive
+	// later dynamic merges.
 	iam.markStaticIdentities(config)
+	iam.updateCredentialManagerStaticIdentities()
 	return nil
 }
 
