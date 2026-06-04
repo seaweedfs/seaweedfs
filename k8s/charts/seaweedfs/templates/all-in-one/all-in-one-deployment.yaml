@@ -465,10 +465,15 @@ spec:
         {{- end }}
         {{- $aioAuthMethodsVol := .Values.allInOne.sftp.authMethods | default .Values.sftp.authMethods }}
         {{- if and $aioAuthMethodsVol (contains "certificate" $aioAuthMethodsVol) }}
+        {{- $aioCASecret := or .Values.allInOne.sftp.existingCAKeysSecret .Values.sftp.existingCAKeysSecret }}
+        {{- $aioCAKeys := or .Values.allInOne.sftp.trustedUserCAKeys .Values.sftp.trustedUserCAKeys }}
+        {{- if and (not $aioCASecret) (not $aioCAKeys) }}
+        {{- fail "allInOne.sftp.authMethods includes \"certificate\" but neither trustedUserCAKeys nor existingCAKeysSecret is set" }}
+        {{- end }}
         - name: config-sftp-ca
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-sftp-ca-secret" (include "seaweedfs.fullname" .)) (or .Values.allInOne.sftp.existingCAKeysSecret .Values.sftp.existingCAKeysSecret) }}
+            secretName: {{ default (printf "%s-sftp-ca-secret" (include "seaweedfs.fullname" .)) $aioCASecret }}
         {{- end }}
         {{- end }}
         {{- if .Values.filer.notificationConfig }}

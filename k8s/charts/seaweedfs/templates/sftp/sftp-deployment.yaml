@@ -265,6 +265,9 @@ spec:
             secretName: {{ include "seaweedfs.fullname" . }}-sftp-ssh-secret
             {{- end }}
         {{- if and .Values.sftp.authMethods (contains "certificate" .Values.sftp.authMethods) }}
+        {{- if and (not .Values.sftp.existingCAKeysSecret) (not .Values.sftp.trustedUserCAKeys) }}
+        {{- fail "sftp.authMethods includes \"certificate\" but neither sftp.trustedUserCAKeys nor sftp.existingCAKeysSecret is set" }}
+        {{- end }}
         - name: config-sftp-ca
           secret:
             defaultMode: 420
