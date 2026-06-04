@@ -70,11 +70,12 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	} else if upsertQuery == "" {
 		upsertQuery = DefaultUpsertQuery
 	}
-	store.SqlGenerator = &SqlGenMysql{
+	gen := &SqlGenMysql{
 		CreateTableSqlTemplate: "",
 		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
+	store.SqlGenerator = gen
 
 	store.RetryableErrorCallback = func(err error) bool {
 		var mysqlError *mysql.MySQLError
@@ -154,6 +155,8 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", maskedDSN(cfg), err)
 	}
+
+	ConfigureListOrdering(store.DB, gen)
 
 	return nil
 }
