@@ -220,8 +220,10 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 	}
 	ch := make(chan entryOrErr, readaheadSize)
 	stopReadahead := make(chan struct{})
+	readaheadDone := make(chan struct{})
 	go func() {
 		defer close(ch)
+		defer close(readaheadDone)
 		for {
 			entry, readErr := visitor.GetNext()
 			if readErr != nil {
@@ -240,7 +242,13 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 			}
 		}
 	}()
-	defer close(stopReadahead)
+	// Stop the readahead goroutine, wait for it to exit, then release any log
+	// file readers it left open (e.g. on early return or cancellation).
+	defer func() {
+		close(stopReadahead)
+		<-readaheadDone
+		visitor.Close()
+	}()
 
 	for item := range ch {
 		if item.err != nil {
@@ -261,4 +269,3 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 
 	return
 }
-

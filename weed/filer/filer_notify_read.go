@@ -197,6 +197,15 @@ func (o *OrderedLogVisitor) GetNext() (logEntry *filer_pb.LogEntry, err error) {
 	return item.Entry, nil
 }
 
+// Close releases any log file readers still open across the per-filer
+// iterators, e.g. when a subscription stops before reaching the end. Safe to
+// call more than once.
+func (o *OrderedLogVisitor) Close() {
+	for _, it := range o.perFilerIteratorMap {
+		it.Close()
+	}
+}
+
 func getFilerId(name string) string {
 	idx := strings.LastIndex(name, ".")
 	if idx < 0 {
@@ -342,6 +351,16 @@ func newLogFileQueueIterator(masterClient *wdclient.MasterClient, q *util.Queue[
 		masterClient: masterClient,
 		startTsNs:    startTsNs,
 		stopTsNs:     stopTsNs,
+	}
+}
+
+// Close releases the current log file reader, if any. Safe to call more than once.
+func (iter *LogFileQueueIterator) Close() {
+	if iter.currentFileIterator != nil {
+		if err := iter.currentFileIterator.Close(); err != nil {
+			glog.Warningf("close log file %s: %v", iter.currentFileIterator.filePath, err)
+		}
+		iter.currentFileIterator = nil
 	}
 }
 
