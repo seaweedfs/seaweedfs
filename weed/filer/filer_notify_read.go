@@ -197,6 +197,15 @@ func (o *OrderedLogVisitor) GetNext() (logEntry *filer_pb.LogEntry, err error) {
 	return item.Entry, nil
 }
 
+// Close releases any log file readers still open across the per-filer
+// iterators, e.g. when a subscription stops before reaching the end. Safe to
+// call more than once.
+func (o *OrderedLogVisitor) Close() {
+	for _, it := range o.perFilerIteratorMap {
+		it.Close()
+	}
+}
+
 func getFilerId(name string) string {
 	idx := strings.LastIndex(name, ".")
 	if idx < 0 {
@@ -329,12 +338,11 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 // ----------
 
 type LogFileQueueIterator struct {
-	q              *util.Queue[*LogFileEntry]
-	masterClient   *wdclient.MasterClient
-	startTsNs      int64
-	stopTsNs       int64
-	pendingEntries []*filer_pb.LogEntry
-	pendingIndex   int
+	q                   *util.Queue[*LogFileEntry]
+	masterClient        *wdclient.MasterClient
+	startTsNs           int64
+	stopTsNs            int64
+	currentFileIterator *LogFileIterator
 }
 
 func newLogFileQueueIterator(masterClient *wdclient.MasterClient, q *util.Queue[*LogFileEntry], startTsNs, stopTsNs int64) *LogFileQueueIterator {
@@ -346,20 +354,48 @@ func newLogFileQueueIterator(masterClient *wdclient.MasterClient, q *util.Queue[
 	}
 }
 
-// getNext will return io.EOF when done
+// Close releases the current log file reader, if any. Safe to call more than once.
+func (iter *LogFileQueueIterator) Close() {
+	if iter.currentFileIterator != nil {
+		if err := iter.currentFileIterator.Close(); err != nil {
+			glog.Warningf("close log file %s: %v", iter.currentFileIterator.filePath, err)
+		}
+		iter.currentFileIterator = nil
+	}
+}
+
+// getNext streams one log entry at a time from the current file, advancing to
+// the next file as each is exhausted. It returns io.EOF when done. Entries are
+// not buffered per file, so memory stays O(1) regardless of log file size.
 func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer_pb.LogEntry, err error) {
 	for {
-		// return pending entries first
-		if iter.pendingIndex < len(iter.pendingEntries) {
-			logEntry = iter.pendingEntries[iter.pendingIndex]
-			iter.pendingIndex++
-			return logEntry, nil
+		if iter.currentFileIterator != nil {
+			logEntry, err = iter.currentFileIterator.getNext()
+			if err == nil {
+				return logEntry, nil
+			}
+			// The current file is done (io.EOF), its volume was deleted, or it is
+			// unreadable. Close it on every path so the reader is not left alive
+			// until GC; only a genuine read error is propagated.
+			readErr := err
+			switch {
+			case readErr == io.EOF:
+				readErr = nil
+			case isChunkNotFoundError(readErr):
+				// Volume or chunk was deleted, skip the rest of this log file
+				glog.Warningf("skipping rest of %s: %v", iter.currentFileIterator.filePath, readErr)
+				readErr = nil
+			}
+			if closeErr := iter.currentFileIterator.Close(); closeErr != nil {
+				glog.Warningf("close log file %s: %v", iter.currentFileIterator.filePath, closeErr)
+			}
+			iter.currentFileIterator = nil
+			if readErr != nil {
+				return nil, readErr
+			}
 		}
-		// reset for next file
-		iter.pendingEntries = nil
-		iter.pendingIndex = 0
 
-		// read entries from next file
+		// advance to the next file
 		if iter.q.Len() == 0 {
 			return nil, io.EOF
 		}
@@ -382,38 +418,7 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 		if next != nil && next.TsNs <= iter.startTsNs {
 			continue
 		}
-
-		// read all entries from this file
-		iter.pendingEntries, err = iter.readFileEntries(t.FileEntry)
-		if err != nil {
-			return nil, err
-		}
-	}
-}
-
-// readFileEntries reads all log entries from a single file
-func (iter *LogFileQueueIterator) readFileEntries(fileEntry *Entry) (entries []*filer_pb.LogEntry, err error) {
-	fileIterator := newLogFileIterator(iter.masterClient, fileEntry, iter.startTsNs, iter.stopTsNs)
-	defer func() {
-		if closeErr := fileIterator.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
-	}()
-
-	for {
-		logEntry, err := fileIterator.getNext()
-		if err == io.EOF {
-			return entries, nil
-		}
-		if err != nil {
-			if isChunkNotFoundError(err) {
-				// Volume or chunk was deleted, skip the rest of this log file
-				glog.Warningf("skipping rest of %s: %v", fileIterator.filePath, err)
-				return entries, nil
-			}
-			return nil, err
-		}
-		entries = append(entries, logEntry)
+		iter.currentFileIterator = newLogFileIterator(iter.masterClient, t.FileEntry, iter.startTsNs, iter.stopTsNs)
 	}
 }
 
