@@ -67,4 +67,10 @@ func TestStreamMetadataBackupReturnsOffsetError(t *testing.T) {
 	if !strings.Contains(err.Error(), "get metadata backup offset") {
 		t.Fatalf("streamMetadataBackup error = %q, want offset context", err.Error())
 	}
+	if !isMetaBackupOffsetError(err) {
+		t.Fatalf("streamMetadataBackup error = %v, want meta backup offset error", err)
+	}
+	if isMetaBackupOffsetError(errors.New("subscribe metadata failed")) {
+		t.Fatal("ordinary stream errors should not be classified as offset errors")
+	}
 }
