@@ -773,21 +773,20 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 	amzDisplayName := s3a.iam.GetAccountNameById(amzAccountId)
+
+	// Return any ACL stored at creation or via PutBucketAcl; fall back to the
+	// owner's default full-control grant.
+	var storedGrants []*s3.Grant
+	if bucketConfig, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && bucketConfig.Entry != nil {
+		storedGrants = GetAcpGrants(bucketConfig.Entry.Extended)
+	}
 	response := AccessControlPolicy{
 		Owner: CanonicalUser{
 			ID:          amzAccountId,
 			DisplayName: amzDisplayName,
 		},
+		AccessControlList: buildAccessControlList(s3a.iam, storedGrants, amzAccountId, amzDisplayName),
 	}
-	response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-		Grantee: Grantee{
-			ID:          amzAccountId,
-			DisplayName: amzDisplayName,
-			Type:        "CanonicalUser",
-			XMLXSI:      "CanonicalUser",
-			XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-		Permission: s3.PermissionFullControl,
-	})
 	writeSuccessResponseXML(w, r, response)
 }
 
