@@ -395,6 +395,21 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			}
 		})
 	}
+
+	// Refresh the JWT signing keys on SIGHUP so an operator can rotate them
+	// without restarting; otherwise filer/volume auth stays stuck on the stale
+	// key after a rotation.
+	grace.OnReload(func() {
+		util.LoadConfiguration("security", false)
+		v := util.GetViper()
+		s3ApiServer.filerGuard.UpdateSigningKeys(
+			v.GetString("jwt.filer_signing.key"),
+			v.GetInt("jwt.filer_signing.expires_after_seconds"),
+			v.GetString("jwt.filer_signing.read.key"),
+			v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
+		)
+		util_http.ReloadJwtSigningReadConfig()
+	})
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 
 	// Update IAM with the final filer client (already handled by SetFilerClient above,

@@ -567,4 +567,10 @@ func (ms *MasterServer) Reload() {
 	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
 		util.StringSplit(v.GetString("guard.white_list"), ",")...),
 	)
+	ms.guard.UpdateSigningKeys(
+		v.GetString("jwt.signing.key"),
+		v.GetInt("jwt.signing.expires_after_seconds"),
+		v.GetString("jwt.signing.read.key"),
+		v.GetInt("jwt.signing.read.expires_after_seconds"),
+	)
 }

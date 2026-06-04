@@ -129,6 +129,19 @@ func (g *Guard) IsWhiteListed(host string) bool {
 	return false
 }
 
+// UpdateSigningKeys refreshes the JWT signing keys and their expirations in
+// place so operators can rotate keys (e.g. via SIGHUP) without restarting the
+// process. Like UpdateWhiteList, it swaps the fields without locking; a reader
+// may briefly observe the old key during a rotation, which self-heals on the
+// next request.
+func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) {
+	g.SigningKey = SigningKey(signingKey)
+	g.ExpiresAfterSec = expiresAfterSec
+	g.ReadSigningKey = SigningKey(readSigningKey)
+	g.ReadExpiresAfterSec = readExpiresAfterSec
+	g.isWriteActive = !g.isEmptyWhiteList || len(g.SigningKey) != 0
+}
+
 func (g *Guard) UpdateWhiteList(whiteList []string) {
 	whiteListIp := make(map[string]struct{})
 	whiteListCIDR := make(map[string]*net.IPNet)
