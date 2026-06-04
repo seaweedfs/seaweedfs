@@ -355,17 +355,25 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 			if err == nil {
 				return logEntry, nil
 			}
-			if err != io.EOF {
-				if !isChunkNotFoundError(err) {
-					return nil, err
-				}
+			// The current file is done (io.EOF), its volume was deleted, or it is
+			// unreadable. Close it on every path so the reader is not left alive
+			// until GC; only a genuine read error is propagated.
+			readErr := err
+			switch {
+			case readErr == io.EOF:
+				readErr = nil
+			case isChunkNotFoundError(readErr):
 				// Volume or chunk was deleted, skip the rest of this log file
-				glog.Warningf("skipping rest of %s: %v", iter.currentFileIterator.filePath, err)
+				glog.Warningf("skipping rest of %s: %v", iter.currentFileIterator.filePath, readErr)
+				readErr = nil
 			}
 			if closeErr := iter.currentFileIterator.Close(); closeErr != nil {
 				glog.Warningf("close log file %s: %v", iter.currentFileIterator.filePath, closeErr)
 			}
 			iter.currentFileIterator = nil
+			if readErr != nil {
+				return nil, readErr
+			}
 		}
 
 		// advance to the next file
