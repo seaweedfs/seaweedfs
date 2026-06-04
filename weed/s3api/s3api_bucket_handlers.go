@@ -557,12 +557,21 @@ func hasExplicitBucketACL(r *http.Request) bool {
 // setBucketOwner creates a function that sets the bucket owner from the request context
 func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
+	// Record the canonical account id too so GetBucketAcl can report the bucket
+	// owner instead of whoever is reading (e.g. an admin or another account).
+	accountId := r.Header.Get(s3_constants.AmzAccountId)
 	return func(entry *filer_pb.Entry) {
+		if currentIdentityId == "" && accountId == "" {
+			return
+		}
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
 		if currentIdentityId != "" {
-			if entry.Extended == nil {
-				entry.Extended = make(map[string][]byte)
-			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
+		}
+		if accountId != "" {
+			entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(accountId)
 		}
 	}
 }
