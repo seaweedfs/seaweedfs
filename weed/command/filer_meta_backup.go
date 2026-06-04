@@ -115,10 +115,11 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			glog.Errorf("traverse meta data: %v", err)
 			return true
 		}
-		glog.V(0).Infof("metadata copied up to %v", startTime)
 		if err := metaBackup.setOffset(startTime); err != nil {
 			glog.Errorf("set metadata backup offset: %v", err)
+			return true
 		}
+		glog.V(0).Infof("metadata copied up to %v", startTime)
 	}
 
 	for {
@@ -181,7 +182,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 
 	startTime, err := metaBackup.getOffset()
 	if err != nil {
-		startTime = time.Now()
+		return fmt.Errorf("get metadata backup offset: %w", err)
 	}
 	glog.V(0).Infof("streaming from %v", startTime)
 
