@@ -268,16 +268,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 			glog.Fatalf("fail to load config file %s: %v", startConfigFile, err)
 		}
 
-		// Track identity names from static config to protect them from dynamic updates
-		// Must be done under lock to avoid race conditions
-		iam.m.Lock()
-		iam.useStaticConfig = true
-		iam.staticIdentityNames = make(map[string]bool)
-		for _, identity := range iam.identities {
-			iam.staticIdentityNames[identity.Name] = true
-			identity.IsStatic = true
-		}
-		iam.m.Unlock()
+		iam.markStaticIdentities()
 	}
 
 	// Always try to load/merge config from credential manager (filer/db)
@@ -330,6 +321,22 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	}
 
 	return iam
+}
+
+// markStaticIdentities protects identities declared inline in a config file from
+// dynamic overwrites. -iam.config (advanced STS/OIDC/roles) loads through here too
+// but normally carries no identities, so useStaticConfig is gated on actual
+// identities: otherwise an OIDC-only deployment would freeze live reloads of
+// filer-backed identities/policies (e.g. operator-managed) created at runtime.
+func (iam *IdentityAccessManagement) markStaticIdentities() {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+	iam.staticIdentityNames = make(map[string]bool)
+	for _, identity := range iam.identities {
+		iam.staticIdentityNames[identity.Name] = true
+		identity.IsStatic = true
+	}
+	iam.useStaticConfig = len(iam.staticIdentityNames) > 0
 }
 
 func (iam *IdentityAccessManagement) pollIamConfigChanges(interval time.Duration) {
