@@ -1,6 +1,9 @@
 package security
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 // TestUpdateSigningKeysRotates pins the hot-reload contract: after a key
 // rotation the guard validates tokens minted with the new key and rejects the
@@ -10,20 +13,48 @@ func TestUpdateSigningKeysRotates(t *testing.T) {
 
 	g.UpdateSigningKeys("new-write", 11, "new-read", 61)
 
-	if string(g.SigningKey) != "new-write" || g.ExpiresAfterSec != 11 {
-		t.Fatalf("write key not refreshed: key=%q exp=%d", g.SigningKey, g.ExpiresAfterSec)
+	if string(g.SigningKey()) != "new-write" || g.ExpiresAfterSec() != 11 {
+		t.Fatalf("write key not refreshed: key=%q exp=%d", g.SigningKey(), g.ExpiresAfterSec())
 	}
-	if string(g.ReadSigningKey) != "new-read" || g.ReadExpiresAfterSec != 61 {
-		t.Fatalf("read key not refreshed: key=%q exp=%d", g.ReadSigningKey, g.ReadExpiresAfterSec)
+	if string(g.ReadSigningKey()) != "new-read" || g.ReadExpiresAfterSec() != 61 {
+		t.Fatalf("read key not refreshed: key=%q exp=%d", g.ReadSigningKey(), g.ReadExpiresAfterSec())
 	}
 
-	tok := GenJwtForVolumeServer(g.SigningKey, g.ExpiresAfterSec, "3,01637037d6")
-	if _, err := DecodeJwt(g.SigningKey, tok, &SeaweedFileIdClaims{}); err != nil {
+	tok := GenJwtForVolumeServer(g.SigningKey(), g.ExpiresAfterSec(), "3,01637037d6")
+	if _, err := DecodeJwt(g.SigningKey(), tok, &SeaweedFileIdClaims{}); err != nil {
 		t.Fatalf("token minted with rotated key should verify: %v", err)
 	}
 	if _, err := DecodeJwt(SigningKey("old-write"), tok, &SeaweedFileIdClaims{}); err == nil {
 		t.Fatalf("token minted with rotated key must not verify against the old key")
 	}
+}
+
+// TestUpdateSigningKeysConcurrent rotates the keys while readers mint and verify
+// tokens, so `go test -race` would flag a torn read of the signing-key slice
+// header. Each rotation uses matching keys so every reader's token validates.
+func TestUpdateSigningKeysConcurrent(t *testing.T) {
+	g := NewGuard(nil, "k0", 60, "k0", 60)
+
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 1000; i++ {
+				key := g.SigningKey()
+				tok := GenJwtForVolumeServer(key, g.ExpiresAfterSec(), "3,01637037d6")
+				if _, err := DecodeJwt(key, tok, &SeaweedFileIdClaims{}); err != nil {
+					t.Errorf("token should verify against the snapshot it was minted from: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < 1000; i++ {
+		g.UpdateSigningKeys("kw", 60, "kr", 60)
+		g.UpdateSigningKeys("kw2", 60, "kr2", 60)
+	}
+	wg.Wait()
 }
 
 // TestUpdateSigningKeysTogglesWriteActive guards the isWriteActive recompute:

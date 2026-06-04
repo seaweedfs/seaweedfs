@@ -183,7 +183,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			}
 			var auth string
 			if commaSep > 0 { // this is a file id
-				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
+				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey(), ms.guard.ExpiresAfterSec(), result.VolumeOrFileId))
 			}
 			if result.NotFound {
 				notFoundCount++

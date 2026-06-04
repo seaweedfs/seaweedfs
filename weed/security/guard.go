@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -40,27 +41,34 @@ Referenced:
 https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
 */
 type Guard struct {
-	whiteListIp         map[string]struct{}
-	whiteListCIDR       map[string]*net.IPNet
-	SigningKey          SigningKey
-	ExpiresAfterSec     int
-	ReadSigningKey      SigningKey
-	ReadExpiresAfterSec int
+	whiteListIp   map[string]struct{}
+	whiteListCIDR map[string]*net.IPNet
+
+	// signingConfig is swapped atomically by UpdateSigningKeys so key rotation
+	// (e.g. on SIGHUP) is safe against concurrent readers. Read it through the
+	// SigningKey / ReadSigningKey accessors.
+	signingConfig atomic.Pointer[signingConfig]
 
 	isWriteActive    bool
 	isEmptyWhiteList bool
 }
 
 func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) *Guard {
-	g := &Guard{
-		SigningKey:          SigningKey(signingKey),
-		ExpiresAfterSec:     expiresAfterSec,
-		ReadSigningKey:      SigningKey(readSigningKey),
-		ReadExpiresAfterSec: readExpiresAfterSec,
-	}
+	g := &Guard{}
+	g.signingConfig.Store(&signingConfig{
+		signingKey:          SigningKey(signingKey),
+		expiresAfterSec:     expiresAfterSec,
+		readSigningKey:      SigningKey(readSigningKey),
+		readExpiresAfterSec: readExpiresAfterSec,
+	})
 	g.UpdateWhiteList(whiteList)
 	return g
 }
+
+func (g *Guard) SigningKey() SigningKey     { return g.signingConfig.Load().signingKey }
+func (g *Guard) ExpiresAfterSec() int       { return g.signingConfig.Load().expiresAfterSec }
+func (g *Guard) ReadSigningKey() SigningKey { return g.signingConfig.Load().readSigningKey }
+func (g *Guard) ReadExpiresAfterSec() int   { return g.signingConfig.Load().readExpiresAfterSec }
 
 func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 	if !g.isWriteActive {
@@ -129,17 +137,28 @@ func (g *Guard) IsWhiteListed(host string) bool {
 	return false
 }
 
-// UpdateSigningKeys refreshes the JWT signing keys and their expirations in
-// place so operators can rotate keys (e.g. via SIGHUP) without restarting the
-// process. Like UpdateWhiteList, it swaps the fields without locking; a reader
-// may briefly observe the old key during a rotation, which self-heals on the
-// next request.
+// signingConfig is the immutable snapshot of JWT signing keys held behind
+// Guard.signingConfig. Rotating keys swaps the whole pointer, so a reader never
+// sees a half-updated multi-word slice header.
+type signingConfig struct {
+	signingKey          SigningKey
+	expiresAfterSec     int
+	readSigningKey      SigningKey
+	readExpiresAfterSec int
+}
+
+// UpdateSigningKeys refreshes the JWT signing keys and their expirations so
+// operators can rotate keys (e.g. via SIGHUP) without restarting the process.
+// The whole snapshot is swapped atomically, so a concurrent reader sees either
+// the old keys or the new ones, never a torn slice header.
 func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) {
-	g.SigningKey = SigningKey(signingKey)
-	g.ExpiresAfterSec = expiresAfterSec
-	g.ReadSigningKey = SigningKey(readSigningKey)
-	g.ReadExpiresAfterSec = readExpiresAfterSec
-	g.isWriteActive = !g.isEmptyWhiteList || len(g.SigningKey) != 0
+	g.signingConfig.Store(&signingConfig{
+		signingKey:          SigningKey(signingKey),
+		expiresAfterSec:     expiresAfterSec,
+		readSigningKey:      SigningKey(readSigningKey),
+		readExpiresAfterSec: readExpiresAfterSec,
+	})
+	g.isWriteActive = !g.isEmptyWhiteList || len(g.SigningKey()) != 0
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {
@@ -158,7 +177,7 @@ func (g *Guard) UpdateWhiteList(whiteList []string) {
 		}
 	}
 	g.isEmptyWhiteList = len(whiteListIp) == 0 && len(whiteListCIDR) == 0
-	g.isWriteActive = !g.isEmptyWhiteList || len(g.SigningKey) != 0
+	g.isWriteActive = !g.isEmptyWhiteList || len(g.SigningKey()) != 0
 	g.whiteListIp = whiteListIp
 	g.whiteListCIDR = whiteListCIDR
 }
