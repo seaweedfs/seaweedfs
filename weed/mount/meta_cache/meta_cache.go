@@ -72,6 +72,7 @@ const (
 	metadataBeginBuild
 	metadataCompleteBuild
 	metadataAbortBuild
+	metadataPurgeDir
 	metadataShutdown
 )
 
@@ -82,6 +83,7 @@ type metadataApplyRequest struct {
 	options      MetadataResponseApplyOptions
 	buildPath    util.FullPath
 	snapshotTsNs int64
+	resetFn      func()
 	done         chan error
 }
 
@@ -269,6 +271,20 @@ func (mc *MetaCache) AbortDirectoryBuild(ctx context.Context, dirPath util.FullP
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
 		kind:      metadataAbortBuild,
 		buildPath: dirPath,
+	})
+}
+
+// PurgeDirectoryChildren asynchronously clears a directory's cached children and
+// resets its cached flag (resetFn) via the apply loop. Asynchronous so callers
+// like kernel Forget don't block; see purgeDirectoryChildrenNow for why off-loop
+// callers must route through here rather than wiping the store directly.
+func (mc *MetaCache) PurgeDirectoryChildren(dirPath util.FullPath, resetFn func()) {
+	_ = mc.enqueueApplyRequest(metadataApplyRequest{
+		ctx:       context.Background(),
+		kind:      metadataPurgeDir,
+		buildPath: dirPath,
+		resetFn:   resetFn,
+		done:      make(chan error, 1),
 	})
 }
 
@@ -465,6 +481,8 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs)
 	case metadataAbortBuild:
 		return mc.abortDirectoryBuildNow(req.buildPath)
+	case metadataPurgeDir:
+		return mc.purgeDirectoryChildrenNow(req.ctx, req.buildPath, req.resetFn)
 	case metadataShutdown:
 		return nil
 	default:
@@ -619,6 +637,24 @@ func (mc *MetaCache) beginDirectoryBuildNow(dirPath util.FullPath) error {
 func (mc *MetaCache) abortDirectoryBuildNow(dirPath util.FullPath) error {
 	delete(mc.buildingDirs, dirPath)
 	return nil
+}
+
+// purgeDirectoryChildrenNow runs in the apply loop, serialized with
+// completeDirectoryBuildNow's markCachedFn, so no build publish interleaves
+// between resetFn (clears the cached flag) and the store wipe. Skipping a
+// building directory avoids deleting entries the build inserted but hasn't yet
+// published. Together these keep a directory from ending up flagged cached over
+// an empty store — which hides every file in it though they remain on the filer.
+func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util.FullPath, resetFn func()) error {
+	if mc.isBuildingDir(dirPath) {
+		return nil
+	}
+	if resetFn != nil {
+		resetFn()
+	}
+	mc.Lock()
+	defer mc.Unlock()
+	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
 func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {

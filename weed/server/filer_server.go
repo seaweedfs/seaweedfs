@@ -25,7 +25,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra2"
@@ -39,6 +38,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/mongodb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/mysql"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/mysql2"
+	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis"
@@ -245,6 +245,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		defaultMux.HandleFunc("/readyz", requestIDMiddleware(fs.filerHealthzHandler))
 		// TUS resumable upload protocol handler
 		if option.TusBasePath != "" {
 			// Normalize TusPath to always have a leading slash and no trailing slash
@@ -268,6 +269,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if defaultMux != readonlyMux {
 		handleStaticResources(readonlyMux)
 		readonlyMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		readonlyMux.HandleFunc("/readyz", requestIDMiddleware(fs.filerHealthzHandler))
 		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.readonlyFilerHandler)))
 	}
 
@@ -310,7 +312,7 @@ func (fs *FilerServer) checkWithMaster() {
 	for !isConnected {
 		fs.option.Masters.RefreshBySrvIfAvailable()
 		for _, master := range fs.option.Masters.GetInstances() {
-			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			readErr := operation.WithMasterServerClient(context.Background(), false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)

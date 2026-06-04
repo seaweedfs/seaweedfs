@@ -70,7 +70,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		inFlightGauge.Inc()
 		defer inFlightGauge.Dec()
 
-		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
+		err = DistributedOperation(ctx, remoteLocations, func(ctx context.Context, location operation.Location) error {
 			u := url.URL{
 				Scheme: "http",
 				Host:   location.Url,
@@ -115,6 +115,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 				Jwt:               jwt,
 				Md5:               contentMd5,
 				BytesBuffer:       bytesBuffer,
+				MaxAttempts:       1, // fail fast on a dead replica; the client write retries
 			}
 
 			uploader, err := operation.NewUploader()
@@ -160,7 +161,8 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
-		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
+		// background, not r.Context(): a client disconnect must not orphan replica deletes
+		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
 			size = 0
@@ -189,20 +191,34 @@ type RemoteResult struct {
 	Error error
 }
 
-func DistributedOperation(locations []operation.Location, op func(location operation.Location) error) error {
+func DistributedOperation(ctx context.Context, locations []operation.Location, op func(ctx context.Context, location operation.Location) error) error {
 	length := len(locations)
-	results := make(chan RemoteResult)
-	for _, location := range locations {
-		go func(location operation.Location, results chan RemoteResult) {
-			results <- RemoteResult{location.Url, op(location)}
-		}(location, results)
-	}
-	ret := DistributedOperationResult(make(map[string]error))
-	for i := 0; i < length; i++ {
-		result := <-results
-		ret[result.Host] = result.Error
+	if length == 0 {
+		return nil
 	}
 
+	// cancel outstanding replica ops once the outcome is decided
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// buffered so a straggler (e.g. a replica stalled on a TCP dial timeout) can
+	// still deliver its result and exit after we have already returned.
+	resultCh := make(chan RemoteResult, length)
+	for _, location := range locations {
+		go func(location operation.Location) {
+			resultCh <- RemoteResult{location.Url, op(ctx, location)}
+		}(location)
+	}
+
+	ret := DistributedOperationResult(make(map[string]error))
+	for i := 0; i < length; i++ {
+		result := <-resultCh
+		ret[result.Host] = result.Error
+		if result.Error != nil {
+			// fail fast on the first error instead of waiting for slow replicas
+			return ret.Error()
+		}
+	}
 	return ret.Error()
 }
 

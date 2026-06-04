@@ -198,6 +198,9 @@ templ FileBrowser(data dash.FileBrowserData) {
 											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" data-action="properties" data-path={ entry.FullPath }>
 												<i class="fas fa-info-circle"></i>
 											</button>
+											<button type="button" class="btn btn-outline-success btn-sm" title="Export metadata" data-action="export-metadata" data-path={ entry.FullPath }>
+												<i class="fas fa-file-export"></i>
+											</button>
 											<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" data-action="delete" data-path={ entry.FullPath }>
 												<i class="fas fa-trash"></i>
 											</button>
@@ -354,7 +357,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			}
 		});
 		
-		// Handle file browser action buttons (download, view, properties, delete)
+		// Handle file browser action buttons (download, view, properties, export-metadata, delete)
 		document.addEventListener('click', function(e) {
 			const button = e.target.closest('[data-action]');
 			if (!button) return;
@@ -373,6 +376,9 @@ templ FileBrowser(data dash.FileBrowserData) {
 					break;
 				case 'properties':
 					showFileProperties(path);
+					break;
+				case 'export-metadata':
+					exportMetadata(path);
 					break;
 				case 'delete':
 					const fileName = path.split('/').pop();
@@ -398,6 +404,11 @@ templ FileBrowser(data dash.FileBrowserData) {
 	function viewFile(path) {
 		// Open file viewer in new tab
 		window.open((window.__BASE_PATH__ || '') + '/api/files/view?path=' + encodeURIComponent(path), '_blank');
+	}
+
+	function exportMetadata(path) {
+		// Download metadata as an fs.meta.load-compatible .meta.gz
+		window.open((window.__BASE_PATH__ || '') + '/api/files/metadata?path=' + encodeURIComponent(path), '_blank');
 	}
 
 	function showFileProperties(path) {

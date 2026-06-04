@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -485,6 +486,7 @@ func initMiniVolumeFlags() {
 	miniOptions.v.readBufferSizeMB = cmdMini.Flag.Int("volume.readBufferSizeMB", 4, "read buffer size in MB")
 	miniOptions.v.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
+	miniOptions.v.setDiskIOProbeDefaults()
 }
 
 // initMiniS3Flags initializes S3 server flag options
@@ -1136,6 +1138,8 @@ func runMini(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+	util.LoadConfiguration("volume", false)
+	miniOptions.v.applyDiskIOProbeConfig()
 
 	// applyConfigFileOptions above may have overwritten -dir from the
 	// mini.options file, so re-resolve it here alongside the other paths.
@@ -1787,8 +1791,19 @@ func printWelcomeMessage() {
 		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
 	}
 
-	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
-	sb.WriteString("  Press Ctrl+C to stop all components")
+	fmt.Fprintf(&sb, "\n  Data Directory:   %s\n", *miniDataFolders)
+	firstDir := util.StringSplit(*miniDataFolders, ",")[0]
+	if ds := stats_collect.NewDiskStatus(firstDir); ds != nil && ds.All > 0 {
+		fmt.Fprintf(&sb, "  Free Space:       %s\n", util.BytesToHumanReadable(ds.Free))
+	}
+	if miniMasterOptions.volumeSizeLimitMB != nil {
+		fmt.Fprintf(&sb, "  Volume Size:      %s\n", util.BytesToHumanReadable(uint64(*miniMasterOptions.volumeSizeLimitMB)*bytesPerMB))
+	}
+	if max, free, ok := miniVolumeCounts(); ok {
+		fmt.Fprintf(&sb, "  Volume Count:     %d\n", max)
+		fmt.Fprintf(&sb, "  Free Volumes:     %d\n", free)
+	}
+	sb.WriteString("\n  Press Ctrl+C to stop all components")
 
 	switch {
 	case s3api.HasAnyIdentity():
@@ -1808,6 +1823,33 @@ func printWelcomeMessage() {
 
 	fmt.Print(sb.String())
 	fmt.Println("")
+}
+
+// miniVolumeCounts asks the local master for the total volume slots the data
+// directory supports (Topology.Max) and how many are still free (Topology.Free).
+// Best-effort: any error returns ok=false so the welcome banner simply omits
+// the lines.
+func miniVolumeCounts() (max, free int64, ok bool) {
+	url := getHealthCheckAddr(fmt.Sprintf("http://%s:%d/dir/status", *miniIp, *miniMasterOptions.port))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, false
+	}
+	var status struct {
+		Topology struct {
+			Max  int64
+			Free int64
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return 0, 0, false
+	}
+	return status.Topology.Max, status.Topology.Free, true
 }
 
 // ensureMiniBuckets creates each named bucket on the embedded filer if it does

@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -15,10 +19,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
+	"google.golang.org/protobuf/proto"
 )
 
 type FileBrowserHandlers struct {
@@ -391,8 +397,9 @@ func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
+	inline := r.URL.Query().Get("inline") == "true"
 	tracker := &responseWriteTracker{ResponseWriter: w}
-	if err := h.downloadFileGrpc(r.Context(), filePath, tracker); err != nil {
+	if err := h.downloadFileGrpc(r.Context(), filePath, tracker, inline); err != nil {
 		// Once bytes have been written we can't switch to a JSON error body
 		// without corrupting the partial response — log and stop. Before any
 		// write the response is still uncommitted, so a 502 with details is
@@ -628,6 +635,93 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, properties)
 }
 
+// ExportMetadata streams a file or folder's metadata as a gzipped, length-prefixed
+// FullEntry stream — the format weed shell fs.meta.load reads. Directories are
+// walked recursively via the filer BFS metadata stream.
+func (h *FileBrowserHandlers) ExportMetadata(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("path")
+	if filePath == "" {
+		writeJSONError(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	cleanPath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tracker := &responseWriteTracker{ResponseWriter: w}
+
+	err = h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		stream, err := client.TraverseBfsMetadata(r.Context(), &filer_pb.TraverseBfsMetadataRequest{
+			Directory:        cleanPath,
+			ExcludedPrefixes: []string{filer.SystemLogDir},
+		})
+		if err != nil {
+			return err
+		}
+
+		// Read the first entry before sending headers so a bad path returns a clean error.
+		first, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+
+		downloadName := path.Base(cleanPath)
+		if downloadName == "/" || downloadName == "." || downloadName == "" {
+			downloadName = "root"
+		}
+		tracker.Header().Set("Content-Type", "application/gzip")
+		tracker.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": downloadName + ".meta.gz"}))
+		tracker.WriteHeader(http.StatusOK)
+
+		bw := bufio.NewWriter(tracker)
+		gw := gzip.NewWriter(bw)
+
+		sizeBuf := make([]byte, 4)
+		writeEntry := func(resp *filer_pb.TraverseBfsMetadataResponse) error {
+			b, err := proto.Marshal(&filer_pb.FullEntry{Dir: resp.Directory, Entry: resp.Entry})
+			if err != nil {
+				return err
+			}
+			util.Uint32toBytes(sizeBuf, uint32(len(b)))
+			if _, err := gw.Write(sizeBuf); err != nil {
+				return err
+			}
+			_, err = gw.Write(b)
+			return err
+		}
+
+		if err := writeEntry(first); err != nil {
+			return err
+		}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr == io.EOF {
+				break
+			}
+			if recvErr != nil {
+				return recvErr
+			}
+			if err := writeEntry(resp); err != nil {
+				return err
+			}
+		}
+
+		if err := gw.Close(); err != nil {
+			return err
+		}
+		return bw.Flush()
+	})
+	if err != nil {
+		if tracker.committed {
+			glog.Errorf("Error exporting metadata for %s: %v", cleanPath, err)
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "Failed to export metadata: "+err.Error())
+	}
+}
+
 // Helper function to format bytes
 func (h *FileBrowserHandlers) formatBytes(bytes int64) string {
 	const unit = 1024
@@ -685,4 +779,3 @@ func min(a, b int64) int64 {
 	}
 	return b
 }
-

@@ -272,6 +272,9 @@ spec:
               {{- $authMethods := .Values.allInOne.sftp.authMethods | default .Values.sftp.authMethods }}
               {{- if $authMethods }}
               -sftp.authMethods={{ $authMethods }} \
+              {{- if contains "certificate" $authMethods }}
+              -sftp.trustedUserCAKeysFile=/etc/sw/sftp_ca/ca_user.pub \
+              {{- end }}
               {{- end }}
               {{- $maxAuthTries := .Values.allInOne.sftp.maxAuthTries | default .Values.sftp.maxAuthTries }}
               {{- if $maxAuthTries }}
@@ -317,6 +320,12 @@ spec:
             {{- if or .Values.allInOne.sftp.enableAuth .Values.sftp.enableAuth }}
             - mountPath: /etc/sw/sftp
               name: config-users
+              readOnly: true
+            {{- end }}
+            {{- $aioAuthMethods := .Values.allInOne.sftp.authMethods | default .Values.sftp.authMethods }}
+            {{- if and $aioAuthMethods (contains "certificate" $aioAuthMethods) }}
+            - mountPath: /etc/sw/sftp_ca
+              name: config-sftp-ca
               readOnly: true
             {{- end }}
             {{- end }}
@@ -453,6 +462,18 @@ spec:
           secret:
             defaultMode: 420
             secretName: {{ default (printf "%s-sftp-secret" (include "seaweedfs.fullname" .)) (or .Values.allInOne.sftp.existingConfigSecret .Values.sftp.existingConfigSecret) }}
+        {{- end }}
+        {{- $aioAuthMethodsVol := .Values.allInOne.sftp.authMethods | default .Values.sftp.authMethods }}
+        {{- if and $aioAuthMethodsVol (contains "certificate" $aioAuthMethodsVol) }}
+        {{- $aioCASecret := or .Values.allInOne.sftp.existingCAKeysSecret .Values.sftp.existingCAKeysSecret }}
+        {{- $aioCAKeys := or .Values.allInOne.sftp.trustedUserCAKeys .Values.sftp.trustedUserCAKeys }}
+        {{- if and (not $aioCASecret) (not $aioCAKeys) }}
+        {{- fail "allInOne.sftp.authMethods includes \"certificate\" but neither trustedUserCAKeys nor existingCAKeysSecret is set" }}
+        {{- end }}
+        - name: config-sftp-ca
+          secret:
+            defaultMode: 420
+            secretName: {{ default (printf "%s-sftp-ca-secret" (include "seaweedfs.fullname" .)) $aioCASecret }}
         {{- end }}
         {{- end }}
         {{- if .Values.filer.notificationConfig }}

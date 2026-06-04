@@ -311,7 +311,9 @@ func InvalidateGrpcConnection(address string) {
 
 // grpcMarshalErrorPrefix is the library-owned prefix gRPC prepends to every
 // client-side proto marshal failure; see grpc-go rpc_util.go encode():
-//   status.Errorf(codes.Internal, "grpc: error while marshaling: %v", ...)
+//
+//	status.Errorf(codes.Internal, "grpc: error while marshaling: %v", ...)
+//
 // The "grpc:" token is reserved for gRPC internal diagnostics and will not
 // collide with user-produced Internal statuses.
 const grpcMarshalErrorPrefix = "grpc: error while marshaling"
@@ -352,8 +354,11 @@ func isClientSideMarshalError(err error) bool {
 	return s.Code() == codes.Internal && strings.HasPrefix(s.Message(), grpcMarshalErrorPrefix)
 }
 
-// shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
-func shouldInvalidateConnection(err error) bool {
+// shouldInvalidateConnection checks if an error indicates the cached connection
+// should be invalidated. ctx is the caller's per-request context (nil is treated
+// as a live context); it disambiguates a genuinely broken channel from the
+// caller cancelling or timing out its own request.
+func shouldInvalidateConnection(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -369,8 +374,19 @@ func shouldInvalidateConnection(err error) bool {
 	if s, ok := status.FromError(err); ok {
 		code := s.Code()
 		switch code {
-		case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded, codes.Aborted, codes.Internal:
+		case codes.Unavailable, codes.Aborted, codes.Internal:
 			return true
+		case codes.Canceled, codes.DeadlineExceeded:
+			// Ambiguous: this fires both when a stale cached channel rejects
+			// RPCs (e.g. a peer restart behind a k8s Service VIP), where we must
+			// invalidate, and when the caller's own context expired, where the
+			// shared channel is fine. Tearing the channel down for the latter
+			// cancels every other in-flight RPC on it with "the client
+			// connection is closing", a cascade that turns one slow request into
+			// a flood of failures across all concurrent callers. Only invalidate
+			// while the caller's context is still live, isolating the genuine
+			// stale-channel signal.
+			return ctx == nil || ctx.Err() == nil
 		}
 	}
 
@@ -387,7 +403,11 @@ func shouldInvalidateConnection(err error) bool {
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
-func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientConn) error, address string, waitForReady bool, opts ...grpc.DialOption) error {
+// ctx is the caller's per-request context: a Canceled/DeadlineExceeded that fires
+// because ctx itself expired will not tear down the shared cached ClientConn out
+// from under other concurrent callers. Pass context.Background() when there is no
+// per-request deadline to honor.
+func WithGrpcClient(ctx context.Context, streamingMode bool, signature int32, fn func(*grpc.ClientConn) error, address string, waitForReady bool, opts ...grpc.DialOption) error {
 
 	if !streamingMode {
 		vgc, err := getOrCreateConnection(address, waitForReady, opts...)
@@ -395,7 +415,7 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 			return fmt.Errorf("getOrCreateConnection %s: %v", address, err)
 		}
 		executionErr := fn(vgc.ClientConn)
-		if executionErr != nil && shouldInvalidateConnection(executionErr) {
+		if executionErr != nil && shouldInvalidateConnection(ctx, executionErr) {
 			grpcClientsLock.Lock()
 			t, ok := grpcClients[address]
 			shouldClose := ok && t.version == vgc.version
@@ -412,12 +432,12 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 	}
 
 	// Streaming mode: dedicate a fresh ClientConn to this call.
-	ctx := context.Background()
+	dialCtx := context.Background()
 	if signature != 0 {
 		// Optimize: Use AppendToOutgoingContext instead of creating new map
-		ctx = metadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", signature))
+		dialCtx = metadata.AppendToOutgoingContext(dialCtx, "sw-client-id", fmt.Sprintf("%d", signature))
 	}
-	grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
+	grpcConnection, err := GrpcDial(dialCtx, address, waitForReady, opts...)
 	if err != nil {
 		return fmt.Errorf("fail to dial %s: %v", address, err)
 	}
@@ -494,8 +514,12 @@ func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 	return util.JoinHostPort(host, port)
 }
 
-func WithMasterClient(streamingMode bool, master ServerAddress, grpcDialOption grpc.DialOption, waitForReady bool, fn func(client master_pb.SeaweedClient) error) error {
-	return WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+// WithMasterClient threads the caller's per-request context into the
+// connection-invalidation decision, so a Canceled/DeadlineExceeded from the
+// caller's own timeout does not invalidate the shared cached master connection.
+// Pass context.Background() when there is no per-request deadline to honor.
+func WithMasterClient(ctx context.Context, streamingMode bool, master ServerAddress, grpcDialOption grpc.DialOption, waitForReady bool, fn func(client master_pb.SeaweedClient) error) error {
+	return WithGrpcClient(ctx, streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
 	}, master.ToGrpcAddress(), waitForReady, grpcDialOption)
@@ -503,7 +527,7 @@ func WithMasterClient(streamingMode bool, master ServerAddress, grpcDialOption g
 }
 
 func WithVolumeServerClient(streamingMode bool, volumeServer ServerAddress, grpcDialOption grpc.DialOption, fn func(client volume_server_pb.VolumeServerClient) error) error {
-	return WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+	return WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
 	}, volumeServer.ToGrpcAddress(), false, grpcDialOption)
@@ -513,7 +537,7 @@ func WithVolumeServerClient(streamingMode bool, volumeServer ServerAddress, grpc
 func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses map[string]ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
 
 	for _, masterGrpcAddress := range masterGrpcAddresses {
-		err = WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+		err = WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 			client := master_pb.NewSeaweedClient(grpcConnection)
 			return fn(client)
 		}, masterGrpcAddress.ToGrpcAddress(), false, grpcDialOption)
@@ -527,7 +551,7 @@ func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses map[stri
 
 func WithBrokerGrpcClient(streamingMode bool, brokerGrpcAddress string, grpcDialOption grpc.DialOption, fn func(client mq_pb.SeaweedMessagingClient) error) error {
 
-	return WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+	return WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 		client := mq_pb.NewSeaweedMessagingClient(grpcConnection)
 		return fn(client)
 	}, brokerGrpcAddress, false, grpcDialOption)
@@ -542,7 +566,7 @@ func WithFilerClient(streamingMode bool, signature int32, filer ServerAddress, g
 
 func WithGrpcFilerClient(streamingMode bool, signature int32, filerAddress ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
-	return WithGrpcClient(streamingMode, signature, func(grpcConnection *grpc.ClientConn) error {
+	return WithGrpcClient(context.Background(), streamingMode, signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, filerAddress.ToGrpcAddress(), false, grpcDialOption)
@@ -552,7 +576,7 @@ func WithGrpcFilerClient(streamingMode bool, signature int32, filerAddress Serve
 func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
 
 	for _, filerAddress := range filerAddresses {
-		err = WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+		err = WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 			return fn(client)
 		}, filerAddress.ToGrpcAddress(), false, grpcDialOption)

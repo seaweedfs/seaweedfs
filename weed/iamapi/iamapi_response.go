@@ -27,6 +27,10 @@ type (
 	GetPolicyResponse                = iamlib.GetPolicyResponse
 	DeletePolicyResponse             = iamlib.DeletePolicyResponse
 	ListPoliciesResponse             = iamlib.ListPoliciesResponse
+	ListPolicyVersionsResponse       = iamlib.ListPolicyVersionsResponse
+	GetPolicyVersionResponse         = iamlib.GetPolicyVersionResponse
+	CreatePolicyVersionResponse      = iamlib.CreatePolicyVersionResponse
+	DeletePolicyVersionResponse      = iamlib.DeletePolicyVersionResponse
 	AttachUserPolicyResponse         = iamlib.AttachUserPolicyResponse
 	DetachUserPolicyResponse         = iamlib.DetachUserPolicyResponse
 	ListAttachedUserPoliciesResponse = iamlib.ListAttachedUserPoliciesResponse

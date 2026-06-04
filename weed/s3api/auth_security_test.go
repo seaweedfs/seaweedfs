@@ -29,6 +29,11 @@ func signRawHTTPRequest(ctx context.Context, req *http.Request, accessKey, secre
 }
 
 func TestReproIssue7912(t *testing.T) {
+	// This test asserts behavior for a config with no anonymous identity; reset
+	// the shared in-memory store so a leaked anonymous identity from another test
+	// does not satisfy the unsigned-streaming auth path.
+	resetMemoryStore()
+
 	// Create a temporary s3.json
 	configContent := `{
   "identities": [
@@ -196,6 +201,52 @@ func TestReproIssue7912(t *testing.T) {
 		assert.Equal(t, s3err.ErrAccessDenied, errCode, "Should be denied with unsigned streaming if no auth header")
 		assert.Nil(t, identity)
 	})
+}
+
+// TestAnonymousStreamingUnsignedUpload is a regression test for issue #9725.
+// Modern botocore/aiobotocore attaches a CRC32 trailer to plain PutObject calls,
+// turning the payload into STREAMING-UNSIGNED-PAYLOAD-TRAILER. An anonymous
+// (anon=True) upload then carries that header but no Authorization, which used to
+// be routed straight to SigV4 verification and rejected as AccessDenied. It must
+// instead fall back to the configured anonymous identity, just like a plain
+// anonymous PUT does.
+func TestAnonymousStreamingUnsignedUpload(t *testing.T) {
+	// This test loads an anonymous identity into the shared in-memory credential
+	// store; reset before and after so it neither inherits nor leaks state.
+	resetMemoryStore()
+	defer resetMemoryStore()
+
+	configContent := `{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Read", "Write", "List"]
+    }
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmpFile.Name()}, nil, "memory")
+	require.True(t, iam.isEnabled(), "Auth should be enabled")
+
+	r := httptest.NewRequest(http.MethodPut, "http://localhost:8333/somebucket/someobject", nil)
+	r.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
+	r.Header.Set("x-amz-trailer", "x-amz-checksum-crc32")
+	// No Authorization header: anonymous upload with a checksum trailer.
+
+	// The request must stay classified as unsigned-streaming so getRequestDataReader
+	// still decodes the chunked body; only the auth resolution falls back to anonymous.
+	assert.Equal(t, authTypeStreamingUnsigned, getRequestAuthType(r))
+
+	identity, errCode := iam.authRequest(r, s3_constants.ACTION_WRITE)
+	assert.Equal(t, s3err.ErrNone, errCode, "anonymous unsigned-streaming PUT should resolve to the anonymous identity")
+	require.NotNil(t, identity)
+	assert.Equal(t, s3_constants.AccountAnonymousId, identity.Name)
 }
 
 // TestExternalUrlSignatureVerification tests that S3 signature verification works

@@ -247,12 +247,21 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 			messages   []*master_pb.VolumeEcShardInformationMessage
 			datDir     string
 			shardCount int
+			dataShards int
 		}
 		var victims []victim
 		loc.ecVolumesLock.RLock()
 		for vid, ev := range loc.ecVolumes {
 			shardCount := len(ev.Shards)
-			if shardCount >= erasure_coding.DataShardsCount {
+			// Use the volume's configured data-shard count, not the OSS
+			// default: a disk holding a full data set for a custom ratio
+			// (e.g. 9 shards of a 9+3 volume) is independently recoverable
+			// and must not be mistaken for a partial leftover and wiped.
+			dataShards := erasure_coding.DataShardsCount
+			if ev.ECContext != nil && ev.ECContext.DataShards > 0 {
+				dataShards = ev.ECContext.DataShards
+			}
+			if shardCount >= dataShards {
 				continue
 			}
 			key := ecKeyForReconcile{collection: ev.Collection, vid: vid}
@@ -279,13 +288,14 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 				messages:   ev.ToVolumeEcShardInformationMessage(uint32(diskId)),
 				datDir:     owner.location.Directory,
 				shardCount: shardCount,
+				dataShards: dataShards,
 			})
 		}
 		loc.ecVolumesLock.RUnlock()
 
 		for _, v := range victims {
 			glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards (need %d) while a healthy .dat exists on sibling disk %s; cleaning up leftover EC files (issue 9478)",
-				v.vid, v.collection, loc.Directory, v.shardCount, erasure_coding.DataShardsCount, v.datDir)
+				v.vid, v.collection, loc.Directory, v.shardCount, v.dataShards, v.datDir)
 			loc.unloadEcVolume(v.vid)
 			loc.removeEcVolumeFiles(v.collection, v.vid)
 			for _, msg := range v.messages {

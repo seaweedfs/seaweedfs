@@ -1,4 +1,6 @@
-FROM golang:1.25-alpine AS builder
+# Pin the builder to the host arch and cross-compile the (CGO-free) Go binary,
+# so arm64/arm/386 targets skip QEMU emulation of the whole compile.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/seaweedfs/
 ARG BRANCH=${BRANCH:-master}
@@ -12,9 +14,12 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs && \
       git checkout $BRANCH) || \
      (echo "ERROR: Branch/commit $BRANCH not found in repository" && \
       echo "Available branches:" && git branch -a && exit 1))
+ARG TARGETOS TARGETARCH TARGETVARIANT
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
-  && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
+  && export GOOS=$TARGETOS GOARCH=$TARGETARCH \
+  && case "$TARGETARCH" in arm) export GOARM="${TARGETVARIANT#v}";; esac \
+  && CGO_ENABLED=0 go build -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}" -o /go/bin/weed .
 
 # Rust volume server: use pre-built binary from CI when available (placed in
 # weed-volume-prebuilt/ by the build-rust-binaries job), otherwise compile

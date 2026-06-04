@@ -17,7 +17,7 @@ const s3TablesDefaultRegion = ""
 const timeFormat = "2006-01-02T15:04:05Z07:00"
 
 func withFilerClient(commandEnv *CommandEnv, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+	return pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(conn)
 		return fn(client)
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)

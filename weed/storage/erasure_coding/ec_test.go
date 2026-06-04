@@ -27,7 +27,7 @@ func TestEncodingDecoding(t *testing.T) {
 	// Create default EC context for testing
 	ctx := NewDefaultECContext("", 0)
 
-	err := generateEcFiles(baseFileName, bufferSize, largeBlockSize, smallBlockSize, ctx)
+	_, err := generateEcFiles(baseFileName, bufferSize, largeBlockSize, smallBlockSize, ctx)
 	if err != nil {
 		t.Logf("generateEcFiles: %v", err)
 	}
@@ -194,6 +194,7 @@ func removeGeneratedFiles(baseFileName string, ctx *ECContext) {
 		os.Remove(fname)
 	}
 	os.Remove(baseFileName + ".ecx")
+	RemoveBitrotSidecars(baseFileName)
 }
 
 func TestLocateData(t *testing.T) {

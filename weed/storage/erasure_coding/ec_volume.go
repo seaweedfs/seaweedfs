@@ -59,6 +59,13 @@ type EcVolume struct {
 	// Seeded from .ecj in NewEcVolume and updated under deletedNeedlesLock.
 	deletedNeedlesLock sync.RWMutex
 	deletedNeedles     map[types.NeedleId]struct{}
+
+	// Bitrot checksum sidecar for the active generation (optional). bitrot is
+	// nil unless bitrotStatus == BitrotOn, and is loaded at mount. Guarded by
+	// bitrotLock.
+	bitrotLock   sync.RWMutex
+	bitrot       *volume_server_pb.EcBitrotProtection
+	bitrotStatus BitrotStatus
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -168,6 +175,9 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
+	// Load the active-generation bitrot checksum sidecar (optional).
+	ev.loadActiveBitrotSidecar()
+
 	return
 }
 
@@ -257,6 +267,12 @@ func (ev *EcVolume) Destroy() {
 	os.Remove(ev.FileName(".ecx"))
 	os.Remove(ev.FileName(".ecj"))
 	os.Remove(ev.FileName(".vif"))
+	// Remove the bitrot checksum sidecar(s) so a later volume reuse cannot load
+	// stale protection. Search both the data and index bases.
+	RemoveBitrotSidecars(ev.DataBaseFileName())
+	if ev.IndexBaseFileName() != ev.DataBaseFileName() {
+		RemoveBitrotSidecars(ev.IndexBaseFileName())
+	}
 }
 
 // DiskType returns the disk type the EC volume currently reports under.

@@ -35,6 +35,7 @@ Your support will be really appreciated by me and other supporters!
 [![nodion](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_nodion.png)](https://www.nodion.com)
 [![piknik](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/piknik.png)](https://www.piknik.com)
 [![keepsec](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/keepsec.png)](https://www.keepsec.ca)
+[![zyner](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_zyner.png)](https://zyner.org)
 
 ---
 
@@ -654,7 +655,8 @@ Cluster Total: 3302.88 MiB/s, 550.51 obj/s over 43s.
 ## Enterprise ##
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
-which has a self-healing storage format with better data protection.
+which has advanced features, including data recovery, self-healing storage, 
+customizable erasure coding, EC vacuum and repair, etc.
 
 [Back to TOC](#table-of-contents)
 

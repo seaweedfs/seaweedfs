@@ -1778,7 +1778,7 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 						data := collectionMap[collection]
 						data.PhysicalSize += int64(shards.TotalSize())
-						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
+						data.LogicalSize += int64(shards.MinusParityShards(erasure_coding.DataShardsCount).TotalSize())
 						collectionMap[collection] = data
 
 						// fileCount is volume-wide (same .ecx on every shard

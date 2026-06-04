@@ -48,7 +48,6 @@ var Commands = []*Command{
 	cmdVolume,
 	cmdWebDav,
 	cmdSftp,
-	cmdNfs,
 	cmdWorker,
 }
 

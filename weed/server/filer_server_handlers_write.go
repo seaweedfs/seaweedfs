@@ -98,8 +98,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("saveInside"),
 	)
 	if err != nil {
-		if err == ErrReadOnly {
-			w.WriteHeader(http.StatusInsufficientStorage)
+		if errors.Is(err, ErrReadOnly) {
+			writeJsonError(w, r, http.StatusInsufficientStorage, err)
 		} else {
 			glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ":", err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
@@ -255,7 +255,14 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
 
 	if rule.ReadOnly {
-		return nil, ErrReadOnly
+		// Name the read-only prefix so the caller knows which path is locked and why.
+		// MatchStorageRule leaves LocationPrefix empty when several rules merge; fall back to the request path.
+		prefix := rule.LocationPrefix
+		if prefix == "" {
+			// requestURI may carry a query string on the HTTP path; keep only the path.
+			prefix, _, _ = strings.Cut(requestURI, "?")
+		}
+		return nil, fmt.Errorf("%w: %s (e.g. bucket over quota)", ErrReadOnly, prefix)
 	}
 
 	// Use local variable instead of mutating shared rule

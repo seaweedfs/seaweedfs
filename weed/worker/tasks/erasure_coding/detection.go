@@ -123,13 +123,10 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 		groupMetrics := volumeGroups[volumeID]
 
-		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
-		metric := groupMetrics[0]
-		for _, m := range groupMetrics {
-			if m.Server < metric.Server {
-				metric = m
-			}
-		}
+		// Prefer the lowest-server credible replica so a 0-byte stub or a
+		// leftover EC shard set on a lower server can't become canonical and
+		// strand the volume in skippedTooSmall / skippedAlreadyEC.
+		metric := selectCanonicalMetric(groupMetrics)
 
 		// Skip if already EC volume
 		if metric.IsECVolume {
@@ -310,13 +307,19 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				for _, shard := range existingECShards {
 					key := fmt.Sprintf("%s:%d", shard.ServerID, shard.DiskID)
 					if !duplicateCheck[key] { // Avoid duplicates if EC shards are on same disk as volume replicas
+						shardIds := append([]uint32(nil), shard.ShardIds...)
+						// Free exactly the shards on this disk. Without an explicit
+						// impact the cleanup falls back to CalculateECShardCleanupImpact,
+						// which credits TotalShardsCount (14) regardless of ratio.
+						cleanupImpact := topology.StorageSlotChange{ShardSlots: -int32(len(shardIds))}
 						sources = append(sources, topology.TaskSourceSpec{
-							ServerID:    shard.ServerID,
-							DiskID:      shard.DiskID,
-							DataCenter:  shard.DataCenter,
-							Rack:        shard.Rack,
-							CleanupType: topology.CleanupECShards,
-							ShardIds:    append([]uint32(nil), shard.ShardIds...),
+							ServerID:      shard.ServerID,
+							DiskID:        shard.DiskID,
+							DataCenter:    shard.DataCenter,
+							Rack:          shard.Rack,
+							CleanupType:   topology.CleanupECShards,
+							ShardIds:      shardIds,
+							StorageImpact: &cleanupImpact,
 						})
 						duplicateCheck[key] = true
 					}

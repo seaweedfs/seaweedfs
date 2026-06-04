@@ -30,21 +30,22 @@ type VolumeServer struct {
 	address  string
 	baseDir  string
 
-	mu                  sync.Mutex
-	receivedFiles       map[string]uint64
-	mountRequests       []*volume_server_pb.VolumeEcShardsMountRequest
-	deleteRequests      []*volume_server_pb.VolumeDeleteRequest
-	markReadonlyCalls   int
-	markWritableCalls   int
-	readFileStatusCalls int
-	vacuumGarbageRatio  float64
-	vacuumCheckCalls    int
-	vacuumCompactCalls  int
-	vacuumCommitCalls   int
-	vacuumCleanupCalls  int
-	volumeCopyCalls     int
-	volumeMountCalls    int
-	tailReceiverCalls   int
+	mu                   sync.Mutex
+	receivedFiles        map[string]uint64
+	mountRequests        []*volume_server_pb.VolumeEcShardsMountRequest
+	deleteRequests       []*volume_server_pb.VolumeDeleteRequest
+	markReadonlyCalls    int
+	markWritableCalls    int
+	readFileStatusCalls  int
+	vacuumGarbageRatio   float64
+	vacuumCommitReadOnly bool
+	vacuumCheckCalls     int
+	vacuumCompactCalls   int
+	vacuumCommitCalls    int
+	vacuumCleanupCalls   int
+	volumeCopyCalls      int
+	volumeMountCalls     int
+	tailReceiverCalls    int
 }
 
 // NewVolumeServer starts a test volume server using the provided base directory.
@@ -113,6 +114,13 @@ func (v *VolumeServer) SetVacuumGarbageRatio(ratio float64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.vacuumGarbageRatio = ratio
+}
+
+// SetVacuumCommitReadOnly sets the IsReadOnly value returned by VacuumVolumeCommit.
+func (v *VolumeServer) SetVacuumCommitReadOnly(readOnly bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.vacuumCommitReadOnly = readOnly
 }
 
 // VacuumStats returns the vacuum RPC call counts.
@@ -428,8 +436,9 @@ func (v *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCom
 func (v *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_server_pb.VacuumVolumeCommitRequest) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
 	v.mu.Lock()
 	v.vacuumCommitCalls++
+	readOnly := v.vacuumCommitReadOnly
 	v.mu.Unlock()
-	return &volume_server_pb.VacuumVolumeCommitResponse{}, nil
+	return &volume_server_pb.VacuumVolumeCommitResponse{IsReadOnly: readOnly}, nil
 }
 
 func (v *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_server_pb.VacuumVolumeCleanupRequest) (*volume_server_pb.VacuumVolumeCleanupResponse, error) {

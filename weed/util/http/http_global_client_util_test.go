@@ -1,6 +1,11 @@
 package http
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestAppendQueryParameter(t *testing.T) {
 	testCases := []struct {
@@ -68,5 +73,44 @@ func TestAppendQueryParameter(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tc.expected, actual)
 			}
 		})
+	}
+}
+func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not gzip"))
+	}))
+	defer server.Close()
+
+	_, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {})
+	if err == nil {
+		t.Fatal("ReadUrlAsStream returned nil error for invalid gzip response")
+	}
+}
+
+func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Delete panicked before returning the request error: %v", r)
+		}
+	}()
+
+	if err := Delete("http://[::1", "jwt"); err == nil {
+		t.Fatal("expected invalid request error")
+	}
+}
+
+func TestDeleteProxiedReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("DeleteProxied panicked before returning the request error: %v", r)
+		}
+	}()
+
+	if _, _, err := DeleteProxied("http://[::1", "jwt"); err == nil {
+		t.Fatal("expected invalid request error")
 	}
 }

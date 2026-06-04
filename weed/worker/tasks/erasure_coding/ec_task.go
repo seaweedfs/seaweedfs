@@ -45,6 +45,11 @@ type ErasureCodingTask struct {
 	sources          []*worker_pb.TaskSource // Unified sources for cleanup
 	shardAssignment  map[string][]string     // destination -> assigned shard types
 	readonlyReplicas []pb.ServerAddress      // replicas marked readonly, for rollback
+
+	// Replica servers whose original volume was an empty stub, deleted in the
+	// pre-distribute sweep. deleteOriginalVolume skips these so it does not
+	// re-delete and remove the now-EC .vif those servers share.
+	emptyReplicasDeleted map[string]bool
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -198,6 +203,18 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	if err := t.cleanupStaleEcShards(ctx); err != nil {
 		t.rollbackReadonly(ctx)
 		return fmt.Errorf("failed to clear stale EC shards on destinations: %v", err)
+	}
+
+	// Delete 0-byte stub replicas left by an interrupted encode before the new
+	// EC files land. A stub shares the <collection>_<vid>.vif path the EC
+	// volume will use; deleting it after distribute (in deleteOriginalVolume)
+	// would remove that .vif and damage the freshly written shards. OnlyEmpty
+	// keeps data-bearing replicas, which are deleted later after verify.
+	t.ReportProgressWithStage(57.0, "Removing empty stub replicas")
+	t.GetLogger().Info("Removing empty stub replicas before distribute")
+	if err := t.sweepEmptyReplicas(ctx); err != nil {
+		t.rollbackReadonly(ctx)
+		return fmt.Errorf("failed to remove empty stub replicas: %w", err)
 	}
 
 	// Step 4: Distribute shards to destinations
@@ -541,8 +558,17 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	}
 
 	// Generate EC shard files (.ec00 ~ .ec13)
-	if err := erasure_coding.WriteEcFiles(baseName); err != nil {
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, erasure_coding.BackgroundECContext())
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate EC shard files: %v", err)
+	}
+	// Persist the bitrot checksum sidecar (generation 0) alongside the shards so
+	// it travels with them during distribution. Best-effort: a failed sidecar
+	// write leaves the generation unprotected rather than failing the encode.
+	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		if serr := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(baseName, 0), ecBitrot); serr != nil {
+			glog.Warningf("failed to write EC bitrot sidecar for %s: %v", baseName, serr)
+		}
 	}
 
 	// Collect generated shard file paths and log details
@@ -606,6 +632,20 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 				"size_bytes": info.Size(),
 			}).Info("Volume info file generated")
 		}
+	}
+
+	// Add the generation-0 bitrot checksum sidecar so it is distributed with
+	// the shards (DistributeEcShards only ships files present in shardFiles).
+	// Best-effort like the sidecar write above: if it is absent the holders
+	// are simply unprotected rather than failing the encode.
+	ecsumFile := erasure_coding.BitrotSidecarPath(baseName, 0)
+	if info, err := os.Stat(ecsumFile); err == nil {
+		shardFiles["ecsum"] = ecsumFile
+		t.GetLogger().WithFields(map[string]interface{}{
+			"file_type":  "ecsum",
+			"file_path":  ecsumFile,
+			"size_bytes": info.Size(),
+		}).Info("EC bitrot checksum sidecar generated")
 	}
 
 	// Log summary of generation
@@ -673,6 +713,14 @@ func (t *ErasureCodingTask) deleteOriginalVolume(ctx context.Context) error {
 	if len(replicas) == 0 {
 		glog.Warningf("No replicas found for volume %d, falling back to source server only", t.volumeID)
 		replicas = []string{t.server}
+	}
+
+	// Empty stub replicas were already removed before distribute; skip them so
+	// VolumeDelete does not run on a server that now holds only EC shards.
+	replicas = replicasPendingDelete(replicas, t.emptyReplicasDeleted)
+	if len(replicas) == 0 {
+		glog.V(0).Infof("EC volume %d: all original replicas were empty stubs removed before distribute", t.volumeID)
+		return nil
 	}
 
 	t.GetLogger().WithFields(map[string]interface{}{
@@ -760,6 +808,67 @@ func (t *ErasureCodingTask) getReplicas() []string {
 		replicas = append(replicas, source.Node)
 	}
 	return replicas
+}
+
+// sweepEmptyReplicas deletes any original replica that is an empty 0-byte stub
+// (OnlyEmpty so a data-bearing replica is refused and kept for the post-verify
+// delete). Run before distribute: a stub shares the <collection>_<vid>.vif the
+// EC volume reuses, so removing it afterwards would strip that .vif. Servers
+// whose stub was deleted are recorded so deleteOriginalVolume skips them.
+//
+// A refusal (volume not empty) or an already-gone volume is expected and left
+// for the later delete. Any other error means the node's state is unknown; we
+// fail rather than proceed to distribute and a force-delete that could strip a
+// shared .vif.
+func (t *ErasureCodingTask) sweepEmptyReplicas(ctx context.Context) error {
+	for _, node := range t.getReplicas() {
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(node), t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, e := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
+					VolumeId:  t.volumeID,
+					OnlyEmpty: true,
+				})
+				return e
+			})
+		switch {
+		case err == nil:
+			if t.emptyReplicasDeleted == nil {
+				t.emptyReplicasDeleted = make(map[string]bool)
+			}
+			t.emptyReplicasDeleted[node] = true
+			glog.V(0).Infof("EC volume %d: removed empty stub replica on %s before distribute", t.volumeID, node)
+		case isExpectedSweepSkip(err):
+			glog.V(1).Infof("EC volume %d: empty-replica sweep left %s in place: %v", t.volumeID, node, err)
+		default:
+			return fmt.Errorf("empty-replica sweep on %s: %w", node, err)
+		}
+	}
+	return nil
+}
+
+// isExpectedSweepSkip reports whether a VolumeDelete(OnlyEmpty) error is the
+// expected leave-in-place case: the replica still holds data (refused) or no
+// longer exists. Other errors (e.g. an unreachable node) leave its state
+// unknown and must not be swallowed.
+func isExpectedSweepSkip(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "volume not empty") || strings.Contains(s, "not found")
+}
+
+// replicasPendingDelete returns replicas not already removed by the
+// pre-distribute empty-stub sweep.
+func replicasPendingDelete(replicas []string, alreadyDeleted map[string]bool) []string {
+	if len(alreadyDeleted) == 0 {
+		return replicas
+	}
+	pending := make([]string, 0, len(replicas))
+	for _, r := range replicas {
+		if alreadyDeleted[r] {
+			continue
+		}
+		pending = append(pending, r)
+	}
+	return pending
 }
 
 // cleanupStaleEcShards unmounts and deletes any EC shards still mounted on

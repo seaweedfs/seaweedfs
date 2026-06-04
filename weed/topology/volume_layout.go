@@ -108,11 +108,11 @@ type volumeSizeTracking struct {
 	reportedSize    uint64    // last heartbeat-reported size (dedup replicas)
 	compactRevision uint32    // detect compaction to reset instead of decay
 	lastUpdateTime  time.Time // dedup replicas within the same heartbeat cycle
-	fullSince       time.Time // non-zero while the volume is eagerly marked full by RecordAssign
+	fullSince       time.Time // non-zero while the volume is marked full (RecordAssign or capacity heartbeat)
 }
 
 // capacityRecoveryDelay is the minimum time a volume must stay out of the
-// writable list after being eagerly removed by RecordAssign before it can
+// writable list after being removed for capacity before it can
 // be considered for re-addition by heartbeat-driven decay. Combined with
 // the effectiveSize hysteresis band, this avoids bouncing the volume in
 // and out of writable within a single burst of assigns.
@@ -788,9 +788,15 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) bool {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) (becameWritable bool) {
+	restoreActiveVolumeCount := false
 	vl.accessLock.Lock()
-	defer vl.accessLock.Unlock()
+	defer func() {
+		vl.accessLock.Unlock()
+		if restoreActiveVolumeCount {
+			vl.adjustActiveVolumeCount(vid, +1)
+		}
+	}()
 
 	vInfo, err := dn.GetVolumesById(vid)
 	if err != nil {
@@ -804,9 +810,17 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 
 	if vl.enoughCopies(vid) {
-		return vl.setVolumeWritable(vid)
+		becameWritable = vl.setVolumeWritable(vid)
+		if becameWritable {
+			if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() {
+				// fullSince marks a prior capacity-full removal that already
+				// decremented activeVolumeCount. Re-adding must pair it once.
+				st.fullSince = time.Time{}
+				restoreActiveVolumeCount = true
+			}
+		}
 	}
-	return false
+	return becameWritable
 }
 
 func (vl *VolumeLayout) enoughCopies(vid needle.VolumeId) bool {
@@ -821,6 +835,13 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 
 	wasWritable := vl.removeFromWritable(vid)
 	if wasWritable {
+		// Stamp fullSince so UpdateVolumeSize's recovery branch can re-add the
+		// volume once it shrinks; RecordAssign does this for the write path.
+		// Only on actual removal, to stay paired with the activeVolumeCount
+		// decrement the caller does for the same bool.
+		if st := vl.sizeTracking[vid]; st != nil && st.fullSince.IsZero() {
+			st.fullSince = time.Now()
+		}
 		glog.V(0).Infof("Volume %d reaches full capacity.", vid)
 	}
 	return wasWritable

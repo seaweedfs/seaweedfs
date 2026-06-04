@@ -86,7 +86,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 		wg.Add(1)
 		go func(server string) {
 			defer wg.Done()
-			err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+			err := pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
 				glog.V(4).Infof("IAM: successfully connected to S3 server %s for propagation", server)
 				client := s3_pb.NewSeaweedS3IamCacheClient(conn)
 				return fn(propagateCtx, client)

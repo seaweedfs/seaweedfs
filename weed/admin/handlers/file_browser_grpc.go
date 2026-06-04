@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -19,13 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// Admin file browser upload chunk sizing — kept in sync with the values
-// s3api uses so files end up split into the same fid-sized pieces the rest of
-// the cluster expects.
-const (
-	adminUploadChunkSize      = 8 * 1024 * 1024
-	adminUploadSmallFileLimit = 256 * 1024
-)
+// Admin upload chunk size, matching s3api so files split into the same fid-sized pieces.
+const adminUploadChunkSize = 8 * 1024 * 1024
 
 // File browser handlers backed by the filer gRPC service. They bypass the
 // filer's HTTP listener so the UI keeps working when the filer is started
@@ -67,7 +64,7 @@ func (h *FileBrowserHandlers) fetchFileContentGrpc(ctx context.Context, filePath
 // response writer receives the canonical attachment headers and the raw
 // bytes; this replaces the HTTP-to-filer proxy that used to run in
 // DownloadFile.
-func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath string, w http.ResponseWriter) error {
+func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath string, w http.ResponseWriter, inline bool) error {
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
 		return err
@@ -84,27 +81,28 @@ func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath str
 	size := int64(filer.FileSize(entry))
 
 	fileName := path.Base(cleanFilePath)
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 
-	contentType := ""
-	if entry.Attributes != nil {
-		contentType = entry.Attributes.Mime
+	// Resolve mime like the viewer does so Content-Type and the inline check agree.
+	contentType := dash.ResolveEntryMime(entry)
+
+	// Only inline images and PDFs; serve the rest as attachments so a hostile upload
+	// (HTML, SVG) can't run as same-origin script. nosniff locks the declared type.
+	disposition := "attachment"
+	if inline && (strings.HasPrefix(contentType, "image/") || contentType == "application/pdf") {
+		disposition = "inline"
 	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": fileName}))
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
 
 	return h.streamEntryContent(ctx, entry, size, w)
 }
 
-// uploadFileGrpc streams the upload to volume servers in 8 MiB chunks via the
-// shared chunked-upload helper, then registers the assembled entry through the
-// filer gRPC service. Bytes never enter the admin process's heap as a whole —
-// each chunk is sized to adminUploadChunkSize. Small files (< 256 KiB) are
-// stored inline on the entry, matching the S3 server's behaviour.
+// uploadFileGrpc streams the upload to volumes in 8 MiB chunks via the shared
+// chunked-upload helper, then registers the entry over the filer gRPC service.
+// Content always lands in volumes, never inlined on the entry.
 func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath string, fileName string, mimeType string, reader io.Reader) error {
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
@@ -152,11 +150,9 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 	}
 
 	chunkResult, err := operation.UploadReaderInChunks(ctx, reader, &operation.ChunkedUploadOption{
-		ChunkSize:       adminUploadChunkSize,
-		SmallFileLimit:  adminUploadSmallFileLimit,
-		SaveSmallInline: true,
-		MimeType:        mimeType,
-		AssignFunc:      assignFunc,
+		ChunkSize:  adminUploadChunkSize,
+		MimeType:   mimeType,
+		AssignFunc: assignFunc,
 	})
 	if err != nil {
 		// Partial chunks come back even on error so we can clean them up rather
@@ -178,11 +174,7 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 			Mime:     mimeType,
 		},
 	}
-	if len(chunkResult.SmallContent) > 0 {
-		entry.Content = chunkResult.SmallContent
-	} else {
-		entry.Chunks = chunkResult.FileChunks
-	}
+	entry.Chunks = chunkResult.FileChunks
 
 	err = h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{

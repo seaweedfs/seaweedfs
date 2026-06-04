@@ -16,6 +16,7 @@ import (
 
 // MockIAMIntegration is a mock implementation of IAM integration for testing
 type MockIAMIntegration struct {
+	authenticateJWTFunc     func(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
 	authorizeFunc           func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
 	validateTrustPolicyFunc func(ctx context.Context, roleArn, principalArn string) error
 	authCalled              bool
@@ -30,6 +31,9 @@ func (m *MockIAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMI
 }
 
 func (m *MockIAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
+	if m.authenticateJWTFunc != nil {
+		return m.authenticateJWTFunc(ctx, r)
+	}
 	return nil, s3err.ErrNotImplemented
 }
 

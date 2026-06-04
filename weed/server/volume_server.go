@@ -42,11 +42,11 @@ type VolumeServer struct {
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
 	pulsePeriod       time.Duration
-	dataCenter      string
-	rack            string
-	store           *storage.Store
-	guard           *security.Guard
-	grpcDialOption  grpc.DialOption
+	dataCenter        string
+	rack              string
+	store             *storage.Store
+	guard             *security.Guard
+	grpcDialOption    grpc.DialOption
 
 	needleMapKind                 storage.NeedleMapKind
 	ldbTimout                     int64
@@ -83,6 +83,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readBufferSizeMB int,
 	ldbTimeout int64,
 	allowUntrustedRemoteEndpoints bool,
+	diskProbeConfig stats.DiskIOProbeConfig,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -134,12 +135,13 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, diskTags, ldbTimeout)
+	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, diskTags, ldbTimeout, diskProbeConfig)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
 	adminMux.HandleFunc("/healthz", requestIDMiddleware(vs.healthzHandler))
+	adminMux.HandleFunc("/readyz", requestIDMiddleware(vs.healthzHandler))
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", requestIDMiddleware(vs.uiStatusHandler))

@@ -496,6 +496,59 @@ func TestObjectTransactionRecomputeDemoteAndAttrs(t *testing.T) {
 	}
 }
 
+// A versioned add is one transaction: the PUT writes the new version file and
+// the RECOMPUTE_LATEST that follows, under the same lock, scans the directory,
+// sees it, flips the .versions pointer to it, and demotes the prior latest. This
+// is what lets putVersionedObject commit the version and its pointer atomically.
+func TestObjectTransactionPutThenRecomputeLatest(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	t1 := time.Unix(1700000100, 0)
+	fs, store := newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj/.versions": {
+			Attr:     filer.Attr{Inode: 2, Mtime: t0, Crtime: t0, Mode: 0755 | (1 << 31)},
+			Extended: map[string][]byte{"latestName": []byte("v1.ver"), "latestVid": []byte("v1")},
+		},
+		"/buckets/b/obj/.versions/v1.ver": {
+			Attr:     filer.Attr{Inode: 10, Mtime: t0, Crtime: t0, Mode: 0644, FileSize: 100},
+			Extended: map[string][]byte{"vid": []byte("v1")},
+		},
+	})
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PUT, Directory: "/buckets/b/obj/.versions", Entry: &filer_pb.Entry{
+				Name:       "v2.ver",
+				Attributes: &filer_pb.FuseAttributes{Mtime: t1.Unix(), FileMode: 0644, Inode: 11, FileSize: 250},
+				Extended:   map[string][]byte{"vid": []byte("v2")},
+			}},
+			{Type: filer_pb.ObjectMutation_RECOMPUTE_LATEST, Directory: "/buckets/b/obj", Name: ".versions",
+				Recompute: &filer_pb.Recompute{
+					ScanDir:      "/buckets/b/obj/.versions",
+					Descending:   true,
+					CopyExtended: map[string]string{"latestVid": "vid"},
+					NameToKey:    "latestName",
+					DemoteKey:    "noncurrentSince",
+					DemoteValue:  []byte("999"),
+				}},
+		},
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+
+	if _, ok := store.entries["/buckets/b/obj/.versions/v2.ver"]; !ok {
+		t.Fatalf("the PUT should have created the new version")
+	}
+	ptr := store.entries["/buckets/b/obj/.versions"].Extended
+	if string(ptr["latestName"]) != "v2.ver" || string(ptr["latestVid"]) != "v2" {
+		t.Fatalf("pointer should flip to the just-PUT version, got name=%s vid=%s", ptr["latestName"], ptr["latestVid"])
+	}
+	if got := store.entries["/buckets/b/obj/.versions/v1.ver"].Extended["noncurrentSince"]; string(got) != "999" {
+		t.Errorf("prior latest v1.ver should be demoted, noncurrentSince=%q want 999", got)
+	}
+}
+
 // A version-specific delete locks the object (condition_key checks WORM on the
 // version), recomputes the pointer excluding the version (repoint-before-delete),
 // then deletes it. A legal-hold guard blocks the delete and preserves the entry.

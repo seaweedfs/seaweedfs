@@ -184,8 +184,14 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				return nil
 			}
 			if resp.Entry.Attributes != nil && resp.Entry.Attributes.Mtime >= entry.Attributes.Mtime {
-				glog.V(3).Infof("skip overwriting %s", key)
-				return nil
+				if filer.FileSize(resp.Entry) >= filer.FileSize(entry) {
+					glog.V(3).Infof("skip overwriting %s", key)
+					return nil
+				}
+				// destination is shorter despite a newer mtime: a truncated copy
+				// an earlier failed replication left behind; overwrite from source.
+				glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; overwriting from source",
+					key, filer.FileSize(resp.Entry), filer.FileSize(entry))
 			}
 		}
 
@@ -260,11 +266,32 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
-	if existingEntry.Attributes.Mtime > newEntry.Attributes.Mtime {
-		// skip if already changed
-		// this usually happens when the messages are not ordered
+	switch chooseUpdateAction(existingEntry, newEntry) {
+	case updateSkip:
+		// a newer, complete version already landed; usually out-of-order messages.
+		// leave the destination untouched — no point rewriting the same entry.
 		glog.V(2).Infof("late updates %s", key)
-	} else {
+		return true, nil
+	case updateRepair:
+		glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; re-replicating full source content",
+			key, filer.FileSize(existingEntry), filer.FileSize(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), key, getEntryMtime(newEntry))
+		if err != nil {
+			if errors.Is(err, errChunkSizeMismatch) {
+				glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
+				return true, err
+			}
+			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			return true, nil
+		}
+		existingEntry.Chunks = replicatedChunks
+		existingEntry.Attributes = newEntry.Attributes
+		existingEntry.Extended = newEntry.Extended
+		existingEntry.HardLinkId = newEntry.HardLinkId
+		existingEntry.HardLinkCounter = newEntry.HardLinkCounter
+		existingEntry.Content = newEntry.Content
+		existingEntry.RemoteEntry = newEntry.RemoteEntry
+	default:
 		// source-side chunks resolve via source filer; sink volume IDs may collide.
 		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
 		if err != nil {
@@ -338,4 +365,33 @@ func getEntryMtime(entry *filer_pb.Entry) int64 {
 		return 0
 	}
 	return entry.Attributes.Mtime
+}
+
+// updateAction decides how UpdateEntry should reconcile an incoming source
+// version with the destination's current entry.
+type updateAction int
+
+const (
+	// updateNormal applies the incremental source diff: the destination is at
+	// or behind the source version.
+	updateNormal updateAction = iota
+	// updateSkip leaves the destination untouched because a newer, complete
+	// version already landed out of order (last-writer-wins).
+	updateSkip
+	// updateRepair re-replicates the full source content over a destination
+	// that is strictly shorter than the source despite a newer mtime — a
+	// truncated copy an earlier failed replication left behind. Its mtime can
+	// look "newer" (the source preserved an old mtime while the partial copy
+	// was written recently), which would otherwise strand the corruption.
+	updateRepair
+)
+
+func chooseUpdateAction(existing, incoming *filer_pb.Entry) updateAction {
+	if getEntryMtime(existing) <= getEntryMtime(incoming) {
+		return updateNormal
+	}
+	if filer.FileSize(existing) < filer.FileSize(incoming) {
+		return updateRepair
+	}
+	return updateSkip
 }

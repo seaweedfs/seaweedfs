@@ -156,6 +156,7 @@ func init() {
 	serverOptions.v.hasSlowRead = cmdServer.Flag.Bool("volume.hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	serverOptions.v.readBufferSizeMB = cmdServer.Flag.Int("volume.readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally")
 	serverOptions.v.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
+	serverOptions.v.setDiskIOProbeDefaults()
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	s3Options.portHttps = cmdServer.Flag.Int("s3.port.https", 0, "s3 server https listen port")
@@ -187,13 +188,14 @@ func init() {
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
 	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
 	sftpOptions.hostKeysFolder = cmdServer.Flag.String("sftp.hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
-	sftpOptions.authMethods = cmdServer.Flag.String("sftp.authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, keyboard-interactive")
+	sftpOptions.authMethods = cmdServer.Flag.String("sftp.authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, certificate")
 	sftpOptions.maxAuthTries = cmdServer.Flag.Int("sftp.maxAuthTries", 6, "maximum number of authentication attempts per connection")
 	sftpOptions.bannerMessage = cmdServer.Flag.String("sftp.bannerMessage", "SeaweedFS SFTP Server - Unauthorized access is prohibited", "message displayed before authentication")
 	sftpOptions.loginGraceTime = cmdServer.Flag.Duration("sftp.loginGraceTime", 2*time.Minute, "timeout for authentication")
 	sftpOptions.clientAliveInterval = cmdServer.Flag.Duration("sftp.clientAliveInterval", 5*time.Second, "interval for sending keep-alive messages")
 	sftpOptions.clientAliveCountMax = cmdServer.Flag.Int("sftp.clientAliveCountMax", 3, "maximum number of missed keep-alive messages before disconnecting")
 	sftpOptions.userStoreFile = cmdServer.Flag.String("sftp.userStoreFile", "", "path to JSON file containing user credentials and permissions")
+	sftpOptions.trustedUserCAKeysFile = cmdServer.Flag.String("sftp.trustedUserCAKeysFile", "", "path to a file with trusted user CA public keys (OpenSSH authorized_keys format); required when 'certificate' is in -sftp.authMethods")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 
@@ -224,6 +226,8 @@ func runServer(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+	util.LoadConfiguration("volume", false)
+	serverOptions.v.applyDiskIOProbeConfig()
 
 	*serverOptions.cpuprofile = util.ResolvePath(*serverOptions.cpuprofile)
 	*serverOptions.memprofile = util.ResolvePath(*serverOptions.memprofile)

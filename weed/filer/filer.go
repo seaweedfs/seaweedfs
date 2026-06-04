@@ -13,7 +13,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
-	"github.com/seaweedfs/seaweedfs/weed/sequence"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -64,7 +63,6 @@ type Filer struct {
 	DeletionRetryQueue      *DeletionRetryQueue
 	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
-	inodeSequencer          sequence.Sequencer
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -79,7 +77,6 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
-		inodeSequencer:      newInodeSequencer(filerHost),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId

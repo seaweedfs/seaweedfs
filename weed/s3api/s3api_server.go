@@ -98,6 +98,12 @@ type S3ApiServer struct {
 	newObjectWriteLock    func(bucket, object string) objectWriteLock
 	// objectWriteLockClient resolves a key's owner filer for route-by-key.
 	objectWriteLockClient *cluster.LockClient
+	// unreachableOwners holds owners (pb.ServerAddress -> expiry time.Time) whose
+	// last owner-first read hit a transport error, so route-by-key reads briefly
+	// skip them instead of re-dialing a dead owner every request until the ring
+	// drops it. Bypasses the gateway's filer health tracking, which no-ops for an
+	// owner outside the static -filer list.
+	unreachableOwners sync.Map
 	// Shared ReaderCache used by the S3 GET streaming path. It lives for the
 	// lifetime of the server so that concurrent and repeat reads share a
 	// single in-flight download per chunk, and so that no per-request
@@ -386,7 +392,6 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
 				glog.V(1).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
-				s3ApiServer.iam.updateCredentialManagerStaticIdentities()
 			}
 		})
 	}
@@ -698,9 +703,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// plus REST-style endpoints for AWS CLI
 	s3a.registerS3TablesRoutes(apiRouter)
 
-	// Readiness Probe
+	// Health probes
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/healthz").HandlerFunc(s3a.StatusHandler)
+	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/readyz").HandlerFunc(s3a.StatusHandler)
 
 	// Object path pattern with (?s) flag to match newlines in object keys
 	const objectPath = "/{object:(?s).+}"

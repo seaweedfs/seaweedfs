@@ -45,7 +45,7 @@ jobs:
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
-          python3 test/s3/fix_s3_tests_bucket_conflicts.py
+          python3 test/s3/compatibility/fix_s3_tests_bucket_conflicts.py
         env:
           S3_TESTS_PATH: s3-tests
 
@@ -388,7 +388,7 @@ jobs:
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
-          python3 test/s3/fix_s3_tests_bucket_conflicts.py
+          python3 test/s3/compatibility/fix_s3_tests_bucket_conflicts.py
         env:
           S3_TESTS_PATH: s3-tests
 
