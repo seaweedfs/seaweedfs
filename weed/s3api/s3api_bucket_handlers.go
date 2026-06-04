@@ -165,6 +165,29 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// Get authenticated identity from context (secure, cannot be spoofed)
 	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
 
+	// Parse any requested bucket ACL (canned ACL or grant headers) up front so it
+	// can be validated, persisted on creation, and factored into the already-exists
+	// response. A "private" canned ACL is the default and counts as no explicit ACL.
+	requestHasACL := hasExplicitBucketACL(r)
+	var aclGrantsBytes []byte
+	if requestHasACL {
+		accountId := getAccountId(r)
+		_, grants, errCode := ParseAndValidateAclHeaders(r, s3a.iam, "", accountId, accountId, false)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		if len(grants) > 0 {
+			grantsBytes, err := json.Marshal(grants)
+			if err != nil {
+				glog.Errorf("PutBucketHandler: marshal ACL grants for %s: %v", bucket, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+			aclGrantsBytes = grantsBytes
+		}
+	}
+
 	// Check collection existence first
 	collectionExists := false
 	if s3a.isTableBucket(bucket) {
@@ -192,54 +215,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check bucket directory existence and get metadata
+	// Bucket already exists: report whether the caller already owns it or the
+	// name is taken / the request conflicts.
 	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
-		// Bucket exists, check ownership and settings
-		if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); err == nil {
-			// Get existing bucket owner
-			var existingOwnerId string
-			if entry.Extended != nil {
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					existingOwnerId = string(id)
-				}
-			}
-
-			// Check ownership
-			if existingOwnerId != "" && existingOwnerId != currentIdentityId {
-				// Different owner - always fail with BucketAlreadyExists
-				glog.V(3).Infof("PutBucketHandler: bucket %s owned by %s, requested by %s", bucket, existingOwnerId, currentIdentityId)
-				s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
-				return
-			}
-
-			// Same owner or no owner set - check for conflicting settings
-			objectLockRequested := strings.EqualFold(r.Header.Get(s3_constants.AmzBucketObjectLockEnabled), "true")
-
-			// Get current bucket configuration
-			bucketConfig, errCode := s3a.getBucketConfig(bucket)
-			if errCode != s3err.ErrNone {
-				glog.Errorf("PutBucketHandler: failed to get bucket config for %s: %v", bucket, errCode)
-				// If we can't get config, assume no conflict and allow recreation
-			} else {
-				// Check for Object Lock conflict
-				currentObjectLockEnabled := bucketConfig.ObjectLockConfig != nil &&
-					bucketConfig.ObjectLockConfig.ObjectLockEnabled == s3_constants.ObjectLockEnabled
-
-				if objectLockRequested != currentObjectLockEnabled {
-					// Conflicting Object Lock settings - fail with BucketAlreadyExists
-					glog.V(3).Infof("PutBucketHandler: bucket %s has conflicting Object Lock settings (requested: %v, current: %v)",
-						bucket, objectLockRequested, currentObjectLockEnabled)
-					s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
-					return
-				}
-			}
-
-			// Bucket already exists - always return BucketAlreadyExists per S3 specification
-			// The S3 tests expect BucketAlreadyExists in all cases, not BucketAlreadyOwnedByYou
-			glog.V(3).Infof("PutBucketHandler: bucket %s already exists", bucket)
-			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
-			return
-		}
+		s3err.WriteErrorResponse(w, r, s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL))
+		return
 	}
 
 	// If collection exists but bucket directory doesn't, this is an inconsistent state
@@ -264,6 +244,15 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		// Set bucket owner
 		setBucketOwner(r)(entry)
+
+		// Persist a requested non-default ACL so GetBucketAcl and idempotent
+		// recreation observe it (private is the default and is not stored).
+		if len(aclGrantsBytes) > 0 {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[s3_constants.ExtAmzAclKey] = aclGrantsBytes
+		}
 
 		// Set Object Lock configuration atomically during bucket creation
 		if objectLockEnabled {
@@ -290,10 +279,10 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}); err != nil {
 		// If mkdir failed because another request created the bucket concurrently,
-		// return BucketAlreadyExists instead of InternalError.
+		// return the appropriate already-exists error instead of InternalError.
 		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
 			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
-			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+			s3err.WriteErrorResponse(w, r, s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL))
 			return
 		}
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
@@ -497,15 +486,92 @@ var ErrAutoCreatePermissionDenied = errors.New("permission denied - requires Adm
 // ErrInvalidBucketName is returned when a bucket name doesn't meet S3 naming requirements
 var ErrInvalidBucketName = errors.New("invalid bucket name")
 
+// existingBucketError returns the error for a PutBucket whose target bucket
+// already exists: BucketAlreadyOwnedByYou for an idempotent recreate by the
+// owner, or BucketAlreadyExists when the name is owned by someone else or the
+// request conflicts with the existing bucket (a different Object Lock setting,
+// or an ACL on the request or the existing bucket).
+func (s3a *S3ApiServer) existingBucketError(r *http.Request, bucket, currentIdentityId string, requestHasACL bool) s3err.ErrorCode {
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		// We just observed the bucket exists but can't read it; report it as taken.
+		glog.Errorf("PutBucketHandler: failed to read existing bucket %s: %v", bucket, err)
+		return s3err.ErrBucketAlreadyExists
+	}
+
+	var existingOwnerId string
+	if entry.Extended != nil {
+		if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
+			existingOwnerId = string(id)
+		}
+	}
+
+	// Different owner: the name is taken in the shared namespace.
+	if existingOwnerId != "" && existingOwnerId != currentIdentityId {
+		glog.V(3).Infof("PutBucketHandler: bucket %s owned by %s, requested by %s", bucket, existingOwnerId, currentIdentityId)
+		return s3err.ErrBucketAlreadyExists
+	}
+
+	// Same owner (or an unowned bucket the caller can claim). Recreating your own
+	// bucket is idempotent and returns BucketAlreadyOwnedByYou, unless the request
+	// conflicts with the existing bucket: a different Object Lock setting, or an ACL
+	// on the request or the existing bucket.
+	// (s3-tests: test_bucket_create_exists vs test_bucket_recreate_*_acl.)
+	if requestHasACL {
+		return s3err.ErrBucketAlreadyExists
+	}
+
+	objectLockRequested := strings.EqualFold(r.Header.Get(s3_constants.AmzBucketObjectLockEnabled), "true")
+	bucketConfig, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		// Can't read the existing bucket's settings, so we can't tell whether this
+		// recreate conflicts; surface the failure instead of assuming idempotency.
+		glog.Errorf("PutBucketHandler: failed to get bucket config for %s: %v", bucket, errCode)
+		return errCode
+	}
+	currentObjectLockEnabled := bucketConfig.ObjectLockConfig != nil &&
+		bucketConfig.ObjectLockConfig.ObjectLockEnabled == s3_constants.ObjectLockEnabled
+	if objectLockRequested != currentObjectLockEnabled || len(bucketConfig.ACL) > 0 {
+		glog.V(3).Infof("PutBucketHandler: bucket %s already exists", bucket)
+		return s3err.ErrBucketAlreadyExists
+	}
+
+	glog.V(3).Infof("PutBucketHandler: bucket %s already owned by requester", bucket)
+	return s3err.ErrBucketAlreadyOwnedByYou
+}
+
+// hasExplicitBucketACL reports whether the request carries an explicit, non-default
+// bucket ACL via a canned ACL header (other than "private") or grant headers.
+func hasExplicitBucketACL(r *http.Request) bool {
+	if canned := r.Header.Get(s3_constants.AmzCannedAcl); canned != "" && !strings.EqualFold(canned, s3_constants.CannedAclPrivate) {
+		return true
+	}
+	for _, h := range []string{s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // setBucketOwner creates a function that sets the bucket owner from the request context
 func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
+	// Record the canonical account id too so GetBucketAcl can report the bucket
+	// owner instead of whoever is reading (e.g. an admin or another account).
+	accountId := r.Header.Get(s3_constants.AmzAccountId)
 	return func(entry *filer_pb.Entry) {
+		if currentIdentityId == "" && accountId == "" {
+			return
+		}
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
 		if currentIdentityId != "" {
-			if entry.Extended == nil {
-				entry.Extended = make(map[string][]byte)
-			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
+		}
+		if accountId != "" {
+			entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(accountId)
 		}
 	}
 }
@@ -722,23 +788,25 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-	amzDisplayName := s3a.iam.GetAccountNameById(amzAccountId)
+	// Report the bucket's owner (recorded at creation or by PutBucketAcl), not the
+	// caller; fall back to the caller only when no owner was persisted. Likewise
+	// return any stored ACL, defaulting to the owner's full-control grant.
+	ownerId := r.Header.Get(s3_constants.AmzAccountId)
+	var storedGrants []*s3.Grant
+	if bucketConfig, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && bucketConfig.Entry != nil {
+		storedGrants = GetAcpGrants(bucketConfig.Entry.Extended)
+		if bucketConfig.Owner != "" {
+			ownerId = bucketConfig.Owner
+		}
+	}
+	ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
 	response := AccessControlPolicy{
 		Owner: CanonicalUser{
-			ID:          amzAccountId,
-			DisplayName: amzDisplayName,
+			ID:          ownerId,
+			DisplayName: ownerDisplayName,
 		},
+		AccessControlList: buildAccessControlList(s3a.iam, storedGrants, ownerId, ownerDisplayName),
 	}
-	response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-		Grantee: Grantee{
-			ID:          amzAccountId,
-			DisplayName: amzDisplayName,
-			Type:        "CanonicalUser",
-			XMLXSI:      "CanonicalUser",
-			XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-		Permission: s3.PermissionFullControl,
-	})
 	writeSuccessResponseXML(w, r, response)
 }
 
