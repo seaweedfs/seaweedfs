@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -124,12 +123,11 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	}
 
 	for {
-		err := metaBackup.streamMetadataBackup()
+		startTime, err := metaBackup.getOffset()
 		if err != nil {
-			if isMetaBackupOffsetError(err) {
-				glog.Exitf("filer meta backup from %s: %v", *metaBackup.filerAddress, err)
-				return true
-			}
+			glog.Exitf("read metadata backup offset from %s: %v", *metaBackup.filerAddress, err)
+		}
+		if err := metaBackup.streamMetadataBackup(startTime); err != nil {
 			glog.Errorf("filer meta backup from %s: %v", *metaBackup.filerAddress, err)
 			time.Sleep(1747 * time.Millisecond)
 		}
@@ -183,33 +181,8 @@ var (
 	MetaBackupKey = []byte("metaBackup")
 )
 
-type metaBackupOffsetError struct {
-	operation string
-	err       error
-}
+func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup(startTime time.Time) error {
 
-func (e *metaBackupOffsetError) Error() string {
-	return fmt.Sprintf("%s: %v", e.operation, e.err)
-}
-
-func (e *metaBackupOffsetError) Unwrap() error {
-	return e.err
-}
-
-func isMetaBackupOffsetError(err error) bool {
-	var offsetErr *metaBackupOffsetError
-	return errors.As(err, &offsetErr)
-}
-
-func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
-
-	startTime, err := metaBackup.getOffset()
-	if err != nil {
-		return &metaBackupOffsetError{
-			operation: "get metadata backup offset",
-			err:       err,
-		}
-	}
 	glog.V(0).Infof("streaming from %v", startTime)
 
 	store := metaBackup.store
