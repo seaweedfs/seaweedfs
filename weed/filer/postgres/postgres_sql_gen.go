@@ -11,6 +11,8 @@ type SqlGenPostgres struct {
 	CreateTableSqlTemplate string
 	DropTableSqlTemplate   string
 	UpsertQueryTemplate    string
+	// Force byte ordering on a locale-aware name column; see ConfigureListOrdering.
+	ForceBinaryCollation bool
 }
 
 // DefaultUpsertQuery keeps INSERTs idempotent so a duplicate-key failure
@@ -46,12 +48,22 @@ func (gen *SqlGenPostgres) GetSqlDeleteFolderChildren(tableName string) string {
 	return fmt.Sprintf(`DELETE FROM "%s" WHERE dirhash=$1 AND directory=$2`, tableName)
 }
 
+// nameExpr forces byte ordering on a locale-aware column via COLLATE "C".
+func (gen *SqlGenPostgres) nameExpr() string {
+	if gen.ForceBinaryCollation {
+		return `name COLLATE "C"`
+	}
+	return "name"
+}
+
 func (gen *SqlGenPostgres) GetSqlListExclusive(tableName string) string {
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND name>$2 AND directory=$3 AND name like $4 ORDER BY NAME ASC LIMIT $5`, tableName)
+	name := gen.nameExpr()
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND name>=$2 AND directory=$3 AND name like $4 ORDER BY NAME ASC LIMIT $5`, tableName)
+	name := gen.nameExpr()
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {

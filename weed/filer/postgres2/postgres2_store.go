@@ -68,11 +68,12 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	} else if upsertQuery == "" {
 		upsertQuery = postgres.DefaultUpsertQuery
 	}
-	store.SqlGenerator = &postgres.SqlGenPostgres{
+	gen := &postgres.SqlGenPostgres{
 		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   `drop table "%s"`,
 		UpsertQueryTemplate:    upsertQuery,
 	}
+	store.SqlGenerator = gen
 
 	// pgx-optimized connection string with better timeouts and connection handling
 	sqlUrl := "connect_timeout=30"
@@ -125,6 +126,8 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
+
+	postgres.ConfigureListOrdering(store.DB, gen)
 
 	return nil
 }
