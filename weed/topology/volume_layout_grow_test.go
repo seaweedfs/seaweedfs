@@ -203,6 +203,43 @@ func TestPlanRackAwareGrowth_PerRackForNonRackSpanning(t *testing.T) {
 	}
 }
 
+// lastGrowCount is spread evenly across all grow targets even when DCs have
+// different rack counts: each crowded "000" rack gets ceilDiv(lastGrowCount,
+// totalRacks), so the total matches the request rather than over-growing per DC.
+func TestPlanRackAwareGrowth_EvenDistributionAcrossUnevenDCs(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":2, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } }
+  },
+  "dc2":{
+    "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[ {"id":3, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack4":{ "node-d":{ "ip":"10.0.0.4", "volumes":[ {"id":4, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack5":{ "node-e":{ "ip":"10.0.0.5", "volumes":[ {"id":5, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 10, 2)
+	if len(plans) != 5 {
+		t.Fatalf("expected a grow per crowded rack (5), got %d: %+v", len(plans), plans)
+	}
+	total := uint32(0)
+	for _, p := range plans {
+		if p.WritableVolumeCount != 2 { // ceilDiv(10, 5 racks)
+			t.Errorf("expected even per-rack count 2, got %d for %s/%s", p.WritableVolumeCount, p.DataCenter, p.Rack)
+		}
+		total += p.WritableVolumeCount
+	}
+	if total != 10 {
+		t.Errorf("expected total grow 10, got %d", total)
+	}
+}
+
 func restoreCopyCounts(copy1, copy2 uint32) {
 	VolumeGrowStrategy.Copy1Count = copy1
 	VolumeGrowStrategy.Copy2Count = copy2

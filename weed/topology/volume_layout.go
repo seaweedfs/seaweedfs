@@ -720,6 +720,13 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 		stepCount = c
 	}
 	growOncePerDc := vl.rp.DiffRackCount > 0
+	// Spread lastGrowCount evenly across all grow targets. Summing every rack
+	// up front keeps the divisor global, so DCs with different rack counts do
+	// not each over-grow from a per-DC divisor.
+	var rackPairs uint32
+	for _, racks := range dcs {
+		rackPairs += uint32(len(racks))
+	}
 	for dcId, racks := range dcs {
 		if growOncePerDc {
 			if !vl.ShouldGrowVolumesByDcAndRack(&writables, dcId, "") {
@@ -738,7 +745,7 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 			}
 			count := stepCount
 			if lastGrowCount > 0 {
-				count = ceilDiv(lastGrowCount, uint32(len(dcs)*len(racks)))
+				count = ceilDiv(lastGrowCount, rackPairs)
 			}
 			plans = append(plans, RackGrowPlan{DataCenter: string(dcId), Rack: string(rackId), WritableVolumeCount: count})
 		}
@@ -748,7 +755,7 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 
 func ceilDiv(a, b uint32) uint32 {
 	if b == 0 {
-		return a
+		return 0
 	}
 	return (a + b - 1) / b
 }
