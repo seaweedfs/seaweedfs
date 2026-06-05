@@ -160,7 +160,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 	}
 
 	// Connect to any available master and get volume list (topology)
-	err = pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
+	err = pb.WithOneOfGrpcMasterClientsWithGrpcDialOptions(false, masterMap, s3a.option.grpcDialOptions(), func(client master_pb.SeaweedClient) error {
 		resp, vErr := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if vErr != nil {
 			return vErr

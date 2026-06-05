@@ -28,7 +28,7 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 	return pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, s3a.getFilerAddress().ToGrpcAddress(), false, s3a.option.GrpcDialOption)
+	}, s3a.getFilerAddress().ToGrpcAddress(), false, s3a.option.grpcDialOptions()...)
 
 }
 
@@ -84,7 +84,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 	for _, filer := range ordered {
 		err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 			return fn(filer_pb.NewSeaweedFilerClient(grpcConnection))
-		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
+		}, filer.ToGrpcAddress(), false, s3a.option.grpcDialOptions()...)
 
 		if err == nil {
 			s3a.filerClient.RecordFilerSuccess(filer)

@@ -826,7 +826,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 	// ReadFilerConfFromFilers provides multi-filer failover
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilersWithGrpcDialOptions(s3a.option.Filers, s3a.option.grpcDialOptions(), nil)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -923,7 +923,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	// (volume server expires under the old rule) or contradict the new
 	// XML after a rule change. The add path is gone — this loop only
 	// shrinks the conf, never grows it.
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilersWithGrpcDialOptions(s3a.option.Filers, s3a.option.grpcDialOptions(), nil)
 	if err != nil {
 		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -975,7 +975,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilersWithGrpcDialOptions(s3a.option.Filers, s3a.option.grpcDialOptions(), nil)
 	if err != nil {
 		glog.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

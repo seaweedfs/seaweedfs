@@ -18,9 +18,16 @@ func GetGlobalHttpClient() *util_http_client.HTTPClient {
 }
 
 func InitGlobalHttpClient() {
+	InitGlobalHttpClientWithOptions()
+}
+
+func InitGlobalHttpClientWithOptions(opt ...util_http_client.HttpClientOpt) {
 	var err error
 
-	globalHttpClient, err = NewGlobalHttpClient()
+	if globalHttpClient != nil {
+		globalHttpClient.Close()
+	}
+	globalHttpClient, err = NewGlobalHttpClient(opt...)
 	if err != nil {
 		glog.Fatalf("error init global http client: %v", err)
 	}

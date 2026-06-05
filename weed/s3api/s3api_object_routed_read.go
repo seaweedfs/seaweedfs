@@ -82,7 +82,7 @@ func (s3a *S3ApiServer) ownerRecentlyUnreachable(owner pb.ServerAddress) bool {
 // lookupEntryOnFiler resolves dir/name against a single filer, without failover.
 func (s3a *S3ApiServer) lookupEntryOnFiler(filer pb.ServerAddress, dir, name string) (*filer_pb.Entry, error) {
 	var entry *filer_pb.Entry
-	err := pb.WithFilerClient(false, 0, filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithFilerClientWithGrpcDialOptions(false, 0, filer, s3a.option.grpcDialOptions(), func(client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,

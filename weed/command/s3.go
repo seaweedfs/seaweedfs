@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -29,6 +30,8 @@ import (
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -259,7 +262,39 @@ func (s3opt *S3Options) resolvePaths() {
 	*s3opt.auditLogConfig = util.ResolvePath(*s3opt.auditLogConfig)
 }
 
+func sourceBindIP(bindIP string) net.IP {
+	ip := net.ParseIP(bindIP)
+	if ip == nil || ip.IsUnspecified() {
+		return nil
+	}
+	return ip
+}
+
+func grpcDialOptionWithLocalAddress(localAddress net.IP) grpc.DialOption {
+	return grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+		dialer := net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 10 * time.Second,
+			LocalAddr: &net.TCPAddr{IP: localAddress},
+		}
+		return dialer.DialContext(ctx, "tcp", address)
+	})
+}
+
 func (s3opt *S3Options) startS3Server() bool {
+	if *s3opt.bindIp == "" {
+		*s3opt.bindIp = "0.0.0.0"
+	}
+
+	grpcDialOptions := []grpc.DialOption{security.LoadClientTLS(util.GetViper(), "grpc.client")}
+	if outboundIP := sourceBindIP(*s3opt.bindIp); outboundIP != nil {
+		util_http_client.SetDefaultDialLocalAddress(outboundIP)
+		util_http.InitGlobalHttpClientWithOptions(util_http_client.AddDialContext)
+		grpcDialOptions = append(grpcDialOptions, grpcDialOptionWithLocalAddress(outboundIP))
+		glog.V(0).Infof("S3 outbound connections will bind to %s", outboundIP.String())
+	} else {
+		util_http_client.SetDefaultDialLocalAddress(nil)
+	}
 
 	filerAddresses := pb.ServerAddresses(*s3opt.filer).ToAddresses()
 
@@ -267,14 +302,14 @@ func (s3opt *S3Options) startS3Server() bool {
 	filerGroup := ""
 	var masterAddresses []pb.ServerAddress
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOption := grpcDialOptions[0]
 
 	// metrics read from the filer
 	var metricsAddress string
 	var metricsIntervalSec int
 
 	for {
-		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithOneOfGrpcFilerClientsWithGrpcDialOptions(false, filerAddresses, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer configuration: %v", err)
@@ -321,10 +356,6 @@ func (s3opt *S3Options) startS3Server() bool {
 	if *s3opt.portGrpc == 0 {
 		*s3opt.portGrpc = 10000 + *s3opt.port
 	}
-	if *s3opt.bindIp == "" {
-		*s3opt.bindIp = "0.0.0.0"
-	}
-
 	defaultFileMode, fileModeErr := s3opt.parseDefaultFileMode()
 	if fileModeErr != nil {
 		glog.Fatalf("S3 API Server startup error: %v", fileModeErr)
@@ -339,6 +370,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
 		BucketsPath:               filerBucketsPath,
 		GrpcDialOption:            grpcDialOption,
+		GrpcDialOptions:           grpcDialOptions,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,

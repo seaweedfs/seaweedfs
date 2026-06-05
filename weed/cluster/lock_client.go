@@ -16,7 +16,7 @@ import (
 )
 
 type LockClient struct {
-	grpcDialOption  grpc.DialOption
+	grpcDialOptions []grpc.DialOption
 	maxLockDuration time.Duration
 	sleepDuration   time.Duration
 	seedFiler       pb.ServerAddress
@@ -38,8 +38,12 @@ type LockClient struct {
 }
 
 func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *LockClient {
+	return NewLockClientWithGrpcDialOptions([]grpc.DialOption{grpcDialOption}, seedFiler)
+}
+
+func NewLockClientWithGrpcDialOptions(grpcDialOptions []grpc.DialOption, seedFiler pb.ServerAddress) *LockClient {
 	return &LockClient{
-		grpcDialOption:  grpcDialOption,
+		grpcDialOptions: grpcDialOptions,
 		maxLockDuration: 5 * time.Second,
 		sleepDuration:   2473 * time.Millisecond,
 		seedFiler:       seedFiler,
@@ -123,7 +127,7 @@ type LiveLock struct {
 	hostFiler           pb.ServerAddress
 	cancelCh            chan struct{}
 	renewalDone         chan struct{} // closed when the renewal goroutine exits; nil if there is none
-	grpcDialOption      grpc.DialOption
+	grpcDialOptions     []grpc.DialOption
 	isLocked            int32 // 0 = unlocked, 1 = locked; use atomic operations
 	self                string
 	lc                  *LockClient
@@ -136,13 +140,13 @@ type LiveLock struct {
 // NewShortLivedLock creates a lock with a 5-second duration
 func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLock) {
 	lock = &LiveLock{
-		key:            key,
-		hostFiler:      lc.hostForKey(key),
-		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(5 * time.Second).UnixNano(),
-		grpcDialOption: lc.grpcDialOption,
-		self:           owner,
-		lc:             lc,
+		key:             key,
+		hostFiler:       lc.hostForKey(key),
+		cancelCh:        make(chan struct{}),
+		expireAtNs:      time.Now().Add(5 * time.Second).UnixNano(),
+		grpcDialOptions: lc.grpcDialOptions,
+		self:            owner,
+		lc:              lc,
 	}
 	lock.retryUntilLocked(5 * time.Second)
 	return
@@ -157,14 +161,14 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 		lockTTL = lock_manager.LiveLockTTL
 	}
 	lock := &LiveLock{
-		key:            key,
-		hostFiler:      lc.hostForKey(key),
-		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
-		grpcDialOption: lc.grpcDialOption,
-		self:           owner,
-		lc:             lc,
-		lockTTL:        lockTTL,
+		key:             key,
+		hostFiler:       lc.hostForKey(key),
+		cancelCh:        make(chan struct{}),
+		expireAtNs:      time.Now().Add(lockTTL).UnixNano(),
+		grpcDialOptions: lc.grpcDialOptions,
+		self:            owner,
+		lc:              lc,
+		lockTTL:         lockTTL,
 	}
 	// Block until acquired
 	lock.retryUntilLocked(lockTTL)
@@ -195,14 +199,14 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 // automatically derived as lockTTL / 2 to ensure timely renewals.
 func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string), lockTTL time.Duration) (lock *LiveLock) {
 	lock = &LiveLock{
-		key:            key,
-		hostFiler:      lc.hostForKey(key),
-		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
-		grpcDialOption: lc.grpcDialOption,
-		self:           owner,
-		lc:             lc,
-		lockTTL:        lockTTL,
+		key:             key,
+		hostFiler:       lc.hostForKey(key),
+		cancelCh:        make(chan struct{}),
+		expireAtNs:      time.Now().Add(lockTTL).UnixNano(),
+		grpcDialOptions: lc.grpcDialOptions,
+		self:            owner,
+		lc:              lc,
+		lockTTL:         lockTTL,
 	}
 	if lock.lockTTL == 0 {
 		lock.lockTTL = lock_manager.LiveLockTTL
@@ -306,7 +310,7 @@ func (lock *LiveLock) StopShortLivedLock() error {
 	defer func() {
 		atomic.StoreInt32(&lock.isLocked, 0)
 	}()
-	return pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClientWithGrpcDialOptions(false, 0, lock.hostFiler, lock.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
 			Name:       lock.key,
 			RenewToken: lock.renewToken,
@@ -360,7 +364,7 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 	previousHostFiler := lock.hostFiler
 	previousOwner := lock.owner
 
-	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithFilerClientWithGrpcDialOptions(false, 0, lock.hostFiler, lock.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{
 			Name:          lock.key,
 			SecondsToLock: int64(lockDuration.Seconds()),

@@ -37,8 +37,12 @@ func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOp
 
 // ReadFilerConfFromFilers reads filer configuration with multi-filer failover support
 func ReadFilerConfFromFilers(filerGrpcAddresses []pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
+	return ReadFilerConfFromFilersWithGrpcDialOptions(filerGrpcAddresses, []grpc.DialOption{grpcDialOption}, masterClient)
+}
+
+func ReadFilerConfFromFilersWithGrpcDialOptions(filerGrpcAddresses []pb.ServerAddress, grpcDialOptions []grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
 	var data []byte
-	if err := pb.WithOneOfGrpcFilerClients(false, filerGrpcAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithOneOfGrpcFilerClientsWithGrpcDialOptions(false, filerGrpcAddresses, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			var buf bytes.Buffer
 			if err := ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf); err != nil {

@@ -11,11 +11,15 @@ import (
 )
 
 func WithVolumeServerClient(streamingMode bool, volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error) error {
+	return WithVolumeServerClientWithGrpcDialOptions(streamingMode, volumeServer, []grpc.DialOption{grpcDialOption}, fn)
+}
+
+func WithVolumeServerClientWithGrpcDialOptions(streamingMode bool, volumeServer pb.ServerAddress, grpcDialOptions []grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error) error {
 
 	return pb.WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
-	}, volumeServer.ToGrpcAddress(), false, grpcDialOption)
+	}, volumeServer.ToGrpcAddress(), false, grpcDialOptions...)
 
 }
 

@@ -75,7 +75,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 				return status.Errorf(codes.Unavailable, "no master available")
 			}
 
-			return pb.WithMasterClient(timeoutCtx, false, master, p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			return pb.WithMasterClientWithGrpcDialOptions(timeoutCtx, false, master, p.masterClient.grpcDialOptions, false, func(client master_pb.SeaweedClient) error {
 				resp, err := client.LookupVolume(timeoutCtx, &master_pb.LookupVolumeRequest{
 					VolumeOrFileIds: volumeIds,
 				})
@@ -149,7 +149,7 @@ type MasterClient struct {
 	currentMaster        pb.ServerAddress
 	currentMasterLock    sync.RWMutex
 	masters              pb.ServerDiscovery
-	grpcDialOption       grpc.DialOption
+	grpcDialOptions      []grpc.DialOption
 	grpcTimeout          time.Duration // Timeout for gRPC calls to master
 	OnPeerUpdate         func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock     sync.RWMutex
@@ -158,14 +158,18 @@ type MasterClient struct {
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
+	return NewMasterClientWithGrpcDialOptions([]grpc.DialOption{grpcDialOption}, filerGroup, clientType, clientHost, clientDataCenter, rack, masters)
+}
+
+func NewMasterClientWithGrpcDialOptions(grpcDialOptions []grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
 	mc := &MasterClient{
-		FilerGroup:     filerGroup,
-		clientType:     clientType,
-		clientHost:     clientHost,
-		rack:           rack,
-		masters:        masters,
-		grpcDialOption: grpcDialOption,
-		grpcTimeout:    5 * time.Second, // Default: 5 seconds for gRPC calls to master
+		FilerGroup:      filerGroup,
+		clientType:      clientType,
+		clientHost:      clientHost,
+		rack:            rack,
+		masters:         masters,
+		grpcDialOptions: grpcDialOptions,
+		grpcTimeout:     5 * time.Second, // Default: 5 seconds for gRPC calls to master
 	}
 
 	// Create provider that references this MasterClient
@@ -224,7 +228,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 	glog.V(1).Infof("%s.%s masterClient Connecting to master %v", mc.FilerGroup, mc.clientType, master)
 	stats.MasterClientConnectCounter.WithLabelValues("total").Inc()
 	connectStartTime := time.Now()
-	gprcErr := pb.WithMasterClient(context.Background(), true, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	gprcErr := pb.WithMasterClientWithGrpcDialOptions(context.Background(), true, master, mc.grpcDialOptions, false, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -394,7 +398,7 @@ func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.
 
 func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	return util.Retry("master grpc", func() error {
-		return pb.WithMasterClient(context.Background(), streamingMode, getMasterF(), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		return pb.WithMasterClientWithGrpcDialOptions(context.Background(), streamingMode, getMasterF(), mc.grpcDialOptions, false, func(client master_pb.SeaweedClient) error {
 			return fn(client)
 		})
 	})
@@ -511,7 +515,7 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 		if master == myMasterAddress {
 			continue
 		}
-		if grpcErr := pb.WithMasterClient(context.Background(), false, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		if grpcErr := pb.WithMasterClientWithGrpcDialOptions(context.Background(), false, master, mc.grpcDialOptions, false, func(client master_pb.SeaweedClient) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
 			defer cancel()
 			resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})

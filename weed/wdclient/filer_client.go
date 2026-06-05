@@ -44,7 +44,7 @@ type FilerClient struct {
 	filerAddressesMu   sync.RWMutex   // Protects filerAddresses and filerHealth
 	filerIndex         int32          // atomic: current filer index for round-robin
 	filerHealth        []*filerHealth // health status per filer (same order as filerAddresses)
-	grpcDialOption     grpc.DialOption
+	grpcDialOptions    []grpc.DialOption
 	urlPreference      UrlPreference
 	grpcTimeout        time.Duration
 	cacheSize          int           // Number of historical vidMap snapshots to keep
@@ -79,6 +79,7 @@ type FilerClientOption struct {
 	MaxRetries         int           // Retry: maximum retry attempts for transient failures (0 = use default of 3)
 	InitialRetryWait   time.Duration // Retry: initial wait time before first retry (0 = use default of 1s)
 	RetryBackoffFactor float64       // Retry: backoff multiplier for wait time (0 = use default of 1.5)
+	GrpcDialOptions    []grpc.DialOption
 
 	// Filer discovery options
 	MasterClient      *MasterClient // Optional: enables filer discovery from master
@@ -95,6 +96,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	}
 
 	// Apply defaults
+	grpcDialOptions := []grpc.DialOption{grpcDialOption}
 	grpcTimeout := 5 * time.Second
 	urlPref := PreferUrl
 	cacheSize := DefaultVidMapCacheSize
@@ -134,6 +136,9 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		if opt.RetryBackoffFactor > 0 {
 			retryBackoffFactor = opt.RetryBackoffFactor
 		}
+		if len(opt.GrpcDialOptions) > 0 {
+			grpcDialOptions = opt.GrpcDialOptions
+		}
 		if opt.MasterClient != nil {
 			masterClient = opt.MasterClient
 			filerGroup = opt.FilerGroup
@@ -153,7 +158,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		filerAddresses:     filerAddresses,
 		filerIndex:         0,
 		filerHealth:        health,
-		grpcDialOption:     grpcDialOption,
+		grpcDialOptions:    grpcDialOptions,
 		urlPreference:      urlPref,
 		grpcTimeout:        grpcTimeout,
 		cacheSize:          cacheSize,
@@ -335,7 +340,7 @@ func (fc *FilerClient) refreshFilerList() {
 	}
 
 	// Query master for filers in our group
-	updates := cluster.ListExistingPeerUpdates(currentMaster, fc.grpcDialOption, fc.filerGroup, cluster.FilerType)
+	updates := cluster.ListExistingPeerUpdatesWithGrpcDialOptions(currentMaster, fc.grpcDialOptions, fc.filerGroup, cluster.FilerType)
 
 	if len(updates) == 0 {
 		glog.V(2).Infof("FilerClient: no filers found in group '%s'", fc.filerGroup)
@@ -638,7 +643,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 				timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
 				defer cancel() // Always clean up context, even on panic or early return
 
-				return pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				return pb.WithGrpcFilerClientWithGrpcDialOptions(false, fc.clientId, filerAddress, fc.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 					resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
 						VolumeIds: volumeIds,
 					})

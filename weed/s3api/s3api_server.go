@@ -50,6 +50,7 @@ type S3ApiServerOption struct {
 	AllowedOrigins            []string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
+	GrpcDialOptions           []grpc.DialOption
 	AllowDeleteBucketNotEmpty bool
 	LocalFilerSocket          string
 	DataCenter                string
@@ -65,6 +66,16 @@ type S3ApiServerOption struct {
 	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
 	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
 	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
+}
+
+func (option *S3ApiServerOption) grpcDialOptions() []grpc.DialOption {
+	if len(option.GrpcDialOptions) > 0 {
+		return option.GrpcDialOptions
+	}
+	if option.GrpcDialOption != nil {
+		return []grpc.DialOption{option.GrpcDialOption}
+	}
+	return nil
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
@@ -163,6 +174,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	var filerClient *wdclient.FilerClient
 	var masterClient *wdclient.MasterClient
 	var objectWriteLockClient *cluster.LockClient
+	grpcDialOptions := option.grpcDialOptions()
 	if len(option.Masters) > 0 {
 		// Enable filer discovery via master
 		masterMap := make(map[string]pb.ServerAddress)
@@ -173,14 +185,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if clientHost == "0.0.0.0" || clientHost == "" {
 			clientHost = util.DetectedHostAddress()
 		}
-		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient = wdclient.NewMasterClientWithGrpcDialOptions(grpcDialOptions, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Build the object-write lock client and subscribe to the master's
 		// lock-ring updates BEFORE starting the master loop, so the initial
 		// LockRingUpdate sent on connect isn't dropped (the master only delivers
 		// it once per connect). The masterClient already filters updates to this
 		// server's filer group.
 		if len(option.Filers) > 0 {
-			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			objectWriteLockClient = cluster.NewLockClientWithGrpcDialOptions(grpcDialOptions, option.Filers[0])
 			masterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
 				servers := make([]pb.ServerAddress, 0, len(update.Servers))
 				for _, s := range update.Servers {
@@ -196,12 +208,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			MasterClient:      masterClient,
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
+			GrpcDialOptions:   grpcDialOptions,
 		})
 
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
-		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
+		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{GrpcDialOptions: grpcDialOptions})
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
 
@@ -292,7 +305,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// Reuse the lock client built in the masters block (already subscribed to
 		// ring updates); create a plain one when no masters are configured.
 		if objectWriteLockClient == nil {
-			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			objectWriteLockClient = cluster.NewLockClientWithGrpcDialOptions(option.grpcDialOptions(), option.Filers[0])
 		}
 		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) objectWriteLock {
@@ -392,7 +405,6 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
 				glog.V(1).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
-				s3ApiServer.iam.updateCredentialManagerStaticIdentities()
 			}
 		})
 	}

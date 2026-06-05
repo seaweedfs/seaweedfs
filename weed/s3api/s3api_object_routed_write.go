@@ -150,7 +150,7 @@ func singleStrongETag(v string) (string, bool) {
 
 func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	var resp *filer_pb.ObjectTransactionResponse
-	err := pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithFilerClientWithGrpcDialOptions(false, 0, owner, s3a.option.grpcDialOptions(), func(client filer_pb.SeaweedFilerClient) error {
 		var e error
 		resp, e = client.ObjectTransaction(context.Background(), req)
 		return e

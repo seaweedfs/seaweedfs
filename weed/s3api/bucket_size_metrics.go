@@ -58,7 +58,7 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 		return
 	}
 	filer := s3a.option.Filers[0]
-	lockClient := cluster.NewLockClient(s3a.option.GrpcDialOption, filer)
+	lockClient := cluster.NewLockClientWithGrpcDialOptions(s3a.option.grpcDialOptions(), filer)
 	owner := string(filer) + "-s3-metrics"
 
 	// Start long-lived lock - this S3 instance will only collect metrics when it holds the lock
@@ -124,7 +124,7 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 		return
 	}
 
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilersWithGrpcDialOptions(s3a.option.Filers, s3a.option.grpcDialOptions(), nil)
 	if err != nil {
 		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
 		return
@@ -176,7 +176,7 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (ma
 	// Connect to any available master and get volume list with topology
 	collectionInfos := make(map[string]*CollectionInfo)
 
-	err := pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
+	err := pb.WithOneOfGrpcMasterClientsWithGrpcDialOptions(false, masterMap, s3a.option.grpcDialOptions(), func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return fmt.Errorf("failed to get volume list: %w", err)

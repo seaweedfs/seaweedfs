@@ -50,6 +50,10 @@ func DeleteFileIds(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.
 }
 
 func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func(vid []string) (map[string]*LookupResult, error)) []*volume_server_pb.DeleteResult {
+	return DeleteFileIdsWithLookupVolumeIdWithGrpcDialOptions([]grpc.DialOption{grpcDialOption}, fileIds, lookupFunc)
+}
+
+func DeleteFileIdsWithLookupVolumeIdWithGrpcDialOptions(grpcDialOptions []grpc.DialOption, fileIds []string, lookupFunc func(vid []string) (map[string]*LookupResult, error)) []*volume_server_pb.DeleteResult {
 
 	var ret []*volume_server_pb.DeleteResult
 
@@ -117,7 +121,7 @@ func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []s
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			resultChan <- DeleteFileIdsAtOneVolumeServer(server, grpcDialOption, fidList, false)
+			resultChan <- DeleteFileIdsAtOneVolumeServerWithGrpcDialOptions(server, grpcDialOptions, fidList, false)
 
 		}(server, fidList)
 	}
@@ -134,10 +138,14 @@ func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []s
 // DeleteFileIdsAtOneVolumeServer deletes a list of files that is on one volume server via gRpc
 // Returns individual results for each file ID. Check result.Error for per-file failures.
 func DeleteFileIdsAtOneVolumeServer(volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fileIds []string, includeCookie bool) []*volume_server_pb.DeleteResult {
+	return DeleteFileIdsAtOneVolumeServerWithGrpcDialOptions(volumeServer, []grpc.DialOption{grpcDialOption}, fileIds, includeCookie)
+}
+
+func DeleteFileIdsAtOneVolumeServerWithGrpcDialOptions(volumeServer pb.ServerAddress, grpcDialOptions []grpc.DialOption, fileIds []string, includeCookie bool) []*volume_server_pb.DeleteResult {
 
 	var ret []*volume_server_pb.DeleteResult
 
-	err := WithVolumeServerClient(false, volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := WithVolumeServerClientWithGrpcDialOptions(false, volumeServer, grpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		req := &volume_server_pb.BatchDeleteRequest{
 			FileIds:         fileIds,

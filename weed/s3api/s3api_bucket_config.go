@@ -588,7 +588,7 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 	}
 	if s3a.objectWriteLockClient != nil {
 		if owner := s3a.objectWriteLockClient.PrimaryForKey(objectWriteRouteKeyPrefix + bucketPath); owner != "" {
-			return pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, txn)
+			return pb.WithFilerClientWithGrpcDialOptions(false, 0, owner, s3a.option.grpcDialOptions(), txn)
 		}
 	}
 	return s3a.WithFilerClient(false, txn)
