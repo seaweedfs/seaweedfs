@@ -110,6 +110,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	if *sftpOpt.bindIp == "" {
 		*sftpOpt.bindIp = "0.0.0.0"
 	}
+	util.SetOutboundLocalIP(*sftpOpt.bindIp)
 	filerAddress := pb.ServerAddress(*sftpOpt.filer)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 

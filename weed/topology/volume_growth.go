@@ -98,20 +98,25 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
 
+// VolumeGrowthCountForCopies returns the configured number of logical volumes
+// to create at once for a given replica copy count (master.volume_growth.copy_N).
+func VolumeGrowthCountForCopies(copyCount int) uint32 {
+	switch copyCount {
+	case 1:
+		return VolumeGrowStrategy.Copy1Count
+	case 2:
+		return VolumeGrowStrategy.Copy2Count
+	case 3:
+		return VolumeGrowStrategy.Copy3Count
+	default:
+		return VolumeGrowStrategy.CopyOtherCount
+	}
+}
+
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count uint32) {
-	switch copyCount {
-	case 1:
-		count = VolumeGrowStrategy.Copy1Count
-	case 2:
-		count = VolumeGrowStrategy.Copy2Count
-	case 3:
-		count = VolumeGrowStrategy.Copy3Count
-	default:
-		count = VolumeGrowStrategy.CopyOtherCount
-	}
-	return
+	return VolumeGrowthCountForCopies(copyCount)
 }
 
 func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount uint32) (result []*master_pb.VolumeLocation, err error) {
