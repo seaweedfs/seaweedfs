@@ -545,6 +545,12 @@ async fn run(
                     whitelist.extend(sec.guard_white_list.iter().cloned());
                     let mut guard = state_reload.guard.write().unwrap();
                     guard.update_whitelist(&whitelist);
+                    guard.update_signing_keys(
+                        SigningKey(sec.jwt_signing_key),
+                        sec.jwt_signing_expires,
+                        SigningKey(sec.jwt_read_signing_key),
+                        sec.jwt_read_signing_expires,
+                    );
                 }
 
                 // Trigger heartbeat to report new volumes

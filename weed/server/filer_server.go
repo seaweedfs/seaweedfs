@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
@@ -343,4 +344,18 @@ func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
 
 	util.LoadConfiguration("security", false)
+	v := util.GetViper()
+	fs.filerGuard.UpdateSigningKeys(
+		v.GetString("jwt.filer_signing.key"),
+		v.GetInt("jwt.filer_signing.expires_after_seconds"),
+		v.GetString("jwt.filer_signing.read.key"),
+		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
+	)
+	fs.volumeGuard.UpdateSigningKeys(
+		v.GetString("jwt.signing.key"),
+		v.GetInt("jwt.signing.expires_after_seconds"),
+		v.GetString("jwt.signing.read.key"),
+		v.GetInt("jwt.signing.read.expires_after_seconds"),
+	)
+	util_http.ReloadJwtSigningReadConfig()
 }

@@ -355,6 +355,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	grace.OnInterrupt(ms.Shutdown)
 	grace.OnInterrupt(grpcS.Stop)
+	grace.OnReload(ms.Reload)
 	grace.OnReload(func() {
 		if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()

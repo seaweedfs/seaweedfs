@@ -254,5 +254,5 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) string {
-	return string(security.GenJwtForVolumeServer(fs.volumeGuard.ReadSigningKey, fs.volumeGuard.ReadExpiresAfterSec, fileId))
+	return string(security.GenJwtForVolumeServer(fs.volumeGuard.ReadSigningKey(), fs.volumeGuard.ReadExpiresAfterSec(), fileId))
 }

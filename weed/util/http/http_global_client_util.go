@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -27,10 +28,14 @@ import (
 var ErrNotFound = fmt.Errorf("not found")
 var ErrTooManyRequests = fmt.Errorf("too many requests")
 
+type jwtSigningReadConfig struct {
+	key     security.SigningKey
+	expires int
+}
+
 var (
-	jwtSigningReadKey        security.SigningKey
-	jwtSigningReadKeyExpires int
-	loadJwtConfigOnce        sync.Once
+	jwtSigningReadConfigPtr atomic.Pointer[jwtSigningReadConfig]
+	loadJwtConfigOnce       sync.Once
 )
 
 func AppendQueryParameter(rawURL, key, value string) string {
@@ -57,8 +62,17 @@ func AppendQueryParameter(rawURL, key, value string) string {
 
 func loadJwtConfig() {
 	v := util.GetViper()
-	jwtSigningReadKey = security.SigningKey(v.GetString("jwt.signing.read.key"))
-	jwtSigningReadKeyExpires = v.GetInt("jwt.signing.read.expires_after_seconds")
+	jwtSigningReadConfigPtr.Store(&jwtSigningReadConfig{
+		key:     security.SigningKey(v.GetString("jwt.signing.read.key")),
+		expires: v.GetInt("jwt.signing.read.expires_after_seconds"),
+	})
+}
+
+// ReloadJwtSigningReadConfig re-reads the volume read-signing key from the
+// already-reloaded security config, so operators can rotate it via SIGHUP
+// without restarting the process.
+func ReloadJwtSigningReadConfig() {
+	loadJwtConfig()
 }
 
 func Post(url string, values url.Values) ([]byte, error) {
@@ -534,12 +548,8 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 
 	loadJwtConfigOnce.Do(loadJwtConfig)
 	var jwt security.EncodedJwt
-	if len(jwtSigningReadKey) > 0 {
-		jwt = security.GenJwtForVolumeServer(
-			jwtSigningReadKey,
-			jwtSigningReadKeyExpires,
-			fileId,
-		)
+	if cfg := jwtSigningReadConfigPtr.Load(); cfg != nil && len(cfg.key) > 0 {
+		jwt = security.GenJwtForVolumeServer(cfg.key, cfg.expires, fileId)
 	}
 
 	// For unencrypted, non-gzipped full chunks, use direct buffer read
