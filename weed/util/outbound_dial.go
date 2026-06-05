@@ -14,15 +14,25 @@ import (
 // address instead of one the OS picks arbitrarily, which may not even be able
 // to reach the target. A nil value keeps the historical behavior of letting
 // the OS choose the source address.
-var outboundLocalAddr atomic.Pointer[net.TCPAddr]
+var (
+	outboundLocalAddr    atomic.Pointer[net.TCPAddr]
+	outboundLocalAddrSet atomic.Bool
+)
 
 // SetOutboundLocalIP records ip as the source address for outbound TCP
-// connections. An empty, wildcard (0.0.0.0 / ::), or unparseable value clears
-// any binding so the OS keeps choosing the source address.
+// connections. An empty, wildcard (0.0.0.0 / ::), or unparseable value leaves
+// the source address to the OS.
+//
+// The first call wins. `weed server` applies the top-level -ip.bind before its
+// embedded master/volume/filer/s3/... start, so a component's own (possibly
+// different) bind setting can't later clobber the process-wide source address
+// the others already dial from.
 func SetOutboundLocalIP(ip string) {
+	if !outboundLocalAddrSet.CompareAndSwap(false, true) {
+		return
+	}
 	parsed := net.ParseIP(ip)
 	if parsed == nil || parsed.IsUnspecified() {
-		outboundLocalAddr.Store(nil)
 		return
 	}
 	outboundLocalAddr.Store(&net.TCPAddr{IP: parsed})
@@ -57,7 +67,20 @@ func outboundLocalAddrForDial(network, address string) *net.TCPAddr {
 	if localAddr == nil || !strings.HasPrefix(network, "tcp") || isLoopbackHost(address) {
 		return nil
 	}
+	// A source address can only originate a connection to a target of the same
+	// IP family. When the target is a literal IP of the other family, leave the
+	// source to the OS rather than forcing a dial that is bound to fail.
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		if targetIP := net.ParseIP(host); targetIP != nil && isIPv4(targetIP) != isIPv4(localAddr.IP) {
+			return nil
+		}
+	}
 	return localAddr
+}
+
+// isIPv4 reports whether ip is an IPv4 (or IPv4-mapped) address.
+func isIPv4(ip net.IP) bool {
+	return ip.To4() != nil
 }
 
 // isLoopbackHost reports whether the host part of a "host:port" (or bare host)

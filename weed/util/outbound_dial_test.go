@@ -4,23 +4,31 @@ import (
 	"testing"
 )
 
+// resetOutbound clears the process-global outbound source address so each test
+// starts from a clean slate (SetOutboundLocalIP is otherwise first-write-wins).
+func resetOutbound() {
+	outboundLocalAddrSet.Store(false)
+	outboundLocalAddr.Store(nil)
+}
+
 func TestSetOutboundLocalIP(t *testing.T) {
-	t.Cleanup(func() { SetOutboundLocalIP("") })
+	t.Cleanup(resetOutbound)
 
 	cases := []struct {
 		name   string
 		ip     string
-		wantIP string // empty means cleared
+		wantIP string // empty means no binding
 	}{
 		{"ipv4", "10.0.0.5", "10.0.0.5"},
 		{"ipv6", "fe80::1", "fe80::1"},
-		{"empty clears", "", ""},
-		{"wildcard v4 clears", "0.0.0.0", ""},
-		{"wildcard v6 clears", "::", ""},
-		{"garbage clears", "not-an-ip", ""},
+		{"empty", "", ""},
+		{"wildcard v4", "0.0.0.0", ""},
+		{"wildcard v6", "::", ""},
+		{"garbage", "not-an-ip", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			resetOutbound()
 			SetOutboundLocalIP(tc.ip)
 			got := OutboundLocalAddr()
 			if tc.wantIP == "" {
@@ -42,15 +50,32 @@ func TestSetOutboundLocalIP(t *testing.T) {
 	}
 }
 
+// TestSetOutboundLocalIPFirstWins guards the behavior that keeps `weed server`
+// from letting a component's own bind setting clobber the process-wide address.
+func TestSetOutboundLocalIPFirstWins(t *testing.T) {
+	t.Cleanup(resetOutbound)
+	resetOutbound()
+
+	SetOutboundLocalIP("10.0.0.5") // server-level bind, applied first
+	SetOutboundLocalIP("10.0.0.9") // a component's own bind: must be ignored
+	SetOutboundLocalIP("")         // a component clearing: must not unbind
+
+	got := OutboundLocalAddr()
+	if got == nil || got.IP.String() != "10.0.0.5" {
+		t.Fatalf("first call should win, got %v", got)
+	}
+}
+
 func TestOutboundLocalAddrForDial(t *testing.T) {
-	t.Cleanup(func() { SetOutboundLocalIP("") })
+	t.Cleanup(resetOutbound)
 
 	// No bind configured: never binds a source address.
-	SetOutboundLocalIP("")
+	resetOutbound()
 	if got := outboundLocalAddrForDial("tcp", "10.0.0.9:8080"); got != nil {
 		t.Fatalf("unconfigured dial should not bind, got %v", got)
 	}
 
+	resetOutbound()
 	SetOutboundLocalIP("10.0.0.5")
 	cases := []struct {
 		name     string
@@ -64,6 +89,7 @@ func TestOutboundLocalAddrForDial(t *testing.T) {
 		{"loopback ip skipped", "tcp", "127.0.0.1:9333", false},
 		{"loopback name skipped", "tcp", "localhost:9333", false},
 		{"ipv6 loopback skipped", "tcp", "[::1]:9333", false},
+		{"ipv6 literal target skipped", "tcp", "[2001:db8::1]:8080", false},
 		{"unix network skipped", "unix", "/tmp/x.sock", false},
 		{"udp network skipped", "udp", "10.0.0.9:53", false},
 	}
@@ -77,5 +103,27 @@ func TestOutboundLocalAddrForDial(t *testing.T) {
 				t.Fatalf("%s/%s: expected no source binding, got %v", tc.network, tc.address, got)
 			}
 		})
+	}
+}
+
+func TestOutboundLocalAddrFamilyMismatch(t *testing.T) {
+	t.Cleanup(resetOutbound)
+
+	resetOutbound()
+	SetOutboundLocalIP("10.0.0.5") // IPv4 source
+	if got := outboundLocalAddrForDial("tcp", "[2001:db8::1]:8080"); got != nil {
+		t.Fatalf("IPv4 source to IPv6 literal target should skip binding, got %v", got)
+	}
+	if got := outboundLocalAddrForDial("tcp", "10.0.0.9:8080"); got == nil {
+		t.Fatalf("IPv4 source to IPv4 literal target should bind")
+	}
+
+	resetOutbound()
+	SetOutboundLocalIP("2001:db8::5") // IPv6 source
+	if got := outboundLocalAddrForDial("tcp", "10.0.0.9:8080"); got != nil {
+		t.Fatalf("IPv6 source to IPv4 literal target should skip binding, got %v", got)
+	}
+	if got := outboundLocalAddrForDial("tcp", "[2001:db8::1]:8080"); got == nil {
+		t.Fatalf("IPv6 source to IPv6 literal target should bind")
 	}
 }
