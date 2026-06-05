@@ -445,7 +445,10 @@ func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
 }
 
 func copyEntryETag(entry *filer_pb.Entry) string {
-	if entry != nil && entry.Extended != nil {
+	if entry == nil {
+		return ""
+	}
+	if entry.Extended != nil {
 		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
 			return string(etag)
 		}
