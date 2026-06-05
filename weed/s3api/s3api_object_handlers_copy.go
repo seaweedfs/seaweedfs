@@ -444,7 +444,7 @@ func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
 	return proto.Clone(entry).(*filer_pb.Entry)
 }
 
-func copyEntryETag(fullPath util.FullPath, entry *filer_pb.Entry) string {
+func copyEntryETag(entry *filer_pb.Entry) string {
 	if entry != nil && entry.Extended != nil {
 		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
 			return string(etag)
@@ -461,11 +461,10 @@ func copyEntryETag(fullPath util.FullPath, entry *filer_pb.Entry) string {
 		}
 	}
 	return filer.ETagEntry(&filer.Entry{
-		FullPath: fullPath,
-		Attr:     attr,
-		Chunks:   entry.Chunks,
-		Content:  entry.Content,
-		Remote:   entry.RemoteEntry,
+		Attr:    attr,
+		Chunks:  entry.Chunks,
+		Content: entry.Content,
+		Remote:  entry.RemoteEntry,
 	})
 }
 
@@ -494,7 +493,7 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		dstEntry.Extended = make(map[string][]byte)
 	}
 
-	etag = copyEntryETag(dstPath, dstEntry)
+	etag = copyEntryETag(dstEntry)
 
 	switch dstVersioningState {
 	case s3_constants.VersioningEnabled:
@@ -987,19 +986,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Calculate ETag for the part
-	partPath := util.FullPath(uploadDir + "/" + partName)
-	filerEntry := &filer.Entry{
-		FullPath: partPath,
-		Attr: filer.Attr{
-			FileSize: dstEntry.Attributes.FileSize,
-			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-			Mime:     dstEntry.Attributes.Mime,
-		},
-		Chunks: dstEntry.Chunks,
-	}
-
-	etag := filer.ETagEntry(filerEntry)
+	etag := copyEntryETag(dstEntry)
 	setEtag(w, etag)
 
 	response := CopyPartResult{
@@ -1429,19 +1416,7 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	// Calculate ETag for the source entry. ETagEntry derives the tag from the
-	// chunks/Md5/remote-etag only, so no path is needed here.
-	filerEntry := &filer.Entry{
-		Attr: filer.Attr{
-			FileSize: entry.Attributes.FileSize,
-			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
-			Mime:     entry.Attributes.Mime,
-			Md5:      entry.Attributes.Md5,
-		},
-		Chunks: entry.Chunks,
-	}
-	sourceETag := filer.ETagEntry(filerEntry)
+	sourceETag := copyEntryETag(entry)
 
 	// Check X-Amz-Copy-Source-If-Match
 	if ifMatch := r.Header.Get(s3_constants.AmzCopySourceIfMatch); ifMatch != "" {
