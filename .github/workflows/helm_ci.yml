@@ -446,6 +446,39 @@ jobs:
           sys.exit(1 if failed else 0)
           PYEOF
 
+          echo ""
+          echo "=== Testing all-in-one env: a key in both global and component renders once ==="
+          # Regression: all-in-one looped global and component extraEnvironmentVars
+          # in two separate ranges, emitting duplicate env entries for any key set
+          # in both maps. Render a shared key and assert it appears exactly once in
+          # the all-in-one container, with the component value winning (consistent
+          # with the merge helper the other components already use). pyyaml is
+          # installed by the earlier IAM gRPC block in this same step.
+          helm template test $CHART_DIR \
+            --set allInOne.enabled=true \
+            --set global.seaweedfs.extraEnvironmentVars.WEED_SHARED=fromGlobal \
+            --set allInOne.extraEnvironmentVars.WEED_SHARED=fromComponent > /tmp/aio-env.yaml
+          python3 - /tmp/aio-env.yaml <<'PYEOF'
+          import sys, yaml
+          from collections import Counter
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          dep = next(d for d in docs if d.get("kind") == "Deployment"
+                     and d["metadata"]["name"].endswith("all-in-one"))
+          envs = [e["name"] for c in dep["spec"]["template"]["spec"]["containers"]
+                  for e in c.get("env", [])]
+          dups = {k: v for k, v in Counter(envs).items() if v > 1}
+          if dups:
+              print(f"FAIL: duplicate env entries in all-in-one container: {dups}", file=sys.stderr)
+              sys.exit(1)
+          val = next(e.get("value") for c in dep["spec"]["template"]["spec"]["containers"]
+                     for e in c.get("env", []) if e["name"] == "WEED_SHARED")
+          if val != "fromComponent":
+              print(f"FAIL: WEED_SHARED should take the component value 'fromComponent', got '{val}'",
+                    file=sys.stderr)
+              sys.exit(1)
+          print("OK: all-in-one env: shared key renders once, component value wins")
+          PYEOF
+
           echo "✅ All template rendering tests passed!"
 
       - name: Create kind cluster
