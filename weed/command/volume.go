@@ -380,6 +380,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if *v.bindIp == "" {
 		*v.bindIp = *v.ip
 	}
+	util.SetOutboundLocalIP(*v.bindIp)
 
 	if *v.publicPort == 0 {
 		*v.publicPort = *v.port

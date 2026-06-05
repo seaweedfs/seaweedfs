@@ -335,6 +335,7 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.bindIp == "" {
 		*fo.bindIp = *fo.ip
 	}
+	util.SetOutboundLocalIP(*fo.bindIp)
 	if *fo.allowedOrigins == "" {
 		*fo.allowedOrigins = "*"
 	}
