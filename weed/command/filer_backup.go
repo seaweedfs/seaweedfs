@@ -144,6 +144,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		// returns 0 → isFreshSync stays true → -initialSnapshot re-runs a full
 		// walk. Writing 0 is equivalent to deleting the key for getOffset's
 		// purposes (it only resumes when lastOffsetTsNs > 0).
+		didReset := false
 		if *backupOption.resetCheckpoint {
 			if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), 0); err != nil {
 				return fmt.Errorf("resetCheckpoint: clear offset for sinkId %d: %w", sinkId, err)
@@ -154,16 +155,25 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			// offset is cleared, later retries must resume from the persisted
 			// checkpoint.
 			*backupOption.resetCheckpoint = false
+			didReset = true
 			glog.V(0).Infof("resetCheckpoint: cleared checkpoint for sinkId %d — starting fresh", sinkId)
 		}
 		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
 		if err != nil {
-			// A KV read failure is ambiguous — a checkpoint may well exist but the
-			// source filer is temporarily unreachable. Don't treat that as a fresh
-			// sync; otherwise runFilerBackup's retry loop would redo the full
-			// -initialSnapshot walk on every transient error.
-			isFreshSync = false
-			glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
+			if didReset {
+				// We just wrote offset 0, so this is authoritatively a fresh sync.
+				// A read-back failure must not flip isFreshSync to false here —
+				// that would skip the -initialSnapshot walk the reset explicitly
+				// requested. Keep isFreshSync=true.
+				glog.V(0).Infof("starting from %v (offset read failed after reset, treating as fresh: %v)", startFrom, err)
+			} else {
+				// A KV read failure is ambiguous — a checkpoint may well exist but
+				// the source filer is temporarily unreachable. Don't treat that as
+				// a fresh sync; otherwise runFilerBackup's retry loop would redo
+				// the full -initialSnapshot walk on every transient error.
+				isFreshSync = false
+				glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
+			}
 		} else if lastOffsetTsNs > 0 {
 			startFrom = time.Unix(0, lastOffsetTsNs)
 			isFreshSync = false
