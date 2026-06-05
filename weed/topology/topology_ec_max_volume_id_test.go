@@ -31,3 +31,20 @@ func TestRegisterEcShardsAdvancesMaxVolumeId(t *testing.T) {
 		t.Fatalf("maxVolumeId after EC registration = %d, want %d", got, ecVid)
 	}
 }
+
+// TestIncrementalSyncDataNodeEcShardsAdvancesMaxVolumeId locks the same
+// invariant on the incremental heartbeat path.
+func TestIncrementalSyncDataNodeEcShardsAdvancesMaxVolumeId(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 100})
+
+	const ecVid = uint32(39849)
+	msg := buildEcShardMessage(ecVid, "prefeitura", "", 0, []erasure_coding.ShardId{0, 1, 2, 3})
+	topo.IncrementalSyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{msg}, nil, dn)
+
+	if got := topo.GetMaxVolumeId(); got != needle.VolumeId(ecVid) {
+		t.Fatalf("maxVolumeId after incremental EC registration = %d, want %d", got, ecVid)
+	}
+}
