@@ -919,7 +919,7 @@ filer:
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
     # objectLock enables S3 Object Lock (irreversible, forces versioning)
-    # versioning: Enabled or Suspended (or true to enable)
+    # versioning: Enabled or Suspended (or bool true/false)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
@@ -972,7 +972,7 @@ s3:
   # Buckets may be exposed publicly by setting `anonymousRead` to `true`
   # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
   # objectLock enables S3 Object Lock (irreversible, forces versioning)
-  # versioning: Enabled or Suspended (or true to enable)
+  # versioning: Enabled or Suspended (or bool true/false)
   # createBuckets:
   #   - name: bucket-a
   #     anonymousRead: true
@@ -1526,7 +1526,7 @@ allInOne:
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
     # objectLock enables S3 Object Lock (irreversible, forces versioning)
-    # versioning: Enabled or Suspended (or true to enable)
+    # versioning: Enabled or Suspended (or bool true/false)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true

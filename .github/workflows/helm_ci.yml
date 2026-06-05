@@ -446,6 +446,16 @@ jobs:
           sys.exit(1 if failed else 0)
           PYEOF
 
+          echo ""
+          echo "=== Testing bucket versioning: YAML bool false suspends like string \"false\" ==="
+          # bool false used to be a silent no-op while string "false" suspended.
+          BOOL_FALSE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=verbucket \
+            --set s3.createBuckets[0].versioning=false | grep 's3.bucket.versioning -name verbucket' || true)
+          echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
+          echo "✓ Bucket versioning: YAML bool false suspends consistently with string \"false\""
+
           echo "✅ All template rendering tests passed!"
 
       - name: Create kind cluster
