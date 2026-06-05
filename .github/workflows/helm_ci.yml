@@ -448,10 +448,7 @@ jobs:
 
           echo ""
           echo "=== Testing bucket versioning: YAML bool false suspends like string \"false\" ==="
-          # Regression: createBuckets[].versioning given as a YAML bool false must
-          # Suspend the bucket, matching the string forms ("false"/"disable"/"suspended").
-          # Before the fix, bool false was a silent no-op while string "false" suspended,
-          # so the same logical value behaved differently depending on its YAML type.
+          # bool false used to be a silent no-op while string "false" suspended.
           BOOL_FALSE=$(helm template test $CHART_DIR \
             --set s3.enabled=true \
             --set s3.createBuckets[0].name=verbucket \
