@@ -188,6 +188,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if *masterOption.ipBind == "" {
 		*masterOption.ipBind = *masterOption.ip
 	}
+	util.SetOutboundLocalIP(*masterOption.ipBind)
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
