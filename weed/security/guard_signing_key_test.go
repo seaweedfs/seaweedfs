@@ -29,11 +29,12 @@ func TestUpdateSigningKeysRotates(t *testing.T) {
 	}
 }
 
-// TestUpdateSigningKeysConcurrent rotates the keys while readers mint and verify
-// tokens, so `go test -race` would flag a torn read of the signing-key slice
-// header. Each rotation uses matching keys so every reader's token validates.
+// TestUpdateSigningKeysConcurrent rotates keys and whitelist while readers mint
+// and verify tokens and check whitelist membership, so `go test -race` would
+// flag any torn read of the signing-key slice header or the whitelist maps.
+// Each key rotation uses matching keys so every reader's token validates.
 func TestUpdateSigningKeysConcurrent(t *testing.T) {
-	g := NewGuard(nil, "k0", 60, "k0", 60)
+	g := NewGuard([]string{"10.0.0.1"}, "k0", 60, "k0", 60)
 
 	var wg sync.WaitGroup
 	for w := 0; w < 8; w++ {
@@ -47,12 +48,14 @@ func TestUpdateSigningKeysConcurrent(t *testing.T) {
 					t.Errorf("token should verify against the snapshot it was minted from: %v", err)
 					return
 				}
+				g.IsWhiteListed("10.0.0.1")
 			}
 		}()
 	}
 	for i := 0; i < 1000; i++ {
 		g.UpdateSigningKeys("kw", 60, "kr", 60)
 		g.UpdateSigningKeys("kw2", 60, "kr2", 60)
+		g.UpdateWhiteList([]string{"10.0.0.1", "192.168.0.0/16"})
 	}
 	wg.Wait()
 }
@@ -62,17 +65,17 @@ func TestUpdateSigningKeysConcurrent(t *testing.T) {
 // clearing it again must deactivate.
 func TestUpdateSigningKeysTogglesWriteActive(t *testing.T) {
 	g := NewGuard(nil, "", 0, "", 0)
-	if g.isWriteActive {
+	if g.state.Load().isWriteActive {
 		t.Fatalf("no whitelist and no key should be inactive")
 	}
 
 	g.UpdateSigningKeys("write", 10, "", 0)
-	if !g.isWriteActive {
+	if !g.state.Load().isWriteActive {
 		t.Fatalf("setting a signing key should activate auth")
 	}
 
 	g.UpdateSigningKeys("", 0, "", 0)
-	if g.isWriteActive {
+	if g.state.Load().isWriteActive {
 		t.Fatalf("clearing the signing key should deactivate auth")
 	}
 }

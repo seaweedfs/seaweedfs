@@ -219,16 +219,14 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	var signingKey security.SigningKey
 
 	if isWrite {
-		if len(fs.filerGuard.SigningKey()) == 0 {
+		signingKey = fs.filerGuard.SigningKey()
+		if len(signingKey) == 0 {
 			return true
-		} else {
-			signingKey = fs.filerGuard.SigningKey()
 		}
 	} else {
-		if len(fs.filerGuard.ReadSigningKey()) == 0 {
+		signingKey = fs.filerGuard.ReadSigningKey()
+		if len(signingKey) == 0 {
 			return true
-		} else {
-			signingKey = fs.filerGuard.ReadSigningKey()
 		}
 	}
 
