@@ -249,35 +249,47 @@ func (s *RaftServer) Peers() (members []string) {
 	return
 }
 
-// recoverTopologyIdFromSnapshot reads the TopologyId from the latest
-// seaweedfs/raft snapshot before state cleanup.
-func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
+// legacyRaftStateExists reports whether a seaweedfs/raft (legacy) state is
+// present in dataDir. The legacy engine writes these names; hashicorp raft
+// uses logs.dat/stable.dat/snapshots, so there is no overlap.
+func legacyRaftStateExists(dataDir string) bool {
+	for _, name := range []string{"snapshot", "log", "conf", "state"} {
+		if _, err := os.Stat(path.Join(dataDir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// readLegacyRaftSnapshotState returns the raw FSM state JSON from the latest
+// seaweedfs/raft (legacy) snapshot, if a valid one exists.
+func readLegacyRaftSnapshotState(dataDir string) (json.RawMessage, bool) {
 	snapshotDir := path.Join(dataDir, "snapshot")
 	dir, err := os.Open(snapshotDir)
 	if err != nil {
-		return
+		return nil, false
 	}
 	defer dir.Close()
 	filenames, err := dir.Readdirnames(-1)
 	if err != nil || len(filenames) == 0 {
-		return
+		return nil, false
 	}
 
 	sort.Strings(filenames)
 	file, err := os.Open(path.Join(snapshotDir, filenames[len(filenames)-1]))
 	if err != nil {
-		return
+		return nil, false
 	}
 	defer file.Close()
 
 	// Snapshot format: 8-hex-digit CRC32 checksum, newline, JSON body.
 	var checksum uint32
 	if _, err := fmt.Fscanf(file, "%08x\n", &checksum); err != nil {
-		return
+		return nil, false
 	}
 	b, err := io.ReadAll(file)
 	if err != nil || crc32.ChecksumIEEE(b) != checksum {
-		return
+		return nil, false
 	}
 
 	// The snapshot JSON wraps the FSM state in a "state" field.
@@ -285,9 +297,17 @@ func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
 		State json.RawMessage `json:"state"`
 	}
 	if err := json.Unmarshal(b, &snap); err != nil || len(snap.State) == 0 {
-		return
+		return nil, false
 	}
-	recoverTopologyIdFromState(snap.State, topo)
+	return snap.State, true
+}
+
+// recoverTopologyIdFromSnapshot reads the TopologyId from the latest
+// seaweedfs/raft snapshot before state cleanup.
+func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
+	if state, ok := readLegacyRaftSnapshotState(dataDir); ok {
+		recoverTopologyIdFromState(state, topo)
+	}
 }
 
 // HasExistingState returns true when the raft log already contains entries,

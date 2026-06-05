@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"google.golang.org/grpc"
 )
 
@@ -31,7 +32,56 @@ const (
 	ldbFile            = "logs.dat"
 	sdbFile            = "stable.dat"
 	updatePeersTimeout = 15 * time.Minute
+
+	// legacyMigrationKey marks, in the hashicorp stable store, that this
+	// master's hashicorp raft state has already absorbed any pre-existing
+	// legacy seaweedfs/raft state. Its presence makes the import one-time so
+	// later restarts never re-read stale legacy state.
+	legacyMigrationKey = "seaweedfs.legacy.raft.migrated"
 )
+
+// migrateLegacyRaftStateIfNeeded performs the one-time legacy -> hashicorp raft
+// migration. It first checks the migration marker in the hashicorp stable
+// store; if already migrated it does nothing. Otherwise, when a legacy
+// seaweedfs/raft state is present, it imports the cluster identity
+// (TopologyId) and MaxVolumeId from it, then marks the migration done. With no
+// legacy state it just records the marker. Either way the master ends up
+// marked migrated, so the import runs at most once per cluster.
+func migrateLegacyRaftStateIfNeeded(sdb *boltdb.BoltStore, dataDir string, topo *topology.Topology) {
+	if _, err := sdb.Get([]byte(legacyMigrationKey)); err == nil {
+		return // marker present: already migrated
+	}
+	if legacyRaftStateExists(dataDir) {
+		glog.V(0).Infof("first hashicorp-raft start with legacy raft state in %s; migrating", dataDir)
+		importLegacyRaftState(dataDir, topo)
+	}
+	if err := sdb.Set([]byte(legacyMigrationKey), []byte(version.Version())); err != nil {
+		glog.Warningf("failed to record legacy raft migration marker: %v", err)
+	}
+}
+
+// importLegacyRaftState seeds TopologyId and MaxVolumeId from the latest legacy
+// snapshot. TopologyId is the cluster identity and must survive the engine
+// switch; MaxVolumeId is otherwise rebuilt from volume heartbeats, but carrying
+// it avoids reusing an id whose volume was deleted before the migration.
+func importLegacyRaftState(dataDir string, topo *topology.Topology) {
+	state, ok := readLegacyRaftSnapshotState(dataDir)
+	if !ok {
+		glog.V(0).Infof("legacy raft state present but no readable snapshot; " +
+			"TopologyId/MaxVolumeId will be rebuilt from volume heartbeats")
+		return
+	}
+	var cmd topology.MaxVolumeIdCommand
+	if err := json.Unmarshal(state, &cmd); err != nil {
+		glog.Warningf("failed to parse legacy raft snapshot state: %v", err)
+		return
+	}
+	topo.UpAdjustMaxVolumeId(cmd.MaxVolumeId)
+	if cmd.TopologyId != "" {
+		topo.SetTopologyId(cmd.TopologyId)
+	}
+	glog.V(0).Infof("migrated legacy raft state: MaxVolumeId=%d TopologyId=%s", cmd.MaxVolumeId, cmd.TopologyId)
+}
 
 func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
 	peerIDs := make([]string, 0, len(mapPeers))
@@ -211,6 +261,11 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("boltdb.NewBoltStore(%q): %v", filepath.Join(baseDir, "stable.dat"), err)
 	}
+
+	// Carry cluster identity forward when upgrading from legacy seaweedfs/raft.
+	// Runs once, before raft starts, so the seeded TopologyId is in place
+	// before ensureTopologyId would otherwise generate a fresh one.
+	migrateLegacyRaftStateIfNeeded(sdb, baseDir, option.Topo)
 
 	fss, err := raft.NewFileSnapshotStore(baseDir, 3, os.Stderr)
 	if err != nil {
