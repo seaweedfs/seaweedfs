@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -89,22 +88,12 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				if err != nil {
 					glog.V(0).Infof("volume grow request failed: %+v", err)
 				}
-				writableVolumes := vl.CloneWritableVolumes()
-				for dcId, racks := range dcs {
-					for _, rackId := range racks {
-						if vl.ShouldGrowVolumesByDcAndRack(&writableVolumes, dcId, rackId) {
-							vgr.DataCenter = string(dcId)
-							vgr.Rack = string(rackId)
-							if lastGrowCount > 0 {
-								vgr.WritableVolumeCount = uint32(math.Ceil(float64(lastGrowCount) / float64(len(dcs)*len(racks))))
-							} else {
-								vgr.WritableVolumeCount = volumeGrowStepCount
-							}
-
-							if _, err = ms.VolumeGrow(ctx, vgr); err != nil {
-								glog.V(0).Infof("volume grow request for dc:%s rack:%s failed: %+v", dcId, rackId, err)
-							}
-						}
+				for _, plan := range vl.PlanRackAwareGrowth(dcs, lastGrowCount, volumeGrowStepCount) {
+					vgr.DataCenter = plan.DataCenter
+					vgr.Rack = plan.Rack
+					vgr.WritableVolumeCount = plan.WritableVolumeCount
+					if _, err = ms.VolumeGrow(ctx, vgr); err != nil {
+						glog.V(0).Infof("volume grow request for dc:%s rack:%s failed: %+v", plan.DataCenter, plan.Rack, err)
 					}
 				}
 			}
