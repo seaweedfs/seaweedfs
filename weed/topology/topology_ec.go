@@ -129,6 +129,10 @@ func (loc *EcShardLocations) DeleteShard(shardId erasure_coding.ShardId, dn *Dat
 
 func (t *Topology) RegisterEcShards(ecvi *erasure_coding.EcVolumeInfo, dn *DataNode) {
 
+	// EC-only volumes (source volume deleted after encoding) must bump
+	// maxVolumeId too, or a heartbeat-rebuilt master could re-issue their id.
+	t.UpAdjustMaxVolumeId(ecvi.VolumeId)
+
 	t.ecShardMapLock.Lock()
 	defer t.ecShardMapLock.Unlock()
 
