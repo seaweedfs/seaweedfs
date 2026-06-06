@@ -239,7 +239,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 
 	// Signature V2 authorization header format:
 	// Authorization: AWS AKIAIOSFODNN7EXAMPLE:frJIUN8DYpKDtOLCwo//yllqDzg=
-	if !strings.HasPrefix(v2Auth, signV2Algorithm) {
+	if !strings.HasPrefix(v2Auth, signV2Algorithm+" ") {
 		return "", s3err.ErrSignatureVersionNotSupported
 	}
 
