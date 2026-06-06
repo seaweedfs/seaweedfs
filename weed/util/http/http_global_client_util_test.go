@@ -103,6 +103,22 @@ func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 	}
 }
 
+func TestDeleteTreatsNoContentAsSuccess(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("expected DELETE, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	if err := Delete(server.URL, ""); err != nil {
+		t.Fatalf("expected 204 DELETE to succeed, got %v", err)
+	}
+}
+
 func TestDeleteProxiedReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
