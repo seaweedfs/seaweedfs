@@ -39,9 +39,9 @@ type BucketConfig struct {
 	BucketPolicy     *policy_engine.PolicyDocument // Cached bucket policy for performance
 	// LifecycleTTL answers "what volume TTL should this PutObject get?"
 	// using only fast-path-safe predicates (prefix + size; tags excluded
-	// because they're mutable post-PUT). nil = no TTL applies (no
-	// lifecycle config, versioned bucket, or only ineligible rules).
-	// The full canonical rule set lives inside the resolver; the
+	// because they're mutable post-PUT). nil = no TTL applies (fast path
+	// not enabled on the bucket, no lifecycle config, versioned bucket,
+	// or only ineligible rules). The fast path is opt-in per bucket. The
 	// lifecycle worker reads bucket entries directly off the meta-log
 	// rather than this cache.
 	LifecycleTTL *LifecycleTTLResolver
@@ -438,22 +438,26 @@ func (s3a *S3ApiServer) populateBucketConfigDerivedFields(config *BucketConfig) 
 		}
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 
-		// Pre-parse lifecycle XML so the per-write TTL resolver doesn't
-		// pay parsing cost on every PutObject. nil on parse error so
-		// the PUT path falls through to "no TTL" rather than rejecting
-		// writes.
-		if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
-			if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
-				// Object Lock requires versioning, so an ObjectLockConfig
-				// implies the bucket is versioned even when the explicit
-				// Versioning header was never written. BucketIsVersioned
-				// in this file uses the same OR — keep them aligned.
-				versioned := config.Versioning == s3_constants.VersioningEnabled ||
-					config.Versioning == s3_constants.VersioningSuspended ||
-					config.ObjectLockConfig != nil
-				config.LifecycleTTL = NewLifecycleTTLResolver(rules, versioned)
-			} else {
-				glog.V(1).Infof("populateBucketConfigDerivedFields: bucket %s lifecycle xml parse: %v", bucket, err)
+		// The lifecycle TTL fast path is opt-in per bucket: a volume TTL
+		// stamped at write time can't honor a later policy change (rule
+		// removed or lengthened) the way worker-driven expiration does,
+		// so it stays off unless explicitly enabled. Skip the XML parse
+		// entirely when off. nil on parse error so the PUT path falls
+		// through to "no TTL" rather than rejecting writes.
+		if bytes.Equal(entry.Extended[s3_constants.ExtLifecycleTtlFastPathKey], []byte("true")) {
+			if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
+				if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
+					// Object Lock requires versioning, so an ObjectLockConfig
+					// implies the bucket is versioned even when the explicit
+					// Versioning header was never written. BucketIsVersioned
+					// in this file uses the same OR — keep them aligned.
+					versioned := config.Versioning == s3_constants.VersioningEnabled ||
+						config.Versioning == s3_constants.VersioningSuspended ||
+						config.ObjectLockConfig != nil
+					config.LifecycleTTL = NewLifecycleTTLResolver(rules, versioned)
+				} else {
+					glog.V(1).Infof("populateBucketConfigDerivedFields: bucket %s lifecycle xml parse: %v", bucket, err)
+				}
 			}
 		}
 	}
