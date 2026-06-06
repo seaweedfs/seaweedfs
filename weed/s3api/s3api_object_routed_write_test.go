@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 func reqWith(headers map[string]string) *http.Request {
@@ -99,6 +100,39 @@ func TestBuildWriteCondition(t *testing.T) {
 			t.Fatal("time condition must not take the fast path")
 		}
 	})
+}
+
+func TestParseConditionalHeadersAcceptsHTTPDateFormats(t *testing.T) {
+	testCases := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{
+			name:   "If-Modified-Since RFC850",
+			header: s3_constants.IfModifiedSince,
+			value:  "Sunday, 06-Nov-94 08:49:37 GMT",
+		},
+		{
+			name:   "If-Unmodified-Since ANSIC",
+			header: s3_constants.IfUnmodifiedSince,
+			value:  "Sun Nov  6 08:49:37 1994",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := reqWith(map[string]string{testCase.header: testCase.value})
+
+			headers, errCode := parseConditionalHeaders(r)
+			if errCode != s3err.ErrNone {
+				t.Fatalf("expected %s to be accepted, got %v", testCase.header, errCode)
+			}
+			if !headers.isSet {
+				t.Fatal("expected conditional headers to be marked set")
+			}
+		})
+	}
 }
 
 func TestBuildDeleteCondition(t *testing.T) {

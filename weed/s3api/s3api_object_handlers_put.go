@@ -1992,7 +1992,7 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 	// Parse date headers with validation
 	var err error
 	if ifModifiedSinceStr != "" {
-		headers.ifModifiedSince, err = time.Parse(time.RFC1123, ifModifiedSinceStr)
+		headers.ifModifiedSince, err = http.ParseTime(ifModifiedSinceStr)
 		if err != nil {
 			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Modified-Since format: %v", err)
 			return headers, s3err.ErrInvalidRequest
@@ -2000,7 +2000,7 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 	}
 
 	if ifUnmodifiedSinceStr != "" {
-		headers.ifUnmodifiedSince, err = time.Parse(time.RFC1123, ifUnmodifiedSinceStr)
+		headers.ifUnmodifiedSince, err = http.ParseTime(ifUnmodifiedSinceStr)
 		if err != nil {
 			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Unmodified-Since format: %v", err)
 			return headers, s3err.ErrInvalidRequest
