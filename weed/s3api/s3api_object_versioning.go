@@ -802,8 +802,11 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
-	// Handle explicit S3 directory object
-	if entry.Attributes.Mime == s3_constants.FolderMimeType {
+	// Handle explicit S3 directory object. Match ListObjectsV2's
+	// IsDirectoryKeyObject (any non-empty mime), not just FolderMimeType:
+	// an SDK PutObject of "dir/" carries a default Content-Type, so the two
+	// listings must agree on what counts as a directory key.
+	if entry.IsDirectoryKeyObject() {
 		vc.processExplicitDirectory(entryPath, entry)
 	}
 
