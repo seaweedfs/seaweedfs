@@ -2072,19 +2072,20 @@ func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject st
 	}
 
 	// Present the version file as a logical entry at the object's base path,
-	// matching the cached fast path's output shape.
-	logicalEntry := &filer_pb.Entry{
+	// matching the cached fast path's output shape. Copy Extended rather than
+	// share the scanned entry's map, since we stamp the version id onto it.
+	extended := make(map[string][]byte, len(latestEntry.Extended)+1)
+	for k, v := range latestEntry.Extended {
+		extended[k] = v
+	}
+	extended[s3_constants.ExtVersionIdKey] = []byte(latestVersionId)
+	return &filer_pb.Entry{
 		Name:        path.Base(normalizedObject),
 		IsDirectory: false,
 		Attributes:  latestEntry.Attributes,
-		Extended:    latestEntry.Extended,
+		Extended:    extended,
 		Chunks:      latestEntry.Chunks,
-	}
-	if logicalEntry.Extended == nil {
-		logicalEntry.Extended = make(map[string][]byte)
-	}
-	logicalEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(latestVersionId)
-	return logicalEntry, nil
+	}, nil
 }
 
 // getObjectOwnerFromVersion extracts object owner information from version metadata
