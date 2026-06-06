@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -804,6 +805,41 @@ func TestValidateDefaultRetention(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStoreObjectLockConfigurationClearsStaleYears(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtObjectLockEnabledKey:      []byte(s3_constants.ObjectLockEnabled),
+			s3_constants.ExtObjectLockDefaultModeKey:  []byte(s3_constants.RetentionModeCompliance),
+			s3_constants.ExtObjectLockDefaultYearsKey: []byte("1"),
+		},
+	}
+	config := CreateObjectLockConfiguration(true, s3_constants.RetentionModeGovernance, 30, 0)
+
+	if err := StoreObjectLockConfigurationInExtended(entry, config); err != nil {
+		t.Fatalf("StoreObjectLockConfigurationInExtended returned error: %v", err)
+	}
+
+	if _, exists := entry.Extended[s3_constants.ExtObjectLockDefaultYearsKey]; exists {
+		t.Fatalf("stale default retention years key was not cleared")
+	}
+
+	loaded, found := LoadObjectLockConfigurationFromExtended(entry)
+	if !found {
+		t.Fatalf("expected stored object lock configuration to load")
+	}
+	if loaded.Rule == nil || loaded.Rule.DefaultRetention == nil {
+		t.Fatalf("expected loaded configuration to include default retention")
+	}
+
+	retention := loaded.Rule.DefaultRetention
+	if !retention.DaysSet || retention.Days != 30 {
+		t.Fatalf("expected loaded retention days to be 30, got DaysSet=%v Days=%d", retention.DaysSet, retention.Days)
+	}
+	if retention.YearsSet || retention.Years != 0 {
+		t.Fatalf("expected loaded retention years to be cleared, got YearsSet=%v Years=%d", retention.YearsSet, retention.Years)
 	}
 }
 
