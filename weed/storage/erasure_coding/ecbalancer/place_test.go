@@ -73,10 +73,8 @@ func TestPlaceStrictSpreadAndCaps(t *testing.T) {
 	}
 }
 
-// TestPlaceDistributesEvenlyAcrossManyVolumes: encode places each volume on the
-// shared snapshot (Place reserves into it), so node selection must account for the
-// load already placed. Otherwise the sorted-first machine wins the first shard of
-// every volume and accumulates far more total shards than the rest.
+// TestPlaceDistributesEvenlyAcrossManyVolumes: placing many volumes against the shared
+// encode snapshot must not pile shards onto the sorted-first machine.
 func TestPlaceDistributesEvenlyAcrossManyVolumes(t *testing.T) {
 	topo := NewTopology()
 	hosts := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
