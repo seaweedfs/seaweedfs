@@ -152,12 +152,13 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
-		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
-		if err != nil {
-			glog.Errorf("deleteVersionedObject: failed to create delete marker for suspended versioning %s/%s: %v", bucket, object, err)
+		// Suspended versioning overwrites the null version with a single null delete
+		// marker (S3 spec), so the marker replaces any prior one instead of piling up.
+		if err := s3a.createNullDeleteMarker(bucket, object); err != nil {
+			glog.Errorf("deleteVersionedObject: failed to create null delete marker for suspended versioning %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
-		result.versionId = deleteMarkerVersionId
+		result.versionId = "null"
 		result.deleteMarker = true
 		return result, s3err.ErrNone
 	}

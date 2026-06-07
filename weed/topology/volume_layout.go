@@ -696,6 +696,70 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 	return true
 }
 
+// RackGrowPlan is one volume grow action produced by the periodic rack-aware
+// growth scan. An empty Rack means the grow is DC-wide.
+type RackGrowPlan struct {
+	DataCenter          string
+	Rack                string
+	WritableVolumeCount uint32
+}
+
+// PlanRackAwareGrowth returns the grow actions needed so every location that
+// can serve writes keeps a non-crowded writable volume. stepCount is the
+// default per-event increment.
+//
+// For rack-spanning replication (DiffRackCount > 0) a single logical volume
+// already covers the racks the placement requires, so ShouldGrowVolumesByDcAndRack
+// returns the same result for every rack in a DC. Planning one grow per rack
+// would create racks×count too many volumes; plan one DC-wide grow instead.
+// The default increment is capped at the configured copy_N so lowering
+// master.volume_growth.copy_N reduces periodic growth.
+func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCount, stepCount uint32) (plans []RackGrowPlan) {
+	writables := vl.CloneWritableVolumes()
+	if c := VolumeGrowthCountForCopies(vl.rp.GetCopyCount()); c < stepCount {
+		stepCount = c
+	}
+	growOncePerDc := vl.rp.DiffRackCount > 0
+	// Spread lastGrowCount evenly across all grow targets. Summing every rack
+	// up front keeps the divisor global, so DCs with different rack counts do
+	// not each over-grow from a per-DC divisor.
+	var rackPairs uint32
+	for _, racks := range dcs {
+		rackPairs += uint32(len(racks))
+	}
+	for dcId, racks := range dcs {
+		if growOncePerDc {
+			if !vl.ShouldGrowVolumesByDcAndRack(&writables, dcId, "") {
+				continue
+			}
+			count := stepCount
+			if lastGrowCount > 0 {
+				count = ceilDiv(lastGrowCount, uint32(len(dcs)))
+			}
+			plans = append(plans, RackGrowPlan{DataCenter: string(dcId), WritableVolumeCount: count})
+			continue
+		}
+		for _, rackId := range racks {
+			if !vl.ShouldGrowVolumesByDcAndRack(&writables, dcId, rackId) {
+				continue
+			}
+			count := stepCount
+			if lastGrowCount > 0 {
+				count = ceilDiv(lastGrowCount, rackPairs)
+			}
+			plans = append(plans, RackGrowPlan{DataCenter: string(dcId), Rack: string(rackId), WritableVolumeCount: count})
+		}
+	}
+	return plans
+}
+
+func ceilDiv(a, b uint32) uint32 {
+	if b == 0 {
+		return 0
+	}
+	return (a + b - 1) / b
+}
+
 func (vl *VolumeLayout) GetWritableVolumeCount() (active, crowded int) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()

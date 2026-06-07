@@ -165,6 +165,8 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 		TLSClientConfig:     tlsConfig,
+		// Bind outbound HTTP to the -ip.bind source address.
+		DialContext: util.OutboundDialContext,
 	}
 	httpClient.Client = &http.Client{
 		Transport: httpClient.Transport,
@@ -279,6 +281,8 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify b
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 		TLSClientConfig:     tlsConfig,
+		// Bind outbound HTTP to the -ip.bind source address.
+		DialContext: util.OutboundDialContext,
 	}
 	httpClient.Client = &http.Client{
 		Transport: httpClient.Transport,
