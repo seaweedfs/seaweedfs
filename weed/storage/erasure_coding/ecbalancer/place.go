@@ -389,12 +389,18 @@ func rackHasFreeDisk(r *rack, eligible func(*disk) bool) bool {
 // eligible disk. FromActiveTopology keeps all disk types/tags in the snapshot, so
 // without this a node with free volume slots but no eligible disk could be chosen.
 //
-// Among eligible nodes it prefers the one whose machine holds the fewest shards of
-// the volume (tie-broken by the node's own count), spreading shards across machines.
+// Among eligible nodes it prefers, in order: the machine holding the fewest shards of
+// the volume (spread across machines), then the machine with the most free capacity,
+// then the node holding the fewest shards of the volume, then the node with the most
+// free capacity. Ranking ties by free capacity rather than sorted id matters because
+// encode places every volume against the same shared snapshot: a sorted-first
+// tie-break would hand the first shard of every volume to the lowest-id machine and
+// pile load there, while free capacity steers toward the least-loaded node.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
+	machineFree := freeSlotsByHost(r.nodes)
 	var best *Node
-	bestMachineCount, bestNodeCount := -1, -1
+	var bestMCount, bestMFree, bestNCount, bestNFree int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
 		if node.freeSlots <= 0 {
@@ -407,9 +413,22 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
-		mCount := machineShards[node.host]
-		if best == nil || mCount < bestMachineCount || (mCount == bestMachineCount && count < bestNodeCount) {
-			best, bestMachineCount, bestNodeCount = node, mCount, count
+		mCount, mFree := machineShards[node.host], machineFree[node.host]
+		better := false
+		switch {
+		case best == nil:
+			better = true
+		case mCount != bestMCount:
+			better = mCount < bestMCount
+		case mFree != bestMFree:
+			better = mFree > bestMFree
+		case count != bestNCount:
+			better = count < bestNCount
+		default:
+			better = node.freeSlots > bestNFree
+		}
+		if better {
+			best, bestMCount, bestMFree, bestNCount, bestNFree = node, mCount, mFree, count, node.freeSlots
 		}
 	}
 	return best
