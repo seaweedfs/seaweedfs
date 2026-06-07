@@ -299,6 +299,9 @@ func TestPlanConvergesToBalancedLoadOverRounds(t *testing.T) {
 
 	perMachine := func() map[string]int {
 		m := map[string]int{}
+		for _, h := range hosts {
+			m[h] = 0 // seed every host so a fully drained one still counts
+		}
 		for _, n := range topo.nodes {
 			for _, info := range n.shards {
 				m[n.host] += info.shardBits.Count()
@@ -308,11 +311,15 @@ func TestPlanConvergesToBalancedLoadOverRounds(t *testing.T) {
 	}
 	opts := Options{Ratio: ratio(10, 4), GlobalUtilizationBased: true, GlobalMaxMovesPerRack: 8}
 
-	rounds := 0
+	rounds, converged := 0, false
 	for ; rounds < 200; rounds++ {
 		if len(Plan(topo, opts)) == 0 {
+			converged = true
 			break
 		}
+	}
+	if !converged {
+		t.Fatalf("balance did not converge within %d rounds", rounds)
 	}
 
 	pm := perMachine()
