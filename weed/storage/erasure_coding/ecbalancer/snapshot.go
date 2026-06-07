@@ -2,6 +2,7 @@ package ecbalancer
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
@@ -32,6 +33,7 @@ func FromActiveTopology(at *topology.ActiveTopology, dataShards int) *Topology {
 	nodeFree := make(map[string]int)
 	nodeDC := make(map[string]string)
 	nodeRack := make(map[string]string)
+	nodeAddr := make(map[string]string)
 	byNode := make(map[string][]*topology.DiskInfo)
 	for _, d := range disks {
 		if d == nil || d.DiskInfo == nil {
@@ -42,11 +44,20 @@ func FromActiveTopology(at *topology.ActiveTopology, dataShards int) *Topology {
 		}
 		nodeDC[d.NodeID] = d.DataCenter
 		nodeRack[d.NodeID] = d.DataCenter + ":" + d.Rack
+		nodeAddr[d.NodeID] = d.Address
 		byNode[d.NodeID] = append(byNode[d.NodeID], d)
 	}
 
 	for nodeID, ds := range byNode {
 		node := topo.AddNode(nodeID, nodeDC[nodeID], nodeRack[nodeID], nodeFree[nodeID])
+		// Treat volume servers sharing a host as one fault domain. NodeID can be an
+		// opaque id, so derive the machine from the volume server address; fall back
+		// to the id (== ip:port in the common case) when no address is recorded.
+		addr := nodeAddr[nodeID]
+		if addr == "" {
+			addr = nodeID
+		}
+		node.SetHost(pb.ServerAddress(addr).ToHost())
 		for _, d := range ds {
 			free := perDiskFreeECSlots(at, d, dataShards)
 			if free < 0 {
