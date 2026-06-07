@@ -543,12 +543,12 @@ func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, listResp.Versions, 3, "Should be back to 3 versions after deleting null version")
-	// A suspended-versioning DELETE removes the null version and records a delete
-	// marker so the object reads as deleted (without one, an older version would
-	// resurface). AWS keeps a single null marker that overwrites; SeaweedFS does
-	// not yet collapse to one (suspended-marker id/dedup is tracked separately),
-	// so assert the invariant - a marker is recorded - rather than an exact count.
-	assert.NotEmpty(t, listResp.DeleteMarkers, "Suspended delete should record a delete marker")
+	// A suspended-versioning DELETE removes the null version and records a single
+	// null delete marker that overwrites any prior one (S3 spec), so the object
+	// reads as deleted without markers piling up.
+	require.Len(t, listResp.DeleteMarkers, 1, "Suspended delete should record exactly one null delete marker")
+	assert.Equal(t, "null", aws.ToString(listResp.DeleteMarkers[0].VersionId), "Suspended delete marker should have version id null")
+	assert.Equal(t, objectKey, aws.ToString(listResp.DeleteMarkers[0].Key), "Delete marker should be for the deleted object")
 
 	// Verify null version is gone
 	nullVersionFound = false
@@ -609,7 +609,19 @@ func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, listResp.Versions, 4, "Should have 3 original versions + 1 new version")
-	assert.NotEmpty(t, listResp.DeleteMarkers, "Re-enabled delete should record a delete marker")
+	// The historical null suspended marker plus the new enabled-mode delete marker.
+	require.Len(t, listResp.DeleteMarkers, 2, "Should have the null suspended marker and the enabled-mode delete marker")
+	var sawNull, sawEnabled bool
+	for _, dm := range listResp.DeleteMarkers {
+		assert.Equal(t, objectKey, aws.ToString(dm.Key), "Delete marker should be for the deleted object")
+		if aws.ToString(dm.VersionId) == "null" {
+			sawNull = true
+		} else {
+			sawEnabled = true
+		}
+	}
+	assert.True(t, sawNull, "Suspended phase should leave a null delete marker")
+	assert.True(t, sawEnabled, "Enabled delete should add a real-version-id delete marker")
 
 	t.Logf("Successfully verified suspended versioning delete behavior")
 }

@@ -257,6 +257,56 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	return versionId, nil
 }
 
+// createNullDeleteMarker records a suspended-versioning delete as a single "null"
+// delete marker. Unlike createDeleteMarker (enabled versioning, where each delete is
+// a distinct historical marker), a suspended delete overwrites the null version per
+// the S3 spec, so this reuses the "null" version id and its fixed file name (v_null):
+// repeated suspended deletes collapse onto one marker instead of accumulating, and a
+// later suspended PUT removes it via putSuspendedVersioningObject's null-version
+// cleanup. The latest-version pointer is set explicitly (not recomputed) because
+// "null" does not sort as the newest version id.
+func (s3a *S3ApiServer) createNullDeleteMarker(bucket, object string) error {
+	cleanObject := strings.TrimPrefix(object, "/")
+	bucketDir := s3a.bucketDir(bucket)
+	versionsDir := bucketDir + "/" + cleanObject + s3_constants.VersionsFolder
+	versionFileName := s3a.getVersionFileName("null")
+
+	mtime := time.Now().Unix()
+	markerExtended := map[string][]byte{
+		s3_constants.ExtVersionIdKey:    []byte("null"),
+		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+	}
+
+	if err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
+		entry.IsDirectory = false
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		entry.Attributes.Mtime = mtime
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		for k, v := range markerExtended {
+			entry.Extended[k] = v
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to create null delete marker in .versions directory: %w", err)
+	}
+
+	markerEntry := &filer_pb.Entry{
+		Name:        versionFileName,
+		IsDirectory: false,
+		Attributes:  &filer_pb.FuseAttributes{Mtime: mtime},
+		Extended:    markerExtended,
+	}
+	if err := s3a.updateLatestVersionInDirectory(bucket, cleanObject, "null", versionFileName, markerEntry); err != nil {
+		return fmt.Errorf("failed to point latest at null delete marker for %s/%s: %w", bucket, object, err)
+	}
+
+	glog.V(2).Infof("createNullDeleteMarker: recorded null delete marker for %s/%s", bucket, object)
+	return nil
+}
+
 // versionListItem represents an item in the unified version/prefix list
 type versionListItem struct {
 	key         string
