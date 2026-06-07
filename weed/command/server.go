@@ -274,6 +274,9 @@ func runServer(cmd *Command, args []string) bool {
 	if *serverBindIp == "" {
 		serverBindIp = serverIp
 	}
+	// Bind outbound connections to the same address up front so every
+	// component started below inherits it, before any of them dials.
+	util.SetOutboundLocalIP(*serverBindIp)
 
 	if *serverMetricsHttpIp == "" {
 		*serverMetricsHttpIp = *serverBindIp

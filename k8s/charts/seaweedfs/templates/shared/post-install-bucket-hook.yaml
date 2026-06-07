@@ -143,6 +143,8 @@ spec:
           {{- if kindIs "bool" .versioning }}
             {{- if .versioning }}
               {{- $bucketVersioning = "Enabled" }}
+            {{- else }}
+              {{- $bucketVersioning = "Suspended" }}
             {{- end }}
           {{- else if kindIs "string" .versioning }}
             {{- $versioningLower := lower .versioning }}
