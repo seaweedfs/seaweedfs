@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 	"google.golang.org/grpc"
@@ -98,6 +99,16 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 		return fmt.Errorf("copy and mount shard: %v", err)
 	}
 
+	// Step 1.5: confirm the destination actually registered the shard(s)
+	// before removing them from the source. A copy/mount RPC can return OK
+	// while the shard isn't loadable on the destination; deleting the source
+	// then would lose the shard. On a mismatch we keep the source so the
+	// scanner retries (the move is reported failed).
+	t.reportProgress(40.0, "Verifying EC shard(s) on destination")
+	if err := t.verifyShardsOnDestination(ctx, params.VolumeId, targetAddr, source.ShardIds); err != nil {
+		return err
+	}
+
 	// Step 2: Unmount shard on source
 	t.reportProgress(50.0, "Unmounting EC shard from source")
 	if err := t.unmountShard(ctx, params.VolumeId, sourceAddr, source.ShardIds); err != nil {
@@ -177,6 +188,22 @@ func (t *ECBalanceTask) unmountShard(ctx context.Context, volumeID uint32, addr 
 			})
 			return err
 		})
+}
+
+// verifyShardsOnDestination confirms targetAddr has registered every shard in
+// shardIDs for volumeID, so the caller can safely delete the source copies.
+func (t *ECBalanceTask) verifyShardsOnDestination(ctx context.Context, volumeID uint32, targetAddr pb.ServerAddress, shardIDs []uint32) error {
+	_, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, volumeID, []string{string(targetAddr)}, t.grpcDialOption)
+	inv := perServer[string(targetAddr)]
+	if inv.QueryError != nil {
+		return fmt.Errorf("verify shard(s) on destination %s for volume %d: %v", targetAddr, volumeID, inv.QueryError)
+	}
+	for _, sid := range shardIDs {
+		if !inv.Bits.Has(erasure_coding.ShardId(sid)) {
+			return fmt.Errorf("destination %s missing EC shard %d.%d after copy/mount; keeping source", targetAddr, volumeID, sid)
+		}
+	}
+	return nil
 }
 
 // deleteShard deletes EC shards from a server
