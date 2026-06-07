@@ -664,7 +664,7 @@ func TestVersionedObjectListBehavior(t *testing.T) {
 	assert.NotContains(t, *listedObject.Key, versionId, "Object key should not contain version ID")
 
 	// Verify object properties
-	assert.Equal(t, int64(len(content)), listedObject.Size, "Object size should match")
+	assert.Equal(t, int64(len(content)), *listedObject.Size, "Object size should match")
 	assert.NotNil(t, listedObject.ETag, "Object should have ETag")
 	assert.NotNil(t, listedObject.LastModified, "Object should have LastModified")
 
@@ -674,7 +674,7 @@ func TestVersionedObjectListBehavior(t *testing.T) {
 	assert.NotEmpty(t, listedObject.Owner.DisplayName, "Owner DisplayName should not be empty")
 
 	t.Logf("Listed object: Key=%s, Size=%d, Owner.ID=%s, Owner.DisplayName=%s",
-		*listedObject.Key, listedObject.Size, *listedObject.Owner.ID, *listedObject.Owner.DisplayName)
+		*listedObject.Key, *listedObject.Size, *listedObject.Owner.ID, *listedObject.Owner.DisplayName)
 
 	// Test list-objects-v2 operation as well
 	listV2Resp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
