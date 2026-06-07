@@ -559,6 +559,10 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 	if query.Get("X-Amz-Expires") == "" {
 		return nil, s3err.ErrInvalidQueryParams
 	}
+	signedHeaders, errCode := parseSignedHeaderList(query.Get("X-Amz-SignedHeaders"))
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
 
 	// Parse date
 	dateStr := query.Get("X-Amz-Date")
@@ -584,7 +588,7 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 	return &v4AuthInfo{
 		Signature:     query.Get("X-Amz-Signature"),
 		AccessKey:     credHeader.accessKey,
-		SignedHeaders: strings.Split(query.Get("X-Amz-SignedHeaders"), ";"),
+		SignedHeaders: signedHeaders,
 		Date:          t,
 		Region:        credHeader.scope.region,
 		Service:       credHeader.scope.service,
@@ -716,10 +720,19 @@ func parseSignedHeader(signedHdrElement string) ([]string, s3err.ErrorCode) {
 	if signedHdrFields[0] != "SignedHeaders" {
 		return nil, s3err.ErrMissingSignHeadersTag
 	}
-	if signedHdrFields[1] == "" {
+	return parseSignedHeaderList(signedHdrFields[1])
+}
+
+func parseSignedHeaderList(signedHeadersValue string) ([]string, s3err.ErrorCode) {
+	if signedHeadersValue == "" {
 		return nil, s3err.ErrMissingFields
 	}
-	signedHeaders := strings.Split(signedHdrFields[1], ";")
+	signedHeaders := strings.Split(signedHeadersValue, ";")
+	for _, header := range signedHeaders {
+		if strings.TrimSpace(header) == "" {
+			return nil, s3err.ErrMissingFields
+		}
+	}
 	return signedHeaders, s3err.ErrNone
 }
 
