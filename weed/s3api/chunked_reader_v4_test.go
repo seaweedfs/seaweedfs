@@ -30,6 +30,16 @@ const (
 	defaultRegion          = "us-east-1"
 )
 
+func TestExtractChecksumAlgorithmIsCaseInsensitive(t *testing.T) {
+	got, err := extractChecksumAlgorithm("X-Amz-Checksum-Crc32")
+	if err != nil {
+		t.Fatalf("extractChecksumAlgorithm returned error: %v", err)
+	}
+	if got != ChecksumAlgorithmCRC32 {
+		t.Fatalf("extractChecksumAlgorithm() = %v, want %v", got, ChecksumAlgorithmCRC32)
+	}
+}
+
 func generateStreamingUnsignedPayloadTrailerPayload(includeFinalCRLF bool) string {
 	// This test will implement the following scenario:
 	// https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html

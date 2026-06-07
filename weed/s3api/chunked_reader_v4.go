@@ -31,6 +31,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -138,6 +139,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 
 func extractChecksumAlgorithm(amzTrailerHeader string) (ChecksumAlgorithm, error) {
 	// Extract checksum algorithm from the x-amz-trailer header.
+	amzTrailerHeader = strings.ToLower(strings.TrimSpace(amzTrailerHeader))
 	switch amzTrailerHeader {
 	case "x-amz-checksum-crc32":
 		return ChecksumAlgorithmCRC32, nil
