@@ -177,7 +177,7 @@ func TestWithinRackParityAntiAffinity(t *testing.T) {
 	addEmptyNode(topo, "node3", "dc1:rack1")
 
 	racks := buildRacks(topo.nodes)
-	moves := detectWithinRackImbalance(volKey{collection: "col1", vid: 100}, topo.nodes, racks, "", 0.01, 1, 2, nil)
+	moves := detectWithinRackImbalance(volKey{collection: "col1", vid: 100}, topo.nodes, racks, "", 1, 2, nil)
 	if len(moves) == 0 {
 		t.Fatal("expected parity moves within rack")
 	}
@@ -451,7 +451,7 @@ func TestWithinRackSpreadsAcrossMachines(t *testing.T) {
 	a1.AddShards(100, "col1", 0, bits(0, 1, 2, 3, 4, 5, 6))     // 7 shards on boxA
 	a2.AddShards(100, "col1", 0, bits(7, 8, 9, 10, 11, 12, 13)) // 7 shards on boxA (all 14)
 
-	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, nil)
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 10, 4, nil)
 
 	perHost := map[string]int{}
 	for _, n := range topo.nodes {
@@ -490,7 +490,7 @@ func TestWithinRackMachineSpreadBalancesCombinedOccupancy(t *testing.T) {
 	b1.AddShards(100, "col1", 0, bits(3, 4, 8, 9)) // 2 data + 2 parity
 
 	// dataShards=5, parityShards=5: feasibility ceil(10/2)=5 <= 5, so machine spread runs.
-	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 5, 5, nil)
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 5, 5, nil)
 
 	perHost := map[string]int{}
 	for _, n := range topo.nodes {
@@ -500,6 +500,47 @@ func TestWithinRackMachineSpreadBalancesCombinedOccupancy(t *testing.T) {
 	}
 	if perHost["boxA"] > 5 {
 		t.Errorf("boxA holds %d shards, want <=5 (parity); data and parity spread independently", perHost["boxA"])
+	}
+}
+
+// TestWithinRackMachineSpreadActsOnExactlyHalfSkew: a 5/4/3 machine layout for a 10+4
+// volume is only 50% skewed ((5-3)/4 = 0.5), which a 0.5 relative-imbalance threshold
+// would skip -- but the 5-shard machine is already past parity. The spread must act
+// regardless (the even cap, not a skew threshold, is the bound) and bring every
+// machine to <=ceil(12/3)=4.
+func TestWithinRackMachineSpreadActsOnExactlyHalfSkew(t *testing.T) {
+	topo := NewTopology()
+	mk := func(id, host string) *Node {
+		n := topo.AddNode(id, "dc1", "dc1:rack1", 100)
+		n.SetHost(host)
+		n.AddDisk(0, "", 100, 0)
+		return n
+	}
+	a1 := mk("a1", "boxA")
+	a2 := mk("a2", "boxA")
+	b1 := mk("b1", "boxB")
+	b2 := mk("b2", "boxB")
+	c1 := mk("c1", "boxC")
+	c2 := mk("c2", "boxC")
+	a1.AddShards(100, "col1", 0, bits(0, 1, 2))
+	a2.AddShards(100, "col1", 0, bits(3, 4)) // boxA = 5
+	b1.AddShards(100, "col1", 0, bits(5, 6))
+	b2.AddShards(100, "col1", 0, bits(7, 8)) // boxB = 4
+	c1.AddShards(100, "col1", 0, bits(9, 10))
+	c2.AddShards(100, "col1", 0, bits(11)) // boxC = 3
+
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 10, 4, nil)
+
+	perHost := map[string]int{}
+	for _, n := range topo.nodes {
+		if info, ok := n.shards[volKey{"col1", 100}]; ok {
+			perHost[n.host] += info.shardBits.Count()
+		}
+	}
+	for h, c := range perHost {
+		if c > 4 {
+			t.Errorf("machine %s holds %d shards, want <=4 (ceil(12/3)); a 50%% skew was skipped", h, c)
+		}
 	}
 }
 
@@ -522,7 +563,7 @@ func TestWithinRackSpreadUsesRackLocalShardCount(t *testing.T) {
 	a1.AddShards(100, "col1", 0, bits(0, 1, 2, 3))
 	a2.AddShards(100, "col1", 0, bits(4, 5, 6)) // boxA holds all 7 of this rack's shards
 
-	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, nil)
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 10, 4, nil)
 
 	perHost := map[string]int{}
 	for _, n := range topo.nodes {
@@ -553,7 +594,7 @@ func TestWithinRackSpreadDefaultsToNodes(t *testing.T) {
 	mk("n3")
 	n1.AddShards(100, "col1", 0, allBits(14)) // all 14 piled on one node
 
-	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, nil)
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 10, 4, nil)
 
 	perNode := map[string]int{}
 	for id, n := range topo.nodes {
@@ -625,7 +666,7 @@ func TestWithinRackMachineSkipsCappedMachine(t *testing.T) {
 	a1.AddShards(100, "col1", 0, bits(0, 1, 2, 3)) // 4 data shards, over-concentrated on boxA
 	b1.AddShards(100, "col1", 0, bits(10, 11))     // 2 parity -> b1 at SameRackCount cap
 
-	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, rp)
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 10, 4, rp)
 
 	moved := 0
 	for _, n := range []*Node{c1, d1} {

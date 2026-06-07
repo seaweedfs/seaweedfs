@@ -224,7 +224,7 @@ func Plan(topo *Topology, opts Options) []Move {
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
-			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
+			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, dataShards, parityShards, opts.ReplicaPlacement)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
@@ -447,7 +447,11 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 // machine spreading buys no durability and would only fight capacity (e.g. cramming
 // a 2-server box while a 12-server box sits idle), so it spreads across nodes and
 // lets capacity/global balancing decide.
-func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
+// The imbalance threshold deliberately does not gate this phase: the even cap
+// (ceil(shards/groups)) is the bound, and exceeding it is a durability problem, not
+// cosmetic skew. A relative-skew gate would skip e.g. a 5/4/3 machine layout for a
+// 10+4 volume ((5-3)/4 = 0.5), leaving 5 shards -- past parity -- on one machine.
+func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
 	var moves []*move
 
 	for _, rackID := range sortedKeys(racks) {
@@ -461,9 +465,9 @@ func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[stri
 		// all 14 could not.
 		rackShards := rackVolumeShardCount(r, vk)
 		if numMachines > 1 && numMachines < numNodes && parityShards > 0 && ceilDivide(rackShards, numMachines) <= parityShards {
-			moves = append(moves, withinRackMachineSpread(vk, r, machines, diskType, threshold, dataShards, rp)...)
+			moves = append(moves, withinRackMachineSpread(vk, r, machines, diskType, dataShards, rp)...)
 		} else if numNodes > 1 {
-			moves = append(moves, withinRackNodeSpread(vk, r, diskType, threshold, dataShards, rp)...)
+			moves = append(moves, withinRackNodeSpread(vk, r, diskType, dataShards, rp)...)
 		}
 	}
 	return moves
@@ -476,10 +480,9 @@ func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[stri
 // can stack their remainders onto one machine (ceil(d/M)+ceil(p/M) > ceil(total/M))
 // and push it past parity. Data/parity anti-affinity is kept at the disk level by
 // pickBestDiskOnNode. With one node per machine this reduces to the node spread.
-func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, diskType string, threshold float64, dataShards int, rp *super_block.ReplicaPlacement) []*move {
+func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, diskType string, dataShards int, rp *super_block.ReplicaPlacement) []*move {
 	machineKeys := sortedKeys(machines)
 	shardsPerMachine := make(map[string][]int, len(machines))
-	counts := make(map[string]int, len(machines))
 	total := 0
 	for _, host := range machineKeys {
 		for _, n := range machines[host] {
@@ -490,12 +493,13 @@ func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, di
 			}
 		}
 		sort.Ints(shardsPerMachine[host])
-		counts[host] = len(shardsPerMachine[host])
-		total += counts[host]
+		total += len(shardsPerMachine[host])
 	}
-	if total == 0 || !exceedsImbalanceThreshold(counts, total, len(machines), threshold) {
+	if total == 0 {
 		return nil
 	}
+	// Cap = even share. The move loop below sheds only what exceeds it, so a balanced
+	// rack is a no-op while any machine over the cap (a parity risk) is always fixed.
 	maxPerMachine := ceilDivide(total, len(machines))
 	if maxPerMachine < 1 {
 		maxPerMachine = 1
@@ -552,13 +556,11 @@ func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, di
 }
 
 // withinRackNodeSpread spreads a volume's shards evenly across a rack's nodes (data
-// then parity, parity anti-affine to data-bearing nodes).
-func withinRackNodeSpread(vk volKey, r *rack, diskType string, threshold float64, dataShards int, rp *super_block.ReplicaPlacement) []*move {
+// then parity, parity anti-affine to data-bearing nodes). Each pass sheds only what
+// exceeds the even per-node cap, so a balanced rack is a no-op and no threshold gate
+// is needed.
+func withinRackNodeSpread(vk volKey, r *rack, diskType string, dataShards int, rp *super_block.ReplicaPlacement) []*move {
 	numNodes := len(r.nodes)
-	gateData, gateParity := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
-	if !typeImbalanced(gateData, numNodes, threshold) && !typeImbalanced(gateParity, numNodes, threshold) {
-		return nil
-	}
 	nodeShardCount := countShardsByNode(vk, r.nodes)
 
 	dataPerNode, _ := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
