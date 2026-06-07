@@ -36,8 +36,8 @@ type S3TestConfig struct {
 
 // Default test configuration - should match s3tests.conf
 var defaultConfig = &S3TestConfig{
-	Endpoint:       firstNonEmpty(os.Getenv("S3_ENDPOINT"), "http://localhost:8333"),       // Default SeaweedFS S3 port
-	MasterEndpoint: firstNonEmpty(os.Getenv("MASTER_ENDPOINT"), "http://127.0.0.1:9333"),   // Default SeaweedFS master HTTP port
+	Endpoint:       firstNonEmpty(os.Getenv("S3_ENDPOINT"), "http://localhost:8333"),     // Default SeaweedFS S3 port
+	MasterEndpoint: firstNonEmpty(os.Getenv("MASTER_ENDPOINT"), "http://127.0.0.1:9333"), // Default SeaweedFS master HTTP port
 	AccessKey:      "some_access_key1",
 	SecretKey:      "some_secret_key1",
 	Region:         "us-east-1",
@@ -50,7 +50,7 @@ var defaultConfig = &S3TestConfig{
 // cleanupAllTestBuckets uses it to find stale buckets from prior tests/runs.
 // Add the new prefix here whenever a test introduces one.
 var allTestBucketPrefixes = []string{
-	"test-versioning-",  // covers test-versioning-, test-versioning-directories, test-versioning-interaction-, test-versioned-acl/list
+	"test-versioning-", // covers test-versioning-, test-versioning-directories, test-versioning-interaction-, test-versioned-acl/list
 	"test-versioned-",
 	"test-error-messages-",
 	"test-delete-markers",
@@ -101,6 +101,28 @@ func getS3Client(t *testing.T) *s3.Client {
 
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true // Important for SeaweedFS
+	})
+}
+
+// getS3ClientWithCredentials creates an S3 client authenticating as a specific
+// identity, so tests can act as a different owner than the default client.
+func getS3ClientWithCredentials(t *testing.T, accessKey, secretKey string) *s3.Client {
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion(defaultConfig.Region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:               defaultConfig.Endpoint,
+					SigningRegion:     defaultConfig.Region,
+					HostnameImmutable: true,
+				}, nil
+			})),
+	)
+	require.NoError(t, err)
+
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
 	})
 }
 
