@@ -475,3 +475,40 @@ func TestPickForWrite(t *testing.T) {
 		}
 	}
 }
+
+// TestPickNodesByWeightPrefersDistinctHosts: a rack runs two physical machines
+// with two volume servers each. Picking two nodes (e.g. for a same-rack replica
+// pair) must land them on distinct hosts so a single machine failure cannot take
+// out both replicas, even though the four data nodes are independent.
+func TestPickNodesByWeightPrefersDistinctHosts(t *testing.T) {
+	rack := NewRack("rack1")
+	mk := func(id, ip string, maxVol int64) *DataNode {
+		dn := NewDataNode(id)
+		dn.Ip = ip
+		rack.LinkChildNode(dn)
+		disk := dn.getOrCreateDisk("")
+		disk.UpAdjustDiskUsageDelta("", &DiskUsageCounts{maxVolumeCount: maxVol})
+		return dn
+	}
+	mk("s1a", "10.0.0.1", 10)
+	mk("s1b", "10.0.0.1", 10)
+	mk("s2a", "10.0.0.2", 10)
+	mk("s2b", "10.0.0.2", 10)
+
+	option := &VolumeGrowOption{DiskType: types.HardDriveType}
+
+	// Selection is weighted-random, so exercise it repeatedly: with two machines
+	// available the chosen pair must always span both.
+	for i := 0; i < 50; i++ {
+		first, rest, err := rack.PickNodesByWeight(2, option, func(node Node) error { return nil })
+		if err != nil {
+			t.Fatalf("PickNodesByWeight: %v", err)
+		}
+		if len(rest) != 1 {
+			t.Fatalf("got %d rest nodes, want 1", len(rest))
+		}
+		if nodeHost(first) == nodeHost(rest[0]) {
+			t.Errorf("both picks on host %s; expected distinct machines", nodeHost(first))
+		}
+	}
+}

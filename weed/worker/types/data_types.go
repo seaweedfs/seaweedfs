@@ -12,6 +12,7 @@ type ReplicaLocation struct {
 	DataCenter string
 	Rack       string
 	NodeID     string
+	Host       string // physical machine (host/IP); servers sharing a host are one fault domain
 }
 
 // ClusterInfo contains cluster information for task detection

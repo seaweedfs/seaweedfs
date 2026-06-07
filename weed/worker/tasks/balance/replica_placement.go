@@ -3,9 +3,20 @@ package balance
 import (
 	"slices"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
+
+// hostFromAddress returns the physical machine (host/IP) of a server address,
+// falling back to the node id (== ip:port in the common case) when no address is
+// known. Servers sharing a host are one fault domain.
+func hostFromAddress(address, nodeID string) string {
+	if address == "" {
+		address = nodeID
+	}
+	return pb.ServerAddress(address).ToHost()
+}
 
 // rackKey uniquely identifies a rack within a data center.
 type rackKey struct {
@@ -42,6 +53,17 @@ func IsGoodMove(rp *super_block.ReplicaPlacement, existingReplicas []types.Repli
 		// Source not in replica list — cluster state may be inconsistent.
 		// Treat as unsafe to avoid incorrect placement decisions.
 		return false
+	}
+
+	// Best-effort machine anti-affinity: don't move a replica onto a host that
+	// already holds another replica of this volume, so a single machine failure
+	// can't take out two replicas.
+	if target.Host != "" {
+		for _, r := range afterMove {
+			if r.Host == target.Host {
+				return false
+			}
+		}
 	}
 
 	return satisfyReplicaPlacement(rp, afterMove, target)

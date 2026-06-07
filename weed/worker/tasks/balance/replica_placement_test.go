@@ -29,6 +29,24 @@ func TestIsGoodMove_NoReplication(t *testing.T) {
 	}
 }
 
+func TestIsGoodMove_MachineAntiAffinity(t *testing.T) {
+	// rep 001 allows two copies in one rack, so replica placement alone would permit
+	// moving onto another port of a host that already holds a replica; machine
+	// anti-affinity must reject that and allow a distinct host.
+	existing := []types.ReplicaLocation{
+		{DataCenter: "dc1", Rack: "r1", NodeID: "10.0.0.1:8080", Host: "10.0.0.1"},
+		{DataCenter: "dc1", Rack: "r1", NodeID: "10.0.0.2:8080", Host: "10.0.0.2"},
+	}
+	onSameMachine := types.ReplicaLocation{DataCenter: "dc1", Rack: "r1", NodeID: "10.0.0.1:8081", Host: "10.0.0.1"}
+	if IsGoodMove(rp(t, "001"), existing, "10.0.0.2:8080", onSameMachine) {
+		t.Error("move onto a machine already holding a replica should be rejected")
+	}
+	onOtherMachine := types.ReplicaLocation{DataCenter: "dc1", Rack: "r1", NodeID: "10.0.0.3:8080", Host: "10.0.0.3"}
+	if !IsGoodMove(rp(t, "001"), existing, "10.0.0.2:8080", onOtherMachine) {
+		t.Error("move onto a distinct machine should be allowed")
+	}
+}
+
 func TestIsGoodMove_001_SameRack(t *testing.T) {
 	// 001 = 1 replica on same rack (2 total on same rack)
 	existing := []types.ReplicaLocation{
