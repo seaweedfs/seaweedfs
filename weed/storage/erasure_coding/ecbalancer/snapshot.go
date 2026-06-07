@@ -50,9 +50,8 @@ func FromActiveTopology(at *topology.ActiveTopology, dataShards int) *Topology {
 
 	for nodeID, ds := range byNode {
 		node := topo.AddNode(nodeID, nodeDC[nodeID], nodeRack[nodeID], nodeFree[nodeID])
-		// Treat volume servers sharing a host as one fault domain. NodeID can be an
-		// opaque id, so derive the machine from the volume server address; fall back
-		// to the id (== ip:port in the common case) when no address is recorded.
+		// Group by physical machine: derive the host from the address (NodeID may be
+		// an opaque id), falling back to the id when no address is recorded.
 		addr := nodeAddr[nodeID]
 		if addr == "" {
 			addr = nodeID

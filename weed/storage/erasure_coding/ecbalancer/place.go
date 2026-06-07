@@ -389,11 +389,8 @@ func rackHasFreeDisk(r *rack, eligible func(*disk) bool) bool {
 // eligible disk. FromActiveTopology keeps all disk types/tags in the snapshot, so
 // without this a node with free volume slots but no eligible disk could be chosen.
 //
-// Among eligible nodes it prefers the one whose physical machine (host) holds the
-// fewest shards of the volume, tie-broken by the node's own shard count, so a
-// volume's shards spread across machines rather than piling onto several servers of
-// one box. With one server per host this is identical to picking the least-loaded
-// node, since each machine's count equals its single node's count.
+// Among eligible nodes it prefers the one whose machine holds the fewest shards of
+// the volume (tie-broken by the node's own count), spreading shards across machines.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
 	var best *Node

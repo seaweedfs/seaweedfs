@@ -553,12 +553,9 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 		}
 	}
 
-	// Best-effort machine anti-affinity: never move a replica onto a physical
-	// machine (host) that already holds another replica of this volume. Volume
-	// servers sharing a host are one fault domain, so co-locating two replicas
-	// there means a single machine failure loses both. Skipping the move (rather
-	// than forcing it elsewhere) keeps this best-effort: balancing simply tries the
-	// next target.
+	// Don't move a replica onto a machine (host) that already holds one of this
+	// volume's replicas: servers sharing a host are one fault domain, so both would
+	// die together. Best-effort -- skip and let balancing try the next target.
 	targetHost := pb.NewServerAddressFromDataNode(targetNode.info).ToHost()
 	for _, replica := range existingReplicasExceptSourceNode {
 		if pb.NewServerAddressFromDataNode(replica.location.dataNode).ToHost() == targetHost {

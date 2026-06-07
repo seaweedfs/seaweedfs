@@ -802,9 +802,8 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 	for _, en := range ecNodes {
 		rackKey := string(en.dc) + ":" + string(en.rack)
 		node := topo.AddNode(en.info.Id, string(en.dc), rackKey, en.freeEcSlot)
-		// Group volume servers by physical machine (host/IP) so a volume's shards
-		// spread across machines, not just nodes; servers sharing a host are one
-		// fault domain. The id stays the node identity used for moves.
+		// Group by physical machine (host) so shards spread across machines, not just
+		// nodes; the id stays the node identity used for moves.
 		node.SetHost(pb.NewServerAddressFromDataNode(en.info).ToHost())
 		for diskId, d := range en.disks {
 			node.AddDisk(diskId, d.diskType, d.freeEcSlots, d.ecShardCount)

@@ -144,11 +144,11 @@ type Node interface {
 }
 
 type NodeImpl struct {
-	diskUsages *DiskUsages
-	id         NodeId
-	parent     Node
+	diskUsages   *DiskUsages
+	id           NodeId
+	parent       Node
 	sync.RWMutex // lock children
-	children    map[NodeId]Node
+	children     map[NodeId]Node
 	// maxVolumeId uses atomic ops so UpAdjustMaxVolumeId (called from the
 	// volume server heartbeat path) and GetMaxVolumeId (called from the
 	// master's assign / warmup checks) can run concurrently without a
@@ -167,10 +167,8 @@ func (n *NodeImpl) GetDiskUsages() *DiskUsages {
 	return n.diskUsages
 }
 
-// the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-// nodeHost returns the physical machine (host/IP) a node runs on, or "" for tiers
-// without one (data centers, racks). Volume servers sharing a host are one fault
-// domain even though they are distinct data nodes.
+// nodeHost returns the host a node runs on, or "" for non-data-node tiers (data
+// centers, racks).
 func nodeHost(node Node) string {
 	if dn, ok := node.(*DataNode); ok {
 		return dn.Ip
@@ -179,10 +177,9 @@ func nodeHost(node Node) string {
 }
 
 // preferDistinctHosts reorders candidates so the first node of each not-yet-used
-// host comes first (in the given weighted order), then the same-host leftovers.
-// Taking a prefix of the result therefore maximizes how many distinct machines are
-// covered. usedHost seeds the set with the already-chosen first node's host. When
-// hosts are empty (non-data-node tiers) the order is unchanged.
+// host comes first (preserving weighted order), then the same-host leftovers, so a
+// prefix covers the most distinct machines. usedHost seeds the set. No-op when
+// hosts are empty (non-data-node tiers).
 func preferDistinctHosts(usedHost string, candidates []Node) []Node {
 	used := map[string]bool{}
 	if usedHost != "" {
@@ -202,6 +199,7 @@ func preferDistinctHosts(usedHost string, candidates []Node) []Node {
 	return append(distinct, dup...)
 }
 
+// the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
 func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
 	var totalWeights int64
 	var errs []string
@@ -249,12 +247,9 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	for k, node := range sortedCandidates {
 		if err := filterFirstNodeFn(node); err == nil {
 			firstNode = node
-			// Fill the remaining picks from all other candidates, preferring data
-			// nodes on physical machines (hosts) not already chosen, so replicas of a
-			// volume spread across machines rather than piling onto several volume
-			// servers of one box. Best-effort: when too few distinct hosts exist,
-			// same-host nodes fill the remainder. For data-center and rack tiers the
-			// host is empty, so this preserves the previous weighted order exactly.
+			// Fill the rest preferring not-yet-used hosts, so replicas spread across
+			// machines; falls back to same-host when too few. No-op for dc/rack tiers
+			// (empty host), which keep the weighted order.
 			pool := make([]Node, 0, len(sortedCandidates)-1)
 			pool = append(pool, sortedCandidates[:k]...)
 			pool = append(pool, sortedCandidates[k+1:]...)
