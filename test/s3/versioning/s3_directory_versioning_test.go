@@ -122,7 +122,7 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 				assert.Equal(t, int64(0), *version.Size, "Directory %s should have size 0", expectedDir)
 				assert.True(t, *version.IsLatest, "Directory %s should be marked as latest", expectedDir)
 				assert.Equal(t, "\"d41d8cd98f00b204e9800998ecf8427e\"", *version.ETag, "Directory %s should have MD5 of empty string as ETag", expectedDir)
-				assert.Equal(t, types.ObjectStorageClassStandard, version.StorageClass, "Directory %s should have STANDARD storage class", expectedDir)
+				assert.Equal(t, types.ObjectVersionStorageClassStandard, version.StorageClass, "Directory %s should have STANDARD storage class", expectedDir)
 				break
 			}
 		}
