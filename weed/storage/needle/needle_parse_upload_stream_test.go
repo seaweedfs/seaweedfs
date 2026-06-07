@@ -76,6 +76,50 @@ func TestParseUpload_GzipStreamCount(t *testing.T) {
 	}
 }
 
+func TestParseUploadUsesDiscoveredFilePartContentType(t *testing.T) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+
+	fieldHeader := make(textproto.MIMEHeader)
+	fieldHeader.Set("Content-Disposition", `form-data; name="description"`)
+	fieldHeader.Set("Content-Type", "text/plain")
+	field, err := mw.CreatePart(fieldHeader)
+	if err != nil {
+		t.Fatalf("create field part: %v", err)
+	}
+	if _, err := field.Write([]byte("metadata")); err != nil {
+		t.Fatalf("write field part: %v", err)
+	}
+
+	fileHeader := make(textproto.MIMEHeader)
+	fileHeader.Set("Content-Disposition", `form-data; name="file"; filename="file.dat"`)
+	fileHeader.Set("Content-Type", "application/x-seaweed-test")
+	filePart, err := mw.CreatePart(fileHeader)
+	if err != nil {
+		t.Fatalf("create file part: %v", err)
+	}
+	if _, err := filePart.Write([]byte("payload")); err != nil {
+		t.Fatalf("write file part: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	pu, err := ParseUpload(req, 1024, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("ParseUpload: %v", err)
+	}
+	if pu.FileName != "file.dat" {
+		t.Fatalf("FileName = %q, want file.dat", pu.FileName)
+	}
+	if pu.MimeType != "application/x-seaweed-test" {
+		t.Fatalf("MimeType = %q, want application/x-seaweed-test", pu.MimeType)
+	}
+}
+
 func gzipBytes(t *testing.T, in []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
