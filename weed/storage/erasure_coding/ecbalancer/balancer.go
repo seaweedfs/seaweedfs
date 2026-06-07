@@ -32,9 +32,11 @@ type volKey struct {
 // Node is a volume server in the snapshot. Fields are set through the builder
 // methods; only its identity is read back (via Move).
 type Node struct {
-	id        string
-	dc        string
-	rack      string // composite rack key (e.g. "dc1:rack1")
+	id   string
+	host string // physical machine (host/IP); nodes sharing a host are one fault domain
+	dc   string
+	rack string // composite rack key (e.g. "dc1:rack1")
+
 	freeSlots int
 	disks     map[uint32]*disk
 	shards    map[volKey]*volumeShards
@@ -116,6 +118,7 @@ func NewTopology() *Topology {
 func (t *Topology) AddNode(id, dc, rackKey string, freeSlots int) *Node {
 	n := &Node{
 		id:        id,
+		host:      id, // default: each node is its own machine until SetHost overrides
 		dc:        dc,
 		rack:      rackKey,
 		freeSlots: freeSlots,
@@ -124,6 +127,16 @@ func (t *Topology) AddNode(id, dc, rackKey string, freeSlots int) *Node {
 	}
 	t.nodes[id] = n
 	return n
+}
+
+// SetHost records the physical machine (host/IP) a node runs on so volume servers
+// sharing a host are treated as one fault domain when spreading a volume's shards.
+// Left at the node id (one machine per node) when never called, in which case all
+// machine-level grouping reduces to node-level grouping.
+func (n *Node) SetHost(host string) {
+	if host != "" {
+		n.host = host
+	}
 }
 
 // AddDisk registers a physical disk. shardCount is the disk's total EC shard
@@ -405,10 +418,16 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 }
 
 func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node {
+	return pickBestNodeForVolume(sortedNodeSlice(r.nodes), vk, rp)
+}
+
+// pickBestNodeForVolume returns the node (from a sorted slice, e.g. a rack's or a
+// machine's nodes) with the fewest shards of the volume that still has a free slot
+// and is under the per-node SameRackCount cap, or nil if none qualifies.
+func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlacement) *Node {
 	var best *Node
 	bestCount := -1
-	for _, id := range sortedNodeKeys(r.nodes) {
-		node := r.nodes[id]
+	for _, node := range nodes {
 		if node.freeSlots <= 0 {
 			continue
 		}
@@ -423,80 +442,90 @@ func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node 
 	return best
 }
 
-// detectWithinRackImbalance spreads a volume's shards across the nodes of each
-// rack, again data then parity with anti-affinity.
+// detectWithinRackImbalance spreads a volume's shards across the machines of each
+// rack, again data then parity with anti-affinity. The fault domain is the machine
+// (volume servers sharing a host), not the individual node: piling a volume's
+// shards onto several servers of one box would lose them all if the box dies, even
+// though they look spread across nodes. When every node is its own machine (the
+// default), machine grouping is identical to node grouping.
 func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
 	var moves []*move
 
 	for _, rackID := range sortedKeys(racks) {
 		r := racks[rackID]
-		if len(r.nodes) <= 1 {
+		machines := buildMachines(r)
+		if len(machines) <= 1 {
 			continue
 		}
 
-		numNodes := len(r.nodes)
-		// Gate on per-type spread across the rack's nodes (see cross-rack phase).
-		gateData, gateParity := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
-		if !typeImbalanced(gateData, numNodes, threshold) && !typeImbalanced(gateParity, numNodes, threshold) {
+		numMachines := len(machines)
+		// Gate on per-type spread across the rack's machines (see cross-rack phase).
+		gateData, gateParity := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.host })
+		if !typeImbalanced(gateData, numMachines, threshold) && !typeImbalanced(gateParity, numMachines, threshold) {
 			continue
 		}
-		nodeShardCount := countShardsByNode(vk, r.nodes)
+		dataPerMachine, _ := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.host })
+		moves = append(moves, balanceShardTypeAcrossMachines(vk, machines, diskType, dataShards,
+			dataPerMachine, ceilDivide(sumLens(dataPerMachine), numMachines), nil, rp)...)
 
-		dataPerNode, _ := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
-		moves = append(moves, balanceShardTypeAcrossNodes(vk, r, diskType, dataShards,
-			dataPerNode, nodeShardCount, ceilDivide(sumLens(dataPerNode), numNodes), nil, rp)...)
-
-		dataPerNode, parityPerNode := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.id })
+		dataPerMachine, parityPerMachine := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.host })
 		antiAffinity := make(map[string]bool)
-		for nodeID, shards := range dataPerNode {
+		for host, shards := range dataPerMachine {
 			if len(shards) > 0 {
-				antiAffinity[nodeID] = true
+				antiAffinity[host] = true
 			}
 		}
-		moves = append(moves, balanceShardTypeAcrossNodes(vk, r, diskType, dataShards,
-			parityPerNode, nodeShardCount, ceilDivide(sumLens(parityPerNode), numNodes), antiAffinity, rp)...)
+		moves = append(moves, balanceShardTypeAcrossMachines(vk, machines, diskType, dataShards,
+			parityPerMachine, ceilDivide(sumLens(parityPerMachine), numMachines), antiAffinity, rp)...)
 	}
 
 	return moves
 }
 
-func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards int, shardsPerNode map[string][]int, nodeShardCount map[string]int, maxPerNode int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
-	if maxPerNode < 1 {
-		maxPerNode = 1
+// balanceShardTypeAcrossMachines spreads one shard type of a volume across the
+// machines of a rack, moving from machines over maxPerMachine to under-loaded
+// machines. The destination node is the least-loaded node within the chosen
+// machine. Mirrors balanceShardTypeAcrossRacks one fault tier down.
+func balanceShardTypeAcrossMachines(vk volKey, machines map[string][]*Node, diskType string, dataShards int, shardsPerMachine map[string][]int, maxPerMachine int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
+	if maxPerMachine < 1 {
+		maxPerMachine = 1
 	}
-	nodeKeys := sortedNodeKeys(r.nodes)
+	machineKeys := sortedKeys(machines)
 
 	type pending struct {
 		shardID int
 		src     *Node
 	}
 	var toMove []pending
-	for _, nodeID := range nodeKeys {
-		shards := append([]int(nil), shardsPerNode[nodeID]...)
-		if len(shards) <= maxPerNode {
+	for _, host := range machineKeys {
+		shards := append([]int(nil), shardsPerMachine[host]...)
+		if len(shards) <= maxPerMachine {
 			continue
 		}
 		sort.Ints(shards)
-		src := r.nodes[nodeID]
-		for i := 0; i < len(shards)-maxPerNode; i++ {
-			toMove = append(toMove, pending{shards[i], src})
+		for i := 0; i < len(shards)-maxPerMachine; i++ {
+			if src := nodeHoldingShard(machines[host], vk, shards[i]); src != nil {
+				toMove = append(toMove, pending{shards[i], src})
+			}
 		}
 	}
 
 	var moves []*move
 	for _, pm := range toMove {
-		destID, ok := pickTarget(nodeKeys, shardsPerNode, maxPerNode, antiAffinity,
-			func(n string) bool { return n != pm.src.id && r.nodes[n].freeSlots > 0 },
-			func(n string) bool {
-				if rp != nil && rp.SameRackCount > 0 {
-					return nodeShardCount[n] < rp.SameRackCount
-				}
+		destHost, ok := pickTarget(machineKeys, shardsPerMachine, maxPerMachine, antiAffinity,
+			func(h string) bool { return h != pm.src.host && machineHasFreeSlots(machines[h]) },
+			func(h string) bool {
+				// SameRackCount caps shards per node; a machine can hold up to that on
+				// each of its nodes, so the per-machine cap is the even spread alone.
 				return true
 			})
 		if !ok {
 			continue
 		}
-		destNode := r.nodes[destID]
+		destNode := pickBestNodeForVolume(machines[destHost], vk, rp)
+		if destNode == nil {
+			continue
+		}
 		destDisk := pickBestDiskOnNode(destNode, vk, diskType, pm.shardID, dataShards)
 		moves = append(moves, &move{
 			volumeID:   vk.vid,
@@ -510,10 +539,8 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 		})
 		releaseShard(pm.src, vk, pm.shardID)
 		reserveShard(destNode, vk, pm.shardID, destDisk)
-		shardsPerNode[destID] = append(shardsPerNode[destID], pm.shardID)
-		shardsPerNode[pm.src.id] = removeInt(shardsPerNode[pm.src.id], pm.shardID)
-		nodeShardCount[destID]++
-		nodeShardCount[pm.src.id]--
+		shardsPerMachine[destHost] = append(shardsPerMachine[destHost], pm.shardID)
+		shardsPerMachine[pm.src.host] = removeInt(shardsPerMachine[pm.src.host], pm.shardID)
 		pm.src.freeSlots++
 		destNode.freeSlots--
 	}
@@ -602,9 +629,11 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 				break
 			}
 
-			// Prefer moving a shard of a volume the destination does not hold at
-			// all (pass 0) before adding another shard of an already-present volume
-			// (pass 1), to keep each volume's shards spread across nodes.
+			// Prefer moving a shard of a volume the destination's machine does not
+			// hold at all (pass 0) before adding another shard of an already-present
+			// volume (pass 1), so load balancing does not re-concentrate a volume's
+			// shards onto one machine. With one node per machine this is the
+			// node-level spread it has always done.
 			moved := false
 			for pass := 0; pass < 2 && !moved; pass++ {
 				for _, vk := range sortedVolumeKeys(maxNode.shards) {
@@ -613,12 +642,12 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					}
 					info := maxNode.shards[vk]
 					minInfo := minNode.shards[vk]
-					volumeOnMin := minInfo != nil && minInfo.shardBits != 0
-					if pass == 0 && volumeOnMin {
-						continue // pass 0: only volumes absent from the destination
+					volumeOnMinMachine := machineHoldsVolume(r, minNode.host, vk)
+					if pass == 0 && volumeOnMinMachine {
+						continue // pass 0: only volumes absent from the destination machine
 					}
-					if pass == 1 && !volumeOnMin {
-						continue // pass 1: only volumes already on the destination
+					if pass == 1 && !volumeOnMinMachine {
+						continue // pass 1: only volumes already on the destination machine
 					}
 					// Walk the volume's actual shard bitmap so custom ratios with more
 					// than the standard total (ids 14..MaxShardCount-1) are candidates too.
@@ -893,17 +922,67 @@ func volumeShardCount(node *Node, vk volKey) int {
 }
 
 func nodeInRackHoldingShard(nodes map[string]*Node, rackID string, vk volKey, shardID int) *Node {
-	sid := erasure_coding.ShardId(shardID)
+	var inRack []*Node
 	for _, id := range sortedNodeKeys(nodes) {
-		node := nodes[id]
-		if node.rack != rackID {
-			continue
+		if nodes[id].rack == rackID {
+			inRack = append(inRack, nodes[id])
 		}
+	}
+	return nodeHoldingShard(inRack, vk, shardID)
+}
+
+// nodeHoldingShard returns the first node (from a sorted slice) holding the given
+// shard of the volume, or nil.
+func nodeHoldingShard(nodes []*Node, vk volKey, shardID int) *Node {
+	sid := erasure_coding.ShardId(shardID)
+	for _, node := range nodes {
 		if info, ok := node.shards[vk]; ok && info.shardBits.Has(sid) {
 			return node
 		}
 	}
 	return nil
+}
+
+// buildMachines groups a rack's nodes by host (physical machine). Each machine's
+// node slice is sorted by node id for deterministic selection.
+func buildMachines(r *rack) map[string][]*Node {
+	machines := make(map[string][]*Node)
+	for _, n := range sortedNodeSlice(r.nodes) {
+		machines[n.host] = append(machines[n.host], n)
+	}
+	return machines
+}
+
+func machineHasFreeSlots(nodes []*Node) bool {
+	for _, n := range nodes {
+		if n.freeSlots > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// machineHoldsVolume reports whether any node on the given machine (host) within
+// the rack holds a shard of the volume.
+func machineHoldsVolume(r *rack, host string, vk volKey) bool {
+	for _, n := range r.nodes {
+		if n.host != host {
+			continue
+		}
+		if info, ok := n.shards[vk]; ok && info.shardBits != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedNodeSlice(nodes map[string]*Node) []*Node {
+	ids := sortedNodeKeys(nodes)
+	out := make([]*Node, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, nodes[id])
+	}
+	return out
 }
 
 func countShardsByRack(vk volKey, nodes map[string]*Node) map[string]int {
@@ -916,11 +995,11 @@ func countShardsByRack(vk volKey, nodes map[string]*Node) map[string]int {
 	return m
 }
 
-func countShardsByNode(vk volKey, nodes map[string]*Node) map[string]int {
+func countShardsByHost(vk volKey, nodes map[string]*Node) map[string]int {
 	m := make(map[string]int)
-	for id, node := range nodes {
+	for _, node := range nodes {
 		if info, ok := node.shards[vk]; ok {
-			m[id] = info.shardBits.Count()
+			m[node.host] += info.shardBits.Count()
 		}
 	}
 	return m

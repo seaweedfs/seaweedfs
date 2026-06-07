@@ -429,3 +429,102 @@ func TestDedupFreesCapacityForLaterPhases(t *testing.T) {
 		t.Error("slot freed by dedup on node2 was not usable by a later phase")
 	}
 }
+
+// TestWithinRackSpreadsAcrossMachines: boxA runs three volume servers and boxB
+// one. A volume's 14 shards all sit on boxA, spread across its three nodes. The
+// within-rack phase must move shards onto boxB so no machine holds more than
+// ceil(14/2)=7 of them, because boxA dying would otherwise lose more shards than
+// EC can recover even though they looked spread across nodes.
+func TestWithinRackSpreadsAcrossMachines(t *testing.T) {
+	topo := NewTopology()
+	mk := func(id, host string) *Node {
+		n := topo.AddNode(id, "dc1", "dc1:rack1", 100)
+		n.SetHost(host)
+		n.AddDisk(0, "", 100, 0)
+		return n
+	}
+	n1 := mk("n1", "boxA")
+	n2 := mk("n2", "boxA")
+	n3 := mk("n3", "boxA")
+	mk("n4", "boxB")
+	n1.AddShards(100, "col1", 0, bits(0, 1, 2, 3, 4))   // 5 data
+	n2.AddShards(100, "col1", 0, bits(5, 6, 7, 8, 9))   // 5 data (10 data total)
+	n3.AddShards(100, "col1", 0, bits(10, 11, 12, 13))  // 4 parity
+
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, nil)
+
+	perHost := map[string]int{}
+	for _, n := range topo.nodes {
+		if info, ok := n.shards[volKey{"col1", 100}]; ok {
+			perHost[n.host] += info.shardBits.Count()
+		}
+	}
+	if perHost["boxB"] == 0 {
+		t.Fatal("no shards moved to boxB: the spread ignored the machine fault domain")
+	}
+	if perHost["boxA"] > 7 {
+		t.Errorf("boxA holds %d shards of the volume, want <=7 (ceil(14/2))", perHost["boxA"])
+	}
+}
+
+// TestWithinRackSpreadDefaultsToNodes: with no SetHost each node is its own
+// machine, so the within-rack phase still spreads a volume off an overloaded node
+// exactly as before (machine grouping reduces to node grouping).
+func TestWithinRackSpreadDefaultsToNodes(t *testing.T) {
+	topo := NewTopology()
+	mk := func(id string) *Node {
+		n := topo.AddNode(id, "dc1", "dc1:rack1", 100)
+		n.AddDisk(0, "", 100, 0)
+		return n
+	}
+	n1 := mk("n1")
+	mk("n2")
+	mk("n3")
+	n1.AddShards(100, "col1", 0, allBits(14)) // all 14 piled on one node
+
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, nil)
+
+	perNode := map[string]int{}
+	for id, n := range topo.nodes {
+		if info, ok := n.shards[volKey{"col1", 100}]; ok {
+			perNode[id] = info.shardBits.Count()
+		}
+	}
+	if perNode["n1"] == 14 {
+		t.Fatal("no within-rack spread happened with one server per host")
+	}
+	if len(perNode) < 3 {
+		t.Errorf("shards not spread across all three nodes: %v", perNode)
+	}
+	// Per-type even caps: ceil(10/3) data + ceil(4/3) parity = 4+2 per node.
+	for id, c := range perNode {
+		if c > 6 {
+			t.Errorf("node %s holds %d shards, want <=6 (dataCap+parityCap)", id, c)
+		}
+	}
+}
+
+// TestGlobalPrefersVolumeAbsentFromDestinationMachine: the global load phase must
+// judge "volume already present" at the machine level. boxB's sibling node holds
+// vol100, so draining boxA onto boxB's empty node should move a vol200 shard first
+// (vol200 is absent from boxB) rather than piling a second vol100 copy onto boxB.
+func TestGlobalPrefersVolumeAbsentFromDestinationMachine(t *testing.T) {
+	topo := NewTopology()
+	n1 := topo.AddNode("n1", "dc1", "dc1:rack1", 0)
+	n1.SetHost("boxA")
+	n1.AddShards(100, "col1", 0, bits(0, 1, 2, 3))
+	n1.AddShards(200, "col1", 0, bits(0, 1, 2, 3))
+	n2 := topo.AddNode("n2", "dc1", "dc1:rack1", 5)
+	n2.SetHost("boxB")
+	n2.AddShards(100, "col1", 0, bits(4)) // vol100 already on boxB (sibling node)
+	n3 := topo.AddNode("n3", "dc1", "dc1:rack1", 5)
+	n3.SetHost("boxB") // empty destination node, but its machine holds vol100
+
+	moves := detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.01, nil, 0, true)
+	if len(moves) == 0 {
+		t.Fatal("expected a global move from the full node")
+	}
+	if moves[0].volumeID != 200 {
+		t.Errorf("first global move is volume %d, want 200 (vol100 already on the destination machine)", moves[0].volumeID)
+	}
+}
