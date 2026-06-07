@@ -469,6 +469,41 @@ func TestWithinRackSpreadsAcrossMachines(t *testing.T) {
 	}
 }
 
+// TestWithinRackSpreadUsesRackLocalShardCount: a rack holds only 7 shards of a 10+4
+// volume (cross-rack spreading moved the rest to other racks). Two machines can hold
+// those 7 within parity (ceil(7/2)=4), so machine spread must apply -- gating on the
+// full 14-shard total would wrongly fall back to node spread and pile 6 onto boxA's
+// two nodes, exceeding parity.
+func TestWithinRackSpreadUsesRackLocalShardCount(t *testing.T) {
+	topo := NewTopology()
+	mk := func(id, host string) *Node {
+		n := topo.AddNode(id, "dc1", "dc1:rack1", 100)
+		n.SetHost(host)
+		n.AddDisk(0, "", 100, 0)
+		return n
+	}
+	a1 := mk("a1", "boxA")
+	a2 := mk("a2", "boxA")
+	mk("b1", "boxB")
+	a1.AddShards(100, "col1", 0, bits(0, 1, 2, 3))
+	a2.AddShards(100, "col1", 0, bits(4, 5, 6)) // boxA holds all 7 of this rack's shards
+
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, nil)
+
+	perHost := map[string]int{}
+	for _, n := range topo.nodes {
+		if info, ok := n.shards[volKey{"col1", 100}]; ok {
+			perHost[n.host] += info.shardBits.Count()
+		}
+	}
+	if perHost["boxA"] > 4 {
+		t.Errorf("boxA holds %d shards, want <=4 (parity); rack-local feasibility not used", perHost["boxA"])
+	}
+	if perHost["boxB"] == 0 {
+		t.Error("no shards moved to boxB; machine spread did not apply")
+	}
+}
+
 // TestWithinRackSpreadDefaultsToNodes: with no SetHost each node is its own
 // machine, so the within-rack phase still spreads a volume off an overloaded node
 // exactly as before (machine grouping reduces to node grouping).

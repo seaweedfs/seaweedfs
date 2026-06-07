@@ -449,14 +449,18 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 // lets capacity/global balancing decide.
 func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShards, parityShards int, rp *super_block.ReplicaPlacement) []*move {
 	var moves []*move
-	totalShards := dataShards + parityShards
 
 	for _, rackID := range sortedKeys(racks) {
 		r := racks[rackID]
 		machines := buildMachines(r)
 		numMachines, numNodes := len(machines), len(r.nodes)
 
-		if numMachines > 1 && numMachines < numNodes && ceilDivide(totalShards, numMachines) <= parityShards {
+		// Feasibility is about this rack's share of the volume (cross-rack spreading
+		// already moved the rest elsewhere), not the whole volume: a rack holding 7 of
+		// a 10+4 volume's shards can keep each of 2 machines within parity even though
+		// all 14 could not.
+		rackShards := rackVolumeShardCount(r, vk)
+		if numMachines > 1 && numMachines < numNodes && parityShards > 0 && ceilDivide(rackShards, numMachines) <= parityShards {
 			moves = append(moves, withinRackMachineSpread(vk, r, machines, diskType, threshold, dataShards, rp)...)
 		} else if numNodes > 1 {
 			moves = append(moves, withinRackNodeSpread(vk, r, diskType, threshold, dataShards, rp)...)
@@ -740,12 +744,13 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 							continue
 						}
 						// Protect the volume's machine spread only where it's achievable
-						// (enough machines for each to stay within parity); there a
-						// cross-machine load move is allowed only if it doesn't raise the
-						// destination machine's count past the source's. Where it isn't
-						// achievable, capacity rules and any leveling move is fine.
-						data, parity := dataShardsByCollection[vk.collection], parityShardsByCollection[vk.collection]
-						spreadFeasible := data > 0 && parity > 0 && rackMachineCount >= ceilDivide(data+parity, parity)
+						// (enough machines for this rack's shards to each stay within
+						// parity); there a cross-machine load move is allowed only if it
+						// doesn't raise the destination machine's count past the source's.
+						// Where it isn't achievable, capacity rules and any leveling move
+						// is fine. Feasibility uses the rack's shards, not the whole volume.
+						parity := parityShardsByCollection[vk.collection]
+						spreadFeasible := parity > 0 && rackMachineCount >= ceilDivide(rackVolumeShardCount(r, vk), parity)
 						if spreadFeasible && minNode.host != maxNode.host &&
 							machineVolumeCount(r, minNode.host, vk) >= machineVolumeCount(r, maxNode.host, vk) {
 							continue
@@ -1051,6 +1056,15 @@ func buildMachines(r *rack) map[string][]*Node {
 		machines[n.host] = append(machines[n.host], n)
 	}
 	return machines
+}
+
+// rackVolumeShardCount returns how many of the volume's shards the whole rack holds.
+func rackVolumeShardCount(r *rack, vk volKey) int {
+	count := 0
+	for _, n := range r.nodes {
+		count += volumeShardCount(n, vk)
+	}
+	return count
 }
 
 // machineVolumeCount returns how many of the volume's shards the machine (host) holds.
