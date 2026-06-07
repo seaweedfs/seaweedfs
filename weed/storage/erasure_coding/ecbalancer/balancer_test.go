@@ -504,6 +504,63 @@ func TestWithinRackSpreadDefaultsToNodes(t *testing.T) {
 	}
 }
 
+// TestGlobalDoesNotConcentrateVolumeAcrossMachines: when load balancing can only
+// proceed by moving a shard of a volume the destination machine already holds, it
+// must not move it across machines (that would raise that machine's shard count of
+// the volume past the fault spread and possibly past parity). Same-machine node
+// rebalancing is still fine. Here boxA's only volume is also on boxB, so pass 0
+// finds nothing and the sole pass-1 option is the cross-machine boxA->boxB move,
+// which must be rejected.
+func TestGlobalDoesNotConcentrateVolumeAcrossMachines(t *testing.T) {
+	topo := NewTopology()
+	a1 := topo.AddNode("a1", "dc1", "dc1:rack1", 0) // full -> high util, the max node
+	a1.SetHost("boxA")
+	a1.AddShards(100, "col1", 0, bits(0, 1))
+	b1 := topo.AddNode("b1", "dc1", "dc1:rack1", 0) // full -> cannot receive
+	b1.SetHost("boxB")
+	b1.AddShards(100, "col1", 0, bits(2, 3))
+	b2 := topo.AddNode("b2", "dc1", "dc1:rack1", 10) // empty -> low util, the min node
+	b2.SetHost("boxB")
+
+	for _, m := range detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.01, nil, 0, true) {
+		if m.source.host != m.target.host {
+			t.Errorf("cross-machine global move %d.%d from %s to %s concentrates the volume on a machine",
+				m.volumeID, m.shardID, m.source.host, m.target.host)
+		}
+	}
+}
+
+// TestWithinRackMachineSkipsCappedMachine: a machine whose only node is already at
+// the per-node SameRackCount cap is not a viable target, and the within-rack spread
+// must move shards to the next machine that is, rather than picking the capped one
+// and skipping the move. boxB's node holds two parity shards (== SameRackCount), so
+// the over-concentrated data shards on boxA must land on the empty boxC.
+func TestWithinRackMachineSkipsCappedMachine(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("002") // SameRackCount=2
+	topo := NewTopology()
+	mk := func(id, host string) *Node {
+		n := topo.AddNode(id, "dc1", "dc1:rack1", 100)
+		n.SetHost(host)
+		n.AddDisk(0, "", 100, 0)
+		return n
+	}
+	a1 := mk("a1", "boxA")
+	b1 := mk("b1", "boxB")
+	c1 := mk("c1", "boxC")
+	a1.AddShards(100, "col1", 0, bits(0, 1, 2, 3)) // 4 data shards, over-concentrated
+	b1.AddShards(100, "col1", 0, bits(10, 11))     // 2 parity -> b1 at SameRackCount cap
+
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 10, 4, rp)
+
+	cShards := 0
+	if info, ok := c1.shards[volKey{"col1", 100}]; ok {
+		cShards = info.shardBits.Count()
+	}
+	if cShards == 0 {
+		t.Error("data shards were not moved to the viable machine boxC; the capped machine boxB blocked the move")
+	}
+}
+
 // TestGlobalPrefersVolumeAbsentFromDestinationMachine: the global load phase must
 // judge "volume already present" at the machine level. boxB's sibling node holds
 // vol100, so draining boxA onto boxB's empty node should move a vol200 shard first

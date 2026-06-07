@@ -513,7 +513,12 @@ func balanceShardTypeAcrossMachines(vk volKey, machines map[string][]*Node, disk
 	var moves []*move
 	for _, pm := range toMove {
 		destHost, ok := pickTarget(machineKeys, shardsPerMachine, maxPerMachine, antiAffinity,
-			func(h string) bool { return h != pm.src.host && machineHasFreeSlots(machines[h]) },
+			// A machine is a viable target only if it has a node that can actually take
+			// the shard (free slot and under the per-node SameRackCount cap). Testing
+			// real viability here, rather than just free slots, stops pickTarget from
+			// settling on a machine whose only nodes are capped and then skipping the
+			// move instead of trying the next machine.
+			func(h string) bool { return h != pm.src.host && pickBestNodeForVolume(machines[h], vk, rp) != nil },
 			func(h string) bool {
 				// SameRackCount caps shards per node; a machine can hold up to that on
 				// each of its nodes, so the per-machine cap is the even spread alone.
@@ -646,8 +651,15 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					if pass == 0 && volumeOnMinMachine {
 						continue // pass 0: only volumes absent from the destination machine
 					}
-					if pass == 1 && !volumeOnMinMachine {
-						continue // pass 1: only volumes already on the destination machine
+					if pass == 1 {
+						// pass 1 adds a shard of an already-present volume to balance
+						// load. Allow it only within one machine (its shard count is
+						// unchanged); a cross-machine pass-1 move would raise the
+						// destination machine's count of this volume and could push it
+						// past parity, undoing the fault spread the within-rack phase set.
+						if !volumeOnMinMachine || maxNode.host != minNode.host {
+							continue
+						}
 					}
 					// Walk the volume's actual shard bitmap so custom ratios with more
 					// than the standard total (ids 14..MaxShardCount-1) are candidates too.
@@ -951,15 +963,6 @@ func buildMachines(r *rack) map[string][]*Node {
 		machines[n.host] = append(machines[n.host], n)
 	}
 	return machines
-}
-
-func machineHasFreeSlots(nodes []*Node) bool {
-	for _, n := range nodes {
-		if n.freeSlots > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // machineHoldsVolume reports whether any node on the given machine (host) within
