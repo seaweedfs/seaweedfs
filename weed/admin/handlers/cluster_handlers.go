@@ -312,6 +312,29 @@ func (h *ClusterHandlers) ShowClusterFilers(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// ShowClusterS3Servers renders the cluster S3 servers page
+func (h *ClusterHandlers) ShowClusterS3Servers(w http.ResponseWriter, r *http.Request) {
+	// Get cluster S3 servers data
+	s3ServersData, err := h.adminServer.GetClusterS3Servers()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get cluster S3 servers: "+err.Error())
+		return
+	}
+
+	username := usernameOrDefault(r)
+	s3ServersData.Username = username
+
+	// Render HTML template
+	w.Header().Set("Content-Type", "text/html")
+	s3ServersComponent := app.ClusterS3Servers(*s3ServersData)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, s3ServersComponent)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+		return
+	}
+}
+
 // GetClusterTopology returns the cluster topology as JSON
 func (h *ClusterHandlers) GetClusterTopology(w http.ResponseWriter, r *http.Request) {
 	topology, err := h.adminServer.GetClusterTopology()

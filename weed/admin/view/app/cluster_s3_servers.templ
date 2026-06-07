@@ -1,0 +1,139 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ ClusterS3Servers(data dash.ClusterS3ServersData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-cloud me-2"></i>S3 Servers
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportS3Servers()">
+					<i class="fas fa-download me-1"></i>Export
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="s3-servers-content">
+		<!-- Summary Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-12 col-md-12 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Total S3 Servers
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalS3Servers) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-cloud fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- S3 Servers Table -->
+		<div class="card shadow mb-4">
+			<div class="card-header py-3">
+				<h6 class="m-0 font-weight-bold text-primary">
+					<i class="fas fa-cloud me-2"></i>S3 Servers
+				</h6>
+			</div>
+			<div class="card-body">
+				if len(data.S3Servers) > 0 {
+					<div class="table-responsive">
+						<table class="table table-hover" id="s3ServersTable">
+							<thead>
+								<tr>
+									<th>Address</th>
+									<th>Version</th>
+									<th>Data Center</th>
+									<th>Created At</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, s3Server := range data.S3Servers {
+									<tr>
+										<td>
+											{ s3Server.Address }
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ s3Server.Version }</span>
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ s3Server.DataCenter }</span>
+										</td>
+										<td>
+											if !s3Server.CreatedAt.IsZero() {
+												{ s3Server.CreatedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<span class="text-muted">N/A</span>
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="text-center py-5">
+						<i class="fas fa-cloud fa-3x text-muted mb-3"></i>
+						<h5 class="text-muted">No S3 Servers Found</h5>
+						<p class="text-muted">No S3 servers are currently available in the cluster.</p>
+					</div>
+				}
+			</div>
+		</div>
+
+		<!-- Last Updated -->
+		<div class="row">
+			<div class="col-12">
+				<small class="text-muted">
+					<i class="fas fa-clock me-1"></i>
+					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
+				</small>
+			</div>
+		</div>
+	</div>
+
+	<script>
+	function exportS3Servers() {
+		const table = document.getElementById('s3ServersTable');
+		if (!table) return;
+
+		let csv = 'Address,Version,Data Center,Created At\n';
+
+		const rows = table.querySelectorAll('tbody tr');
+		rows.forEach(row => {
+			const cells = row.querySelectorAll('td');
+			if (cells.length >= 4) {
+				const address = cells[0].textContent.trim();
+				const version = cells[1].textContent.trim();
+				const dataCenter = cells[2].textContent.trim();
+				const createdAt = cells[3].textContent.trim();
+
+				csv += `"${address}","${version}","${dataCenter}","${createdAt}"\n`;
+			}
+		});
+
+		const blob = new Blob([csv], { type: 'text/csv' });
+		const url = window.URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 's3-servers.csv';
+		a.click();
+		window.URL.revokeObjectURL(url);
+	}
+	</script>
+}

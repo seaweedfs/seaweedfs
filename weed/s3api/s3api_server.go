@@ -173,7 +173,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if clientHost == "0.0.0.0" || clientHost == "" {
 			clientHost = util.DetectedHostAddress()
 		}
-		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), option.DataCenter, "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Build the object-write lock client and subscribe to the master's
 		// lock-ring updates BEFORE starting the master loop, so the initial
 		// LockRingUpdate sent on connect isn't dropped (the master only delivers
