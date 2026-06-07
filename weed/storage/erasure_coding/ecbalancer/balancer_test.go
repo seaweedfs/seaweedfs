@@ -469,6 +469,40 @@ func TestWithinRackSpreadsAcrossMachines(t *testing.T) {
 	}
 }
 
+// TestWithinRackMachineSpreadBalancesCombinedOccupancy: a 5+5 volume on two machines
+// where each shard type is already within its own per-type cap (boxA 3 data + 3
+// parity = 6, boxB 2 data + 2 parity = 4). Spreading data and parity independently
+// would leave boxA at 6, past parity; balancing the combined count must move one
+// shard to reach 5/5 so a machine loss stays recoverable.
+func TestWithinRackMachineSpreadBalancesCombinedOccupancy(t *testing.T) {
+	topo := NewTopology()
+	mk := func(id, host string) *Node {
+		n := topo.AddNode(id, "dc1", "dc1:rack1", 100)
+		n.SetHost(host)
+		n.AddDisk(0, "", 100, 0)
+		return n
+	}
+	a1 := mk("a1", "boxA")
+	a2 := mk("a2", "boxA") // two nodes on boxA -> numMachines(2) < numNodes(3)
+	b1 := mk("b1", "boxB")
+	a1.AddShards(100, "col1", 0, bits(0, 1, 2))    // 3 data
+	a2.AddShards(100, "col1", 0, bits(5, 6, 7))    // 3 parity (ids >= 5)
+	b1.AddShards(100, "col1", 0, bits(3, 4, 8, 9)) // 2 data + 2 parity
+
+	// dataShards=5, parityShards=5: feasibility ceil(10/2)=5 <= 5, so machine spread runs.
+	detectWithinRackImbalance(volKey{"col1", 100}, topo.nodes, buildRacks(topo.nodes), "", 0, 5, 5, nil)
+
+	perHost := map[string]int{}
+	for _, n := range topo.nodes {
+		if info, ok := n.shards[volKey{"col1", 100}]; ok {
+			perHost[n.host] += info.shardBits.Count()
+		}
+	}
+	if perHost["boxA"] > 5 {
+		t.Errorf("boxA holds %d shards, want <=5 (parity); data and parity spread independently", perHost["boxA"])
+	}
+}
+
 // TestWithinRackSpreadUsesRackLocalShardCount: a rack holds only 7 shards of a 10+4
 // volume (cross-rack spreading moved the rest to other racks). Two machines can hold
 // those 7 within parity (ceil(7/2)=4), so machine spread must apply -- gating on the

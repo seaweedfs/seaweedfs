@@ -469,28 +469,86 @@ func detectWithinRackImbalance(vk volKey, nodes map[string]*Node, racks map[stri
 	return moves
 }
 
-// withinRackMachineSpread spreads a volume's shards evenly across a rack's machines
-// (data then parity, parity anti-affine to data-bearing machines).
+// withinRackMachineSpread spreads a volume's shards across a rack's machines so no
+// machine holds more than ceil(rackShards/numMachines). EC recovers from any loss
+// within parity regardless of shard type, so what matters per machine is the
+// combined count, not data and parity separately: spreading the two independently
+// can stack their remainders onto one machine (ceil(d/M)+ceil(p/M) > ceil(total/M))
+// and push it past parity. Data/parity anti-affinity is kept at the disk level by
+// pickBestDiskOnNode. With one node per machine this reduces to the node spread.
 func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, diskType string, threshold float64, dataShards int, rp *super_block.ReplicaPlacement) []*move {
-	numMachines := len(machines)
-	gateData, gateParity := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.host })
-	if !typeImbalanced(gateData, numMachines, threshold) && !typeImbalanced(gateParity, numMachines, threshold) {
+	machineKeys := sortedKeys(machines)
+	shardsPerMachine := make(map[string][]int, len(machines))
+	counts := make(map[string]int, len(machines))
+	total := 0
+	for _, host := range machineKeys {
+		for _, n := range machines[host] {
+			if info, ok := n.shards[vk]; ok {
+				for sid := range info.shardBits.All() {
+					shardsPerMachine[host] = append(shardsPerMachine[host], int(sid))
+				}
+			}
+		}
+		sort.Ints(shardsPerMachine[host])
+		counts[host] = len(shardsPerMachine[host])
+		total += counts[host]
+	}
+	if total == 0 || !exceedsImbalanceThreshold(counts, total, len(machines), threshold) {
 		return nil
 	}
+	maxPerMachine := ceilDivide(total, len(machines))
+	if maxPerMachine < 1 {
+		maxPerMachine = 1
+	}
 
-	dataPerMachine, _ := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.host })
-	moves := balanceShardTypeAcrossMachines(vk, machines, diskType, dataShards,
-		dataPerMachine, ceilDivide(sumLens(dataPerMachine), numMachines), nil, rp)
-
-	dataPerMachine, parityPerMachine := shardsByGroup(vk, r.nodes, dataShards, func(n *Node) string { return n.host })
-	antiAffinity := make(map[string]bool)
-	for host, shards := range dataPerMachine {
-		if len(shards) > 0 {
-			antiAffinity[host] = true
+	type pending struct {
+		shardID int
+		src     *Node
+	}
+	var toMove []pending
+	for _, host := range machineKeys {
+		shards := shardsPerMachine[host]
+		for i := 0; i < len(shards)-maxPerMachine; i++ {
+			if src := nodeHoldingShard(machines[host], vk, shards[i]); src != nil {
+				toMove = append(toMove, pending{shards[i], src})
+			}
 		}
 	}
-	return append(moves, balanceShardTypeAcrossMachines(vk, machines, diskType, dataShards,
-		parityPerMachine, ceilDivide(sumLens(parityPerMachine), numMachines), antiAffinity, rp)...)
+
+	var moves []*move
+	for _, pm := range toMove {
+		// A machine is a viable target only if a node on it can actually take the
+		// shard (free slot, under SameRackCount), so a capped machine is skipped
+		// rather than settled on and the move dropped.
+		destHost, ok := pickTarget(machineKeys, shardsPerMachine, maxPerMachine, nil,
+			func(h string) bool { return h != pm.src.host && pickBestNodeForVolume(machines[h], vk, rp) != nil },
+			func(string) bool { return true })
+		if !ok {
+			continue
+		}
+		destNode := pickBestNodeForVolume(machines[destHost], vk, rp)
+		if destNode == nil {
+			continue
+		}
+		destDisk := pickBestDiskOnNode(destNode, vk, diskType, pm.shardID, dataShards)
+		moves = append(moves, &move{
+			volumeID:   vk.vid,
+			shardID:    pm.shardID,
+			collection: vk.collection,
+			source:     pm.src,
+			sourceDisk: shardDiskID(pm.src, vk, pm.shardID),
+			target:     destNode,
+			targetDisk: destDisk,
+			phase:      "within_rack",
+		})
+		releaseShard(pm.src, vk, pm.shardID)
+		reserveShard(destNode, vk, pm.shardID, destDisk)
+		shardsPerMachine[destHost] = append(shardsPerMachine[destHost], pm.shardID)
+		shardsPerMachine[pm.src.host] = removeInt(shardsPerMachine[pm.src.host], pm.shardID)
+		pm.src.freeSlots++
+		destNode.freeSlots--
+	}
+	return moves
 }
 
 // withinRackNodeSpread spreads a volume's shards evenly across a rack's nodes (data
@@ -574,68 +632,6 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 		shardsPerNode[pm.src.id] = removeInt(shardsPerNode[pm.src.id], pm.shardID)
 		nodeShardCount[destID]++
 		nodeShardCount[pm.src.id]--
-		pm.src.freeSlots++
-		destNode.freeSlots--
-	}
-	return moves
-}
-
-// balanceShardTypeAcrossMachines spreads one shard type of a volume across a rack's
-// machines, mirroring balanceShardTypeAcrossRacks one fault tier down.
-func balanceShardTypeAcrossMachines(vk volKey, machines map[string][]*Node, diskType string, dataShards int, shardsPerMachine map[string][]int, maxPerMachine int, antiAffinity map[string]bool, rp *super_block.ReplicaPlacement) []*move {
-	if maxPerMachine < 1 {
-		maxPerMachine = 1
-	}
-	machineKeys := sortedKeys(machines)
-
-	type pending struct {
-		shardID int
-		src     *Node
-	}
-	var toMove []pending
-	for _, host := range machineKeys {
-		shards := append([]int(nil), shardsPerMachine[host]...)
-		if len(shards) <= maxPerMachine {
-			continue
-		}
-		sort.Ints(shards)
-		for i := 0; i < len(shards)-maxPerMachine; i++ {
-			if src := nodeHoldingShard(machines[host], vk, shards[i]); src != nil {
-				toMove = append(toMove, pending{shards[i], src})
-			}
-		}
-	}
-
-	var moves []*move
-	for _, pm := range toMove {
-		// Viable only if a node can actually take the shard (free slot, under
-		// SameRackCount); checking real viability lets pickTarget skip a capped
-		// machine instead of settling on it and dropping the move.
-		destHost, ok := pickTarget(machineKeys, shardsPerMachine, maxPerMachine, antiAffinity,
-			func(h string) bool { return h != pm.src.host && pickBestNodeForVolume(machines[h], vk, rp) != nil },
-			func(string) bool { return true }) // no per-machine cap; SameRackCount is per node
-		if !ok {
-			continue
-		}
-		destNode := pickBestNodeForVolume(machines[destHost], vk, rp)
-		if destNode == nil {
-			continue
-		}
-		destDisk := pickBestDiskOnNode(destNode, vk, diskType, pm.shardID, dataShards)
-		moves = append(moves, &move{
-			volumeID:   vk.vid,
-			shardID:    pm.shardID,
-			collection: vk.collection,
-			source:     pm.src,
-			sourceDisk: shardDiskID(pm.src, vk, pm.shardID),
-			target:     destNode,
-			targetDisk: destDisk,
-			phase:      "within_rack",
-		})
-		releaseShard(pm.src, vk, pm.shardID)
-		reserveShard(destNode, vk, pm.shardID, destDisk)
-		shardsPerMachine[destHost] = append(shardsPerMachine[destHost], pm.shardID)
-		shardsPerMachine[pm.src.host] = removeInt(shardsPerMachine[pm.src.host], pm.shardID)
 		pm.src.freeSlots++
 		destNode.freeSlots--
 	}
