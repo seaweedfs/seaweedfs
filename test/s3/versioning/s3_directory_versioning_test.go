@@ -669,6 +669,7 @@ func TestVersionedObjectListBehavior(t *testing.T) {
 	assert.NotContains(t, *listedObject.Key, versionId, "Object key should not contain version ID")
 
 	// Verify object properties
+	require.NotNil(t, listedObject.Size, "Object size should not be nil")
 	assert.Equal(t, int64(len(content)), *listedObject.Size, "Object size should match")
 	assert.NotNil(t, listedObject.ETag, "Object should have ETag")
 	assert.NotNil(t, listedObject.LastModified, "Object should have LastModified")

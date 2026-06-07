@@ -135,7 +135,8 @@ func TestBucketCreationBehavior(t *testing.T) {
 // (versus BucketAlreadyOwnedByYou for the owner re-creating it).
 func TestBucketCreationWithDifferentUsers(t *testing.T) {
 	ctx := context.Background()
-	bucketName := "test-different-users-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	// Tracked prefix + run id so cleanupAllTestBuckets sweeps it if the test leaks.
+	bucketName := getNewBucketName()
 
 	// User A owns the bucket.
 	clientA := getS3Client(t)
