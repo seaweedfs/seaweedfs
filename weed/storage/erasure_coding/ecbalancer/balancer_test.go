@@ -260,6 +260,87 @@ func allBits(n int) erasure_coding.ShardBits {
 	return b
 }
 
+// TestPlanConvergesToBalancedLoadOverRounds starts skewed -- machine 10.0.0.1 holds
+// 4 shards of every volume, the others 2 -- and runs repeated worker-style balance
+// passes (capped moves per pass). It must converge to an even per-machine shard load.
+func TestPlanConvergesToBalancedLoadOverRounds(t *testing.T) {
+	topo := NewTopology()
+	hosts := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
+	for _, h := range hosts {
+		for _, p := range []string{":8080", ":8081"} {
+			n := topo.AddNode(h+p, "dc1", "dc1:rack1", 4000)
+			n.SetHost(h)
+			n.AddDisk(0, "", 4000, 0)
+		}
+	}
+	add := func(id string, vid uint32, ids ...int) {
+		n := topo.nodes[id]
+		n.AddShards(vid, "c1", 0, bits(ids...))
+		n.disks[0].shardCount += len(ids)
+		n.disks[0].freeSlots -= len(ids)
+		n.freeSlots -= len(ids)
+	}
+	const volumes = 60
+	for v := 0; v < volumes; v++ {
+		vid := uint32(v)
+		add("10.0.0.1:8080", vid, 0, 1) // machine 10.0.0.1 gets 4 shards/volume
+		add("10.0.0.1:8081", vid, 2, 3)
+		add("10.0.0.2:8080", vid, 4)
+		add("10.0.0.2:8081", vid, 5)
+		add("10.0.0.3:8080", vid, 6)
+		add("10.0.0.3:8081", vid, 7)
+		add("10.0.0.4:8080", vid, 8)
+		add("10.0.0.4:8081", vid, 9)
+		add("10.0.0.5:8080", vid, 10)
+		add("10.0.0.5:8081", vid, 11)
+		add("10.0.0.6:8080", vid, 12)
+		add("10.0.0.6:8081", vid, 13)
+	}
+
+	perMachine := func() map[string]int {
+		m := map[string]int{}
+		for _, h := range hosts {
+			m[h] = 0 // seed every host so a fully drained one still counts
+		}
+		for _, n := range topo.nodes {
+			for _, info := range n.shards {
+				m[n.host] += info.shardBits.Count()
+			}
+		}
+		return m
+	}
+	opts := Options{Ratio: ratio(10, 4), GlobalUtilizationBased: true, GlobalMaxMovesPerRack: 8}
+
+	rounds, converged := 0, false
+	for ; rounds < 200; rounds++ {
+		if len(Plan(topo, opts)) == 0 {
+			converged = true
+			break
+		}
+	}
+	if !converged {
+		t.Fatalf("balance did not converge within %d rounds", rounds)
+	}
+
+	pm := perMachine()
+	min, max := 1<<30, 0
+	for _, c := range pm {
+		if c < min {
+			min = c
+		}
+		if c > max {
+			max = c
+		}
+	}
+	t.Logf("converged after %d rounds: %v", rounds, pm)
+	if rounds < 2 {
+		t.Errorf("expected convergence to take multiple rounds (capped moves), took %d", rounds)
+	}
+	if float64(max) > 1.1*float64(min) {
+		t.Errorf("did not converge to balanced load: min=%d max=%d %v", min, max, pm)
+	}
+}
+
 func TestGlobalImbalanceMovesFromFullToEmpty(t *testing.T) {
 	topo := NewTopology()
 	n1 := topo.AddNode("node1", "dc1", "dc1:rack1", 5)

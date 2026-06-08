@@ -1120,6 +1120,15 @@ func countShardsByHost(vk volKey, nodes map[string]*Node) map[string]int {
 	return m
 }
 
+// freeSlotsByHost sums each machine's free EC shard slots.
+func freeSlotsByHost(nodes map[string]*Node) map[string]int {
+	m := make(map[string]int)
+	for _, node := range nodes {
+		m[node.host] += node.freeSlots
+	}
+	return m
+}
+
 func countShardsByNode(vk volKey, nodes map[string]*Node) map[string]int {
 	m := make(map[string]int)
 	for id, node := range nodes {
