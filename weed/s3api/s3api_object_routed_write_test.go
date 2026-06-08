@@ -135,6 +135,40 @@ func TestParseConditionalHeadersAcceptsHTTPDateFormats(t *testing.T) {
 	}
 }
 
+func TestValidateConditionalCopyHeadersAcceptsHTTPDateFormats(t *testing.T) {
+	testCases := []struct {
+		name   string
+		header string
+		value  string
+		mtime  int64 // source mtime chosen so the condition passes
+	}{
+		{
+			name:   "X-Amz-Copy-Source-If-Modified-Since RFC850",
+			header: s3_constants.AmzCopySourceIfModifiedSince,
+			value:  "Sunday, 06-Nov-94 08:49:37 GMT",
+			mtime:  1577836800, // 2020-01-01, modified after the 1994 header
+		},
+		{
+			name:   "X-Amz-Copy-Source-If-Unmodified-Since ANSIC",
+			header: s3_constants.AmzCopySourceIfUnmodifiedSince,
+			value:  "Sun Nov  6 08:49:37 1994",
+			mtime:  631152000, // 1990-01-01, not modified after the 1994 header
+		},
+	}
+
+	var s3a *S3ApiServer // method does not use the receiver
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := reqWith(map[string]string{testCase.header: testCase.value})
+			entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: testCase.mtime}}
+
+			if errCode := s3a.validateConditionalCopyHeaders(r, entry); errCode != s3err.ErrNone {
+				t.Fatalf("expected %s to be accepted, got %v", testCase.header, errCode)
+			}
+		})
+	}
+}
+
 func TestBuildDeleteCondition(t *testing.T) {
 	t.Run("no If-Match is unconditional", func(t *testing.T) {
 		cond, ok := buildDeleteCondition(reqWith(nil))
