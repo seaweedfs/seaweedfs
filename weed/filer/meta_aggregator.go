@@ -307,8 +307,13 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					return err
 				}
 			}
-			// Process any additional batched events
+			// Process any additional batched events. Mirror the envelope's nil
+			// guard: the server can fold a freshness signal (nil EventNotification)
+			// into the batched tail, and processOne dereferences it.
 			for _, batchedEvent := range resp.Events {
+				if batchedEvent.EventNotification == nil {
+					continue
+				}
 				if err := processOne(batchedEvent); err != nil {
 					return err
 				}
