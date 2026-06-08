@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -222,6 +223,23 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if found {
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
+	}
+
+	// Load existing data only; never let NewVolume create a phantom .dat. A
+	// lone .vif/.idx (e.g. an EC sidecar whose .ecx is on a sibling disk,
+	// which the same-disk hasEcxFile() guard misses) would otherwise get an
+	// 8-byte stub that the sibling-.dat prune deletes real shards against.
+	// Remote-tiered volumes also have no local .dat, but their .vif points at
+	// remote files and must still load via the remote path.
+	if !util.FileExists(l.Directory + "/" + volumeName + ".dat") {
+		_, hasRemote, _, _ := volume_info.MaybeLoadVolumeInfo(l.Directory + "/" + volumeName + ".vif")
+		if !hasRemote && l.IdxDirectory != l.Directory {
+			_, hasRemote, _, _ = volume_info.MaybeLoadVolumeInfo(l.IdxDirectory + "/" + volumeName + ".vif")
+		}
+		if !hasRemote {
+			glog.V(1).Infof("loadExistingVolume: skipping volume %d (collection=%q); no .dat and no remote file", vid, collection)
+			return false
+		}
 	}
 
 	// load the volume
