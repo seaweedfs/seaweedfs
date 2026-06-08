@@ -87,13 +87,21 @@ jobs:
           tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
           rm weed-volume-normal
 
+      - name: Generate md5 checksums
+        run: |
+          for f in weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume_${{ matrix.asset_suffix }}.tar.gz; do
+            md5sum "$f" > "$f.md5"
+          done
+
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -104,7 +112,9 @@ jobs:
           name: rust-volume-${{ matrix.asset_suffix }}
           path: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
 
   build-rust-volume-darwin:
     permissions:
@@ -164,13 +174,21 @@ jobs:
           tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
           rm weed-volume-normal
 
+      - name: Generate md5 checksums
+        run: |
+          for f in weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume_${{ matrix.asset_suffix }}.tar.gz; do
+            md5 -r "$f" > "$f.md5"
+          done
+
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -181,7 +199,9 @@ jobs:
           name: rust-volume-${{ matrix.asset_suffix }}
           path: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
 
   build-rust-volume-windows:
     permissions:
@@ -233,13 +253,22 @@ jobs:
           7z a weed-volume_windows_amd64.zip weed-volume-normal.exe
           rm weed-volume-normal.exe
 
+      - name: Generate md5 checksums
+        shell: bash
+        run: |
+          for f in weed-volume_large_disk_windows_amd64.zip weed-volume_windows_amd64.zip; do
+            md5sum "$f" > "$f.md5"
+          done
+
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: |
             weed-volume_large_disk_windows_amd64.zip
+            weed-volume_large_disk_windows_amd64.zip.md5
             weed-volume_windows_amd64.zip
+            weed-volume_windows_amd64.zip.md5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -250,4 +279,6 @@ jobs:
           name: rust-volume-windows_amd64
           path: |
             weed-volume_large_disk_windows_amd64.zip
+            weed-volume_large_disk_windows_amd64.zip.md5
             weed-volume_windows_amd64.zip
+            weed-volume_windows_amd64.zip.md5
