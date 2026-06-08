@@ -90,9 +90,17 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	// Wipe any EC artifacts from a prior encode so a retry never mixes two runs.
 	// Evict the in-memory EcVolume first so the unlink frees the inodes instead
-	// of leaving open fds serving the old bytes. Scans the cap for custom ratios.
+	// of leaving open fds serving the old bytes. Sweep every disk: stale shards
+	// can sit on a sibling disk and would otherwise survive and be mounted
+	// against the new index at reconcile. Scans the cap for custom ratios.
 	vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
-	removeStaleEcArtifacts(baseFileName, v.IndexFileName(), erasure_coding.MaxShardCount)
+	for _, loc := range vs.store.Locations {
+		dataBase := storage.VolumeFileName(loc.Directory, req.Collection, int(req.VolumeId))
+		idxBase := storage.VolumeFileName(loc.IdxDirectory, req.Collection, int(req.VolumeId))
+		if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
+			return nil, fmt.Errorf("wipe stale EC artifacts for volume %d on %s: %w", req.VolumeId, loc.Directory, err)
+		}
+	}
 
 	// IMPORTANT: Generate .ecx BEFORE EC shards to prevent a race condition.
 	// If .ecx were generated after EC shards, any write (e.g. from WriteNeedleBlob
@@ -435,7 +443,9 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
 		if util.FileExists(shardFileName) {
 			found = true
-			os.Remove(shardFileName)
+			if err := removeFileIfExists(shardFileName); err != nil {
+				return fmt.Errorf("remove ec shard %s: %w", shardFileName, err)
+			}
 		}
 	}
 
@@ -485,34 +495,56 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	return nil
 }
 
+// removeFileIfExists removes path, treating "already gone" as success and
+// returning only a real failure (so a stale shard left behind is not silently
+// reported as cleaned).
+func removeFileIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // removeStaleEcArtifacts deletes the shard, index, journal, and bitrot sidecar
 // files of a prior encode so a fresh encode never mixes runs. total is the
-// shard-id range to scan (pass the cap for custom ratios). Does not touch the
-// source .dat/.idx/.vif.
-func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total int) {
+// shard-id range to scan (pass the cap for custom ratios). Returns the first
+// real removal failure; does not touch the source .dat/.idx/.vif.
+func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total int) error {
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	for i := 0; i < total; i++ {
-		os.Remove(dataBaseFileName + erasure_coding.ToExt(i))
+		record(removeFileIfExists(dataBaseFileName + erasure_coding.ToExt(i)))
 	}
 	// .ecx/.ecj/.ecsum may sit in either dir depending on -dir.idx; clear both.
-	os.Remove(indexBaseFileName + ".ecx")
-	os.Remove(indexBaseFileName + ".ecj")
-	removeBitrotSidecars(indexBaseFileName)
+	record(removeFileIfExists(indexBaseFileName + ".ecx"))
+	record(removeFileIfExists(indexBaseFileName + ".ecj"))
+	record(removeBitrotSidecars(indexBaseFileName))
 	if dataBaseFileName != indexBaseFileName {
-		os.Remove(dataBaseFileName + ".ecx")
-		os.Remove(dataBaseFileName + ".ecj")
-		removeBitrotSidecars(dataBaseFileName)
+		record(removeFileIfExists(dataBaseFileName + ".ecx"))
+		record(removeFileIfExists(dataBaseFileName + ".ecj"))
+		record(removeBitrotSidecars(dataBaseFileName))
 	}
+	return firstErr
 }
 
 // removeBitrotSidecars removes the legacy <base>.ecsum and any versioned
-// <base>.ecsum.v<N> sidecars. Best-effort; logs nothing on absence.
-func removeBitrotSidecars(baseFilename string) {
-	os.Remove(baseFilename + erasure_coding.BitrotSidecarExt)
-	if matches, _ := filepath.Glob(baseFilename + erasure_coding.BitrotSidecarExt + ".v*"); matches != nil {
-		for _, m := range matches {
-			os.Remove(m)
+// <base>.ecsum.v<N> sidecars, returning the first real removal failure.
+func removeBitrotSidecars(baseFilename string) error {
+	var firstErr error
+	if err := removeFileIfExists(baseFilename + erasure_coding.BitrotSidecarExt); err != nil {
+		firstErr = err
+	}
+	matches, _ := filepath.Glob(baseFilename + erasure_coding.BitrotSidecarExt + ".v*")
+	for _, m := range matches {
+		if err := removeFileIfExists(m); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
+	return firstErr
 }
 
 func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFile bool, hasIdxFile bool, existingShardCount int, err error) {
