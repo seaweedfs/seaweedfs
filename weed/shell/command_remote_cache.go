@@ -273,7 +273,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 						Attributes: &filer_pb.FuseAttributes{
 							FileSize: uint64(remoteEntry.RemoteSize),
 							Mtime:    remoteEntry.RemoteMtime,
-							FileMode: uint32(0644),
+							FileMode: remoteEntryFileMode(isDirectory),
 						},
 						RemoteEntry: remoteEntry,
 					},
