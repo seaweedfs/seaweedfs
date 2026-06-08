@@ -64,6 +64,59 @@ func TestCheckEcVolumeStatusCountOnlyDataShards(t *testing.T) {
 	}
 }
 
+// TestRemoveStaleEcArtifacts: a fresh encode deletes every prior EC artifact
+// (incl. shard ids beyond the default ratio and versioned bitrot sidecars)
+// while leaving the source .dat/.idx/.vif untouched.
+func TestRemoveStaleEcArtifacts(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	idxDir := filepath.Join(tempDir, "idx")
+	for _, d := range []string{dataDir, idxDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	const baseName = "7"
+	dataBase := filepath.Join(dataDir, baseName)
+	idxBase := filepath.Join(idxDir, baseName)
+
+	// EC artifacts that must be removed, including a shard id past the default
+	// 10+4 ratio (proves the MaxShardCount scan) and a versioned sidecar.
+	var ecFiles []string
+	for _, id := range []int{0, 9, 13, 20, erasure_coding.MaxShardCount - 1} {
+		ecFiles = append(ecFiles, dataBase+erasure_coding.ToExt(id))
+	}
+	ecFiles = append(ecFiles,
+		dataBase+".ecx", dataBase+".ecj",
+		idxBase+".ecx", idxBase+".ecj",
+		dataBase+erasure_coding.BitrotSidecarExt,       // .ecsum (generation 0)
+		dataBase+erasure_coding.BitrotSidecarExt+".v2", // versioned sidecar
+	)
+
+	// Source files that must survive — the authoritative input for the encode.
+	srcFiles := []string{dataBase + ".dat", idxBase + ".idx", dataBase + ".vif"}
+
+	for _, f := range append(append([]string{}, ecFiles...), srcFiles...) {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("create %s: %v", f, err)
+		}
+	}
+
+	removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount)
+
+	for _, f := range ecFiles {
+		if util.FileExists(f) {
+			t.Errorf("expected EC artifact removed: %s", f)
+		}
+	}
+	for _, f := range srcFiles {
+		if !util.FileExists(f) {
+			t.Errorf("expected source file preserved: %s", f)
+		}
+	}
+}
+
 // TestVolumeEcShardsInfo_AggregatesAcrossDisks pins the multi-disk path:
 // when a volume server mounts EC shards for the same volume on more than
 // one disk (each disk holds its own EcVolume entry — Store.FindEcVolume

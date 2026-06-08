@@ -88,6 +88,12 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		os.Remove(erasure_coding.BitrotSidecarPath(baseFileName, 0))
 	}()
 
+	// Wipe any EC artifacts from a prior encode so a retry never mixes two runs.
+	// Evict the in-memory EcVolume first so the unlink frees the inodes instead
+	// of leaving open fds serving the old bytes. Scans the cap for custom ratios.
+	vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+	removeStaleEcArtifacts(baseFileName, v.IndexFileName(), erasure_coding.MaxShardCount)
+
 	// IMPORTANT: Generate .ecx BEFORE EC shards to prevent a race condition.
 	// If .ecx were generated after EC shards, any write (e.g. from WriteNeedleBlob
 	// during replica sync) between the two steps would add entries to .idx that
@@ -480,6 +486,25 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	}
 
 	return nil
+}
+
+// removeStaleEcArtifacts deletes the shard, index, journal, and bitrot sidecar
+// files of a prior encode so a fresh encode never mixes runs. total is the
+// shard-id range to scan (pass the cap for custom ratios). Does not touch the
+// source .dat/.idx/.vif.
+func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total int) {
+	for i := 0; i < total; i++ {
+		os.Remove(dataBaseFileName + erasure_coding.ToExt(i))
+	}
+	// .ecx/.ecj/.ecsum may sit in either dir depending on -dir.idx; clear both.
+	os.Remove(indexBaseFileName + ".ecx")
+	os.Remove(indexBaseFileName + ".ecj")
+	removeBitrotSidecars(indexBaseFileName)
+	if dataBaseFileName != indexBaseFileName {
+		os.Remove(dataBaseFileName + ".ecx")
+		os.Remove(dataBaseFileName + ".ecj")
+		removeBitrotSidecars(dataBaseFileName)
+	}
 }
 
 // removeBitrotSidecars removes the legacy <base>.ecsum and any versioned

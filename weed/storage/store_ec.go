@@ -349,6 +349,14 @@ func (s *Store) DestroyEcVolume(vid needle.VolumeId) {
 	}
 }
 
+// UnloadEcVolume drops any in-memory EcVolume for vid from every disk and closes
+// its fds without deleting files, so a following unlink frees the inodes.
+func (s *Store) UnloadEcVolume(vid needle.VolumeId) {
+	for _, location := range s.Locations {
+		location.unloadEcVolume(vid)
+	}
+}
+
 func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadSizeFn func(size types.Size)) (int, error) {
 	for _, location := range s.Locations {
 		if localEcVolume, found := location.FindEcVolume(vid); found {
