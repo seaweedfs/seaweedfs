@@ -324,7 +324,7 @@ func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.Remot
 	}
 
 	data = make([]byte, size)
-	_, err = blobClient.DownloadBuffer(context.Background(), data, &blob.DownloadBufferOptions{
+	n, err := blobClient.DownloadBuffer(context.Background(), data, &blob.DownloadBufferOptions{
 		Range: blob.HTTPRange{
 			Offset: offset,
 			Count:  size,
@@ -334,6 +334,11 @@ func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.Remot
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	// Pre-sized buffer: a short read stays zero-padded. Reject it rather than
+	// cache corrupt content.
+	if n != size {
+		return nil, fmt.Errorf("short read from %s%s at offset %d: got %d bytes, want %d", loc.Bucket, loc.Path, offset, n, size)
 	}
 
 	return data, nil
