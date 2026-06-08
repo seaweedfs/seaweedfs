@@ -3,6 +3,7 @@ package s3api
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -104,19 +105,31 @@ func TestBuildWriteCondition(t *testing.T) {
 
 func TestParseConditionalHeadersAcceptsHTTPDateFormats(t *testing.T) {
 	testCases := []struct {
-		name   string
-		header string
-		value  string
+		name     string
+		header   string
+		value    string
+		expected time.Time
 	}{
 		{
-			name:   "If-Modified-Since RFC850",
-			header: s3_constants.IfModifiedSince,
-			value:  "Sunday, 06-Nov-94 08:49:37 GMT",
+			name:     "If-Modified-Since RFC850",
+			header:   s3_constants.IfModifiedSince,
+			value:    "Sunday, 06-Nov-94 08:49:37 GMT",
+			expected: time.Date(1994, time.November, 6, 8, 49, 37, 0, time.UTC),
 		},
 		{
-			name:   "If-Unmodified-Since ANSIC",
-			header: s3_constants.IfUnmodifiedSince,
-			value:  "Sun Nov  6 08:49:37 1994",
+			name:     "If-Unmodified-Since ANSIC",
+			header:   s3_constants.IfUnmodifiedSince,
+			value:    "Sun Nov  6 08:49:37 1994",
+			expected: time.Date(1994, time.November, 6, 8, 49, 37, 0, time.UTC),
+		},
+		{
+			// Go clients build this with t.UTC().Format(time.RFC1123); the "UTC"
+			// zone is rejected by http.ParseTime but was accepted before, so the
+			// RFC1123 fallback must keep it working.
+			name:     "If-Modified-Since RFC1123 UTC zone",
+			header:   s3_constants.IfModifiedSince,
+			value:    "Wed, 21 Oct 2015 07:28:00 UTC",
+			expected: time.Date(2015, time.October, 21, 7, 28, 0, 0, time.UTC),
 		},
 	}
 
@@ -130,6 +143,13 @@ func TestParseConditionalHeadersAcceptsHTTPDateFormats(t *testing.T) {
 			}
 			if !headers.isSet {
 				t.Fatal("expected conditional headers to be marked set")
+			}
+			parsed := headers.ifModifiedSince
+			if testCase.header == s3_constants.IfUnmodifiedSince {
+				parsed = headers.ifUnmodifiedSince
+			}
+			if !parsed.Equal(testCase.expected) {
+				t.Fatalf("expected parsed time %v, got %v", testCase.expected, parsed)
 			}
 		})
 	}

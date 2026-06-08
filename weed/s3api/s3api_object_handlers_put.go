@@ -1971,6 +1971,17 @@ type conditionalHeaders struct {
 	isSet             bool // true if any conditional headers are present
 }
 
+// parseHTTPDate parses a conditional date header. It accepts the three HTTP-date
+// formats required by RFC 9110 via http.ParseTime, then falls back to RFC1123 so
+// the non-standard "UTC" zone that Go clients emit with t.UTC().Format(time.RFC1123)
+// keeps working as it did before http.ParseTime was adopted.
+func parseHTTPDate(value string) (time.Time, error) {
+	if t, err := http.ParseTime(value); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC1123, value)
+}
+
 // parseConditionalHeaders extracts and validates conditional headers from the request
 func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCode) {
 	headers := conditionalHeaders{
@@ -1992,7 +2003,7 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 	// Parse date headers with validation
 	var err error
 	if ifModifiedSinceStr != "" {
-		headers.ifModifiedSince, err = http.ParseTime(ifModifiedSinceStr)
+		headers.ifModifiedSince, err = parseHTTPDate(ifModifiedSinceStr)
 		if err != nil {
 			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Modified-Since format: %v", err)
 			return headers, s3err.ErrInvalidRequest
@@ -2000,7 +2011,7 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 	}
 
 	if ifUnmodifiedSinceStr != "" {
-		headers.ifUnmodifiedSince, err = http.ParseTime(ifUnmodifiedSinceStr)
+		headers.ifUnmodifiedSince, err = parseHTTPDate(ifUnmodifiedSinceStr)
 		if err != nil {
 			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Unmodified-Since format: %v", err)
 			return headers, s3err.ErrInvalidRequest
