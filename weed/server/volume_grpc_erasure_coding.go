@@ -428,17 +428,14 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	indexBaseFilename := path.Join(location.IdxDirectory, bName)
 	dataBaseFilename := path.Join(location.Directory, bName)
 
-	ecxExists := util.FileExists(path.Join(location.IdxDirectory, bName+".ecx"))
-	if !ecxExists && location.IdxDirectory != location.Directory {
-		ecxExists = util.FileExists(path.Join(location.Directory, bName+".ecx"))
-	}
-	if ecxExists {
-		for _, shardId := range shardIds {
-			shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-			if util.FileExists(shardFileName) {
-				found = true
-				os.Remove(shardFileName)
-			}
+	// Delete the requested shard files unconditionally. Gating on a local .ecx
+	// (still used for index-file routing below) would leak an orphan shard left
+	// by a failed copy that reconciliation later mounts under a foreign index.
+	for _, shardId := range shardIds {
+		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
+		if util.FileExists(shardFileName) {
+			found = true
+			os.Remove(shardFileName)
 		}
 	}
 

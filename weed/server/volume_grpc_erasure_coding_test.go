@@ -117,6 +117,42 @@ func TestRemoveStaleEcArtifacts(t *testing.T) {
 	}
 }
 
+// TestDeleteEcShardsWithoutLocalEcx: the delete handler removes the requested
+// shard files even on a disk with no local .ecx, so a failed-copy orphan stays
+// cleanable rather than being mounted later under a foreign index.
+func TestDeleteEcShardsWithoutLocalEcx(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	idxDir := filepath.Join(tempDir, "idx")
+	for _, d := range []string{dataDir, idxDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	const baseName = "7"
+	// Orphan shard files with NO .ecx/.idx anywhere — a failed-copy leftover.
+	orphans := []string{
+		filepath.Join(dataDir, baseName+".ec03"),
+		filepath.Join(dataDir, baseName+".ec11"),
+	}
+	for _, f := range orphans {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("create %s: %v", f, err)
+		}
+	}
+
+	location := &storage.DiskLocation{Directory: dataDir, IdxDirectory: idxDir}
+	if err := deleteEcShardIdsForEachLocation(baseName, location, []uint32{3, 11}); err != nil {
+		t.Fatalf("deleteEcShardIdsForEachLocation: %v", err)
+	}
+	for _, f := range orphans {
+		if util.FileExists(f) {
+			t.Errorf("expected orphan shard removed without a local .ecx: %s", f)
+		}
+	}
+}
+
 // TestVolumeEcShardsInfo_AggregatesAcrossDisks pins the multi-disk path:
 // when a volume server mounts EC shards for the same volume on more than
 // one disk (each disk holds its own EcVolume entry — Store.FindEcVolume
