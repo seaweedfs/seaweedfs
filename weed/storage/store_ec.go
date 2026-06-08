@@ -294,6 +294,21 @@ func (s *Store) FindEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId)
 	return s.findEcShard(vid, shardId)
 }
 
+// FindEcVolumeWithShard returns the EcVolume on the disk that owns the given
+// shard, plus the shard. The read guard must check the identity of the volume
+// that owns the bytes served: on a multi-disk server one vid can hold shards
+// from different encode runs across disks, so a first-match volume can differ.
+func (s *Store) FindEcVolumeWithShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, *erasure_coding.EcVolumeShard, bool) {
+	for _, location := range s.Locations {
+		if shard, found := location.FindEcShard(vid, shardId); found {
+			if ev, ok := location.FindEcVolume(vid); ok {
+				return ev, shard, true
+			}
+		}
+	}
+	return nil, nil, false
+}
+
 func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
 		if s, found := location.FindEcVolume(vid); found {
@@ -422,7 +437,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 
 	// try reading directly
 	if hasShardIdLocation {
-		_, is_deleted, err = s.readRemoteEcShardInterval(sourceDataNodes, needleId, ecVolume.VolumeId, shardId, data, actualOffset)
+		_, is_deleted, err = s.readRemoteEcShardInterval(sourceDataNodes, needleId, ecVolume.VolumeId, shardId, data, actualOffset, ecVolume.EncodeTsNs)
 		if err == nil {
 			return
 		}
@@ -490,10 +505,15 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 }
 
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
-	// findEcShard walks every DiskLocation under ecVolumesLock; the
+	// Resolve the shard together with the EcVolume on the disk that owns it; the
 	// shard may live on a sibling disk of this server.
-	_, shard, found := s.findEcShard(ecVolume.VolumeId, shardId)
+	ownerVolume, shard, found := s.FindEcVolumeWithShard(ecVolume.VolumeId, shardId)
 	if !found {
+		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
+	}
+	// Skip a local shard from a different encode run than the caller's index;
+	// treat it as not-local so the read recovers from the correct generation.
+	if ecVolume.EncodeTsNs != 0 && ownerVolume.EncodeTsNs != 0 && ecVolume.EncodeTsNs != ownerVolume.EncodeTsNs {
 		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
 	}
 
@@ -508,7 +528,7 @@ func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shar
 	return nil
 }
 
-func (s *Store) readRemoteEcShardInterval(sourceDataNodes []pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
+func (s *Store) readRemoteEcShardInterval(sourceDataNodes []pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64, expectedEncodeTsNs int64) (n int, is_deleted bool, err error) {
 
 	if len(sourceDataNodes) == 0 {
 		return 0, false, fmt.Errorf("failed to find ec shard %d.%d", vid, shardId)
@@ -516,7 +536,7 @@ func (s *Store) readRemoteEcShardInterval(sourceDataNodes []pb.ServerAddress, ne
 
 	for _, sourceDataNode := range sourceDataNodes {
 		glog.V(3).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
-		n, is_deleted, err = s.doReadRemoteEcShardInterval(sourceDataNode, needleId, vid, shardId, buf, offset)
+		n, is_deleted, err = s.doReadRemoteEcShardInterval(sourceDataNode, needleId, vid, shardId, buf, offset, expectedEncodeTsNs)
 		if err == nil {
 			return
 		}
@@ -526,17 +546,18 @@ func (s *Store) readRemoteEcShardInterval(sourceDataNodes []pb.ServerAddress, ne
 	return
 }
 
-func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
+func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64, expectedEncodeTsNs int64) (n int, is_deleted bool, err error) {
 
 	err = operation.WithVolumeServerClient(false, sourceDataNode, s.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		// copy data slice
 		shardReadClient, err := client.VolumeEcShardRead(context.Background(), &volume_server_pb.VolumeEcShardReadRequest{
-			VolumeId: uint32(vid),
-			ShardId:  uint32(shardId),
-			Offset:   offset,
-			Size:     int64(len(buf)),
-			FileKey:  uint64(needleId),
+			VolumeId:   uint32(vid),
+			ShardId:    uint32(shardId),
+			Offset:     offset,
+			Size:       int64(len(buf)),
+			FileKey:    uint64(needleId),
+			EncodeTsNs: expectedEncodeTsNs,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to start reading ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, err)
@@ -595,7 +616,7 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		go func(shardId erasure_coding.ShardId, locations []pb.ServerAddress) {
 			defer wg.Done()
 			data := make([]byte, len(buf))
-			nRead, isDeleted, readErr := s.readRemoteEcShardInterval(locations, needleId, ecVolume.VolumeId, shardId, data, offset)
+			nRead, isDeleted, readErr := s.readRemoteEcShardInterval(locations, needleId, ecVolume.VolumeId, shardId, data, offset, ecVolume.EncodeTsNs)
 			if readErr != nil {
 				glog.V(3).Infof("recover: readRemoteEcShardInterval %d.%d %d bytes from %+v: %v", ecVolume.VolumeId, shardId, nRead, locations, readErr)
 				forgetShardId(ecVolume, shardId)

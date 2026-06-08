@@ -54,7 +54,7 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId) (int64, []*volume_server_pb.E
 			sourceDataNodes, ok := ecv.ShardLocations[shardId]
 			ecv.ShardLocationsLock.RUnlock()
 			if ok {
-				if _, _, err := s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset); err == nil {
+				if _, _, err := s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); err == nil {
 					data = append(data, chunk...)
 					continue
 				}

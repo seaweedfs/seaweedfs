@@ -141,10 +141,12 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 			ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total(), erasure_coding.MaxShardCount)
 	}
 
-	// Save EC configuration to VolumeInfo
+	// EncodeTsNs stamps this run's identity into the .vif (copied with the
+	// shards), so a read served from a different run's shard is rejected.
 	volumeInfo.EcShardConfig = &volume_server_pb.EcShardConfig{
 		DataShards:   uint32(ecCtx.DataShards),
 		ParityShards: uint32(ecCtx.ParityShards),
+		EncodeTsNs:   time.Now().UnixNano(),
 	}
 	glog.V(1).Infof("Saving EC config to .vif for volume %d: %d+%d (total: %d)",
 		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
@@ -581,15 +583,18 @@ func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_s
 
 func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
 
-	ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
-	if !found {
-		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
-	}
-	// shard may live on a sibling disk of this server; walk all of them
-	// under ecVolumesLock.
-	_, ecShard, found := vs.store.FindEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId))
+	// Resolve the shard together with the EcVolume on the disk that owns it,
+	// rather than a first-match volume on a sibling disk: on a multi-disk server
+	// those can belong to different encode generations, and the guard must
+	// validate the identity of the volume whose bytes we serve.
+	ecVolume, ecShard, found := vs.store.FindEcVolumeWithShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId))
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
+	}
+	// Reject a shard from a different encode run than the caller's index; the
+	// caller then recovers from parity. 0 on either side = pre-upgrade volume.
+	if req.EncodeTsNs != 0 && ecVolume.EncodeTsNs != 0 && req.EncodeTsNs != ecVolume.EncodeTsNs {
+		return fmt.Errorf("ec shard %d.%d belongs to a different encode run", req.VolumeId, req.ShardId)
 	}
 
 	if req.FileKey != 0 {

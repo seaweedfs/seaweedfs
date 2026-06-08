@@ -44,6 +44,10 @@ type EcVolume struct {
 	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
 
+	// EncodeTsNs is the encode time (unix nanos) loaded from .vif; reads carry it
+	// so a shard from a different encode run is rejected. 0 for pre-upgrade volumes.
+	EncodeTsNs int64
+
 	// ecjFileSize mirrors the on-disk size of the .ecj deletion journal and
 	// is maintained under ecjFileAccessLock. It is only used by IO helpers
 	// (seek/truncate) — the authoritative runtime delete count comes from
@@ -150,6 +154,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		if volumeInfo.EcShardConfig != nil {
 			ds := int(volumeInfo.EcShardConfig.DataShards)
 			ps := int(volumeInfo.EcShardConfig.ParityShards)
+			ev.EncodeTsNs = volumeInfo.EcShardConfig.GetEncodeTsNs()
 
 			// Validate shard counts to prevent zero or invalid values
 			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
