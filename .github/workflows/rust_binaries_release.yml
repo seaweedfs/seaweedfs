@@ -66,26 +66,32 @@ jobs:
           SEAWEEDFS_COMMIT: ${{ github.sha }}
         run: |
           cd seaweed-volume
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }} --target-dir target/large-disk
 
       - name: Build Rust volume server (normal)
         env:
           SEAWEEDFS_COMMIT: ${{ github.sha }}
         run: |
           cd seaweed-volume
-          cargo build --release --target ${{ matrix.target }} --no-default-features
+          cargo build --release --target ${{ matrix.target }} --no-default-features --target-dir target/normal
 
       - name: Package binaries
         run: |
           # Large disk (default, 5bytes feature)
-          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          cp seaweed-volume/target/large-disk/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
           tar czf weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume-large-disk
           rm weed-volume-large-disk
 
           # Normal volume size
-          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          cp seaweed-volume/target/normal/${{ matrix.target }}/release/weed-volume weed-volume-normal
           tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
           rm weed-volume-normal
+
+      - name: Generate md5 checksums
+        run: |
+          for f in weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume_${{ matrix.asset_suffix }}.tar.gz; do
+            md5sum "$f" > "$f.md5"
+          done
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -93,7 +99,9 @@ jobs:
         with:
           files: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -104,7 +112,9 @@ jobs:
           name: rust-volume-${{ matrix.asset_suffix }}
           path: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
 
   build-rust-volume-darwin:
     permissions:
@@ -145,24 +155,30 @@ jobs:
           SEAWEEDFS_COMMIT: ${{ github.sha }}
         run: |
           cd seaweed-volume
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }} --target-dir target/large-disk
 
       - name: Build Rust volume server (normal)
         env:
           SEAWEEDFS_COMMIT: ${{ github.sha }}
         run: |
           cd seaweed-volume
-          cargo build --release --target ${{ matrix.target }} --no-default-features
+          cargo build --release --target ${{ matrix.target }} --no-default-features --target-dir target/normal
 
       - name: Package binaries
         run: |
-          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          cp seaweed-volume/target/large-disk/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
           tar czf weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume-large-disk
           rm weed-volume-large-disk
 
-          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          cp seaweed-volume/target/normal/${{ matrix.target }}/release/weed-volume weed-volume-normal
           tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
           rm weed-volume-normal
+
+      - name: Generate md5 checksums
+        run: |
+          for f in weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume_${{ matrix.asset_suffix }}.tar.gz; do
+            md5 -r "$f" > "$f.md5"
+          done
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -170,7 +186,9 @@ jobs:
         with:
           files: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -181,7 +199,9 @@ jobs:
           name: rust-volume-${{ matrix.asset_suffix }}
           path: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
 
   build-rust-volume-windows:
     permissions:
@@ -213,25 +233,32 @@ jobs:
           SEAWEEDFS_COMMIT: ${{ github.sha }}
         run: |
           cd seaweed-volume
-          cargo build --release
+          cargo build --release --target-dir target/large-disk
 
       - name: Build Rust volume server (normal)
         env:
           SEAWEEDFS_COMMIT: ${{ github.sha }}
         run: |
           cd seaweed-volume
-          cargo build --release --no-default-features
+          cargo build --release --no-default-features --target-dir target/normal
 
       - name: Package binaries
         shell: bash
         run: |
-          cp seaweed-volume/target/release/weed-volume.exe weed-volume-large-disk.exe
+          cp seaweed-volume/target/large-disk/release/weed-volume.exe weed-volume-large-disk.exe
           7z a weed-volume_large_disk_windows_amd64.zip weed-volume-large-disk.exe
           rm weed-volume-large-disk.exe
 
-          cp seaweed-volume/target/release/weed-volume.exe weed-volume-normal.exe
+          cp seaweed-volume/target/normal/release/weed-volume.exe weed-volume-normal.exe
           7z a weed-volume_windows_amd64.zip weed-volume-normal.exe
           rm weed-volume-normal.exe
+
+      - name: Generate md5 checksums
+        shell: bash
+        run: |
+          for f in weed-volume_large_disk_windows_amd64.zip weed-volume_windows_amd64.zip; do
+            md5sum "$f" > "$f.md5"
+          done
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -239,7 +266,9 @@ jobs:
         with:
           files: |
             weed-volume_large_disk_windows_amd64.zip
+            weed-volume_large_disk_windows_amd64.zip.md5
             weed-volume_windows_amd64.zip
+            weed-volume_windows_amd64.zip.md5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -250,4 +279,6 @@ jobs:
           name: rust-volume-windows_amd64
           path: |
             weed-volume_large_disk_windows_amd64.zip
+            weed-volume_large_disk_windows_amd64.zip.md5
             weed-volume_windows_amd64.zip
+            weed-volume_windows_amd64.zip.md5

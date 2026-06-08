@@ -58,6 +58,11 @@ func TestValidateV2AuthHeader(t *testing.T) {
 			expectedError: s3err.ErrSignatureVersionNotSupported,
 		},
 		{
+			name:          "algorithm prefix without space",
+			authHeader:    "AWSXAKIAIOSFODNN7EXAMPLE:signature",
+			expectedError: s3err.ErrSignatureVersionNotSupported,
+		},
+		{
 			name:          "missing colon separator",
 			authHeader:    "AWS AKIAIOSFODNN7EXAMPLE",
 			expectedError: s3err.ErrMissingFields,
@@ -232,7 +237,7 @@ func TestDoesSignV2Match(t *testing.T) {
 			query:         "",
 			headers:       map[string]string{"Date": "Mon, 09 Sep 2011 23:36:00 GMT"},
 			authOverride:  "AWSAKIAIOSFODNN7EXAMPLE:signature==",
-			expectedError: s3err.ErrInvalidAccessKeyID,
+			expectedError: s3err.ErrSignatureVersionNotSupported,
 			expectIdent:   false,
 		},
 	}

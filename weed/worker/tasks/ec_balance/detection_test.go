@@ -2,6 +2,7 @@ package ec_balance
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -47,6 +48,51 @@ func TestBuildBalancerTopology(t *testing.T) {
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{ImbalanceThreshold: 0.01})
 	if len(moves) == 0 {
 		t.Error("expected cross-rack moves for an all-on-one-rack volume")
+	}
+}
+
+// TestBuildBalancerTopologyGroupsByHost: two volume servers on host 10.0.0.1
+// (different ports) plus three other hosts, a 10+4 volume concentrated on the
+// 10.0.0.1 machine. Four machines is enough to spread within parity, so after
+// planning the 10.0.0.1 machine must hold <=4 shards of the volume -- which only
+// holds if its two ports are grouped into one machine (host wired into the build).
+func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
+	mkNode := func(id string, bits uint32) *master_pb.DataNodeInfo {
+		di := &master_pb.DiskInfo{Type: "", MaxVolumeCount: 100}
+		if bits != 0 {
+			di.EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: bits}}
+		}
+		return &master_pb.DataNodeInfo{Id: id, DiskInfos: map[string]*master_pb.DiskInfo{"": di}}
+	}
+	topoInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+				mkNode("10.0.0.1:8080", 0x007F), // shards 0-6 on host 10.0.0.1
+				mkNode("10.0.0.1:8081", 0x3F80), // shards 7-13 on host 10.0.0.1
+				mkNode("10.0.0.2:8080", 0),
+				mkNode("10.0.0.3:8080", 0),
+				mkNode("10.0.0.4:8080", 0),
+			}}},
+		}},
+	}
+
+	topo, _ := buildBalancerTopology(topoInfo, NewDefaultConfig())
+	moves := ecbalancer.Plan(topo, ecbalancer.Options{ImbalanceThreshold: 0.01})
+
+	host := func(nodeID string) string { h, _, _ := net.SplitHostPort(nodeID); return h }
+	count := map[string]int{"10.0.0.1": 14}
+	for _, m := range moves {
+		if m.VolumeID != 100 {
+			continue
+		}
+		count[host(m.SourceNode)]--
+		if m.SourceNode != m.TargetNode { // non-dedup move
+			count[host(m.TargetNode)]++
+		}
+	}
+	if count["10.0.0.1"] > 4 {
+		t.Errorf("machine 10.0.0.1 holds %d shards of the volume after balancing, want <=4 (host grouping not applied)", count["10.0.0.1"])
 	}
 }
 

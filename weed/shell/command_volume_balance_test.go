@@ -227,6 +227,41 @@ func TestIsGoodMove(t *testing.T) {
 			targetLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn4"}},
 			expected:       false,
 		},
+
+		{
+			// rep 001 allows two copies in one rack; replica-placement alone would
+			// permit this, but the target shares a host with another replica, so the
+			// machine anti-affinity must reject it.
+			name:        "test 001 reject move onto a machine already holding a replica",
+			replication: "001",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.1:8080"}},
+				},
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.2:8080"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.2:8080"}},
+			targetLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.1:8081"}},
+			expected:       false,
+		},
+
+		{
+			name:        "test 001 allow move onto a different machine in the rack",
+			replication: "001",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.1:8080"}},
+				},
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.2:8080"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.2:8080"}},
+			targetLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.3:8080"}},
+			expected:       true,
+		},
 	}
 
 	for _, tt := range tests {
