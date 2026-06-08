@@ -240,8 +240,11 @@ func (ev *EcVolume) Close() {
 	}
 	if ev.ecxFile != nil {
 		_ = ev.ecxFile.Sync()
+		// Do NOT nil ecxFile: LocateEcShardNeedle reads it without the
+		// ecVolumesLock after the resolving lookup released it, so a concurrent
+		// eviction that nils the field would race that read. A closed-but-set fd
+		// yields a clean read error (recovered from parity) and no data race.
 		_ = ev.ecxFile.Close()
-		ev.ecxFile = nil
 	}
 }
 
