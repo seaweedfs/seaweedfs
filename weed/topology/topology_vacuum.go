@@ -240,6 +240,9 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 					vid := needle.VolumeId(volumeId)
 					volumeLayout.accessLock.RLock()
 					locationList, ok := volumeLayout.vid2location[vid]
+					if ok {
+						locationList = locationList.Copy()
+					}
 					volumeLayout.accessLock.RUnlock()
 					if ok {
 						t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate, false)
