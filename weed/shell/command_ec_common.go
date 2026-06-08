@@ -536,6 +536,30 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 }
 
+// unmountAndDeleteEcShardsQuiet unmounts then deletes shards on one server in a
+// single connection, without the per-call logging the interactive helpers emit.
+// Used by the orphan sweep, which fans out to every node x volume and would
+// otherwise flood the shell with no-op lines.
+func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, location pb.ServerAddress, shardIds []erasure_coding.ShardId) error {
+	ids := erasure_coding.ShardIdsToUint32(shardIds)
+	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		if _, err := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
+			VolumeId: uint32(volumeId),
+			ShardIds: ids,
+		}); err != nil {
+			return fmt.Errorf("unmount: %w", err)
+		}
+		if _, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:   uint32(volumeId),
+			Collection: collection,
+			ShardIds:   ids,
+		}); err != nil {
+			return fmt.Errorf("delete: %w", err)
+		}
+		return nil
+	})
+}
+
 func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeUnmountedShardIds []erasure_coding.ShardId) error {
 
 	fmt.Printf("unmount %d.%v from %s\n", volumeId, toBeUnmountedShardIds, sourceLocation)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -236,6 +237,12 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		return fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
 	}
 
+	// Clear EC shards left by a previous failed/partial encode so a retry
+	// starts clean and never mixes two encode runs.
+	if err := clearPreexistingEcShards(commandEnv, topologyInfo, volumeIds, volumeIdToCollection, maxParallelization); err != nil {
+		return fmt.Errorf("clear pre-existing ec shards before encoding: %w", err)
+	}
+
 	// Build a map of (volumeId, serverAddress) -> freeVolumeCount.
 	// Key by dn.Address so it matches wdclient.Location.Url. In deployments
 	// where dn.Id is a short name (e.g. Kubernetes StatefulSet pod name)
@@ -338,6 +345,73 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	}
 
 	return nil
+}
+
+// clearPreexistingEcShards removes EC shards and index files left over from a
+// previous (failed or partial) encode of the given volume ids, on every node
+// that still reports them, so a fresh encode regenerates from a clean slate.
+// Scans all disk types. The normal .dat/.idx — the source of truth for this
+// encode — is untouched; only orphaned EC artifacts are deleted.
+func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, volumeIdToCollection map[needle.VolumeId]string, maxParallelization int) error {
+	wanted := make(map[uint32]bool, len(volumeIds))
+	for _, vid := range volumeIds {
+		wanted[uint32(vid)] = true
+	}
+
+	// Note which (node, vid) pairs the topology already reports EC shards for:
+	// those are mounted leftovers and cleaning them is required (fatal on
+	// error). Every other (node, vid) is swept best-effort to catch UNMOUNTED
+	// orphans left by a failed copy — invisible to the heartbeat, so absent
+	// here. A node that is down or holds nothing is a harmless no-op; a node
+	// unreachable now also cannot receive this encode's new generation, so a
+	// surviving orphan there keeps its old identity and the read guard rejects
+	// it. Always delete the full shard-id range so a wider custom ratio's
+	// leftovers are covered too.
+	reportedKey := func(addr pb.ServerAddress, vid uint32) string {
+		return string(addr) + "\x00" + strconv.Itoa(int(vid))
+	}
+	reported := make(map[string]struct{})
+	var nodes []pb.ServerAddress
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		addr := pb.NewServerAddressFromDataNode(dn)
+		nodes = append(nodes, addr)
+		for _, diskInfo := range dn.DiskInfos {
+			for _, ecInfo := range diskInfo.EcShardInfos {
+				if wanted[ecInfo.Id] {
+					reported[reportedKey(addr, ecInfo.Id)] = struct{}{}
+				}
+			}
+		}
+	})
+
+	allShardIds := make([]erasure_coding.ShardId, erasure_coding.MaxShardCount)
+	for i := range allShardIds {
+		allShardIds[i] = erasure_coding.ShardId(i)
+	}
+
+	if len(reported) > 0 {
+		fmt.Printf("clearing stale EC shards reported for %d (node,volume) pair(s) before regenerating...\n", len(reported))
+	}
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, addr := range nodes {
+		for _, vid := range volumeIds {
+			fatal := false
+			if _, ok := reported[reportedKey(addr, uint32(vid))]; ok {
+				fatal = true
+			}
+			collection := volumeIdToCollection[vid]
+			ewg.Add(func() error {
+				if err := unmountAndDeleteEcShardsQuiet(commandEnv.option.GrpcDialOption, collection, vid, addr, allShardIds); err != nil {
+					if fatal {
+						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
+					}
+					glog.V(1).Infof("orphan sweep: volume %d on %s: %v", vid, addr, err)
+				}
+				return nil
+			})
+		}
+	}
+	return ewg.Wait()
 }
 
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
