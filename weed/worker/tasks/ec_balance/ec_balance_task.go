@@ -194,7 +194,10 @@ func (t *ECBalanceTask) unmountShard(ctx context.Context, volumeID uint32, addr 
 // shardIDs for volumeID, so the caller can safely delete the source copies.
 func (t *ECBalanceTask) verifyShardsOnDestination(ctx context.Context, volumeID uint32, targetAddr pb.ServerAddress, shardIDs []uint32) error {
 	_, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, volumeID, []string{string(targetAddr)}, t.grpcDialOption)
-	inv := perServer[string(targetAddr)]
+	inv, ok := perServer[string(targetAddr)]
+	if !ok {
+		return fmt.Errorf("verify shard(s) on destination %s for volume %d: no inventory returned", targetAddr, volumeID)
+	}
 	if inv.QueryError != nil {
 		return fmt.Errorf("verify shard(s) on destination %s for volume %d: %v", targetAddr, volumeID, inv.QueryError)
 	}
