@@ -786,6 +786,16 @@ func TestValidateDefaultRetention(t *testing.T) {
 			expectError: true,
 			errorMsg:    "default retention must specify either Days or Years",
 		},
+		{
+			name: "Zero years",
+			retention: &DefaultRetention{
+				Mode:     "GOVERNANCE",
+				Years:    0,
+				YearsSet: true,
+			},
+			expectError: true,
+			errorMsg:    "invalid retention period specified",
+		},
 	}
 
 	for _, tt := range tests {
