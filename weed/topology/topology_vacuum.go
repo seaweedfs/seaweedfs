@@ -242,7 +242,7 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 					locationList, ok := volumeLayout.vid2location[vid]
 					volumeLayout.accessLock.RUnlock()
 					if ok {
-						t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
+						t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate, false)
 					}
 				} else {
 					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, maxParallelVacuumPerServer, preallocate, automatic)
@@ -311,7 +311,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			wg.Add(1)
 			executor.Execute(func() {
 				defer wg.Done()
-				t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
+				t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate, true)
 				// credit the quota
 				for _, dn := range locationList.list {
 					limiterLock.Lock()
@@ -336,14 +336,20 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 
 }
 
-func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64) {
+// skipReadOnly is set by the background scan and all-volumes sweep, where a
+// read-only flag usually means an unhealthy disk. An explicit volumeId clears
+// it so a benignly read-only (full/oversized) volume can be reclaimed.
+func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64, skipReadOnly bool) {
 	volumeLayout.accessLock.RLock()
 	isReadOnly := volumeLayout.readonlyVolumes.IsTrue(vid)
 	isEnoughCopies := volumeLayout.enoughCopies(vid)
 	volumeLayout.accessLock.RUnlock()
 
 	if isReadOnly {
-		return
+		if skipReadOnly {
+			return
+		}
+		glog.V(0).Infof("vacuuming read-only volume %d on explicit request", vid)
 	}
 	if !isEnoughCopies {
 		glog.Warningf("skip vacuuming: not enough copies for volume:%d", vid)
