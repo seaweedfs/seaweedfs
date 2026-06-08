@@ -52,9 +52,13 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 	}
 
 	var terminal []string
+	var restored []*MaintenanceTask
 	mq.mutex.Lock()
 	requeued := 0
 	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
 		switch task.Status {
 		case TaskStatusPending, TaskStatusAssigned, TaskStatusInProgress:
 			task.Status = TaskStatusPending
@@ -62,6 +66,7 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 			task.Progress = 0
 			mq.tasks[task.ID] = task
 			mq.pendingTasks = append(mq.pendingTasks, task)
+			restored = append(restored, snapshotTask(task))
 			requeued++
 		default:
 			terminal = append(terminal, task.ID)
@@ -74,6 +79,15 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
 	})
 	mq.mutex.Unlock()
+
+	// ActiveTopology is in-memory and starts empty, so restored tasks must be
+	// re-synced or GetNextTask's AssignTask would reject them as unknown and
+	// they'd sit pending forever. Done outside the lock, like the retry path.
+	if mq.integration != nil {
+		for _, task := range restored {
+			mq.integration.SyncTask(task)
+		}
+	}
 
 	// Delete stale terminal files outside the lock to avoid blocking on disk I/O.
 	for _, id := range terminal {
