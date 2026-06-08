@@ -1,14 +1,19 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"mime"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // ClusterHandlers contains all the HTTP handlers for cluster management
@@ -85,6 +90,30 @@ func (h *ClusterHandlers) ShowClusterVolumes(w http.ResponseWriter, r *http.Requ
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
+	}
+}
+
+// ExportClusterVolumes streams the full-cluster volume list as a downloadable
+// JSON report: every volume and EC shard across the topology, with more fields
+// than the paginated table (a superset of the volume.list shell command).
+func (h *ClusterHandlers) ExportClusterVolumes(w http.ResponseWriter, r *http.Request) {
+	collection := r.URL.Query().Get("collection") // Optional collection filter
+
+	export, err := h.adminServer.ExportClusterVolumeList(r.Context(), collection, time.Now().UTC())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to export volume list: "+err.Error())
+		return
+	}
+
+	filename := fmt.Sprintf("seaweedfs-volumes-%s.json", export.GeneratedAt.Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(export); err != nil {
+		// The response is already streaming, so we can only log a late failure.
+		glog.Errorf("export volume list: encode failed: %v", err)
 	}
 }
 
