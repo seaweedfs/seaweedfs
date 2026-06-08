@@ -720,6 +720,31 @@ func loadOrCreateMiniHexSecret(path string, nBytes int) string {
 	return s
 }
 
+// ensureMiniVolumeGrowthDefaults keeps a small mini cluster usable with many
+// S3 buckets. Mini auto-sizes its data disk into a handful of large (up to
+// 1 GiB) volume slots, but the master pre-grows copy_1 (default 7) volumes for
+// every new collection. Under a filer group each bucket is its own collection,
+// so the first couple of buckets' writes claim every slot and later buckets
+// can no longer grow a volume — their PutObjects fail with
+// "assign volume: ... no free volumes". Grow one volume at a time so the slots
+// stretch across many collections. Anything the operator already set via
+// master.toml or a WEED_ env var wins.
+func ensureMiniVolumeGrowthDefaults() {
+	v := util.GetViper()
+	for _, key := range []string{
+		"master.volume_growth.copy_1",
+		"master.volume_growth.copy_2",
+		"master.volume_growth.copy_3",
+		"master.volume_growth.copy_other",
+	} {
+		envKey := "WEED_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		if v.IsSet(key) || os.Getenv(envKey) != "" {
+			continue
+		}
+		v.Set(key, 1)
+	}
+}
+
 // isPortOpenOnIP checks if a port is available for binding on a specific IP address
 func isPortOpenOnIP(ip string, port int) bool {
 	if port <= 0 || port > 65535 {
@@ -1140,6 +1165,8 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadConfiguration("master", false)
 	util.LoadConfiguration("volume", false)
 	miniOptions.v.applyDiskIOProbeConfig()
+
+	ensureMiniVolumeGrowthDefaults()
 
 	// applyConfigFileOptions above may have overwritten -dir from the
 	// mini.options file, so re-resolve it here alongside the other paths.
