@@ -252,31 +252,39 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {
-	diskId, ecShard, found := s.findEcShard(vid, shardId)
-	if !found {
-		return nil
+	// Walk every disk: a split-disk reconciled volume can mount the same vid on
+	// more than one disk, so a first-match unmount would leave a sibling copy
+	// mounted and heartbeating. Emit one deletion delta per disk.
+	unmountedAny := false
+	var lastErr error
+	for diskId, location := range s.Locations {
+		ecShard, found := location.FindEcShard(vid, shardId)
+		if !found {
+			continue
+		}
+		if deleted := location.UnloadEcShard(vid, shardId); deleted {
+			si := erasure_coding.NewShardsInfo()
+			si.Set(erasure_coding.NewShardInfo(shardId, 0))
+			s.DeletedEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+				Id:          uint32(vid),
+				Collection:  ecShard.Collection,
+				EcIndexBits: si.Bitmap(),
+				ShardSizes:  si.SizesInt64(),
+				DiskType:    string(ecShard.DiskType),
+				DiskId:      uint32(diskId),
+			}
+			glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
+			unmountedAny = true
+		} else {
+			lastErr = fmt.Errorf("UnmountEcShards %d.%d not found on disk %d", vid, shardId, diskId)
+		}
 	}
 
-	si := erasure_coding.NewShardsInfo()
-	si.Set(erasure_coding.NewShardInfo(shardId, 0))
-	message := master_pb.VolumeEcShardInformationMessage{
-		Id:          uint32(vid),
-		Collection:  ecShard.Collection,
-		EcIndexBits: si.Bitmap(),
-		ShardSizes:  si.SizesInt64(),
-		DiskType:    string(ecShard.DiskType),
-		DiskId:      diskId,
+	// nil when no disk held the shard (idempotent re-unmount).
+	if !unmountedAny {
+		return lastErr
 	}
-
-	location := s.Locations[diskId]
-
-	if deleted := location.UnloadEcShard(vid, shardId); deleted {
-		glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
-		s.DeletedEcShardsChan <- message
-		return nil
-	}
-
-	return fmt.Errorf("UnmountEcShards %d.%d not found on disk %d", vid, shardId, diskId)
+	return nil
 }
 
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
