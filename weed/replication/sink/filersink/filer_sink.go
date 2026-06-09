@@ -195,14 +195,13 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtime(entry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
 
 		if err != nil {
 			// Don't swallow size-mismatch: source bytes disagree with source
 			// metadata, so committing would propagate corruption silently.
 			if errors.Is(err, errChunkSizeMismatch) {
-				glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
-				return err
+				return fs.onCorruptChunk(key, entry, err)
 			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return nil
@@ -275,11 +274,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	case updateRepair:
 		glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; re-replicating full source content",
 			key, filer.FileSize(existingEntry), filer.FileSize(newEntry))
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), key, getEntryMtime(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), key, getEntryMtimeNs(newEntry))
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
-				glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
-				return true, err
+				return true, fs.onCorruptChunk(key, newEntry, err)
 			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
@@ -305,11 +303,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, key, getEntryMtime(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, key, getEntryMtimeNs(newEntry))
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
-				glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
-				return true, err
+				return true, fs.onCorruptChunk(key, newEntry, err)
 			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
@@ -365,6 +362,41 @@ func getEntryMtime(entry *filer_pb.Entry) int64 {
 		return 0
 	}
 	return entry.Attributes.Mtime
+}
+
+// getEntryMtimeNs returns the entry's modification time at full nanosecond
+// precision (seconds * 1e9 + the sub-second component). Plain second-grained
+// mtime cannot order versions of a file rewritten several times within the
+// same second (e.g. git's config.lock dance), which is exactly when a stale
+// replayed event needs to be told apart from the live version.
+func getEntryMtimeNs(entry *filer_pb.Entry) int64 {
+	if entry == nil || entry.Attributes == nil {
+		return 0
+	}
+	return entry.Attributes.Mtime*int64(1e9) + int64(entry.Attributes.MtimeNs)
+}
+
+// onCorruptChunk decides what to do when replicating an entry's chunks failed
+// with a permanent size-mismatch (the fetched source bytes disagree with the
+// source metadata, e.g. the chunk reads 0 bytes).
+//
+// If the source already holds a newer version of this entry, the failing event
+// is a stale replay: the chunk it references was overwritten and its needle
+// garbage-collected on the source volume, so it can never be fetched. Skipping
+// is lossless — a later event carries the current chunks, and meta events are
+// full-entry snapshots, so no change is dropped. This is the common case when
+// replaying an old checkpoint over rapid rewrite churn.
+//
+// Otherwise the corruption is in the live version (no newer source entry), so
+// the error is returned: replication halts loudly rather than propagate
+// corruption or silently drop a file that is still current on the source.
+func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error) error {
+	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+		glog.Warningf("skip stale entry %s with superseded corrupt chunk: %v", key, err)
+		return nil
+	}
+	glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
+	return err
 }
 
 // updateAction decides how UpdateEntry should reconcile an incoming source

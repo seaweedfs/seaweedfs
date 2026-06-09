@@ -447,8 +447,14 @@ func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
 	return fmt.Sprintf("http://%s/%s", host, fileId)
 }
 
-func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtime int64) bool {
-	if sourceMtime <= 0 || fs.filerSource == nil {
+// hasSourceNewerVersion reports whether the source filer's current entry for
+// targetPath has moved past sourceMtimeNs (the full-nanosecond mtime of the
+// version being replicated). It is true when the source entry is gone, or when
+// the live source mtime is strictly newer — meaning the version we are
+// replaying is stale. sourceMtimeNs is compared at nanosecond precision so
+// versions written within the same second are still ordered correctly.
+func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int64) bool {
+	if sourceMtimeNs <= 0 || fs.filerSource == nil {
 		return false
 	}
 
@@ -458,8 +464,26 @@ func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtime int64)
 	}
 
 	sourceEntry, err := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
-	if err != nil {
-		glog.V(1).Infof("lookup source entry %s: %v", sourcePath, err)
+	return sourceSupersedes(sourcePath, sourceEntry, err, sourceMtimeNs)
+}
+
+// sourceSupersedes classifies a source lookup result: it reports whether the
+// version being replayed (sourceMtimeNs) is stale relative to the source's
+// current state. It is true when the source entry is gone or strictly newer,
+// and false when the source still holds the same-or-older version or the lookup
+// failed for any reason other than "not found".
+//
+// A missing entry is reported by GetEntry as an error (ErrNotFound), not a nil
+// entry — and may arrive wrapped or as a plain string across gRPC — so both the
+// error and the nil-entry forms are treated as "gone". A genuine lookup failure
+// (network, etc.) returns false so a transient error never skips a live file.
+func sourceSupersedes(sourcePath util.FullPath, sourceEntry *filer_pb.Entry, lookupErr error, sourceMtimeNs int64) bool {
+	if lookupErr != nil {
+		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+			glog.V(1).Infof("source entry %s no longer exists: %v", sourcePath, lookupErr)
+			return true
+		}
+		glog.V(1).Infof("lookup source entry %s: %v", sourcePath, lookupErr)
 		return false
 	}
 	if sourceEntry == nil {
@@ -467,7 +491,7 @@ func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtime int64)
 		return true
 	}
 
-	return sourceEntry.Attributes != nil && sourceEntry.Attributes.Mtime > sourceMtime
+	return getEntryMtimeNs(sourceEntry) > sourceMtimeNs
 }
 
 func (fs *FilerSink) targetPathToSourcePath(targetPath string) (util.FullPath, bool) {
