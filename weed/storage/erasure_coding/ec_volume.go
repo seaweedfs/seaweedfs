@@ -232,12 +232,12 @@ func (ev *EcVolume) Close() {
 	for _, s := range ev.Shards {
 		s.Close()
 	}
+	ev.ecjFileAccessLock.Lock()
 	if ev.ecjFile != nil {
-		ev.ecjFileAccessLock.Lock()
 		_ = ev.ecjFile.Close()
 		ev.ecjFile = nil
-		ev.ecjFileAccessLock.Unlock()
 	}
+	ev.ecjFileAccessLock.Unlock()
 	if ev.ecxFile != nil {
 		_ = ev.ecxFile.Sync()
 		// Do NOT nil ecxFile: LocateEcShardNeedle reads it without the
@@ -252,13 +252,13 @@ func (ev *EcVolume) Close() {
 // This ensures that deletions made via DeleteNeedleFromEcx are visible
 // to other processes/file handles that may read these files.
 func (ev *EcVolume) Sync() {
+	ev.ecjFileAccessLock.Lock()
 	if ev.ecjFile != nil {
-		ev.ecjFileAccessLock.Lock()
 		if err := ev.ecjFile.Sync(); err != nil {
 			glog.Warningf("failed to sync ecj file for volume %d: %v", ev.VolumeId, err)
 		}
-		ev.ecjFileAccessLock.Unlock()
 	}
+	ev.ecjFileAccessLock.Unlock()
 	if ev.ecxFile != nil {
 		if err := ev.ecxFile.Sync(); err != nil {
 			glog.Warningf("failed to sync ecx file for volume %d: %v", ev.VolumeId, err)
