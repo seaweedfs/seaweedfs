@@ -612,22 +612,30 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			if util.IsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is also in the watched directory
 				if filer_pb.IsRename(resp) {
-					// A real move: UpdateEntry cannot move an entry, so create at the new
-					// key first, then delete the old (when deletes are enabled), so a crash
-					// between the two leaves the entry visible rather than lost.
 					newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-					if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
-						return fmt.Errorf("create entry2 : %w", err)
-					}
-					// derive the old key the same way as the new one so the delete
-					// targets the same sink-side normalization the create used. Guard
-					// against the watched root itself moving, where the old key would
-					// resolve to targetPath and recursively delete the whole sink tree.
+					// With deletes enabled a rename relocates the entry. Guard the
+					// watched root itself, whose old key would resolve to the target
+					// root and recursively delete the whole sink tree.
 					if doDeleteFiles && string(sourceOldKey) != sourcePath {
 						oldKey := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
+						if mover, ok := dataSink.(sink.EntryMover); ok {
+							// native atomic move: no re-copy, no descendant gap, no chunk leak.
+							return mover.MoveEntry(oldKey, newKey, message.NewEntry, message.Signatures)
+						}
+						// no native move: create the new entry first, then delete the
+						// old, so a crash between the two leaves the entry visible.
+						if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+							return fmt.Errorf("create entry2 : %w", err)
+						}
 						if err := dataSink.DeleteEntry(oldKey, message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
 							return fmt.Errorf("delete old entry %v: %w", oldKey, err)
 						}
+						return nil
+					}
+					// deletes disabled (backup/incremental) or the watched root moved:
+					// create the new entry and keep the old.
+					if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+						return fmt.Errorf("create entry2 : %w", err)
 					}
 					return nil
 				}

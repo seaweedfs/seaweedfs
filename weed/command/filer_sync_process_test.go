@@ -58,6 +58,23 @@ func (s *recordingSyncSink) GetSinkToDirectory() string         { return "/dest"
 func (s *recordingSyncSink) SetSourceFiler(*source.FilerSource) {}
 func (s *recordingSyncSink) IsIncremental() bool                { return false }
 
+// movingSyncSink is a recordingSyncSink that also implements sink.EntryMover,
+// modeling a sink (like the filer) with a native atomic move.
+type movingSyncSink struct {
+	*recordingSyncSink
+	moveOldKeys []string
+	moveNewKeys []string
+}
+
+var _ sink.EntryMover = (*movingSyncSink)(nil)
+
+func (s *movingSyncSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+	s.moveOldKeys = append(s.moveOldKeys, oldKey)
+	s.moveNewKeys = append(s.moveNewKeys, newKey)
+	s.ordered = append(s.ordered, "move")
+	return nil
+}
+
 func TestPathIsEqualOrUnderUsesDirectoryBoundaries(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -122,6 +139,57 @@ func TestGenProcessFunctionRenameCreatesThenDeletes(t *testing.T) {
 	}
 	if got, want := dataSink.ordered, []string{"create", "delete"}; !equalSyncStrings(got, want) {
 		t.Fatalf("call order = %v, want create before delete %v", got, want)
+	}
+}
+
+// A sink with a native move relocates a rename via MoveEntry, not create-then-delete.
+func TestGenProcessFunctionRenameUsesMoveEntryWhenSupported(t *testing.T) {
+	dataSink := &movingSyncSink{recordingSyncSink: &recordingSyncSink{}}
+	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, true, false)
+
+	err := processFn(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/foo/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "old.txt"},
+			NewEntry:      &filer_pb.Entry{Name: "new.txt"},
+			NewParentPath: "/foo/dir",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processFn rename via mover: %v", err)
+	}
+
+	if len(dataSink.moveOldKeys) != 1 || dataSink.moveOldKeys[0] != "/dest/dir/old.txt" || dataSink.moveNewKeys[0] != "/dest/dir/new.txt" {
+		t.Fatalf("move old=%v new=%v, want one move /dest/dir/old.txt => /dest/dir/new.txt", dataSink.moveOldKeys, dataSink.moveNewKeys)
+	}
+	if len(dataSink.createKeys) != 0 || len(dataSink.deleteKeys) != 0 || len(dataSink.updateKeys) != 0 {
+		t.Fatalf("native move must not create/delete/update: creates=%v deletes=%v updates=%v", dataSink.createKeys, dataSink.deleteKeys, dataSink.updateKeys)
+	}
+}
+
+// With deletes disabled (backup/incremental), even a mover keeps the old entry:
+// it creates the new one and does not move or delete the old.
+func TestGenProcessFunctionRenameMoverKeepsOldWhenDeletesDisabled(t *testing.T) {
+	dataSink := &movingSyncSink{recordingSyncSink: &recordingSyncSink{}}
+	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, false, false)
+
+	err := processFn(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/foo/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "old.txt"},
+			NewEntry:      &filer_pb.Entry{Name: "new.txt"},
+			NewParentPath: "/foo/dir",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processFn rename (no delete) via mover: %v", err)
+	}
+
+	if len(dataSink.createKeys) != 1 || dataSink.createKeys[0] != "/dest/dir/new.txt" {
+		t.Fatalf("create keys = %v, want [/dest/dir/new.txt]", dataSink.createKeys)
+	}
+	if len(dataSink.moveOldKeys) != 0 || len(dataSink.deleteKeys) != 0 {
+		t.Fatalf("deletes-disabled rename must keep old: moves=%v deletes=%v", dataSink.moveOldKeys, dataSink.deleteKeys)
 	}
 }
 

@@ -112,10 +112,14 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	}
 
 	if oldSinkKey != newSinkKey {
-		// A real move: the path changed. UpdateEntry can only mutate an entry in place
-		// at its existing path; it cannot move it. Create at the new key first, then
-		// delete the old, so a crash between the two leaves the entry visible under
-		// both names rather than gone.
+		// A real move: the path changed. UpdateEntry cannot move an entry.
+		if mover, ok := r.sink.(sink.EntryMover); ok {
+			glog.V(4).Infof("moving %v => %v", oldSinkKey, newSinkKey)
+			return mover.MoveEntry(oldSinkKey, newSinkKey, newEntry, message.Signatures)
+		}
+		// Sinks without a native move: create at the new key first, then delete the
+		// old, so a crash between the two leaves the entry visible under both names
+		// rather than gone.
 		glog.V(4).Infof("creating renamed %v", newSinkKey)
 		if err := r.sink.CreateEntry(newSinkKey, newEntry, message.Signatures); err != nil {
 			return fmt.Errorf("create renamed entry %v: %w", newSinkKey, err)

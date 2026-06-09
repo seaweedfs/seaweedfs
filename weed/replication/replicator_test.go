@@ -77,6 +77,26 @@ func (s *recordingSink) IsIncremental() bool {
 	return s.incremental
 }
 
+type moveCall struct {
+	oldKey string
+	newKey string
+}
+
+// movingSink is a recordingSink that also implements sink.EntryMover, modeling
+// a sink (like the filer) with a native atomic move.
+type movingSink struct {
+	*recordingSink
+	moveCalls []moveCall
+}
+
+var _ sink.EntryMover = (*movingSink)(nil)
+
+func (s *movingSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+	s.moveCalls = append(s.moveCalls, moveCall{oldKey: oldKey, newKey: newKey})
+	s.ordered = append(s.ordered, "move")
+	return nil
+}
+
 func TestReplicateRenameUsesTargetKeyForNonFilerSink(t *testing.T) {
 	s := &recordingSink{name: "local", sinkToDirectory: "/dest"}
 	r := &Replicator{
@@ -120,9 +140,10 @@ func TestReplicateRenameUsesTargetKeyForNonFilerSink(t *testing.T) {
 // A real move to a filer sink also goes through create-then-delete (the
 // filer-sink special-case that previously routed renames to UpdateEntry is
 // gone): UpdateEntry cannot move an entry across paths.
-func TestReplicateRenameUsesCreateThenDeleteForFilerSink(t *testing.T) {
+// A sink without a native move falls back to create-then-delete for a rename.
+func TestReplicateRenameWithoutMoverUsesCreateThenDelete(t *testing.T) {
 	s := &recordingSink{
-		name:                "filer",
+		name:                "s3",
 		sinkToDirectory:     "/dest",
 		updateFoundExisting: true,
 	}
@@ -151,7 +172,7 @@ func TestReplicateRenameUsesCreateThenDeleteForFilerSink(t *testing.T) {
 	}
 
 	if len(s.updateCalls) != 0 {
-		t.Fatalf("expected filer-sink rename to bypass UpdateEntry, got %d calls", len(s.updateCalls))
+		t.Fatalf("expected rename to bypass UpdateEntry, got %d calls", len(s.updateCalls))
 	}
 	if len(s.createCalls) != 1 || s.createCalls[0].key != "/dest/new/renamed.txt" {
 		t.Fatalf("create calls = %+v, want target sink key", s.createCalls)
@@ -161,6 +182,32 @@ func TestReplicateRenameUsesCreateThenDeleteForFilerSink(t *testing.T) {
 	}
 	if got, want := s.ordered, []string{"create", "delete"}; !equalStrings(got, want) {
 		t.Fatalf("call order = %v, want create before delete %v", got, want)
+	}
+}
+
+// A sink with a native move (the filer) relocates a rename via MoveEntry — never
+// create-then-delete, so a failed copy can't delete the only valid destination.
+func TestReplicateRenameUsesMoveEntryWhenSupported(t *testing.T) {
+	s := &movingSink{recordingSink: &recordingSink{name: "filer", sinkToDirectory: "/dest"}}
+	r := &Replicator{
+		sink:   s,
+		source: &source.FilerSource{Dir: "/source"},
+	}
+
+	err := r.Replicate(context.Background(), "/source/old/file.txt", &filer_pb.EventNotification{
+		OldEntry:      &filer_pb.Entry{Name: "file.txt"},
+		NewEntry:      &filer_pb.Entry{Name: "renamed.txt"},
+		NewParentPath: "/source/new",
+	})
+	if err != nil {
+		t.Fatalf("Replicate rename: %v", err)
+	}
+
+	if len(s.moveCalls) != 1 || s.moveCalls[0].oldKey != "/dest/old/file.txt" || s.moveCalls[0].newKey != "/dest/new/renamed.txt" {
+		t.Fatalf("move calls = %+v, want one move /dest/old/file.txt => /dest/new/renamed.txt", s.moveCalls)
+	}
+	if len(s.createCalls) != 0 || len(s.deleteCalls) != 0 || len(s.updateCalls) != 0 {
+		t.Fatalf("native move must not create/delete/update: creates=%v deletes=%v updates=%v", s.createCalls, s.deleteCalls, s.updateCalls)
 	}
 }
 
