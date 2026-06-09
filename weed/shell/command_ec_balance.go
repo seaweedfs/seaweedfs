@@ -75,5 +75,5 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	diskType := types.ToDiskType(*diskTypeStr)
 
-	return EcBalance(commandEnv, collections, *dc, rp, diskType, *maxParallelization, *applyBalancing)
+	return EcBalance(commandEnv, collections, *dc, rp, diskType, *maxParallelization, *applyBalancing, nil)
 }

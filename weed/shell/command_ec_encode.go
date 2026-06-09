@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -197,11 +198,13 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// encode all requested volumes...
-	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization, topologyInfo); err != nil {
+	skippedNodes, err := doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization, topologyInfo)
+	if err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
-	// ...re-balance ec shards...
-	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing); err != nil {
+	// ...re-balance ec shards, excluding nodes the orphan sweep could not reach so
+	// a recovered node's stale orphan is never paired with a new-generation shard...
+	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing, skippedNodes); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
 	// A partial encode followed by source deletion is unrecoverable.
@@ -231,19 +234,23 @@ func volumeLocations(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[n
 	return res, nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int, topologyInfo *master_pb.TopologyInfo) error {
+func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int, topologyInfo *master_pb.TopologyInfo) (skippedNodes map[pb.ServerAddress]struct{}, err error) {
 	if !commandEnv.isLocked() {
-		return fmt.Errorf("lock is lost")
+		return nil, fmt.Errorf("lock is lost")
 	}
 	locations, err := volumeLocations(commandEnv, volumeIds)
 	if err != nil {
-		return fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
+		return nil, fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
 	}
 
 	// Clear EC shards left by a previous failed/partial encode so a retry
-	// starts clean and never mixes two encode runs.
-	if err := clearPreexistingEcShards(commandEnv, topologyInfo, volumeIds, volumeIdToCollection, maxParallelization); err != nil {
-		return fmt.Errorf("clear pre-existing ec shards before encoding: %w", err)
+	// starts clean and never mixes two encode runs. A node skipped here as
+	// unreachable is excluded from the later balance: it may still hold a stale
+	// orphan that, paired with a new-generation shard from a balance copy, would
+	// mix generations on that node.
+	skippedNodes, err = clearPreexistingEcShards(commandEnv, topologyInfo, volumeIds, volumeIdToCollection, maxParallelization)
+	if err != nil {
+		return nil, fmt.Errorf("clear pre-existing ec shards before encoding: %w", err)
 	}
 
 	// Build a map of (volumeId, serverAddress) -> freeVolumeCount.
@@ -277,7 +284,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 			}
 		}
 		if len(filteredLocs) == 0 {
-			return fmt.Errorf("no healthy replicas (FreeVolumeCount >= 2) found for volume %d to use as source for EC encoding", vid)
+			return nil, fmt.Errorf("no healthy replicas (FreeVolumeCount >= 2) found for volume %d to use as source for EC encoding", vid)
 		}
 		filteredLocations[vid] = filteredLocs
 	}
@@ -295,7 +302,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		}
 	}
 	if err := ewg.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Sync replicas and select the best one for each volume (with highest file count)
@@ -308,7 +315,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		// Sync missing entries between replicas, then select the best one
 		bestLoc, selectErr := volume_replica.SyncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
 		if selectErr != nil {
-			return fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
+			return nil, fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
 		}
 		bestReplicas[vid] = bestLoc
 	}
@@ -326,7 +333,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		})
 	}
 	if err := ewg.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// mount all ec shards for the converted volume
@@ -344,10 +351,10 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		})
 	}
 	if err := ewg.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return skippedNodes, nil
 }
 
 // clearPreexistingEcShards removes EC shards and index files left over from a
@@ -355,7 +362,12 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 // that still reports them, so a fresh encode regenerates from a clean slate.
 // Scans all disk types. The normal .dat/.idx — the source of truth for this
 // encode — is untouched; only orphaned EC artifacts are deleted.
-func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, volumeIdToCollection map[needle.VolumeId]string, maxParallelization int) error {
+//
+// Returns the set of nodes skipped as unreachable. A skipped node may still hold
+// an un-deleted orphan from a prior run; if it recovers it must be kept out of
+// this encode's shard distribution, or the balance could install the new
+// generation alongside the stale orphan and mix generations on one node.
+func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, volumeIdToCollection map[needle.VolumeId]string, maxParallelization int) (skipped map[pb.ServerAddress]struct{}, err error) {
 	wanted := make(map[uint32]bool, len(volumeIds))
 	for _, vid := range volumeIds {
 		wanted[uint32(vid)] = true
@@ -395,6 +407,9 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 	if len(reported) > 0 {
 		fmt.Printf("clearing stale EC shards reported for %d (node,volume) pair(s) before regenerating...\n", len(reported))
 	}
+	// Nodes skipped as unreachable, accumulated across the concurrent sweep tasks.
+	skipped = make(map[pb.ServerAddress]struct{})
+	var skippedMu sync.Mutex
 	ewg := NewErrorWaitGroup(maxParallelization)
 	for _, addr := range nodes {
 		for _, vid := range volumeIds {
@@ -423,12 +438,18 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
 					glog.V(1).Infof("orphan sweep: volume %d on %s skipped (unreachable): %v", vid, addr, err)
+					skippedMu.Lock()
+					skipped[addr] = struct{}{}
+					skippedMu.Unlock()
 				}
 				return nil
 			})
 		}
 	}
-	return ewg.Wait()
+	if err := ewg.Wait(); err != nil {
+		return nil, err
+	}
+	return skipped, nil
 }
 
 // isNodeUnreachable reports whether err means the volume server could not be

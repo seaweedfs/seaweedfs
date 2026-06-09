@@ -794,12 +794,35 @@ type ecBalancer struct {
 	diskType           types.DiskType
 }
 
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool) (err error) {
+// excludeNodes is a set of server addresses kept out of the balance as copy/move
+// targets and sources. ec.encode passes the nodes its orphan sweep could not
+// reach: such a node may still hold a stale-generation shard orphan, and pairing
+// it with a new-generation shard from a balance copy would mix generations on one
+// node. The standalone ec.balance command passes nil.
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}) (err error) {
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc, diskType)
 	if err != nil {
 		return err
 	}
+
+	// Drop excluded nodes (and the slots they contribute) before planning so they
+	// can be neither a target nor a source for any move this balance plans.
+	if len(excludeNodes) > 0 {
+		kept := allEcNodes[:0]
+		var excludedFreeSlots int
+		for _, en := range allEcNodes {
+			if _, skip := excludeNodes[pb.NewServerAddressFromDataNode(en.info)]; skip {
+				excludedFreeSlots += en.freeEcSlot
+				glog.V(0).Infof("EC balance excluding node %s: skipped as unreachable by the encode orphan sweep", en.info.Id)
+				continue
+			}
+			kept = append(kept, en)
+		}
+		allEcNodes = kept
+		totalFreeEcSlots -= excludedFreeSlots
+	}
+
 	if totalFreeEcSlots < 1 {
 		return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
 	}
