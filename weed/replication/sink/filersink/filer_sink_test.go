@@ -13,8 +13,7 @@ func entry(mtime int64, size uint64) *filer_pb.Entry {
 	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime, FileSize: size}}
 }
 
-// entryNs is entry with an explicit sub-second component, used to check that the
-// decision orders versions rewritten within the same second.
+// entryNs adds a sub-second component to check same-second ordering.
 func entryNs(mtime int64, ns int32, size uint64) *filer_pb.Entry {
 	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime, MtimeNs: ns, FileSize: size}}
 }
@@ -42,9 +41,8 @@ func TestGetEntryMtimeNs(t *testing.T) {
 	}
 }
 
-// onCorruptChunk must NOT silently skip an entry unless it can prove the source
-// holds a newer version. With no source filer it cannot confirm supersession,
-// so it must surface the error (refuse) rather than drop a possibly-live file.
+// onCorruptChunk must surface the error, not skip, when it can't confirm
+// supersession (no source filer here) — otherwise it could drop a live file.
 func TestOnCorruptChunkRefusesWhenSupersessionUnconfirmed(t *testing.T) {
 	fs := &FilerSink{} // filerSource nil => hasSourceNewerVersion is always false
 	sentinel := errors.New("corrupt chunk: read 0 bytes, source says 107")
@@ -76,8 +74,7 @@ func TestChooseUpdateAction(t *testing.T) {
 		{"destination newer and complete", entry(300, 100), entry(200, 100), updateSkip},
 		{"destination newer and larger", entry(300, 200), entry(200, 100), updateSkip},
 		{"destination newer but truncated", entry(300, 90), entry(200, 100), updateRepair},
-		// same second: sub-second ordering must still decide which version wins,
-		// otherwise an older same-second replay overwrites the newer destination.
+		// same second: sub-second ordering must still pick the winner
 		{"same second, destination newer and complete", entryNs(5, 200, 100), entryNs(5, 100, 100), updateSkip},
 		{"same second, destination older", entryNs(5, 100, 100), entryNs(5, 200, 100), updateNormal},
 	}

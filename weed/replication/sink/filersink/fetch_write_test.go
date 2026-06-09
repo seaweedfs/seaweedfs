@@ -43,9 +43,7 @@ func TestTargetPathToSourcePath(t *testing.T) {
 			wantOK:     true,
 		},
 		{
-			// incremental sink keys carry a date prefix that cannot be reversed
-			// to a real source path, so the mapping must report unmappable
-			// (otherwise a not-found lookup would skip a live source entry).
+			// incremental keys carry a date prefix that can't be reversed; unmappable
 			name:        "incremental sink is unmappable",
 			targetRoot:  "/target",
 			sourceRoot:  "/source",
@@ -336,9 +334,8 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 	}
 }
 
-// sourceSupersedes is the decision behind skipping a stale replayed event whose
-// chunk can no longer be fetched. The replayed version's mtime is fixed; the
-// table varies what the current source lookup returned.
+// sourceSupersedes decides whether to skip a stale replayed event. The replayed
+// mtime is fixed; the table varies what the source lookup returned.
 func TestSourceSupersedes(t *testing.T) {
 	const eventNs int64 = 5_000_000_500 // the version being replayed (sec 5, ns 500)
 
@@ -352,8 +349,7 @@ func TestSourceSupersedes(t *testing.T) {
 		lookupErr error
 		want      bool
 	}{
-		// deleted on source: GetEntry reports this as ErrNotFound, in several
-		// shapes — all must be read as "gone -> stale -> skip".
+		// deleted on source: ErrNotFound in several shapes, all read as gone -> skip
 		{"not-found sentinel", nil, filer_pb.ErrNotFound, true},
 		{"not-found wrapped", nil, fmt.Errorf("lookup /x: %w", filer_pb.ErrNotFound), true},
 		{"not-found as string (gRPC)", nil, errors.New("rpc error: " + filer_pb.ErrNotFound.Error()), true},

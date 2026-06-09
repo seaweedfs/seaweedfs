@@ -188,8 +188,6 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 					glog.V(3).Infof("skip overwriting %s", key)
 					return nil
 				}
-				// destination is shorter despite a newer mtime: a truncated copy
-				// an earlier failed replication left behind; overwrite from source.
 				glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; overwriting from source",
 					key, filer.FileSize(resp.Entry), filer.FileSize(entry))
 			}
@@ -198,8 +196,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
 
 		if err != nil {
-			// Don't swallow size-mismatch: source bytes disagree with source
-			// metadata, so committing would propagate corruption silently.
+			// don't swallow: committing mismatched bytes would propagate corruption
 			if errors.Is(err, errChunkSizeMismatch) {
 				return fs.onCorruptChunk(key, entry, err)
 			}
@@ -267,8 +264,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	switch chooseUpdateAction(existingEntry, newEntry) {
 	case updateSkip:
-		// a newer, complete version already landed; usually out-of-order messages.
-		// leave the destination untouched — no point rewriting the same entry.
+		// a newer, complete version already landed (out-of-order); leave it
 		glog.V(2).Infof("late updates %s", key)
 		return true, nil
 	case updateRepair:
@@ -357,14 +353,8 @@ func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunc
 	return
 }
 
-// getEntryMtimeNs returns the entry's modification time at full nanosecond
-// precision (seconds * 1e9 + the sub-second component). Plain second-grained
-// mtime cannot order versions of a file rewritten several times within the
-// same second (e.g. git's config.lock dance), which is exactly when a stale
-// replayed event needs to be told apart from the live version.
-//
-// int64 nanoseconds overflow only past ~year 2262 (current ~1.78e9 s * 1e9 ≈
-// 1.78e18, well under the int64 max ~9.2e18), so plain int64 arithmetic is safe.
+// getEntryMtimeNs returns the mtime at full nanosecond precision so versions
+// rewritten within the same second can be ordered. int64 ns is safe until ~2262.
 func getEntryMtimeNs(entry *filer_pb.Entry) int64 {
 	if entry == nil || entry.Attributes == nil {
 		return 0
@@ -372,20 +362,11 @@ func getEntryMtimeNs(entry *filer_pb.Entry) int64 {
 	return entry.Attributes.Mtime*int64(1e9) + int64(entry.Attributes.MtimeNs)
 }
 
-// onCorruptChunk decides what to do when replicating an entry's chunks failed
-// with a permanent size-mismatch (the fetched source bytes disagree with the
-// source metadata, e.g. the chunk reads 0 bytes).
-//
-// If the source already holds a newer version of this entry, the failing event
-// is a stale replay: the chunk it references was overwritten and its needle
-// garbage-collected on the source volume, so it can never be fetched. Skipping
-// is lossless — a later event carries the current chunks, and meta events are
-// full-entry snapshots, so no change is dropped. This is the common case when
-// replaying an old checkpoint over rapid rewrite churn.
-//
-// Otherwise the corruption is in the live version (no newer source entry), so
-// the error is returned: replication halts loudly rather than propagate
-// corruption or silently drop a file that is still current on the source.
+// onCorruptChunk handles a permanent chunk size-mismatch (fetched source bytes
+// disagree with source metadata). If the source already holds a newer version the
+// event is a stale replay whose chunk was overwritten and GC'd — skip it (lossless:
+// meta events are full snapshots, so a later event re-carries the current chunks).
+// Otherwise the live version is corrupt, so return the error and halt loudly.
 func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error) error {
 	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
 		glog.Warningf("skip stale entry %s with superseded corrupt chunk: %v", key, err)
@@ -395,22 +376,17 @@ func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error
 	return err
 }
 
-// updateAction decides how UpdateEntry should reconcile an incoming source
-// version with the destination's current entry.
+// updateAction decides how UpdateEntry reconciles an incoming source version with
+// the destination's current entry.
 type updateAction int
 
 const (
-	// updateNormal applies the incremental source diff: the destination is at
-	// or behind the source version.
+	// updateNormal applies the source diff: destination at or behind the source.
 	updateNormal updateAction = iota
-	// updateSkip leaves the destination untouched because a newer, complete
-	// version already landed out of order (last-writer-wins).
+	// updateSkip leaves the destination untouched: a newer complete version already landed.
 	updateSkip
-	// updateRepair re-replicates the full source content over a destination
-	// that is strictly shorter than the source despite a newer mtime — a
-	// truncated copy an earlier failed replication left behind. Its mtime can
-	// look "newer" (the source preserved an old mtime while the partial copy
-	// was written recently), which would otherwise strand the corruption.
+	// updateRepair re-replicates full source over a destination strictly shorter than
+	// the source despite a newer mtime — a truncated copy from a failed replication.
 	updateRepair
 )
 

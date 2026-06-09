@@ -381,10 +381,8 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 
 const maxTransientBackoff = 2 * time.Minute
 
-// nextTransientBackoff returns the next backoff duration for a transient
-// network failure. It starts at 10s, doubles each time, and caps at 2 minutes
-// so an overloaded destination can recover instead of being hammered every
-// second by the surrounding RetryUntil loop.
+// nextTransientBackoff escalates 10s -> doubling -> 2m cap so an overloaded
+// destination can recover instead of being hammered by the RetryUntil loop.
 func nextTransientBackoff(current time.Duration) time.Duration {
 	if current < 10*time.Second {
 		return 10 * time.Second
@@ -403,12 +401,10 @@ func isEofError(err error) bool {
 	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
-// isRetryableNetworkError reports whether err is a transient network failure
-// worth a backoff-and-retry: an interrupted read (EOF), a timeout (e.g. the
-// destination volume server hitting its idle deadline while reading a large
-// upload body under load), or a reset/broken connection. The volume server
-// returns the timeout as a JSON error string, so match on text in addition to
-// the net.Error interface.
+// isRetryableNetworkError reports whether err is a transient network failure worth
+// a backoff-and-retry: EOF, timeout (e.g. the destination's idle deadline under
+// load), or a reset/broken connection. The volume server returns the timeout as a
+// JSON string, so match on text as well as the net.Error interface.
 func isRetryableNetworkError(err error) bool {
 	if err == nil {
 		return false
@@ -420,8 +416,7 @@ func isRetryableNetworkError(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
-	// lower-case so we also catch capitalized variants from other OSes,
-	// libraries, or custom error wrappers
+	// lower-cased to also catch capitalized variants
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "i/o timeout") ||
 		strings.Contains(msg, "connection reset") ||
@@ -447,12 +442,9 @@ func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
 	return fmt.Sprintf("http://%s/%s", host, fileId)
 }
 
-// hasSourceNewerVersion reports whether the source filer's current entry for
-// targetPath has moved past sourceMtimeNs (the full-nanosecond mtime of the
-// version being replicated). It is true when the source entry is gone, or when
-// the live source mtime is strictly newer — meaning the version we are
-// replaying is stale. sourceMtimeNs is compared at nanosecond precision so
-// versions written within the same second are still ordered correctly.
+// hasSourceNewerVersion reports whether the source's current entry for targetPath
+// has moved past sourceMtimeNs — gone, or a strictly-newer mtime — meaning the
+// version being replayed is stale.
 func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int64) bool {
 	if sourceMtimeNs <= 0 || fs.filerSource == nil {
 		return false
@@ -467,16 +459,11 @@ func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int6
 	return sourceSupersedes(sourcePath, sourceEntry, err, sourceMtimeNs)
 }
 
-// sourceSupersedes classifies a source lookup result: it reports whether the
-// version being replayed (sourceMtimeNs) is stale relative to the source's
-// current state. It is true when the source entry is gone or strictly newer,
-// and false when the source still holds the same-or-older version or the lookup
-// failed for any reason other than "not found".
-//
-// A missing entry is reported by GetEntry as an error (ErrNotFound), not a nil
-// entry — and may arrive wrapped or as a plain string across gRPC — so both the
-// error and the nil-entry forms are treated as "gone". A genuine lookup failure
-// (network, etc.) returns false so a transient error never skips a live file.
+// sourceSupersedes reports whether the replayed version (sourceMtimeNs) is stale:
+// true if the source entry is gone or strictly newer, false on a same/older version
+// or any non-"not found" lookup error (so a transient failure never skips a live
+// file). GetEntry signals missing as ErrNotFound — possibly wrapped or a plain gRPC
+// string, occasionally a nil entry — all treated as gone.
 func sourceSupersedes(sourcePath util.FullPath, sourceEntry *filer_pb.Entry, lookupErr error, sourceMtimeNs int64) bool {
 	if lookupErr != nil {
 		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
@@ -499,11 +486,9 @@ func (fs *FilerSink) targetPathToSourcePath(targetPath string) (util.FullPath, b
 		return "", false
 	}
 
-	// In incremental mode the sink key carries a date prefix
-	// (sinkDir/YYYY-MM-DD/relPath) that cannot be reversed to a real source path.
-	// Report "unmappable" instead of returning a path under a nonexistent dated
-	// directory — that would look ErrNotFound and wrongly classify a live source
-	// entry as deleted, skipping it.
+	// Incremental sink keys carry a date prefix (sinkDir/YYYY-MM-DD/relPath) that
+	// can't be reversed to a source path; report unmappable rather than build a path
+	// under a nonexistent dated dir, which would read as ErrNotFound and skip a live entry.
 	if fs.isIncremental {
 		return "", false
 	}
