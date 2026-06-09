@@ -3605,6 +3605,7 @@ type VolumeEcShardsDeleteRequest struct {
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	FullTeardown  bool                   `protobuf:"varint,4,opt,name=full_teardown,json=fullTeardown,proto3" json:"full_teardown,omitempty"` // pre-encode cleanup: wipe every EC artifact + generation for this volume, not just shard_ids
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3658,6 +3659,13 @@ func (x *VolumeEcShardsDeleteRequest) GetShardIds() []uint32 {
 		return x.ShardIds
 	}
 	return nil
+}
+
+func (x *VolumeEcShardsDeleteRequest) GetFullTeardown() bool {
+	if x != nil {
+		return x.FullTeardown
+	}
+	return false
 }
 
 type VolumeEcShardsDeleteResponse struct {
@@ -7244,13 +7252,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rcopy_vif_file\x18\a \x01(\bR\vcopyVifFile\x12\x17\n" +
 	"\adisk_id\x18\b \x01(\rR\x06diskId\x12&\n" +
 	"\x0fcopy_ecsum_file\x18\t \x01(\bR\rcopyEcsumFile\"\x1c\n" +
-	"\x1aVolumeEcShardsCopyResponse\"w\n" +
+	"\x1aVolumeEcShardsCopyResponse\"\x9c\x01\n" +
 	"\x1bVolumeEcShardsDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1e\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12#\n" +
+	"\rfull_teardown\x18\x04 \x01(\bR\ffullTeardown\"\x1e\n" +
 	"\x1cVolumeEcShardsDeleteResponse\"\xa0\x01\n" +
 	"\x1aVolumeEcShardsMountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +

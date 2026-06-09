@@ -417,6 +417,23 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
+	if req.FullTeardown {
+		// Pre-encode cleanup: evict the volume and wipe every EC artifact for it on
+		// every disk (the same teardown the generator does locally), not just the
+		// listed shards, so a remote node retains no stale generation that a fresh
+		// gen-0 copy would later collide with.
+		glog.V(0).Infof("ec volume %s full teardown", bName)
+		vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+		for _, location := range vs.store.Locations {
+			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
+				return nil, fmt.Errorf("full teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
+			}
+		}
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	}
+
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
 	for diskId, location := range vs.store.Locations {

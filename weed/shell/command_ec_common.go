@@ -550,9 +550,10 @@ func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection st
 			return fmt.Errorf("unmount: %w", err)
 		}
 		if _, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
-			VolumeId:   uint32(volumeId),
-			Collection: collection,
-			ShardIds:   ids,
+			VolumeId:     uint32(volumeId),
+			Collection:   collection,
+			ShardIds:     ids,
+			FullTeardown: true,
 		}); err != nil {
 			return fmt.Errorf("delete: %w", err)
 		}

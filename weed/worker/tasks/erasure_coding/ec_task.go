@@ -978,9 +978,10 @@ func unmountAndDeleteEcShards(
 				return fmt.Errorf("unmount: %w", err)
 			}
 			if _, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-				VolumeId:   volumeID,
-				Collection: collection,
-				ShardIds:   shardIds,
+				VolumeId:     volumeID,
+				Collection:   collection,
+				ShardIds:     shardIds,
+				FullTeardown: true,
 			}); err != nil {
 				return fmt.Errorf("delete: %w", err)
 			}
