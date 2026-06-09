@@ -108,7 +108,9 @@ func TestDeleteTreatsNoContentAsSuccess(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
-			t.Fatalf("expected DELETE, got %s", r.Method)
+			t.Errorf("expected DELETE, got %s", r.Method)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
