@@ -486,6 +486,7 @@ message VolumeEcShardReadRequest {
 message VolumeEcShardReadResponse {
     bytes data = 1;
     bool is_deleted = 2;
+    int64 encode_ts_ns = 3; // identity of the shard actually served; client rejects a mismatch (0 = pre-upgrade server)
 }
 
 message VolumeEcBlobDeleteRequest {

@@ -590,6 +590,12 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 			if receiveErr != nil {
 				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, receiveErr)
 			}
+			// Validate the served shard's identity client-side, so the guard holds
+			// even against a pre-upgrade server that ignored the request field (it
+			// returns 0). A mismatch fails the read; the caller recovers from parity.
+			if expectedEncodeTsNs != 0 && resp.EncodeTsNs != expectedEncodeTsNs {
+				return fmt.Errorf("ec shard %d.%d from %s belongs to a different encode run (want %d, got %d)", vid, shardId, sourceDataNode, expectedEncodeTsNs, resp.EncodeTsNs)
+			}
 			if resp.IsDeleted {
 				is_deleted = true
 			}

@@ -686,7 +686,8 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		_, size, _ := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
 		if size.IsDeleted() {
 			return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
-				IsDeleted: true,
+				IsDeleted:  true,
+				EncodeTsNs: ecVolume.EncodeTsNs,
 			})
 		}
 	}
@@ -714,7 +715,8 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 				bytesread = int(bytesToRead)
 			}
 			err = stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
-				Data: buffer[:bytesread],
+				Data:       buffer[:bytesread],
+				EncodeTsNs: ecVolume.EncodeTsNs,
 			})
 			if err != nil {
 				// println("sending", bytesread, "bytes err", err.Error())

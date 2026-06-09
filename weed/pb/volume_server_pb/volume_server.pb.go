@@ -3992,6 +3992,7 @@ type VolumeEcShardReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	IsDeleted     bool                   `protobuf:"varint,2,opt,name=is_deleted,json=isDeleted,proto3" json:"is_deleted,omitempty"`
+	EncodeTsNs    int64                  `protobuf:"varint,3,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"` // identity of the shard actually served; client rejects a mismatch (0 = pre-upgrade server)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4038,6 +4039,13 @@ func (x *VolumeEcShardReadResponse) GetIsDeleted() bool {
 		return x.IsDeleted
 	}
 	return false
+}
+
+func (x *VolumeEcShardReadResponse) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
+	}
+	return 0
 }
 
 type VolumeEcBlobDeleteRequest struct {
@@ -7289,11 +7297,13 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x19\n" +
 	"\bfile_key\x18\x05 \x01(\x04R\afileKey\x12 \n" +
 	"\fencode_ts_ns\x18\a \x01(\x03R\n" +
-	"encodeTsNsJ\x04\b\x06\x10\a\"N\n" +
+	"encodeTsNsJ\x04\b\x06\x10\a\"p\n" +
 	"\x19VolumeEcShardReadResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
-	"is_deleted\x18\x02 \x01(\bR\tisDeleted\"\x8d\x01\n" +
+	"is_deleted\x18\x02 \x01(\bR\tisDeleted\x12 \n" +
+	"\fencode_ts_ns\x18\x03 \x01(\x03R\n" +
+	"encodeTsNs\"\x8d\x01\n" +
 	"\x19VolumeEcBlobDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
