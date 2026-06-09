@@ -219,6 +219,9 @@ func (fs *FilerSink) entryMissing(key string) (bool, error) {
 		if lookupErr == nil {
 			return nil
 		}
+		// The string check is a deliberate compatibility fallback: a cross-cluster
+		// gRPC error often arrives as a plain status string that no longer wraps the
+		// filer_pb.ErrNotFound sentinel, so errors.Is alone would miss it.
 		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
 			missing = true
 			return nil
