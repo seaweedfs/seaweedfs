@@ -340,10 +340,19 @@ impl DiskLocation {
         self.remove_ec_volume_files(collection, vid);
         let base = volume_file_name(&self.directory, collection, vid);
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
-        if !std::path::Path::new(&format!("{}.idx", idx_base)).exists() {
+        // try_exists, not exists(): a stat error on a PRESENT .idx must not read as
+        // "shard-only" and delete a live source volume's .vif. Only Ok(false) (genuine
+        // NotFound) clears it; on a stat error stay conservative and keep the sidecar.
+        if matches!(
+            std::path::Path::new(&format!("{}.idx", idx_base)).try_exists(),
+            Ok(false)
+        ) {
             let _ = fs::remove_file(format!("{}.vif", idx_base));
             if self.idx_directory != self.directory
-                && !std::path::Path::new(&format!("{}.idx", base)).exists()
+                && matches!(
+                    std::path::Path::new(&format!("{}.idx", base)).try_exists(),
+                    Ok(false)
+                )
             {
                 let _ = fs::remove_file(format!("{}.vif", base));
             }
