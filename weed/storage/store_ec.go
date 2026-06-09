@@ -609,6 +609,16 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 		return 0, is_deleted, fmt.Errorf("read ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, err)
 	}
 
+	// A non-deleted interval must arrive whole: the server stamps EncodeTsNs only
+	// on chunks that carry bytes, so a short or empty stream (e.g. immediate EOF
+	// from a pre-upgrade or stale server) leaves the buffer partly zero-filled and
+	// unvalidated. Reject it so the caller recovers from parity. The is_deleted
+	// short-circuit legitimately returns n=0 with no data and is exempt, matching
+	// readLocalEcShardInterval's got==len(buf) rule for the local path.
+	if !is_deleted && n != len(buf) {
+		return n, is_deleted, fmt.Errorf("short read ec shard %d.%d from %s: got %d want %d", vid, shardId, sourceDataNode, n, len(buf))
+	}
+
 	return
 }
 
