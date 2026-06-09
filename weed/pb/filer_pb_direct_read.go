@@ -144,6 +144,23 @@ func readMultiFilersMerged(
 	streams := make([]filerStream, len(filerOrder))
 	var wg sync.WaitGroup
 
+	// A genuine (non chunk-not-found) read error must fail the whole replay: the
+	// caller advances its cursor only on success, so a swallowed error leaves a
+	// permanent gap. stop aborts the other readers; fatalErr is read on exit.
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	closeStop := func() { stopOnce.Do(func() { close(stop) }) }
+	var fatalMu sync.Mutex
+	var fatalErr error
+	setFatal := func(e error) {
+		fatalMu.Lock()
+		if fatalErr == nil {
+			fatalErr = e
+		}
+		fatalMu.Unlock()
+		closeStop()
+	}
+
 	for i, filerId := range filerOrder {
 		entryCh := make(chan *filer_pb.LogEntry, 512)
 		streams[i] = filerStream{filerId: filerId, entryCh: entryCh}
@@ -152,8 +169,18 @@ func readMultiFilersMerged(
 		go func(refs []*filer_pb.LogFileChunkRef, ch chan *filer_pb.LogEntry) {
 			defer wg.Done()
 			defer close(ch)
-			readFilerFilesToChannel(refs, newReader, startTsNs, stopTsNs, ch)
+			readFilerFilesToChannel(refs, newReader, startTsNs, stopTsNs, ch, stop, setFatal)
 		}(perFiler[filerId], entryCh)
+	}
+
+	// Stop readers, drain channels so none block on a send, then wait for exit.
+	drainAndWait := func() {
+		closeStop()
+		for i := range streams {
+			for range streams[i].entryCh {
+			}
+		}
+		wg.Wait()
 	}
 
 	// Seed the min-heap with the first entry from each filer
@@ -167,15 +194,23 @@ func readMultiFilersMerged(
 
 	// Merge loop
 	for pq.Len() > 0 {
+		// stop is closed only by setFatal here, so a closed stop means a reader
+		// aborted; lock-free bail on the hot path.
+		select {
+		case <-stop:
+			drainAndWait()
+			fatalMu.Lock()
+			fe := fatalErr
+			fatalMu.Unlock()
+			return lastTsNs, fe
+		default:
+		}
+
 		item := heap.Pop(pq).(*logEntryHeapItem)
 
 		lastTsNs, err = processOneLogEntry(item.entry, filter, processEventFn)
 		if err != nil {
-			for i := range streams {
-				for range streams[i].entryCh {
-				}
-			}
-			wg.Wait()
+			drainAndWait()
 			return
 		}
 
@@ -184,7 +219,13 @@ func readMultiFilersMerged(
 		}
 	}
 
-	wg.Wait()
+	drainAndWait()
+	fatalMu.Lock()
+	fe := fatalErr
+	fatalMu.Unlock()
+	if fe != nil {
+		return lastTsNs, fe
+	}
 	return
 }
 
@@ -193,6 +234,8 @@ func readFilerFilesToChannel(
 	newReader LogFileReaderFn,
 	startTsNs, stopTsNs int64,
 	ch chan *filer_pb.LogEntry,
+	stop <-chan struct{},
+	setFatal func(error),
 ) {
 	type prefetchResult struct {
 		entries []*filer_pb.LogEntry
@@ -214,7 +257,12 @@ func readFilerFilesToChannel(
 	}
 
 	for i, ref := range refs {
-		result := <-pendingCh
+		var result prefetchResult
+		select {
+		case result = <-pendingCh:
+		case <-stop:
+			return
+		}
 
 		if i+1 < len(refs) {
 			pendingCh = startPrefetch(refs[i+1])
@@ -223,14 +271,19 @@ func readFilerFilesToChannel(
 		if result.err != nil {
 			if isChunkNotFound(result.err) {
 				glog.V(0).Infof("skip log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
-			} else {
-				glog.Errorf("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
+				continue
 			}
-			continue
+			glog.Errorf("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
+			setFatal(fmt.Errorf("read log file filer=%s ts=%d: %w", ref.FilerId, ref.FileTsNs, result.err))
+			return
 		}
 
 		for _, entry := range result.entries {
-			ch <- entry
+			select {
+			case ch <- entry:
+			case <-stop:
+				return
+			}
 		}
 	}
 }
