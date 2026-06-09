@@ -63,6 +63,7 @@ type Filer struct {
 	DeletionRetryQueue      *DeletionRetryQueue
 	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
+	persistedLogCache       *persistedLogCache
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -77,6 +78,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
+		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
