@@ -29,7 +29,7 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk, path string, sourceMtime int64) (replicatedChunks []*filer_pb.FileChunk, err error) {
+func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk, path string, sourceMtimeNs int64) (replicatedChunks []*filer_pb.FileChunk, err error) {
 	if len(sourceChunks) == 0 {
 		return
 	}
@@ -76,7 +76,7 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 		}
 
 		if sourceChunk.IsChunkManifest {
-			replicatedChunk, replicateErr := fs.replicateOneManifestChunk(ctx, sourceChunk, path, sourceMtime)
+			replicatedChunk, replicateErr := fs.replicateOneManifestChunk(ctx, sourceChunk, path, sourceMtimeNs)
 			if replicateErr != nil {
 				setError(replicateErr)
 				break
@@ -94,7 +94,7 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 			defer wg.Done()
 			var replicatedChunk *filer_pb.FileChunk
 			retryErr := util.Retry("replicate chunks", func() error {
-				chunk, e := fs.replicateOneChunk(source, path, sourceMtime)
+				chunk, e := fs.replicateOneChunk(source, path, sourceMtimeNs)
 				if e != nil {
 					return e
 				}
@@ -117,9 +117,9 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 	return
 }
 
-func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path string, sourceMtime int64) (*filer_pb.FileChunk, error) {
+func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
 
-	fileId, err := fs.fetchAndWrite(sourceChunk, path, sourceMtime)
+	fileId, err := fs.fetchAndWrite(sourceChunk, path, sourceMtimeNs)
 	if err != nil {
 		return nil, fmt.Errorf("copy %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -138,13 +138,13 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 	}, nil
 }
 
-func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtime int64) (*filer_pb.FileChunk, error) {
+func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
 	resolvedChunks, err := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
 	if err != nil {
 		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), err)
 	}
 
-	replicatedResolvedChunks, err := fs.replicateChunks(ctx, resolvedChunks, path, sourceMtime)
+	replicatedResolvedChunks, err := fs.replicateChunks(ctx, resolvedChunks, path, sourceMtimeNs)
 	if err != nil {
 		return nil, fmt.Errorf("replicate manifest data chunks %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -162,7 +162,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 		return nil, fmt.Errorf("marshal manifest %s: %w", sourceChunk.GetFileIdString(), err)
 	}
 
-	manifestFileId, err := fs.uploadManifestChunk(path, sourceMtime, sourceChunk.GetFileIdString(), manifestData)
+	manifestFileId, err := fs.uploadManifestChunk(path, sourceMtimeNs, sourceChunk.GetFileIdString(), manifestData)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 	}, nil
 }
 
-func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceFileId string, manifestData []byte) (fileId string, err error) {
+func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourceFileId string, manifestData []byte) (fileId string, err error) {
 	uploader, err := fs.getUploader()
 	if err != nil {
 		glog.V(0).Infof("upload manifest data %v: %v", sourceFileId, err)
@@ -221,7 +221,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 		fileId = currentFileId
 		return nil
 	}, func(uploadErr error) (shouldContinue bool) {
-		if fs.hasSourceNewerVersion(path, sourceMtime) {
+		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceFileId, path, uploadErr)
 			return false
 		}
@@ -235,7 +235,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 	return fileId, nil
 }
 
-func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string, sourceMtime int64) (fileId string, err error) {
+func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (fileId string, err error) {
 	uploader, err := fs.getUploader()
 	if err != nil {
 		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
@@ -348,7 +348,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			transferStatus.mu.Unlock()
 			return false
 		}
-		if fs.hasSourceNewerVersion(path, sourceMtime) {
+		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
 			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, retryErr)
 			return false
 		}

@@ -369,6 +369,9 @@ func getEntryMtime(entry *filer_pb.Entry) int64 {
 // mtime cannot order versions of a file rewritten several times within the
 // same second (e.g. git's config.lock dance), which is exactly when a stale
 // replayed event needs to be told apart from the live version.
+//
+// int64 nanoseconds overflow only past ~year 2262 (current ~1.78e9 s * 1e9 ≈
+// 1.78e18, well under the int64 max ~9.2e18), so plain int64 arithmetic is safe.
 func getEntryMtimeNs(entry *filer_pb.Entry) int64 {
 	if entry == nil || entry.Attributes == nil {
 		return 0
