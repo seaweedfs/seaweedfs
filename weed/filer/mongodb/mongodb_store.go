@@ -82,6 +82,7 @@ func (store *MongodbStore) connection(uri string, poolSize uint64, ssl bool, ssl
 		}
 		creds.Username = username
 		creds.Password = password
+		creds.PasswordSet = true
 		opts.SetAuth(creds)
 	}
 
