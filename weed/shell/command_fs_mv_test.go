@@ -71,7 +71,7 @@ func TestFsMvMovesIntoExistingDestinationDirectory(t *testing.T) {
 func newFsMvTestCommandEnv(t *testing.T, filerServer filer_pb.SeaweedFilerServer) (*CommandEnv, func()) {
 	t.Helper()
 
-	socketDir, err := os.MkdirTemp("/private/tmp", "swmv-")
+	socketDir, err := os.MkdirTemp("", "swmv-")
 	if err != nil {
 		t.Fatalf("create socket dir: %v", err)
 	}
