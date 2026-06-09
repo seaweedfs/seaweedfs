@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -402,16 +404,32 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 			collection := volumeIdToCollection[vid]
 			ewg.Add(func() error {
 				if err := unmountAndDeleteEcShardsQuiet(commandEnv.option.GrpcDialOption, collection, vid, addr, allShardIds); err != nil {
-					if fatal {
+					// Surface a reachable node whose delete genuinely failed (its orphan would
+					// be re-stamped by a later copy installing the new .vif); stay best-effort
+					// only for an unreachable node, which cannot receive this new generation.
+					if fatal || !isNodeUnreachable(err) {
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
-					glog.V(1).Infof("orphan sweep: volume %d on %s: %v", vid, addr, err)
+					glog.V(1).Infof("orphan sweep: volume %d on %s unreachable, skipping: %v", vid, addr, err)
 				}
 				return nil
 			})
 		}
 	}
 	return ewg.Wait()
+}
+
+// isNodeUnreachable reports whether err means the volume server could not be
+// reached at all, as opposed to an RPC that reached the node and failed. Only an
+// unreachable node is safe to skip in the orphan sweep.
+func isNodeUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if st, ok := status.FromError(err); ok {
+		return st.Code() == codes.Unavailable
+	}
+	return true
 }
 
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
