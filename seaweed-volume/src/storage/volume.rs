@@ -189,6 +189,10 @@ pub struct VifEcShardConfig {
     pub data_shards: u32,
     #[serde(default, rename = "parityShards")]
     pub parity_shards: u32,
+    /// Encode time (unix nanos). Shards and .ecx of one encode run share it,
+    /// so a read served from a different run's shard is rejected.
+    #[serde(default, rename = "encodeTsNs", with = "string_or_i64")]
+    pub encode_ts_ns: i64,
 }
 
 /// Serde-compatible representation of OldVersionVolumeInfo for legacy .vif JSON deserialization.
@@ -279,6 +283,7 @@ impl VifVolumeInfo {
             ec_shard_config: pb.ec_shard_config.as_ref().map(|c| VifEcShardConfig {
                 data_shards: c.data_shards,
                 parity_shards: c.parity_shards,
+                encode_ts_ns: c.encode_ts_ns,
             }),
         }
     }
@@ -309,6 +314,7 @@ impl VifVolumeInfo {
                 crate::pb::volume_server_pb::EcShardConfig {
                     data_shards: c.data_shards,
                     parity_shards: c.parity_shards,
+                    encode_ts_ns: c.encode_ts_ns,
                 }
             }),
         }

@@ -57,6 +57,10 @@ pub struct EcVolume {
     pub shard_locations_refresh_time: std::sync::Mutex<Option<std::time::Instant>>,
     /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
     pub expire_at_sec: u64,
+    /// Encode-run identity (unix nanos) loaded from the .vif EcShardConfig. A read
+    /// served from a shard of a different encode run is rejected (server- and
+    /// client-side); 0 for a pre-feature volume, which is treated leniently.
+    pub encode_ts_ns: i64,
 }
 
 /// Locate the `.vif` for a (collection, vid) by preferring the data dir
@@ -137,7 +141,7 @@ impl EcVolume {
         // for shard-size math and by the Store-level prune in
         // `store_ec_reconcile.rs` to verify a sibling-disk .dat is
         // plausibly the encoding source (#9478).
-        let (expire_at_sec, vif_version, vif_dat_file_size) = {
+        let (expire_at_sec, vif_version, vif_dat_file_size, encode_ts_ns) = {
             let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
             if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
                 if let Ok(vif_info) =
@@ -148,12 +152,21 @@ impl EcVolume {
                     } else {
                         Version::current()
                     };
-                    (vif_info.expire_at_sec, ver, vif_info.dat_file_size)
+                    let cfg_encode_ts_ns = vif_info
+                        .ec_shard_config
+                        .as_ref()
+                        .map_or(0, |c| c.encode_ts_ns);
+                    (
+                        vif_info.expire_at_sec,
+                        ver,
+                        vif_info.dat_file_size,
+                        cfg_encode_ts_ns,
+                    )
                 } else {
-                    (0, Version::current(), 0)
+                    (0, Version::current(), 0, 0)
                 }
             } else {
-                (0, Version::current(), 0)
+                (0, Version::current(), 0, 0)
             }
         };
 
@@ -177,6 +190,7 @@ impl EcVolume {
             shard_locations: std::sync::RwLock::new(HashMap::new()),
             shard_locations_refresh_time: std::sync::Mutex::new(None),
             expire_at_sec,
+            encode_ts_ns,
         };
 
         // Open .ecx file (sorted index) in read/write mode for in-place deletion marking.
@@ -1243,6 +1257,7 @@ mod tests {
             ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
                 data_shards: 6,
                 parity_shards: 3,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -1268,6 +1283,7 @@ mod tests {
             ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
                 data_shards: 10,
                 parity_shards: 10,
+                ..Default::default()
             }),
             ..Default::default()
         };
