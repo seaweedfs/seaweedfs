@@ -1,6 +1,7 @@
 package filersink
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -10,6 +11,45 @@ import (
 // decision, which only looks at those two attributes.
 func entry(mtime int64, size uint64) *filer_pb.Entry {
 	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime, FileSize: size}}
+}
+
+// getEntryMtimeNs must order versions written within the same second, which
+// plain second-grained mtime cannot. It also must be nil-safe.
+func TestGetEntryMtimeNs(t *testing.T) {
+	if got := getEntryMtimeNs(nil); got != 0 {
+		t.Fatalf("nil entry: got %d, want 0", got)
+	}
+	if got := getEntryMtimeNs(&filer_pb.Entry{}); got != 0 {
+		t.Fatalf("nil attributes: got %d, want 0", got)
+	}
+
+	mk := func(sec int64, ns int32) *filer_pb.Entry {
+		return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: sec, MtimeNs: ns}}
+	}
+	if got, want := getEntryMtimeNs(mk(5, 200)), int64(5_000_000_200); got != want {
+		t.Fatalf("full-ns: got %d, want %d", got, want)
+	}
+	// same second, later sub-second component must compare strictly greater
+	if !(getEntryMtimeNs(mk(5, 200)) > getEntryMtimeNs(mk(5, 100))) {
+		t.Fatalf("same-second ordering failed: %d not > %d",
+			getEntryMtimeNs(mk(5, 200)), getEntryMtimeNs(mk(5, 100)))
+	}
+}
+
+// onCorruptChunk must NOT silently skip an entry unless it can prove the source
+// holds a newer version. With no source filer it cannot confirm supersession,
+// so it must surface the error (refuse) rather than drop a possibly-live file.
+func TestOnCorruptChunkRefusesWhenSupersessionUnconfirmed(t *testing.T) {
+	fs := &FilerSink{} // filerSource nil => hasSourceNewerVersion is always false
+	sentinel := errors.New("corrupt chunk: read 0 bytes, source says 107")
+
+	got := fs.onCorruptChunk("/buckets/x/config",
+		&filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 5, MtimeNs: 200}},
+		sentinel)
+
+	if !errors.Is(got, sentinel) {
+		t.Fatalf("expected the error to be returned (refuse), got %v", got)
+	}
 }
 
 // chooseUpdateAction decides skip vs repair vs normal. A destination left

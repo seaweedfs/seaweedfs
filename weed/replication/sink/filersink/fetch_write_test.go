@@ -321,3 +321,43 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 		t.Fatalf("error chain broken: errors.Is(err, errChunkSizeMismatch) = false; got %v", err)
 	}
 }
+
+// sourceSupersedes is the decision behind skipping a stale replayed event whose
+// chunk can no longer be fetched. The replayed version's mtime is fixed; the
+// table varies what the current source lookup returned.
+func TestSourceSupersedes(t *testing.T) {
+	const eventNs int64 = 5_000_000_500 // the version being replayed (sec 5, ns 500)
+
+	withMtime := func(sec int64, ns int32) *filer_pb.Entry {
+		return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: sec, MtimeNs: ns}}
+	}
+
+	tests := []struct {
+		name      string
+		entry     *filer_pb.Entry
+		lookupErr error
+		want      bool
+	}{
+		// deleted on source: GetEntry reports this as ErrNotFound, in several
+		// shapes — all must be read as "gone -> stale -> skip".
+		{"not-found sentinel", nil, filer_pb.ErrNotFound, true},
+		{"not-found wrapped", nil, fmt.Errorf("lookup /x: %w", filer_pb.ErrNotFound), true},
+		{"not-found as string (gRPC)", nil, errors.New("rpc error: " + filer_pb.ErrNotFound.Error()), true},
+		{"nil entry, nil error", nil, nil, true},
+		// transient lookup failure must NOT skip a possibly-live file
+		{"network error", nil, errors.New("dial tcp: i/o timeout"), false},
+		// live entry: compare full-ns mtime against the replayed version
+		{"source strictly newer", withMtime(5, 600), nil, true},
+		{"source same version", withMtime(5, 500), nil, false},
+		{"source older (out-of-order replay)", withMtime(5, 400), nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sourceSupersedes("/source/x/config", tc.entry, tc.lookupErr, eventNs)
+			if got != tc.want {
+				t.Fatalf("sourceSupersedes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
