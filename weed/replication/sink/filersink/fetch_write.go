@@ -499,6 +499,15 @@ func (fs *FilerSink) targetPathToSourcePath(targetPath string) (util.FullPath, b
 		return "", false
 	}
 
+	// In incremental mode the sink key carries a date prefix
+	// (sinkDir/YYYY-MM-DD/relPath) that cannot be reversed to a real source path.
+	// Report "unmappable" instead of returning a path under a nonexistent dated
+	// directory — that would look ErrNotFound and wrongly classify a live source
+	// entry as deleted, skipping it.
+	if fs.isIncremental {
+		return "", false
+	}
+
 	normalizePath := func(p string) string {
 		p = strings.TrimSuffix(p, "/")
 		if p == "" {

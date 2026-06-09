@@ -26,12 +26,13 @@ func TestMain(m *testing.M) {
 
 func TestTargetPathToSourcePath(t *testing.T) {
 	tests := []struct {
-		name       string
-		targetRoot string
-		sourceRoot string
-		targetPath string
-		wantPath   util.FullPath
-		wantOK     bool
+		name        string
+		targetRoot  string
+		sourceRoot  string
+		targetPath  string
+		incremental bool
+		wantPath    util.FullPath
+		wantOK      bool
 	}{
 		{
 			name:       "basic mapping",
@@ -40,6 +41,18 @@ func TestTargetPathToSourcePath(t *testing.T) {
 			targetPath: "/target/path/file.txt",
 			wantPath:   "/source/path/file.txt",
 			wantOK:     true,
+		},
+		{
+			// incremental sink keys carry a date prefix that cannot be reversed
+			// to a real source path, so the mapping must report unmappable
+			// (otherwise a not-found lookup would skip a live source entry).
+			name:        "incremental sink is unmappable",
+			targetRoot:  "/target",
+			sourceRoot:  "/source",
+			targetPath:  "/target/2026-06-09/path/file.txt",
+			incremental: true,
+			wantPath:    "",
+			wantOK:      false,
 		},
 		{
 			name:       "trailing slash roots",
@@ -78,7 +91,8 @@ func TestTargetPathToSourcePath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &FilerSink{
-				dir: tc.targetRoot,
+				dir:           tc.targetRoot,
+				isIncremental: tc.incremental,
 				filerSource: &source.FilerSource{
 					Dir: tc.sourceRoot,
 				},
