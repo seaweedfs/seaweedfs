@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -410,7 +411,7 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 					// still hold an orphan a later copy would re-stamp into the new generation.
 					// Stay best-effort only for an unreachable node, which cannot receive this
 					// new generation at all.
-					if fatal || !isNodeUnreachable(err) {
+					if fatal || errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) {
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
 					glog.V(1).Infof("orphan sweep: volume %d on %s skipped: %v", vid, addr, err)
@@ -424,15 +425,16 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 
 // isNodeUnreachable reports whether err means the volume server could not be
 // reached at all, as opposed to an RPC that reached the node and failed. Only an
-// unreachable node is safe to skip in the orphan sweep.
+// unreachable node is safe to skip in the orphan sweep. A dead peer surfaces as
+// a gRPC codes.Unavailable from the RPC (the dial is lazy, so it never fails at
+// connect time); any non-status error reached node logic and is treated as
+// reachable, so the sweep stays fatal rather than silently leaving stale state.
 func isNodeUnreachable(err error) bool {
 	if err == nil {
 		return false
 	}
-	if st, ok := status.FromError(err); ok {
-		return st.Code() == codes.Unavailable
-	}
-	return true
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.Unavailable
 }
 
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {

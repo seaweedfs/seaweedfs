@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -536,6 +537,12 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 }
 
+// errFullTeardownNotAcked marks a reachable server that completed the delete RPC
+// but did not report full_teardown_done (a pre-upgrade volume server). The orphan
+// sweep must treat this as fatal: the node may still hold an orphan that a later
+// copy would re-stamp into the new generation.
+var errFullTeardownNotAcked = errors.New("delete did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain")
+
 // unmountAndDeleteEcShardsQuiet unmounts then deletes shards on one server in a
 // single connection, without the per-call logging the interactive helpers emit.
 // Used by the orphan sweep, which fans out to every node x volume and would
@@ -559,7 +566,7 @@ func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection st
 			return fmt.Errorf("delete: %w", err)
 		}
 		if !resp.GetFullTeardownDone() {
-			return fmt.Errorf("delete on %s did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain", location)
+			return fmt.Errorf("delete on %s: %w", location, errFullTeardownNotAcked)
 		}
 		return nil
 	})
