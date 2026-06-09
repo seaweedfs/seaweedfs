@@ -61,6 +61,20 @@ func TestAtimePolicy_Relatime_DebouncesFreshReads(t *testing.T) {
 	}
 }
 
+func TestAtimePolicy_Relatime_ZeroThresholdUsesDefault(t *testing.T) {
+	// A struct literal with no threshold must still debounce using the
+	// default rather than degrading to strict (every advance updating).
+	policy := &AtimePolicy{Mode: AtimeModeRelatime}
+	atime := time.Unix(1_700_000_000, 0)
+	existing := Attr{Atime: atime, Mtime: atime, Ctime: atime}
+	if policy.ShouldUpdate(existing, atime.Add(time.Minute)) {
+		t.Fatal("zero threshold must fall back to default and debounce fresh reads")
+	}
+	if !policy.ShouldUpdate(existing, atime.Add(DefaultRelatimeThreshold)) {
+		t.Fatal("zero threshold must update once the default threshold elapses")
+	}
+}
+
 func TestParseAtimeMode(t *testing.T) {
 	cases := map[string]AtimeMode{
 		"":          AtimeModeOff,
@@ -97,6 +111,18 @@ func TestNewAtimePolicy_DefaultsToOff(t *testing.T) {
 	}
 }
 
+func TestNewAtimePolicy_NonPositiveThresholdUsesDefault(t *testing.T) {
+	for _, threshold := range []time.Duration{0, -time.Hour} {
+		policy, err := NewAtimePolicy("relatime", threshold, nil)
+		if err != nil {
+			t.Fatalf("threshold %v: unexpected error: %v", threshold, err)
+		}
+		if policy.RelatimeThreshold != DefaultRelatimeThreshold {
+			t.Fatalf("threshold %v: expected default %v, got %v", threshold, DefaultRelatimeThreshold, policy.RelatimeThreshold)
+		}
+	}
+}
+
 func TestParsePathPrefixes_TrimsAndDropsEmpty(t *testing.T) {
 	got := ParsePathPrefixes("  /buckets/a , ,/buckets/b ,  ")
 	want := []string{"/buckets/a", "/buckets/b"}
@@ -113,6 +139,9 @@ func TestParsePathPrefixes_TrimsAndDropsEmpty(t *testing.T) {
 	}
 	if ParsePathPrefixes(" , , ") != nil {
 		t.Fatal("whitespace-only input must yield nil")
+	}
+	if got := ParsePathPrefixes("/buckets/cache/, /"); len(got) != 1 || got[0] != "/buckets/cache" {
+		t.Fatalf("trailing slashes must be trimmed and bare / dropped, got %v", got)
 	}
 }
 
@@ -152,8 +181,14 @@ func TestAtimePolicy_AppliesToPath(t *testing.T) {
 		},
 		{
 			"trailing slash prefix matches sub-path",
-			&AtimePolicy{Mode: AtimeModeRelatime, PathPrefixes: []string{"/buckets/cache/"}},
+			&AtimePolicy{Mode: AtimeModeRelatime, PathPrefixes: ParsePathPrefixes("/buckets/cache/")},
 			"/buckets/cache/object",
+			true,
+		},
+		{
+			"trailing slash prefix matches directory itself",
+			&AtimePolicy{Mode: AtimeModeRelatime, PathPrefixes: ParsePathPrefixes("/buckets/cache/")},
+			"/buckets/cache",
 			true,
 		},
 		{
