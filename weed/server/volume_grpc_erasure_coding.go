@@ -557,6 +557,21 @@ func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total in
 		record(removeFileIfExists(dataBaseFileName + ".ecj"))
 		record(removeBitrotSidecars(dataBaseFileName))
 	}
+
+	// Canonical <base>.vif. A shard copy installs shards + .ecx before .vif, so an
+	// interrupted copy can leave a stale .vif whose run identity / shard ratio /
+	// dat_file_size a fresh generation would inherit. Remove it only on a shard-only
+	// EC node: where a normal <base>.idx exists this is the source volume holder and
+	// the .vif belongs to that live volume — keep it. This mirrors the !hasIdxFile
+	// gate in the per-shard delete path.
+	if _, statErr := os.Stat(indexBaseFileName + ".idx"); os.IsNotExist(statErr) {
+		record(removeFileIfExists(indexBaseFileName + ".vif"))
+		if dataBaseFileName != indexBaseFileName {
+			if _, dStatErr := os.Stat(dataBaseFileName + ".idx"); os.IsNotExist(dStatErr) {
+				record(removeFileIfExists(dataBaseFileName + ".vif"))
+			}
+		}
+	}
 	return firstErr
 }
 

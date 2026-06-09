@@ -2609,7 +2609,7 @@ impl VolumeServer for VolumeGrpcService {
                 let mut store = self.state.store.write().unwrap();
                 let _ = store.remove_ec_volume(vid);
                 for loc in &store.locations {
-                    loc.remove_ec_volume_files(&req.collection, vid);
+                    loc.remove_ec_volume_files_full_teardown(&req.collection, vid);
                 }
             }
             self.state.volume_state_notify.notify_one();

@@ -328,6 +328,28 @@ impl DiskLocation {
         }
     }
 
+    /// Full-teardown variant: everything remove_ec_volume_files clears, PLUS the
+    /// normal-volume <base>.vif on a SHARD-ONLY node. An interrupted shard copy
+    /// (which installs shards + .ecx before .vif) could otherwise mount a fresh
+    /// generation under the prior run's identity / ratio / dat_file_size carried by
+    /// a stale .vif. Gated on .idx absence so a source-volume holder keeps its live
+    /// .vif. Reconcile/load-fallback call remove_ec_volume_files directly and
+    /// intentionally preserve it, mirroring Go's removeEcVolumeFiles (reconcile) vs
+    /// removeStaleEcArtifacts (teardown) split.
+    pub(crate) fn remove_ec_volume_files_full_teardown(&self, collection: &str, vid: VolumeId) {
+        self.remove_ec_volume_files(collection, vid);
+        let base = volume_file_name(&self.directory, collection, vid);
+        let idx_base = volume_file_name(&self.idx_directory, collection, vid);
+        if !std::path::Path::new(&format!("{}.idx", idx_base)).exists() {
+            let _ = fs::remove_file(format!("{}.vif", idx_base));
+            if self.idx_directory != self.directory
+                && !std::path::Path::new(&format!("{}.idx", base)).exists()
+            {
+                let _ = fs::remove_file(format!("{}.vif", base));
+            }
+        }
+    }
+
     /// Find a volume by ID.
     pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
         self.volumes.get(&vid)
