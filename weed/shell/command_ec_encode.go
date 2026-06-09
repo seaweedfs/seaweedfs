@@ -409,12 +409,15 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 					// be re-stamped by a later copy installing the new .vif). A missing
 					// full_teardown ack from a reachable pre-upgrade node is fatal too: it may
 					// still hold an orphan a later copy would re-stamp into the new generation.
-					// Stay best-effort only for an unreachable node, which cannot receive this
-					// new generation at all.
-					if fatal || errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) {
+					// Stay best-effort only for a node that is truly unreachable: codes.Unavailable
+					// alone is ambiguous — a genuinely-down node and a reachable Rust volume
+					// server in maintenance mode both return it (a Go server returns Unknown for
+					// maintenance, already fatal above). Confirm with a non-maintenance-gated Ping
+					// before skipping; a reachable maintenance node CAN receive this generation.
+					if fatal || errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) || isVolumeServerReachable(commandEnv.option.GrpcDialOption, addr) {
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
-					glog.V(1).Infof("orphan sweep: volume %d on %s skipped: %v", vid, addr, err)
+					glog.V(1).Infof("orphan sweep: volume %d on %s skipped (unreachable): %v", vid, addr, err)
 				}
 				return nil
 			})

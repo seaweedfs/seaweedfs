@@ -543,6 +543,19 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 // copy would re-stamp into the new generation.
 var errFullTeardownNotAcked = errors.New("delete did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain")
 
+// isVolumeServerReachable probes node liveness with an empty-target Ping, which
+// is never maintenance-gated. It disambiguates a sweep codes.Unavailable: a Rust
+// volume server in maintenance mode fails the maintenance-gated delete with
+// Unavailable yet answers Ping (reachable, so its orphan must be cleared),
+// whereas a genuinely-down node fails Ping too (skip best-effort). A Go server
+// returns Unknown for maintenance, which isNodeUnreachable already treats as fatal.
+func isVolumeServerReachable(grpcDialOption grpc.DialOption, location pb.ServerAddress) bool {
+	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, pingErr := client.Ping(context.Background(), &volume_server_pb.PingRequest{})
+		return pingErr
+	}) == nil
+}
+
 // unmountAndDeleteEcShardsQuiet unmounts then deletes shards on one server in a
 // single connection, without the per-call logging the interactive helpers emit.
 // Used by the orphan sweep, which fans out to every node x volume and would
