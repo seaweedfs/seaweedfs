@@ -657,9 +657,11 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}
-	// Reject a shard from a different encode run than the caller's index; the
-	// caller then recovers from parity. 0 on either side = pre-upgrade volume.
-	if req.EncodeTsNs != 0 && ecVolume.EncodeTsNs != 0 && req.EncodeTsNs != ecVolume.EncodeTsNs {
+	// Reject a shard whose identity doesn't match the caller's index; the caller
+	// then recovers from parity. Lenient only when the caller has no identity
+	// (pre-upgrade reader): a known caller must not accept an unstamped holder,
+	// which would serve a stale pre-upgrade shard.
+	if req.EncodeTsNs != 0 && req.EncodeTsNs != ecVolume.EncodeTsNs {
 		return fmt.Errorf("ec shard %d.%d belongs to a different encode run", req.VolumeId, req.ShardId)
 	}
 
