@@ -619,7 +619,19 @@ impl EcVolume {
                 })?;
 
             let mut buf = vec![0u8; interval.size as usize];
-            shard.read_at(&mut buf, shard_offset as u64)?;
+            let n = shard.read_at(&mut buf, shard_offset as u64)?;
+            if n != buf.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "short read on ec shard {}: read {} of {} bytes for needle {}",
+                        shard_id,
+                        n,
+                        buf.len(),
+                        needle_id
+                    ),
+                ));
+            }
             bytes.extend_from_slice(&buf);
         }
 
