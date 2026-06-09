@@ -13,6 +13,8 @@ import (
 	"unicode"
 )
 
+var randomRead = rand.Read
+
 // BytesToHumanReadable returns the converted human readable representation of the bytes.
 func BytesToHumanReadable(b uint64) string {
 	const unit = 1024
@@ -156,10 +158,12 @@ func RandomInt32() int32 {
 	return int32(BytesToUint32(buf))
 }
 
-func RandomUint64() int32 {
+func RandomUint64() uint64 {
 	buf := make([]byte, 8)
-	rand.Read(buf)
-	return int32(BytesToUint64(buf))
+	if _, err := randomRead(buf); err != nil {
+		panic(err)
+	}
+	return BytesToUint64(buf)
 }
 
 func RandomBytes(byteCount int) []byte {
