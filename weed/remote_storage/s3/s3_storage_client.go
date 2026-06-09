@@ -243,13 +243,19 @@ func (s *s3RemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteSto
 	dataSlice := make([]byte, int(size))
 	writerAt := aws.NewWriteAtBuffer(dataSlice)
 
-	_, err = downloader.Download(writerAt, &s3.GetObjectInput{
+	n, err := downloader.Download(writerAt, &s3.GetObjectInput{
 		Bucket: aws.String(loc.Bucket),
 		Key:    aws.String(loc.Path[1:]),
 		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+size-1)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+	// The buffer is pre-sized to size, so a short read leaves the tail
+	// zero-padded and would be cached as valid-looking but corrupt content.
+	// Reject it instead.
+	if n != size {
+		return nil, fmt.Errorf("short read from %s%s at offset %d: got %d bytes, want %d", loc.Bucket, loc.Path, offset, n, size)
 	}
 
 	return writerAt.Bytes(), nil

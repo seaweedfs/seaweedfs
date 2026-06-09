@@ -329,6 +329,11 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 		return ErrInvalidRetentionPeriod
 	}
 
+	// Check for invalid Years value (zero is invalid when explicitly provided)
+	if retention.YearsSet && retention.Years == 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
 	// Check for neither Days nor Years being specified
 	if !retention.DaysSet && !retention.YearsSet {
 		return ErrDefaultRetentionMissingPeriod

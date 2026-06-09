@@ -208,7 +208,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 				// update
 				pu.Data = pu.bytesBuffer.Bytes()
 				pu.FileName = util.CleanWindowsPathBase(fName)
-				contentType = part.Header.Get("Content-Type")
+				contentType = part2.Header.Get("Content-Type")
 				pu.ContentMd5 = part2.Header.Get("Content-MD5")
 				part = part2
 				break

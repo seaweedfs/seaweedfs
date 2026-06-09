@@ -257,6 +257,56 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	return versionId, nil
 }
 
+// createNullDeleteMarker records a suspended-versioning delete as a single "null"
+// delete marker. Unlike createDeleteMarker (enabled versioning, where each delete is
+// a distinct historical marker), a suspended delete overwrites the null version per
+// the S3 spec, so this reuses the "null" version id and its fixed file name (v_null):
+// repeated suspended deletes collapse onto one marker instead of accumulating, and a
+// later suspended PUT removes it via putSuspendedVersioningObject's null-version
+// cleanup. The latest-version pointer is set explicitly (not recomputed) because
+// "null" does not sort as the newest version id.
+func (s3a *S3ApiServer) createNullDeleteMarker(bucket, object string) error {
+	cleanObject := strings.TrimPrefix(object, "/")
+	bucketDir := s3a.bucketDir(bucket)
+	versionsDir := bucketDir + "/" + cleanObject + s3_constants.VersionsFolder
+	versionFileName := s3a.getVersionFileName("null")
+
+	mtime := time.Now().Unix()
+	markerExtended := map[string][]byte{
+		s3_constants.ExtVersionIdKey:    []byte("null"),
+		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+	}
+
+	if err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
+		entry.IsDirectory = false
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		entry.Attributes.Mtime = mtime
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		for k, v := range markerExtended {
+			entry.Extended[k] = v
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to create null delete marker in .versions directory: %w", err)
+	}
+
+	markerEntry := &filer_pb.Entry{
+		Name:        versionFileName,
+		IsDirectory: false,
+		Attributes:  &filer_pb.FuseAttributes{Mtime: mtime},
+		Extended:    markerExtended,
+	}
+	if err := s3a.updateLatestVersionInDirectory(bucket, cleanObject, "null", versionFileName, markerEntry); err != nil {
+		return fmt.Errorf("failed to point latest at null delete marker for %s/%s: %w", bucket, object, err)
+	}
+
+	glog.V(2).Infof("createNullDeleteMarker: recorded null delete marker for %s/%s", bucket, object)
+	return nil
+}
+
 // versionListItem represents an item in the unified version/prefix list
 type versionListItem struct {
 	key         string
@@ -602,6 +652,15 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		directoryKey += "/"
 	}
 
+	// Only surface a directory key whose own key matches the prefix. Ancestor
+	// markers (e.g. "Veeam/") get descended through to reach a deeper prefix but
+	// don't match it themselves, so they must not appear as version entries -
+	// this mirrors ListObjectsV2 and AWS, and stops clients like Veeam that
+	// reject unexpected keys in a listing from aborting.
+	if !strings.HasPrefix(directoryKey, vc.prefix) {
+		return
+	}
+
 	// Skip directories at or before keyMarker
 	if vc.keyMarker != "" && directoryKey <= vc.keyMarker {
 		return
@@ -802,8 +861,11 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
-	// Handle explicit S3 directory object
-	if entry.Attributes.Mime == s3_constants.FolderMimeType {
+	// Handle explicit S3 directory object. Match ListObjectsV2's
+	// IsDirectoryKeyObject (any non-empty mime), not just FolderMimeType:
+	// an SDK PutObject of "dir/" carries a default Content-Type, so the two
+	// listings must agree on what counts as a directory key.
+	if entry.IsDirectoryKeyObject() {
 		vc.processExplicitDirectory(entryPath, entry)
 	}
 
@@ -1829,6 +1891,35 @@ func selectLatestVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry
 	return
 }
 
+// scanLatestVersionEntry paginates a .versions/ directory and returns the
+// chronologically newest version entry (including delete markers; see
+// selectLatestVersion). A single-shot list would miss the true latest when
+// old-format (raw timestamp) version ids spill past one page, since filesystem
+// order is lexicographic-ascending = oldest-first for that format. latestEntry
+// is nil when the directory holds no version entries.
+func (s3a *S3ApiServer) scanLatestVersionEntry(versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
+	startFrom := ""
+	for {
+		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+		if listErr != nil {
+			return nil, "", "", false, fmt.Errorf("list %s: %w", versionsDir, listErr)
+		}
+		if pageEntry, pageId, pageFile, pageDM := selectLatestVersion(entries); pageEntry != nil {
+			if latestEntry == nil || compareVersionIds(pageId, latestVersionId) < 0 {
+				latestEntry = pageEntry
+				latestVersionId = pageId
+				latestVersionFileName = pageFile
+				isDeleteMarker = pageDM
+			}
+		}
+		if isLast || len(entries) == 0 {
+			break
+		}
+		startFrom = entries[len(entries)-1].Name
+	}
+	return
+}
+
 // healStaleLatestVersionPointer is invoked when the .versions directory metadata
 // points to a version file that no longer exists. It paginates the directory,
 // picks the chronologically newest remaining entry (content version or delete
@@ -1854,30 +1945,9 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	// and the caller renders NoSuchKey (with x-amz-delete-marker) from the
 	// returned entry. Restricting to content versions here would "undelete"
 	// the object by promoting an older content version over a newer marker.
-	var (
-		latestEntry           *filer_pb.Entry
-		latestVersionId       string
-		latestVersionFileName string
-		isDeleteMarker        bool
-		startFrom             string
-	)
-	for {
-		entries, isLast, err := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
-		if err != nil {
-			return nil, fmt.Errorf("list %s: %w", versionsDir, err)
-		}
-		if pageEntry, pageId, pageFile, pageDM := selectLatestVersion(entries); pageEntry != nil {
-			if latestEntry == nil || compareVersionIds(pageId, latestVersionId) < 0 {
-				latestEntry = pageEntry
-				latestVersionId = pageId
-				latestVersionFileName = pageFile
-				isDeleteMarker = pageDM
-			}
-		}
-		if isLast || len(entries) == 0 {
-			break
-		}
-		startFrom = entries[len(entries)-1].Name
+	latestEntry, latestVersionId, latestVersionFileName, isDeleteMarker, scanErr := s3a.scanLatestVersionEntry(versionsDir)
+	if scanErr != nil {
+		return nil, scanErr
 	}
 
 	if latestEntry == nil {
@@ -1932,14 +2002,15 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
-	// Check if the directory entry has latest version metadata
-	if versionsDirEntry.Extended == nil {
-		return nil, fmt.Errorf("no Extended metadata in .versions directory entry")
-	}
-
+	// The latest-version pointer is normally cached on the .versions directory
+	// entry, giving a single-scan listing. In a multi-filer deployment the pointer
+	// is written on the key's owner filer and may be absent on the filer serving
+	// this list, so recover by rescanning .versions/ rather than dropping the
+	// object from the listing entirely (the version files themselves replicate
+	// here). Indexing a nil Extended map is safe and yields !ok.
 	latestVersionIdBytes, hasLatestVersionId := versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	if !hasLatestVersionId {
-		return nil, fmt.Errorf("missing latest version ID metadata in .versions directory entry")
+		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject)
 	}
 
 	// Check if this is a delete marker (should not be shown in regular list)
@@ -1998,7 +2069,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	// Fallback: fetch version file if cached metadata not available (for older versions)
 	latestVersionFileBytes, hasLatestVersionFile := versionsDirEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 	if !hasLatestVersionFile {
-		return nil, fmt.Errorf("missing latest version file name metadata in .versions directory entry")
+		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject)
 	}
 	latestVersionFile := string(latestVersionFileBytes)
 
@@ -2029,6 +2100,54 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	}
 
 	return logicalEntry, nil
+}
+
+// recoverLatestListEntryByScan rebuilds an object's current-version list entry by
+// rescanning .versions/ when the cached latest-version pointer is missing on the
+// filer serving the list. This is the listing-path counterpart to the read path's
+// recoverLatestVersionWithoutPointer, and the cure for a multi-filer undercount:
+// the pointer is written on the key's owner filer and may not be present on the
+// serving filer, but the version files themselves replicate, so a local rescan
+// resolves the current version. It is read-only on purpose — a single list can
+// touch many objects, so it does not persist a pointer (which would amplify into
+// a write per diverged object); convergence is handled on the write/replication
+// side. Returns ErrDeleteMarker when the current version is a delete marker
+// (excluded from a regular listing) and filer_pb.ErrNotFound when nothing remains.
+func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject string) (*filer_pb.Entry, error) {
+	bucketDir := s3a.bucketDir(bucket)
+	versionsDir := bucketDir + "/" + normalizedObject + s3_constants.VersionsFolder
+
+	latestEntry, latestVersionId, _, isDeleteMarker, err := s3a.scanLatestVersionEntry(versionsDir)
+	if err != nil {
+		return nil, err
+	}
+	if latestEntry == nil {
+		// No version files remain. A pre-versioning / suspended "null" object at the
+		// base path is the current version if one exists.
+		if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil {
+			return regularEntry, nil
+		}
+		return nil, fmt.Errorf("%w: no current version for %s/%s", filer_pb.ErrNotFound, bucket, normalizedObject)
+	}
+	if isDeleteMarker {
+		return nil, ErrDeleteMarker
+	}
+
+	// Present the version file as a logical entry at the object's base path,
+	// matching the cached fast path's output shape. Copy Extended rather than
+	// share the scanned entry's map, since we stamp the version id onto it.
+	extended := make(map[string][]byte, len(latestEntry.Extended)+1)
+	for k, v := range latestEntry.Extended {
+		extended[k] = v
+	}
+	extended[s3_constants.ExtVersionIdKey] = []byte(latestVersionId)
+	return &filer_pb.Entry{
+		Name:        path.Base(normalizedObject),
+		IsDirectory: false,
+		Attributes:  latestEntry.Attributes,
+		Extended:    extended,
+		Chunks:      latestEntry.Chunks,
+	}, nil
 }
 
 // getObjectOwnerFromVersion extracts object owner information from version metadata

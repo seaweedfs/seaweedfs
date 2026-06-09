@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -111,8 +110,8 @@ func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request)
 	// Delete file via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            filepath.Dir(request.Path),
-			Name:                 filepath.Base(request.Path),
+			Directory:            path.Dir(request.Path),
+			Name:                 path.Base(request.Path),
 			IsDeleteData:         true,
 			IsRecursive:          true,
 			IgnoreRecursiveError: false,
@@ -143,8 +142,8 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 		return
 	}
 
-	for _, path := range request.Paths {
-		if strings.TrimSpace(path) == "" {
+	for _, p := range request.Paths {
+		if strings.TrimSpace(p) == "" {
 			writeJSONError(w, http.StatusBadRequest, "path is required")
 			return
 		}
@@ -155,11 +154,11 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 	var errors []string
 
 	// Delete each file/folder
-	for _, path := range request.Paths {
+	for _, p := range request.Paths {
 		err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 			_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-				Directory:            filepath.Dir(path),
-				Name:                 filepath.Base(path),
+				Directory:            path.Dir(p),
+				Name:                 path.Base(p),
 				IsDeleteData:         true,
 				IsRecursive:          true,
 				IgnoreRecursiveError: false,
@@ -169,7 +168,7 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 
 		if err != nil {
 			failedCount++
-			errors = append(errors, fmt.Sprintf("%s: %v", path, err))
+			errors = append(errors, fmt.Sprintf("%s: %v", p, err))
 		} else {
 			deletedCount++
 		}
@@ -230,9 +229,9 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 	// Create folder via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
-			Directory: filepath.Dir(fullPath),
+			Directory: path.Dir(fullPath),
 			Entry: &filer_pb.Entry{
-				Name:        filepath.Base(fullPath),
+				Name:        path.Base(fullPath),
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
 					FileMode: uint32(0o755 | os.ModeDir), // Directory mode
@@ -444,8 +443,8 @@ func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
 	var fileEntry dash.FileEntry
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filepath.Dir(filePath),
-			Name:      filepath.Base(filePath),
+			Directory: path.Dir(filePath),
+			Name:      path.Base(filePath),
 		})
 		if err != nil {
 			return err
@@ -549,8 +548,8 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 	var properties map[string]interface{}
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filepath.Dir(filePath),
-			Name:      filepath.Base(filePath),
+			Directory: path.Dir(filePath),
+			Name:      path.Base(filePath),
 		})
 		if err != nil {
 			return err

@@ -123,3 +123,72 @@ func TestFilerSyncOffsetStaysFreshOnFilteredMarker(t *testing.T) {
 		t.Fatalf("expected final gauge write fresh at %d, got %+v (spike is back if stale %d)", markerTs, last, oldEventTs)
 	}
 }
+
+// TestFilerSyncBatchedFreshnessSignalDoesNotCrash: while catching up after a
+// peer outage the server folds a backlog into one batched response: the first
+// event in the top-level fields, the rest in resp.Events. The drain can pull an
+// idle heartbeat (nil EventNotification) into that tail. The batched tail must
+// get the same freshness-signal handling as the envelope, else processEventFn
+// (filer.sync's AddSyncJob) nil-derefs in IsEmpty. The processEventFn here
+// mirrors that first call.
+func TestFilerSyncBatchedFreshnessSignalDoesNotCrash(t *testing.T) {
+	const ts1 = int64(1_000_000_000)      // envelope: real create
+	const ts2 = int64(1_000_000_001)      // batched: real create
+	const markerTs = int64(1_000_000_002) // batched: MaxUnsyncedEvents marker (empty entry)
+	hbTs := time.Now().UnixNano()         // batched: idle heartbeat (nil EventNotification), fresh
+
+	var realEvents []int64
+	var heartbeatTs []int64
+
+	// Mirrors AddSyncJob: IsEmpty nil-derefs on a nil EventNotification.
+	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if filer_pb.IsEmpty(resp) {
+			return nil
+		}
+		realEvents = append(realEvents, resp.TsNs)
+		return nil
+	}
+
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		StartTsNs:      ts1,
+		EventErrorType: DontLogError,
+		OnIdleHeartbeat: func(tsNs int64) {
+			heartbeatTs = append(heartbeatTs, tsNs)
+		},
+	}
+
+	// One batched response: envelope plus a tail mixing a real event, a marker,
+	// and a fresh heartbeat, as the server emits while draining a backlog. The
+	// heartbeat is last and carries the largest timestamp on purpose.
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{{
+			Directory:         "/watched",
+			TsNs:              ts1,
+			EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "a"}},
+			Events: []*filer_pb.SubscribeMetadataResponse{
+				{Directory: "/watched", TsNs: ts2, EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "b"}}},
+				{TsNs: markerTs, EventNotification: &filer_pb.EventNotification{}}, // marker: empty entry
+				{TsNs: hbTs}, // idle heartbeat: nil EventNotification
+			},
+		}},
+	}
+
+	if err := makeSubscribeMetadataFunc(option, processEventFn)(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+
+	// Both real events reached processEventFn; neither freshness signal did.
+	if len(realEvents) != 2 || realEvents[0] != ts1 || realEvents[1] != ts2 {
+		t.Errorf("expected real events [%d %d], got %v", ts1, ts2, realEvents)
+	}
+	// The batched marker and heartbeat both fired OnIdleHeartbeat.
+	if len(heartbeatTs) != 2 || heartbeatTs[0] != markerTs || heartbeatTs[1] != hbTs {
+		t.Errorf("expected heartbeats [%d %d], got %v", markerTs, hbTs, heartbeatTs)
+	}
+	// The marker advances the resume cursor; the heartbeat does not, even though
+	// it is last and carries the largest timestamp. StartTsNs ends at the marker.
+	if option.StartTsNs != markerTs {
+		t.Errorf("expected StartTsNs %d (marker), got %d (heartbeat must not advance the cursor)", markerTs, option.StartTsNs)
+	}
+}

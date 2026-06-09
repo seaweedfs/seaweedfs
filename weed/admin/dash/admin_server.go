@@ -1189,6 +1189,52 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 	}, nil
 }
 
+// GetClusterS3Servers retrieves cluster S3 servers data
+func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
+	var s3Servers []S3ServerInfo
+
+	// Get S3 server information from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.S3Type,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each S3 server node
+		for _, node := range resp.ClusterNodes {
+			createdAt := time.Unix(0, node.CreatedAtNs)
+
+			s3ServerInfo := S3ServerInfo{
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
+				DataCenter: node.DataCenter,
+				Version:    node.Version,
+				CreatedAt:  createdAt,
+			}
+
+			s3Servers = append(s3Servers, s3ServerInfo)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get S3 server nodes from master: %w", err)
+	}
+
+	// Sort S3 servers by address for consistent ordering on page refresh
+	sort.Slice(s3Servers, func(i, j int) bool {
+		return s3Servers[i].Address < s3Servers[j].Address
+	})
+
+	return &ClusterS3ServersData{
+		S3Servers:      s3Servers,
+		TotalS3Servers: len(s3Servers),
+		LastUpdated:    time.Now(),
+	}, nil
+}
+
 // GetAllFilers method moved to client_management.go
 
 // GetVolumeDetails method moved to volume_management.go

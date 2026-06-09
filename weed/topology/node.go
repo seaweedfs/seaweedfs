@@ -144,11 +144,11 @@ type Node interface {
 }
 
 type NodeImpl struct {
-	diskUsages *DiskUsages
-	id         NodeId
-	parent     Node
+	diskUsages   *DiskUsages
+	id           NodeId
+	parent       Node
 	sync.RWMutex // lock children
-	children    map[NodeId]Node
+	children     map[NodeId]Node
 	// maxVolumeId uses atomic ops so UpAdjustMaxVolumeId (called from the
 	// volume server heartbeat path) and GetMaxVolumeId (called from the
 	// master's assign / warmup checks) can run concurrently without a
@@ -165,6 +165,38 @@ type NodeImpl struct {
 
 func (n *NodeImpl) GetDiskUsages() *DiskUsages {
 	return n.diskUsages
+}
+
+// nodeHost returns the host a node runs on, or "" for non-data-node tiers (data
+// centers, racks).
+func nodeHost(node Node) string {
+	if dn, ok := node.(*DataNode); ok {
+		return dn.Ip
+	}
+	return ""
+}
+
+// preferDistinctHosts reorders candidates so the first node of each not-yet-used
+// host comes first (preserving weighted order), then the same-host leftovers, so a
+// prefix covers the most distinct machines. usedHost seeds the set. No-op when
+// hosts are empty (non-data-node tiers).
+func preferDistinctHosts(usedHost string, candidates []Node) []Node {
+	used := map[string]bool{}
+	if usedHost != "" {
+		used[usedHost] = true
+	}
+	distinct := make([]Node, 0, len(candidates))
+	dup := make([]Node, 0, len(candidates))
+	for _, node := range candidates {
+		h := nodeHost(node)
+		if h != "" && !used[h] {
+			used[h] = true
+			distinct = append(distinct, node)
+		} else {
+			dup = append(dup, node)
+		}
+	}
+	return append(distinct, dup...)
 }
 
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
@@ -215,12 +247,17 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	for k, node := range sortedCandidates {
 		if err := filterFirstNodeFn(node); err == nil {
 			firstNode = node
-			if k >= numberOfNodes-1 {
-				restNodes = sortedCandidates[:numberOfNodes-1]
-			} else {
-				restNodes = append(restNodes, sortedCandidates[:k]...)
-				restNodes = append(restNodes, sortedCandidates[k+1:numberOfNodes]...)
+			// Fill the rest preferring not-yet-used hosts, so replicas spread across
+			// machines; falls back to same-host when too few. No-op for dc/rack tiers
+			// (empty host), which keep the weighted order.
+			pool := make([]Node, 0, len(sortedCandidates)-1)
+			pool = append(pool, sortedCandidates[:k]...)
+			pool = append(pool, sortedCandidates[k+1:]...)
+			pool = preferDistinctHosts(nodeHost(firstNode), pool)
+			if len(pool) > numberOfNodes-1 {
+				pool = pool[:numberOfNodes-1]
 			}
+			restNodes = pool
 			ret = true
 			break
 		} else {

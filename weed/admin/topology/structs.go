@@ -43,6 +43,7 @@ type taskState struct {
 // DiskInfo represents a disk with its current state and ongoing tasks (public for external access)
 type DiskInfo struct {
 	NodeID     string              `json:"node_id"`
+	Address    string              `json:"address"` // volume server ip:port; NodeID may be an opaque id, so this is the source for the physical-machine host
 	DiskID     uint32              `json:"disk_id"`
 	DiskType   string              `json:"disk_type"`
 	DataCenter string              `json:"data_center"`

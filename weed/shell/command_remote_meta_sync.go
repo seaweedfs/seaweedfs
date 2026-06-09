@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -121,6 +122,20 @@ If entry.RemoteEntry == nil, this is a new local change and should not be overwr
 	  the remote version is updated, need to pull meta
 	}
 */
+
+// remoteEntryFileMode returns the POSIX mode for an entry synced from a remote
+// whose listing carries no mode. It matches what SeaweedFS S3 assigns native
+// objects (files 0660) so a mounted bucket matches the source, deriving the
+// directory mode with the same 0111 traversal mask the filer uses for
+// auto-created parents (0660 -> 0771).
+func remoteEntryFileMode(isDirectory bool) uint32 {
+	mode := uint32(0660)
+	if isDirectory {
+		mode = uint32(os.ModeDir) | mode | 0111
+	}
+	return mode
+}
+
 func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
 
 	// visit remote storage
@@ -159,7 +174,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 						Attributes: &filer_pb.FuseAttributes{
 							FileSize: uint64(remoteEntry.RemoteSize),
 							Mtime:    remoteEntry.RemoteMtime,
-							FileMode: uint32(0644),
+							FileMode: remoteEntryFileMode(isDirectory),
 							TtlSec:   0, // Remote entries should not have TTL
 						},
 						RemoteEntry: remoteEntry,

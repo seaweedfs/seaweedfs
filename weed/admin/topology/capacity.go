@@ -162,6 +162,7 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 				// Create a new DiskInfo with current capacity information
 				diskCopy := DiskInfo{
 					NodeID:     disk.DiskInfo.NodeID,
+					Address:    disk.DiskInfo.Address,
 					DiskID:     disk.DiskInfo.DiskID,
 					DiskType:   disk.DiskInfo.DiskType,
 					DataCenter: disk.DiskInfo.DataCenter,
@@ -226,6 +227,7 @@ func (at *ActiveTopology) GetDisksForPlanning(taskType TaskType, excludeNodeID s
 				// Create a new DiskInfo with planning information
 				diskCopy := DiskInfo{
 					NodeID:     disk.DiskInfo.NodeID,
+					Address:    disk.DiskInfo.Address,
 					DiskID:     disk.DiskInfo.DiskID,
 					DiskType:   disk.DiskInfo.DiskType,
 					DataCenter: disk.DiskInfo.DataCenter,

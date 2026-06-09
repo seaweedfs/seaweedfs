@@ -66,8 +66,8 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 		// collect destination entry info
 		destinationRequest := &filer_pb.LookupDirectoryEntryRequest{
-			Name:      destinationDir,
-			Directory: destinationName,
+			Directory: destinationDir,
+			Name:      destinationName,
 		}
 		respDestinationLookupEntry, err := filer_pb.LookupEntry(context.Background(), client, destinationRequest)
 

@@ -310,6 +310,20 @@ type ClusterBrokersData struct {
 	LastUpdated  time.Time           `json:"last_updated"`
 }
 
+type S3ServerInfo struct {
+	Address    string    `json:"address"`
+	DataCenter string    `json:"datacenter"`
+	Version    string    `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type ClusterS3ServersData struct {
+	Username       string         `json:"username"`
+	S3Servers      []S3ServerInfo `json:"s3_servers"`
+	TotalS3Servers int            `json:"total_s3_servers"`
+	LastUpdated    time.Time      `json:"last_updated"`
+}
+
 type TopicInfo struct {
 	Name         string             `json:"name"`
 	Partitions   int                `json:"partitions"`

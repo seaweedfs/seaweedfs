@@ -63,7 +63,7 @@ func init() {
 	filerBackupOptions.retentionDays = cmdFilerBackup.Flag.Int("retentionDays", 0, "incremental backup retention days")
 	filerBackupOptions.disableErrorRetry = cmdFilerBackup.Flag.Bool("disableErrorRetry", false, "disables errors retry, only logs will print")
 	filerBackupOptions.ignore404Error = cmdFilerBackup.Flag.Bool("ignore404Error", true, "ignore 404 errors from filer")
-	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination. Only runs on a fresh sync (no prior checkpoint and -timeAgo is 0). After the walk, subscription starts from the walk-start timestamp so concurrent changes are still captured.")
+	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination, then subscribe from the walk-start timestamp so concurrent changes are still captured. Runs on every start when -timeAgo is 0 and overwrites the saved checkpoint, so it also re-seeds a reinitialized destination. Remove it once the backup is caught up, otherwise it re-walks the whole tree on each restart.")
 }
 
 var cmdFilerBackup = &Command{
@@ -75,12 +75,13 @@ var cmdFilerBackup = &Command{
 	and write to the destination. This is to replace filer.replicate command since additional message queue is not needed.
 
 	If restarted and "-timeAgo" is not set, the synchronization will resume from the previous checkpoints, persisted every minute.
-	A fresh sync will start from the earliest metadata logs. To reset the checkpoints, just set "-timeAgo" to a high value.
+	A fresh sync will start from the earliest metadata logs.
 
 	On a fresh sync the metadata event log only re-materializes files that still exist on the source; entries that were
 	created and later deleted are replayed as a create-then-delete pair and therefore never appear on the destination.
 	Pass "-initialSnapshot" to walk the live filer tree first and seed the destination with the current tree, then
-	subscribe from the walk-start timestamp. The walk only runs when there is no prior checkpoint.
+	subscribe from the walk-start timestamp. This also re-seeds a reinitialized destination: it overwrites the saved
+	checkpoint and re-walks on every start, so remove it once the backup is caught up.
 
 `,
 }
@@ -135,27 +136,25 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	// get start time for the data sink
 	startFrom := time.Unix(0, 0)
-	isFreshSync := true
 	sinkId := util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory())
-	if timeAgo.Milliseconds() == 0 {
-		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
-		if err != nil {
-			// A KV read failure is ambiguous — a checkpoint may well exist but the
-			// source filer is temporarily unreachable. Don't treat that as a fresh
-			// sync; otherwise runFilerBackup's retry loop would redo the full
-			// -initialSnapshot walk on every transient error.
-			isFreshSync = false
-			glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
-		} else if lastOffsetTsNs > 0 {
-			startFrom = time.Unix(0, lastOffsetTsNs)
-			isFreshSync = false
-			glog.V(0).Infof("resuming from %v", startFrom)
+	runSnapshot := *backupOption.initialSnapshot && timeAgo == 0
+	if timeAgo == 0 {
+		if runSnapshot {
+			// snapshot below sets the start point; no checkpoint read needed
+			glog.V(0).Infof("initialSnapshot requested — walking live tree before subscribing")
 		} else {
-			glog.V(0).Infof("starting from %v (no prior checkpoint)", startFrom)
+			lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
+			if err != nil {
+				glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
+			} else if lastOffsetTsNs > 0 {
+				startFrom = time.Unix(0, lastOffsetTsNs)
+				glog.V(0).Infof("resuming from %v", startFrom)
+			} else {
+				glog.V(0).Infof("starting from %v (no prior checkpoint)", startFrom)
+			}
 		}
 	} else {
 		startFrom = time.Now().Add(-timeAgo)
-		isFreshSync = false
 		glog.V(0).Infof("start time is set to %v", startFrom)
 	}
 
@@ -174,13 +173,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	}
 	dataSink.SetSourceFiler(filerSource)
 
-	// When the destination has no prior checkpoint and the user opted in to an
-	// initial snapshot, walk the live filer tree first and seed the destination
-	// with the current entries. This avoids the "only new files appear" pitfall
-	// of replaying the metadata event log: entries created-then-deleted before
-	// the walk leave no trace, so a re-backup after wiping the destination
-	// reflects what is actually live on the source instead of an empty tree.
-	if *backupOption.initialSnapshot && isFreshSync {
+	// Walk and seed the live tree, then subscribe from the walk-start watermark:
+	// replaying the event log alone misses entries created-then-deleted before
+	// the walk. The watermark overwrites any stale checkpoint, re-seeding a wiped
+	// destination.
+	if runSnapshot {
 		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.ignore404Error)
 		if err != nil {
 			return fmt.Errorf("initial snapshot: %w", err)
@@ -193,6 +190,8 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			return fmt.Errorf("persist initial snapshot offset: %w", err)
 		}
 		startFrom = time.Unix(0, snapshotTsNs)
+		// walk once per process; retries resume from the persisted checkpoint
+		*backupOption.initialSnapshot = false
 		glog.V(0).Infof("initialSnapshot done; subscribing from %v", startFrom)
 	}
 

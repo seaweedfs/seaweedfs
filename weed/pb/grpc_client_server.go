@@ -73,8 +73,13 @@ type versionedGrpcClient struct {
 }
 
 func init() {
-	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024
-	http.DefaultTransport.(*http.Transport).MaxIdleConns = 1024
+	t := http.DefaultTransport.(*http.Transport)
+	t.MaxIdleConnsPerHost = 1024
+	t.MaxIdleConns = 1024
+	// Bind outbound HTTP to the -ip.bind source address. Reads the setting
+	// per dial, so it applies regardless of when SetOutboundLocalIP runs
+	// relative to this init.
+	t.DialContext = util.OutboundDialContext
 }
 
 // RegisterLocalGrpcSocket registers a Unix socket path for a gRPC service
@@ -206,6 +211,16 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 		options = append(options, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socketPath)
+		}))
+	} else {
+		// Always install so a conn cached before SetOutboundLocalIP binds once set;
+		// the stock net.Dialer until then preserves gRPC's default dial behavior.
+		options = append(options, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			if util.OutboundLocalAddr() == nil {
+				var d net.Dialer
+				return d.DialContext(ctx, "tcp", addr)
+			}
+			return util.OutboundDialContext(ctx, "tcp", addr)
 		}))
 	}
 

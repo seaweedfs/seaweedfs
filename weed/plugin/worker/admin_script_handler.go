@@ -25,8 +25,7 @@ const (
 	adminScriptDetectTickMinutes = 17
 )
 
-const defaultAdminScript = `ec.balance -apply
-fs.log.purge -daysAgo=7
+const defaultAdminScript = `fs.log.purge -daysAgo=7
 volume.deleteEmpty -quietFor=24h -apply
 volume.fix.replication -apply
 s3.clean.uploads -timeAgo=24h`
