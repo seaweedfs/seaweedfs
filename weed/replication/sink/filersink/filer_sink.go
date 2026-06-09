@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -164,6 +165,70 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 		return fmt.Errorf("delete entry %s: %v", key, err)
 	}
 	return nil
+}
+
+var _ sink.EntryMover = (*FilerSink)(nil)
+
+// MoveEntry relocates oldKey to newKey on the target filer via AtomicRenameEntry:
+// a metadata-only move that relocates a whole subtree in one transaction, so a
+// directory rename never leaves descendants missing and chunks are neither
+// re-copied nor leaked.
+//
+// When the move fails because the old path is genuinely gone on the sink — a
+// descendant the parent rename already relocated, or one never replicated —
+// there is nothing to move, so it creates the new path instead (CreateEntry
+// short-circuits when the entry is already there, and never deletes). Existence
+// is re-checked with a direct lookup rather than inferred from the rename error,
+// so a rolled-back move that left the old entry intact propagates for retry
+// instead of being mistaken for "gone".
+func (fs *FilerSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+	oldDir, oldName := util.FullPath(oldKey).DirAndName()
+	newDir, newName := util.FullPath(newKey).DirAndName()
+
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: oldDir,
+			OldName:      oldName,
+			NewDirectory: newDir,
+			NewName:      newName,
+			Signatures:   signatures,
+		})
+		return err
+	})
+	if err == nil {
+		return nil
+	}
+	if missing, lookupErr := fs.entryMissing(oldKey); lookupErr == nil && missing {
+		glog.V(2).Infof("move %s => %s: old path gone, creating %s", oldKey, newKey, newKey)
+		return fs.CreateEntry(newKey, newEntry, signatures)
+	}
+	return fmt.Errorf("move %s => %s: %w", oldKey, newKey, err)
+}
+
+// entryMissing reports whether key has no entry on the target filer. A lookup
+// not-found (sentinel or the gRPC string form) means missing; any other lookup
+// error is returned so the caller does not treat an unknown state as missing.
+func (fs *FilerSink) entryMissing(key string) (bool, error) {
+	dir, name := util.FullPath(key).DirAndName()
+	missing := false
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if lookupErr == nil {
+			return nil
+		}
+		// The string check is a deliberate compatibility fallback: a cross-cluster
+		// gRPC error often arrives as a plain status string that no longer wraps the
+		// filer_pb.ErrNotFound sentinel, so errors.Is alone would miss it.
+		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+			missing = true
+			return nil
+		}
+		return lookupErr
+	})
+	return missing, err
 }
 
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {

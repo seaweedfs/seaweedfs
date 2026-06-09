@@ -611,6 +611,37 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			// old key is in the watched directory
 			if util.IsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is also in the watched directory
+				if filer_pb.IsRename(resp) {
+					newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
+					// With deletes enabled a rename relocates the entry. Guard the
+					// watched root itself, whose old key would resolve to the target
+					// root and recursively delete the whole sink tree.
+					if doDeleteFiles && string(sourceOldKey) != sourcePath {
+						oldKey := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
+						if mover, ok := dataSink.(sink.EntryMover); ok {
+							// native atomic move: no re-copy, no descendant gap, no chunk leak.
+							return mover.MoveEntry(oldKey, newKey, message.NewEntry, message.Signatures)
+						}
+						// no native move: create the new entry first, then delete the
+						// old, so a crash between the two leaves the entry visible.
+						if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+							return fmt.Errorf("create entry2 : %w", err)
+						}
+						if err := dataSink.DeleteEntry(oldKey, message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
+							return fmt.Errorf("delete old entry %v: %w", oldKey, err)
+						}
+						return nil
+					}
+					// deletes disabled (backup/incremental) or the watched root moved:
+					// create the new entry and keep the old.
+					if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+						return fmt.Errorf("create entry2 : %w", err)
+					}
+					return nil
+				}
+
+				// in-place update (same path): mutate via UpdateEntry; never
+				// delete-then-recreate the same key.
 				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
 					var sinkNewParentPath string
@@ -623,19 +654,16 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 					if foundExisting {
 						return err
 					}
-
-					// not able to find old entry
+					// old entry missing on the destination; fall through to create it
 					if err = dataSink.DeleteEntry(string(oldKey), message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
 						return fmt.Errorf("delete old entry %v: %w", oldKey, err)
 					}
 				}
-				// create the new entry
 				newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
 				if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
 					return fmt.Errorf("create entry2 : %w", err)
-				} else {
-					return nil
 				}
+				return nil
 
 			} else {
 				// new key is outside the watched directory
