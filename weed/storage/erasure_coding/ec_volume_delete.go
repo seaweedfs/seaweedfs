@@ -64,6 +64,14 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		return nil
 	}
 
+	// Close nils ecjFile under this same lock, so a delete that resolved its
+	// .ecx lookup before an eviction (e.g. the generate-time UnloadEcVolume)
+	// can reach here with no journal fd. Bail with a clear error rather than
+	// operating on the closed/nil handle.
+	if ev.ecjFile == nil {
+		return fmt.Errorf("ec volume %d closed", ev.VolumeId)
+	}
+
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)
 
