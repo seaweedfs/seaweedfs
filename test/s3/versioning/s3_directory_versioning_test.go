@@ -159,6 +159,85 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 	assert.Equal(t, len(testFiles), fileCount, "Should find exactly %d files", len(testFiles))
 }
 
+// TestListObjectVersionsDeepPrefixExcludesAncestorDirectories verifies that a
+// prefix+delimiter version listing does not leak ancestor directory markers that
+// the listing only descends through to reach the prefix. Veeam's immutable
+// backup repository (versioning + object lock) issues exactly this request from
+// Cloud.FindLastCheckpointId and aborts when it sees an unexpected key like
+// "Veeam/" that does not match the deep prefix it asked for. The version listing
+// must match ListObjectsV2 / AWS: only keys at or under the prefix appear.
+func TestListObjectVersionsDeepPrefixExcludesAncestorDirectories(t *testing.T) {
+	bucketName := "test-versioning-deep-prefix"
+
+	client := setupS3Client(t)
+
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	defer cleanupBucket(t, client, bucketName)
+
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	// Explicit directory markers for every parent path, as Veeam creates them.
+	ancestorMarkers := []string{
+		"Veeam/",
+		"Veeam/Backup/",
+		"Veeam/Backup/job1/",
+		"Veeam/Backup/job1/Clients/",
+		"Veeam/Backup/job1/Clients/aaaa/",
+		"Veeam/Backup/job1/Clients/aaaa/bbbb/",
+	}
+	prefix := "Veeam/Backup/job1/Clients/aaaa/bbbb/Metadata/"
+	checkpointKey := prefix + "Checkpoint"
+
+	for _, dirKey := range append(ancestorMarkers, prefix) {
+		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(dirKey),
+			Body:   strings.NewReader(""),
+		})
+		require.NoError(t, err, "Failed to create directory marker %s", dirKey)
+	}
+
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(checkpointKey),
+		Body:   strings.NewReader("checkpoint"),
+	})
+	require.NoError(t, err)
+
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket:    aws.String(bucketName),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
+	})
+	require.NoError(t, err)
+
+	var gotKeys []string
+	for _, v := range listResp.Versions {
+		gotKeys = append(gotKeys, *v.Key)
+		assert.True(t, strings.HasPrefix(*v.Key, prefix),
+			"version key %q must start with the requested prefix %q", *v.Key, prefix)
+	}
+
+	// Only the prefix's own marker and the real object at/under it may appear.
+	assert.ElementsMatch(t, []string{prefix, checkpointKey}, gotKeys,
+		"deep-prefix version listing must not include ancestor directory markers")
+
+	// None of the ancestor markers ("Veeam/", ...) may surface as versions.
+	for _, marker := range ancestorMarkers {
+		assert.NotContains(t, gotKeys, marker,
+			"ancestor directory marker %q must not appear in a deep-prefix version listing", marker)
+	}
+}
+
 // TestListObjectVersionsDeleteMarkers tests that delete markers are properly separated from versions
 // This test verifies the fix for the issue where delete markers were incorrectly categorized as versions
 func TestListObjectVersionsDeleteMarkers(t *testing.T) {
