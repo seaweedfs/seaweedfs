@@ -468,26 +468,38 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 		// leaks. The per-shard-id delete that ec.rebuild uses for
 		// copied-survivor cleanup leaves shards behind, so this guard does not
 		// fire there.
-		removeBitrotSidecars(dataBaseFilename)
+		if err := removeBitrotSidecars(dataBaseFilename); err != nil {
+			return err
+		}
 		if location.IdxDirectory != location.Directory {
-			removeBitrotSidecars(indexBaseFilename)
+			if err := removeBitrotSidecars(indexBaseFilename); err != nil {
+				return err
+			}
 		}
 
 		if hasEcxFile {
 			// Remove .ecx/.ecj from both idx and data directories
-			// since they may be in either location depending on when -dir.idx was configured
-			if err := os.Remove(indexBaseFilename + ".ecx"); err != nil && !os.IsNotExist(err) {
-				return err
+			// since they may be in either location depending on when -dir.idx was configured.
+			// A surviving stale .ecx is the orphan-index condition this path prevents,
+			// so surface a real removal failure instead of reporting cleanup as success.
+			for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
+				if err := removeFileIfExists(p); err != nil {
+					return err
+				}
 			}
-			os.Remove(indexBaseFilename + ".ecj")
 			if location.IdxDirectory != location.Directory {
-				os.Remove(dataBaseFilename + ".ecx")
-				os.Remove(dataBaseFilename + ".ecj")
+				for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
+					if err := removeFileIfExists(p); err != nil {
+						return err
+					}
+				}
 			}
 
 			if !hasIdxFile {
 				// .vif is used for ec volumes and normal volumes
-				os.Remove(dataBaseFilename + ".vif")
+				if err := removeFileIfExists(dataBaseFilename + ".vif"); err != nil {
+					return err
+				}
 			}
 		}
 	}
