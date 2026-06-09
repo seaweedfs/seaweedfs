@@ -619,9 +619,13 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 					if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
 						return fmt.Errorf("create entry2 : %w", err)
 					}
-					if doDeleteFiles {
-						oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
-						if err := dataSink.DeleteEntry(string(oldKey), message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
+					// derive the old key the same way as the new one so the delete
+					// targets the same sink-side normalization the create used. Guard
+					// against the watched root itself moving, where the old key would
+					// resolve to targetPath and recursively delete the whole sink tree.
+					if doDeleteFiles && string(sourceOldKey) != sourcePath {
+						oldKey := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
+						if err := dataSink.DeleteEntry(oldKey, message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
 							return fmt.Errorf("delete old entry %v: %w", oldKey, err)
 						}
 					}
