@@ -2,7 +2,6 @@ package shell
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -406,11 +405,12 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 			ewg.Add(func() error {
 				if err := unmountAndDeleteEcShardsQuiet(commandEnv.option.GrpcDialOption, collection, vid, addr, allShardIds); err != nil {
 					// Surface a reachable node whose delete genuinely failed (its orphan would
-					// be re-stamped by a later copy installing the new .vif). Stay best-effort
-					// for an unreachable node (it cannot receive this new generation) and for
-					// a pre-upgrade node that did not ack full_teardown on an UNREPORTED pair
-					// (it likely had nothing to wipe); a reported leftover stays fatal.
-					if fatal || (!isNodeUnreachable(err) && !errors.Is(err, errFullTeardownNotAcked)) {
+					// be re-stamped by a later copy installing the new .vif). A missing
+					// full_teardown ack from a reachable pre-upgrade node is fatal too: it may
+					// still hold an orphan a later copy would re-stamp into the new generation.
+					// Stay best-effort only for an unreachable node, which cannot receive this
+					// new generation at all.
+					if fatal || !isNodeUnreachable(err) {
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
 					glog.V(1).Infof("orphan sweep: volume %d on %s skipped: %v", vid, addr, err)
