@@ -183,7 +183,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				glog.V(3).Infof("already replicated %s", key)
 				return nil
 			}
-			if resp.Entry.Attributes != nil && resp.Entry.Attributes.Mtime >= entry.Attributes.Mtime {
+			if getEntryMtimeNs(resp.Entry) >= getEntryMtimeNs(entry) {
 				if filer.FileSize(resp.Entry) >= filer.FileSize(entry) {
 					glog.V(3).Infof("skip overwriting %s", key)
 					return nil
@@ -357,13 +357,6 @@ func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunc
 	return
 }
 
-func getEntryMtime(entry *filer_pb.Entry) int64 {
-	if entry == nil || entry.Attributes == nil {
-		return 0
-	}
-	return entry.Attributes.Mtime
-}
-
 // getEntryMtimeNs returns the entry's modification time at full nanosecond
 // precision (seconds * 1e9 + the sub-second component). Plain second-grained
 // mtime cannot order versions of a file rewritten several times within the
@@ -422,7 +415,7 @@ const (
 )
 
 func chooseUpdateAction(existing, incoming *filer_pb.Entry) updateAction {
-	if getEntryMtime(existing) <= getEntryMtime(incoming) {
+	if getEntryMtimeNs(existing) <= getEntryMtimeNs(incoming) {
 		return updateNormal
 	}
 	if filer.FileSize(existing) < filer.FileSize(incoming) {
