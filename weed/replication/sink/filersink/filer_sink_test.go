@@ -86,3 +86,29 @@ func TestChooseUpdateAction(t *testing.T) {
 		})
 	}
 }
+
+// updatedEntryKey must resolve the incoming entry's new path. For a rename the
+// supersession check has to target newParentPath/newEntry.Name, not the old key,
+// or the renamed-away old path looks deleted on the source and skips a live event.
+func TestUpdatedEntryKey(t *testing.T) {
+	named := func(name string) *filer_pb.Entry { return &filer_pb.Entry{Name: name} }
+	tests := []struct {
+		name          string
+		key           string
+		newParentPath string
+		entry         *filer_pb.Entry
+		want          string
+	}{
+		{"content update, no new parent", "/dst/a.txt", "", named("a.txt"), "/dst/a.txt"},
+		{"rename same dir", "/dst/old.txt", "/dst", named("new.txt"), "/dst/new.txt"},
+		{"rename to subdir", "/dst/old.txt", "/dst/sub", named("new.txt"), "/dst/sub/new.txt"},
+		{"root parent", "/old.txt", "/", named("new.txt"), "/new.txt"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := updatedEntryKey(tc.key, tc.newParentPath, tc.entry); got != tc.want {
+				t.Fatalf("updatedEntryKey = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

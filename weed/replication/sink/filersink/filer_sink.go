@@ -262,6 +262,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
+	// the supersession checks below must look up where the incoming entry lives
+	// now, which for a rename is newParentPath/newEntry.Name, not the old key.
+	targetKey := updatedEntryKey(key, newParentPath, newEntry)
+
 	switch chooseUpdateAction(existingEntry, newEntry) {
 	case updateSkip:
 		// a newer, complete version already landed (out-of-order); leave it
@@ -270,10 +274,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	case updateRepair:
 		glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; re-replicating full source content",
 			key, filer.FileSize(existingEntry), filer.FileSize(newEntry))
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), key, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry))
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
-				return true, fs.onCorruptChunk(key, newEntry, err)
+				return true, fs.onCorruptChunk(targetKey, newEntry, err)
 			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
@@ -299,10 +303,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, key, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry))
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
-				return true, fs.onCorruptChunk(key, newEntry, err)
+				return true, fs.onCorruptChunk(targetKey, newEntry, err)
 			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
@@ -389,6 +393,17 @@ const (
 	// the source despite a newer mtime — a truncated copy from a failed replication.
 	updateRepair
 )
+
+// updatedEntryKey returns the sink path the incoming entry lands at: for a rename
+// newParentPath/newEntry.Name, else key's parent + name. Supersession must use this,
+// not the pre-rename key, which would look deleted on the source and skip a live event.
+func updatedEntryKey(key, newParentPath string, newEntry *filer_pb.Entry) string {
+	targetDir := newParentPath
+	if targetDir == "" {
+		targetDir, _ = util.FullPath(key).DirAndName()
+	}
+	return string(util.NewFullPath(targetDir, newEntry.Name))
+}
 
 func chooseUpdateAction(existing, incoming *filer_pb.Entry) updateAction {
 	if getEntryMtimeNs(existing) <= getEntryMtimeNs(incoming) {
