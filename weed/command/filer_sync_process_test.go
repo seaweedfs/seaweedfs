@@ -15,6 +15,9 @@ type recordingSyncSink struct {
 	deleteKeys []string
 	createKeys []string
 	updateKeys []string
+	// updateFoundExisting is what UpdateEntry reports; false exercises the
+	// delete-then-create fallback for an in-place update missing on the sink.
+	updateFoundExisting bool
 	// ordered records the sink method names in call order so tests can assert
 	// create-before-delete sequencing.
 	ordered []string
@@ -37,7 +40,7 @@ func (s *recordingSyncSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 func (s *recordingSyncSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (bool, error) {
 	s.updateKeys = append(s.updateKeys, key)
 	s.ordered = append(s.ordered, "update")
-	return true, nil
+	return s.updateFoundExisting, nil
 }
 
 func equalSyncStrings(a, b []string) bool {
@@ -125,7 +128,7 @@ func TestGenProcessFunctionRenameCreatesThenDeletes(t *testing.T) {
 // An in-place update (same dir + same name) must route to UpdateEntry, never the
 // rename create-then-delete path — otherwise it would delete the key it just wrote.
 func TestGenProcessFunctionInPlaceUpdateUsesUpdateEntry(t *testing.T) {
-	dataSink := &recordingSyncSink{}
+	dataSink := &recordingSyncSink{updateFoundExisting: true}
 	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, true, false)
 
 	err := processFn(&filer_pb.SubscribeMetadataResponse{
@@ -145,6 +148,34 @@ func TestGenProcessFunctionInPlaceUpdateUsesUpdateEntry(t *testing.T) {
 	}
 	if len(dataSink.createKeys) != 0 || len(dataSink.deleteKeys) != 0 {
 		t.Fatalf("in-place update must not create or delete: creates=%v deletes=%v", dataSink.createKeys, dataSink.deleteKeys)
+	}
+}
+
+// When an in-place update finds no existing entry on the sink, it falls back to
+// delete-then-create on the same key — and must delete before create, or the
+// recreated entry would be removed.
+func TestGenProcessFunctionInPlaceUpdateFallbackDeletesBeforeCreate(t *testing.T) {
+	dataSink := &recordingSyncSink{updateFoundExisting: false}
+	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, true, false)
+
+	err := processFn(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/foo/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file.txt"},
+			NewEntry:      &filer_pb.Entry{Name: "file.txt"},
+			NewParentPath: "/foo/dir",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processFn in-place update fallback: %v", err)
+	}
+
+	if got, want := dataSink.ordered, []string{"update", "delete", "create"}; !equalSyncStrings(got, want) {
+		t.Fatalf("call order = %v, want %v", got, want)
+	}
+	if len(dataSink.deleteKeys) != 1 || dataSink.deleteKeys[0] != "/dest/dir/file.txt" ||
+		len(dataSink.createKeys) != 1 || dataSink.createKeys[0] != "/dest/dir/file.txt" {
+		t.Fatalf("fallback keys: deletes=%v creates=%v, want both [/dest/dir/file.txt]", dataSink.deleteKeys, dataSink.createKeys)
 	}
 }
 

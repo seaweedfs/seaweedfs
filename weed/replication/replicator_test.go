@@ -251,6 +251,9 @@ func TestReplicateInPlaceUpdateFallbackCreates(t *testing.T) {
 	if len(s.createCalls) != 1 || s.createCalls[0].key != "/dest/dir/file.txt" {
 		t.Fatalf("create calls = %+v, want same sink key", s.createCalls)
 	}
+	if got, want := s.ordered, []string{"update", "delete", "create"}; !equalStrings(got, want) {
+		t.Fatalf("call order = %v, want %v", got, want)
+	}
 }
 
 func equalStrings(a, b []string) bool {
