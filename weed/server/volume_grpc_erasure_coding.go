@@ -431,7 +431,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 				return nil, fmt.Errorf("full teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
 			}
 		}
-		return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
 	}
 
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)

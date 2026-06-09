@@ -3669,9 +3669,10 @@ func (x *VolumeEcShardsDeleteRequest) GetFullTeardown() bool {
 }
 
 type VolumeEcShardsDeleteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	FullTeardownDone bool                   `protobuf:"varint,1,opt,name=full_teardown_done,json=fullTeardownDone,proto3" json:"full_teardown_done,omitempty"` // set by a new server that performed full_teardown; absent from an old server lets the caller detect the silent no-op
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *VolumeEcShardsDeleteResponse) Reset() {
@@ -3702,6 +3703,13 @@ func (x *VolumeEcShardsDeleteResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use VolumeEcShardsDeleteResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) {
 	return file_volume_server_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *VolumeEcShardsDeleteResponse) GetFullTeardownDone() bool {
+	if x != nil {
+		return x.FullTeardownDone
+	}
+	return false
 }
 
 type VolumeEcShardsMountRequest struct {
@@ -7259,8 +7267,9 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
 	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12#\n" +
-	"\rfull_teardown\x18\x04 \x01(\bR\ffullTeardown\"\x1e\n" +
-	"\x1cVolumeEcShardsDeleteResponse\"\xa0\x01\n" +
+	"\rfull_teardown\x18\x04 \x01(\bR\ffullTeardown\"L\n" +
+	"\x1cVolumeEcShardsDeleteResponse\x12,\n" +
+	"\x12full_teardown_done\x18\x01 \x01(\bR\x10fullTeardownDone\"\xa0\x01\n" +
 	"\x1aVolumeEcShardsMountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +

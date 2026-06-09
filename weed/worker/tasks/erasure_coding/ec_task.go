@@ -977,13 +977,17 @@ func unmountAndDeleteEcShards(
 			}); err != nil {
 				return fmt.Errorf("unmount: %w", err)
 			}
-			if _, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+			resp, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
 				VolumeId:     volumeID,
 				Collection:   collection,
 				ShardIds:     shardIds,
 				FullTeardown: true,
-			}); err != nil {
+			})
+			if err != nil {
 				return fmt.Errorf("delete: %w", err)
+			}
+			if !resp.GetFullTeardownDone() {
+				return fmt.Errorf("delete: %s did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain", destination)
 			}
 			return nil
 		})

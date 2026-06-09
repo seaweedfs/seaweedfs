@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -405,12 +406,14 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 			ewg.Add(func() error {
 				if err := unmountAndDeleteEcShardsQuiet(commandEnv.option.GrpcDialOption, collection, vid, addr, allShardIds); err != nil {
 					// Surface a reachable node whose delete genuinely failed (its orphan would
-					// be re-stamped by a later copy installing the new .vif); stay best-effort
-					// only for an unreachable node, which cannot receive this new generation.
-					if fatal || !isNodeUnreachable(err) {
+					// be re-stamped by a later copy installing the new .vif). Stay best-effort
+					// for an unreachable node (it cannot receive this new generation) and for
+					// a pre-upgrade node that did not ack full_teardown on an UNREPORTED pair
+					// (it likely had nothing to wipe); a reported leftover stays fatal.
+					if fatal || (!isNodeUnreachable(err) && !errors.Is(err, errFullTeardownNotAcked)) {
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
-					glog.V(1).Infof("orphan sweep: volume %d on %s unreachable, skipping: %v", vid, addr, err)
+					glog.V(1).Infof("orphan sweep: volume %d on %s skipped: %v", vid, addr, err)
 				}
 				return nil
 			})

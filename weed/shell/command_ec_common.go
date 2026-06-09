@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -536,6 +537,13 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 }
 
+// errFullTeardownNotAcked marks a VolumeEcShardsDelete whose server did not
+// echo full_teardown_done -- a pre-upgrade volume server silently ignoring the
+// flag. The pre-encode sweep treats it as fatal only for a reported (mounted)
+// leftover; for an unreported node it is best-effort, since that node likely had
+// nothing to wipe and an old server cannot acknowledge either way.
+var errFullTeardownNotAcked = errors.New("volume server did not perform full teardown")
+
 // unmountAndDeleteEcShardsQuiet unmounts then deletes shards on one server in a
 // single connection, without the per-call logging the interactive helpers emit.
 // Used by the orphan sweep, which fans out to every node x volume and would
@@ -549,13 +557,17 @@ func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection st
 		}); err != nil {
 			return fmt.Errorf("unmount: %w", err)
 		}
-		if _, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+		resp, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
 			VolumeId:     uint32(volumeId),
 			Collection:   collection,
 			ShardIds:     ids,
 			FullTeardown: true,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("delete: %w", err)
+		}
+		if !resp.GetFullTeardownDone() {
+			return fmt.Errorf("delete on %s: %w", location, errFullTeardownNotAcked)
 		}
 		return nil
 	})
