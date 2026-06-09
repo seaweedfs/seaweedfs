@@ -74,10 +74,14 @@ func (store *MongodbStore) connection(uri string, poolSize uint64, ssl bool, ssl
 	}
 
 	if username != "" && password != "" {
-		creds := options.Credential{
-			Username: username,
-			Password: password,
+		// Keep auth fields parsed from the URI (AuthSource, AuthMechanism, ...)
+		// and only override the credentials.
+		creds := options.Credential{}
+		if opts.Auth != nil {
+			creds = *opts.Auth
 		}
+		creds.Username = username
+		creds.Password = password
 		opts.SetAuth(creds)
 	}
 
