@@ -37,6 +37,17 @@ func (s *recordingSyncSink) GetSinkToDirectory() string         { return "/dest"
 func (s *recordingSyncSink) SetSourceFiler(*source.FilerSource) {}
 func (s *recordingSyncSink) IsIncremental() bool                { return false }
 
+// TestDestKeyPreservesColonForNonLocalSink guards against the command layer
+// stripping colons from keys destined for non-local sinks. Colon
+// sanitization belongs to the local filesystem sink only.
+func TestDestKeyPreservesColonForNonLocalSink(t *testing.T) {
+	got := destKey(&recordingSyncSink{}, "/backup", "/src", util.FullPath("/src/2024:01:02/file:name.txt"), 0)
+	want := "/backup/2024:01:02/file:name.txt"
+	if got != want {
+		t.Errorf("destKey() = %q, want %q", got, want)
+	}
+}
+
 func TestPathIsEqualOrUnderUsesDirectoryBoundaries(t *testing.T) {
 	tests := []struct {
 		name      string
