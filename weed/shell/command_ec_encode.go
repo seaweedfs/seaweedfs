@@ -413,8 +413,13 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 					// alone is ambiguous — a genuinely-down node and a reachable Rust volume
 					// server in maintenance mode both return it (a Go server returns Unknown for
 					// maintenance, already fatal above). Confirm with a non-maintenance-gated Ping
-					// before skipping; a reachable maintenance node CAN receive this generation.
-					if fatal || errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) || isVolumeServerReachable(commandEnv.option.GrpcDialOption, addr) {
+					// before skipping; skip only when the Ping itself transport-failed (nodeDown).
+					// A reachable maintenance node (nodeUp) CAN receive this generation, and an
+					// inconclusive Ping (nodeLivenessUnknown, e.g. a pre-Ping server returning
+					// Unimplemented — which means the node is up) does not prove the node is down,
+					// so both stay fatal rather than silently leaving a stale EC generation.
+					if fatal || errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) ||
+						classifyNodeLiveness(pingVolumeServer(commandEnv.option.GrpcDialOption, addr)) != nodeDown {
 						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
 					}
 					glog.V(1).Infof("orphan sweep: volume %d on %s skipped (unreachable): %v", vid, addr, err)
@@ -438,6 +443,35 @@ func isNodeUnreachable(err error) bool {
 	}
 	st, ok := status.FromError(err)
 	return ok && st.Code() == codes.Unavailable
+}
+
+// nodeLiveness is the tri-state result of a pingVolumeServer probe.
+type nodeLiveness int
+
+const (
+	// nodeUp: Ping succeeded — the node is reachable (e.g. a Rust volume server
+	// in maintenance mode that fails the delete but answers Ping).
+	nodeUp nodeLiveness = iota
+	// nodeDown: Ping itself transport-failed with codes.Unavailable — the node is
+	// confirmed unreachable. The only state the orphan sweep may skip.
+	nodeDown
+	// nodeLivenessUnknown: Ping reached failing logic with any non-Unavailable
+	// code (Internal, ResourceExhausted, Unimplemented from a pre-Ping server, …)
+	// or a non-status error. This does NOT prove the node is down, so it is fatal.
+	nodeLivenessUnknown
+)
+
+// classifyNodeLiveness maps a pingVolumeServer error into the tri-state. A nil
+// error is nodeUp, a transport codes.Unavailable is nodeDown (reusing the same
+// rule as isNodeUnreachable), and every other Ping failure is nodeLivenessUnknown.
+func classifyNodeLiveness(pingErr error) nodeLiveness {
+	if pingErr == nil {
+		return nodeUp
+	}
+	if isNodeUnreachable(pingErr) {
+		return nodeDown
+	}
+	return nodeLivenessUnknown
 }
 
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
