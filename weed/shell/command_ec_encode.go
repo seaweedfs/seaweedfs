@@ -332,6 +332,19 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		return nil, err
 	}
 
+	// A selected generation host still in skippedNodes after the re-sweep was
+	// transport-down when we tried to clean it, so its stale orphans were never
+	// removed and EcBalance excludes it as both source and target. If it recovers
+	// just in time for generation, all shards land on a node we can neither clean
+	// nor balance off — a single point of failure that union-only verification
+	// still accepts, after which the originals are deleted. Abort instead.
+	for _, vid := range volumeIds {
+		genHost := bestReplicas[vid].ServerAddress()
+		if _, stillSkipped := skippedNodes[genHost]; stillSkipped {
+			return nil, fmt.Errorf("generate ec shards for volume %d aborted: selected source %s is still skipped after the orphan re-sweep", vid, genHost)
+		}
+	}
+
 	// generate ec shards using the best replica for each volume
 	ewg.Reset()
 	for _, vid := range volumeIds {
