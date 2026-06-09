@@ -27,6 +27,9 @@ type AtimePolicy struct {
 	PathPrefixes []string
 }
 
+// NewAtimePolicy builds a policy from a mode string, relatime threshold and
+// optional path-prefix list. A non-positive threshold falls back to
+// DefaultRelatimeThreshold.
 func NewAtimePolicy(mode string, threshold time.Duration, pathPrefixes []string) (*AtimePolicy, error) {
 	parsed, err := ParseAtimeMode(mode)
 	if err != nil {
@@ -42,6 +45,8 @@ func NewAtimePolicy(mode string, threshold time.Duration, pathPrefixes []string)
 	}, nil
 }
 
+// ParseAtimeMode normalises a mode string (case- and whitespace-insensitive),
+// treating the empty string as AtimeModeOff and rejecting anything unknown.
 func ParseAtimeMode(s string) (AtimeMode, error) {
 	switch AtimeMode(strings.ToLower(strings.TrimSpace(s))) {
 	case AtimeModeOff, "":
@@ -70,6 +75,10 @@ func normalisePathPrefixes(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, p := range in {
 		p = strings.TrimSpace(p)
+		// Treat "/a/b" and "/a/b/" as the same subtree so a prefix also
+		// matches the directory itself. A bare "/" collapses to "" and is
+		// dropped, which correctly means "no restriction".
+		p = strings.TrimRight(p, "/")
 		if p != "" {
 			out = append(out, p)
 		}
@@ -115,6 +124,10 @@ func pathHasPrefix(fullpath, prefix string) bool {
 	return fullpath[len(prefix)] == '/'
 }
 
+// ShouldUpdate reports whether a candidate access time should be persisted for
+// an entry under this policy. The relatime threshold is normalised here too, so
+// a policy built via a struct literal with a non-positive threshold still
+// debounces using DefaultRelatimeThreshold rather than degrading to strict.
 func (p *AtimePolicy) ShouldUpdate(existing Attr, candidate time.Time) bool {
 	if p == nil || p.Mode == AtimeModeOff {
 		return false
@@ -137,5 +150,9 @@ func (p *AtimePolicy) ShouldUpdate(existing Attr, candidate time.Time) bool {
 	if !existing.Ctime.IsZero() && existing.Atime.Before(existing.Ctime) {
 		return true
 	}
-	return candidate.Sub(existing.Atime) >= p.RelatimeThreshold
+	threshold := p.RelatimeThreshold
+	if threshold <= 0 {
+		threshold = DefaultRelatimeThreshold
+	}
+	return candidate.Sub(existing.Atime) >= threshold
 }
