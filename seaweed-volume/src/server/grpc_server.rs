@@ -420,13 +420,35 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                     Err(e) => {
-                        results.push(volume_server_pb::DeleteResult {
-                            file_id: fid_str.clone(),
-                            status: 500,
-                            error: e.to_string(),
-                            size: 0,
-                            version: 0,
-                        });
+                        // The volume vanished between the is_ec_volume snapshot and
+                        // this mutation. If an EC volume now occupies the vid (ec.encode
+                        // mounted EC then deleted the .dat under us), the delete belongs
+                        // on the EC journal, not here — return a retriable 503 with the
+                        // "try again" token so the filer requeues it and the retry hits
+                        // the EC path. A bare exact "not found" would be dropped
+                        // permanently by the filer chunk-GC.
+                        if matches!(e, crate::storage::volume::VolumeError::NotFound)
+                            && store.has_ec_volume(file_id.volume_id)
+                        {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 503,
+                                error: format!(
+                                    "volume {} became ec during delete, try again",
+                                    file_id.volume_id
+                                ),
+                                size: 0,
+                                version: 0,
+                            });
+                        } else {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 500,
+                                error: e.to_string(),
+                                size: 0,
+                                version: 0,
+                            });
+                        }
                     }
                 }
             } else {
