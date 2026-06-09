@@ -26,12 +26,13 @@ func TestMain(m *testing.M) {
 
 func TestTargetPathToSourcePath(t *testing.T) {
 	tests := []struct {
-		name       string
-		targetRoot string
-		sourceRoot string
-		targetPath string
-		wantPath   util.FullPath
-		wantOK     bool
+		name        string
+		targetRoot  string
+		sourceRoot  string
+		targetPath  string
+		incremental bool
+		wantPath    util.FullPath
+		wantOK      bool
 	}{
 		{
 			name:       "basic mapping",
@@ -40,6 +41,16 @@ func TestTargetPathToSourcePath(t *testing.T) {
 			targetPath: "/target/path/file.txt",
 			wantPath:   "/source/path/file.txt",
 			wantOK:     true,
+		},
+		{
+			// incremental keys carry a date prefix that can't be reversed; unmappable
+			name:        "incremental sink is unmappable",
+			targetRoot:  "/target",
+			sourceRoot:  "/source",
+			targetPath:  "/target/2026-06-09/path/file.txt",
+			incremental: true,
+			wantPath:    "",
+			wantOK:      false,
 		},
 		{
 			name:       "trailing slash roots",
@@ -78,7 +89,8 @@ func TestTargetPathToSourcePath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &FilerSink{
-				dir: tc.targetRoot,
+				dir:           tc.targetRoot,
+				isIncremental: tc.incremental,
 				filerSource: &source.FilerSource{
 					Dir: tc.sourceRoot,
 				},
@@ -319,5 +331,56 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 	}
 	if !errors.Is(err, errChunkSizeMismatch) {
 		t.Fatalf("error chain broken: errors.Is(err, errChunkSizeMismatch) = false; got %v", err)
+	}
+}
+
+// sourceSupersedes decides whether to skip a stale replayed event. The replayed
+// mtime is fixed; the table varies what the source lookup returned.
+func TestSourceSupersedes(t *testing.T) {
+	const eventNs int64 = 5_000_000_500 // the version being replayed (sec 5, ns 500)
+
+	withMtime := func(sec int64, ns int32) *filer_pb.Entry {
+		return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: sec, MtimeNs: ns}}
+	}
+
+	tests := []struct {
+		name      string
+		entry     *filer_pb.Entry
+		lookupErr error
+		want      bool
+	}{
+		// deleted on source: ErrNotFound in several shapes, all read as gone -> skip
+		{"not-found sentinel", nil, filer_pb.ErrNotFound, true},
+		{"not-found wrapped", nil, fmt.Errorf("lookup /x: %w", filer_pb.ErrNotFound), true},
+		{"not-found as string (gRPC)", nil, errors.New("rpc error: " + filer_pb.ErrNotFound.Error()), true},
+		{"nil entry, nil error", nil, nil, true},
+		// transient lookup failure must NOT skip a possibly-live file
+		{"network error", nil, errors.New("dial tcp: i/o timeout"), false},
+		// live entry: compare full-ns mtime against the replayed version
+		{"source strictly newer", withMtime(5, 600), nil, true},
+		{"source same version", withMtime(5, 500), nil, false},
+		{"source older (out-of-order replay)", withMtime(5, 400), nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sourceSupersedes("/source/x/config", tc.entry, tc.lookupErr, eventNs)
+			if got != tc.want {
+				t.Fatalf("sourceSupersedes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An epoch/unset replayed mtime (0) must not block "gone" detection: a deleted
+// source still reports superseded so the event is skipped instead of wedging on
+// permanent retries. A live source stays not-superseded — no valid mtime to compare.
+func TestSourceSupersedesEpochMtime(t *testing.T) {
+	live := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 5, MtimeNs: 600}}
+	if !sourceSupersedes("/source/x", nil, filer_pb.ErrNotFound, 0) {
+		t.Fatal("epoch-mtime deleted source must be reported gone")
+	}
+	if sourceSupersedes("/source/x", live, nil, 0) {
+		t.Fatal("epoch-mtime live source must not be reported superseded")
 	}
 }
