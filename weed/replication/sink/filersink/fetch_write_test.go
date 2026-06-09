@@ -371,3 +371,16 @@ func TestSourceSupersedes(t *testing.T) {
 		})
 	}
 }
+
+// An epoch/unset replayed mtime (0) must not block "gone" detection: a deleted
+// source still reports superseded so the event is skipped instead of wedging on
+// permanent retries. A live source stays not-superseded — no valid mtime to compare.
+func TestSourceSupersedesEpochMtime(t *testing.T) {
+	live := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 5, MtimeNs: 600}}
+	if !sourceSupersedes("/source/x", nil, filer_pb.ErrNotFound, 0) {
+		t.Fatal("epoch-mtime deleted source must be reported gone")
+	}
+	if sourceSupersedes("/source/x", live, nil, 0) {
+		t.Fatal("epoch-mtime live source must not be reported superseded")
+	}
+}

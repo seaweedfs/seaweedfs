@@ -444,9 +444,10 @@ func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
 
 // hasSourceNewerVersion reports whether the source's current entry for targetPath
 // has moved past sourceMtimeNs — gone, or a strictly-newer mtime — meaning the
-// version being replayed is stale.
+// version being replayed is stale. The lookup runs regardless of sourceMtimeNs so
+// a deleted source is detected even when the replayed mtime is epoch/unset.
 func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int64) bool {
-	if sourceMtimeNs <= 0 || fs.filerSource == nil {
+	if fs.filerSource == nil {
 		return false
 	}
 
@@ -478,6 +479,11 @@ func sourceSupersedes(sourcePath util.FullPath, sourceEntry *filer_pb.Entry, loo
 		return true
 	}
 
+	// source still holds the entry; only a strictly-newer mtime proves staleness,
+	// and only when there is a valid replayed mtime to compare against.
+	if sourceMtimeNs <= 0 {
+		return false
+	}
 	return getEntryMtimeNs(sourceEntry) > sourceMtimeNs
 }
 
