@@ -722,10 +722,10 @@ func destKey(dataSink sink.ReplicationSink, targetPath, sourcePath string, sourc
 		relative = strings.TrimPrefix(sk, "/")
 	}
 	if !dataSink.IsIncremental() {
-		return escapeKey(util.Join(targetPath, relative))
+		return util.Join(targetPath, relative)
 	}
 	dateKey := time.Unix(mTime, 0).Format("2006-01-02")
-	return escapeKey(util.Join(targetPath, dateKey, relative))
+	return util.Join(targetPath, dateKey, relative)
 }
 
 // isEntryExcluded checks whether a single side (old or new) of an event is excluded
