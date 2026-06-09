@@ -13,6 +13,12 @@ func entry(mtime int64, size uint64) *filer_pb.Entry {
 	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime, FileSize: size}}
 }
 
+// entryNs is entry with an explicit sub-second component, used to check that the
+// decision orders versions rewritten within the same second.
+func entryNs(mtime int64, ns int32, size uint64) *filer_pb.Entry {
+	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime, MtimeNs: ns, FileSize: size}}
+}
+
 // getEntryMtimeNs must order versions written within the same second, which
 // plain second-grained mtime cannot. It also must be nil-safe.
 func TestGetEntryMtimeNs(t *testing.T) {
@@ -70,6 +76,10 @@ func TestChooseUpdateAction(t *testing.T) {
 		{"destination newer and complete", entry(300, 100), entry(200, 100), updateSkip},
 		{"destination newer and larger", entry(300, 200), entry(200, 100), updateSkip},
 		{"destination newer but truncated", entry(300, 90), entry(200, 100), updateRepair},
+		// same second: sub-second ordering must still decide which version wins,
+		// otherwise an older same-second replay overwrites the newer destination.
+		{"same second, destination newer and complete", entryNs(5, 200, 100), entryNs(5, 100, 100), updateSkip},
+		{"same second, destination older", entryNs(5, 100, 100), entryNs(5, 200, 100), updateNormal},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
