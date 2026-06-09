@@ -44,4 +44,22 @@ func TestCreateEntryWritesSanitizedPath(t *testing.T) {
 	if _, err := os.Stat(key); err == nil {
 		t.Errorf("unexpected file at unsanitized path %q", key)
 	}
+
+	updated := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{FileMode: uint32(0644)},
+		Content:    []byte("data-v2"),
+	}
+	if _, err := sink.UpdateEntry(key, entry, filepath.Dir(key), updated, false, nil); err != nil {
+		t.Fatalf("UpdateEntry failed: %v", err)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("expected updated file at sanitized path %q: %v", want, err)
+	}
+
+	if err := sink.DeleteEntry(key, false, false, nil); err != nil {
+		t.Fatalf("DeleteEntry failed: %v", err)
+	}
+	if _, err := os.Stat(want); !os.IsNotExist(err) {
+		t.Errorf("expected sanitized path %q removed, stat err=%v", want, err)
+	}
 }

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -12,9 +13,10 @@ import (
 var _ sink.ReplicationSink = (*recordingSyncSink)(nil)
 
 type recordingSyncSink struct {
-	deleteKeys []string
-	createKeys []string
-	updateKeys []string
+	deleteKeys  []string
+	createKeys  []string
+	updateKeys  []string
+	incremental bool
 }
 
 func (s *recordingSyncSink) GetName() string { return "recording" }
@@ -35,17 +37,26 @@ func (s *recordingSyncSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, ne
 }
 func (s *recordingSyncSink) GetSinkToDirectory() string         { return "/dest" }
 func (s *recordingSyncSink) SetSourceFiler(*source.FilerSource) {}
-func (s *recordingSyncSink) IsIncremental() bool                { return false }
+func (s *recordingSyncSink) IsIncremental() bool                { return s.incremental }
 
 // TestDestKeyPreservesColonForNonLocalSink guards against the command layer
 // stripping colons from keys destined for non-local sinks. Colon
 // sanitization belongs to the local filesystem sink only.
 func TestDestKeyPreservesColonForNonLocalSink(t *testing.T) {
-	got := destKey(&recordingSyncSink{}, "/backup", "/src", util.FullPath("/src/2024:01:02/file:name.txt"), 0)
-	want := "/backup/2024:01:02/file:name.txt"
-	if got != want {
-		t.Errorf("destKey() = %q, want %q", got, want)
-	}
+	t.Run("non-incremental", func(t *testing.T) {
+		got := destKey(&recordingSyncSink{}, "/backup", "/src", util.FullPath("/src/2024:01:02/file:name.txt"), 0)
+		want := "/backup/2024:01:02/file:name.txt"
+		if got != want {
+			t.Errorf("destKey() = %q, want %q", got, want)
+		}
+	})
+	t.Run("incremental", func(t *testing.T) {
+		got := destKey(&recordingSyncSink{incremental: true}, "/backup", "/src", util.FullPath("/src/file:name.txt"), 0)
+		// the date partition varies by timezone; assert the colon-bearing name survives.
+		if !strings.HasPrefix(got, "/backup/") || !strings.HasSuffix(got, "/file:name.txt") {
+			t.Errorf("destKey() = %q, want /backup/<date>/file:name.txt with colon preserved", got)
+		}
+	})
 }
 
 func TestPathIsEqualOrUnderUsesDirectoryBoundaries(t *testing.T) {
