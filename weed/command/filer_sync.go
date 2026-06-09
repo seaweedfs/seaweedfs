@@ -611,6 +611,25 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			// old key is in the watched directory
 			if util.IsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is also in the watched directory
+				if filer_pb.IsRename(resp) {
+					// A real move: UpdateEntry cannot move an entry, so create at the new
+					// key first, then delete the old (when deletes are enabled), so a crash
+					// between the two leaves the entry visible rather than lost.
+					newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
+					if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+						return fmt.Errorf("create entry2 : %w", err)
+					}
+					if doDeleteFiles {
+						oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
+						if err := dataSink.DeleteEntry(string(oldKey), message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
+							return fmt.Errorf("delete old entry %v: %w", oldKey, err)
+						}
+					}
+					return nil
+				}
+
+				// in-place update (same path): mutate via UpdateEntry; never
+				// delete-then-recreate the same key.
 				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
 					var sinkNewParentPath string
@@ -623,19 +642,16 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 					if foundExisting {
 						return err
 					}
-
-					// not able to find old entry
+					// old entry missing on the destination; fall through to create it
 					if err = dataSink.DeleteEntry(string(oldKey), message.OldEntry.IsDirectory, false, message.Signatures); err != nil {
 						return fmt.Errorf("delete old entry %v: %w", oldKey, err)
 					}
 				}
-				// create the new entry
 				newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
 				if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
 					return fmt.Errorf("create entry2 : %w", err)
-				} else {
-					return nil
 				}
+				return nil
 
 			} else {
 				// new key is outside the watched directory

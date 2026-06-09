@@ -15,6 +15,9 @@ type recordingSyncSink struct {
 	deleteKeys []string
 	createKeys []string
 	updateKeys []string
+	// ordered records the sink method names in call order so tests can assert
+	// create-before-delete sequencing.
+	ordered []string
 }
 
 func (s *recordingSyncSink) GetName() string { return "recording" }
@@ -23,15 +26,30 @@ func (s *recordingSyncSink) Initialize(util.Configuration, string) error {
 }
 func (s *recordingSyncSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 	s.deleteKeys = append(s.deleteKeys, key)
+	s.ordered = append(s.ordered, "delete")
 	return nil
 }
 func (s *recordingSyncSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 	s.createKeys = append(s.createKeys, key)
+	s.ordered = append(s.ordered, "create")
 	return nil
 }
 func (s *recordingSyncSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (bool, error) {
 	s.updateKeys = append(s.updateKeys, key)
+	s.ordered = append(s.ordered, "update")
 	return true, nil
+}
+
+func equalSyncStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 func (s *recordingSyncSink) GetSinkToDirectory() string         { return "/dest" }
 func (s *recordingSyncSink) SetSourceFiler(*source.FilerSource) {}
@@ -69,6 +87,90 @@ func TestMatchesExcludePathUsesDirectoryBoundaries(t *testing.T) {
 	}
 	if matchesExcludePath("/tmp2/sub", []string{"/tmp"}) {
 		t.Fatal("did not expect sibling directory to be excluded")
+	}
+}
+
+// A combined rename event (old and new both under sourcePath, doDeleteFiles=true)
+// creates at the new key then deletes the old key — never UpdateEntry.
+func TestGenProcessFunctionRenameCreatesThenDeletes(t *testing.T) {
+	dataSink := &recordingSyncSink{}
+	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, true, false)
+
+	err := processFn(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/foo/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "old.txt"},
+			NewEntry:      &filer_pb.Entry{Name: "new.txt"},
+			NewParentPath: "/foo/dir",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processFn rename: %v", err)
+	}
+
+	if len(dataSink.updateKeys) != 0 {
+		t.Fatalf("expected rename to bypass UpdateEntry, got %v", dataSink.updateKeys)
+	}
+	if len(dataSink.createKeys) != 1 || dataSink.createKeys[0] != "/dest/dir/new.txt" {
+		t.Fatalf("create keys = %v, want [/dest/dir/new.txt]", dataSink.createKeys)
+	}
+	if len(dataSink.deleteKeys) != 1 || dataSink.deleteKeys[0] != "/dest/dir/old.txt" {
+		t.Fatalf("delete keys = %v, want [/dest/dir/old.txt]", dataSink.deleteKeys)
+	}
+	if got, want := dataSink.ordered, []string{"create", "delete"}; !equalSyncStrings(got, want) {
+		t.Fatalf("call order = %v, want create before delete %v", got, want)
+	}
+}
+
+// An in-place update (same dir + same name) must route to UpdateEntry, never the
+// rename create-then-delete path — otherwise it would delete the key it just wrote.
+func TestGenProcessFunctionInPlaceUpdateUsesUpdateEntry(t *testing.T) {
+	dataSink := &recordingSyncSink{}
+	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, true, false)
+
+	err := processFn(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/foo/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file.txt"},
+			NewEntry:      &filer_pb.Entry{Name: "file.txt"},
+			NewParentPath: "/foo/dir",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processFn in-place update: %v", err)
+	}
+
+	if len(dataSink.updateKeys) != 1 || dataSink.updateKeys[0] != "/dest/dir/file.txt" {
+		t.Fatalf("update keys = %v, want [/dest/dir/file.txt]", dataSink.updateKeys)
+	}
+	if len(dataSink.createKeys) != 0 || len(dataSink.deleteKeys) != 0 {
+		t.Fatalf("in-place update must not create or delete: creates=%v deletes=%v", dataSink.createKeys, dataSink.deleteKeys)
+	}
+}
+
+// With deletes disabled (e.g. incremental backup), a rename creates the new
+// entry only — the old key is left in place.
+func TestGenProcessFunctionRenameCreateOnlyWhenDeletesDisabled(t *testing.T) {
+	dataSink := &recordingSyncSink{}
+	processFn := genProcessFunction("/foo", "/dest", nil, nil, nil, nil, dataSink, false, false)
+
+	err := processFn(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/foo/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "old.txt"},
+			NewEntry:      &filer_pb.Entry{Name: "new.txt"},
+			NewParentPath: "/foo/dir",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processFn rename (no delete): %v", err)
+	}
+
+	if len(dataSink.createKeys) != 1 || dataSink.createKeys[0] != "/dest/dir/new.txt" {
+		t.Fatalf("create keys = %v, want [/dest/dir/new.txt]", dataSink.createKeys)
+	}
+	if len(dataSink.deleteKeys) != 0 || len(dataSink.updateKeys) != 0 {
+		t.Fatalf("unexpected delete/update calls: deletes=%v updates=%v", dataSink.deleteKeys, dataSink.updateKeys)
 	}
 }
 
