@@ -133,10 +133,8 @@ func SplitStatements(query string) []string {
 		}
 	}
 
-	// If no statements found, return the original query as a single statement
-	if len(statements) == 0 {
-		return []string{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))}
+	if statements == nil {
+		return []string{}
 	}
-
 	return statements
 }
