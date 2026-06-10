@@ -219,8 +219,10 @@ func (store *ElasticStore) listDirectoryEntries(
 	parentId := weed_util.Md5String([]byte(fullpath))
 	if _, err = store.client.Refresh(index).Do(ctx); err != nil {
 		if elastic.IsNotFound(err) {
-			store.client.CreateIndex(index).Do(ctx)
-			return
+			if _, err := store.client.CreateIndex(index).Do(ctx); err != nil {
+				return lastFileName, fmt.Errorf("create index(%s) %v", index, err)
+			}
+			return lastFileName, nil
 		}
 	}
 	for {
@@ -278,6 +280,11 @@ func (store *ElasticStore) listDirectoryEntries(
 	return
 }
 
+func (store *ElasticStore) listSorter() elastic.Sorter {
+	// unmapped_type tolerates indexes with no documents yet
+	return elastic.NewFieldSort("_id").Desc().UnmappedType("keyword")
+}
+
 func (store *ElasticStore) search(ctx context.Context, index, parentId string) (result *elastic.SearchResult, err error) {
 	if count, err := store.client.Count(index).Do(ctx); err == nil && count == 0 {
 		return &elastic.SearchResult{
@@ -289,7 +296,7 @@ func (store *ElasticStore) search(ctx context.Context, index, parentId string) (
 		Index(index).
 		Query(elastic.NewMatchQuery("ParentId", parentId)).
 		Size(store.maxPageSize).
-		Sort("_id", false).
+		SortBy(store.listSorter()).
 		Do(ctx)
 	return queryResult, err
 }
@@ -300,7 +307,7 @@ func (store *ElasticStore) searchAfter(ctx context.Context, index, parentId, aft
 		Query(elastic.NewMatchQuery("ParentId", parentId)).
 		SearchAfter(after).
 		Size(store.maxPageSize).
-		Sort("_id", false).
+		SortBy(store.listSorter()).
 		Do(ctx)
 	return queryResult, err
 
