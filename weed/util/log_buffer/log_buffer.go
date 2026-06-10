@@ -512,7 +512,10 @@ func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	// notice IsStopping() and exit promptly, even on an idle buffer where no
 	// flush notification would otherwise fire.
 	close(logBuffer.shutdownCh)
-	if toFlush := logBuffer.copyToFlush(); toFlush != nil {
+	logBuffer.Lock()
+	toFlush := logBuffer.copyToFlush()
+	logBuffer.Unlock()
+	if toFlush != nil {
 		logBuffer.flushChan <- toFlush
 	}
 	// nil is the shutdown sentinel: loopFlush drains everything queued before
