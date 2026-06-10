@@ -200,11 +200,11 @@ func isChunkNotFoundError(err error) bool {
 		httpNotFoundPattern.MatchString(errMsg)
 }
 
-// persistedLogReplayLimit caps concurrent legacy replays; each holds a chunk
-// reader per source filer, so a reconnect storm of pre-offload clients would
-// otherwise pin many GB. Metadata-chunks clients take sendLogFileRefs and never
-// reach this path.
-const persistedLogReplayLimit = 16
+// persistedLogReplayLimit caps concurrent legacy replays. With chunk decodes
+// shared through the persisted-log cache a replay is mostly iteration, so the
+// cap only needs to bound the listing fan-out, not memory. Metadata-chunks
+// clients take sendLogFileRefs and never reach this path.
+const persistedLogReplayLimit = 64
 
 var persistedLogReplaySem = make(chan struct{}, persistedLogReplayLimit)
 
