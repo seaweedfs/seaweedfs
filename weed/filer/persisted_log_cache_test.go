@@ -48,11 +48,11 @@ func TestPersistedLogCacheHitMiss(t *testing.T) {
 		return logEntriesAt(1, 2, 3), true, nil
 	}
 
-	e1, err := c.getOrLoad("3,01", load)
+	e1, err := c.getOrLoad("3,01", 1, load)
 	if err != nil || len(e1) != 3 {
 		t.Fatalf("first getOrLoad: err=%v len=%d", err, len(e1))
 	}
-	e2, err := c.getOrLoad("3,01", load)
+	e2, err := c.getOrLoad("3,01", 1, load)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,10 +74,10 @@ func TestPersistedLogCacheNotCachedWhenUncacheable(t *testing.T) {
 		return logEntriesAt(1, 2), false, nil
 	}
 
-	if e, err := c.getOrLoad("3,01", load); err != nil || len(e) != 2 {
+	if e, err := c.getOrLoad("3,01", 1, load); err != nil || len(e) != 2 {
 		t.Fatalf("first: err=%v len=%d", err, len(e))
 	}
-	if e, err := c.getOrLoad("3,01", load); err != nil || len(e) != 2 {
+	if e, err := c.getOrLoad("3,01", 1, load); err != nil || len(e) != 2 {
 		t.Fatalf("second: err=%v len=%d", err, len(e))
 	}
 	if n := atomic.LoadInt32(&loads); n != 2 {
@@ -104,7 +104,7 @@ func TestPersistedLogCacheSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := c.getOrLoad("3,01", load); err != nil {
+			if _, err := c.getOrLoad("3,01", 1, load); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -128,10 +128,10 @@ func TestPersistedLogCacheEviction(t *testing.T) {
 		}
 	}
 
-	if _, err := c.getOrLoad("a", mk(1)); err != nil {
+	if _, err := c.getOrLoad("a", 1, mk(1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.getOrLoad("b", mk(2)); err != nil { // pushes over budget, evicts LRU "a"
+	if _, err := c.getOrLoad("b", 1, mk(2)); err != nil { // pushes over budget, evicts LRU "a"
 		t.Fatal(err)
 	}
 
@@ -364,10 +364,10 @@ func TestPersistedLogCacheIdleEviction(t *testing.T) {
 	load := func() ([]*filer_pb.LogEntry, bool, error) {
 		return logEntriesAt(1), true, nil
 	}
-	if _, err := c.getOrLoad("idle", load); err != nil {
+	if _, err := c.getOrLoad("idle", 1, load); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.getOrLoad("hot", load); err != nil {
+	if _, err := c.getOrLoad("hot", 1, load); err != nil {
 		t.Fatal(err)
 	}
 
@@ -411,5 +411,17 @@ func TestDecodeLogRecordsRejectsImplausibleRecords(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].TsNs != 10 {
 		t.Fatalf("non-increasing prefix: %v", entries)
+	}
+}
+
+func TestPersistedLogCacheLoadLargerThanBudget(t *testing.T) {
+	// a load weight above the semaphore size could never be acquired; it must
+	// clamp and still run
+	c := newPersistedLogCache(persistedLogCacheMaxBytes)
+	e, err := c.getOrLoad("3,01", persistedLogCacheLoadBudget*4, func() ([]*filer_pb.LogEntry, bool, error) {
+		return logEntriesAt(1), true, nil
+	})
+	if err != nil || len(e) != 1 {
+		t.Fatalf("oversized load: err=%v len=%d", err, len(e))
 	}
 }
