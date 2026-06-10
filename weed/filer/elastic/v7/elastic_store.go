@@ -34,6 +34,7 @@ var (
 
 type ESEntry struct {
 	ParentId string `json:"ParentId"`
+	Id       string `json:"Id,omitempty"`
 	Entry    *filer.Entry
 }
 
@@ -43,15 +44,31 @@ type ESKVEntry struct {
 
 func init() {
 	filer.Stores = append(filer.Stores, &ElasticStore{})
+	filer.Stores = append(filer.Stores, &Elastic8Store{})
 }
 
 type ElasticStore struct {
 	client      *elastic.Client
 	maxPageSize int
+	es8         bool
 }
 
 func (store *ElasticStore) GetName() string {
 	return "elastic7"
+}
+
+// Elastic8Store sorts listings on an indexed Id field since Elasticsearch 8 disallows _id fielddata.
+type Elastic8Store struct {
+	ElasticStore
+}
+
+func (store *Elastic8Store) GetName() string {
+	return "elastic8"
+}
+
+func (store *Elastic8Store) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	store.es8 = true
+	return store.ElasticStore.Initialize(configuration, prefix)
 }
 
 func (store *ElasticStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
@@ -109,6 +126,9 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 	esEntry := &ESEntry{
 		ParentId: weed_util.Md5String([]byte(dir)),
 		Entry:    entry,
+	}
+	if store.es8 {
+		esEntry.Id = id
 	}
 	value, err := jsoniter.Marshal(esEntry)
 	if err != nil {
@@ -219,8 +239,10 @@ func (store *ElasticStore) listDirectoryEntries(
 	parentId := weed_util.Md5String([]byte(fullpath))
 	if _, err = store.client.Refresh(index).Do(ctx); err != nil {
 		if elastic.IsNotFound(err) {
-			store.client.CreateIndex(index).Do(ctx)
-			return
+			if _, err := store.client.CreateIndex(index).Do(ctx); err != nil {
+				return lastFileName, fmt.Errorf("create index(%s) %v", index, err)
+			}
+			return lastFileName, nil
 		}
 	}
 	for {
@@ -278,6 +300,15 @@ func (store *ElasticStore) listDirectoryEntries(
 	return
 }
 
+func (store *ElasticStore) listSorter() elastic.Sorter {
+	field := "_id"
+	if store.es8 {
+		field = "Id.keyword"
+	}
+	// unmapped_type tolerates indexes with no documents yet
+	return elastic.NewFieldSort(field).Desc().UnmappedType("keyword")
+}
+
 func (store *ElasticStore) search(ctx context.Context, index, parentId string) (result *elastic.SearchResult, err error) {
 	if count, err := store.client.Count(index).Do(ctx); err == nil && count == 0 {
 		return &elastic.SearchResult{
@@ -289,7 +320,7 @@ func (store *ElasticStore) search(ctx context.Context, index, parentId string) (
 		Index(index).
 		Query(elastic.NewMatchQuery("ParentId", parentId)).
 		Size(store.maxPageSize).
-		Sort("_id", false).
+		SortBy(store.listSorter()).
 		Do(ctx)
 	return queryResult, err
 }
@@ -300,7 +331,7 @@ func (store *ElasticStore) searchAfter(ctx context.Context, index, parentId, aft
 		Query(elastic.NewMatchQuery("ParentId", parentId)).
 		SearchAfter(after).
 		Size(store.maxPageSize).
-		Sort("_id", false).
+		SortBy(store.listSorter()).
 		Do(ctx)
 	return queryResult, err
 
