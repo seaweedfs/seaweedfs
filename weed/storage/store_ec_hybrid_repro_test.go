@@ -112,11 +112,11 @@ func TestIssue9478_PartialEcOnSiblingDiskOfHealthyDat(t *testing.T) {
 	// consistent state.
 	store := &Store{
 		Locations:           []*DiskLocation{datLoc, ecLoc},
-		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, 16),
-		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, 16),
+		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, 16),
+		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, 16),
 	}
 	ecLoc.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
-		store.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+		store.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
 			Id:         uint32(vid),
 			Collection: collection,
 		}
@@ -231,8 +231,8 @@ func TestIssue9478_ZeroByteSiblingDatKeepsPartialEc(t *testing.T) {
 
 	store := &Store{
 		Locations:           []*DiskLocation{datLoc, ecLoc},
-		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, 16),
-		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, 16),
+		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, 16),
+		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, 16),
 	}
 
 	if err := ecLoc.loadAllEcShards(nil); err != nil {

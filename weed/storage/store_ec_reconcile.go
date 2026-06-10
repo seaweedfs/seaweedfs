@@ -297,7 +297,7 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 			loc.removeEcVolumeFiles(v.collection, v.vid)
 			for _, msg := range v.messages {
 				select {
-				case s.DeletedEcShardsChan <- *msg:
+				case s.DeletedEcShardsChan <- msg:
 				default:
 					// Channel full during startup is fine — the next
 					// periodic heartbeat reports the full ecVolumes
