@@ -34,6 +34,7 @@ var (
 
 type ESEntry struct {
 	ParentId string `json:"ParentId"`
+	Id       string `json:"Id,omitempty"`
 	Entry    *filer.Entry
 }
 
@@ -43,15 +44,31 @@ type ESKVEntry struct {
 
 func init() {
 	filer.Stores = append(filer.Stores, &ElasticStore{})
+	filer.Stores = append(filer.Stores, &Elastic8Store{})
 }
 
 type ElasticStore struct {
 	client      *elastic.Client
 	maxPageSize int
+	es8         bool
 }
 
 func (store *ElasticStore) GetName() string {
 	return "elastic7"
+}
+
+// Elastic8Store sorts listings on an indexed Id field since Elasticsearch 8 disallows _id fielddata.
+type Elastic8Store struct {
+	ElasticStore
+}
+
+func (store *Elastic8Store) GetName() string {
+	return "elastic8"
+}
+
+func (store *Elastic8Store) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
+	store.es8 = true
+	return store.ElasticStore.Initialize(configuration, prefix)
 }
 
 func (store *ElasticStore) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
@@ -109,6 +126,9 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 	esEntry := &ESEntry{
 		ParentId: weed_util.Md5String([]byte(dir)),
 		Entry:    entry,
+	}
+	if store.es8 {
+		esEntry.Id = id
 	}
 	value, err := jsoniter.Marshal(esEntry)
 	if err != nil {
@@ -281,8 +301,12 @@ func (store *ElasticStore) listDirectoryEntries(
 }
 
 func (store *ElasticStore) listSorter() elastic.Sorter {
+	field := "_id"
+	if store.es8 {
+		field = "Id.keyword"
+	}
 	// unmapped_type tolerates indexes with no documents yet
-	return elastic.NewFieldSort("_id").Desc().UnmappedType("keyword")
+	return elastic.NewFieldSort(field).Desc().UnmappedType("keyword")
 }
 
 func (store *ElasticStore) search(ctx context.Context, index, parentId string) (result *elastic.SearchResult, err error) {
