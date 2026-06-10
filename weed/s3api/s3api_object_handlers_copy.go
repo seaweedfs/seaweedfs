@@ -1447,7 +1447,7 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 
 	// Check X-Amz-Copy-Source-If-Modified-Since
 	if ifModifiedSince := r.Header.Get(s3_constants.AmzCopySourceIfModifiedSince); ifModifiedSince != "" {
-		t, err := time.Parse(time.RFC1123, ifModifiedSince)
+		t, err := parseHTTPDate(ifModifiedSince)
 		if err != nil {
 			glog.V(3).Infof("CopyObjectHandler: Invalid If-Modified-Since header: %v", err)
 			return s3err.ErrInvalidRequest
@@ -1460,7 +1460,7 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 
 	// Check X-Amz-Copy-Source-If-Unmodified-Since
 	if ifUnmodifiedSince := r.Header.Get(s3_constants.AmzCopySourceIfUnmodifiedSince); ifUnmodifiedSince != "" {
-		t, err := time.Parse(time.RFC1123, ifUnmodifiedSince)
+		t, err := parseHTTPDate(ifUnmodifiedSince)
 		if err != nil {
 			glog.V(3).Infof("CopyObjectHandler: Invalid If-Unmodified-Since header: %v", err)
 			return s3err.ErrInvalidRequest

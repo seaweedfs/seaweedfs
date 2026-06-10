@@ -229,6 +229,12 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	if readRemoteErr != nil {
 		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
 	}
+	// The chunk is recorded with the requested size, so a short read would be
+	// cached as a full-size chunk with a zero-padded or truncated tail. Fail
+	// loudly instead of persisting silently corrupt content.
+	if int64(len(data)) != req.Size {
+		return nil, fmt.Errorf("read from remote %+v: got %d bytes, want %d", remoteStorageLocation, len(data), req.Size)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)

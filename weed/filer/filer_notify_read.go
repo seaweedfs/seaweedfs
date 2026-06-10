@@ -300,7 +300,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		}
 		iter, found := v.perFilerIteratorMap[filerId]
 		if !found {
-			iter = newLogFileQueueIterator(c.f.MasterClient, util.NewQueue[*LogFileEntry](), c.startTsNs, c.stopTsNs)
+			iter = newLogFileQueueIterator(c.f.MasterClient, c.f.persistedLogCache, util.NewQueue[*LogFileEntry](), c.startTsNs, c.stopTsNs)
 			v.perFilerIteratorMap[filerId] = iter
 			freshFilerIds[filerId] = hourMinuteEntry.Name()
 		}
@@ -340,15 +340,17 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 type LogFileQueueIterator struct {
 	q                   *util.Queue[*LogFileEntry]
 	masterClient        *wdclient.MasterClient
+	cache               *persistedLogCache
 	startTsNs           int64
 	stopTsNs            int64
 	currentFileIterator *LogFileIterator
 }
 
-func newLogFileQueueIterator(masterClient *wdclient.MasterClient, q *util.Queue[*LogFileEntry], startTsNs, stopTsNs int64) *LogFileQueueIterator {
+func newLogFileQueueIterator(masterClient *wdclient.MasterClient, cache *persistedLogCache, q *util.Queue[*LogFileEntry], startTsNs, stopTsNs int64) *LogFileQueueIterator {
 	return &LogFileQueueIterator{
 		q:            q,
 		masterClient: masterClient,
+		cache:        cache,
 		startTsNs:    startTsNs,
 		stopTsNs:     stopTsNs,
 	}
@@ -418,27 +420,48 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 		if next != nil && next.TsNs <= iter.startTsNs {
 			continue
 		}
-		iter.currentFileIterator = newLogFileIterator(iter.masterClient, t.FileEntry, iter.startTsNs, iter.stopTsNs)
+		iter.currentFileIterator = newLogFileIterator(iter.masterClient, iter.cache, t.FileEntry, t.TsNs, iter.startTsNs, iter.stopTsNs)
 	}
 }
 
 // ----------
 
 type LogFileIterator struct {
-	r         io.Reader
-	sizeBuf   []byte
+	// streaming mode (current/incomplete file): one entry read at a time.
+	r       io.Reader
+	sizeBuf []byte
+	// cached mode (completed file): iterate the shared decoded slice. Entries are
+	// read-only and shared across subscribers, so they are never mutated here.
+	cached    []*filer_pb.LogEntry
+	cachedPos int
+	loadErr   error
 	startTsNs int64
 	stopTsNs  int64
 	filePath  string
 }
 
-func newLogFileIterator(masterClient *wdclient.MasterClient, fileEntry *Entry, startTsNs, stopTsNs int64) *LogFileIterator {
+func newLogFileIterator(masterClient *wdclient.MasterClient, cache *persistedLogCache, fileEntry *Entry, fileTsNs, startTsNs, stopTsNs int64) *LogFileIterator {
+	filePath := string(fileEntry.FullPath)
+	if cache != nil && logFileIsCacheable(fileTsNs) {
+		chunks := fileEntry.GetChunks()
+		fingerprint := chunksFingerprint(chunks)
+		entries, err := cache.getOrLoad(filePath, fingerprint, func() ([]*filer_pb.LogEntry, bool, error) {
+			return loadLogFileEntries(masterClient, filePath, chunks)
+		})
+		return &LogFileIterator{
+			cached:    entries,
+			loadErr:   err,
+			startTsNs: startTsNs,
+			stopTsNs:  stopTsNs,
+			filePath:  filePath,
+		}
+	}
 	return &LogFileIterator{
 		r:         NewChunkStreamReaderFromFiler(context.Background(), masterClient, fileEntry.Chunks),
 		sizeBuf:   make([]byte, 4),
 		startTsNs: startTsNs,
 		stopTsNs:  stopTsNs,
-		filePath:  string(fileEntry.FullPath),
+		filePath:  filePath,
 	}
 }
 
@@ -451,6 +474,9 @@ func (iter *LogFileIterator) Close() error {
 
 // getNext will return io.EOF when done
 func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) {
+	if iter.r == nil {
+		return iter.getNextCached()
+	}
 	var n int
 	for {
 		n, err = iter.r.Read(iter.sizeBuf)
@@ -461,7 +487,9 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 			return nil, fmt.Errorf("size %d bytes, expected 4 bytes", n)
 		}
 		size := util.BytesToUint32(iter.sizeBuf)
-		// println("entry size", size)
+		if size > maxLogEntrySize {
+			return nil, fmt.Errorf("%s entry size %d exceeds %d", iter.filePath, size, maxLogEntrySize)
+		}
 		entryData := make([]byte, size)
 		n, err = iter.r.Read(entryData)
 		if err != nil {
@@ -482,4 +510,28 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 		}
 		return
 	}
+}
+
+// getNextCached yields entries from the shared cached slice, applying the same
+// per-subscriber timestamp filtering as the streaming path. Any load error is
+// surfaced only after the read entries are yielded, so a partial read delivers
+// its prefix before failing, just like the streaming path.
+func (iter *LogFileIterator) getNextCached() (logEntry *filer_pb.LogEntry, err error) {
+	for iter.cachedPos < len(iter.cached) {
+		logEntry = iter.cached[iter.cachedPos]
+		iter.cachedPos++
+		if logEntry.TsNs <= iter.startTsNs {
+			continue
+		}
+		if iter.stopTsNs != 0 && logEntry.TsNs > iter.stopTsNs {
+			return nil, io.EOF
+		}
+		return logEntry, nil
+	}
+	if iter.loadErr != nil {
+		err = iter.loadErr
+		iter.loadErr = nil
+		return nil, err
+	}
+	return nil, io.EOF
 }

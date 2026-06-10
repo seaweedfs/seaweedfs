@@ -21,7 +21,9 @@ use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
 use crate::storage::types::*;
-use crate::storage::volume::{remove_volume_files, volume_file_name, Volume, VolumeError};
+use crate::storage::volume::{
+    remove_volume_files, volume_file_name, VifVolumeInfo, Volume, VolumeError,
+};
 
 /// A single disk location managing volumes in one directory.
 pub struct DiskLocation {
@@ -175,6 +177,20 @@ impl DiskLocation {
 
             // Skip if already loaded (e.g., from a previous call)
             if self.volumes.contains_key(&vid) {
+                continue;
+            }
+
+            // Load existing data only; never create a phantom `.dat`. A lone
+            // `.vif`/`.idx` (e.g. an EC sidecar whose `.ecx` is on a sibling
+            // disk) would otherwise have Volume::new write an 8-byte stub that
+            // the sibling-.dat prune deletes real shards against. Remote-tiered
+            // volumes also have no local `.dat`, but their `.vif` points at
+            // remote files and must still load via the remote path.
+            let dat_path = format!("{}.dat", volume_name);
+            if !check_dat_file_exists(&dat_path)
+                && !vif_references_remote_file(&format!("{}.vif", volume_name))
+                && !vif_references_remote_file(&format!("{}.vif", idx_name))
+            {
                 continue;
             }
 
@@ -1016,6 +1032,17 @@ fn check_dat_file_exists(path: &str) -> bool {
         Err(e) if e.kind() == io::ErrorKind::NotFound => false,
         Err(_) => true,
     }
+}
+
+/// True when a `.vif` references remote-tier files: a remote-only volume
+/// that has no local `.dat` but must still load via the remote path,
+/// rather than be skipped as a lone EC sidecar.
+fn vif_references_remote_file(vif_path: &str) -> bool {
+    fs::read_to_string(vif_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
+        .map(|vif| !vif.files.is_empty())
+        .unwrap_or(false)
 }
 
 fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {

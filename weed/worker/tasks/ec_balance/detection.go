@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -198,6 +199,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				}
 
 				node := topo.AddNode(dn.Id, dc.Id, rackKey, freeSlots)
+				// Group servers sharing a host so a volume's shards spread across
+				// machines, not just nodes (servers on one host are one fault domain).
+				node.SetHost(pb.NewServerAddressFromDataNode(dn).ToHost())
 
 				perDiskFree := 0
 				if diskCount := len(diskTypeOf); diskCount > 0 && freeSlots > 0 {

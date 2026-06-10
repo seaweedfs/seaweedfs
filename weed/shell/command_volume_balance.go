@@ -553,6 +553,16 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 		}
 	}
 
+	// Don't move a replica onto a machine (host) that already holds one of this
+	// volume's replicas: servers sharing a host are one fault domain, so both would
+	// die together. Best-effort -- skip and let balancing try the next target.
+	targetHost := pb.NewServerAddressFromDataNode(targetNode.info).ToHost()
+	for _, replica := range existingReplicasExceptSourceNode {
+		if pb.NewServerAddressFromDataNode(replica.location.dataNode).ToHost() == targetHost {
+			return false
+		}
+	}
+
 	// target location
 	targetLocation := location{
 		dc:       targetNode.dc,

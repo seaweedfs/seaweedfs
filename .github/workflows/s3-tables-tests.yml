@@ -83,6 +83,11 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: Run go mod tidy
         run: go mod tidy
 
@@ -139,11 +144,15 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Trino image
-        run: docker pull trinodb/trino:479
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull trinodb/trino:479
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -205,14 +214,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Dremio image
-        run: docker pull dremio/dremio-oss:25.2.0
-
-      - name: Pre-pull Python image for PyIceberg writer
-        run: docker pull python:3.11-slim
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull dremio/dremio-oss:25.2.0
+          pull python:3.11-slim
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -276,14 +287,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Doris image
-        run: docker pull apache/doris:doris-all-in-one-2.1.0
-
-      - name: Pre-pull Python image for PyIceberg writer
-        run: docker pull python:3.11-slim
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/doris:doris-all-in-one-2.1.0
+          pull python:3.11-slim
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -354,8 +367,15 @@ jobs:
         run: |
           go install -buildvcs=false ./weed
 
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: Pre-pull Polaris image
-        run: docker pull apache/polaris:latest
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/polaris:latest
 
       - name: Run Polaris Integration Tests
         timeout-minutes: 25
@@ -408,11 +428,15 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Spark image
-        run: docker pull apache/spark:3.5.1
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/spark:3.5.1
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -474,13 +498,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull RisingWave image
         run: |
-          docker pull risingwavelabs/risingwave:v2.5.0
-          docker pull postgres:16-alpine
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull risingwavelabs/risingwave:v2.5.0
+          pull postgres:16-alpine
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -542,11 +569,15 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Python image
-        run: docker pull python:3
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull python:3
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -608,14 +639,17 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Python image
-        run: docker pull python:3
-        
-      - name: Pre-pull LocalStack image (if needed)
-        run: docker pull localstack/localstack:latest || true
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull python:3
+          # localstack is optional; best-effort pull
+          for i in 1 2 3; do docker pull localstack/localstack:latest && break; sleep 15; done
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -677,14 +711,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Unity Catalog image
-        run: docker pull unitycatalog/unitycatalog:v0.4.0
-
-      - name: Pre-pull Python image for delta-rs writer
-        run: docker pull python:3.11-slim
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull unitycatalog/unitycatalog:v0.4.0
+          pull python:3.11-slim
 
       - name: Run go mod tidy
         run: go mod tidy

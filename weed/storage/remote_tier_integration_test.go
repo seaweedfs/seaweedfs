@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // In-process integration tests for cloud-tiered ("remote") volumes.
@@ -221,6 +223,40 @@ func reloadVolume(t *testing.T, dir string, vid needle.VolumeId) *Volume {
 	v, err := NewVolume(dir, dir, "", vid, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	require.NoError(t, err)
 	return v
+}
+
+// TestRemoteTier_DiskScanLoadsRemoteOnlyVolume locks in that the disk scan
+// (loadExistingVolume) loads a remote-only volume — a .vif pointing at remote
+// files with no local .dat — instead of skipping it as a lone sidecar. The
+// phantom-.dat guard must let remote volumes through.
+func TestRemoteTier_DiskScanLoadsRemoteOnlyVolume(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(44)
+	tierUpVolume(t, dir, vid, b) // leaves .vif (remote) + .idx, no .dat
+
+	require.False(t, util.FileExists(filepath.Join(dir, "44.dat")), "tier-up should have removed the local .dat")
+
+	loc := &DiskLocation{
+		Directory:              dir,
+		DirectoryUuid:          "test-uuid",
+		IdxDirectory:           dir,
+		DiskType:               types.HddType,
+		MaxVolumeCount:         100,
+		OriginalMaxVolumeCount: 100,
+		MinFreeSpace:           util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"},
+	}
+	loc.volumes = make(map[needle.VolumeId]*Volume)
+	loc.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+
+	loc.loadExistingVolumes(NeedleMapInMemory, 0)
+
+	v, ok := loc.volumes[vid]
+	require.True(t, ok, "remote-only volume must be loaded by the disk scan, not skipped by the phantom-.dat guard")
+	require.True(t, v.HasRemoteFile(), "loaded volume should be in remote mode")
+	v.Close()
 }
 
 // TestRemoteTier_Move_KeepsRemoteObject simulates the move-on-source-after-copy

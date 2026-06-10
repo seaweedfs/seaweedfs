@@ -199,6 +199,16 @@ var (
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
 
+	// Sampled only on first creation, so counts track distinct objects.
+	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "object_size_bytes",
+			Help:      "Distribution of object sizes in bytes, sampled when an object is first created.",
+			Buckets:   []float64{1024, 102400, 1048576, 104857600, 1073741824},
+		})
+
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -751,6 +761,7 @@ func init() {
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
+	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 

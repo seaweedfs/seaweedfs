@@ -87,6 +87,7 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 						disk := &activeDisk{
 							DiskInfo: &DiskInfo{
 								NodeID:     nodeInfo.Id,
+								Address:    nodeInfo.Address,
 								DiskID:     perDisk.DiskId,
 								DiskType:   diskType,
 								DataCenter: dc.Id,

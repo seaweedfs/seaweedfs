@@ -203,14 +203,11 @@ impl Store {
     /// this server) also fall through unchanged because the `.dat`
     /// index never matches.
     ///
-    /// Before deleting any EC files we also check that the sibling
-    /// `.dat` is plausibly the encoding source: at least
-    /// `SUPER_BLOCK_SIZE` bytes long, and — when the EC's `.vif`
-    /// recorded a non-zero source size in `dat_file_size` — at least
-    /// that many bytes. A zero-byte shell or a truncated `.dat` does
-    /// not justify wiping the partial EC, because that EC shard may
-    /// still combine usefully with shards on other servers in a
-    /// recoverable distributed-EC layout.
+    /// The sibling `.dat` must be a credible encoding source before we
+    /// delete anything: at least the size `.vif` recorded at encode time,
+    /// or — when unknown (0) — more than a bare superblock so an empty
+    /// 8-byte stub can't pass. A truncated `.dat` leaves the partial EC
+    /// alone; those shards may still reconstruct from other servers.
     ///
     /// We don't have to push anything to a deleted-shards channel
     /// here: the Rust heartbeat path in `server/heartbeat.rs` diffs
@@ -257,14 +254,13 @@ impl Store {
                     // per-disk pass; don't second-guess it here.
                     continue;
                 }
-                // Decide whether the sibling .dat is credible. Prefer
-                // the size baked into .vif at encode time; fall back
-                // to "at least a superblock" for old EC volumes whose
-                // .vif predates the field.
+                // Credible source size: prefer .vif's encode-time size; when
+                // unknown (0) require more than a bare superblock so an empty
+                // 8-byte stub (e.g. a phantom .dat) can't pass.
                 let required = if ev.dat_file_size > 0 {
                     ev.dat_file_size as u64
                 } else {
-                    SUPER_BLOCK_SIZE as u64
+                    SUPER_BLOCK_SIZE as u64 + 1
                 };
                 if owner.size < required {
                     warn!(
@@ -467,6 +463,97 @@ mod tests {
             serde_json::to_string(&vif).unwrap(),
         )
         .unwrap();
+    }
+
+    /// Regression: a lone `.vif` whose `.ecx` is on a sibling disk must not
+    /// make the loader create a phantom `.dat`, nor the sibling-.dat prune
+    /// delete the real shards on the sibling.
+    #[test]
+    fn test_lone_vif_does_not_create_phantom_dat_or_delete_shards() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        let d1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&d0).unwrap();
+        std::fs::create_dir_all(&d1).unwrap();
+        let coll = "warp-loadtest";
+        let vid = 57u32;
+
+        // d0: a self-contained but partial (2 < 10) EC volume.
+        write_shard(d0.to_str().unwrap(), coll, vid, 2);
+        write_shard(d0.to_str().unwrap(), coll, vid, 4);
+        write_index_files(d0.to_str().unwrap(), coll, vid, 10, 4);
+
+        // d1: ONLY the mirrored `.vif` — no `.ecx`, no shard, no `.dat`.
+        std::fs::copy(
+            d0.join(format!("{}_{}.vif", coll, vid)),
+            d1.join(format!("{}_{}.vif", coll, vid)),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&d0, &d1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        let phantom = d1.join(format!("{}_{}.dat", coll, vid));
+        assert!(
+            !phantom.exists(),
+            "loader created a phantom .dat from a lone .vif"
+        );
+        let total: usize = store.locations.iter().map(|l| l.ec_shard_count()).sum();
+        assert_eq!(total, 2, "real EC shards were deleted (total={})", total);
+    }
+
+    /// Regression for the prune credibility gate: when the EC `.vif`
+    /// records no source size (`dat_file_size == 0`), an empty 8-byte
+    /// sibling `.dat` stub must NOT justify deleting partial EC shards.
+    #[test]
+    fn test_prune_refuses_unverifiable_8byte_dat() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        let d1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&d0).unwrap();
+        std::fs::create_dir_all(&d1).unwrap();
+        let coll = "warp-loadtest";
+        let vid = 99u32;
+
+        // d0: partial EC (2 shards); its `.vif` records no source size.
+        write_shard(d0.to_str().unwrap(), coll, vid, 0);
+        write_shard(d0.to_str().unwrap(), coll, vid, 1);
+        write_index_files(d0.to_str().unwrap(), coll, vid, 10, 4);
+
+        // d1: a real but empty 8-byte (superblock-sized) `.dat` stub.
+        std::fs::write(d1.join(format!("{}_{}.dat", coll, vid)), vec![0u8; 8]).unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&d0, &d1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        let total: usize = store.locations.iter().map(|l| l.ec_shard_count()).sum();
+        assert_eq!(
+            total, 2,
+            "prune deleted shards against an unverifiable 8-byte .dat (total={})",
+            total
+        );
     }
 
     /// Reproduces the orphan-shard layout from issue #9212. Shards live
@@ -966,15 +1053,15 @@ mod tests {
         std::fs::create_dir_all(&dat_dir).unwrap();
         std::fs::create_dir_all(&ec_dir).unwrap();
 
-        let collection = "";
+        // Real collection so the loader's volume_file_name-based `.ecx`
+        // lookup matches the helpers (empty collection emits `_122.*` vs the
+        // expected `122.*`).
+        let collection = "pics";
         let vid = 122u32;
 
-        // Disk A (sdd): a non-trivial .dat plus the regular-volume
-        // sidecars. The .dat content doesn't matter for the prune —
-        // load_existing_volumes refuses to mount it because the
-        // superblock is absent — but its file name has to be present
-        // so index_dat_owners records this disk as the .dat owner.
-        let dat_path = dat_dir.join(format!("{}_{}.dat", collection, vid).trim_start_matches('_'));
+        // Disk A (sdd): a .dat whose name must be present so index_dat_owners
+        // records this disk as the .dat owner (content doesn't matter).
+        let dat_path = dat_dir.join(format!("{}_{}.dat", collection, vid));
         std::fs::write(&dat_path, vec![0u8; 1024]).unwrap();
 
         // Disk B (sdf): partial EC — one shard, plus .ecx / .ecj / .vif.

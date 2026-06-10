@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -187,7 +187,7 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 
 			// Check if this version directory is expired
 			if versionDir.VersionTime.Before(cutoffTime) {
-				dirPath := filepath.Join(topicDir, versionDir.Name)
+				dirPath := path.Join(topicDir, versionDir.Name)
 
 				// Delete the entire version directory
 				err := p.deleteDirectoryRecursively(client, dirPath)
@@ -267,7 +267,7 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 		if resp.Entry == nil {
 			continue
 		}
-		entryPath := filepath.Join(dirPath, resp.Entry.Name)
+		entryPath := path.Join(dirPath, resp.Entry.Name)
 
 		if resp.Entry.IsDirectory {
 			// Recursively delete subdirectory
@@ -288,8 +288,8 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 	}
 
 	// Delete the directory itself
-	parentDir := filepath.Dir(dirPath)
-	dirName := filepath.Base(dirPath)
+	parentDir := path.Dir(dirPath)
+	dirName := path.Base(dirPath)
 
 	_, err = client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 		Directory: parentDir,

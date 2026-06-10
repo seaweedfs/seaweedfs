@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -77,14 +78,19 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 
 	if readConfErr != nil {
-		// Negative cache: topic doesn't exist
-		b.topicCacheMu.Lock()
-		b.topicCache[topicKey] = &topicCacheEntry{
-			conf:      nil,
-			expiresAt: time.Now().Add(b.topicCacheTTL),
+		// Only negative-cache when the filer definitively reports topic.conf is
+		// missing. Transient errors (timeouts, connection blips) must not poison
+		// the cache, otherwise the topic appears to vanish for the full TTL even
+		// though it still exists on disk.
+		if errors.Is(readConfErr, filer_pb.ErrNotFound) {
+			b.topicCacheMu.Lock()
+			b.topicCache[topicKey] = &topicCacheEntry{
+				conf:      nil,
+				expiresAt: time.Now().Add(b.topicCacheTTL),
+			}
+			b.topicCacheMu.Unlock()
+			glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
 		}
-		b.topicCacheMu.Unlock()
-		glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
 

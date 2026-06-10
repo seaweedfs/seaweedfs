@@ -200,7 +200,27 @@ func isChunkNotFoundError(err error) bool {
 		httpNotFoundPattern.MatchString(errMsg)
 }
 
-func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
+// persistedLogReplayLimit caps concurrent legacy replays; each holds a chunk
+// reader per source filer, so a reconnect storm of pre-offload clients would
+// otherwise pin many GB. Metadata-chunks clients take sendLogFileRefs and never
+// reach this path.
+const persistedLogReplayLimit = 16
+
+var persistedLogReplaySem = make(chan struct{}, persistedLogReplayLimit)
+
+func (f *Filer) ReadPersistedLogBuffer(ctx context.Context, startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
+
+	// Cap concurrent replays; bail if the stream is already gone so cancelled
+	// clients do not park on the semaphore.
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	select {
+	case persistedLogReplaySem <- struct{}{}:
+		defer func() { <-persistedLogReplaySem }()
+	case <-ctx.Done():
+		return 0, false, ctx.Err()
+	}
 
 	visitor, visitErr := f.collectPersistedLogBuffer(startPosition, stopTsNs)
 	if visitErr != nil {

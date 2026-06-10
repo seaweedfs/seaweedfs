@@ -261,6 +261,9 @@ func (s3opt *S3Options) resolvePaths() {
 
 func (s3opt *S3Options) startS3Server() bool {
 
+	// Before the first filer dial below; gRPC caches conns and binds at dial time.
+	util.SetOutboundLocalIP(*s3opt.bindIp)
+
 	filerAddresses := pb.ServerAddresses(*s3opt.filer).ToAddresses()
 
 	filerBucketsPath := "/buckets"
@@ -324,7 +327,6 @@ func (s3opt *S3Options) startS3Server() bool {
 	if *s3opt.bindIp == "" {
 		*s3opt.bindIp = "0.0.0.0"
 	}
-	util.SetOutboundLocalIP(*s3opt.bindIp)
 
 	defaultFileMode, fileModeErr := s3opt.parseDefaultFileMode()
 	if fileModeErr != nil {

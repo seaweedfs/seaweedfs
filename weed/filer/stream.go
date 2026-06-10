@@ -484,6 +484,8 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 		return err
 	}
 	var buffer bytes.Buffer
+	// pre-size to the known chunk size; avoids bytes.Buffer's doubling regrowth
+	buffer.Grow(int(chunkView.ViewSize))
 	var shouldRetry bool
 	jwt := JwtForVolumeServer(chunkView.FileId)
 	for _, urlString := range urlStrings {
