@@ -557,7 +557,7 @@ func (iter *LogFileIterator) getNextCached() (logEntry *filer_pb.LogEntry, err e
 		if chunk.ModifiedTsNs > 0 && chunk.ModifiedTsNs+int64(LogFlushInterval) <= iter.startTsNs {
 			continue
 		}
-		entries, loadErr := iter.cache.getOrLoad(chunk.GetFileIdString(), func() ([]*filer_pb.LogEntry, bool, error) {
+		entries, loadErr := iter.cache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
 			return loadLogFileEntriesFn(iter.masterClient, chunk)
 		})
 		if loadErr != nil {

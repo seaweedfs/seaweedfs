@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
 
@@ -19,8 +20,9 @@ import (
 const (
 	// persistedLogCacheMaxBytes bounds retained entries regardless of subscriber count.
 	persistedLogCacheMaxBytes = 256 << 20
-	// persistedLogCacheMaxLoads bounds how many chunks fetch and decode at once.
-	persistedLogCacheMaxLoads = 8
+	// persistedLogCacheLoadBudget bounds in-flight fetch+decode bytes, charged
+	// by chunk size: small chunks load wide, full-size ones cap the peak.
+	persistedLogCacheLoadBudget = 128 << 20
 	// persistedLogCacheIdleTTL frees entries no replay has touched recently, so
 	// the cache holds memory only while subscribers actually replay.
 	persistedLogCacheIdleTTL = 5 * time.Minute
@@ -44,7 +46,7 @@ type persistedLogCache struct {
 	curBytes int64
 	maxBytes int64
 	sf       singleflight.Group
-	loadSem  chan struct{}
+	loadSem  *semaphore.Weighted
 }
 
 type logCacheItem struct {
@@ -59,7 +61,7 @@ func newPersistedLogCache(maxBytes int64) *persistedLogCache {
 		ll:       list.New(),
 		index:    make(map[string]*list.Element),
 		maxBytes: maxBytes,
-		loadSem:  make(chan struct{}, persistedLogCacheMaxLoads),
+		loadSem:  semaphore.NewWeighted(persistedLogCacheLoadBudget),
 	}
 	// the filer's cache lives for the process lifetime
 	go c.loopEvictIdle()
@@ -97,7 +99,7 @@ type logLoadResult struct {
 // coalescing concurrent misses. Only a clean, complete decode is cached: a
 // chunk-not-found read must be re-probed on later replays, and an incomplete
 // chunk stays with the streaming fallback.
-func (c *persistedLogCache) getOrLoad(fileId string, load func() ([]*filer_pb.LogEntry, bool, error)) ([]*filer_pb.LogEntry, error) {
+func (c *persistedLogCache) getOrLoad(fileId string, loadBytes int64, load func() ([]*filer_pb.LogEntry, bool, error)) ([]*filer_pb.LogEntry, error) {
 	if entries, ok := c.lookup(fileId); ok {
 		return entries, nil
 	}
@@ -105,7 +107,7 @@ func (c *persistedLogCache) getOrLoad(fileId string, load func() ([]*filer_pb.Lo
 		if entries, ok := c.lookup(fileId); ok {
 			return logLoadResult{entries: entries}, nil
 		}
-		entries, cacheable, loadErr := c.loadGuarded(load)
+		entries, cacheable, loadErr := c.loadGuarded(loadBytes, load)
 		if loadErr == nil && cacheable {
 			c.store(fileId, entries)
 		}
@@ -115,9 +117,19 @@ func (c *persistedLogCache) getOrLoad(fileId string, load func() ([]*filer_pb.Lo
 	return res.entries, res.err
 }
 
-func (c *persistedLogCache) loadGuarded(load func() ([]*filer_pb.LogEntry, bool, error)) ([]*filer_pb.LogEntry, bool, error) {
-	c.loadSem <- struct{}{}
-	defer func() { <-c.loadSem }()
+func (c *persistedLogCache) loadGuarded(loadBytes int64, load func() ([]*filer_pb.LogEntry, bool, error)) ([]*filer_pb.LogEntry, bool, error) {
+	weight := loadBytes
+	if weight < 1 {
+		weight = 1
+	}
+	if weight > persistedLogCacheLoadBudget {
+		// never exceeds the semaphore size, or the acquire could not succeed
+		weight = persistedLogCacheLoadBudget
+	}
+	if err := c.loadSem.Acquire(context.Background(), weight); err != nil {
+		return nil, false, err
+	}
+	defer c.loadSem.Release(weight)
 	return load()
 }
 
