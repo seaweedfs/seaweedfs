@@ -3,9 +3,11 @@ package filer
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -366,9 +368,10 @@ func (iter *LogFileQueueIterator) Close() {
 	}
 }
 
-// getNext streams one log entry at a time from the current file, advancing to
+// getNext yields one log entry at a time from the current file, advancing to
 // the next file as each is exhausted. It returns io.EOF when done. Entries are
-// not buffered per file, so memory stays O(1) regardless of log file size.
+// decoded one chunk at a time and shared across subscribers, so per-subscriber
+// memory stays bounded regardless of log file size.
 func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer_pb.LogEntry, err error) {
 	for {
 		if iter.currentFileIterator != nil {
@@ -420,49 +423,65 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 		if next != nil && next.TsNs <= iter.startTsNs {
 			continue
 		}
-		iter.currentFileIterator = newLogFileIterator(iter.masterClient, iter.cache, t.FileEntry, t.TsNs, iter.startTsNs, iter.stopTsNs)
+		iter.currentFileIterator = newLogFileIterator(iter.masterClient, iter.cache, t.FileEntry, iter.startTsNs, iter.stopTsNs)
 	}
 }
 
 // ----------
 
 type LogFileIterator struct {
-	// streaming mode (current/incomplete file): one entry read at a time.
-	r       io.Reader
-	sizeBuf []byte
-	// cached mode (completed file): iterate the shared decoded slice. Entries are
-	// read-only and shared across subscribers, so they are never mutated here.
-	cached    []*filer_pb.LogEntry
-	cachedPos int
-	loadErr   error
+	// cached mode: each immutable chunk is decoded once and shared read-only
+	// across subscribers via the persisted-log cache.
+	masterClient *wdclient.MasterClient
+	cache        *persistedLogCache
+	chunks       []*filer_pb.FileChunk
+	chunkIdx     int
+	cur          []*filer_pb.LogEntry
+	curPos       int
+	lastTsNs     int64
+	// streaming mode: the whole file as one byte stream, the fallback when a
+	// chunk does not decode standalone (records spanning chunk boundaries).
+	r         io.Reader
+	sizeBuf   []byte
 	startTsNs int64
 	stopTsNs  int64
 	filePath  string
 }
 
-func newLogFileIterator(masterClient *wdclient.MasterClient, cache *persistedLogCache, fileEntry *Entry, fileTsNs, startTsNs, stopTsNs int64) *LogFileIterator {
-	filePath := string(fileEntry.FullPath)
-	if cache != nil && logFileIsCacheable(fileTsNs) {
-		chunks := fileEntry.GetChunks()
-		fingerprint := chunksFingerprint(chunks)
-		entries, err := cache.getOrLoad(filePath, fingerprint, func() ([]*filer_pb.LogEntry, bool, error) {
-			return loadLogFileEntries(masterClient, filePath, chunks)
-		})
-		return &LogFileIterator{
-			cached:    entries,
-			loadErr:   err,
-			startTsNs: startTsNs,
-			stopTsNs:  stopTsNs,
-			filePath:  filePath,
-		}
-	}
-	return &LogFileIterator{
-		r:         NewChunkStreamReaderFromFiler(context.Background(), masterClient, fileEntry.Chunks),
-		sizeBuf:   make([]byte, 4),
+// swapped in tests
+var loadLogFileEntriesFn = loadLogFileEntries
+var newLogFileStreamReader = func(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) io.Reader {
+	return NewChunkStreamReaderFromFiler(context.Background(), masterClient, chunks)
+}
+
+func newLogFileIterator(masterClient *wdclient.MasterClient, cache *persistedLogCache, fileEntry *Entry, startTsNs, stopTsNs int64) *LogFileIterator {
+	iter := &LogFileIterator{
+		masterClient: masterClient,
+		cache:        cache,
+		// sort a copy, leaving the listed entry's chunk order alone
+		chunks:    append([]*filer_pb.FileChunk(nil), fileEntry.GetChunks()...),
 		startTsNs: startTsNs,
 		stopTsNs:  stopTsNs,
-		filePath:  filePath,
+		filePath:  string(fileEntry.FullPath),
 	}
+	sort.SliceStable(iter.chunks, func(i, j int) bool {
+		return iter.chunks[i].Offset < iter.chunks[j].Offset
+	})
+	if cache == nil {
+		iter.startStreaming()
+	}
+	return iter
+}
+
+// startStreaming switches to the byte-stream fallback, resuming after the last
+// yielded entry.
+func (iter *LogFileIterator) startStreaming() {
+	if iter.lastTsNs > iter.startTsNs {
+		iter.startTsNs = iter.lastTsNs
+	}
+	iter.r = newLogFileStreamReader(iter.masterClient, iter.chunks)
+	iter.sizeBuf = make([]byte, 4)
+	iter.cur, iter.curPos = nil, 0
 }
 
 func (iter *LogFileIterator) Close() error {
@@ -512,26 +531,44 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 	}
 }
 
-// getNextCached yields entries from the shared cached slice, applying the same
-// per-subscriber timestamp filtering as the streaming path. Any load error is
-// surfaced only after the read entries are yielded, so a partial read delivers
-// its prefix before failing, just like the streaming path.
+// getNextCached yields from shared per-chunk decoded slices, loading chunks
+// lazily and in order.
 func (iter *LogFileIterator) getNextCached() (logEntry *filer_pb.LogEntry, err error) {
-	for iter.cachedPos < len(iter.cached) {
-		logEntry = iter.cached[iter.cachedPos]
-		iter.cachedPos++
-		if logEntry.TsNs <= iter.startTsNs {
-			continue
+	for {
+		for iter.curPos < len(iter.cur) {
+			logEntry = iter.cur[iter.curPos]
+			iter.curPos++
+			if logEntry.TsNs <= iter.startTsNs {
+				continue
+			}
+			if iter.stopTsNs != 0 && logEntry.TsNs > iter.stopTsNs {
+				return nil, io.EOF
+			}
+			iter.lastTsNs = logEntry.TsNs
+			return logEntry, nil
 		}
-		if iter.stopTsNs != 0 && logEntry.TsNs > iter.stopTsNs {
+		if iter.chunkIdx >= len(iter.chunks) {
 			return nil, io.EOF
 		}
-		return logEntry, nil
+		chunk := iter.chunks[iter.chunkIdx]
+		iter.chunkIdx++
+		// the flush upload time upper-bounds every record ts in the chunk; the
+		// margin tolerates a wall-clock retreat between stamping and upload
+		if chunk.ModifiedTsNs > 0 && chunk.ModifiedTsNs+int64(LogFlushInterval) <= iter.startTsNs {
+			continue
+		}
+		entries, loadErr := iter.cache.getOrLoad(chunk.GetFileIdString(), func() ([]*filer_pb.LogEntry, bool, error) {
+			return loadLogFileEntriesFn(iter.masterClient, chunk)
+		})
+		if loadErr != nil {
+			if errors.Is(loadErr, errLogChunkIncomplete) {
+				glog.V(1).Infof("log file %s chunk %s does not decode standalone, streaming the file", iter.filePath, chunk.GetFileIdString())
+				iter.startStreaming()
+				return iter.getNext()
+			}
+			return nil, loadErr
+		}
+		iter.cur = entries
+		iter.curPos = sort.Search(len(entries), func(i int) bool { return entries[i].TsNs > iter.startTsNs })
 	}
-	if iter.loadErr != nil {
-		err = iter.loadErr
-		iter.loadErr = nil
-		return nil, err
-	}
-	return nil, io.EOF
 }
