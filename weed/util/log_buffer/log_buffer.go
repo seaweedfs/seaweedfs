@@ -477,18 +477,14 @@ func (logBuffer *LogBuffer) ForceFlush() {
 	logBuffer.Unlock()
 
 	if toFlush != nil {
-		// Send to flush channel (with reasonable timeout)
+		// The live buffer was already sealed and reset by copyToFlushWithCallback,
+		// so dropping toFlush on a timeout would lose it. Block until queued.
+		logBuffer.flushChan <- toFlush
 		select {
-		case logBuffer.flushChan <- toFlush:
-			// Successfully queued for flush - now WAIT for it to complete
-			select {
-			case <-toFlush.done:
-				// Flush completed successfully
-			case <-time.After(5 * time.Second):
-				// Timeout waiting for flush - this shouldn't happen
-			}
-		case <-time.After(2 * time.Second):
-			// If flush channel is still blocked after 2s, something is wrong
+		case <-toFlush.done:
+			// Flush completed
+		case <-time.After(5 * time.Second):
+			// Queued but not yet flushed; loopFlush will still persist it
 		}
 	}
 }
