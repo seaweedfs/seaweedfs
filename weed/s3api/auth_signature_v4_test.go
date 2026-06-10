@@ -66,6 +66,51 @@ func TestExtractV4AuthInfoFromHeader_S3Tables(t *testing.T) {
 	}
 }
 
+func TestParseSignedHeaderRejectsEmptyHeaderNames(t *testing.T) {
+	cases := []string{
+		"SignedHeaders=host;",
+		"SignedHeaders=;host",
+		"SignedHeaders=host;;x-amz-date",
+	}
+
+	for _, tc := range cases {
+		if _, errCode := parseSignedHeader(tc); errCode != s3err.ErrMissingFields {
+			t.Fatalf("parseSignedHeader(%q) errCode = %v, want %v", tc, errCode, s3err.ErrMissingFields)
+		}
+	}
+}
+
+func TestExtractV4AuthInfoFromQueryRejectsEmptySignedHeaderNames(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []string{
+		"host;",
+		";host",
+		"host;;x-amz-date",
+	}
+
+	for _, tc := range cases {
+		t.Run(tc, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, "http://localhost/bucket/object", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+
+			query := req.URL.Query()
+			query.Set("X-Amz-Algorithm", signV4Algorithm)
+			query.Set("X-Amz-Credential", fmt.Sprintf("AKIAIOSFODNN7EXAMPLE/%s/us-east-1/s3/aws4_request", now.Format(yyyymmdd)))
+			query.Set("X-Amz-Date", now.Format(iso8601Format))
+			query.Set("X-Amz-Expires", "60")
+			query.Set("X-Amz-Signature", "dummy")
+			query.Set("X-Amz-SignedHeaders", tc)
+			req.URL.RawQuery = query.Encode()
+
+			if _, errCode := extractV4AuthInfoFromQuery(req); errCode != s3err.ErrMissingFields {
+				t.Fatalf("extractV4AuthInfoFromQuery(%q) errCode = %v, want %v", tc, errCode, s3err.ErrMissingFields)
+			}
+		})
+	}
+}
+
 func TestBuildPathWithForwardedPrefix(t *testing.T) {
 	tests := []struct {
 		name            string
