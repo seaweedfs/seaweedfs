@@ -19,6 +19,11 @@ import (
 const BufferSize = 8 * 1024 * 1024
 const PreviousBufferCount = 4
 
+// flushQueueDepth bounds queued flush copies (BufferSize each); a full queue
+// blocks producers, so a stalled flush backpressures writers instead of
+// pinning hundreds of buffer copies.
+const flushQueueDepth = 16
+
 // Errors that can be returned by log buffer operations
 var (
 	// ErrBufferCorrupted indicates the log buffer contains corrupted data
@@ -103,7 +108,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		ReadFromDiskFn: readFromDiskFn,
 		notifyFn:       notifyFn,
 		subscribers:    make(map[string]chan struct{}),
-		flushChan:      make(chan *dataToFlush, 256),
+		flushChan:      make(chan *dataToFlush, flushQueueDepth),
 		isStopping:     new(atomic.Bool),
 		shutdownCh:     make(chan struct{}),
 		offset:         0, // Will be initialized from existing data if available
