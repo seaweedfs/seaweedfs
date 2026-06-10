@@ -265,7 +265,11 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 	defer func() {
 		logBuffer.Unlock()
 		if toFlush != nil {
-			logBuffer.flushChan <- toFlush
+			select {
+			case logBuffer.flushChan <- toFlush:
+			case <-logBuffer.shutdownCh:
+				// shutting down; loopFlush may be gone, do not park forever
+			}
 		}
 		// Only notify if there was no error
 		if marshalErr == nil {
@@ -374,7 +378,11 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	defer func() {
 		logBuffer.Unlock()
 		if toFlush != nil {
-			logBuffer.flushChan <- toFlush
+			select {
+			case logBuffer.flushChan <- toFlush:
+			case <-logBuffer.shutdownCh:
+				// shutting down; loopFlush may be gone, do not park forever
+			}
 		}
 		// Only notify if there was no error
 		if marshalErr == nil {
@@ -478,8 +486,13 @@ func (logBuffer *LogBuffer) ForceFlush() {
 
 	if toFlush != nil {
 		// The live buffer was already sealed and reset by copyToFlushWithCallback,
-		// so dropping toFlush on a timeout would lose it. Block until queued.
-		logBuffer.flushChan <- toFlush
+		// so dropping toFlush on a timeout would lose it. Block until queued,
+		// bailing out only on shutdown.
+		select {
+		case logBuffer.flushChan <- toFlush:
+		case <-logBuffer.shutdownCh:
+			return
+		}
 		select {
 		case <-toFlush.done:
 			// Flush completed
@@ -499,9 +512,13 @@ func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	// notice IsStopping() and exit promptly, even on an idle buffer where no
 	// flush notification would otherwise fire.
 	close(logBuffer.shutdownCh)
-	toFlush := logBuffer.copyToFlush()
-	logBuffer.flushChan <- toFlush
-	close(logBuffer.flushChan)
+	if toFlush := logBuffer.copyToFlush(); toFlush != nil {
+		logBuffer.flushChan <- toFlush
+	}
+	// nil is the shutdown sentinel: loopFlush drains everything queued before
+	// it and exits. The channel is never closed, so a sender racing shutdown
+	// can never panic on a closed channel.
+	logBuffer.flushChan <- nil
 }
 
 // IsAllFlushed returns true if all data in the buffer has been flushed, after calling ShutdownLogBuffer().
@@ -511,27 +528,28 @@ func (logBuffer *LogBuffer) IsAllFlushed() bool {
 
 func (logBuffer *LogBuffer) loopFlush() {
 	for d := range logBuffer.flushChan {
-		if d != nil {
-			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes(), d.minOffset, d.maxOffset)
-			d.releaseMemory()
-			// local logbuffer is different from aggregate logbuffer here
-			if d.maxOffset >= 0 {
-				logBuffer.lastFlushedOffset.Store(d.maxOffset)
-			}
-			if !d.stopTime.IsZero() {
-				logBuffer.lastFlushTsNs.Store(d.stopTime.UnixNano())
-			}
+		if d == nil {
+			break // shutdown sentinel
+		}
+		logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes(), d.minOffset, d.maxOffset)
+		d.releaseMemory()
+		// local logbuffer is different from aggregate logbuffer here
+		if d.maxOffset >= 0 {
+			logBuffer.lastFlushedOffset.Store(d.maxOffset)
+		}
+		if !d.stopTime.IsZero() {
+			logBuffer.lastFlushTsNs.Store(d.stopTime.UnixNano())
+		}
 
-			// Wake readers that may be waiting to retry disk reads after the flush lands.
-			if logBuffer.notifyFn != nil {
-				logBuffer.notifyFn()
-			}
-			logBuffer.notifySubscribers()
+		// Wake readers that may be waiting to retry disk reads after the flush lands.
+		if logBuffer.notifyFn != nil {
+			logBuffer.notifyFn()
+		}
+		logBuffer.notifySubscribers()
 
-			// Signal completion if there's a callback channel
-			if d.done != nil {
-				close(d.done)
-			}
+		// Signal completion if there's a callback channel
+		if d.done != nil {
+			close(d.done)
 		}
 	}
 	logBuffer.isAllFlushed = true
@@ -548,7 +566,11 @@ func (logBuffer *LogBuffer) loopInterval() {
 		toFlush := logBuffer.copyToFlush()
 		logBuffer.Unlock()
 		if toFlush != nil {
-			logBuffer.flushChan <- toFlush
+			select {
+			case logBuffer.flushChan <- toFlush:
+			case <-logBuffer.shutdownCh:
+				// shutting down; loopFlush may be gone, do not park forever
+			}
 		}
 	}
 }
