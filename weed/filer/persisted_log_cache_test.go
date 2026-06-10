@@ -388,3 +388,24 @@ func TestPersistedLogCacheIdleEviction(t *testing.T) {
 		t.Errorf("curBytes=%d, want %d", bytesLeft, want)
 	}
 }
+
+func TestDecodeLogRecordsRejectsImplausibleRecords(t *testing.T) {
+	// zeroed region: parses as endless empty records without the size guard
+	if _, _, err := decodeLogRecords(make([]byte, 16)); err != errLogChunkIncomplete {
+		t.Fatalf("zeroed data: err=%v", err)
+	}
+
+	// the writer never produces a zero timestamp
+	if _, _, err := decodeLogRecords(encodeLogRecords(t, logEntriesAt(0))); err != errLogChunkIncomplete {
+		t.Fatalf("zero ts: err=%v", err)
+	}
+
+	// timestamps are strictly increasing within one flushed buffer
+	entries, cacheable, err := decodeLogRecords(encodeLogRecords(t, logEntriesAt(10, 10)))
+	if err != errLogChunkIncomplete || cacheable {
+		t.Fatalf("non-increasing ts: err=%v cacheable=%v", err, cacheable)
+	}
+	if len(entries) != 1 || entries[0].TsNs != 10 {
+		t.Fatalf("non-increasing prefix: %v", entries)
+	}
+}

@@ -189,14 +189,18 @@ func loadLogFileEntries(masterClient *wdclient.MasterClient, chunk *filer_pb.Fil
 // decodeLogRecords parses size-prefixed LogEntry records. A buffer that stops
 // mid-record, or whose size prefix is garbage (also the symptom of starting
 // mid-record), reports errLogChunkIncomplete with the cleanly decoded prefix.
+// Since proto.Unmarshal is permissive enough to accept misaligned bytes,
+// records must also satisfy the writer's invariants: never empty, a positive
+// timestamp, and strictly increasing within one flushed buffer.
 // proto.Unmarshal copies all bytes, so the entries do not alias data.
 func decodeLogRecords(data []byte) (entries []*filer_pb.LogEntry, cacheable bool, err error) {
+	var lastTsNs int64
 	for pos := 0; pos < len(data); {
 		if pos+4 > len(data) {
 			return entries, false, errLogChunkIncomplete
 		}
 		size32 := util.BytesToUint32(data[pos : pos+4])
-		if size32 > maxLogEntrySize {
+		if size32 == 0 || size32 > maxLogEntrySize {
 			return entries, false, errLogChunkIncomplete
 		}
 		size := int(size32)
@@ -207,6 +211,10 @@ func decodeLogRecords(data []byte) (entries []*filer_pb.LogEntry, cacheable bool
 		if unmarshalErr := proto.Unmarshal(data[pos+4:pos+4+size], logEntry); unmarshalErr != nil {
 			return entries, false, errLogChunkIncomplete
 		}
+		if logEntry.TsNs <= lastTsNs {
+			return entries, false, errLogChunkIncomplete
+		}
+		lastTsNs = logEntry.TsNs
 		entries = append(entries, logEntry)
 		pos += 4 + size
 	}
