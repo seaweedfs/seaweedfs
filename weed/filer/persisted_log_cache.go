@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
@@ -20,6 +21,9 @@ const (
 	persistedLogCacheMaxBytes = 256 << 20
 	// persistedLogCacheMaxLoads bounds how many chunks fetch and decode at once.
 	persistedLogCacheMaxLoads = 8
+	// persistedLogCacheIdleTTL frees entries no replay has touched recently, so
+	// the cache holds memory only while subscribers actually replay.
+	persistedLogCacheIdleTTL = 5 * time.Minute
 	// maxLogEntrySize guards the per-entry allocation against a corrupt size prefix.
 	maxLogEntrySize = 1 << 30
 )
@@ -44,17 +48,43 @@ type persistedLogCache struct {
 }
 
 type logCacheItem struct {
-	key     string // chunk file id
-	entries []*filer_pb.LogEntry
-	bytes   int64
+	key      string // chunk file id
+	entries  []*filer_pb.LogEntry
+	bytes    int64
+	lastUsed time.Time
 }
 
 func newPersistedLogCache(maxBytes int64) *persistedLogCache {
-	return &persistedLogCache{
+	c := &persistedLogCache{
 		ll:       list.New(),
 		index:    make(map[string]*list.Element),
 		maxBytes: maxBytes,
 		loadSem:  make(chan struct{}, persistedLogCacheMaxLoads),
+	}
+	// the filer's cache lives for the process lifetime
+	go c.loopEvictIdle()
+	return c
+}
+
+func (c *persistedLogCache) loopEvictIdle() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		c.evictIdle(time.Now().Add(-persistedLogCacheIdleTTL))
+	}
+}
+
+// evictIdle drops every entry last used at or before cutoff. Recency order
+// makes the idle entries exactly the tail of the LRU list.
+func (c *persistedLogCache) evictIdle(cutoff time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.ll.Len() > 0 {
+		el := c.ll.Back()
+		if el.Value.(*logCacheItem).lastUsed.After(cutoff) {
+			break
+		}
+		c.removeElement(el)
 	}
 }
 
@@ -99,7 +129,9 @@ func (c *persistedLogCache) lookup(fileId string) ([]*filer_pb.LogEntry, bool) {
 		return nil, false
 	}
 	c.ll.MoveToFront(el)
-	return el.Value.(*logCacheItem).entries, true
+	item := el.Value.(*logCacheItem)
+	item.lastUsed = time.Now()
+	return item.entries, true
 }
 
 func (c *persistedLogCache) store(fileId string, entries []*filer_pb.LogEntry) {
@@ -113,7 +145,7 @@ func (c *persistedLogCache) store(fileId string, entries []*filer_pb.LogEntry) {
 	if el, ok := c.index[fileId]; ok {
 		c.removeElement(el)
 	}
-	el := c.ll.PushFront(&logCacheItem{key: fileId, entries: entries, bytes: bytes})
+	el := c.ll.PushFront(&logCacheItem{key: fileId, entries: entries, bytes: bytes, lastUsed: time.Now()})
 	c.index[fileId] = el
 	c.curBytes += bytes
 	for c.curBytes > c.maxBytes && c.ll.Len() > 1 {

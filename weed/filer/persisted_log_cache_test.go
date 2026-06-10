@@ -354,3 +354,37 @@ func TestLogFileIteratorLoadErrorPropagates(t *testing.T) {
 		t.Fatalf("expected load error surfaced, got %v", err)
 	}
 }
+
+func TestPersistedLogCacheIdleEviction(t *testing.T) {
+	c := newPersistedLogCache(persistedLogCacheMaxBytes)
+	load := func() ([]*filer_pb.LogEntry, bool, error) {
+		return logEntriesAt(1), true, nil
+	}
+	if _, err := c.getOrLoad("idle", load); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.getOrLoad("hot", load); err != nil {
+		t.Fatal(err)
+	}
+
+	c.mu.Lock()
+	c.index["idle"].Value.(*logCacheItem).lastUsed = time.Now().Add(-2 * persistedLogCacheIdleTTL)
+	c.mu.Unlock()
+
+	c.evictIdle(time.Now().Add(-persistedLogCacheIdleTTL))
+
+	c.mu.Lock()
+	_, hasIdle := c.index["idle"]
+	_, hasHot := c.index["hot"]
+	bytesLeft := c.curBytes
+	c.mu.Unlock()
+	if hasIdle {
+		t.Error("idle entry should have been evicted")
+	}
+	if !hasHot {
+		t.Error("recently used entry should remain")
+	}
+	if want := estimateEntriesBytes(logEntriesAt(1)); bytesLeft != want {
+		t.Errorf("curBytes=%d, want %d", bytesLeft, want)
+	}
+}
