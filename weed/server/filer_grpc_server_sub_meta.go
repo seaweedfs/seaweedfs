@@ -197,7 +197,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
-	baseEachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		lastSeenTsNs = logEntry.TsNs
 		return baseEachLogEntryFn(logEntry)
@@ -338,7 +338,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
-	baseEachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		lastSeenTsNs = logEntry.TsNs
 		return baseEachLogEntryFn(logEntry)
@@ -490,8 +490,29 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) log_buffer.EachLogEntryFuncType {
+func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) log_buffer.EachLogEntryFuncType {
+	// Entries carry full chunk lists, so unmarshaling every event for every
+	// subscriber dominates replay CPU. A shallow scan of just the path fields
+	// feeds the same matcher and skips the decode for entries this subscriber
+	// filters out anyway; any scan failure falls back to the full decode.
+	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
+	var filtered int64
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
+		if prefilter {
+			if skeleton, ok := filer_pb.ScanMetadataEventSkeleton(logEntry.Data); ok &&
+				!filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories) {
+				filtered++
+				if filtered > MaxUnsyncedEvents {
+					if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
+						EventNotification: &filer_pb.EventNotification{},
+						TsNs:              skeleton.TsNs,
+					}); err == nil {
+						filtered = 0
+					}
+				}
+				return false, nil
+			}
+		}
 		event := &filer_pb.SubscribeMetadataResponse{}
 		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
