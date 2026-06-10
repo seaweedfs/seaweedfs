@@ -210,7 +210,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
-			s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+			s.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(vid),
 				Collection:  collection,
 				EcIndexBits: uint32(si.Bitmap()),
@@ -272,7 +272,7 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 
 	if deleted := location.UnloadEcShard(vid, shardId); deleted {
 		glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
-		s.DeletedEcShardsChan <- message
+		s.DeletedEcShardsChan <- &message
 		return nil
 	}
 
