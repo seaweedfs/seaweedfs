@@ -89,8 +89,11 @@ func TestPersistedLogCacheSingleFlight(t *testing.T) {
 	c := newPersistedLogCache(persistedLogCacheMaxBytes)
 	var loads int32
 	release := make(chan struct{})
+	started := make(chan struct{})
 	load := func() ([]*filer_pb.LogEntry, bool, error) {
-		atomic.AddInt32(&loads, 1)
+		if atomic.AddInt32(&loads, 1) == 1 {
+			close(started)
+		}
 		<-release // hold the flight open so concurrent callers coalesce
 		return logEntriesAt(1), true, nil
 	}
@@ -106,7 +109,8 @@ func TestPersistedLogCacheSingleFlight(t *testing.T) {
 			}
 		}()
 	}
-	time.Sleep(50 * time.Millisecond)
+	<-started // the flight is provably open before anyone is released
+	time.Sleep(10 * time.Millisecond)
 	close(release)
 	wg.Wait()
 
