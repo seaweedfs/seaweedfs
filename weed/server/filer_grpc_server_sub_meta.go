@@ -493,12 +493,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 }
 
 func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
-	// Entries carry full chunk lists, so unmarshaling every event for every
-	// subscriber dominates replay CPU. A shallow scan of just the path fields
-	// feeds the same matcher and skips the decode for entries this subscriber
-	// filters out anyway; any scan failure falls back to the full decode.
-	// The unsynced-events counter is shared with the notification fn, so only
-	// a delivery resets it no matter which side drops an entry.
+	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
+	// this subscriber would filter out anyway; scan surprises fall back to the
+	// full decode. Only a delivery resets the shared unsynced-events counter.
 	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
 		if prefilter {

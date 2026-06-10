@@ -4,11 +4,9 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
-// ScanMetadataEventSkeleton extracts only the fields that
-// MetadataEventMatchesSubscription reads (directory, entry names, rename
-// destination, ts) from a marshaled SubscribeMetadataResponse, without
-// materializing the entries' chunk lists. ok=false means the payload could
-// not be scanned and the caller must fall back to a full unmarshal.
+// ScanMetadataEventSkeleton extracts just the fields the subscription matcher
+// reads, without materializing the entries' chunk lists. ok=false means the
+// caller must fall back to a full unmarshal.
 func ScanMetadataEventSkeleton(data []byte) (skeleton *SubscribeMetadataResponse, ok bool) {
 	skeleton = &SubscribeMetadataResponse{}
 	rest := data
@@ -115,8 +113,7 @@ func scanEventNotificationSkeleton(data []byte) (*EventNotification, bool) {
 	return notification, true
 }
 
-// scanEntryName walks the whole entry so field order does not matter; the
-// chunk list is skipped tag by tag without being decoded.
+// scanEntryName walks the whole entry so field order does not matter.
 func scanEntryName(data []byte) (string, bool) {
 	name := ""
 	rest := data

@@ -20,9 +20,8 @@ import (
 const (
 	// persistedLogCacheMaxBytes bounds retained entries regardless of subscriber count.
 	persistedLogCacheMaxBytes = 256 << 20
-	// persistedLogCacheLoadBudget bounds the bytes being fetched and decoded at
-	// once, weighted by chunk size: many small chunks load in parallel while
-	// full-size ones stay serialized enough to cap the transient peak.
+	// persistedLogCacheLoadBudget bounds in-flight fetch+decode bytes, charged
+	// by chunk size: small chunks load wide, full-size ones cap the peak.
 	persistedLogCacheLoadBudget = 128 << 20
 	// persistedLogCacheIdleTTL frees entries no replay has touched recently, so
 	// the cache holds memory only while subscribers actually replay.
