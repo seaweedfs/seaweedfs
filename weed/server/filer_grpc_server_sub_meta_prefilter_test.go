@@ -64,6 +64,17 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 	if decoded != 1 {
 		t.Fatalf("matching entry must be decoded and delivered, got %d", decoded)
 	}
+
+	// the decode resets the skip counter: a fresh full window passes before
+	// the next heartbeat
+	for i := 0; i <= MaxUnsyncedEvents; i++ {
+		if _, err := fn(metadataLogEntry(t, "/data/pvc-1", "x.log", int64(20000+i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sender.sent) != 2 {
+		t.Fatalf("expected a second heartbeat after a full window, got %d sends", len(sender.sent))
+	}
 }
 
 func TestEachLogEntryFnNoFilterDecodesEverything(t *testing.T) {

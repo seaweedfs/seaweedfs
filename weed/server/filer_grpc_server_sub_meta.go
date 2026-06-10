@@ -506,9 +506,10 @@ func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStrea
 					if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 						EventNotification: &filer_pb.EventNotification{},
 						TsNs:              skeleton.TsNs,
-					}); err == nil {
-						filtered = 0
+					}); err != nil {
+						return false, err
 					}
+					filtered = 0
 				}
 				return false, nil
 			}
@@ -522,6 +523,7 @@ func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStrea
 		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
 			return false, err
 		}
+		filtered = 0
 
 		return false, nil
 	}
