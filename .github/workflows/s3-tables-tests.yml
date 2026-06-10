@@ -574,10 +574,34 @@ jobs:
           echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
 
-      - name: Pre-pull Python image
+      - name: Week stamp for image cache key
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore python:3 image cache
+        id: python-image
+        uses: actions/cache@v5
+        with:
+          path: /tmp/python3-image.tar
+          key: python3-image-${{ steps.week.outputs.week }}
+          restore-keys: |
+            python3-image-
+
+      - name: Load or pull python:3
         run: |
+          if [ "${{ steps.python-image.outputs.cache-hit }}" = "true" ]; then
+            docker load -i /tmp/python3-image.tar
+            exit 0
+          fi
           pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
-          pull python:3
+          if pull python:3; then
+            docker save -o /tmp/python3-image.tar python:3
+          elif [ -f /tmp/python3-image.tar ]; then
+            # Docker Hub unreachable; fall back to last week's cached image
+            docker load -i /tmp/python3-image.tar
+          else
+            exit 1
+          fi
 
       - name: Run go mod tidy
         run: go mod tidy
