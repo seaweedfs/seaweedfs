@@ -399,6 +399,27 @@ impl VolumeServer for VolumeGrpcService {
 
             if !is_ec_volume {
                 let mut store = self.state.store.write().unwrap();
+                // Recheck EC state under the write lock before mutating the .dat. The
+                // is_ec_volume snapshot was taken earlier under a separate read lock;
+                // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
+                // originals, so the vid can be EC now while the .dat still exists. A
+                // delete_volume_needle here would tombstone that .dat, which the encode
+                // then removes — the delete is lost and the needle resurrected from the
+                // pre-tombstone shards. If the vid is now EC, return a retriable 503 so
+                // the filer requeues the delete onto the EC path.
+                if store.has_ec_volume(file_id.volume_id) {
+                    results.push(volume_server_pb::DeleteResult {
+                        file_id: fid_str.clone(),
+                        status: 503,
+                        error: format!(
+                            "volume {} became ec during delete, try again",
+                            file_id.volume_id
+                        ),
+                        size: 0,
+                        version: 0,
+                    });
+                    continue;
+                }
                 match store.delete_volume_needle(file_id.volume_id, &mut n) {
                     Ok(size) => {
                         if size.0 == 0 {
