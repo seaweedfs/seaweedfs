@@ -639,18 +639,6 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Configure Docker Hub mirror
-        run: |
-          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-
-      - name: Pre-pull images
-        run: |
-          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
-          pull python:3
-          # localstack is optional; best-effort pull
-          for i in 1 2 3; do docker pull localstack/localstack:latest && break; sleep 15; done
-
       - name: Run go mod tidy
         run: go mod tidy
 
