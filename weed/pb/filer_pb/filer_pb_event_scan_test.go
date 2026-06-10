@@ -3,6 +3,7 @@ package filer_pb
 import (
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -83,6 +84,23 @@ func TestScanMetadataEventSkeletonFallsBack(t *testing.T) {
 	two := append(append([]byte{}, one...), one...)
 	if _, ok := ScanMetadataEventSkeleton(two); ok {
 		t.Error("duplicated message field must fall back to full decode")
+	}
+
+	// same for a duplicated entry inside the notification
+	entry, err := proto.Marshal(&Entry{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notification []byte
+	for i := 0; i < 2; i++ {
+		notification = protowire.AppendTag(notification, 1, protowire.BytesType) // old_entry
+		notification = protowire.AppendBytes(notification, entry)
+	}
+	var response []byte
+	response = protowire.AppendTag(response, 2, protowire.BytesType) // event_notification
+	response = protowire.AppendBytes(response, notification)
+	if _, ok := ScanMetadataEventSkeleton(response); ok {
+		t.Error("duplicated nested entry field must fall back to full decode")
 	}
 }
 

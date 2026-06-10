@@ -36,10 +36,12 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{PathPrefix: "/data/pvc-7/"}
 	sender := &recordingSender{}
 	var decoded int
+	var unsyncedEvents int64
 	fn := eachLogEntryFn(req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		decoded++
+		unsyncedEvents = 0 // emulate a delivery, like the notification fn after a send
 		return nil
-	})
+	}, &unsyncedEvents)
 
 	// non-matching entries skip the full decode but keep heartbeating
 	for i := 0; i <= MaxUnsyncedEvents; i++ {
@@ -65,8 +67,8 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 		t.Fatalf("matching entry must be decoded and delivered, got %d", decoded)
 	}
 
-	// the decode resets the skip counter: a fresh full window passes before
-	// the next heartbeat
+	// the delivery reset the shared counter: a fresh full window passes
+	// before the next heartbeat
 	for i := 0; i <= MaxUnsyncedEvents; i++ {
 		if _, err := fn(metadataLogEntry(t, "/data/pvc-1", "x.log", int64(20000+i))); err != nil {
 			t.Fatal(err)
@@ -80,10 +82,11 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 func TestEachLogEntryFnNoFilterDecodesEverything(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{}
 	var decoded int
+	var unsyncedEvents int64
 	fn := eachLogEntryFn(req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		decoded++
 		return nil
-	})
+	}, &unsyncedEvents)
 	if _, err := fn(metadataLogEntry(t, "/anywhere", "x", 1)); err != nil {
 		t.Fatal(err)
 	}
