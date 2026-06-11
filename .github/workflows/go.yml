@@ -37,6 +37,21 @@ jobs:
         # Fail only if there are actual vet errors (not counting the filtered lock warnings)
         if grep -q "vet:" vet-output.txt; then exit 1; fi
 
+  vet-32bit:
+    name: Go Vet 32-bit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+    - name: Go Vet linux/386 (type-checks code and tests for 32-bit int overflows)
+      run: |
+        GOOS=linux GOARCH=386 go vet ./... 2>&1 | grep -v "MessageState contains sync.Mutex" | grep -v "IdentityAccessManagement contains sync.RWMutex" | tee vet-32bit-output.txt
+        if grep -q "vet:" vet-32bit-output.txt; then exit 1; fi
+
   build:
     name: Build
     runs-on: ubuntu-latest

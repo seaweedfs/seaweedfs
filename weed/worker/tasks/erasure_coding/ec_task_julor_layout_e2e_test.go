@@ -66,7 +66,7 @@ func TestEcEncodeJulorLayoutConverges(t *testing.T) {
 	framework.AllocateVolume(t, clients[srcServer], volumeID, collection)
 	httpClient := framework.NewHTTPClient()
 	for i := 0; i < 8; i++ {
-		fid := framework.NewFileID(volumeID, uint64(950000+i), uint32(0x9500CA00+i))
+		fid := framework.NewFileID(volumeID, uint64(950000+i), 0x9500CA00+uint32(i))
 		payload := make([]byte, 4096)
 		for j := range payload {
 			payload[j] = byte(i + 1)
