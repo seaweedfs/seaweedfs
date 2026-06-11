@@ -2,8 +2,10 @@ package dash
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
@@ -66,7 +68,12 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		ecChanged = true
 	}
 	if k := "maintenance.erasure_coding.preferred_tags"; v.IsSet(k) {
-		ecConf.PreferredTags = v.GetStringSlice(k)
+		// viper does not split comma-separated values from env vars
+		var tags []string
+		for _, tag := range v.GetStringSlice(k) {
+			tags = append(tags, strings.Split(tag, ",")...)
+		}
+		ecConf.PreferredTags = util.NormalizeTagList(tags)
 		ecChanged = true
 	}
 	if k := "maintenance.erasure_coding.replica_placement"; v.IsSet(k) {

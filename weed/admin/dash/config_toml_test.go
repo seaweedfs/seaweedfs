@@ -45,7 +45,7 @@ min_volume_age_seconds = 1800
 [maintenance.erasure_coding]
 enabled = false
 fullness_ratio = 0.8
-preferred_tags = ["ssd"]
+preferred_tags = "Fast, ssd"
 `)
 	if err := cp.ApplyMaintenanceConfigFromToml(v); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -70,8 +70,8 @@ preferred_tags = ["ssd"]
 	if ecConf.FullnessRatio != 0.8 {
 		t.Errorf("fullness ratio = %v, want 0.8", ecConf.FullnessRatio)
 	}
-	if !reflect.DeepEqual(ecConf.PreferredTags, []string{"ssd"}) {
-		t.Errorf("preferred tags = %v, want [ssd]", ecConf.PreferredTags)
+	if !reflect.DeepEqual(ecConf.PreferredTags, []string{"fast", "ssd"}) {
+		t.Errorf("preferred tags = %v, want [fast ssd]", ecConf.PreferredTags)
 	}
 	if ecConf.QuietForSeconds != 3600 {
 		t.Errorf("quiet for = %v, want default 3600 preserved", ecConf.QuietForSeconds)
