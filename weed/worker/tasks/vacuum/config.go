@@ -39,7 +39,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 		TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 			VacuumConfig: &worker_pb.VacuumTaskConfig{
 				GarbageThreshold:  float64(c.GarbageThreshold),
-				MinVolumeAgeHours: int32(c.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
+				MinVolumeAgeHours: int32((c.MinVolumeAgeSeconds + 3599) / 3600), // round up so sub-hour values don't become 0
 			},
 		},
 	}

@@ -40,7 +40,7 @@ func TestApplyMaintenanceConfigFromToml(t *testing.T) {
 	v := tomlConfig(t, `
 [maintenance.vacuum]
 garbage_threshold = 0.03
-min_volume_age_seconds = 3600
+min_volume_age_seconds = 1800
 
 [maintenance.erasure_coding]
 enabled = false
@@ -55,6 +55,7 @@ preferred_tags = ["ssd"]
 	if vacuumConf.GarbageThreshold != 0.03 {
 		t.Errorf("garbage threshold = %v, want 0.03", vacuumConf.GarbageThreshold)
 	}
+	// sub-hour values round up to a whole hour instead of truncating to 0
 	if vacuumConf.MinVolumeAgeSeconds != 3600 {
 		t.Errorf("min volume age = %v, want 3600", vacuumConf.MinVolumeAgeSeconds)
 	}
