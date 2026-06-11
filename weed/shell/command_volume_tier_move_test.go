@@ -23,7 +23,14 @@ func TestFilterLocationsByDataCenter(t *testing.T) {
 	_, allLocations := collectVolumeReplicaLocations(parseOutput(topoData))
 
 	assert.Equal(t, 5, len(allLocations))
-	assert.Equal(t, 2, len(filterLocationsByDataCenter(allLocations, "dc2")))
-	assert.Equal(t, 1, len(filterLocationsByDataCenter(allLocations, "dc3")))
-	assert.Equal(t, 0, len(filterLocationsByDataCenter(allLocations, "dc9")))
+	assert.ElementsMatch(t, []string{"192.168.1.4:8080", "192.168.1.2:8080"}, locationNodeIds(filterLocationsByDataCenter(allLocations, "dc2")))
+	assert.ElementsMatch(t, []string{"192.168.1.6:8080"}, locationNodeIds(filterLocationsByDataCenter(allLocations, "dc3")))
+	assert.Empty(t, filterLocationsByDataCenter(allLocations, "dc9"))
+}
+
+func locationNodeIds(locations []location) (ids []string) {
+	for _, loc := range locations {
+		ids = append(ids, loc.dataNode.Id)
+	}
+	return
 }
