@@ -51,7 +51,7 @@ func TestEcEncodeLeavesRightFilesAndRemovesStubAndSource(t *testing.T) {
 	framework.AllocateVolume(t, clientA, volumeID, collection)
 	httpClient := framework.NewHTTPClient()
 	for i := 0; i < 8; i++ {
-		fid := framework.NewFileID(volumeID, uint64(948000+i), uint32(0x9490CA00+i))
+		fid := framework.NewFileID(volumeID, uint64(948000+i), 0x9490CA00+uint32(i))
 		payload := make([]byte, 4096)
 		for j := range payload {
 			payload[j] = byte(i + 1)
