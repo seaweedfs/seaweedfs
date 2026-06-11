@@ -23,7 +23,7 @@ func main() {
 			Name:       "newbucket",
 			Versioning: false,
 		},
-		MaxBackoffDelay:  aws.Int(int(time.Second * 5)),
+		MaxBackoffDelay:  aws.Int(int((5 * time.Second).Milliseconds())),
 		MaxRetryAttempts: aws.Int(1),
 	}
 
