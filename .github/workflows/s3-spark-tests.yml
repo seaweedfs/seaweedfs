@@ -33,15 +33,19 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Install SeaweedFS
         run: |
           go install -buildvcs=false ./weed
 
       - name: Pre-pull Spark image
-        run: docker pull apache/spark:3.5.8
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/spark:3.5.1
 
       - name: Run S3 Spark integration tests
         working-directory: test/s3/spark

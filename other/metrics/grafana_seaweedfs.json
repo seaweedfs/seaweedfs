@@ -623,6 +623,237 @@
               "show": true
             }
           ]
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_PROMETHEUS}",
+          "editable": true,
+          "error": false,
+          "fill": 5,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 31
+          },
+          "hiddenSeries": false,
+          "id": 91,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 2,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.1.2",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": true,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1024\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "< 1KB",
+              "refId": "A"
+            },
+            {
+              "expr": "clamp_min(sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"102400\"}[1m])) - sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1024\"}[1m])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "1KB - 100KB",
+              "refId": "B"
+            },
+            {
+              "expr": "clamp_min(sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+06\"}[1m])) - sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"102400\"}[1m])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "100KB - 1MB",
+              "refId": "C"
+            },
+            {
+              "expr": "clamp_min(sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+08\"}[1m])) - sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+06\"}[1m])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "1MB - 100MB",
+              "refId": "D"
+            },
+            {
+              "expr": "clamp_min(sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.073741824e+09\"}[1m])) - sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+08\"}[1m])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "100MB - 1GB",
+              "refId": "E"
+            },
+            {
+              "expr": "clamp_min(sum(rate(SeaweedFS_filer_object_size_bytes_count[1m])) - sum(rate(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.073741824e+09\"}[1m])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "> 1GB",
+              "refId": "F"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Filer Object Write Rate by Size Range",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": "objects/s",
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "description": "Objects created per size range over the selected time window.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "id": 92,
+          "options": {
+            "displayMode": "gradient",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true,
+            "valueMode": "color"
+          },
+          "pluginVersion": "8.1.2",
+          "targets": [
+            {
+              "expr": "sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1024\"}[$__range]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "< 1KB",
+              "refId": "A",
+              "instant": true
+            },
+            {
+              "expr": "clamp_min(sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"102400\"}[$__range])) - sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1024\"}[$__range])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "1KB - 100KB",
+              "refId": "B",
+              "instant": true
+            },
+            {
+              "expr": "clamp_min(sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+06\"}[$__range])) - sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"102400\"}[$__range])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "100KB - 1MB",
+              "refId": "C",
+              "instant": true
+            },
+            {
+              "expr": "clamp_min(sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+08\"}[$__range])) - sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+06\"}[$__range])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "1MB - 100MB",
+              "refId": "D",
+              "instant": true
+            },
+            {
+              "expr": "clamp_min(sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.073741824e+09\"}[$__range])) - sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.048576e+08\"}[$__range])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "100MB - 1GB",
+              "refId": "E",
+              "instant": true
+            },
+            {
+              "expr": "clamp_min(sum(increase(SeaweedFS_filer_object_size_bytes_count[$__range])) - sum(increase(SeaweedFS_filer_object_size_bytes_bucket{le=\"1.073741824e+09\"}[$__range])), 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "> 1GB",
+              "refId": "F",
+              "instant": true
+            }
+          ],
+          "title": "Filer Object Size Distribution",
+          "type": "bargauge"
         }
       ],
       "repeat": null,

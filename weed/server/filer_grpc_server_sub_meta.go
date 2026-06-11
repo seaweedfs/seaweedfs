@@ -190,14 +190,15 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
+	var unsyncedEvents int64
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
 	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
 	// only emitted once it is caught up to the buffer head. It is read and
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
-	baseEachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		lastSeenTsNs = logEntry.TsNs
 		return baseEachLogEntryFn(logEntry)
@@ -215,7 +216,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		if req.ClientSupportsMetadataChunks {
 			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 		} else {
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 		}
 		if readPersistedLogErr != nil {
 			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
@@ -331,14 +332,15 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
+	var unsyncedEvents int64
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
 	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
 	// only emitted once it is caught up to the buffer head. It is read and
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
-	baseEachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		lastSeenTsNs = logEntry.TsNs
 		return baseEachLogEntryFn(logEntry)
@@ -367,7 +369,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			if req.ClientSupportsMetadataChunks {
 				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 			} else {
-				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
@@ -490,8 +492,28 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) log_buffer.EachLogEntryFuncType {
+func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
+	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
+	// this subscriber would filter out anyway; scan surprises fall back to the
+	// full decode. Only a delivery resets the shared unsynced-events counter.
+	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
+		if prefilter {
+			if skeleton, ok := filer_pb.ScanMetadataEventSkeleton(logEntry.Data); ok &&
+				!filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories) {
+				*filtered++
+				if *filtered > MaxUnsyncedEvents {
+					if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
+						EventNotification: &filer_pb.EventNotification{},
+						TsNs:              skeleton.TsNs,
+					}); err != nil {
+						return false, err
+					}
+					*filtered = 0
+				}
+				return false, nil
+			}
+		}
 		event := &filer_pb.SubscribeMetadataResponse{}
 		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
@@ -574,22 +596,20 @@ func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStrea
 	return lastTsNs, false, nil
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
-	filtered := 0
-
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		defer func() {
-			if filtered > MaxUnsyncedEvents {
+			if *filtered > MaxUnsyncedEvents {
 				if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 					EventNotification: &filer_pb.EventNotification{},
 					TsNs:              tsNs,
 				}); err == nil {
-					filtered = 0
+					*filtered = 0
 				}
 			}
 		}()
 
-		filtered++
+		*filtered++
 		foundSelf := false
 		for _, sig := range eventNotification.Signatures {
 			if sig == req.Signature && req.Signature != 0 {
@@ -636,7 +656,7 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
-		filtered = 0
+		*filtered = 0
 		return nil
 	}
 }

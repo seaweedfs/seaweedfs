@@ -216,13 +216,11 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 // also fall through unchanged because the lookup in the .dat index below
 // will simply not find a match.
 //
-// Before deleting any EC files we also check that the sibling .dat is
-// plausibly the encoding source: at least super_block.SuperBlockSize
-// bytes long, and — when the EC's .vif recorded a non-zero source size
-// in datFileSize — at least that many bytes. A zero-byte shell or a
-// truncated .dat does not justify wiping the partial EC, because that
-// EC shard may still combine usefully with shards on other servers in
-// a recoverable distributed-EC layout.
+// The sibling .dat must be a credible encoding source before we delete
+// anything: at least the size .vif recorded at encode time, or — when
+// unknown (0) — more than a bare superblock so an empty 8-byte stub
+// can't pass. A truncated .dat leaves the partial EC alone; those shards
+// may still reconstruct from other servers.
 //
 // We push DeletedEcShardsChan for every pruned shard so the master is told
 // to forget the registrations the per-disk pass already emitted on
@@ -269,13 +267,12 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 			if !hasDat || owner.location == loc {
 				continue
 			}
-			// Decide whether the sibling .dat is a credible source.
-			// Prefer the size baked into .vif at encode time; fall
-			// back to "at least a superblock" for old EC volumes
-			// whose .vif predates the field.
+			// Credible source size: prefer .vif's encode-time size; when
+			// unknown (0) require more than a bare superblock so an empty
+			// 8-byte stub (e.g. a phantom .dat) can't pass.
 			requiredDatSize := ev.DatFileSize()
 			if requiredDatSize <= 0 {
-				requiredDatSize = int64(super_block.SuperBlockSize)
+				requiredDatSize = int64(super_block.SuperBlockSize) + 1
 			}
 			if owner.size < requiredDatSize {
 				glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards but sibling .dat on %s is %d bytes (need >= %d); leaving partial EC in place so distributed reconstruction is still possible",
@@ -300,7 +297,7 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 			loc.removeEcVolumeFiles(v.collection, v.vid)
 			for _, msg := range v.messages {
 				select {
-				case s.DeletedEcShardsChan <- *msg:
+				case s.DeletedEcShardsChan <- msg:
 				default:
 					// Channel full during startup is fine — the next
 					// periodic heartbeat reports the full ecVolumes

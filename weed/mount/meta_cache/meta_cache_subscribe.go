@@ -2,8 +2,10 @@ package meta_cache
 
 import (
 	"context"
+	"io"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -66,6 +68,9 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		prefix = prefix + "/"
 	}
 
+	// Read persisted log chunks directly from volume servers, keeping the replay
+	// cost off the filer's heap (see LogFileReaderFn below).
+	lookupFn := filer.LookupFn(client)
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "mount",
 		ClientId:               selfSignature,
@@ -77,6 +82,9 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		StartTsNs:              lastTsNs,
 		StopTsNs:               0,
 		EventErrorType:         pb.FatalOnError,
+		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			return filer.NewChunkStreamReaderFromLookup(context.Background(), lookupFn, chunks), nil
+		},
 	}
 	util.RetryUntil("followMetaUpdates", func() error {
 		metadataFollowOption.ClientEpoch++

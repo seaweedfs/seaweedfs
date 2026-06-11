@@ -652,6 +652,15 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		directoryKey += "/"
 	}
 
+	// Only surface a directory key whose own key matches the prefix. Ancestor
+	// markers (e.g. "Veeam/") get descended through to reach a deeper prefix but
+	// don't match it themselves, so they must not appear as version entries -
+	// this mirrors ListObjectsV2 and AWS, and stops clients like Veeam that
+	// reject unexpected keys in a listing from aborting.
+	if !strings.HasPrefix(directoryKey, vc.prefix) {
+		return
+	}
+
 	// Skip directories at or before keyMarker
 	if vc.keyMarker != "" && directoryKey <= vc.keyMarker {
 		return

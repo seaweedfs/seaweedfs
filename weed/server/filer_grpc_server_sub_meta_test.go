@@ -188,7 +188,8 @@ func TestEachEventNotificationFnMatchesRenameTargetsForAllWatchTypes(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stream := &collectingStream{}
-			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client")
+			var unsyncedEvents int64
+			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client", &unsyncedEvents)
 
 			newDir := "/etc/remote"
 			if len(tt.req.Directories) > 0 {
@@ -509,7 +510,8 @@ func TestFilteredEventsEmitMaxUnsyncedMarker(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{ClientName: "syncFrom_A_To_B", PathPrefix: "/watched/"}
 
 	stream := &collectingStream{}
-	eachEventFn := fs.eachEventNotificationFn(req, stream, "client")
+	var unsyncedEvents int64
+	eachEventFn := fs.eachEventNotificationFn(req, stream, "client", &unsyncedEvents)
 
 	base := time.Now().UnixNano()
 	var lastTsNs int64

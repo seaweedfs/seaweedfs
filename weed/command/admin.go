@@ -360,15 +360,9 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		SameSite: http.SameSiteLaxMode,
 	}
 
-	// Static files - serve from embedded filesystem
-	staticFS, err := admin.GetStaticFS()
-	if err != nil {
-		log.Printf("Warning: Failed to load embedded static files: %v", err)
-	} else {
-		staticHandler := http.FileServer(http.FS(staticFS))
-		r.Handle("/static", http.RedirectHandler("/static/", http.StatusMovedPermanently))
-		r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", staticHandler))
-	}
+	// Static files - pre-gzipped and embedded in the binary
+	r.Handle("/static", http.RedirectHandler("/static/", http.StatusMovedPermanently))
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", admin.StaticHandler()))
 
 	// Create admin server (plugin is always enabled)
 	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
