@@ -1,0 +1,47 @@
+# Put this file to one of the location, with descending priority
+#    ./admin.toml
+#    $HOME/.seaweedfs/admin.toml
+#    /etc/seaweedfs/admin.toml
+# this file is read by "weed admin"
+
+# Maintenance task settings declared here are applied every time the admin
+# server starts, overriding values saved from the admin UI under
+# <dataDir>/conf. Commented-out keys keep their saved or default values.
+# Requires -dataDir.
+# Each value can also be set via environment variable, e.g.
+#    export WEED_MAINTENANCE_VACUUM_GARBAGE_THRESHOLD=0.3
+
+[maintenance.vacuum]
+# enabled = true
+# vacuum volumes with more deleted content than this ratio
+# garbage_threshold = 0.3
+# how often to scan for volumes needing vacuum
+# scan_interval_seconds = 7200
+# max_concurrent = 2
+# only vacuum volumes older than this
+# min_volume_age_seconds = 86400
+
+[maintenance.balance]
+# enabled = true
+# trigger balancing when volume distribution exceeds this ratio
+# imbalance_threshold = 0.2
+# scan_interval_seconds = 1800
+# max_concurrent = 1
+# minimum number of volume servers before balancing
+# min_server_count = 2
+
+[maintenance.erasure_coding]
+# enabled = true
+# only erasure code volumes this full
+# fullness_ratio = 0.95
+# only erasure code volumes not modified for this long
+# quiet_for_seconds = 3600
+# scan_interval_seconds = 3600
+# max_concurrent = 1
+# min_size_mb = 30
+# only process volumes from this collection ("" = all collections)
+# collection_filter = ""
+# disk tags preferred for shard placement
+# preferred_tags = ["fast", "ssd"]
+# EC shard placement constraint, e.g. "020"; empty uses the master default replication
+# replica_placement = ""
