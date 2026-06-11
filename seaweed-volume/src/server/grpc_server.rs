@@ -399,6 +399,27 @@ impl VolumeServer for VolumeGrpcService {
 
             if !is_ec_volume {
                 let mut store = self.state.store.write().unwrap();
+                // Recheck EC state under the write lock before mutating the .dat. The
+                // is_ec_volume snapshot was taken earlier under a separate read lock;
+                // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
+                // originals, so the vid can be EC now while the .dat still exists. A
+                // delete_volume_needle here would tombstone that .dat, which the encode
+                // then removes — the delete is lost and the needle resurrected from the
+                // pre-tombstone shards. If the vid is now EC, return a retriable 503 so
+                // the filer requeues the delete onto the EC path.
+                if store.has_ec_volume(file_id.volume_id) {
+                    results.push(volume_server_pb::DeleteResult {
+                        file_id: fid_str.clone(),
+                        status: 503,
+                        error: format!(
+                            "volume {} became ec during delete, try again",
+                            file_id.volume_id
+                        ),
+                        size: 0,
+                        version: 0,
+                    });
+                    continue;
+                }
                 match store.delete_volume_needle(file_id.volume_id, &mut n) {
                     Ok(size) => {
                         if size.0 == 0 {
@@ -420,13 +441,35 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                     Err(e) => {
-                        results.push(volume_server_pb::DeleteResult {
-                            file_id: fid_str.clone(),
-                            status: 500,
-                            error: e.to_string(),
-                            size: 0,
-                            version: 0,
-                        });
+                        // The volume vanished between the is_ec_volume snapshot and
+                        // this mutation. If an EC volume now occupies the vid (ec.encode
+                        // mounted EC then deleted the .dat under us), the delete belongs
+                        // on the EC journal, not here — return a retriable 503 with the
+                        // "try again" token so the filer requeues it and the retry hits
+                        // the EC path. A bare exact "not found" would be dropped
+                        // permanently by the filer chunk-GC.
+                        if matches!(e, crate::storage::volume::VolumeError::NotFound)
+                            && store.has_ec_volume(file_id.volume_id)
+                        {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 503,
+                                error: format!(
+                                    "volume {} became ec during delete, try again",
+                                    file_id.volume_id
+                                ),
+                                size: 0,
+                                version: 0,
+                            });
+                        } else {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 500,
+                                error: e.to_string(),
+                                size: 0,
+                                version: 0,
+                            });
+                        }
                     }
                 }
             } else {
@@ -2133,6 +2176,12 @@ impl VolumeServer for VolumeGrpcService {
                 ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
                     data_shards: data_shards,
                     parity_shards: parity_shards,
+                    // This run's identity; the read path rejects a shard from a
+                    // different encode run.
+                    encode_ts_ns: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as i64,
                 }),
                 ..Default::default()
             };
@@ -2593,12 +2642,35 @@ impl VolumeServer for VolumeGrpcService {
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
+
+        if req.full_teardown {
+            // Pre-encode cleanup: evict the volume and wipe every EC artifact for it
+            // on every disk, not just the listed shards, so a remote node retains no
+            // stale generation that a fresh gen-0 copy would collide with. Echo the
+            // acknowledgement so the caller can tell a pre-upgrade server apart.
+            {
+                let mut store = self.state.store.write().unwrap();
+                let _ = store.remove_ec_volume(vid);
+                for loc in &store.locations {
+                    loc.remove_ec_volume_files_full_teardown(&req.collection, vid);
+                }
+            }
+            self.state.volume_state_notify.notify_one();
+            return Ok(Response::new(
+                volume_server_pb::VolumeEcShardsDeleteResponse {
+                    full_teardown_done: true,
+                },
+            ));
+        }
+
         let mut store = self.state.store.write().unwrap();
         store.delete_ec_shards(vid, &req.collection, &req.shard_ids);
         drop(store);
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(
-            volume_server_pb::VolumeEcShardsDeleteResponse {},
+            volume_server_pb::VolumeEcShardsDeleteResponse {
+                full_teardown_done: false,
+            },
         ))
     }
 
@@ -2672,6 +2744,21 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
+        // Reject a shard whose identity doesn't match the caller's index; the caller
+        // then recovers from parity. Lenient only when the caller has no identity
+        // (pre-upgrade reader): a known caller must not accept an unstamped holder,
+        // which would serve a stale shard from a different encode run.
+        if req.encode_ts_ns != 0 && req.encode_ts_ns != ec_vol.encode_ts_ns {
+            return Err(Status::failed_precondition(format!(
+                "ec shard {}.{} belongs to a different encode run",
+                req.volume_id, req.shard_id
+            )));
+        }
+
+        // Identity of the shard actually served, echoed on every response chunk so
+        // the client can reject a different encode run even from a pre-upgrade server.
+        let served_encode_ts_ns = ec_vol.encode_ts_ns;
+
         // Check if the requested needle is deleted (via .ecx index, matching Go)
         if req.file_key > 0 {
             let needle_id = NeedleId(req.file_key);
@@ -2682,6 +2769,7 @@ impl VolumeServer for VolumeGrpcService {
                 if size.is_deleted() {
                     let results = vec![Ok(volume_server_pb::VolumeEcShardReadResponse {
                         is_deleted: true,
+                        encode_ts_ns: served_encode_ts_ns,
                         ..Default::default()
                     })];
                     return Ok(Response::new(Box::pin(tokio_stream::iter(results))));
@@ -2730,6 +2818,7 @@ impl VolumeServer for VolumeGrpcService {
             results.push(Ok(volume_server_pb::VolumeEcShardReadResponse {
                 data: buf,
                 is_deleted: false,
+                encode_ts_ns: served_encode_ts_ns,
             }));
             if n < chunk_size {
                 break; // short read means EOF

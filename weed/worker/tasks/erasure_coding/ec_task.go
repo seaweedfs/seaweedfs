@@ -616,10 +616,24 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		}).Info("EC journal file generated")
 	}
 
-	// Generate .vif file (volume info)
+	// Always stamp the encode identity into the .vif so the read guard stays on.
+	// The ratio is the resolved one from the encoder's protection, defaulting to
+	// the context this path encodes with (not t.dataShards, which this path does
+	// not pass to the encoder).
 	vifFile := baseName + ".vif"
+	defaultCtx := erasure_coding.NewDefaultECContext("", 0)
+	ecShardConfig := &volume_server_pb.EcShardConfig{
+		DataShards:   uint32(defaultCtx.DataShards),
+		ParityShards: uint32(defaultCtx.ParityShards),
+		EncodeTsNs:   time.Now().UnixNano(),
+	}
+	if ecBitrot != nil && ecBitrot.EcShardConfig != nil {
+		ecShardConfig.DataShards = ecBitrot.EcShardConfig.DataShards
+		ecShardConfig.ParityShards = ecBitrot.EcShardConfig.ParityShards
+	}
 	volumeInfo := &volume_server_pb.VolumeInfo{
-		Version: uint32(needle.GetCurrentVersion()),
+		Version:       uint32(needle.GetCurrentVersion()),
+		EcShardConfig: ecShardConfig,
 	}
 	if err := volume_info.SaveVolumeInfo(vifFile, volumeInfo); err != nil {
 		glog.Warningf("Failed to create .vif file: %v", err)
@@ -963,12 +977,17 @@ func unmountAndDeleteEcShards(
 			}); err != nil {
 				return fmt.Errorf("unmount: %w", err)
 			}
-			if _, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-				VolumeId:   volumeID,
-				Collection: collection,
-				ShardIds:   shardIds,
-			}); err != nil {
+			resp, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+				VolumeId:     volumeID,
+				Collection:   collection,
+				ShardIds:     shardIds,
+				FullTeardown: true,
+			})
+			if err != nil {
 				return fmt.Errorf("delete: %w", err)
+			}
+			if !resp.GetFullTeardownDone() {
+				return fmt.Errorf("delete: %s did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain", destination)
 			}
 			return nil
 		})

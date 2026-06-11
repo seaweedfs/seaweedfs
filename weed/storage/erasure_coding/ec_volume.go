@@ -44,6 +44,10 @@ type EcVolume struct {
 	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
 
+	// EncodeTsNs is the encode time (unix nanos) loaded from .vif; reads carry it
+	// so a shard from a different encode run is rejected. 0 for pre-upgrade volumes.
+	EncodeTsNs int64
+
 	// ecjFileSize mirrors the on-disk size of the .ecj deletion journal and
 	// is maintained under ecjFileAccessLock. It is only used by IO helpers
 	// (seek/truncate) — the authoritative runtime delete count comes from
@@ -150,6 +154,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		if volumeInfo.EcShardConfig != nil {
 			ds := int(volumeInfo.EcShardConfig.DataShards)
 			ps := int(volumeInfo.EcShardConfig.ParityShards)
+			ev.EncodeTsNs = volumeInfo.EcShardConfig.GetEncodeTsNs()
 
 			// Validate shard counts to prevent zero or invalid values
 			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
@@ -227,16 +232,19 @@ func (ev *EcVolume) Close() {
 	for _, s := range ev.Shards {
 		s.Close()
 	}
+	ev.ecjFileAccessLock.Lock()
 	if ev.ecjFile != nil {
-		ev.ecjFileAccessLock.Lock()
 		_ = ev.ecjFile.Close()
 		ev.ecjFile = nil
-		ev.ecjFileAccessLock.Unlock()
 	}
+	ev.ecjFileAccessLock.Unlock()
 	if ev.ecxFile != nil {
 		_ = ev.ecxFile.Sync()
+		// Do NOT nil ecxFile: LocateEcShardNeedle reads it without the
+		// ecVolumesLock after the resolving lookup released it, so a concurrent
+		// eviction that nils the field would race that read. A closed-but-set fd
+		// yields a clean read error (recovered from parity) and no data race.
 		_ = ev.ecxFile.Close()
-		ev.ecxFile = nil
 	}
 }
 
@@ -244,13 +252,13 @@ func (ev *EcVolume) Close() {
 // This ensures that deletions made via DeleteNeedleFromEcx are visible
 // to other processes/file handles that may read these files.
 func (ev *EcVolume) Sync() {
+	ev.ecjFileAccessLock.Lock()
 	if ev.ecjFile != nil {
-		ev.ecjFileAccessLock.Lock()
 		if err := ev.ecjFile.Sync(); err != nil {
 			glog.Warningf("failed to sync ecj file for volume %d: %v", ev.VolumeId, err)
 		}
-		ev.ecjFileAccessLock.Unlock()
 	}
+	ev.ecjFileAccessLock.Unlock()
 	if ev.ecxFile != nil {
 		if err := ev.ecxFile.Sync(); err != nil {
 			glog.Warningf("failed to sync ecx file for volume %d: %v", ev.VolumeId, err)

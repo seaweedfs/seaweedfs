@@ -7,8 +7,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 func TestPositioning(t *testing.T) {
@@ -51,4 +53,41 @@ func TestPositioning(t *testing.T) {
 		fmt.Printf("interval: %+v, shardId: %d, shardOffset: %d\n", interval, shardId, shardOffset)
 	}
 
+}
+
+// TestNewEcVolumeLoadsEncodeTsNs pins that the per-encode identity stamped into
+// .vif is loaded onto the EcVolume, so reads can reject a shard from a different
+// encode run.
+func TestNewEcVolumeLoadsEncodeTsNs(t *testing.T) {
+	dir := t.TempDir()
+	const vid = needle.VolumeId(123)
+	base := EcShardFileName("", dir, int(vid))
+
+	// A 0-byte .ecx is a valid index (no live needles) and lets NewEcVolume mount.
+	if err := os.WriteFile(base+".ecx", nil, 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+
+	const tsNs int64 = 1717000000000000123
+	vi := &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards:   10,
+			ParityShards: 4,
+			EncodeTsNs:   tsNs,
+		},
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", vi); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	ev, err := NewEcVolume(types.HardDriveType, dir, dir, "", vid)
+	if err != nil {
+		t.Fatalf("NewEcVolume: %v", err)
+	}
+	defer ev.Close()
+
+	if ev.EncodeTsNs != tsNs {
+		t.Errorf("EncodeTsNs = %d, want %d", ev.EncodeTsNs, tsNs)
+	}
 }

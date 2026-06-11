@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -536,6 +537,58 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 }
 
+// errFullTeardownNotAcked marks a reachable server that completed the delete RPC
+// but did not report full_teardown_done (a pre-upgrade volume server). The orphan
+// sweep must treat this as fatal: the node may still hold an orphan that a later
+// copy would re-stamp into the new generation.
+var errFullTeardownNotAcked = errors.New("delete did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain")
+
+// pingVolumeServer probes node liveness with an empty-target Ping, which is never
+// maintenance-gated, and returns the raw Ping error (nil on success). It lets the
+// orphan sweep disambiguate a delete codes.Unavailable: a Rust volume server in
+// maintenance mode fails the maintenance-gated delete with Unavailable yet answers
+// Ping, whereas a genuinely-down node fails Ping with a transport Unavailable too.
+// A Go server returns Unknown for maintenance, which isNodeUnreachable already
+// treats as fatal. The caller classifies the result with classifyNodeLiveness:
+// only a Ping that itself transport-failed (codes.Unavailable) confirms the node
+// is down; a nil error (reachable) or any other Ping error (inconclusive — e.g. a
+// pre-Ping server returning Unimplemented, which means the node is up) is fatal.
+func pingVolumeServer(grpcDialOption grpc.DialOption, location pb.ServerAddress) error {
+	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, pingErr := client.Ping(context.Background(), &volume_server_pb.PingRequest{})
+		return pingErr
+	})
+}
+
+// unmountAndDeleteEcShardsQuiet unmounts then deletes shards on one server in a
+// single connection, without the per-call logging the interactive helpers emit.
+// Used by the orphan sweep, which fans out to every node x volume and would
+// otherwise flood the shell with no-op lines.
+func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, location pb.ServerAddress, shardIds []erasure_coding.ShardId) error {
+	ids := erasure_coding.ShardIdsToUint32(shardIds)
+	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		if _, err := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
+			VolumeId: uint32(volumeId),
+			ShardIds: ids,
+		}); err != nil {
+			return fmt.Errorf("unmount: %w", err)
+		}
+		resp, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:     uint32(volumeId),
+			Collection:   collection,
+			ShardIds:     ids,
+			FullTeardown: true,
+		})
+		if err != nil {
+			return fmt.Errorf("delete: %w", err)
+		}
+		if !resp.GetFullTeardownDone() {
+			return fmt.Errorf("delete on %s: %w", location, errFullTeardownNotAcked)
+		}
+		return nil
+	})
+}
+
 func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeUnmountedShardIds []erasure_coding.ShardId) error {
 
 	fmt.Printf("unmount %d.%v from %s\n", volumeId, toBeUnmountedShardIds, sourceLocation)
@@ -741,12 +794,35 @@ type ecBalancer struct {
 	diskType           types.DiskType
 }
 
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool) (err error) {
+// excludeNodes is a set of server addresses kept out of the balance as copy/move
+// targets and sources. ec.encode passes the nodes its orphan sweep could not
+// reach: such a node may still hold a stale-generation shard orphan, and pairing
+// it with a new-generation shard from a balance copy would mix generations on one
+// node. The standalone ec.balance command passes nil.
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}) (err error) {
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc, diskType)
 	if err != nil {
 		return err
 	}
+
+	// Drop excluded nodes (and the slots they contribute) before planning so they
+	// can be neither a target nor a source for any move this balance plans.
+	if len(excludeNodes) > 0 {
+		kept := allEcNodes[:0]
+		var excludedFreeSlots int
+		for _, en := range allEcNodes {
+			if _, skip := excludeNodes[pb.NewServerAddressFromDataNode(en.info)]; skip {
+				excludedFreeSlots += en.freeEcSlot
+				glog.V(0).Infof("EC balance excluding node %s: skipped as unreachable by the encode orphan sweep", en.info.Id)
+				continue
+			}
+			kept = append(kept, en)
+		}
+		allEcNodes = kept
+		totalFreeEcSlots -= excludedFreeSlots
+	}
+
 	if totalFreeEcSlots < 1 {
 		return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
 	}

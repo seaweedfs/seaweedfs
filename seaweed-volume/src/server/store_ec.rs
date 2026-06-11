@@ -70,6 +70,10 @@ struct Snapshot {
     intervals: Vec<IntervalResult>,
     cached_locations: HashMap<ShardId, Vec<String>>,
     cache_refreshed_at: Option<Instant>,
+    /// This volume's encode identity, carried to peers on remote shard reads so a
+    /// shard from a different encode run is rejected rather than served at a
+    /// mismatched offset. 0 for a pre-feature volume (lenient).
+    encode_ts_ns: i64,
 }
 
 /// Top-level entry point. Returns `Ok(None)` for "not found" (matches
@@ -147,6 +151,7 @@ pub async fn read_ec_shard_needle_distributed(
                     &shard_locations,
                     snapshot.data_shards as usize,
                     snapshot.parity_shards as usize,
+                    snapshot.encode_ts_ns,
                 )
                 .await?;
                 assembled.push(buf);
@@ -259,6 +264,7 @@ fn snapshot_under_lock(
         intervals: interval_results,
         cached_locations,
         cache_refreshed_at,
+        encode_ts_ns: ecv.encode_ts_ns,
     }))
 }
 
@@ -383,6 +389,7 @@ async fn fetch_one_interval(
     shard_locations: &HashMap<ShardId, Vec<String>>,
     data_shards: usize,
     parity_shards: usize,
+    expected_encode_ts_ns: i64,
 ) -> io::Result<Vec<u8>> {
     // Direct peer read against the cached locations for this shard.
     if let Some(sources) = shard_locations.get(&shard_id) {
@@ -395,6 +402,7 @@ async fn fetch_one_interval(
                 shard_id,
                 shard_offset,
                 size,
+                expected_encode_ts_ns,
             )
             .await
             {
@@ -424,6 +432,7 @@ async fn fetch_one_interval(
         shard_locations,
         data_shards,
         parity_shards,
+        expected_encode_ts_ns,
     )
     .await
 }
@@ -436,6 +445,7 @@ async fn read_remote_ec_shard_interval(
     shard_id: ShardId,
     shard_offset: i64,
     size: usize,
+    expected_encode_ts_ns: i64,
 ) -> io::Result<Vec<u8>> {
     let mut last_err: Option<io::Error> = None;
     for src in sources {
@@ -447,6 +457,7 @@ async fn read_remote_ec_shard_interval(
             shard_id,
             shard_offset,
             size,
+            expected_encode_ts_ns,
         )
         .await
         {
@@ -470,6 +481,7 @@ async fn do_read_remote_ec_shard_interval(
     shard_id: ShardId,
     shard_offset: i64,
     size: usize,
+    expected_encode_ts_ns: i64,
 ) -> io::Result<Vec<u8>> {
     let grpc_addr =
         parse_grpc_address(source).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -505,6 +517,7 @@ async fn do_read_remote_ec_shard_interval(
         offset: shard_offset,
         size: size as i64,
         file_key: needle_id.0,
+        encode_ts_ns: expected_encode_ts_ns,
     };
     let resp = client
         .volume_ec_shard_read(Request::new(req))
@@ -523,6 +536,18 @@ async fn do_read_remote_ec_shard_interval(
         .await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("recv: {}", e)))?
     {
+        // Validate the served shard's identity client-side, so the guard holds even
+        // against a pre-upgrade server that ignored the request field (returns 0).
+        // A mismatch fails the read; the caller recovers from parity.
+        if expected_encode_ts_ns != 0 && msg.encode_ts_ns != expected_encode_ts_ns {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "ec shard {}.{} from {} belongs to a different encode run (want {} got {})",
+                    vid.0, shard_id, source, expected_encode_ts_ns, msg.encode_ts_ns
+                ),
+            ));
+        }
         if !msg.data.is_empty() {
             out.extend_from_slice(&msg.data);
         }
@@ -554,6 +579,7 @@ async fn recover_one_remote_ec_shard_interval(
     shard_locations: &HashMap<ShardId, Vec<String>>,
     data_shards: usize,
     parity_shards: usize,
+    expected_encode_ts_ns: i64,
 ) -> io::Result<Vec<u8>> {
     let total_shards = data_shards + parity_shards;
     let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
@@ -614,6 +640,7 @@ async fn recover_one_remote_ec_shard_interval(
                 sid,
                 shard_offset,
                 size,
+                expected_encode_ts_ns,
             )
             .await;
             (sid, res)
