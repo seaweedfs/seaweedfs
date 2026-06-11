@@ -19,7 +19,7 @@ use crate::storage::erasure_coding::ec_shard::{
 };
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle_map::NeedleMapKind;
-use crate::storage::super_block::ReplicaPlacement;
+use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 use crate::storage::volume::{
     remove_volume_files, volume_file_name, VifVolumeInfo, Volume, VolumeError,
@@ -135,6 +135,12 @@ impl DiskLocation {
                 );
                 remove_volume_files(&volume_name, false);
                 remove_volume_files(&idx_name, false);
+                continue;
+            }
+
+            // Sweep a leftover empty `.dat` stub (a phantom from the pre-fix
+            // loader) before it loads as a phantom volume or blocks startup.
+            if remove_empty_ec_dat_stub(&volume_name, &idx_name, vid) {
                 continue;
             }
 
@@ -1076,6 +1082,47 @@ fn vif_references_remote_file(vif_path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when a `.vif` records an EC shard config, i.e. the volume was
+/// erasure-coded. Such a volume keeps no local `.dat`, so an empty `.dat`
+/// alongside it is a leftover stub safe to remove.
+fn vif_is_ec_volume(vif_path: &str) -> bool {
+    fs::read_to_string(vif_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
+        .map(|vif| vif.ec_shard_config.is_some())
+        .unwrap_or(false)
+}
+
+/// Remove a leftover empty EC `.dat` stub and return whether one was swept.
+///
+/// A stub is an empty `.dat` (<= a superblock, i.e. zero needles) whose `.vif`
+/// records an EC shard config. An EC volume keeps no local `.dat`, so the stub
+/// holds no data — its shards live on other servers. Such stubs (phantoms from
+/// the pre-fix loader) otherwise load as phantom empty volumes, and a same-vid
+/// stub on two disks blocks startup via the duplicate-vid check. The `.dat` and
+/// its empty `.idx` are removed; non-EC empty `.dat` files are left alone. The
+/// `.vif` is looked up in both the data and idx directories (which differ only
+/// when `-dir.idx` is configured), each read at most once.
+fn remove_empty_ec_dat_stub(volume_name: &str, idx_name: &str, vid: VolumeId) -> bool {
+    let dat_path = format!("{}.dat", volume_name);
+    match fs::metadata(&dat_path) {
+        Ok(meta) if meta.len() <= SUPER_BLOCK_SIZE as u64 => {}
+        _ => return false,
+    }
+
+    let data_vif = format!("{}.vif", volume_name);
+    let idx_vif = format!("{}.vif", idx_name);
+    let is_ec = vif_is_ec_volume(&data_vif) || (idx_vif != data_vif && vif_is_ec_volume(&idx_vif));
+    if !is_ec {
+        return false;
+    }
+
+    warn!(volume_id = vid.0, "removing leftover empty .dat stub for EC volume");
+    let _ = fs::remove_file(&dat_path);
+    let _ = fs::remove_file(format!("{}.idx", idx_name));
+    true
+}
+
 fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
     let stem = filename
         .strip_suffix(".dat")
@@ -1100,6 +1147,37 @@ fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// When `-dir.idx` is configured the EC `.vif` may live in the idx
+    /// directory; the sweep must look there too, not only the data dir.
+    #[test]
+    fn test_remove_empty_ec_dat_stub_finds_vif_in_idx_dir() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&idx).unwrap();
+        let vbase = format!("{}/warp-cal_42", data.to_str().unwrap());
+        let ibase = format!("{}/warp-cal_42", idx.to_str().unwrap());
+        std::fs::write(format!("{}.dat", vbase), vec![0u8; 8]).unwrap();
+
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        std::fs::write(format!("{}.vif", ibase), serde_json::to_string(&vif).unwrap()).unwrap();
+
+        assert!(
+            remove_empty_ec_dat_stub(&vbase, &ibase, VolumeId(42)),
+            "EC .vif in the idx dir should be found and the stub removed",
+        );
+        assert!(!std::path::Path::new(&format!("{}.dat", vbase)).exists());
+    }
 
     #[test]
     fn test_parse_volume_filename() {

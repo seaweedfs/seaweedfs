@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -120,5 +121,126 @@ func TestLoneVifDoesNotCreatePhantomDat(t *testing.T) {
 		if !util.FileExists(base0 + erasure_coding.ToExt(int(sid))) {
 			t.Errorf("EC shard file %d on dir0 was removed from disk", sid)
 		}
+	}
+}
+
+// TestEmptyEcDatStubIsSwept: an empty .dat (<= a superblock, i.e. zero needles)
+// for an EC volume is a leftover stub from the pre-fix loader; the loader must
+// sweep it on startup, not load it as a phantom empty volume. (On Rust this
+// also unblocks the duplicate-vid startup check; Go loads each disk
+// independently and does not crash, but the phantom must still go.)
+func TestEmptyEcDatStubIsSwept(t *testing.T) {
+	tempDir := t.TempDir()
+	dir0 := filepath.Join(tempDir, "data1")
+	dir1 := filepath.Join(tempDir, "data2")
+	for _, d := range []string{dir0, dir1} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	collection := "warp-cal"
+	vid := needle.VolumeId(41)
+	// A real (loadable) but empty superblock: without the sweep it loads as a
+	// phantom empty volume.
+	stub := (&super_block.SuperBlock{
+		Version:          needle.Version3,
+		ReplicaPlacement: &super_block.ReplicaPlacement{},
+		Ttl:              &needle.TTL{},
+	}).Bytes()
+	for _, d := range []string{dir0, dir1} {
+		base := erasure_coding.EcShardFileName(collection, d, int(vid))
+		if err := os.WriteFile(base+".dat", stub, 0o644); err != nil {
+			t.Fatalf("write stub .dat: %v", err)
+		}
+		if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+			Version:       uint32(needle.Version3),
+			EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+		}); err != nil {
+			t.Fatalf("save .vif: %v", err)
+		}
+	}
+
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
+	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+		[]string{dir0, dir1},
+		[]int32{100, 100},
+		[]util.MinFreeSpace{{}, {}},
+		"",
+		NeedleMapInMemory,
+		[]types.DiskType{types.HardDriveType, types.HardDriveType},
+		nil,
+		3,
+		diskIOProbeConfig,
+	)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-store.NewVolumesChan:
+			case <-store.NewEcShardsChan:
+			case <-store.DeletedVolumesChan:
+			case <-store.DeletedEcShardsChan:
+			case <-store.StateUpdateChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
+
+	if store.findVolume(vid) != nil {
+		t.Errorf("empty EC .dat stub was loaded as a phantom volume %d", vid)
+	}
+	for _, d := range []string{dir0, dir1} {
+		if util.FileExists(erasure_coding.EcShardFileName(collection, d, int(vid)) + ".dat") {
+			t.Errorf("empty .dat stub on %s was not removed", d)
+		}
+	}
+}
+
+// TestRemoveEmptyEcDatStubFindsVifInIdxDir: when -dir.idx is configured the EC
+// .vif may live in the idx directory; removeEmptyEcDatStub must look there too,
+// not only in the data dir. Calls the helper directly (the dir scan only
+// discovers volumes via a .idx/.vif in the data dir, which a separate idx dir
+// sidesteps).
+func TestRemoveEmptyEcDatStubFindsVifInIdxDir(t *testing.T) {
+	dataDir := t.TempDir()
+	idxDir := t.TempDir()
+	loc := &DiskLocation{
+		Directory:              dataDir,
+		DirectoryUuid:          "test-uuid",
+		IdxDirectory:           idxDir,
+		DiskType:               types.HddType,
+		MaxVolumeCount:         100,
+		OriginalMaxVolumeCount: 100,
+		MinFreeSpace:           util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"},
+	}
+
+	const volumeName = "warp-cal_42"
+	stub := (&super_block.SuperBlock{
+		Version:          needle.Version3,
+		ReplicaPlacement: &super_block.ReplicaPlacement{},
+		Ttl:              &needle.TTL{},
+	}).Bytes()
+	if err := os.WriteFile(dataDir+"/"+volumeName+".dat", stub, 0o644); err != nil {
+		t.Fatalf("write stub .dat: %v", err)
+	}
+	// EC .vif lives in the idx dir, not next to the .dat.
+	if err := volume_info.SaveVolumeInfo(idxDir+"/"+volumeName+".vif", &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	if !loc.removeEmptyEcDatStub(volumeName, needle.VolumeId(42), "warp-cal") {
+		t.Fatal("stub with EC .vif in the idx dir should be removed")
+	}
+	if util.FileExists(dataDir + "/" + volumeName + ".dat") {
+		t.Error(".dat stub was not removed")
 	}
 }

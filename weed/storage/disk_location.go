@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -167,6 +168,36 @@ func (l *DiskLocation) hasEcxFile(volumeName string) bool {
 	return false
 }
 
+// removeEmptyEcDatStub removes a leftover empty EC .dat stub and returns
+// whether one was swept. A stub is an empty .dat (<= a superblock, i.e. zero
+// needles) whose .vif records an EC shard config. An EC volume keeps no local
+// .dat, so the stub holds no data -- its shards live on other servers. Such
+// stubs (phantoms from the pre-fix loader) otherwise load as phantom empty
+// volumes, and a same-vid stub on two disks can shadow a real replica. The
+// .dat and its empty .idx are removed; non-EC empty .dat files are left alone.
+// The .vif is looked up in both the data and idx directories (which differ
+// only when -dir.idx is configured).
+func (l *DiskLocation) removeEmptyEcDatStub(volumeName string, vid needle.VolumeId, collection string) bool {
+	datPath := l.Directory + "/" + volumeName + ".dat"
+	if fi, err := os.Stat(datPath); err != nil || fi.Size() > int64(super_block.SuperBlockSize) {
+		return false
+	}
+	if !vifIsEcVolume(l.Directory+"/"+volumeName+".vif") &&
+		!(l.IdxDirectory != l.Directory && vifIsEcVolume(l.IdxDirectory+"/"+volumeName+".vif")) {
+		return false
+	}
+	glog.Warningf("removing leftover empty .dat stub for EC volume %d (collection=%q)", vid, collection)
+	os.Remove(datPath)
+	os.Remove(l.IdxDirectory + "/" + volumeName + ".idx")
+	return true
+}
+
+// vifIsEcVolume reports whether the .vif at vifPath records an EC shard config.
+func vifIsEcVolume(vifPath string) bool {
+	vi, _, _, err := volume_info.MaybeLoadVolumeInfo(vifPath)
+	return err == nil && vi.GetEcShardConfig() != nil
+}
+
 func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32) bool {
 	basename := dirEntry.Name()
 	if dirEntry.IsDir() {
@@ -223,6 +254,12 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if found {
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
+	}
+
+	// Sweep a leftover empty .dat stub (a phantom from the pre-fix loader)
+	// before it loads as a phantom volume.
+	if l.removeEmptyEcDatStub(volumeName, vid, collection) {
+		return false
 	}
 
 	// Load existing data only; never let NewVolume create a phantom .dat. A
