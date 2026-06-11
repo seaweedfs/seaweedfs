@@ -26,6 +26,8 @@ func init() {
 type volumeTierMoveJob struct {
 	src pb.ServerAddress
 	vid needle.VolumeId
+	// replica already on target: skip the copy, just fulfill replication and clean up
+	alreadyPlaced bool
 }
 
 type commandVolumeTierMove struct {
@@ -124,7 +126,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	// Collect volume ID to collection name mapping for the sync operation
 	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
 
-	_, allLocations := collectVolumeReplicaLocations(topologyInfo)
+	volumeReplicas, allLocations := collectVolumeReplicaLocations(topologyInfo)
 	allLocations = filterLocationsByDiskType(allLocations, toDiskType)
 	if *toDataCenter != "" {
 		allLocations = filterLocationsByDataCenter(allLocations, *toDataCenter)
@@ -150,7 +152,11 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 		go func(dst location, jobs <-chan volumeTierMoveJob, applyChanges bool) {
 			defer wg.Done()
 			for job := range jobs {
-				fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", job.vid, job.src, dst.dataNode.Id, toDiskType.ReadableString())
+				if job.alreadyPlaced {
+					fmt.Fprintf(writer, "completing move of volume %d already on %s ...\n", job.vid, dst.dataNode.Id)
+				} else {
+					fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", job.vid, job.src, dst.dataNode.Id, toDiskType.ReadableString())
+				}
 
 				locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(job.vid))
 				if !found {
@@ -161,7 +167,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 				unlock := c.Lock(job.src)
 
 				if applyChanges {
-					if err := c.doMoveOneVolume(commandEnv, writer, job.vid, toDiskType, *toDataCenter, locations, job.src, dst, *ioBytePerSecond, replicationString); err != nil {
+					if err := c.doMoveOneVolume(commandEnv, writer, job.vid, toDiskType, *toDataCenter, locations, job.src, dst, *ioBytePerSecond, replicationString, job.alreadyPlaced); err != nil {
 						fmt.Fprintf(writer, "move volume %d %s => %s: %v\n", job.vid, job.src, dst.dataNode.Id, err)
 					}
 				}
@@ -172,7 +178,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 
 	for _, vid := range volumeIds {
 		collection := volumeIdToCollection[vid]
-		if err = c.doVolumeTierMove(commandEnv, writer, vid, collection, toDiskType, *toDataCenter, allLocations); err != nil {
+		if err = c.doVolumeTierMove(commandEnv, writer, vid, collection, toDiskType, *toDataCenter, allLocations, volumeReplicas[uint32(vid)]); err != nil {
 			fmt.Printf("tier move volume %d: %v\n", vid, err)
 		}
 		allLocations = rotateDataNodes(allLocations)
@@ -237,11 +243,25 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, collection string, toDiskType types.DiskType, toDataCenter string, allLocations []location) (err error) {
+func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, collection string, toDiskType types.DiskType, toDataCenter string, allLocations []location, replicas []*VolumeReplica) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
+	}
+
+	// a replica already on the target tier (e.g. left by an interrupted earlier run)
+	// anchors the move: skip the copy, only fulfill replication and clean up old replicas
+	for _, r := range replicas {
+		if types.ToDiskType(r.info.DiskType) != toDiskType || (toDataCenter != "" && r.location.dc != toDataCenter) {
+			continue
+		}
+		anchorAddress := pb.NewServerAddressFromDataNode(r.location.dataNode)
+		if queue, found := c.queues[anchorAddress]; found {
+			fmt.Fprintf(writer, "volume %d is already on %s, will complete replication and cleanup\n", vid, r.location.dataNode.Id)
+			queue <- volumeTierMoveJob{src: anchorAddress, vid: vid, alreadyPlaced: true}
+			return nil
+		}
 	}
 
 	// find one server with the most empty volume slots with target disk type
@@ -274,7 +294,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			addVolumeCount(dst.dataNode.DiskInfos[string(toDiskType)], 1)
 
 			destServerAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
-			c.queues[destServerAddress] <- volumeTierMoveJob{sourceVolumeServer, vid}
+			c.queues[destServerAddress] <- volumeTierMoveJob{src: sourceVolumeServer, vid: vid}
 		}
 	}
 
@@ -285,7 +305,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 	return nil
 }
 
-func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location, ioBytePerSecond int64, replicationString *string) (err error) {
+func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location, ioBytePerSecond int64, replicationString *string, alreadyPlaced bool) (err error) {
 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
@@ -297,7 +317,11 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	}
 	newAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
 
-	if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
+	// when already placed nothing is deleted yet, so failure paths restore every replica
+	deletedSource := sourceVolumeServer
+	if alreadyPlaced {
+		deletedSource = ""
+	} else if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
 		// mark all replicas as writable
 		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
 			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
@@ -311,7 +335,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		if err = configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, newAddress, *replicationString); err != nil {
 			// LiveMoveVolume already deleted sourceVolumeServer; mark surviving
 			// old replicas writable before aborting so the volume stays accessible.
-			restoreSurvivingReplicasWritable(commandEnv, vid, locations, sourceVolumeServer)
+			restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
 			return fmt.Errorf("configure replication %s on volume %d at %s: %v", *replicationString, vid, newAddress, err)
 		}
 	}
@@ -323,7 +347,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	preserveServers, replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, *replicationString)
 	if replicateErr != nil {
 		// Replication not fully achieved — do NOT delete old replicas.
-		restoreSurvivingReplicasWritable(commandEnv, vid, locations, sourceVolumeServer)
+		restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
 		return fmt.Errorf("volume %d moved to %s but failed to fulfill replication, old replicas preserved: %v", vid, dst.dataNode.Id, replicateErr)
 	}
 
@@ -375,6 +399,8 @@ func restoreSurvivingReplicasWritable(commandEnv *CommandEnv, vid needle.VolumeI
 // counted toward fulfillment, so the caller can avoid deleting them during cleanup.
 func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, movedDst location, replicationString string) (preserveServers map[string]bool, err error) {
 	preserveServers = make(map[string]bool)
+	// keeps an anchored pre-existing replica writable on the early-return paths
+	preserveServers[movedDst.dataNode.Id] = true
 	sourceAddress := pb.NewServerAddressFromDataNode(movedDst.dataNode)
 
 	// Wait briefly for the master to receive heartbeats reflecting the move,
