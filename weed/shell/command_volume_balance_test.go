@@ -358,7 +358,7 @@ func TestBalanceDoesNotDrainOntoOneNode(t *testing.T) {
 func TestVolumeSelection(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
 
-	vids, err := collectVolumeIdsForTierChange(topologyInfo, 1000, types.ToDiskType(types.HddType), "", 20.0, 0)
+	vids, err := collectVolumeIdsForTierChange(topologyInfo, 1000, types.ToDiskType(types.HddType), "", "", 20.0, 0)
 	if err != nil {
 		t.Errorf("collectVolumeIdsForTierChange: %v", err)
 	}
