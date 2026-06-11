@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
@@ -388,12 +389,14 @@ func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, vo
 	}
 }
 
-// checkDatFileExists checks if .dat file exists with robust error handling.
-// Unexpected errors (permission, I/O) are treated as "exists" to avoid misclassifying
-// local EC as distributed EC, which is the safer fallback.
+// checkDatFileExists checks if a .dat file with actual data exists with robust
+// error handling. An empty .dat (<= a superblock, zero needles) is a leftover
+// stub, not an encode source, and is treated as absent so it never justifies
+// deleting shards. Unexpected errors (permission, I/O) are treated as "exists"
+// to avoid misclassifying local EC as distributed EC, which is the safer fallback.
 func (l *DiskLocation) checkDatFileExists(datFileName string) bool {
-	if _, err := os.Stat(datFileName); err == nil {
-		return true
+	if fi, err := os.Stat(datFileName); err == nil {
+		return fi.Size() > int64(super_block.SuperBlockSize)
 	} else if !os.IsNotExist(err) {
 		glog.Warningf("Failed to stat .dat file %s: %v", datFileName, err)
 		// Safer to assume local .dat exists to avoid misclassifying as distributed EC
@@ -477,9 +480,15 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	dataShards := l.ecDataShardsFromVif(collection, vid)
 
 	// If .dat file exists, compute exact expected shard size from it.
+	// An empty .dat (<= a superblock, zero needles) cannot be the encode
+	// source -- it is a leftover stub -- so treat it as absent rather than
+	// letting it mark a healthy distributed EC volume as an interrupted
+	// local encode, which would delete its shards.
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
-		datExists = true
-		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), dataShards)
+		if datFileInfo.Size() > int64(super_block.SuperBlockSize) {
+			datExists = true
+			expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), dataShards)
+		}
 	} else if !os.IsNotExist(err) {
 		// If stat fails with unexpected error (permission, I/O), fail validation
 		// Don't treat this as "distributed EC" - it could be a temporary error

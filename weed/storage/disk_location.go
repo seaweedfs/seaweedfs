@@ -215,6 +215,14 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		return false
 	}
 
+	// Sweep a leftover empty .dat stub before any EC presence checks below.
+	// It must go first: next to an .ecx it would otherwise make
+	// validateEcVolume mistake a healthy distributed EC volume for an
+	// interrupted local encode and delete its shards.
+	if l.removeEmptyEcDatStub(volumeName, vid, collection) {
+		return false
+	}
+
 	// .vif next to .ecx is EC shard metadata, not a regular volume.
 	// Without this guard NewVolume below would create a phantom empty .dat.
 	if strings.HasSuffix(basename, ".vif") && l.hasEcxFile(volumeName) {
@@ -254,12 +262,6 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if found {
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
-	}
-
-	// Sweep a leftover empty .dat stub (a phantom from the pre-fix loader)
-	// before it loads as a phantom volume.
-	if l.removeEmptyEcDatStub(volumeName, vid, collection) {
-		return false
 	}
 
 	// Load existing data only; never let NewVolume create a phantom .dat. A

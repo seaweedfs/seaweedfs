@@ -244,3 +244,142 @@ func TestRemoveEmptyEcDatStubFindsVifInIdxDir(t *testing.T) {
 		t.Error(".dat stub was not removed")
 	}
 }
+
+// startEcTestStore starts a single-disk store over dir and drains its
+// notification channels until cleanup.
+func startEcTestStore(t *testing.T, dir string) *Store {
+	t.Helper()
+	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+		[]string{dir},
+		[]int32{100},
+		[]util.MinFreeSpace{{}},
+		"",
+		NeedleMapInMemory,
+		[]types.DiskType{types.HardDriveType},
+		nil,
+		3,
+		stats.DefaultDiskIOProbeConfig(),
+	)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-store.NewVolumesChan:
+			case <-store.NewEcShardsChan:
+			case <-store.DeletedVolumesChan:
+			case <-store.DeletedEcShardsChan:
+			case <-store.StateUpdateChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
+	return store
+}
+
+// writeEcShardFixture lays down .ecx, .ecj, and the given shards for a
+// distributed EC volume in dir, each shard truncated to shardSize.
+func writeEcShardFixture(t *testing.T, base string, shardIds []int, shardSize int64) {
+	t.Helper()
+	for _, sid := range shardIds {
+		f, err := os.Create(base + erasure_coding.ToExt(sid))
+		if err != nil {
+			t.Fatalf("create shard %d: %v", sid, err)
+		}
+		if err := f.Truncate(shardSize); err != nil {
+			f.Close()
+			t.Fatalf("truncate shard %d: %v", sid, err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close shard %d: %v", sid, err)
+		}
+	}
+	if err := os.WriteFile(base+".ecx", make([]byte, 20), 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+	if err := os.WriteFile(base+".ecj", nil, 0o644); err != nil {
+		t.Fatalf("write .ecj: %v", err)
+	}
+}
+
+// TestEmptyDatStubNextToEcxDoesNotDeleteShards: a disk holding a few local
+// shards of a healthy distributed EC volume plus a leftover empty .dat stub.
+// The stub used to make startup classify the volume as an interrupted local
+// encode (fewer than dataShards local shards) and delete the only copies of
+// those shards. The stub must be swept and the shards must load.
+func TestEmptyDatStubNextToEcxDoesNotDeleteShards(t *testing.T) {
+	dir := t.TempDir()
+	collection := "warp-rec"
+	vid := needle.VolumeId(87)
+	base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+
+	shardIds := []int{0, 5}
+	writeEcShardFixture(t, base, shardIds, int64(erasure_coding.ErasureCodingSmallBlockSize))
+	// Zero-byte stub .dat: the phantom left by the pre-fix loader.
+	if err := os.WriteFile(base+".dat", nil, 0o644); err != nil {
+		t.Fatalf("write stub .dat: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	store := startEcTestStore(t, dir)
+
+	loc := store.Locations[0]
+	for _, sid := range shardIds {
+		if !util.FileExists(base + erasure_coding.ToExt(sid)) {
+			t.Errorf("EC shard file %d was deleted", sid)
+		}
+		if _, found := loc.FindEcShard(vid, erasure_coding.ShardId(sid)); !found {
+			t.Errorf("EC shard %d was not loaded", sid)
+		}
+	}
+	if !util.FileExists(base + ".ecx") {
+		t.Error(".ecx was deleted")
+	}
+	if util.FileExists(base + ".dat") {
+		t.Error("empty .dat stub was not swept")
+	}
+	if store.findVolume(vid) != nil {
+		t.Errorf("stub was loaded as a phantom volume %d", vid)
+	}
+}
+
+// TestEmptyDatWithoutVifDoesNotDeleteShards: same shard-holding disk but the
+// stub has no .vif at all, so the sweep has no EC evidence and must leave it.
+// The empty .dat still must not count as an encode source: the shards survive
+// and load as a distributed EC volume.
+func TestEmptyDatWithoutVifDoesNotDeleteShards(t *testing.T) {
+	dir := t.TempDir()
+	collection := "warp-rec"
+	vid := needle.VolumeId(88)
+	base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+
+	shardIds := []int{1, 7}
+	writeEcShardFixture(t, base, shardIds, int64(erasure_coding.ErasureCodingSmallBlockSize))
+	if err := os.WriteFile(base+".dat", nil, 0o644); err != nil {
+		t.Fatalf("write stub .dat: %v", err)
+	}
+
+	store := startEcTestStore(t, dir)
+
+	loc := store.Locations[0]
+	for _, sid := range shardIds {
+		if !util.FileExists(base + erasure_coding.ToExt(sid)) {
+			t.Errorf("EC shard file %d was deleted", sid)
+		}
+		if _, found := loc.FindEcShard(vid, erasure_coding.ShardId(sid)); !found {
+			t.Errorf("EC shard %d was not loaded", sid)
+		}
+	}
+	if store.findVolume(vid) != nil {
+		t.Errorf("stub was loaded as a phantom volume %d", vid)
+	}
+}

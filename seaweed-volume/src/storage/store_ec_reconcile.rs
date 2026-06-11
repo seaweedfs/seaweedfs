@@ -613,6 +613,97 @@ mod tests {
         assert_eq!(total, 2, "real EC shards were deleted (total={})", total);
     }
 
+    /// A disk holding a few local shards of a healthy distributed EC volume
+    /// plus a leftover empty `.dat` stub: the stub must be swept before EC
+    /// validation can mistake the volume for an interrupted local encode
+    /// (fewer than data_shards local shards) and delete the only copies of
+    /// those shards.
+    #[test]
+    fn test_empty_dat_stub_next_to_ecx_does_not_delete_shards() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        std::fs::create_dir_all(&d0).unwrap();
+        let dir = d0.to_str().unwrap();
+        let coll = "warp-rec";
+        let vid = 87u32;
+
+        write_shard(dir, coll, vid, 0);
+        write_shard(dir, coll, vid, 5);
+        write_index_files(dir, coll, vid, 10, 4);
+        // Zero-byte stub .dat: the phantom left by the pre-fix loader.
+        std::fs::write(d0.join(format!("{}_{}.dat", coll, vid)), b"").unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        assert!(
+            !d0.join(format!("{}_{}.dat", coll, vid)).exists(),
+            "empty .dat stub was not swept"
+        );
+        assert_eq!(
+            store.locations[0].ec_shard_count(),
+            2,
+            "EC shards were deleted on the stub's account"
+        );
+        assert_eq!(
+            store.locations[0].volume_ids().len(),
+            0,
+            "stub was loaded as a phantom volume"
+        );
+    }
+
+    /// Same shard-holding disk but the stub has no `.vif` at all, so the
+    /// sweep has no EC evidence and must leave it. The empty `.dat` still
+    /// must not count as an encode source: the shards survive and load as
+    /// a distributed EC volume.
+    #[test]
+    fn test_empty_dat_without_vif_does_not_delete_shards() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        std::fs::create_dir_all(&d0).unwrap();
+        let dir = d0.to_str().unwrap();
+        let coll = "warp-rec";
+        let vid = 88u32;
+
+        write_shard(dir, coll, vid, 1);
+        write_shard(dir, coll, vid, 7);
+        write_index_files(dir, coll, vid, 10, 4);
+        std::fs::remove_file(d0.join(format!("{}_{}.vif", coll, vid))).unwrap();
+        std::fs::write(d0.join(format!("{}_{}.dat", coll, vid)), b"").unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.locations[0].ec_shard_count(),
+            2,
+            "EC shards were deleted on the empty .dat's account"
+        );
+        assert_eq!(
+            store.locations[0].volume_ids().len(),
+            0,
+            "empty .dat was loaded as a phantom volume"
+        );
+    }
+
     /// Regression for the prune credibility gate: when the EC `.vif`
     /// records no source size (`dat_file_size == 0`), an empty 8-byte
     /// sibling `.dat` stub must NOT justify deleting partial EC shards.

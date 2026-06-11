@@ -192,8 +192,14 @@ impl DiskLocation {
             // the sibling-.dat prune deletes real shards against. Remote-tiered
             // volumes also have no local `.dat`, but their `.vif` points at
             // remote files and must still load via the remote path.
+            // Plain existence check (not check_dat_file_exists): an empty
+            // .dat here is a fresh, needle-less volume that must still load.
+            // A stat error other than NotFound counts as present so a
+            // transient error doesn't skip a real volume.
             let dat_path = format!("{}.dat", volume_name);
-            if !check_dat_file_exists(&dat_path)
+            let dat_missing = matches!(fs::metadata(&dat_path),
+                Err(ref e) if e.kind() == io::ErrorKind::NotFound);
+            if dat_missing
                 && !vif_references_remote_file(&format!("{}.vif", volume_name))
                 && !vif_references_remote_file(&format!("{}.vif", idx_name))
             {
@@ -243,15 +249,21 @@ impl DiskLocation {
         let dat_path = format!("{}.dat", base);
 
         let mut expected_shard_size: Option<i64> = None;
-        let dat_exists = std::path::Path::new(&dat_path).exists();
-
-        if dat_exists {
-            if let Ok(meta) = fs::metadata(&dat_path) {
+        // An empty .dat (<= a superblock, zero needles) cannot be the encode
+        // source -- it is a leftover stub -- so treat it as absent rather than
+        // letting it mark a healthy distributed EC volume as an interrupted
+        // local encode, which would delete its shards.
+        let dat_exists = match fs::metadata(&dat_path) {
+            Ok(meta) if meta.len() > SUPER_BLOCK_SIZE as u64 => {
                 expected_shard_size = Some(calculate_expected_shard_size(meta.len() as i64));
-            } else {
-                return false;
+                true
             }
-        }
+            Ok(_) => false,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+            // Unexpected stat error: don't risk classifying local EC as
+            // distributed; fail validation instead of deleting anything.
+            Err(_) => return false,
+        };
 
         let mut shard_count = 0usize;
         let mut actual_shard_size: Option<i64> = None;
@@ -1060,12 +1072,14 @@ fn parse_ec_shard_extension(ext: &str) -> Option<u32> {
     Some(id)
 }
 
-/// Robust `.dat` existence check: any unexpected stat error (permission,
-/// I/O) is treated as "exists" so we don't misclassify local EC as
-/// distributed EC. Mirrors `checkDatFileExists` in Go.
+/// Robust check that a `.dat` with actual data exists. An empty `.dat`
+/// (<= a superblock, zero needles) is a leftover stub, not an encode source,
+/// and counts as absent so it never justifies deleting shards. Any unexpected
+/// stat error (permission, I/O) is treated as "exists" so we don't misclassify
+/// local EC as distributed EC. Mirrors `checkDatFileExists` in Go.
 fn check_dat_file_exists(path: &str) -> bool {
     match fs::metadata(path) {
-        Ok(_) => true,
+        Ok(meta) => meta.len() > SUPER_BLOCK_SIZE as u64,
         Err(e) if e.kind() == io::ErrorKind::NotFound => false,
         Err(_) => true,
     }
