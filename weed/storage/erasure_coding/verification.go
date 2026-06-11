@@ -19,7 +19,7 @@ type ServerShardInventory struct {
 // Query errors are recorded per-server and treated as zero shards rather
 // than aborting the scan, so the caller still sees partial coverage from
 // healthy peers when one server is down. The caller gates destructive
-// actions on RequireFullShardSet against the returned union.
+// actions on RequireRecoverableShardSet against the returned union.
 func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 	servers []string, dialOption grpc.DialOption) (
 	union ShardBits, perServer map[string]ServerShardInventory) {
@@ -63,13 +63,24 @@ func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 	return union, perServer
 }
 
-// totalShards is the configured DataShards+ParityShards for this volume.
-// Passed as a parameter (not derived from TotalShardsCount) so enterprise
-// builds with custom EC ratios share this helper verbatim.
-func RequireFullShardSet(volumeID uint32, shardsPresent ShardBits, totalShards int) error {
+// RequireRecoverableShardSet gates source-volume deletion after EC encode:
+// a non-empty .dat may only be deleted when enough distinct shards exist to
+// reconstruct the volume (>= dataShards). A full set returns (false, nil); a
+// degraded-but-recoverable set returns (true, nil) so the caller can warn and
+// proceed -- the missing shards can be rebuilt from the survivors, while
+// keeping the source next to live shards is the more dangerous mixed state.
+// Below dataShards it returns an error and the source must be kept.
+// dataShards/totalShards are passed as parameters (not derived from the
+// package constants) so enterprise builds with custom EC ratios share this
+// helper verbatim.
+func RequireRecoverableShardSet(volumeID uint32, shardsPresent ShardBits, dataShards, totalShards int) (degraded bool, err error) {
 	if totalShards <= 0 || totalShards > MaxShardCount {
-		return fmt.Errorf("invalid totalShards %d for volume %d (must be in [1, %d])",
+		return false, fmt.Errorf("invalid totalShards %d for volume %d (must be in [1, %d])",
 			totalShards, volumeID, MaxShardCount)
+	}
+	if dataShards <= 0 || dataShards > totalShards {
+		return false, fmt.Errorf("invalid dataShards %d for volume %d (must be in [1, %d])",
+			dataShards, volumeID, totalShards)
 	}
 	var missing []int
 	for id := 0; id < totalShards; id++ {
@@ -78,11 +89,14 @@ func RequireFullShardSet(volumeID uint32, shardsPresent ShardBits, totalShards i
 		}
 	}
 	if len(missing) == 0 {
-		return nil
+		return false, nil
+	}
+	if totalShards-len(missing) >= dataShards {
+		return true, nil
 	}
 	sort.Ints(missing)
-	return fmt.Errorf("EC shard set incomplete for volume %d: %d/%d shards present, missing shard ids %v",
-		volumeID, shardsPresent.Count(), totalShards, missing)
+	return false, fmt.Errorf("EC shard set unrecoverable for volume %d: %d/%d shards present, need %d to reconstruct, missing shard ids %v",
+		volumeID, totalShards-len(missing), totalShards, dataShards, missing)
 }
 
 func SummarizeShardInventory(perServer map[string]ServerShardInventory) string {
