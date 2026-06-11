@@ -77,7 +77,7 @@ func MyAwsConfig(cfg MyConfig) (*aws.Config, error) {
 		config.WithEndpointResolverWithOptions(customResolver),
 		config.WithRetryer(func() aws.Retryer {
 			r := retry.AddWithMaxAttempts(retry.NewStandard(), *cfg.MaxRetryAttempts)
-			return retry.AddWithMaxBackoffDelay(r, time.Duration(*cfg.MaxBackoffDelay*1000*1000))
+			return retry.AddWithMaxBackoffDelay(r, time.Duration(*cfg.MaxBackoffDelay)*time.Millisecond)
 		}))
 	return &awsCfg, err
 }
