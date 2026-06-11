@@ -764,12 +764,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	// If source object is empty or bucket is empty, reply back invalid copy source.
-	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
-	if srcObject == "" || srcBucket == "" {
-		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
-			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+	// Validate the copy source as CopyObject does.
+	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
+		glog.V(2).Infof("CopyObjectPartHandler validation error: %v", err)
+		s3err.WriteErrorResponse(w, r, MapCopyValidationError(err))
 		return
 	}
 
