@@ -201,3 +201,46 @@ func TestEmptyEcDatStubIsSwept(t *testing.T) {
 		}
 	}
 }
+
+// TestRemoveEmptyEcDatStubFindsVifInIdxDir: when -dir.idx is configured the EC
+// .vif may live in the idx directory; removeEmptyEcDatStub must look there too,
+// not only in the data dir. Calls the helper directly (the dir scan only
+// discovers volumes via a .idx/.vif in the data dir, which a separate idx dir
+// sidesteps).
+func TestRemoveEmptyEcDatStubFindsVifInIdxDir(t *testing.T) {
+	dataDir := t.TempDir()
+	idxDir := t.TempDir()
+	loc := &DiskLocation{
+		Directory:              dataDir,
+		DirectoryUuid:          "test-uuid",
+		IdxDirectory:           idxDir,
+		DiskType:               types.HddType,
+		MaxVolumeCount:         100,
+		OriginalMaxVolumeCount: 100,
+		MinFreeSpace:           util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"},
+	}
+
+	const volumeName = "warp-cal_42"
+	stub := (&super_block.SuperBlock{
+		Version:          needle.Version3,
+		ReplicaPlacement: &super_block.ReplicaPlacement{},
+		Ttl:              &needle.TTL{},
+	}).Bytes()
+	if err := os.WriteFile(dataDir+"/"+volumeName+".dat", stub, 0o644); err != nil {
+		t.Fatalf("write stub .dat: %v", err)
+	}
+	// EC .vif lives in the idx dir, not next to the .dat.
+	if err := volume_info.SaveVolumeInfo(idxDir+"/"+volumeName+".vif", &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	if !loc.removeEmptyEcDatStub(volumeName, needle.VolumeId(42), "warp-cal") {
+		t.Fatal("stub with EC .vif in the idx dir should be removed")
+	}
+	if util.FileExists(dataDir + "/" + volumeName + ".dat") {
+		t.Error(".dat stub was not removed")
+	}
+}
