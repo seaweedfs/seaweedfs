@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -223,6 +224,21 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if found {
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
+	}
+
+	// Remove a leftover empty .dat stub for an EC volume. An EC volume keeps
+	// no local .dat; an empty one (<= a superblock, i.e. zero needles) next to
+	// EC metadata is a phantom from the pre-fix loader. Left in place it loads
+	// as a phantom empty volume, and a same-vid stub on two disks blocks
+	// startup via the duplicate-vid check. The real data is in the EC shards.
+	datPath := l.Directory + "/" + volumeName + ".dat"
+	if fi, statErr := os.Stat(datPath); statErr == nil && fi.Size() <= int64(super_block.SuperBlockSize) {
+		if vi, _, _, e := volume_info.MaybeLoadVolumeInfo(l.Directory + "/" + volumeName + ".vif"); e == nil && vi.GetEcShardConfig() != nil {
+			glog.Warningf("removing leftover empty .dat stub for EC volume %d (collection=%q)", vid, collection)
+			os.Remove(datPath)
+			os.Remove(l.IdxDirectory + "/" + volumeName + ".idx")
+			return false
+		}
 	}
 
 	// Load existing data only; never let NewVolume create a phantom .dat. A

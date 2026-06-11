@@ -19,7 +19,7 @@ use crate::storage::erasure_coding::ec_shard::{
 };
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle_map::NeedleMapKind;
-use crate::storage::super_block::ReplicaPlacement;
+use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 use crate::storage::volume::{
     remove_volume_files, volume_file_name, VifVolumeInfo, Volume, VolumeError,
@@ -138,6 +138,27 @@ impl DiskLocation {
                 continue;
             }
 
+            let dat_path = format!("{}.dat", volume_name);
+
+            // Remove a leftover empty `.dat` stub for an EC volume. An EC
+            // volume keeps no local `.dat`; an empty one (<= a superblock, i.e.
+            // zero needles) next to EC metadata is a phantom from the pre-4.33
+            // loader bug. Left in place it loads as a phantom empty volume, and
+            // a same-vid stub on two disks blocks startup via the duplicate-vid
+            // check. The real data is in the EC shards, so the stub holds
+            // nothing to lose.
+            if let Ok(meta) = fs::metadata(&dat_path) {
+                if meta.len() <= SUPER_BLOCK_SIZE as u64
+                    && (vif_is_ec_volume(&format!("{}.vif", volume_name))
+                        || vif_is_ec_volume(&format!("{}.vif", idx_name)))
+                {
+                    warn!(volume_id = vid.0, "removing leftover empty .dat stub for EC volume");
+                    let _ = fs::remove_file(&dat_path);
+                    let _ = fs::remove_file(format!("{}.idx", idx_name));
+                    continue;
+                }
+            }
+
             // If valid EC shards exist (.ecx file present), skip loading .dat
             let ecx_path = format!("{}.ecx", idx_name);
             let ecx_exists = if std::path::Path::new(&ecx_path).exists() {
@@ -186,7 +207,6 @@ impl DiskLocation {
             // the sibling-.dat prune deletes real shards against. Remote-tiered
             // volumes also have no local `.dat`, but their `.vif` points at
             // remote files and must still load via the remote path.
-            let dat_path = format!("{}.dat", volume_name);
             if !check_dat_file_exists(&dat_path)
                 && !vif_references_remote_file(&format!("{}.vif", volume_name))
                 && !vif_references_remote_file(&format!("{}.vif", idx_name))
@@ -1073,6 +1093,17 @@ fn vif_references_remote_file(vif_path: &str) -> bool {
         .ok()
         .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
         .map(|vif| !vif.files.is_empty())
+        .unwrap_or(false)
+}
+
+/// True when a `.vif` records an EC shard config, i.e. the volume was
+/// erasure-coded. Such a volume keeps no local `.dat`, so an empty `.dat`
+/// alongside it is a leftover stub safe to remove.
+fn vif_is_ec_volume(vif_path: &str) -> bool {
+    fs::read_to_string(vif_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
+        .map(|vif| vif.ec_shard_config.is_some())
         .unwrap_or(false)
 }
 

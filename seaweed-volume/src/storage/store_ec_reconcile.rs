@@ -466,6 +466,105 @@ mod tests {
         .unwrap();
     }
 
+    fn write_ec_vif(dir: &str, collection: &str, vid: u32) {
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        std::fs::write(
+            format!("{}/{}_{}.vif", dir, collection, vid),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// An empty `.dat` (<= a superblock, i.e. zero needles) for an EC volume
+    /// is a leftover stub from the pre-fix loader. It must be swept on startup,
+    /// not loaded as a phantom empty volume. With the same vid's stub on two
+    /// disks this also unblocks startup, which previously failed the
+    /// duplicate-vid check (the volume6 incident).
+    #[test]
+    fn test_empty_ec_dat_stub_removed_and_unblocks_startup() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        let d1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&d0).unwrap();
+        std::fs::create_dir_all(&d1).unwrap();
+        let coll = "warp-cal";
+        let vid = 41u32;
+
+        // A real (loadable) but empty superblock: without the sweep both disks
+        // load it as vid 41 and add_location fails the duplicate-vid check.
+        let stub = crate::storage::super_block::SuperBlock {
+            version: crate::storage::types::Version::current(),
+            ..Default::default()
+        }
+        .to_bytes();
+        for d in [&d0, &d1] {
+            let dir = d.to_str().unwrap();
+            std::fs::write(format!("{}/{}_{}.dat", dir, coll, vid), &stub).unwrap();
+            write_ec_vif(dir, coll, vid);
+        }
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&d0, &d1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .expect("a same-vid empty stub on two disks must not block startup");
+        }
+
+        let loaded: usize = store.locations.iter().map(|l| l.volume_ids().len()).sum();
+        assert_eq!(loaded, 0, "empty EC stub was loaded as a phantom volume");
+        for d in [&d0, &d1] {
+            assert!(
+                !std::path::Path::new(&format!("{}/{}_{}.dat", d.to_str().unwrap(), coll, vid))
+                    .exists(),
+                "empty .dat stub was not removed",
+            );
+        }
+    }
+
+    /// Safety: an empty `.dat` for a NON-EC volume (no EC `.vif`) is left
+    /// alone — only EC stubs are swept, so freshly-allocated empty volumes
+    /// survive.
+    #[test]
+    fn test_keeps_empty_dat_for_non_ec_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("data0");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dat = format!("{}/7.dat", dir.to_str().unwrap());
+        std::fs::write(&dat, vec![0u8; 8]).unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir.to_str().unwrap(),
+                dir.to_str().unwrap(),
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        assert!(
+            std::path::Path::new(&dat).exists(),
+            "a non-EC empty .dat must not be swept",
+        );
+    }
+
     /// Regression: a lone `.vif` whose `.ecx` is on a sibling disk must not
     /// make the loader create a phantom `.dat`, nor the sibling-.dat prune
     /// delete the real shards on the sibling.
