@@ -265,6 +265,15 @@ func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
 		}
 	}
 
+	// `.`/`..` segments are collapsed by the filer's path join; reject them as
+	// IsValidObjectKey does for the request URL so the source stays in-bucket.
+	if !s3_constants.IsValidBucketName(srcBucket) || !s3_constants.IsValidObjectKey(srcObject) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidCopySource,
+			Message: "Copy source contains invalid path segments",
+		}
+	}
+
 	return nil
 }
 
