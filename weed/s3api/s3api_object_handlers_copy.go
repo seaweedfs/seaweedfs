@@ -101,7 +101,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate copy source and destination
-	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
+	if err := validateCopySource(cpSrcPath, srcBucket, srcObject, srcVersionId); err != nil {
 		glog.V(2).Infof("CopyObjectHandler validation error: %v", err)
 		errCode := MapCopyValidationError(err)
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -765,7 +765,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Validate the copy source as CopyObject does.
-	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
+	if err := validateCopySource(cpSrcPath, srcBucket, srcObject, srcVersionId); err != nil {
 		glog.V(2).Infof("CopyObjectPartHandler validation error: %v", err)
 		s3err.WriteErrorResponse(w, r, MapCopyValidationError(err))
 		return

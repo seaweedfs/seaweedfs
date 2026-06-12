@@ -158,6 +158,8 @@ func TestCopySourceRejectsTraversal(t *testing.T) {
 		{"bare dot segment rejected", "bucket-a/./key", true},
 		{"dotdot bucket rejected", "../bucket-secret/flag", true},
 		{"dotdot with versionId escapes bucket", "bucket-a/../bucket-secret/flag?versionId=v1", true},
+		{"versionId encoded slash rejected", "bucket-a/dir/key?versionId=v1%2F..%2Fsecret", true},
+		{"versionId backslash rejected", "bucket-a/dir/key?versionId=v1%5C..%5Csecret", true},
 	}
 
 	for _, tc := range tests {
@@ -166,9 +168,9 @@ func TestCopySourceRejectsTraversal(t *testing.T) {
 			if err != nil {
 				cpSrcPath = tc.rawCopySource
 			}
-			srcBucket, srcObject, _ := pathToBucketObjectAndVersion(tc.rawCopySource, cpSrcPath)
+			srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(tc.rawCopySource, cpSrcPath)
 
-			gotErr := ValidateCopySource(cpSrcPath, srcBucket, srcObject) != nil
+			gotErr := validateCopySource(cpSrcPath, srcBucket, srcObject, srcVersionId) != nil
 			if gotErr != tc.wantErr {
 				t.Errorf("ValidateCopySource(%q) error = %v, want %v (parsed bucket=%q object=%q)",
 					tc.rawCopySource, gotErr, tc.wantErr, srcBucket, srcObject)

@@ -34,6 +34,13 @@ func deleteErrorFromCode(code s3err.ErrorCode, key, versionId string) DeleteErro
 	}
 }
 
+func validateDeleteObjectIdentifier(object ObjectIdentifier) s3err.ErrorCode {
+	if !s3_constants.IsValidObjectKey(object.Key) || !isValidVersionID(object.VersionId) {
+		return s3err.ErrInvalidRequest
+	}
+	return s3err.ErrNone
+}
+
 // isMissingDeleteConditionTarget normalizes missing-target detection for conditional deletes.
 // Prefer errors.Is(err, filer_pb.ErrNotFound) and errors.Is(err, ErrDeleteMarker); keep the
 // string-based fallback only as a defensive bridge for filer paths that still return plain text.
@@ -50,6 +57,9 @@ func isMissingDeleteConditionTarget(err error) bool {
 }
 
 func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
+	if !isValidVersionID(versionId) {
+		return nil, errInvalidVersionID
+	}
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 	bucketDir := s3a.bucketDir(bucket)
 
@@ -173,6 +183,9 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 // when the entry's Attributes.TtlSec > 0 so the volume is guaranteed to
 // drop the chunks on its own.
 func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
+	if !s3_constants.IsValidBucketName(bucket) || !s3_constants.IsValidObjectKey(object) {
+		return errors.New("invalid bucket or object path")
+	}
 	target := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := target.DirAndName()
 	return deleteObjectEntry(client, dir, name, !metadataOnly, false)
@@ -421,6 +434,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
 			if object.Key == "" {
+				continue
+			}
+			if validationCode := validateDeleteObjectIdentifier(object); validationCode != s3err.ErrNone {
+				deleteErrors = append(deleteErrors, deleteErrorFromCode(validationCode, object.Key, object.VersionId))
 				continue
 			}
 			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {

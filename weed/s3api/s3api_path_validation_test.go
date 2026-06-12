@@ -85,3 +85,57 @@ func TestValidateRequestPath_RejectsEmptyCapturedVars(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRequestPath_RejectsUnsafePathQueryValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		rawQuery string
+		wantCode int
+	}{
+		{"clean version ID", "versionId=opaque-version", http.StatusOK},
+		{"clean upload ID", "uploadId=opaque_upload", http.StatusOK},
+		{"empty values", "versionId=&uploadId=", http.StatusOK},
+		{"version ID encoded slash", "versionId=v1%2F..%2Fsecret", http.StatusBadRequest},
+		{"version ID backslash", "versionId=v1%5C..%5Csecret", http.StatusBadRequest},
+		{"upload ID traversal", "uploadId=hash%2F..%2F..%2Fvictim", http.StatusBadRequest},
+		{"unsafe repeated value", "versionId=clean&versionId=bad%2Fvalue", http.StatusBadRequest},
+		{"encoded version ID name", "version%49d=v1%2F..%2Fsecret", http.StatusBadRequest},
+		{"encoded upload ID name", "upload%49d=hash%2F..%2Fvictim", http.StatusBadRequest},
+		{"unrelated query", "prefix=folder&delimiter=%2F", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			h := validateRequestPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := mux.SetURLVars(
+				httptest.NewRequest(http.MethodGet, "/bucket-a/key?"+tt.rawQuery, nil),
+				map[string]string{"bucket": "bucket-a", "object": "key"},
+			)
+			rr := httptest.NewRecorder()
+
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantCode {
+				t.Fatalf("query %q: got status %d, want %d", tt.rawQuery, rr.Code, tt.wantCode)
+			}
+			if tt.wantCode != http.StatusOK && called {
+				t.Fatalf("query %q: inner handler reached despite rejection", tt.rawQuery)
+			}
+		})
+	}
+}
+
+func TestHasPathSegmentQuery_CommonPathDoesNotAllocate(t *testing.T) {
+	allocations := testing.AllocsPerRun(1000, func() {
+		if hasPathSegmentQuery("prefix=folder&delimiter=%2F") {
+			t.Fatal("unrelated query recognized as a path segment query")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("common query path allocated %v times per run, want 0", allocations)
+	}
+}

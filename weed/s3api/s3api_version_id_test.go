@@ -63,6 +63,27 @@ func TestVersionIdFormatDetection(t *testing.T) {
 	}
 }
 
+func TestIsValidVersionID(t *testing.T) {
+	tests := []struct {
+		versionID string
+		want      bool
+	}{
+		{"", true},
+		{"null", true},
+		{"opaque-version_123", true},
+		{"v1/../../../victim", false},
+		{`v1\..\victim`, false},
+		{"bad\x00version", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.versionID, func(t *testing.T) {
+			if got := isValidVersionID(tt.versionID); got != tt.want {
+				t.Errorf("isValidVersionID(%q) = %v, want %v", tt.versionID, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestGenerateVersionIdFormats tests that generateVersionId produces correct format based on parameter
 func TestGenerateVersionIdFormats(t *testing.T) {
 	// Generate old format version ID
