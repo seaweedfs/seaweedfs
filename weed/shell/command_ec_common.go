@@ -231,11 +231,14 @@ func assertEncodableRegularVolumes(t *master_pb.TopologyInfo, vids []needle.Volu
 		want[vid] = true
 	}
 	regular := make(map[needle.VolumeId]bool)
-	ecOnly := make(map[needle.VolumeId]bool)
+	hasEcShards := make(map[needle.VolumeId]bool)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, diskInfo := range dn.DiskInfos {
+					if diskInfo == nil {
+						continue
+					}
 					for _, vi := range diskInfo.VolumeInfos {
 						if want[needle.VolumeId(vi.Id)] {
 							regular[needle.VolumeId(vi.Id)] = true
@@ -243,7 +246,7 @@ func assertEncodableRegularVolumes(t *master_pb.TopologyInfo, vids []needle.Volu
 					}
 					for _, ec := range diskInfo.EcShardInfos {
 						if want[needle.VolumeId(ec.Id)] {
-							ecOnly[needle.VolumeId(ec.Id)] = true
+							hasEcShards[needle.VolumeId(ec.Id)] = true
 						}
 					}
 				}
@@ -254,7 +257,7 @@ func assertEncodableRegularVolumes(t *master_pb.TopologyInfo, vids []needle.Volu
 		if regular[vid] {
 			continue
 		}
-		if ecOnly[vid] {
+		if hasEcShards[vid] {
 			return fmt.Errorf("volume %d is already EC-encoded (no .dat replica); refusing to re-encode, which would destroy its shards", vid)
 		}
 		return fmt.Errorf("volume %d not found as a regular volume in the cluster; refusing to encode", vid)

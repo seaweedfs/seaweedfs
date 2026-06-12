@@ -142,6 +142,21 @@ func TestPrepareDataToRecover_UnionsLocalShardsAcrossDisks(t *testing.T) {
 	}
 }
 
+// TestCountLocalShards_UnionsAcrossDisks: slot accounting must union shards
+// across the node's disks like prepareDataToRecover does, or slotsNeeded is
+// overstated and selectAndReserveRebuilder can reject a valid node.
+func TestCountLocalShards_UnionsAcrossDisks(t *testing.T) {
+	var log bytes.Buffer
+	rebuilder := newEcNode("dc1", "rack1", "rebuilder", 100).
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1}).
+		addEcVolumeShards(needle.VolumeId(1), "c1", []erasure_coding.ShardId{5}, types.SsdType)
+	erb := newDryRunRebuilder(&log, rebuilder)
+
+	if got := erb.countLocalShards(rebuilder, "c1", needle.VolumeId(1)); got != 3 {
+		t.Errorf("countLocalShards must union across disks: want 3, got %d", got)
+	}
+}
+
 // TestPrepareDataToRecover_SelfSourceNotCopied: if the rebuilder is the only
 // listed holder of a shard it does not report locally, it must be treated as
 // local rather than copied onto itself and then deleted.

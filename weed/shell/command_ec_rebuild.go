@@ -145,15 +145,18 @@ func (erb *ecRebuilder) isLocked() bool {
 }
 
 // countLocalShards returns the number of shards already present locally on the node for the given volume.
+// Unions across all of the node's disks, like prepareDataToRecover, so slot
+// accounting matches what the rebuild will actually treat as local.
 func (erb *ecRebuilder) countLocalShards(node *EcNode, collection string, volumeId needle.VolumeId) int {
+	localShardsInfo := erasure_coding.NewShardsInfo()
 	for _, diskInfo := range node.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
-				return erasure_coding.GetShardCount(ecShardInfo)
+				localShardsInfo.Add(erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo))
 			}
 		}
 	}
-	return 0
+	return localShardsInfo.Count()
 }
 
 // selectAndReserveRebuilder atomically selects a rebuilder node with sufficient free slots
@@ -384,7 +387,7 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 				CopyEcxFile:    needEcxFile,
 				CopyEcjFile:    true,
 				CopyVifFile:    needEcxFile,
-				SourceDataNode: ecNodes[0].info.Id,
+				SourceDataNode: string(pb.NewServerAddressFromDataNode(ecNodes[0].info)),
 			})
 			return copyErr
 		})
