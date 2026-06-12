@@ -594,12 +594,16 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 	// volume-server heartbeats, so freshly distributed shards may not all be
 	// visible in the master topology immediately. Poll a few times before
 	// concluding the shard set is incomplete, so a heartbeat-propagation lag is
-	// not mistaken for missing data (which would abort the encode). Genuine loss
-	// still fails after the retries are exhausted.
+	// not mistaken for missing data. After the retries: a volume below the
+	// recoverable threshold (dataShards) aborts the deletion; a recoverable
+	// but degraded set proceeds with a warning, since the missing shards can
+	// be rebuilt from the survivors while keeping the source next to live
+	// shards is the more dangerous mixed state.
 	const maxAttempts = 10
 	const retryInterval = 2 * time.Second
 
 	var lastErr error
+	var lastDegraded []string
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
 		if err != nil {
@@ -607,6 +611,7 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 		}
 
 		lastErr = nil
+		lastDegraded = lastDegraded[:0]
 		for _, vid := range volumeIds {
 			nodeShards, _ := collectEcNodeShardsInfo(topoInfo, vid, diskType)
 
@@ -616,7 +621,8 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 			}
 
 			totalShards := erasure_coding.TotalShardsCount
-			if err := erasure_coding.RequireFullShardSet(uint32(vid), union, totalShards); err != nil {
+			degraded, err := erasure_coding.RequireRecoverableShardSet(uint32(vid), union, erasure_coding.DataShardsCount, totalShards)
+			if err != nil {
 				summary := make([]string, 0, len(nodeShards))
 				for node, info := range nodeShards {
 					summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
@@ -625,23 +631,32 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
 				break
 			}
+			if degraded {
+				lastDegraded = append(lastDegraded, fmt.Sprintf("volume %d: %d/%d shards", vid, union.Count(), totalShards))
+				continue
+			}
 
 			glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
 				vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
 		}
 
-		if lastErr == nil {
+		if lastErr == nil && len(lastDegraded) == 0 {
 			return nil
 		}
 		if attempt < maxAttempts-1 {
-			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v",
-				attempt+1, maxAttempts, lastErr)
+			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v %v",
+				attempt+1, maxAttempts, lastErr, lastDegraded)
 			time.Sleep(retryInterval)
 		}
 	}
 
-	glog.Errorf("EC shard verification failed after %d attempts: %v", maxAttempts, lastErr)
-	return lastErr
+	if lastErr != nil {
+		glog.Errorf("EC shard verification failed after %d attempts: %v", maxAttempts, lastErr)
+		return lastErr
+	}
+	glog.Warningf("EC shard set incomplete but recoverable after %d attempts, proceeding with source deletion (rebuild missing shards with ec.rebuild): %v",
+		maxAttempts, lastDegraded)
+	return nil
 }
 
 // doDeleteVolumesWithLocations deletes volumes using pre-collected location information

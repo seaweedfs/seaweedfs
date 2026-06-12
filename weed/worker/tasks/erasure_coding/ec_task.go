@@ -708,13 +708,25 @@ func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) erro
 		"per_server":    summary,
 	}).Info("EC shard inventory before source deletion")
 
-	if err := erasure_coding.RequireFullShardSet(t.volumeID, union, totalShards); err != nil {
+	degraded, err := erasure_coding.RequireRecoverableShardSet(t.volumeID, union, int(t.dataShards), totalShards)
+	if err != nil {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":  t.volumeID,
 			"per_server": summary,
 			"error":      err.Error(),
 		}).Error("EC shard verification failed — source volume will be kept")
 		return err
+	}
+	if degraded {
+		// Enough shards to reconstruct; the missing ones can be rebuilt from
+		// the survivors, while keeping the source next to live shards is the
+		// more dangerous mixed state.
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":    t.volumeID,
+			"shards_seen":  union.Count(),
+			"shards_total": totalShards,
+			"per_server":   summary,
+		}).Warning("EC shard set incomplete but recoverable; proceeding with source deletion")
 	}
 	return nil
 }
