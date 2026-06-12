@@ -160,6 +160,15 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return nil
 	}
 
+	// Refuse to encode a volume that is already EC (present only as shards):
+	// an EC volume has no .dat, so re-encoding it would tear down its only
+	// copy before failing. A regular volume (with a .dat) passes. This closes
+	// the operator-rerun / script-retry path; a worker racing the snapshot is
+	// handled by encode fencing, not here.
+	if err = assertEncodableRegularVolumes(topologyInfo, volumeIds); err != nil {
+		return err
+	}
+
 	// Collect volume ID to collection name mapping for the sync operation
 	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
 

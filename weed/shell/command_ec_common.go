@@ -219,6 +219,49 @@ func collectEcNodes(commandEnv *CommandEnv, diskType types.DiskType) (ecNodes []
 	return collectEcNodesForDC(commandEnv, "", diskType)
 }
 
+// assertEncodableRegularVolumes rejects volume ids that are not encodable
+// regular volumes in the topology snapshot: an already-EC volume (present only
+// as EC shards, with no .dat) or an id absent from the cluster. Encoding an
+// already-EC volume would clear its shards before failing, destroying the only
+// copy. A volume present as BOTH a regular .dat and stale orphan shards (a
+// failed-encode retry) passes, so the retry + orphan sweep still works.
+func assertEncodableRegularVolumes(t *master_pb.TopologyInfo, vids []needle.VolumeId) error {
+	want := make(map[needle.VolumeId]bool, len(vids))
+	for _, vid := range vids {
+		want[vid] = true
+	}
+	regular := make(map[needle.VolumeId]bool)
+	ecOnly := make(map[needle.VolumeId]bool)
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, diskInfo := range dn.DiskInfos {
+					for _, vi := range diskInfo.VolumeInfos {
+						if want[needle.VolumeId(vi.Id)] {
+							regular[needle.VolumeId(vi.Id)] = true
+						}
+					}
+					for _, ec := range diskInfo.EcShardInfos {
+						if want[needle.VolumeId(ec.Id)] {
+							ecOnly[needle.VolumeId(ec.Id)] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, vid := range vids {
+		if regular[vid] {
+			continue
+		}
+		if ecOnly[vid] {
+			return fmt.Errorf("volume %d is already EC-encoded (no .dat replica); refusing to re-encode, which would destroy its shards", vid)
+		}
+		return fmt.Errorf("volume %d not found as a regular volume in the cluster; refusing to encode", vid)
+	}
+	return nil
+}
+
 // collectVolumeIdToCollection returns a map from volume ID to its collection name
 func collectVolumeIdToCollection(t *master_pb.TopologyInfo, vids []needle.VolumeId) map[needle.VolumeId]string {
 	result := make(map[needle.VolumeId]string)
