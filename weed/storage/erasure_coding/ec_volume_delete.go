@@ -123,6 +123,7 @@ func RebuildEcxFile(baseFileName string) error {
 	if err != nil {
 		return fmt.Errorf("rebuild: failed to open ecj file: %w", err)
 	}
+	defer ecjFile.Close()
 
 	buf := make([]byte, types.NeedleIdSize)
 	for {
@@ -136,8 +137,6 @@ func RebuildEcxFile(baseFileName string) error {
 		if readErr != nil {
 			// Torn or unreadable journal: abort and leave .ecj in place so a
 			// retry can re-apply the deletions rather than resurrect them.
-			ecxFile.Close()
-			ecjFile.Close()
 			return fmt.Errorf("rebuild: read ecj: %w", readErr)
 		}
 
@@ -146,8 +145,6 @@ func RebuildEcxFile(baseFileName string) error {
 		_, _, err = SearchNeedleFromSortedIndex(ecxFile, ecxFileSize, needleId, MarkNeedleDeleted)
 
 		if err != nil && err != NotFoundError {
-			ecxFile.Close()
-			ecjFile.Close()
 			return err
 		}
 
@@ -157,13 +154,12 @@ func RebuildEcxFile(baseFileName string) error {
 	// crash can persist the .ecj unlink ahead of the .ecx writes and resurrect
 	// the deleted needles on the next load.
 	if err = ecxFile.Sync(); err != nil {
-		ecxFile.Close()
-		ecjFile.Close()
 		return fmt.Errorf("rebuild: sync ecx: %w", err)
 	}
-	ecxFile.Close()
-	ecjFile.Close()
 
+	// Close the journal before unlinking it (Windows cannot delete an open
+	// file); the deferred Close becomes a harmless no-op.
+	ecjFile.Close()
 	os.Remove(baseFileName + ".ecj")
 
 	return nil
