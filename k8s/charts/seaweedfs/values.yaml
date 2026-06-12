@@ -26,6 +26,13 @@ global:
         volumeRead: false
         filerWrite: false
         filerRead: false
+        # Positive values override SeaweedFS token lifetime defaults.
+        # Zero keeps the runtime defaults: 10s for writes and 60s for reads.
+        expiresAfterSeconds:
+          volumeWrite: 0
+          volumeRead: 0
+          filerWrite: 0
+          filerRead: 0
     # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
     serviceAccountName: "seaweedfs"
     serviceAccountAnnotations: {}
