@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 
@@ -26,12 +28,40 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			return
 		}
 
+		// Send the chunk's MD5 as Content-MD5 so the volume server verifies
+		// it on ingest and echoes it back into FileChunk.ETag, giving
+		// mount-written files a meaningful filer.ETag. Skipped under cipher:
+		// the server only sees ciphertext, so a plaintext digest could never
+		// match.
+		//
+		// The dirty-page flush paths already hand us a *util.BytesReader whose
+		// backing slice is the whole chunk, so hash it in place — no second
+		// read, copy, or allocation (UploadWithRetry unwraps it the same way).
+		// Only the rarer callers passing a plain reader (e.g. manifest chunks)
+		// need an actual read, and io.ReadAll there cannot truncate the way a
+		// size-hinted read would if the hint ever under-counted.
+		var md5Base64 string
+		if !wfs.option.Cipher {
+			if br, ok := reader.(*util.BytesReader); ok {
+				md5Base64 = contentMD5Base64(br.Bytes)
+			} else {
+				data, readErr := io.ReadAll(reader)
+				if readErr != nil {
+					glog.V(0).Infof("read chunk data %v: %v", filename, readErr)
+					return nil, fmt.Errorf("read chunk data: %w", readErr)
+				}
+				md5Base64 = contentMD5Base64(data)
+				reader = util.NewBytesReader(data)
+			}
+		}
+
 		uploadOption := &operation.UploadOption{
 			Filename:          filename,
 			Cipher:            wfs.option.Cipher,
 			IsInputCompressed: false,
 			MimeType:          "",
 			PairMap:           nil,
+			Md5:               md5Base64,
 		}
 		genFileUrlFn := func(host, fileId string) string {
 			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
@@ -91,4 +121,16 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		chunk = uploadResult.ToPbFileChunk(fileId, offset, tsNs)
 		return chunk, nil
 	}
+}
+
+// contentMD5Base64 returns a chunk's MD5 in the exact encoding the volume
+// server expects in the Content-MD5 header: the standard-base64 form of the
+// raw 16-byte digest (see CreateNeedleFromRequest / ParseUpload). The server
+// recomputes the digest over the received plaintext and rejects the upload on
+// mismatch, then echoes the value back as the chunk ETag. Using any other
+// encoding (hex, url-base64) would make every mount upload fail verification,
+// so the encoding is a contract worth pinning.
+func contentMD5Base64(data []byte) string {
+	digest := md5.Sum(data)
+	return base64.StdEncoding.EncodeToString(digest[:])
 }
