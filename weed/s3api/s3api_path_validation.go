@@ -33,6 +33,16 @@ func validateRequestPath(next http.Handler) http.Handler {
 				return
 			}
 		}
+		// versionId and uploadId are later used as filer entry names. Query
+		// decoding has already expanded encoded slashes and backslashes here.
+		for _, name := range []string{"versionId", "uploadId"} {
+			for _, value := range r.URL.Query()[name] {
+				if value != "" && !s3_constants.IsValidPathSegment(value) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+					return
+				}
+			}
+		}
 		next.ServeHTTP(w, r)
 	})
 }

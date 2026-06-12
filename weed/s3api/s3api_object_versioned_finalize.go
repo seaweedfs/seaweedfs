@@ -112,6 +112,9 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 // object (serializing the pointer recompute); for object-lock buckets the
 // condition gates the delete on the version's WORM guards evaluated on the owner.
 func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
+	if !isValidVersionID(versionId) {
+		return s3err.ErrInvalidRequest
+	}
 	versionFileName := s3a.getVersionFileName(versionId)
 	versionsPath := s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder)
 	cond := wormDeleteCondition(worm, bypass)

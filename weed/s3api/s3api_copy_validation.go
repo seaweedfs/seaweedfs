@@ -242,8 +242,12 @@ func validateEncryptionContext(contextHeader string) error {
 	return nil
 }
 
-// ValidateCopySource validates the copy source path and permissions
+// ValidateCopySource validates the copy source path.
 func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
+	return validateCopySource(copySource, srcBucket, srcObject, "")
+}
+
+func validateCopySource(copySource string, srcBucket, srcObject, srcVersionId string) error {
 	if copySource == "" {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidCopySource,
@@ -271,6 +275,12 @@ func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidCopySource,
 			Message: "Copy source contains invalid path segments",
+		}
+	}
+	if !isValidVersionID(srcVersionId) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidCopySource,
+			Message: "Copy source contains an invalid version ID",
 		}
 	}
 

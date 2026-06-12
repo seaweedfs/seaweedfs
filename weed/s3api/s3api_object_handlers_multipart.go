@@ -521,11 +521,30 @@ func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 
 	hash := s3a.generateUploadID(object)
 
-	if !strings.HasPrefix(id, hash) {
+	// uploadID becomes a filer directory name. Accept the historical hash-only
+	// form and the exact current hash_UUID form, not arbitrary hash-prefixed paths.
+	valid := id == hash // legacy upload IDs generated before the UUID suffix was added
+	if len(id) == len(hash)+1+32 && strings.HasPrefix(id, hash+"_") {
+		valid = isLowerHex(id[len(hash)+1:])
+	}
+	if !valid {
 		glog.Errorf("object %s and uploadID %s are not matched", object, id)
 		return fmt.Errorf("object %s and uploadID %s are not matched", object, id)
 	}
 	return nil
+}
+
+func isLowerHex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Parse bucket url queries for ?uploads
