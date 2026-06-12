@@ -133,7 +133,7 @@ func SplitStatements(query string) []string {
 		}
 	}
 
-	if statements == nil {
+	if len(statements) == 0 {
 		return []string{}
 	}
 	return statements
