@@ -122,7 +122,9 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		// old .ldb beside a freshly swapped, shorter .idx). Trusting it would
 		// replay zero entries and silently poison the needle map, so rebuild
 		// from offset 0 instead.
-		if watermark*NeedleMapEntrySize > uint64(stat.Size()) {
+		// Compare in entries, not bytes: watermark*NeedleMapEntrySize can
+		// overflow uint64 for a corrupted watermark and wrap past the size check.
+		if watermark > uint64(stat.Size())/NeedleMapEntrySize {
 			glog.Warningf("stale watermark %d for %s (filesize %d); rebuilding leveldb from start", watermark, dbFileName, stat.Size())
 			watermark = 0
 		}
