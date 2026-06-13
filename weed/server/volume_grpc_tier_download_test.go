@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -306,7 +307,7 @@ func TestTierMoveDatFromRemote_KeepRemote_LeavesReplicaLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read local dat after download: %v", err)
 	}
-	if len(gotDat) != len(localDat) {
-		t.Fatalf("local .dat size mismatch: got %d want %d", len(gotDat), len(localDat))
+	if !bytes.Equal(gotDat, localDat) {
+		t.Fatalf("local .dat content mismatch: got %d bytes, want %d", len(gotDat), len(localDat))
 	}
 }
