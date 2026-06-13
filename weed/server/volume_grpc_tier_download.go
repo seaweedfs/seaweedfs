@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -121,8 +122,12 @@ func swapToLocalDatBackend(v *storage.Volume, datFileName string) error {
 	return nil
 }
 
-// fsyncDir flushes a directory entry so renamed/created files within it survive a crash.
+// fsyncDir flushes a directory entry so renamed/created files within it survive
+// a crash. Directory fsync is unsupported on Windows, so it is skipped there.
 func fsyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
