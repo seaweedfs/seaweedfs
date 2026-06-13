@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 type scriptedHTTPResponse struct {
@@ -195,6 +197,60 @@ func TestUploadRewindsBodyOnConnectionReset(t *testing.T) {
 			if !bytes.Equal(client.bodies[0], client.bodies[1]) {
 				t.Fatalf("retry body length=%d differs from first attempt length=%d (body was not rewound)",
 					len(client.bodies[1]), len(client.bodies[0]))
+			}
+		})
+	}
+}
+
+func TestReplicationUploadPreservesUncompressedNeedle(t *testing.T) {
+	testCases := []struct {
+		name    string
+		payload []byte
+	}{
+		{
+			name:    "unknown binary sampling",
+			payload: bytes.Repeat([]byte{0}, 32*1024),
+		},
+		{
+			name:    "receiver MIME detection",
+			payload: bytes.Repeat([]byte("plain text content\n"), 2048),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var replicatedNeedle *needle.Needle
+			var parseErr error
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				replicatedNeedle, _, _, parseErr = needle.CreateNeedleFromRequest(r, false, 1024*1024, &bytes.Buffer{})
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"name":"payload.custom","size":32768}`)
+			}))
+			defer server.Close()
+
+			uploader := newUploader(server.Client())
+			_, err := uploader.UploadData(context.Background(), tc.payload, &UploadOption{
+				UploadUrl:     server.URL + "/3,01637037d6?type=replicate",
+				Filename:      "payload.custom",
+				IsReplication: true,
+				MaxAttempts:   1,
+			})
+			if err != nil {
+				t.Fatalf("replication upload failed: %v", err)
+			}
+			if parseErr != nil {
+				t.Fatalf("parse replicated upload: %v", parseErr)
+			}
+			if replicatedNeedle == nil {
+				t.Fatal("replica did not receive a needle")
+			}
+			if replicatedNeedle.IsCompressed() {
+				t.Fatal("replication changed an uncompressed needle to compressed")
+			}
+			if !bytes.Equal(replicatedNeedle.Data, tc.payload) {
+				t.Fatalf("replicated data differs: got %d bytes, want %d", len(replicatedNeedle.Data), len(tc.payload))
 			}
 		})
 	}

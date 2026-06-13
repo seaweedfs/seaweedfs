@@ -33,6 +33,7 @@ type UploadOption struct {
 	Filename          string
 	Cipher            bool
 	IsInputCompressed bool
+	IsReplication     bool // preserve the source needle's compression state
 	MimeType          string
 	PairMap           map[string]string
 	Jwt               security.EncodedJwt
@@ -276,7 +277,7 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
 	contentIsGzipped := option.IsInputCompressed
 	shouldGzipNow := false
-	if !option.IsInputCompressed {
+	if !option.IsInputCompressed && !option.IsReplication {
 		if option.MimeType == "" {
 			option.MimeType = http.DetectContentType(data)
 			// println("detect1 mimetype to", MimeType)

@@ -110,6 +110,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 				Filename:          string(n.Name),
 				Cipher:            false,
 				IsInputCompressed: n.IsCompressed(),
+				IsReplication:     true,
 				MimeType:          string(n.Mime),
 				PairMap:           pairMap,
 				Jwt:               jwt,

@@ -268,6 +268,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 					Filename:          "",
 					Cipher:            false,
 					IsInputCompressed: false,
+					IsReplication:     true,
 					MimeType:          "",
 					PairMap:           nil,
 					Jwt:               security.EncodedJwt(req.Auth),

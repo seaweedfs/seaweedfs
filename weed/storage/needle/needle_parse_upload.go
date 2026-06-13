@@ -94,7 +94,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		} else if n, err := util.GunzipStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
 			pu.OriginalDataSize = int(n)
 		}
-	} else {
+	} else if r.URL.Query().Get("type") != "replicate" {
 		ext := filepath.Base(pu.FileName)
 		mimeType := pu.MimeType
 		if mimeType == "" {
