@@ -119,11 +119,13 @@ func (cm *MemDb) SaveToIdx(idxName string) (ret error) {
 	}
 	defer func() {
 		// The .cpx generated here is renamed to .idx at commit, so a discarded
-		// fsync error could leave a partially-written index after a crash.
+		// fsync or close error could leave a partially-written index after a crash.
 		if syncErr := idxFile.Sync(); syncErr != nil && ret == nil {
 			ret = syncErr
 		}
-		idxFile.Close()
+		if closeErr := idxFile.Close(); closeErr != nil && ret == nil {
+			ret = closeErr
+		}
 	}()
 
 	return cm.AscendingVisit(func(value NeedleValue) error {
