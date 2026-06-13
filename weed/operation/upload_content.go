@@ -312,8 +312,8 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 				contentIsGzipped = true
 			}
 		}
-	} else if option.IsInputCompressed {
-		// just to get the clear data length
+	} else if option.IsInputCompressed && !option.IsReplication {
+		// decompress only to report the clear data length; replication discards the result, so skip it
 		clearData, err = util.DecompressData(data)
 		if err == nil {
 			clearDataLen = len(clearData)
