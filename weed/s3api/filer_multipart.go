@@ -1313,6 +1313,15 @@ func checksumAlgorithmFromHeaderName(headerName string) ChecksumAlgorithm {
 	return ChecksumAlgorithmNone
 }
 
+func checksumAlgorithmNameFromHeaderName(headerName string) string {
+	for name, entry := range checksumAlgorithmMapping {
+		if entry.name == headerName {
+			return name
+		}
+	}
+	return ""
+}
+
 func getEtagFromEntry(entry *filer_pb.Entry) string {
 	if entry.Extended != nil {
 		if etagBytes, ok := entry.Extended[s3_constants.ExtETagKey]; ok {

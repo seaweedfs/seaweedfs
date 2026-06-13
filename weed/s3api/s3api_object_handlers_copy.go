@@ -906,7 +906,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) {
+	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) || uploadEntryHasChecksum(uploadEntry) {
 		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
