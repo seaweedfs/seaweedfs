@@ -95,6 +95,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 			pu.OriginalDataSize = int(n)
 		}
 	} else if r.URL.Query().Get("type") != "replicate" {
+		// replica writes must keep the source needle's compression state, not re-derive it
 		ext := filepath.Base(pu.FileName)
 		mimeType := pu.MimeType
 		if mimeType == "" {
