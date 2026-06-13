@@ -531,6 +531,35 @@ func TestPickOneMisplacedVolumeRelocatesReadOnlyReplicas(t *testing.T) {
 	}
 }
 
+// The over-replication trim must not strip the only replica in a required
+// failure domain: with "100" and replicas in dc1 + two in dc2, deleting the
+// smallest (dc1) leaves both survivors in dc2 and violates placement, so the
+// trim must instead delete a dc2 writable replica.
+func TestPickOneReplicaToDeletePreservesPlacement(t *testing.T) {
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromString("100")
+	replicas := []*VolumeReplica{
+		{
+			location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dc1-writable"}},
+			info:     &master_pb.VolumeInformationMessage{Size: 90, ReadOnly: false},
+		},
+		{
+			location: &location{"dc2", "r2", &master_pb.DataNodeInfo{Id: "dc2-readonly"}},
+			info:     &master_pb.VolumeInformationMessage{Size: 80, ReadOnly: true},
+		},
+		{
+			location: &location{"dc2", "r3", &master_pb.DataNodeInfo{Id: "dc2-writable"}},
+			info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: false},
+		},
+	}
+	got := pickOneReplicaToDelete(replicas, replicaPlacement)
+	if got == nil {
+		t.Fatal("expected a replica to delete")
+	}
+	if got.location.dataNode.Id != "dc2-writable" {
+		t.Fatalf("expected to delete dc2-writable to preserve placement, got %s", got.location.dataNode.Id)
+	}
+}
+
 func TestSatisfyReplicaCurrentLocation(t *testing.T) {
 
 	var tests = []testcase{

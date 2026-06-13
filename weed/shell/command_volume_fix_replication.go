@@ -677,6 +677,22 @@ func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_b
 	if len(writable) < 2 {
 		return nil
 	}
+	// Prefer a writable replica whose removal still satisfies placement, so the
+	// trim does not strip the only replica in a required failure domain. Fall
+	// back to the smallest writable if none keeps placement (a later misplaced
+	// cycle then re-balances).
+	var placementSafe []*VolumeReplica
+	for i, r := range replicas {
+		if r.info.ReadOnly {
+			continue
+		}
+		if !isMisplaced(otherThan(replicas, i), replicaPlacement) {
+			placementSafe = append(placementSafe, r)
+		}
+	}
+	if len(placementSafe) > 0 {
+		return pickSmallestReplica(placementSafe)
+	}
 	return pickSmallestReplica(writable)
 }
 
