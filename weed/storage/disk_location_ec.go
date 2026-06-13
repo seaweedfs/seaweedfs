@@ -371,12 +371,9 @@ func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, vo
 		return
 	}
 
-	// Attempt to load the EC shards. A load failure (corrupt/locked .ecx,
-	// EMFILE, transient I/O) is not proof the shards are disposable, and
-	// validateEcVolume above already decided they may be the only copy --
-	// deleting them here on a .dat that did not pass that check is the same
-	// data loss. Release any partially-loaded FDs but keep the files; the
-	// volume can load on a later boot or after operator repair.
+	// A load failure (corrupt/locked .ecx, EMFILE, transient I/O) is not proof
+	// the shards are disposable -- validateEcVolume already decided they may be
+	// the only copy. Release FDs but keep the files for retry; never delete here.
 	if err := l.loadEcShards(shards, collection, volumeId, onShardLoad); err != nil {
 		glog.Warningf("Failed to load EC shards for volume %d: %v; keeping files for retry", volumeId, err)
 		l.unloadEcVolume(volumeId)
@@ -453,37 +450,20 @@ func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
 	return shardSize
 }
 
-// validateEcVolume checks if EC volume has enough shards to be functional
-// For distributed EC volumes (where .dat is deleted), any number of shards is valid
-// For incomplete EC encoding (where .dat still exists), we need at least DataShardsCount shards
-// Also validates that all shards have the same size (required for Reed-Solomon EC)
-// If .dat exists, it also validates shards match the expected size based on .dat file size
-// validateEcVolume decides whether the EC artefacts for (collection, vid) on
-// THIS disk may be deleted so the local .dat can be reclaimed. It returns
-// false (delete the EC files) only when that is provably safe; every
-// ambiguity returns true (keep the shards), because the shards may be the
-// only copy of distributed-EC data.
-//
-// Deleting is safe only when a credible, committed full .dat exists -- its
-// on-disk size equals the size .vif recorded at encode time -- AND the local
-// shard set is either empty or a complete, size-consistent local encode of
-// that .dat. A stale or partial .dat (e.g. an interrupted decode leaves a
-// half-written .dat next to the volume's only shards) does not match the
-// recorded size and must never authorize deleting shards. A partial local
-// set (1..dataShards-1) may be sole copies of a volume mid-transition and is
-// always kept. Transient stat errors keep the data, never delete it.
+// validateEcVolume reports whether the EC files for (collection, vid) on this
+// disk may be deleted to reclaim the local .dat. It returns false (delete)
+// only when that provably loses no data; every ambiguity returns true (keep),
+// since the shards may be the only copy of distributed-EC data.
 func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) bool {
 	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
 	datFileName := baseFileName + ".dat"
 
-	// The .vif (written at encode time, travels with the volume) is the only
-	// source of truth on the volume server for the custom ratio; the server
-	// never holds the cluster EC config in memory.
+	// Custom ratio comes from the volume's own .vif; the server holds no
+	// cluster EC config in memory.
 	dataShards := l.ecDataShardsFromVif(collection, vid)
 
-	// On-disk .dat size, or -1 when absent. An empty .dat (<= a superblock,
-	// zero needles) is a leftover stub, treated as absent. A transient stat
-	// error keeps the shards (it could be permission/IO, not a missing .dat).
+	// On-disk .dat size, or -1 when absent (an empty <= superblock .dat is a
+	// stub). A transient stat error keeps the shards rather than deleting.
 	var expectedShardSize int64 = -1
 	datExists := false
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
@@ -496,8 +476,7 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 		return true
 	}
 
-	// Count local shards and confirm they are size-consistent. A transient
-	// stat error or an inconsistent set is ambiguous -> keep.
+	// Count local shards; a transient stat error or inconsistent sizes -> keep.
 	shardCount := 0
 	var actualShardSize int64 = -1
 	for i := 0; i < erasure_coding.MaxShardCount; i++ {
@@ -519,35 +498,22 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 		}
 	}
 
-	// No local .dat -> distributed EC; any shard count is valid, keep.
 	if !datExists {
-		glog.V(1).Infof("EC volume %d: distributed EC (.dat absent) with %d shards", vid, shardCount)
-		return true
+		return true // distributed EC; any shard count is valid
 	}
 
-	// A .dat is present. Reclaim it (delete the EC files) only when doing so
-	// provably loses no data. The discriminating signal is the shard size:
-	//   - actual < expected: the shards are smaller than this .dat's full
-	//     encode would produce, i.e. an interrupted encode left partial
-	//     shards and the .dat is the complete source -> reclaim the .dat.
-	//   - actual == expected: complete shards consistent with the .dat -> a
-	//     valid local EC volume (or a still-distributing one) -> KEEP.
-	//   - actual > expected: the shards are larger than this .dat predicts,
-	//     so the .dat is the stale/partial side (e.g. an interrupted decode
-	//     left a half-written .dat next to the real shards) -> KEEP; the
-	//     shards may be the only copy.
-	// Any non-deletion case keeps the shards: never trade a possibly-sole
-	// copy for a .dat that is not provably the complete source.
+	// Reclaim only when it loses no data. Shards smaller than this .dat's full
+	// encode are an interrupted encode whose .dat is the complete source ->
+	// reclaim. Shards >= expected (valid/distributing EC, or a stale/partial
+	// .dat beside larger real shards) may be the only copy -> keep.
 	if shardCount == 0 {
-		// Only leftover index files beside a .dat; nothing to lose.
 		return false
 	}
 	if expectedShardSize > 0 && actualShardSize > 0 && actualShardSize < expectedShardSize {
-		glog.Warningf("EC volume %d: %d shards of %d bytes are smaller than this .dat's full encode (%d bytes); reclaiming the complete .dat",
+		glog.Warningf("EC volume %d: %d shards of %d bytes are smaller than the .dat's full encode (%d bytes); reclaiming the complete .dat",
 			vid, shardCount, actualShardSize, expectedShardSize)
 		return false
 	}
-	glog.V(1).Infof("EC volume %d: keeping %d shards (size %d, .dat-expected %d)", vid, shardCount, actualShardSize, expectedShardSize)
 	return true
 }
 

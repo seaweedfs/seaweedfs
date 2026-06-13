@@ -242,25 +242,21 @@ impl DiskLocation {
         Ok(())
     }
 
-    /// Validate EC volume shards: all shards must be same size, and if .dat exists,
-    /// need at least DATA_SHARDS_COUNT shards with size matching expected.
-    /// Decide whether the EC artefacts for (collection, vid) on this disk may
-    /// be deleted so the local .dat can be reclaimed. Returns false (delete)
-    /// only when that provably loses no data; every ambiguity returns true
-    /// (keep), since the shards may be the only copy of distributed-EC data.
-    /// Mirrors Go's validateEcVolume.
+    /// Reports whether the EC files for (collection, vid) on this disk may be
+    /// deleted to reclaim the local .dat. Returns false (delete) only when that
+    /// provably loses no data; every ambiguity returns true (keep), since the
+    /// shards may be the only copy. Mirrors Go's validateEcVolume.
     fn validate_ec_volume(&self, collection: &str, vid: VolumeId) -> bool {
         let base = volume_file_name(&self.directory, collection, vid);
         let dat_path = format!("{}.dat", base);
 
-        // The custom ratio comes from the volume's own .vif; the server never
-        // holds the cluster EC config in memory.
+        // Custom ratio comes from the volume's own .vif; the server holds no
+        // cluster EC config in memory.
         let data_shards =
             ec_data_shards_from_vif(&self.directory, &self.idx_directory, collection, vid);
 
-        // On-disk .dat: an empty one (<= a superblock) is a stub, treated as
-        // absent. A transient stat error keeps the shards (never delete on a
-        // permission/IO error that is not a missing file).
+        // On-disk .dat: an empty <= superblock one is a stub; a transient stat
+        // error keeps the shards rather than deleting.
         let mut expected_shard_size: Option<i64> = None;
         let dat_exists = match fs::metadata(&dat_path) {
             Ok(meta) if meta.len() > SUPER_BLOCK_SIZE as u64 => {
@@ -305,19 +301,14 @@ impl DiskLocation {
             }
         }
 
-        // No local .dat -> distributed EC; any shard count is valid, keep.
         if !dat_exists {
-            return true;
+            return true; // distributed EC; any shard count is valid
         }
 
-        // A .dat is present. Reclaim only when doing so loses no data. The
-        // discriminating signal is the shard size:
-        //   - actual < expected: shards smaller than this .dat's full encode,
-        //     i.e. an interrupted encode left partial shards and the .dat is
-        //     the complete source -> reclaim.
-        //   - actual >= expected: complete shards (valid/distributing EC) or a
-        //     stale/partial .dat beside larger real shards -> KEEP; the shards
-        //     may be the only copy.
+        // Reclaim only when it loses no data. Shards smaller than this .dat's
+        // full encode are an interrupted encode whose .dat is the complete
+        // source -> reclaim. Shards >= expected (valid/distributing EC, or a
+        // stale/partial .dat beside larger real shards) may be the only copy -> keep.
         if shard_count == 0 {
             return false;
         }
@@ -889,11 +880,10 @@ impl DiskLocation {
         let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
         if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids, "") {
             // A mount failure (corrupt/locked .ecx, EMFILE, transient I/O) is
-            // not proof the shards are disposable, and validate_ec_volume above
-            // already decided they may be the only copy. Release any
-            // partially-mounted shards (unmount_ec_shards mirror-decrements the
-            // per-shard metric) but keep the files; never delete on a load
-            // error. The volume can load on a later boot or after repair.
+            // not proof the shards are disposable -- validate_ec_volume already
+            // decided they may be the only copy. Release partially-mounted
+            // shards (mirror-decrements the metric) but keep the files; never
+            // delete on a load error.
             warn!(
                 volume_id = vid.0,
                 "Failed to load EC shards: {}; keeping files for retry",

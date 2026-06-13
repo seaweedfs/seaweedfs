@@ -236,9 +236,8 @@ impl Store {
         let mut victims: Vec<Victim> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             for (vid, ev) in loc.ec_volumes() {
-                // Use the volume's configured ratio (custom ratios live in the
-                // .vif), not the OSS default: a disk holding a full data set
-                // for a 9+3 volume is independently recoverable.
+                // Use the volume's own ratio, not the OSS default, so a full
+                // custom-ratio data set (e.g. 9 of a 9+3) is not mistaken for a leftover.
                 let data_shards = if ev.data_shards > 0 {
                     ev.data_shards as usize
                 } else {
@@ -261,12 +260,9 @@ impl Store {
                     // per-disk pass; don't second-guess it here.
                     continue;
                 }
-                // Only a byte-exact committed source authorizes deleting these
-                // shards: the sibling .dat size must equal the size .vif
-                // recorded at encode time. An unknown (0) recorded size or any
-                // mismatch (a stale or truncated .dat) cannot prove the .dat
-                // holds this volume's data, so the partial EC is left for
-                // distributed reconstruction.
+                // Delete only against a byte-exact committed source: the sibling
+                // .dat must equal the size .vif recorded at encode time. An
+                // unknown (0) or mismatched size cannot prove the .dat holds this data.
                 if ev.dat_file_size <= 0 || owner.size != ev.dat_file_size as u64 {
                     warn!(
                         volume_id = vid.0,
@@ -280,10 +276,9 @@ impl Store {
                     );
                     continue;
                 }
-                // Final node-wide guard: never prune when the volume's shards
-                // are independently recoverable across this node's disks (a set
-                // split over sibling disks summing to >= data_shards). Those
-                // shards may be sole copies of a distributed volume.
+                // Never prune when the shards are recoverable node-wide (a set
+                // split across sibling disks summing to >= data_shards); they
+                // may be sole copies of a distributed volume.
                 let mut node_wide_bits = ev.shard_bits().0;
                 for other in &self.locations {
                     if let Some(other_ev) = other.find_ec_volume(*vid) {

@@ -225,12 +225,10 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 // to forget the registrations the per-disk pass already emitted on
 // NewEcShardsChan during startup, instead of waiting for the first
 // periodic heartbeat to reconcile.
-// countEcShardsNodeWide returns the number of distinct EC shard ids for
-// (collection, vid) held across every disk on this store. A volume's shards
-// can be split across sibling disks (e.g. by ec.balance under a shared
-// -dir.idx); a per-disk count understates the set and would make a
-// node-wide-recoverable volume look like a partial leftover. The caller must
-// not hold any DiskLocation.ecVolumesLock when calling this (it takes them).
+// countEcShardsNodeWide returns the distinct EC shard ids for (collection, vid)
+// across every disk on this store. Shards can be split across sibling disks, so
+// a per-disk count understates a node-wide-recoverable set. Caller must not hold
+// any DiskLocation.ecVolumesLock (this takes them).
 func (s *Store) countEcShardsNodeWide(collection string, vid needle.VolumeId) int {
 	seen := make(map[erasure_coding.ShardId]struct{})
 	for _, loc := range s.Locations {
@@ -270,10 +268,8 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 		loc.ecVolumesLock.RLock()
 		for vid, ev := range loc.ecVolumes {
 			shardCount := len(ev.Shards)
-			// Use the volume's configured data-shard count, not the OSS
-			// default: a disk holding a full data set for a custom ratio
-			// (e.g. 9 shards of a 9+3 volume) is independently recoverable
-			// and must not be mistaken for a partial leftover and wiped.
+			// Use the volume's own ratio, not the OSS default, so a full
+			// custom-ratio data set (e.g. 9 of a 9+3) is not mistaken for a leftover.
 			dataShards := erasure_coding.DataShardsCount
 			if ev.ECContext != nil && ev.ECContext.DataShards > 0 {
 				dataShards = ev.ECContext.DataShards
@@ -286,12 +282,9 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 			if !hasDat || owner.location == loc {
 				continue
 			}
-			// Only a byte-exact committed source authorizes deleting these
-			// shards: the sibling .dat size must equal the size .vif recorded
-			// at encode time. An unknown (0) recorded size, or any mismatch
-			// (a stale or truncated .dat), cannot prove the .dat holds this
-			// volume's data, so the partial EC is left for distributed
-			// reconstruction.
+			// Delete only against a byte-exact committed source: the sibling
+			// .dat must equal the size .vif recorded at encode time. An unknown
+			// (0) or mismatched size cannot prove the .dat holds this data.
 			datFileSize := ev.DatFileSize()
 			if datFileSize <= 0 || owner.size != datFileSize {
 				glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards; sibling .dat on %s is %d bytes but .vif recorded %d (need byte-exact match); leaving partial EC in place",
@@ -310,11 +303,9 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 		loc.ecVolumesLock.RUnlock()
 
 		for _, v := range victims {
-			// Final node-wide guard: even with a credible sibling .dat, never
-			// prune when the volume's shards are independently recoverable
-			// across this node's disks (a set split over sibling disks summing
-			// to >= dataShards). Those shards may be sole copies of a
-			// distributed volume.
+			// Never prune when the shards are recoverable node-wide (a set
+			// split across sibling disks summing to >= dataShards); they may
+			// be sole copies of a distributed volume.
 			if nodeWide := s.countEcShardsNodeWide(v.collection, v.vid); nodeWide >= v.dataShards {
 				glog.Warningf("ec volume %d (collection=%q): %d shards present node-wide (>= %d) are independently recoverable; leaving EC in place despite a sibling .dat",
 					v.vid, v.collection, nodeWide, v.dataShards)
