@@ -42,7 +42,7 @@ func TestMultipartCopyPreservesCRC64NVME(t *testing.T) {
 	defer cleanupBucket(t, client, bucket)
 
 	sourceKey := "source"
-	_, err = client.PutObject(context.Background(), &s3.PutObjectInput{
+	source, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:            aws.String(bucket),
 		Key:               aws.String(sourceKey),
 		Body:              bytes.NewBufferString("trailing checksum"),
@@ -66,6 +66,7 @@ func TestMultipartCopyPreservesCRC64NVME(t *testing.T) {
 		PartNumber: aws.Int32(1),
 	})
 	require.NoError(t, err)
+	require.Equal(t, aws.ToString(source.ChecksumCRC64NVME), aws.ToString(part.CopyPartResult.ChecksumCRC64NVME))
 
 	_, err = client.CompleteMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),

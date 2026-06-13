@@ -3,7 +3,9 @@ package s3api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -41,5 +43,71 @@ func TestUploadEntryHasChecksum(t *testing.T) {
 	entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte("unknown")
 	if uploadEntryHasChecksum(entry) {
 		t.Fatal("unknown checksum algorithm was accepted")
+	}
+}
+
+func TestBuildCopyPartResult(t *testing.T) {
+	modified := time.Unix(123, 0).UTC()
+	tests := []struct {
+		name     string
+		header   string
+		element  string
+		expected CopyPartResult
+	}{
+		{
+			name:    "CRC32",
+			header:  s3_constants.AmzChecksumCRC32,
+			element: "<ChecksumCRC32>value</ChecksumCRC32>",
+			expected: CopyPartResult{
+				ETag: "etag", LastModified: modified, ChecksumCRC32: "value",
+			},
+		},
+		{
+			name:    "CRC32C",
+			header:  s3_constants.AmzChecksumCRC32C,
+			element: "<ChecksumCRC32C>value</ChecksumCRC32C>",
+			expected: CopyPartResult{
+				ETag: "etag", LastModified: modified, ChecksumCRC32C: "value",
+			},
+		},
+		{
+			name:    "CRC64NVME",
+			header:  s3_constants.AmzChecksumCRC64NVME,
+			element: "<ChecksumCRC64NVME>value</ChecksumCRC64NVME>",
+			expected: CopyPartResult{
+				ETag: "etag", LastModified: modified, ChecksumCRC64NVME: "value",
+			},
+		},
+		{
+			name:    "SHA1",
+			header:  s3_constants.AmzChecksumSHA1,
+			element: "<ChecksumSHA1>value</ChecksumSHA1>",
+			expected: CopyPartResult{
+				ETag: "etag", LastModified: modified, ChecksumSHA1: "value",
+			},
+		},
+		{
+			name:    "SHA256",
+			header:  s3_constants.AmzChecksumSHA256,
+			element: "<ChecksumSHA256>value</ChecksumSHA256>",
+			expected: CopyPartResult{
+				ETag: "etag", LastModified: modified, ChecksumSHA256: "value",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := buildCopyPartResult("etag", modified, SSEResponseMetadata{
+				ChecksumHeaderName: test.header,
+				ChecksumValue:      "value",
+			})
+			if result != test.expected {
+				t.Fatalf("result = %#v, want %#v", result, test.expected)
+			}
+			if encoded := string(s3err.EncodeXMLResponse(result)); !strings.Contains(encoded, test.element) {
+				t.Fatalf("response %q does not contain %q", encoded, test.element)
+			}
+		})
 	}
 }
