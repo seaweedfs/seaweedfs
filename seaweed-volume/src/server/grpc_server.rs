@@ -1247,7 +1247,7 @@ impl VolumeServer for VolumeGrpcService {
                     .await
                     .map_err(|e| Status::internal(e))?;
                     if dat_modified_ts_ns > 0 {
-                        set_file_mtime(&dat_path, dat_modified_ts_ns);
+                        let _ = set_file_mtime(&dat_path, dat_modified_ts_ns);
                     }
                 }
 
@@ -1272,7 +1272,7 @@ impl VolumeServer for VolumeGrpcService {
                 .await
                 .map_err(|e| Status::internal(e))?;
                 if idx_modified_ts_ns > 0 {
-                    set_file_mtime(&idx_path, idx_modified_ts_ns);
+                    let _ = set_file_mtime(&idx_path, idx_modified_ts_ns);
                 }
 
                 // Copy .vif file (ignore if not found on source)
@@ -1296,7 +1296,7 @@ impl VolumeServer for VolumeGrpcService {
                 .await
                 .map_err(|e| Status::internal(e))?;
                 if vif_modified_ts_ns > 0 {
-                    set_file_mtime(&vif_path, vif_modified_ts_ns);
+                    let _ = set_file_mtime(&vif_path, vif_modified_ts_ns);
                 }
 
                 // Remove the .note file
@@ -3293,7 +3293,10 @@ impl VolumeServer for VolumeGrpcService {
                 // Restore the .dat mtime so a reload computes TTL from real data age,
                 // not download time (matches Go VolumeTierMoveDatFromRemote).
                 if remote_modified_secs > 0 {
-                    set_file_mtime(&dat_path, (remote_modified_secs as i64) * 1_000_000_000);
+                    let modified_ts_ns = (remote_modified_secs as i64).saturating_mul(1_000_000_000);
+                    if let Err(e) = set_file_mtime(&dat_path, modified_ts_ns) {
+                        tracing::warn!("volume {} restore data file {} modified time: {}", vid, dat_path, e);
+                    }
                 }
 
                 if !keep_remote {
@@ -4167,17 +4170,16 @@ async fn ping_filer_target(
 use super::grpc_client::parse_grpc_address;
 
 /// Set the modification time of a file from nanoseconds since Unix epoch.
-fn set_file_mtime(path: &str, modified_ts_ns: i64) {
+fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     use std::time::{Duration, SystemTime};
     let ts = if modified_ts_ns >= 0 {
         SystemTime::UNIX_EPOCH + Duration::from_nanos(modified_ts_ns as u64)
     } else {
         SystemTime::UNIX_EPOCH
     };
-    if let Ok(file) = std::fs::File::open(path) {
-        let ft = std::fs::FileTimes::new().set_accessed(ts).set_modified(ts);
-        let _ = file.set_times(ft);
-    }
+    let file = std::fs::File::open(path)?;
+    let ft = std::fs::FileTimes::new().set_accessed(ts).set_modified(ts);
+    file.set_times(ft)
 }
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
