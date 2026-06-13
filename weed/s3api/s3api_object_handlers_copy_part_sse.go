@@ -329,6 +329,8 @@ func applyDestChecksumHeaderToCopyRequest(r *http.Request, uploadEntry *filer_pb
 	}
 	headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm])
 	if algorithm := checksumAlgorithmNameFromHeaderName(headerName); algorithm != "" {
+		// Drop any inherited sdk-checksum selector; it outranks the header we set.
+		r.Header.Del(s3_constants.AmzSdkChecksumAlgorithm)
 		r.Header.Set(s3_constants.AmzChecksumAlgorithm, algorithm)
 	}
 }
