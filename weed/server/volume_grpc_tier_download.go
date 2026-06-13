@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -66,8 +67,10 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	}
 	if remoteFileModifiedTime > 0 {
 		modifiedTime := time.Unix(int64(remoteFileModifiedTime), 0)
-		if err := os.Chtimes(v.FileName(".dat"), time.Now(), modifiedTime); err != nil {
-			return fmt.Errorf("restore data file %s modified time: %v", v.FileName(".dat"), err)
+		// best-effort: a cosmetic mtime failure should not abort an otherwise
+		// complete tier-down, matching the EC copy path
+		if err := os.Chtimes(v.FileName(".dat"), modifiedTime, modifiedTime); err != nil {
+			glog.Warningf("volume %d restore data file %s modified time: %v", v.Id, v.FileName(".dat"), err)
 		}
 	}
 
