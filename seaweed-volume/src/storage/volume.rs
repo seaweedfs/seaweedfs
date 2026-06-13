@@ -2953,7 +2953,7 @@ impl Volume {
             .open(&marker_path)?;
         f.sync_all()?;
         drop(f);
-        fsync_dir(&marker_path);
+        fsync_dir(&marker_path)?;
         Ok(())
     }
 
@@ -3007,9 +3007,9 @@ impl Volume {
             fs::rename(self.file_name(".cpx"), &idx_path)?;
         }
         if cpd_exists || cpx_exists {
-            fsync_dir(&dat_path);
+            fsync_dir(&dat_path)?;
             if self.dir != self.dir_idx {
-                fsync_dir(&idx_path);
+                fsync_dir(&idx_path)?;
             }
             let _ = fs::remove_dir_all(self.file_name(".ldb"));
             let _ = fs::remove_file(self.file_name(".rdb"));
@@ -3023,7 +3023,7 @@ impl Volume {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
-        fsync_dir(&marker_path);
+        fsync_dir(&marker_path)?;
         Ok(())
     }
 
@@ -3415,13 +3415,24 @@ fn get_append_at_ns(last: u64) -> u64 {
 /// Remove all files associated with a volume.
 /// .dat/.idx removals log at info level so destructive calls are traceable.
 /// fsync the parent directory of `path` so a rename/create/unlink inside it is
-/// durable. Best-effort: a platform that does not support directory fsync (or a
-/// path with no parent) is silently tolerated, matching the Go fsyncDir helper.
-fn fsync_dir(path: &str) {
-    if let Some(parent) = Path::new(path).parent() {
-        if let Ok(d) = File::open(parent) {
-            let _ = d.sync_all();
+/// durable, propagating a sync failure so the commit path can abort rather than
+/// proceed with an undurable rename or marker. A path with no openable parent is
+/// tolerated; directory fsync is unsupported on Windows, so it is a no-op there
+/// (matching the Go fsyncDir helper, which ignores that error).
+fn fsync_dir(path: &str) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(parent) = Path::new(path).parent() {
+            if let Ok(d) = File::open(parent) {
+                return d.sync_all();
+            }
         }
+        Ok(())
     }
 }
 
