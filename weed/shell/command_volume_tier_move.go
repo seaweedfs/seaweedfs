@@ -251,7 +251,11 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 	}
 
 	// a replica already on the target tier (e.g. left by an interrupted earlier run)
-	// anchors the move: skip the copy, only fulfill replication and clean up old replicas
+	// anchors the move: skip the copy, only fulfill replication and clean up old replicas.
+	// The anchor must match both the target disk type AND (when set) the target data
+	// center, so a bare presence elsewhere never short-circuits a cross-DC move.
+	// No replica sync is needed here: remote-tiered replicas share one cloud object,
+	// so their content is byte-identical and there is no local divergence to reconcile.
 	for _, r := range replicas {
 		if types.ToDiskType(r.info.DiskType) != toDiskType || (toDataCenter != "" && r.location.dc != toDataCenter) {
 			continue
@@ -372,7 +376,9 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		if preserveServers[loc.Url] {
 			continue
 		}
-		if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, false); err != nil {
+		// keepRemoteData=true: remote-tiered replicas share one cloud object, so
+		// deleting a replica must not delete the object the survivors still point at.
+		if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, true); err != nil {
 			fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 		}
 	}
