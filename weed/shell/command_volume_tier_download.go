@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -132,6 +133,12 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 		// copy the .dat file from remote tier to local
 		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), keepRemote)
 		if err != nil {
+			// A replica already made local by a prior interrupted run is not a
+			// failure; skip it so the remaining remote replicas still download.
+			if strings.Contains(err.Error(), "already on local disk") {
+				fmt.Fprintf(writer, "volume %d on %s is already on local disk, skipping\n", vid, loc.Url)
+				continue
+			}
 			return fmt.Errorf("download dat file for volume %d to %s: %v", vid, loc.Url, err)
 		}
 	}
