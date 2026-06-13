@@ -32,6 +32,10 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	if !ok {
 		return nil // already copied to remove. fmt.Errorf("volume %d is not on local disk", req.VolumeId)
 	}
+	_, modTime, err := diskFile.GetStat()
+	if err != nil {
+		return fmt.Errorf("stat data file %s: %v", diskFile.Name(), err)
+	}
 
 	// check valid storage backend type
 	backendStorage, found := backend.BackendStorages[req.DestinationBackendName]
@@ -78,7 +82,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		Key:          key,
 		Offset:       0,
 		FileSize:     uint64(size),
-		ModifiedTime: uint64(time.Now().Unix()),
+		ModifiedTime: uint64(modTime.Unix()),
 		Extension:    ".dat",
 	})
 

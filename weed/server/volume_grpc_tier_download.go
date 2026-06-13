@@ -2,8 +2,10 @@ package weed_server
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -28,6 +30,7 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	if storageName == "" || storageKey == "" {
 		return fmt.Errorf("volume %d is already on local disk", req.VolumeId)
 	}
+	remoteFileModifiedTime := v.GetVolumeInfo().GetFiles()[0].GetModifiedTime()
 
 	// check whether the local .dat already exists
 	_, ok := v.DataBackend.(*backend.DiskFile)
@@ -61,6 +64,14 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	_, err := backendStorage.DownloadFile(v.FileName(".dat"), storageKey, fn)
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", storageName, v.FileName(".dat"), err)
+	}
+	if remoteFileModifiedTime > 0 {
+		modifiedTime := time.Unix(int64(remoteFileModifiedTime), 0)
+		// best-effort: a cosmetic mtime failure should not abort an otherwise
+		// complete tier-down, matching the EC copy path
+		if err := os.Chtimes(v.FileName(".dat"), modifiedTime, modifiedTime); err != nil {
+			glog.Warningf("volume %d restore data file %s modified time: %v", v.Id, v.FileName(".dat"), err)
+		}
 	}
 
 	if req.KeepRemoteDatFile {
