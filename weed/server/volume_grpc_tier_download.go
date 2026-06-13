@@ -115,10 +115,9 @@ func swapToLocalDatBackend(v *storage.Volume, datFileName string) error {
 	if err != nil {
 		return err
 	}
-	if v.DataBackend != nil {
-		v.DataBackend.Close()
-	}
-	v.DataBackend = backend.NewDiskFile(dataFile)
+	// Swap under the volume's data lock so concurrent reads never see a closed
+	// or half-swapped backend.
+	v.SwapDataBackend(backend.NewDiskFile(dataFile))
 	return nil
 }
 
