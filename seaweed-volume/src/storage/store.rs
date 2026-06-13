@@ -369,6 +369,16 @@ impl Store {
             let vif_path = format!("{}.vif", base);
             if std::path::Path::new(&dat_path).exists() || std::path::Path::new(&vif_path).exists()
             {
+                // A persisting .note means the copy that produced these files
+                // never completed; mounting it would expose a truncated volume.
+                // Fail the mount so the caller (VolumeCopy) treats it as an error.
+                let note_path = format!("{}.note", base);
+                if std::path::Path::new(&note_path).exists() {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("volume {} copy incomplete: .note still present", vid),
+                    )));
+                }
                 return loc.create_volume(
                     vid,
                     collection,

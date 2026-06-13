@@ -439,6 +439,73 @@ func TestPickingMisplacedVolumeToDelete(t *testing.T) {
 
 }
 
+func TestPickOneReplicaToDeleteSkipsReadOnlySurvivor(t *testing.T) {
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromString("001")
+
+	// One writable replica and one read-only replica. The trim must never
+	// delete the only writable replica while the survivor is read-only:
+	// VolumeStatus alone cannot prove the read-only .dat is readable, so the
+	// trim is refused.
+	t.Run("refuses to delete the only writable replica while a read-only survivor remains", func(t *testing.T) {
+		replicas := []*VolumeReplica{
+			{
+				location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn-writable"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 90, ReadOnly: false},
+			},
+			{
+				location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn-readonly"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: true},
+			},
+		}
+		if got := pickOneReplicaToDelete(replicas, replicaPlacement); got != nil {
+			t.Fatalf("expected no replica to delete, got %s", got.location.dataNode.Id)
+		}
+	})
+
+	// All survivors read-only: never trim.
+	t.Run("refuses when all replicas are read-only", func(t *testing.T) {
+		replicas := []*VolumeReplica{
+			{
+				location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: true},
+			},
+			{
+				location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: true},
+			},
+		}
+		if got := pickOneReplicaToDelete(replicas, replicaPlacement); got != nil {
+			t.Fatalf("expected no replica to delete, got %s", got.location.dataNode.Id)
+		}
+	})
+
+	// Two healthy writable replicas plus a read-only one: trim the smallest
+	// writable, never the read-only one.
+	t.Run("trims the smallest writable replica and never the read-only one", func(t *testing.T) {
+		replicas := []*VolumeReplica{
+			{
+				location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn-big"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: false},
+			},
+			{
+				location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn-small"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 90, ReadOnly: false},
+			},
+			{
+				location: &location{"dc1", "r3", &master_pb.DataNodeInfo{Id: "dn-readonly"}},
+				info:     &master_pb.VolumeInformationMessage{Size: 80, ReadOnly: true},
+			},
+		}
+		got := pickOneReplicaToDelete(replicas, replicaPlacement)
+		if got == nil {
+			t.Fatalf("expected a writable replica to delete, got nil")
+		}
+		if got.location.dataNode.Id != "dn-small" {
+			t.Fatalf("expected to delete smallest writable dn-small, got %s", got.location.dataNode.Id)
+		}
+	})
+}
+
 func TestSatisfyReplicaCurrentLocation(t *testing.T) {
 
 	var tests = []testcase{
