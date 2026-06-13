@@ -3087,6 +3087,15 @@ impl VolumeServer for VolumeGrpcService {
             dat_path
         };
 
+        // Store the source .dat mtime, not the upload time, so a reload computes
+        // TTL from real data age (matches Go VolumeTierMoveDatToRemote).
+        let dat_modified_secs = std::fs::metadata(&dat_path)
+            .and_then(|m| m.modified())
+            .map_err(|e| Status::internal(format!("stat data file {}: {}", dat_path, e)))?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         // Look up the S3 tier backend
         let backend = {
             let registry = self.state.s3_tier_registry.read().unwrap();
@@ -3139,18 +3148,13 @@ impl VolumeServer for VolumeGrpcService {
                 {
                     let mut store = state.store.write().unwrap();
                     if let Some((_, vol)) = store.find_volume_mut(vid) {
-                        let now_unix = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-
                         vol.volume_info.files.push(volume_server_pb::RemoteFile {
                             backend_type: backend_type.clone(),
                             backend_id: backend_id.clone(),
                             key,
                             offset: 0,
                             file_size: size,
-                            modified_time: now_unix,
+                            modified_time: dat_modified_secs,
                             extension: ".dat".to_string(),
                         });
                         vol.refresh_remote_write_mode();
@@ -3201,7 +3205,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         // Validate volume and get remote storage info
-        let (dat_path, storage_name, storage_key) = {
+        let (dat_path, storage_name, storage_key, remote_modified_secs) = {
             let store = self.state.store.read().unwrap();
             let (_, vol) = store
                 .find_volume(vid)
@@ -3231,7 +3235,14 @@ impl VolumeServer for VolumeGrpcService {
                 )));
             }
 
-            (dat_path, storage_name, storage_key)
+            let remote_modified_secs = vol
+                .volume_info
+                .files
+                .first()
+                .map(|f| f.modified_time)
+                .unwrap_or(0);
+
+            (dat_path, storage_name, storage_key, remote_modified_secs)
         };
 
         // Look up the S3 tier backend
@@ -3278,6 +3289,12 @@ impl VolumeServer for VolumeGrpcService {
                             storage_name_clone, dat_path, e
                         ))
                     })?;
+
+                // Restore the .dat mtime so a reload computes TTL from real data age,
+                // not download time (matches Go VolumeTierMoveDatFromRemote).
+                if remote_modified_secs > 0 {
+                    set_file_mtime(&dat_path, (remote_modified_secs as i64) * 1_000_000_000);
+                }
 
                 if !keep_remote {
                     // Delete remote file
