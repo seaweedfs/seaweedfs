@@ -170,6 +170,15 @@ func TestVolumeTierMoveDatPreservesModifiedTime(t *testing.T) {
 		t.Fatalf("set source modified time: %v", err)
 	}
 
+	// Re-open the data backend so the DiskFile caches the on-disk mtime, the way
+	// a volume freshly loaded from disk does.
+	volume.DataBackend.Close()
+	reopened, err := os.OpenFile(dataFileName, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatalf("reopen data file: %v", err)
+	}
+	volume.DataBackend = backend.NewDiskFile(reopened)
+
 	volumeServer := &VolumeServer{store: store}
 	if err := volumeServer.VolumeTierMoveDatToRemote(
 		&volume_server_pb.VolumeTierMoveDatToRemoteRequest{
