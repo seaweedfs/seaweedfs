@@ -10,7 +10,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 // datOwnerInfo records both the disk that holds a .dat for a given
@@ -226,6 +225,26 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 // to forget the registrations the per-disk pass already emitted on
 // NewEcShardsChan during startup, instead of waiting for the first
 // periodic heartbeat to reconcile.
+// countEcShardsNodeWide returns the number of distinct EC shard ids for
+// (collection, vid) held across every disk on this store. A volume's shards
+// can be split across sibling disks (e.g. by ec.balance under a shared
+// -dir.idx); a per-disk count understates the set and would make a
+// node-wide-recoverable volume look like a partial leftover. The caller must
+// not hold any DiskLocation.ecVolumesLock when calling this (it takes them).
+func (s *Store) countEcShardsNodeWide(collection string, vid needle.VolumeId) int {
+	seen := make(map[erasure_coding.ShardId]struct{})
+	for _, loc := range s.Locations {
+		loc.ecVolumesLock.RLock()
+		if ev, ok := loc.ecVolumes[vid]; ok && ev.Collection == collection {
+			for _, sh := range ev.Shards {
+				seen[sh.ShardId] = struct{}{}
+			}
+		}
+		loc.ecVolumesLock.RUnlock()
+	}
+	return len(seen)
+}
+
 func (s *Store) pruneIncompleteEcWithSiblingDat() {
 	if len(s.Locations) < 2 {
 		return
@@ -267,16 +286,16 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 			if !hasDat || owner.location == loc {
 				continue
 			}
-			// Credible source size: prefer .vif's encode-time size; when
-			// unknown (0) require more than a bare superblock so an empty
-			// 8-byte stub (e.g. a phantom .dat) can't pass.
-			requiredDatSize := ev.DatFileSize()
-			if requiredDatSize <= 0 {
-				requiredDatSize = int64(super_block.SuperBlockSize) + 1
-			}
-			if owner.size < requiredDatSize {
-				glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards but sibling .dat on %s is %d bytes (need >= %d); leaving partial EC in place so distributed reconstruction is still possible",
-					vid, ev.Collection, loc.Directory, shardCount, owner.location.Directory, owner.size, requiredDatSize)
+			// Only a byte-exact committed source authorizes deleting these
+			// shards: the sibling .dat size must equal the size .vif recorded
+			// at encode time. An unknown (0) recorded size, or any mismatch
+			// (a stale or truncated .dat), cannot prove the .dat holds this
+			// volume's data, so the partial EC is left for distributed
+			// reconstruction.
+			datFileSize := ev.DatFileSize()
+			if datFileSize <= 0 || owner.size != datFileSize {
+				glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards; sibling .dat on %s is %d bytes but .vif recorded %d (need byte-exact match); leaving partial EC in place",
+					vid, ev.Collection, loc.Directory, shardCount, owner.location.Directory, owner.size, datFileSize)
 				continue
 			}
 			victims = append(victims, victim{
@@ -291,7 +310,17 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 		loc.ecVolumesLock.RUnlock()
 
 		for _, v := range victims {
-			glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards (need %d) while a healthy .dat exists on sibling disk %s; cleaning up leftover EC files (issue 9478)",
+			// Final node-wide guard: even with a credible sibling .dat, never
+			// prune when the volume's shards are independently recoverable
+			// across this node's disks (a set split over sibling disks summing
+			// to >= dataShards). Those shards may be sole copies of a
+			// distributed volume.
+			if nodeWide := s.countEcShardsNodeWide(v.collection, v.vid); nodeWide >= v.dataShards {
+				glog.Warningf("ec volume %d (collection=%q): %d shards present node-wide (>= %d) are independently recoverable; leaving EC in place despite a sibling .dat",
+					v.vid, v.collection, nodeWide, v.dataShards)
+				continue
+			}
+			glog.Warningf("ec volume %d (collection=%q) on %s has only %d shards (need %d) while a byte-exact source .dat exists on sibling disk %s; cleaning up leftover EC files",
 				v.vid, v.collection, loc.Directory, v.shardCount, v.dataShards, v.datDir)
 			loc.unloadEcVolume(v.vid)
 			loc.removeEcVolumeFiles(v.collection, v.vid)
