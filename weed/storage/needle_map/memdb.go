@@ -118,7 +118,11 @@ func (cm *MemDb) SaveToIdx(idxName string) (ret error) {
 		return
 	}
 	defer func() {
-		idxFile.Sync()
+		// The .cpx generated here is renamed to .idx at commit, so a discarded
+		// fsync error could leave a partially-written index after a crash.
+		if syncErr := idxFile.Sync(); syncErr != nil && ret == nil {
+			ret = syncErr
+		}
 		idxFile.Close()
 	}()
 

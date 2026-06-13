@@ -117,8 +117,14 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
 		return err
 	} else {
+		// A watermark past the end of the .idx means the .ldb is stale relative
+		// to the index it must mirror (e.g. an interrupted compaction left the
+		// old .ldb beside a freshly swapped, shorter .idx). Trusting it would
+		// replay zero entries and silently poison the needle map, so rebuild
+		// from offset 0 instead.
 		if watermark*NeedleMapEntrySize > uint64(stat.Size()) {
-			glog.Warningf("wrong watermark %d for filesize %d", watermark, stat.Size())
+			glog.Warningf("stale watermark %d for %s (filesize %d); rebuilding leveldb from start", watermark, dbFileName, stat.Size())
+			watermark = 0
 		}
 		glog.V(1).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*NeedleMapEntrySize)/NeedleMapEntrySize)
 	}

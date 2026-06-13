@@ -10,7 +10,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::config::MinFreeSpace;
 use crate::storage::erasure_coding::ec_shard::{
@@ -106,6 +106,12 @@ impl DiskLocation {
             fs::create_dir_all(&self.idx_directory)?;
         }
 
+        // Recover any interrupted compaction commit before the volume scan. This
+        // must run here, not inside the .dat loop: that loop is keyed on .dat
+        // files and would miss the marker-only or already-renamed-.idx states a
+        // mid-commit crash can leave behind.
+        self.reconcile_compact_states();
+
         // Scan for .dat files
         let entries = fs::read_dir(&self.directory)?;
         let mut dat_files: Vec<(String, VolumeId)> = Vec::new();
@@ -124,19 +130,6 @@ impl DiskLocation {
         for (collection, vid) in dat_files {
             let volume_name = volume_file_name(&self.directory, &collection, vid);
             let idx_name = volume_file_name(&self.idx_directory, &collection, vid);
-
-            // Check for incomplete volume (.note file means a VolumeCopy was interrupted)
-            let note_path = format!("{}.note", volume_name);
-            if std::path::Path::new(&note_path).exists() {
-                let note = fs::read_to_string(&note_path).unwrap_or_default();
-                warn!(
-                    volume_id = vid.0,
-                    "volume was not completed: {}, removing files", note
-                );
-                remove_volume_files(&volume_name, false);
-                remove_volume_files(&idx_name, false);
-                continue;
-            }
 
             // Sweep a leftover empty `.dat` stub (a phantom from the pre-fix
             // loader) before it loads as a phantom volume or blocks startup.
@@ -169,17 +162,27 @@ impl DiskLocation {
                 }
             }
 
-            // Clean up stale compaction temp files
-            let cpd_path = format!("{}.cpd", volume_name);
-            let cpx_path = format!("{}.cpx", idx_name);
-            if std::path::Path::new(&cpd_path).exists() {
-                info!(volume_id = vid.0, "removing stale compaction file .cpd");
-                let _ = fs::remove_file(&cpd_path);
+            // Check for an incomplete volume (.note means a VolumeCopy was
+            // interrupted). This runs BELOW the empty-stub sweep and EC
+            // validation: when an .ecx for this vid coexists on the disk, the
+            // regular and EC volumes share <base>.vif, so removing the
+            // incomplete regular copy must keep the .vif (keep_vif=true) or it
+            // would strip the EC volume's info file.
+            let note_path = format!("{}.note", volume_name);
+            if std::path::Path::new(&note_path).exists() {
+                let note = fs::read_to_string(&note_path).unwrap_or_default();
+                warn!(
+                    volume_id = vid.0,
+                    "volume was not completed: {}, removing files", note
+                );
+                let keep_vif = ecx_exists;
+                remove_volume_files(&volume_name, keep_vif);
+                remove_volume_files(&idx_name, keep_vif);
+                continue;
             }
-            if std::path::Path::new(&cpx_path).exists() {
-                info!(volume_id = vid.0, "removing stale compaction file .cpx");
-                let _ = fs::remove_file(&cpx_path);
-            }
+
+            // Stale .cpd/.cpx temp files were already rolled forward or back by
+            // the reconcile_compact_states pre-pass above.
 
             // Skip if already loaded (e.g., from a previous call)
             if self.volumes.contains_key(&vid) {
@@ -240,6 +243,41 @@ impl DiskLocation {
         }
 
         Ok(())
+    }
+
+    /// Directory pre-pass that recovers interrupted compaction commits. Collects
+    /// every volume id that still has a .cpc commit marker or a leftover
+    /// .cpd/.cpx temp file across the data and idx directories, then rolls the
+    /// swap forward (marker present) or back (marker absent) per volume.
+    fn reconcile_compact_states(&self) {
+        let mut pending: HashSet<(String, VolumeId)> = HashSet::new();
+        let mut collect = |dir: &str| {
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().into_string().unwrap_or_default();
+                    let stem = name
+                        .strip_suffix(".cpc")
+                        .or_else(|| name.strip_suffix(".cpd"))
+                        .or_else(|| name.strip_suffix(".cpx"));
+                    if let Some(stem) = stem {
+                        if let Some(key) = parse_collection_volume_id(stem) {
+                            pending.insert(key);
+                        }
+                    }
+                }
+            }
+        };
+        collect(&self.directory);
+        if self.idx_directory != self.directory {
+            collect(&self.idx_directory);
+        }
+
+        for (collection, vid) in pending {
+            let v = Volume::new_unloaded(&self.directory, &self.idx_directory, &collection, vid);
+            if let Err(e) = v.reconcile_compact_state() {
+                warn!(volume_id = vid.0, error = %e, "reconcile interrupted compaction failed");
+            }
+        }
     }
 
     /// Validate EC volume shards: all shards must be same size, and if .dat exists,
@@ -1142,15 +1180,7 @@ fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
         .strip_suffix(".dat")
         .or_else(|| filename.strip_suffix(".vif"))
         .or_else(|| filename.strip_suffix(".idx"))?;
-    if let Some(pos) = stem.rfind('_') {
-        let collection = &stem[..pos];
-        let id_str = &stem[pos + 1..];
-        let id: u32 = id_str.parse().ok()?;
-        Some((collection.to_string(), VolumeId(id)))
-    } else {
-        let id: u32 = stem.parse().ok()?;
-        Some((String::new(), VolumeId(id)))
-    }
+    parse_collection_volume_id(stem)
 }
 
 // ============================================================================

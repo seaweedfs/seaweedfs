@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -198,30 +199,21 @@ func (v *Volume) CommitCompact() error {
 			return e
 		}
 	} else {
-		if runtime.GOOS == "windows" {
-			e = os.RemoveAll(v.FileName(".dat"))
-			if e != nil {
-				return e
-			}
-			e = os.RemoveAll(v.FileName(".idx"))
-			if e != nil {
-				return e
-			}
+		// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
+		// commit marker BEFORE renaming so the two renames are atomic across a
+		// crash: a marker on disk means the swap is decided and reconcile rolls
+		// forward; no marker means roll back. Without it, a crash between the
+		// two renames leaves a stale .idx that a later vacuum compacts to empty.
+		if e = v.writeCompactCommitMarker(); e != nil {
+			return e
 		}
-		var e error
-		if e = os.Rename(v.FileName(".cpd"), v.FileName(".dat")); e != nil {
-			return fmt.Errorf("rename %s: %v", v.FileName(".cpd"), e)
-		}
-		if e = os.Rename(v.FileName(".cpx"), v.FileName(".idx")); e != nil {
-			return fmt.Errorf("rename %s: %v", v.FileName(".cpx"), e)
+		if e = v.applyCompactSwap(); e != nil {
+			return e
 		}
 	}
 
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
-
-	os.RemoveAll(v.FileName(".ldb"))
-	os.Remove(v.FileName(".rdb"))
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
 	if e = v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
@@ -231,12 +223,133 @@ func (v *Volume) CommitCompact() error {
 	return nil
 }
 
+// writeCompactCommitMarker writes and fsyncs the .cpc marker, then fsyncs the
+// directory so the marker's existence survives a crash before applyCompactSwap.
+func (v *Volume) writeCompactCommitMarker() error {
+	markerPath := v.FileName(".cpc")
+	f, err := os.OpenFile(markerPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("create commit marker %s: %v", markerPath, err)
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("sync commit marker %s: %v", markerPath, err)
+	}
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("close commit marker %s: %v", markerPath, err)
+	}
+	return fsyncDir(filepath.Dir(markerPath))
+}
+
+// applyCompactSwap performs the durable two-rename compaction commit. It is
+// idempotent and is run both at the tail of CommitCompact and by
+// reconcileCompactState rolling forward after a crash. It requires the .cpc
+// marker and BOTH .cpd/.cpx to be present, so a stale or duplicate commit
+// returns an error without deleting the live .dat/.idx.
+func (v *Volume) applyCompactSwap() error {
+	cpdPath := v.FileName(".cpd")
+	cpxPath := v.FileName(".cpx")
+	if !util.FileExists(cpdPath) || !util.FileExists(cpxPath) {
+		return fmt.Errorf("volume %d compact swap aborted: missing .cpd/.cpx", v.Id)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Windows cannot rename over an existing file; remove the targets only
+		// after the guard above confirms the replacements are present.
+		if e := os.RemoveAll(v.FileName(".dat")); e != nil {
+			return e
+		}
+		if e := os.RemoveAll(v.FileName(".idx")); e != nil {
+			return e
+		}
+	}
+	if e := os.Rename(cpdPath, v.FileName(".dat")); e != nil {
+		return fmt.Errorf("rename %s: %v", cpdPath, e)
+	}
+	if e := os.Rename(cpxPath, v.FileName(".idx")); e != nil {
+		return fmt.Errorf("rename %s: %v", cpxPath, e)
+	}
+	if e := fsyncDir(filepath.Dir(v.FileName(".dat"))); e != nil {
+		return e
+	}
+	if v.dir != v.dirIdx {
+		if e := fsyncDir(filepath.Dir(v.FileName(".idx"))); e != nil {
+			return e
+		}
+	}
+
+	// A stale .ldb/.rdb mirrors the old .idx; remove it as part of the swap so
+	// it can never poison the needle map built from the freshly renamed .idx.
+	os.RemoveAll(v.FileName(".ldb"))
+	os.Remove(v.FileName(".rdb"))
+
+	// The swap is now durable; clear the marker last and fsync the dir so a
+	// later restart does not re-run a completed swap.
+	if e := os.Remove(v.FileName(".cpc")); e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	return fsyncDir(filepath.Dir(v.FileName(".cpc")))
+}
+
+// reconcileCompactState recovers an interrupted compaction commit on load. When
+// the .cpc marker is present the swap was decided, so roll FORWARD by finishing
+// the renames; when it is absent any leftover .cpd/.cpx are an abandoned
+// generation, so roll BACK by deleting them (and any stale .ldb left next to a
+// healthy .idx). It is keyed only on .cpc/.cpd existence so a crash that left
+// just the marker, or an already-renamed .idx, is still handled.
+func (v *Volume) reconcileCompactState() error {
+	cpcPath := v.FileName(".cpc")
+	if util.FileExists(cpcPath) {
+		if util.FileExists(v.FileName(".cpd")) && util.FileExists(v.FileName(".cpx")) {
+			glog.V(0).Infof("volume %d: rolling forward interrupted compaction commit", v.Id)
+			return v.applyCompactSwap()
+		}
+		// The marker outlived its .cpd/.cpx: the swap already finished but the
+		// final marker removal did not. Clear it so we do not loop on reload.
+		glog.V(0).Infof("volume %d: clearing orphan commit marker (swap already applied)", v.Id)
+		if e := os.Remove(cpcPath); e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		return nil
+	}
+
+	// No marker: roll back any orphan compaction temp files.
+	rolledBack := false
+	for _, ext := range []string{".cpd", ".cpx"} {
+		p := v.FileName(ext)
+		if util.FileExists(p) {
+			glog.V(0).Infof("volume %d: rolling back orphan compaction file %s", v.Id, ext)
+			if e := os.Remove(p); e != nil && !os.IsNotExist(e) {
+				return e
+			}
+			rolledBack = true
+		}
+	}
+	if rolledBack {
+		// A stale .ldb may mirror an .idx that never got swapped; drop it so the
+		// reload rebuilds the needle map from the surviving .idx.
+		os.RemoveAll(v.FileName(".ldb"))
+		os.Remove(v.FileName(".rdb"))
+	}
+	return nil
+}
+
 func (v *Volume) cleanupCompact() error {
 	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
+
+	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
+	// .cpc marker exists: those temp files are the only inputs reconcile can roll
+	// forward to, so removing them mid-commit would strand a decided swap.
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if util.FileExists(v.FileName(".cpc")) {
+		return fmt.Errorf("volume %d: refusing cleanup while commit marker present", v.Id)
+	}
 
 	e1 := os.Remove(v.FileName(".cpd"))
 	e2 := os.Remove(v.FileName(".cpx"))
 	e3 := os.RemoveAll(v.FileName(".cpldb"))
+	e4 := os.Remove(v.FileName(".cpc"))
 	if e1 != nil && !os.IsNotExist(e1) {
 		return e1
 	}
@@ -245,6 +358,24 @@ func (v *Volume) cleanupCompact() error {
 	}
 	if e3 != nil && !os.IsNotExist(e3) {
 		return e3
+	}
+	if e4 != nil && !os.IsNotExist(e4) {
+		return e4
+	}
+	return nil
+}
+
+// fsyncDir fsyncs a directory so a rename/create/unlink inside it is durable.
+// A failure to open the directory for sync is non-fatal on platforms that do
+// not support it.
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer d.Close()
+	if err = d.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
+		return fmt.Errorf("sync dir %s: %v", dir, err)
 	}
 	return nil
 }
@@ -332,7 +463,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	}
 
 	defer func() {
-		idx.Sync()
+		// makeupDiff appends new needles/tombstones to the .cpx; its fsync is the
+		// durability gate that must succeed before CommitCompact writes the .cpc
+		// marker and swaps the files.
+		if syncErr := idx.Sync(); syncErr != nil && err == nil {
+			err = fmt.Errorf("sync idx %s: %v", newIdxFileName, syncErr)
+		}
 		idx.Close()
 	}()
 
@@ -491,8 +627,13 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		return err
 	}
 	defer func() {
-		dstDatBackend.Sync()
-		dstDatBackend.Close()
+		// DiskFile.Close performs the final fsync, so its error is the durability
+		// signal for the .cpd contents. Surface it (only when no earlier error is
+		// already being returned) so a failed flush aborts the compaction instead
+		// of leaving a half-written .cpd that CommitCompact would rename live.
+		if closeErr := dstDatBackend.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close compacted dat %s: %v", opts.destDatPath, closeErr)
+		}
 	}()
 
 	oldNm := needle_map.NewMemDb()
@@ -614,7 +755,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		return err
 	}
 	defer func() {
-		indexFile.Sync()
+		if syncErr := indexFile.Sync(); syncErr != nil && err == nil {
+			err = fmt.Errorf("sync compacted idx %s: %v", opts.destIdxPath, syncErr)
+		}
 		indexFile.Close()
 	}()
 	if v.tmpNm != nil {
