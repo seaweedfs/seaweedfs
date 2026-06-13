@@ -181,7 +181,12 @@ impl DiskLocation {
                     volume_id = vid.0,
                     "volume was not completed: {}, removing files", note
                 );
-                let keep_vif = ecx_exists;
+                // Re-check .ecx now (not the pre-validation ecx_exists): the
+                // invalid-EC cleanup above may have removed it, in which case
+                // the .vif is no longer shared and must not be preserved.
+                let keep_vif = std::path::Path::new(&ecx_path).exists()
+                    || (self.idx_directory != self.directory
+                        && std::path::Path::new(&format!("{}.ecx", volume_name)).exists());
                 remove_volume_files(&volume_name, keep_vif);
                 remove_volume_files(&idx_name, keep_vif);
                 continue;
