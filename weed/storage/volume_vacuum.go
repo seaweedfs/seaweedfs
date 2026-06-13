@@ -247,44 +247,60 @@ func (v *Volume) writeCompactCommitMarker() error {
 // marker and BOTH .cpd/.cpx to be present, so a stale or duplicate commit
 // returns an error without deleting the live .dat/.idx.
 func (v *Volume) applyCompactSwap() error {
-	cpdPath := v.FileName(".cpd")
-	cpxPath := v.FileName(".cpx")
-	if !util.FileExists(cpdPath) || !util.FileExists(cpxPath) {
+	// Normal commit: both temp files must be present, or a stale/duplicate
+	// commit could clobber the live .dat/.idx.
+	if !util.FileExists(v.FileName(".cpd")) || !util.FileExists(v.FileName(".cpx")) {
 		return fmt.Errorf("volume %d compact swap aborted: missing .cpd/.cpx", v.Id)
 	}
+	return v.finishCompactSwap()
+}
 
-	if runtime.GOOS == "windows" {
-		// Windows cannot rename over an existing file; remove the targets only
-		// after the guard above confirms the replacements are present.
-		if e := os.RemoveAll(v.FileName(".dat")); e != nil {
-			return e
+// finishCompactSwap renames whichever compaction temp file is still present
+// (.cpd->.dat, .cpx->.idx), fsyncs, drops the stale .ldb/.rdb, then clears the
+// .cpc marker. It tolerates a partial state: a crash after the .dat rename but
+// before the .idx rename leaves only .cpx, which must still be applied -- not
+// abandoned, which would pair a fresh .dat with a stale .idx.
+func (v *Volume) finishCompactSwap() error {
+	cpdExists := util.FileExists(v.FileName(".cpd"))
+	cpxExists := util.FileExists(v.FileName(".cpx"))
+
+	if cpdExists {
+		if runtime.GOOS == "windows" {
+			if e := os.RemoveAll(v.FileName(".dat")); e != nil {
+				return e
+			}
 		}
-		if e := os.RemoveAll(v.FileName(".idx")); e != nil {
-			return e
-		}
-	}
-	if e := os.Rename(cpdPath, v.FileName(".dat")); e != nil {
-		return fmt.Errorf("rename %s: %v", cpdPath, e)
-	}
-	if e := os.Rename(cpxPath, v.FileName(".idx")); e != nil {
-		return fmt.Errorf("rename %s: %v", cpxPath, e)
-	}
-	if e := fsyncDir(filepath.Dir(v.FileName(".dat"))); e != nil {
-		return e
-	}
-	if v.dir != v.dirIdx {
-		if e := fsyncDir(filepath.Dir(v.FileName(".idx"))); e != nil {
-			return e
+		if e := os.Rename(v.FileName(".cpd"), v.FileName(".dat")); e != nil {
+			return fmt.Errorf("rename %s: %v", v.FileName(".cpd"), e)
 		}
 	}
+	if cpxExists {
+		if runtime.GOOS == "windows" {
+			if e := os.RemoveAll(v.FileName(".idx")); e != nil {
+				return e
+			}
+		}
+		if e := os.Rename(v.FileName(".cpx"), v.FileName(".idx")); e != nil {
+			return fmt.Errorf("rename %s: %v", v.FileName(".cpx"), e)
+		}
+	}
+	if cpdExists || cpxExists {
+		if e := fsyncDir(filepath.Dir(v.FileName(".dat"))); e != nil {
+			return e
+		}
+		if v.dir != v.dirIdx {
+			if e := fsyncDir(filepath.Dir(v.FileName(".idx"))); e != nil {
+				return e
+			}
+		}
+		// A stale .ldb/.rdb mirrors the old .idx; remove it so it can never
+		// poison the needle map built from the freshly renamed .idx.
+		os.RemoveAll(v.FileName(".ldb"))
+		os.Remove(v.FileName(".rdb"))
+	}
 
-	// A stale .ldb/.rdb mirrors the old .idx; remove it as part of the swap so
-	// it can never poison the needle map built from the freshly renamed .idx.
-	os.RemoveAll(v.FileName(".ldb"))
-	os.Remove(v.FileName(".rdb"))
-
-	// The swap is now durable; clear the marker last and fsync the dir so a
-	// later restart does not re-run a completed swap.
+	// Clear the marker last and fsync the dir so a restart does not re-run a
+	// completed swap.
 	if e := os.Remove(v.FileName(".cpc")); e != nil && !os.IsNotExist(e) {
 		return e
 	}
@@ -300,17 +316,12 @@ func (v *Volume) applyCompactSwap() error {
 func (v *Volume) reconcileCompactState() error {
 	cpcPath := v.FileName(".cpc")
 	if util.FileExists(cpcPath) {
-		if util.FileExists(v.FileName(".cpd")) && util.FileExists(v.FileName(".cpx")) {
-			glog.V(0).Infof("volume %d: rolling forward interrupted compaction commit", v.Id)
-			return v.applyCompactSwap()
-		}
-		// The marker outlived its .cpd/.cpx: the swap already finished but the
-		// final marker removal did not. Clear it so we do not loop on reload.
-		glog.V(0).Infof("volume %d: clearing orphan commit marker (swap already applied)", v.Id)
-		if e := os.Remove(cpcPath); e != nil && !os.IsNotExist(e) {
-			return e
-		}
-		return nil
+		// Marker present: the swap was decided. Finish whichever rename is
+		// still pending -- a crash may have completed only the .dat rename, so
+		// the lone remaining .cpx must still be applied, not abandoned. If
+		// neither temp file remains, finishCompactSwap just clears the marker.
+		glog.V(0).Infof("volume %d: rolling forward interrupted compaction commit", v.Id)
+		return v.finishCompactSwap()
 	}
 
 	// No marker: roll back any orphan compaction temp files.

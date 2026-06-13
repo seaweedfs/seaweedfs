@@ -2962,39 +2962,61 @@ impl Volume {
     /// requires BOTH .cpd/.cpx to be present, so a stale or duplicate commit
     /// returns an error without deleting the live .dat/.idx.
     fn apply_compact_swap(&self) -> Result<(), VolumeError> {
-        let cpd_path = self.file_name(".cpd");
-        let cpx_path = self.file_name(".cpx");
-        let dat_path = self.file_name(".dat");
-        let idx_path = self.file_name(".idx");
-
-        if !Path::new(&cpd_path).exists() || !Path::new(&cpx_path).exists() {
+        // Normal commit: both temp files must be present, or a stale/duplicate
+        // commit could clobber the live .dat/.idx.
+        if !Path::new(&self.file_name(".cpd")).exists()
+            || !Path::new(&self.file_name(".cpx")).exists()
+        {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::NotFound,
                 "compact files (.cpd/.cpx) not found",
             )));
         }
+        self.finish_compact_swap()
+    }
 
-        // Windows cannot rename over an existing file; remove the targets only
-        // after the guard above confirms the replacements are present.
-        #[cfg(windows)]
-        {
-            let _ = fs::remove_file(&dat_path);
-            let _ = fs::remove_file(&idx_path);
+    /// Renames whichever compaction temp file is still present (.cpd->.dat,
+    /// .cpx->.idx), fsyncs, drops the stale .ldb/.rdb, then clears the .cpc
+    /// marker. Tolerates a partial state: a crash after the .dat rename but
+    /// before the .idx rename leaves only .cpx, which must still be applied --
+    /// not abandoned, which would pair a fresh .dat with a stale .idx. Existence
+    /// is checked robustly so a transient error never silently skips the swap.
+    fn finish_compact_swap(&self) -> Result<(), VolumeError> {
+        let exists = |p: String| match fs::metadata(&p) {
+            Ok(_) => true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+            Err(_) => true,
+        };
+        let dat_path = self.file_name(".dat");
+        let idx_path = self.file_name(".idx");
+        let cpd_exists = exists(self.file_name(".cpd"));
+        let cpx_exists = exists(self.file_name(".cpx"));
+
+        if cpd_exists {
+            #[cfg(windows)]
+            {
+                let _ = fs::remove_file(&dat_path);
+            }
+            fs::rename(self.file_name(".cpd"), &dat_path)?;
+        }
+        if cpx_exists {
+            #[cfg(windows)]
+            {
+                let _ = fs::remove_file(&idx_path);
+            }
+            fs::rename(self.file_name(".cpx"), &idx_path)?;
+        }
+        if cpd_exists || cpx_exists {
+            fsync_dir(&dat_path);
+            if self.dir != self.dir_idx {
+                fsync_dir(&idx_path);
+            }
+            let _ = fs::remove_dir_all(self.file_name(".ldb"));
+            let _ = fs::remove_file(self.file_name(".rdb"));
         }
 
-        fs::rename(&cpd_path, &dat_path)?;
-        fs::rename(&cpx_path, &idx_path)?;
-        fsync_dir(&dat_path);
-        if self.dir != self.dir_idx {
-            fsync_dir(&idx_path);
-        }
-
-        // A stale .ldb/.rdb mirrors the old .idx; remove it as part of the swap
-        // so it can never poison the index built from the freshly renamed .idx.
-        let _ = fs::remove_dir_all(self.file_name(".ldb"));
-        let _ = fs::remove_file(self.file_name(".rdb"));
-
-        // The swap is now durable; clear the marker last and fsync the dir.
+        // Clear the marker last and fsync the dir so a restart does not re-run a
+        // completed swap.
         let marker_path = self.file_name(".cpc");
         match fs::remove_file(&marker_path) {
             Ok(()) => {}
@@ -3012,27 +3034,15 @@ impl Volume {
     pub fn reconcile_compact_state(&self) -> Result<(), VolumeError> {
         let cpc_path = self.file_name(".cpc");
         if Path::new(&cpc_path).exists() {
-            if Path::new(&self.file_name(".cpd")).exists()
-                && Path::new(&self.file_name(".cpx")).exists()
-            {
-                tracing::info!(
-                    volume_id = self.id.0,
-                    "rolling forward interrupted compaction commit"
-                );
-                return self.apply_compact_swap();
-            }
-            // Marker outlived its .cpd/.cpx: swap already finished but the final
-            // marker removal did not. Clear it so we do not loop on reload.
+            // Marker present: the swap was decided. Finish whichever rename is
+            // still pending -- a crash may have completed only the .dat rename,
+            // so the lone remaining .cpx must still be applied, not abandoned.
+            // If neither temp file remains, finish_compact_swap clears the marker.
             tracing::info!(
                 volume_id = self.id.0,
-                "clearing orphan commit marker (swap already applied)"
+                "rolling forward interrupted compaction commit"
             );
-            match fs::remove_file(&cpc_path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-            return Ok(());
+            return self.finish_compact_swap();
         }
 
         // No marker: roll back any orphan compaction temp files.

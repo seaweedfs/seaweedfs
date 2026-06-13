@@ -104,6 +104,74 @@ func TestReconcileRollForwardMarkerOnly(t *testing.T) {
 	}
 }
 
+// A crash AFTER .cpd->.dat but BEFORE .cpx->.idx leaves a compacted .dat, a
+// stale .idx, and only .cpx + .cpc. The roll-forward must finish the pending
+// .cpx->.idx rename, not abandon it -- abandoning pairs the fresh .dat with the
+// stale .idx, which is index corruption.
+func TestReconcileRollForwardPartialRename(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapLevelDb, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	const liveCount = 6
+	for i := uint64(1); i <= liveCount; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	for _, id := range []uint64{2, 5} {
+		if _, err := v.deleteNeedle2(newEmptyNeedle(id)); err != nil {
+			t.Fatalf("delete %d: %v", id, err)
+		}
+	}
+	expectedLive := uint64(liveCount - 2)
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact by index: %v", err)
+	}
+	v.Close()
+
+	cpd := filepath.Join(dir, "1.cpd")
+	cpx := filepath.Join(dir, "1.cpx")
+	cpc := filepath.Join(dir, "1.cpc")
+	datPath := filepath.Join(dir, "1.dat")
+	idxPath := filepath.Join(dir, "1.idx")
+
+	// Crash after the .dat rename committed but before the .idx one: .cpd has
+	// become .dat, the stale pre-compact .idx survives, .cpx and the marker remain.
+	os.RemoveAll(filepath.Join(dir, "1.ldb"))
+	if err := os.Remove(datPath); err != nil {
+		t.Fatalf("remove stale dat: %v", err)
+	}
+	if err := os.Rename(cpd, datPath); err != nil {
+		t.Fatalf("rename cpd->dat: %v", err)
+	}
+	if err := os.WriteFile(cpc, nil, 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	mustNotExist(t, cpd)
+	mustExist(t, cpx)
+	mustExist(t, idxPath)
+
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
+	defer location.Close()
+	location.loadExistingVolumes(NeedleMapLevelDb, 0)
+
+	mustNotExist(t, cpx)
+	mustNotExist(t, cpc)
+	mustExist(t, datPath)
+	mustExist(t, idxPath)
+
+	reloaded, found := location.FindVolume(needle.VolumeId(1))
+	if !found {
+		t.Fatalf("volume not loaded after partial roll-forward")
+	}
+	if got := reloaded.FileCount(); got != expectedLive {
+		t.Fatalf("volume has %d needles, want compacted count %d (pending .cpx->.idx was not rolled forward)", got, expectedLive)
+	}
+}
+
 // With no .cpc marker, leftover .cpd/.cpx are an abandoned generation. The
 // pre-pass must roll BACK by deleting them, leaving the live .dat/.idx intact.
 func TestReconcileRollBackNoMarker(t *testing.T) {
