@@ -355,6 +355,11 @@ func fakeContentRequest(orig *http.Request, body io.ReadCloser, contentLength in
 	return cloned
 }
 
+// copyObjectPartViaReencryption is the UploadPartCopy slow path: it re-streams the
+// source range through putToFiler so the destination's SSE re-encryption and/or
+// requested checksum are produced on write. A raw chunk copy can't: it would leave
+// dest chunks under the source key (corrupt GET) and parts with no checksum
+// (completion fails).
 func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	r *http.Request,
 	srcEntry *filer_pb.Entry,
