@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -28,6 +29,7 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	if storageName == "" || storageKey == "" {
 		return fmt.Errorf("volume %d is already on local disk", req.VolumeId)
 	}
+	remoteFileModifiedTime := v.GetVolumeInfo().GetFiles()[0].GetModifiedTime()
 
 	// check whether the local .dat already exists
 	_, ok := v.DataBackend.(*backend.DiskFile)
@@ -61,6 +63,12 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	_, err := backendStorage.DownloadFile(v.FileName(".dat"), storageKey, fn)
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", storageName, v.FileName(".dat"), err)
+	}
+	if remoteFileModifiedTime > 0 {
+		modifiedTime := time.Unix(int64(remoteFileModifiedTime), 0)
+		if err := os.Chtimes(v.FileName(".dat"), time.Now(), modifiedTime); err != nil {
+			return fmt.Errorf("restore data file %s modified time: %v", v.FileName(".dat"), err)
+		}
 	}
 
 	if req.KeepRemoteDatFile {
