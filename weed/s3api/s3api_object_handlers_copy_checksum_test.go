@@ -30,6 +30,18 @@ func TestApplyDestChecksumHeaderToCopyRequest(t *testing.T) {
 	if headerName != s3_constants.AmzChecksumCRC64NVME {
 		t.Fatalf("header = %q, want %q", headerName, s3_constants.AmzChecksumCRC64NVME)
 	}
+
+	for _, noChecksum := range []*filer_pb.Entry{
+		nil,
+		{},
+		{Extended: map[string][]byte{s3_constants.ExtChecksumAlgorithm: []byte("unknown")}},
+	} {
+		req := httptest.NewRequest(http.MethodPut, "http://example.com/bucket/object", nil)
+		applyDestChecksumHeaderToCopyRequest(req, noChecksum)
+		if got := req.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+			t.Fatalf("expected no checksum header, got %q", got)
+		}
+	}
 }
 
 func TestUploadEntryHasChecksum(t *testing.T) {
@@ -43,6 +55,10 @@ func TestUploadEntryHasChecksum(t *testing.T) {
 	entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte("unknown")
 	if uploadEntryHasChecksum(entry) {
 		t.Fatal("unknown checksum algorithm was accepted")
+	}
+
+	if uploadEntryHasChecksum(nil) || uploadEntryHasChecksum(&filer_pb.Entry{}) {
+		t.Fatal("nil entry or nil Extended map reported a checksum")
 	}
 }
 
@@ -94,6 +110,12 @@ func TestBuildCopyPartResult(t *testing.T) {
 				ETag: "etag", LastModified: modified, ChecksumSHA256: "value",
 			},
 		},
+		{
+			name:     "Unknown",
+			header:   "x-amz-checksum-unknown",
+			element:  "",
+			expected: CopyPartResult{ETag: "etag", LastModified: modified},
+		},
 	}
 
 	for _, test := range tests {
@@ -105,7 +127,7 @@ func TestBuildCopyPartResult(t *testing.T) {
 			if result != test.expected {
 				t.Fatalf("result = %#v, want %#v", result, test.expected)
 			}
-			if encoded := string(s3err.EncodeXMLResponse(result)); !strings.Contains(encoded, test.element) {
+			if encoded := string(s3err.EncodeXMLResponse(result)); test.element != "" && !strings.Contains(encoded, test.element) {
 				t.Fatalf("response %q does not contain %q", encoded, test.element)
 			}
 		})
