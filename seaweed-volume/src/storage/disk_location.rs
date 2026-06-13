@@ -131,6 +131,19 @@ impl DiskLocation {
             let volume_name = volume_file_name(&self.directory, &collection, vid);
             let idx_name = volume_file_name(&self.idx_directory, &collection, vid);
 
+            // Check for incomplete volume (.note file means a VolumeCopy was interrupted)
+            let note_path = format!("{}.note", volume_name);
+            if std::path::Path::new(&note_path).exists() {
+                let note = fs::read_to_string(&note_path).unwrap_or_default();
+                warn!(
+                    volume_id = vid.0,
+                    "volume was not completed: {}, removing files", note
+                );
+                remove_volume_files(&volume_name, false);
+                remove_volume_files(&idx_name, false);
+                continue;
+            }
+
             // Sweep a leftover empty `.dat` stub (a phantom from the pre-fix
             // loader) before it loads as a phantom volume or blocks startup.
             if remove_empty_ec_dat_stub(&volume_name, &idx_name, vid) {
@@ -160,25 +173,6 @@ impl DiskLocation {
                     self.remove_ec_volume_files(&collection, vid);
                     // Fall through to load .dat file
                 }
-            }
-
-            // Check for an incomplete volume (.note means a VolumeCopy was
-            // interrupted). This runs BELOW the empty-stub sweep and EC
-            // validation: when an .ecx for this vid coexists on the disk, the
-            // regular and EC volumes share <base>.vif, so removing the
-            // incomplete regular copy must keep the .vif (keep_vif=true) or it
-            // would strip the EC volume's info file.
-            let note_path = format!("{}.note", volume_name);
-            if std::path::Path::new(&note_path).exists() {
-                let note = fs::read_to_string(&note_path).unwrap_or_default();
-                warn!(
-                    volume_id = vid.0,
-                    "volume was not completed: {}, removing files", note
-                );
-                let keep_vif = ecx_exists;
-                remove_volume_files(&volume_name, keep_vif);
-                remove_volume_files(&idx_name, keep_vif);
-                continue;
             }
 
             // Stale .cpd/.cpx temp files were already rolled forward or back by
@@ -273,6 +267,14 @@ impl DiskLocation {
         }
 
         for (collection, vid) in pending {
+            // On a runtime reload (SIGHUP), an already-loaded volume may be
+            // mid-vacuum: its .cpd/.cpx are live, not crash leftovers, and
+            // rolling them back would clobber the in-flight compaction. Only
+            // reconcile vids not currently loaded; genuine startup recovery
+            // runs before any volume is loaded.
+            if self.volumes.contains_key(&vid) {
+                continue;
+            }
             let v = Volume::new_unloaded(&self.directory, &self.idx_directory, &collection, vid);
             if let Err(e) = v.reconcile_compact_state() {
                 warn!(volume_id = vid.0, error = %e, "reconcile interrupted compaction failed");

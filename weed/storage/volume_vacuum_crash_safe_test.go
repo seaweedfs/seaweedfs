@@ -149,6 +149,47 @@ func TestReconcileRollBackNoMarker(t *testing.T) {
 	}
 }
 
+// A runtime reload (SIGHUP -> LoadNewVolumes -> reconcileCompactStates) must
+// NOT roll back an in-flight vacuum of an already-loaded volume: its .cpd/.cpx
+// are live, not crash leftovers. The pre-pass only reconciles vids not loaded.
+func TestReconcileSkipsLoadedVolumeMidVacuum(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	for i := uint64(1); i <= 4; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	v.Close()
+
+	// Load the volume as a running server would (populates l.volumes).
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
+	defer location.Close()
+	location.loadExistingVolumes(NeedleMapInMemory, 0)
+	loaded, found := location.FindVolume(needle.VolumeId(1))
+	if !found {
+		t.Fatalf("volume not loaded")
+	}
+
+	// In-flight vacuum: .cpd/.cpx written, commit (.cpc) not yet reached.
+	if err := loaded.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact by index: %v", err)
+	}
+	cpd := filepath.Join(dir, "1.cpd")
+	cpx := filepath.Join(dir, "1.cpx")
+	mustExist(t, cpd)
+	mustExist(t, cpx)
+
+	// The reload pre-pass must leave the loaded volume's in-flight temp files alone.
+	location.reconcileCompactStates()
+	mustExist(t, cpd)
+	mustExist(t, cpx)
+}
+
 // applyCompactSwap must abort without touching the live .dat/.idx when the
 // .cpd/.cpx temp files are missing (a stale or duplicate commit). Before the
 // fix a late commit on Windows would RemoveAll the .dat/.idx first and then

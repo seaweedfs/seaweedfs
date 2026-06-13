@@ -250,12 +250,8 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if util.FileExists(noteFile) {
 		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
-		// Keep the .vif when an .ecx for this vid coexists on the disk: the
-		// regular and EC volumes share <base>.vif, so removing the incomplete
-		// regular copy must not strip the EC volume's info file.
-		keepVif := l.hasEcxFile(volumeName)
-		removeVolumeFiles(l.Directory+"/"+volumeName, keepVif)
-		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, keepVif)
+		removeVolumeFiles(l.Directory+"/"+volumeName, false)
+		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, false)
 		return false
 	}
 
@@ -406,6 +402,18 @@ func (l *DiskLocation) reconcileCompactStates() {
 	}
 
 	for k := range pending {
+		// On a runtime reload (SIGHUP -> LoadNewVolumes), an already-loaded
+		// volume may be mid-vacuum: its .cpd/.cpx are live, not crash
+		// leftovers, and rolling them back would clobber the in-flight
+		// compaction (and remove a live .ldb). Only reconcile vids that are
+		// not currently loaded; genuine startup recovery runs before any
+		// volume is loaded, so the map is empty then.
+		l.volumesLock.RLock()
+		_, loaded := l.volumes[k.vid]
+		l.volumesLock.RUnlock()
+		if loaded {
+			continue
+		}
 		v := &Volume{dir: l.Directory, dirIdx: l.IdxDirectory, Collection: k.collection, Id: k.vid}
 		if err := v.reconcileCompactState(); err != nil {
 			glog.Errorf("volume %d: reconcile interrupted compaction failed: %v", k.vid, err)
