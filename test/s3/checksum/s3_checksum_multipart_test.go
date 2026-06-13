@@ -18,6 +18,8 @@ import (
 )
 
 func TestMultipartCopyPreservesCRC64NVME(t *testing.T) {
+	// aws-sdk-go-v2 sends CRC64NVME as an unsigned streaming trailer, which it
+	// refuses over plain HTTP, so front the HTTP endpoint with a TLS proxy.
 	target, err := url.Parse(defaultConfig.Endpoint)
 	require.NoError(t, err)
 
