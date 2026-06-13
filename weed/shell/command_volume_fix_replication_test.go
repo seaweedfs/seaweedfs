@@ -506,6 +506,31 @@ func TestPickOneReplicaToDeleteSkipsReadOnlySurvivor(t *testing.T) {
 	})
 }
 
+// The over-replication writable-survivor guard must NOT leak into the misplaced
+// relocation path: a misplaced volume whose replicas are all read-only (e.g. a
+// full volume) must still be relocated, picking the smallest replica to delete
+// and recreate at a correct placement.
+func TestPickOneMisplacedVolumeRelocatesReadOnlyReplicas(t *testing.T) {
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromString("001")
+	replicas := []*VolumeReplica{
+		{
+			location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+			info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: true},
+		},
+		{
+			location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+			info:     &master_pb.VolumeInformationMessage{Size: 99, ReadOnly: true},
+		},
+	}
+	got := pickOneMisplacedVolume(replicas, replicaPlacement)
+	if got == nil {
+		t.Fatal("misplaced read-only volume must still be relocated, got nil")
+	}
+	if got.location.dataNode.Id != "dn2" {
+		t.Fatalf("expected to relocate smallest replica dn2, got %s", got.location.dataNode.Id)
+	}
+}
+
 func TestSatisfyReplicaCurrentLocation(t *testing.T) {
 
 	var tests = []testcase{
