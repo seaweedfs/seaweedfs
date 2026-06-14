@@ -184,6 +184,12 @@ pub fn write_dat_file_from_shards_with_dirs(
         // atomically published before the caller deletes the source shards.
         dat_file.sync_all()?;
         drop(dat_file);
+        // Windows rename does not replace an existing file on every version;
+        // remove the destination first, matching the compaction commit path.
+        #[cfg(windows)]
+        {
+            let _ = std::fs::remove_file(&dat_path);
+        }
         std::fs::rename(&tmp_path, &dat_path)?;
         fsync_dir(&dat_path)?;
         Ok(())
@@ -246,6 +252,12 @@ pub fn write_idx_file_from_ec_index(
         // atomically published before the caller deletes the source shards.
         idx_file.sync_all()?;
         drop(idx_file);
+        // Windows rename does not replace an existing file on every version;
+        // remove the destination first, matching the compaction commit path.
+        #[cfg(windows)]
+        {
+            let _ = std::fs::remove_file(&idx_path);
+        }
         std::fs::rename(&tmp_path, &idx_path)?;
         fsync_dir(&idx_path)?;
         Ok(())
