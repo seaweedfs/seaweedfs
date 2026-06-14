@@ -49,10 +49,8 @@ func TestUnscopedIdentitiesGetDistinctAccounts(t *testing.T) {
 	assert.Equal(t, AccountAdmin.Id, admin.Account.Id, "the admin identity keeps the admin account")
 }
 
-// TestCheckAccessByOwnershipDeniesNonOwner documents that a non-admin caller can
-// no longer reach an admin-owned bucket's ownership just by having an account-less
-// identity (which previously collapsed to the admin account). iam is nil here, so
-// isUserAdmin returns false and only true ownership grants access.
+// A distinct non-owner is denied an admin-owned bucket (iam nil => isUserAdmin
+// false, so only real ownership grants access).
 func TestCheckAccessByOwnershipDeniesNonOwner(t *testing.T) {
 	adminOwner := AccountAdmin.Id
 	s3a := &S3ApiServer{

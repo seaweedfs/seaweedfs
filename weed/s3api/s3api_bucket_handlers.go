@@ -672,9 +672,8 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 // isUserAdmin securely checks if the authenticated user is an admin
 // This validates admin status through proper IAM authentication, not spoofable headers
 func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
-	// Prefer the identity the Auth middleware already verified and stored in the
-	// request context, to avoid re-running signature verification (which also
-	// fails once the request body has been consumed).
+	// Reuse the identity the Auth middleware stored; re-authenticating here would
+	// fail once the request body has been read.
 	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
 		if identity, ok := identityObj.(*Identity); ok {
 			return identity != nil && identity.isAdmin()

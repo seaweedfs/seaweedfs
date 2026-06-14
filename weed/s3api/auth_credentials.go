@@ -137,12 +137,9 @@ var (
 	}
 )
 
-// accountForUnscopedIdentity returns the account for an identity configured
-// without an explicit account block. Distinct identities get distinct account
-// ids derived from the identity name, so they are not collapsed into the shared
-// admin account for ownership and ACL checks. Admin capability is decided from
-// Actions, so a non-admin identity no longer inherits admin's ownership simply
-// by omitting an account.
+// accountForUnscopedIdentity gives an identity with no configured account a
+// distinct account id from its name, so account-less identities are not all
+// collapsed into the shared admin account for ownership/ACL checks.
 func accountForUnscopedIdentity(name string) *Account {
 	if name == "" || name == AccountAdmin.Id {
 		return &AccountAdmin
