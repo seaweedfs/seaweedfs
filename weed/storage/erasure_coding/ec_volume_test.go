@@ -119,3 +119,39 @@ func TestNewEcVolumeDoesNotWriteStubVif(t *testing.T) {
 		t.Fatalf("expected default EC context, got %+v", ev.ECContext)
 	}
 }
+
+// TestNewEcVolumeLoadsCustomRatio pins that a volume's own EC ratio is loaded from
+// its .vif into ECContext, so the read/recover/decode paths reconstruct with the
+// matrix that produced the shards rather than the build default. (Custom ratios are
+// an enterprise feature; in OSS the .vif always records 10+4.)
+func TestNewEcVolumeLoadsCustomRatio(t *testing.T) {
+	dir := t.TempDir()
+	const vid = needle.VolumeId(125)
+	base := EcShardFileName("", dir, int(vid))
+
+	if err := os.WriteFile(base+".ecx", nil, 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards:   9,
+			ParityShards: 3,
+		},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	ev, err := NewEcVolume(types.HardDriveType, dir, dir, "", vid)
+	if err != nil {
+		t.Fatalf("NewEcVolume: %v", err)
+	}
+	defer ev.Close()
+
+	if ev.ECContext == nil {
+		t.Fatalf("ECContext must be set from the .vif")
+	}
+	if ev.ECContext.DataShards != 9 || ev.ECContext.ParityShards != 3 {
+		t.Fatalf("ECContext = %d+%d, want 9+3", ev.ECContext.DataShards, ev.ECContext.ParityShards)
+	}
+}

@@ -495,12 +495,20 @@ func forgetShardId(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.Sha
 
 func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) (err error) {
 
+	// Use the volume's own EC ratio so a custom-ratio volume (e.g. 9+3) is judged
+	// complete/recoverable against its real data-shard count, not the build default.
+	// In OSS the ratio is always 10+4, so this is a no-op.
+	ecCtx := ecVolume.ECContext
+	if ecCtx == nil {
+		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
+	}
+
 	shardCount := len(ecVolume.ShardLocations)
-	if shardCount < erasure_coding.DataShardsCount &&
+	if shardCount < ecCtx.DataShards &&
 		ecVolume.ShardLocationsRefreshTime.Add(11*time.Second).After(time.Now()) ||
-		shardCount == erasure_coding.TotalShardsCount &&
+		shardCount == ecCtx.Total() &&
 			ecVolume.ShardLocationsRefreshTime.Add(37*time.Minute).After(time.Now()) ||
-		shardCount >= erasure_coding.DataShardsCount &&
+		shardCount >= ecCtx.DataShards &&
 			ecVolume.ShardLocationsRefreshTime.Add(7*time.Minute).After(time.Now()) {
 		// still fresh
 		return nil
@@ -516,8 +524,8 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		if err != nil {
 			return fmt.Errorf("lookup ec volume %d: %v", ecVolume.VolumeId, err)
 		}
-		if len(resp.ShardIdLocations) < erasure_coding.DataShardsCount {
-			return fmt.Errorf("only %d shards found but %d required", len(resp.ShardIdLocations), erasure_coding.DataShardsCount)
+		if len(resp.ShardIdLocations) < ecCtx.DataShards {
+			return fmt.Errorf("only %d shards found but %d required", len(resp.ShardIdLocations), ecCtx.DataShards)
 		}
 
 		ecVolume.ShardLocationsLock.Lock()
@@ -641,7 +649,15 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
 	glog.V(3).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
 
-	enc, err := reedsolomon.New(erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
+	// Reconstruct with the volume's OWN EC ratio (loaded from its .vif), not the
+	// build default, so a custom-ratio volume (e.g. 9+3) is decoded with the matrix
+	// that actually produced its shards -- decoding it as 10+4 would corrupt the
+	// recovered bytes. In OSS the ratio is always 10+4, so this is a no-op.
+	ecCtx := ecVolume.ECContext
+	if ecCtx == nil {
+		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
+	}
+	enc, err := reedsolomon.New(ecCtx.DataShards, ecCtx.ParityShards)
 	if err != nil {
 		return 0, false, fmt.Errorf("failed to create encoder: %w", err)
 	}
@@ -687,7 +703,7 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	// Count and log available shards for diagnostics
 	availableShards := make([]erasure_coding.ShardId, 0, erasure_coding.TotalShardsCount)
 	missingShards := make([]erasure_coding.ShardId, 0, erasure_coding.ParityShardsCount+1)
-	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+	for shardId := 0; shardId < ecCtx.Total(); shardId++ {
 		if bufs[shardId] != nil {
 			availableShards = append(availableShards, erasure_coding.ShardId(shardId))
 		} else {
@@ -700,14 +716,14 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		len(availableShards), availableShards,
 		len(missingShards), missingShards)
 
-	if len(availableShards) < erasure_coding.DataShardsCount {
+	if len(availableShards) < ecCtx.DataShards {
 		return 0, false, fmt.Errorf("cannot recover shard %d.%d: only %d shards available %v, need at least %d (missing: %v)",
 			ecVolume.VolumeId, shardIdToRecover,
 			len(availableShards), availableShards,
-			erasure_coding.DataShardsCount, missingShards)
+			ecCtx.DataShards, missingShards)
 	}
 
-	if err = enc.ReconstructData(bufs[:erasure_coding.TotalShardsCount]); err != nil {
+	if err = enc.ReconstructData(bufs[:ecCtx.Total()]); err != nil {
 		return 0, false, fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
 			ecVolume.VolumeId, shardIdToRecover, len(availableShards), availableShards, err)
 	}
