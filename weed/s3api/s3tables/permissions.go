@@ -193,16 +193,14 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 	if !strings.Contains(operation, ":") {
 		fullAction = "s3tables:" + operation
 	}
+	if hasAdminAction(ctx.IdentityActions) {
+		return true
+	}
 	candidates := []string{operation, fullAction}
 	if ctx.TableBucketName != "" {
 		candidates = append(candidates, operation+":"+ctx.TableBucketName, fullAction+":"+ctx.TableBucketName)
 	}
 	for _, action := range ctx.IdentityActions {
-		// Legacy static identities may still use broad admin markers or s3 wildcards.
-		// s3:* is treated as s3tables:* so shared admin policies still permit table access.
-		if action == "*" || action == string(s3_constants.ACTION_ADMIN) || action == "s3:*" || action == "s3tables:*" {
-			return true
-		}
 		for _, candidate := range candidates {
 			if action == candidate {
 				return true
@@ -210,6 +208,18 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 			if strings.ContainsAny(action, "*?") && wildcard.MatchesWildcard(action, candidate) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// hasAdminAction reports whether the action list grants blanket admin access.
+// Legacy static identities may use broad markers or s3 wildcards; s3:* is treated
+// as s3tables:* so shared admin policies still permit table access.
+func hasAdminAction(actions []string) bool {
+	for _, action := range actions {
+		if action == "*" || action == string(s3_constants.ACTION_ADMIN) || action == "s3:*" || action == "s3tables:*" {
+			return true
 		}
 	}
 	return false

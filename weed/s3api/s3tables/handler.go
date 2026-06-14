@@ -212,7 +212,14 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 					idField := accountVal.FieldByName("Id")
 					if idField.IsValid() && idField.Kind() == reflect.String {
 						if principal := normalizePrincipalID(idField.String()); principal != "" {
-							return principal
+							// Account-less identities default to the shared admin
+							// account (see auth_credentials.go). Only honor that as the
+							// principal for identities that actually hold admin rights;
+							// otherwise fall through to the unique identity name so
+							// distinct users are not collapsed into "admin".
+							if principal != s3_constants.AccountAdminId || hasAdminAction(getIdentityActions(r)) {
+								return principal
+							}
 						}
 					}
 				}

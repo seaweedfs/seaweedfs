@@ -16,7 +16,9 @@ type testIdentityAccount struct {
 }
 
 type testIdentity struct {
+	Name    string
 	Account *testIdentityAccount
+	Actions []string
 	Claims  map[string]interface{}
 }
 
@@ -110,6 +112,32 @@ func TestGetAccountIDFallsBackToAccountID(t *testing.T) {
 	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), id))
 
 	assert.Equal(t, "my-account-id", h.getAccountID(req), "expected Account.Id to be returned when claims are missing")
+}
+
+func TestGetAccountIDNonAdminDoesNotInheritAdminAccount(t *testing.T) {
+	h := NewS3TablesHandler()
+	id := &testIdentity{
+		Account: &testIdentityAccount{Id: s3_constants.AccountAdminId},
+		Actions: []string{"Read", "List"},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), id))
+	req = req.WithContext(s3_constants.SetIdentityNameInContext(req.Context(), "readonly"))
+
+	assert.Equal(t, "readonly", h.getAccountID(req), "a non-admin identity must not inherit the shared admin account")
+}
+
+func TestGetAccountIDAdminActionKeepsAdminAccount(t *testing.T) {
+	h := NewS3TablesHandler()
+	id := &testIdentity{
+		Account: &testIdentityAccount{Id: s3_constants.AccountAdminId},
+		Actions: []string{s3_constants.ACTION_ADMIN},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), id))
+	req = req.WithContext(s3_constants.SetIdentityNameInContext(req.Context(), "root"))
+
+	assert.Equal(t, s3_constants.AccountAdminId, h.getAccountID(req), "an admin identity keeps the admin account as principal")
 }
 
 func TestGetAccountIDNormalizesAccountIDARN(t *testing.T) {
