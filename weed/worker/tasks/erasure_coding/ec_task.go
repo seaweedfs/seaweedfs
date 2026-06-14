@@ -41,6 +41,7 @@ type ErasureCodingTask struct {
 	dataShards       int32
 	parityShards     int32
 	sourceDiskType   string                  // source volume's disk type, forwarded to Mount RPC (#9423)
+	encodeTsNs       int64                   // admin-issued encode generation; stamps the .vif and fences the stale-shard cleanup. 0 => unfenced (legacy/shell)
 	targets          []*worker_pb.TaskTarget // Unified targets for EC shards
 	sources          []*worker_pb.TaskSource // Unified sources for cleanup
 	shardAssignment  map[string][]string     // destination -> assigned shard types
@@ -79,6 +80,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.dataShards = ecParams.DataShards
 	t.parityShards = ecParams.ParityShards
 	t.sourceDiskType = ecParams.SourceDiskType
+	t.encodeTsNs = ecParams.EncodeTsNs
 	t.workDir = ecParams.WorkingDir
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
@@ -625,10 +627,17 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	// not pass to the encoder).
 	vifFile := baseName + ".vif"
 	defaultCtx := erasure_coding.NewDefaultECContext("", 0)
+	// Use the admin-issued generation when present so the distributed .vif carries
+	// the same generation the stale-shard cleanup fences on; fall back to a local
+	// timestamp only for the unfenced legacy/shell path (keeps the read guard on).
+	encodeTsNs := t.encodeTsNs
+	if encodeTsNs == 0 {
+		encodeTsNs = time.Now().UnixNano()
+	}
 	ecShardConfig := &volume_server_pb.EcShardConfig{
 		DataShards:   uint32(defaultCtx.DataShards),
 		ParityShards: uint32(defaultCtx.ParityShards),
-		EncodeTsNs:   time.Now().UnixNano(),
+		EncodeTsNs:   encodeTsNs,
 	}
 	if ecBitrot != nil && ecBitrot.EcShardConfig != nil {
 		ecShardConfig.DataShards = ecBitrot.EcShardConfig.DataShards
@@ -938,7 +947,7 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 			"shard_ids":   allShards,
 		}).Info("Clearing stale EC shards on destination before re-distribute")
 
-		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards); err != nil {
+		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards, t.encodeTsNs); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
 			t.GetLogger().WithFields(map[string]interface{}{
 				"volume_id":   t.volumeID,
@@ -983,12 +992,17 @@ func unmountAndDeleteEcShards(
 	volumeID uint32,
 	collection string,
 	shardIds []uint32,
+	encodeTsNs int64,
 ) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(destination), dialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
+			// encodeTsNs fences both RPCs against a newer run on a shared node: the
+			// server skips a disk whose mounted/on-disk generation is same-or-newer.
+			// 0 (legacy/shell) leaves the unconditional unmount + blanket teardown.
 			if _, err := client.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
-				VolumeId: volumeID,
-				ShardIds: shardIds,
+				VolumeId:   volumeID,
+				ShardIds:   shardIds,
+				EncodeTsNs: encodeTsNs,
 			}); err != nil {
 				return fmt.Errorf("unmount: %w", err)
 			}
@@ -997,6 +1011,7 @@ func unmountAndDeleteEcShards(
 				Collection:   collection,
 				ShardIds:     shardIds,
 				FullTeardown: true,
+				EncodeTsNs:   encodeTsNs,
 			})
 			if err != nil {
 				return fmt.Errorf("delete: %w", err)
