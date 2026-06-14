@@ -329,6 +329,10 @@ func testDecodeDat(t *testing.T, datSize int64) {
 	err = WriteDatFile(decodedBase, datSize, shardFileNames)
 	require.NoError(t, err, "WriteDatFile")
 
+	// The atomic publish must rename the temp file away, never leaving it behind.
+	_, statErr := os.Stat(decodedBase + ".dat.tmp")
+	require.True(t, os.IsNotExist(statErr), "WriteDatFile must not leave a .dat.tmp")
+
 	// 4. Verify decoded .dat matches original
 	decodedData, err := os.ReadFile(decodedBase + ".dat")
 	require.NoError(t, err)
