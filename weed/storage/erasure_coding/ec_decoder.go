@@ -46,17 +46,27 @@ func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 	}
 	defer idxFile.Close()
 
-	io.Copy(idxFile, ecxFile)
+	if _, err = io.Copy(idxFile, ecxFile); err != nil {
+		return fmt.Errorf("copy ecx to idx for %s: %v", baseFileName, err)
+	}
 
 	err = iterateEcjFile(baseFileName, func(key types.NeedleId) error {
-
 		bytes := needle_map.ToBytes(key, types.Offset{}, types.TombstoneFileSize)
-		idxFile.Write(bytes)
-
+		if _, writeErr := idxFile.Write(bytes); writeErr != nil {
+			return writeErr
+		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	// fsync so the decoded .idx is durable before the caller renames it into
+	// place and deletes the source shards.
+	if err = idxFile.Sync(); err != nil {
+		return fmt.Errorf("sync idx for %s: %v", baseFileName, err)
+	}
+	return nil
 }
 
 // FindDatFileSize calculate .dat file size from max offset entry
@@ -222,6 +232,11 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 		}
 	}
 
+	// fsync so the decoded .dat is durable before the caller renames it into
+	// place and deletes the source shards.
+	if err := datFile.Sync(); err != nil {
+		return fmt.Errorf("sync dat for %s: %v", baseFileName, err)
+	}
 	return nil
 }
 

@@ -197,14 +197,13 @@ pub fn write_idx_file_from_ec_index(
     std::fs::copy(&ecx_path, &idx_path)?;
 
     // Append deletions from .ecj as tombstones
+    let mut idx_file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(&idx_path)?;
     if std::path::Path::new(&ecj_path).exists() {
         let ecj_data = std::fs::read(&ecj_path)?;
         if !ecj_data.is_empty() {
-            let mut idx_file = std::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(&idx_path)?;
-
             let count = ecj_data.len() / NEEDLE_ID_SIZE;
             for i in 0..count {
                 let start = i * NEEDLE_ID_SIZE;
@@ -219,6 +218,9 @@ pub fn write_idx_file_from_ec_index(
         }
     }
 
+    // fsync so the decoded .idx is durable before the caller renames it into
+    // place and deletes the source shards.
+    idx_file.sync_all()?;
     Ok(())
 }
 
