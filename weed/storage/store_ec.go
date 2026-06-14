@@ -263,6 +263,12 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 		if !found {
 			continue
 		}
+		// Capture the encode generation before unloading so the deletion delta
+		// carries it like the mount delta does.
+		var encodeTsNs int64
+		if ecVolume, ok := location.FindEcVolume(vid); ok {
+			encodeTsNs = ecVolume.EncodeTsNs
+		}
 		if deleted := location.UnloadEcShard(vid, shardId); deleted {
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, 0))
@@ -273,6 +279,7 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 				ShardSizes:  si.SizesInt64(),
 				DiskType:    string(ecShard.DiskType),
 				DiskId:      uint32(diskId),
+				EncodeTsNs:  encodeTsNs,
 			}
 			glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
 			unmountedAny = true
