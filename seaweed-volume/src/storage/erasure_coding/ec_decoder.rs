@@ -11,7 +11,7 @@ use crate::storage::idx;
 use crate::storage::needle::needle::get_actual_size;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
-use crate::storage::volume::volume_file_name;
+use crate::storage::volume::{fsync_dir, volume_file_name};
 
 /// Calculate .dat file size from the max offset entry in .ecx.
 /// Reads the volume version from the first EC shard (.ec00) superblock,
@@ -123,60 +123,75 @@ pub fn write_dat_file_from_shards_with_dirs(
     }
     let base = volume_file_name(dat_dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
+    // Write to a temp file and atomically rename into place, so a crash
+    // mid-write never leaves a partial .dat at the final name beside the
+    // source shards.
+    let tmp_path = format!("{}.tmp", dat_path);
 
-    // Open data shards from their individual home dirs.
-    let mut shards: Vec<EcVolumeShard> = (0..data_shards as u8)
-        .map(|i| EcVolumeShard::new(&shard_dirs[i as usize], collection, volume_id, i))
-        .collect();
+    let write_result = (|| -> io::Result<()> {
+        // Open data shards from their individual home dirs.
+        let mut shards: Vec<EcVolumeShard> = (0..data_shards as u8)
+            .map(|i| EcVolumeShard::new(&shard_dirs[i as usize], collection, volume_id, i))
+            .collect();
 
-    for shard in &mut shards {
-        shard.open()?;
-    }
-
-    let mut dat_file = File::create(&dat_path)?;
-    let mut remaining = dat_file_size;
-    let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
-    let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
-    let large_row_size = (large_block_size * data_shards) as i64;
-
-    let mut shard_offset: u64 = 0;
-
-    // Read large blocks
-    while remaining >= large_row_size {
-        for i in 0..data_shards {
-            let mut buf = vec![0u8; large_block_size];
-            shards[i].read_at(&mut buf, shard_offset)?;
-            let to_write = large_block_size.min(remaining as usize);
-            dat_file.write_all(&buf[..to_write])?;
-            remaining -= to_write as i64;
-            if remaining <= 0 {
-                break;
-            }
+        for shard in &mut shards {
+            shard.open()?;
         }
-        shard_offset += large_block_size as u64;
-    }
 
-    // Read small blocks
-    while remaining > 0 {
-        for i in 0..data_shards {
-            let mut buf = vec![0u8; small_block_size];
-            shards[i].read_at(&mut buf, shard_offset)?;
-            let to_write = small_block_size.min(remaining as usize);
-            dat_file.write_all(&buf[..to_write])?;
-            remaining -= to_write as i64;
-            if remaining <= 0 {
-                break;
+        let mut dat_file = File::create(&tmp_path)?;
+        let mut remaining = dat_file_size;
+        let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
+        let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
+        let large_row_size = (large_block_size * data_shards) as i64;
+
+        let mut shard_offset: u64 = 0;
+
+        // Read large blocks
+        while remaining >= large_row_size {
+            for i in 0..data_shards {
+                let mut buf = vec![0u8; large_block_size];
+                shards[i].read_at(&mut buf, shard_offset)?;
+                let to_write = large_block_size.min(remaining as usize);
+                dat_file.write_all(&buf[..to_write])?;
+                remaining -= to_write as i64;
+                if remaining <= 0 {
+                    break;
+                }
             }
+            shard_offset += large_block_size as u64;
         }
-        shard_offset += small_block_size as u64;
-    }
 
-    for shard in &mut shards {
-        shard.close();
-    }
+        // Read small blocks
+        while remaining > 0 {
+            for i in 0..data_shards {
+                let mut buf = vec![0u8; small_block_size];
+                shards[i].read_at(&mut buf, shard_offset)?;
+                let to_write = small_block_size.min(remaining as usize);
+                dat_file.write_all(&buf[..to_write])?;
+                remaining -= to_write as i64;
+                if remaining <= 0 {
+                    break;
+                }
+            }
+            shard_offset += small_block_size as u64;
+        }
 
-    dat_file.sync_all()?;
-    Ok(())
+        for shard in &mut shards {
+            shard.close();
+        }
+
+        // fsync, rename, then fsync the dir so the decoded .dat is durable and
+        // atomically published before the caller deletes the source shards.
+        dat_file.sync_all()?;
+        drop(dat_file);
+        std::fs::rename(&tmp_path, &dat_path)?;
+        fsync_dir(&dat_path)?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    write_result
 }
 
 /// Write .idx file from .ecx index + .ecj deletion journal.
@@ -192,36 +207,49 @@ pub fn write_idx_file_from_ec_index(
     let ecx_path = format!("{}.ecx", base);
     let ecj_path = format!("{}.ecj", base);
     let idx_path = format!("{}.idx", base);
+    // Write to a temp file and atomically rename into place, so a crash
+    // mid-write never leaves a partial .idx at the final name beside the
+    // source shards.
+    let tmp_path = format!("{}.tmp", idx_path);
 
-    // Copy .ecx to .idx
-    std::fs::copy(&ecx_path, &idx_path)?;
+    let write_result = (|| -> io::Result<()> {
+        // Copy .ecx to the temp .idx
+        std::fs::copy(&ecx_path, &tmp_path)?;
 
-    // Append deletions from .ecj as tombstones
-    let mut idx_file = std::fs::OpenOptions::new()
-        .write(true)
-        .append(true)
-        .open(&idx_path)?;
-    if std::path::Path::new(&ecj_path).exists() {
-        let ecj_data = std::fs::read(&ecj_path)?;
-        if !ecj_data.is_empty() {
-            let count = ecj_data.len() / NEEDLE_ID_SIZE;
-            for i in 0..count {
-                let start = i * NEEDLE_ID_SIZE;
-                let needle_id = NeedleId::from_bytes(&ecj_data[start..start + NEEDLE_ID_SIZE]);
-                idx::write_index_entry(
-                    &mut idx_file,
-                    needle_id,
-                    Offset::default(),
-                    TOMBSTONE_FILE_SIZE,
-                )?;
+        // Append deletions from .ecj as tombstones
+        let mut idx_file = std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&tmp_path)?;
+        if std::path::Path::new(&ecj_path).exists() {
+            let ecj_data = std::fs::read(&ecj_path)?;
+            if !ecj_data.is_empty() {
+                let count = ecj_data.len() / NEEDLE_ID_SIZE;
+                for i in 0..count {
+                    let start = i * NEEDLE_ID_SIZE;
+                    let needle_id = NeedleId::from_bytes(&ecj_data[start..start + NEEDLE_ID_SIZE]);
+                    idx::write_index_entry(
+                        &mut idx_file,
+                        needle_id,
+                        Offset::default(),
+                        TOMBSTONE_FILE_SIZE,
+                    )?;
+                }
             }
         }
-    }
 
-    // fsync so the decoded .idx is durable before the caller renames it into
-    // place and deletes the source shards.
-    idx_file.sync_all()?;
-    Ok(())
+        // fsync, rename, then fsync the dir so the decoded .idx is durable and
+        // atomically published before the caller deletes the source shards.
+        idx_file.sync_all()?;
+        drop(idx_file);
+        std::fs::rename(&tmp_path, &idx_path)?;
+        fsync_dir(&idx_path)?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    write_result
 }
 
 #[cfg(test)]
@@ -290,6 +318,10 @@ mod tests {
             .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
+        // Atomic publish must rename the temp files away, never leaving them behind.
+        assert!(!std::path::Path::new(&format!("{}/1.dat.tmp", dir)).exists());
+        assert!(!std::path::Path::new(&format!("{}/1.idx.tmp", dir)).exists());
+
         // Verify reconstructed .dat matches original
         let reconstructed_dat = std::fs::read(format!("{}/1.dat", dir)).unwrap();
         assert_eq!(
@@ -320,5 +352,17 @@ mod tests {
             v2.read_needle(&mut n).unwrap();
             assert_eq!(&n.data, expected_data, "needle {} data should match", id);
         }
+    }
+
+    #[test]
+    fn test_decode_missing_shard_leaves_no_dat() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // No shard files exist, so de-striping must fail and publish nothing:
+        // neither the final .dat nor a partial .dat.tmp may remain.
+        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 10);
+        assert!(res.is_err());
+        assert!(!std::path::Path::new(&format!("{}/7.dat", dir)).exists());
+        assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
     }
 }
