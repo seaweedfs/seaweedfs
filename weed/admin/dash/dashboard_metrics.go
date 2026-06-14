@@ -180,10 +180,13 @@ func trendBytes(v float64) string {
 	if v < unit {
 		return fmt.Sprintf("%.0f B", v)
 	}
+	const units = "KMGTPE"
 	div, exp := unit, 0
-	for n := v / unit; n >= unit; n /= unit {
+	// Cap exp at the last unit so an anomalously huge value can't index past
+	// the units string and panic.
+	for n := v / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %ciB", v/div, "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f %ciB", v/div, units[exp])
 }
