@@ -15,10 +15,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// TestValidateSTSSessionTokenAssignsDistinctAccount asserts an STS session owns
-// resources as its own principal (the OIDC subject, matching the JWT path, or
-// the assumed-role user when no subject is present) rather than collapsing into
-// the shared admin account. Permissions still come from the session policies.
+// An STS session owns resources as its own principal (OIDC subject, or the
+// assumed-role user when absent), not the shared admin account.
 func TestValidateSTSSessionTokenAssignsDistinctAccount(t *testing.T) {
 	cases := []struct {
 		name            string

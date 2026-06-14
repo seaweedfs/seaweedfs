@@ -433,12 +433,9 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		claims[k] = v
 	}
 
-	// Resolve the principal to the OIDC subject so the same session maps to the
-	// same identity across the SigV4 and JWT auth paths (see s3_iam_middleware.go),
-	// falling back to the assumed-role user when no subject is present. Account and
-	// ownership stay distinct per principal rather than collapsing into the shared
-	// admin account; permissions come from the session policies, and admin is
-	// granted only through Actions.
+	// Key the principal on the OIDC subject so a session resolves to the same
+	// identity on the SigV4 and JWT paths (see s3_iam_middleware.go); fall back to
+	// the assumed-role user when absent. Distinct per principal, not shared admin.
 	principal := sessionInfo.Subject
 	if principal == "" {
 		principal = sessionInfo.AssumedRoleUser
