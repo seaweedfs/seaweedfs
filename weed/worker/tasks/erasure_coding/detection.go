@@ -719,8 +719,20 @@ func cleanupOrphanSourceReplicas(ctx context.Context, clusterInfo *types.Cluster
 	var deleteErrors []string
 	for _, replica := range replicas {
 		serverAddress := replica.ServerID
+		var isReadOnly bool
 		err := operation.WithVolumeServerClient(false, pb.ServerAddress(serverAddress), clusterInfo.GrpcDialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
+				// Re-probe before deleting: only a still-readonly source replica is
+				// safe to remove. One that came back writable may have accepted
+				// writes the EC shards do not contain, so deleting it loses data.
+				status, statusErr := client.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: metric.VolumeID})
+				if statusErr != nil {
+					return statusErr
+				}
+				isReadOnly = status.GetIsReadOnly()
+				if !isReadOnly {
+					return nil
+				}
 				_, deleteErr := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
 					VolumeId:  metric.VolumeID,
 					OnlyEmpty: false,
@@ -729,6 +741,10 @@ func cleanupOrphanSourceReplicas(ctx context.Context, clusterInfo *types.Cluster
 			})
 		if err != nil {
 			deleteErrors = append(deleteErrors, fmt.Sprintf("server %s: %v", serverAddress, err))
+			continue
+		}
+		if !isReadOnly {
+			glog.Warningf("EC Detection: source replica for volume %d on %s is writable; not deleting (may hold writes the EC shards lack)", metric.VolumeID, serverAddress)
 			continue
 		}
 		deleted++
