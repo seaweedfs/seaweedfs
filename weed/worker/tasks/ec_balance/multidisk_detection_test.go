@@ -295,13 +295,13 @@ func TestBuildBalancerTopologyNormalizesHddDiskType(t *testing.T) {
 	}
 	topoInfo := buildMasterTopology("c", 100, 50, specs)
 
-	if _, n := buildBalancerTopology(topoInfo, &Config{DiskType: "hdd"}); n != 2 {
+	if _, n, _ := buildBalancerTopology(topoInfo, &Config{DiskType: "hdd"}); n != 2 {
 		t.Errorf("disk_type=hdd matched %d nodes on an all-HDD cluster, want 2 (hdd must map to the empty HDD key)", n)
 	}
-	if _, n := buildBalancerTopology(topoInfo, &Config{DiskType: ""}); n != 2 {
+	if _, n, _ := buildBalancerTopology(topoInfo, &Config{DiskType: ""}); n != 2 {
 		t.Errorf("disk_type=empty matched %d nodes, want 2 (all)", n)
 	}
-	if _, n := buildBalancerTopology(topoInfo, &Config{DiskType: "ssd"}); n != 0 {
+	if _, n, _ := buildBalancerTopology(topoInfo, &Config{DiskType: "ssd"}); n != 0 {
 		t.Errorf("disk_type=ssd matched %d nodes on an all-HDD cluster, want 0", n)
 	}
 }

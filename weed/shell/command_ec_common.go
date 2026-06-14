@@ -898,12 +898,16 @@ func shellECRatio(_ string) (int, int) {
 // balance plans EC shard moves with the shared planner and executes them. When
 // collections is empty all collections present are balanced.
 func (ecb *ecBalancer) balance(collections []string) error {
-	topo := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType)
+	topo, volumeRatio := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType)
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{
 		DiskType:           string(ecb.diskType),
 		ImbalanceThreshold: 0, // the shell balances to an even distribution
 		ReplicaPlacement:   ecb.replicaPlacement,
 		Ratio:              shellECRatio,
+		// Prefer each volume's own heartbeat-reported ratio over the collection
+		// default so a mixed-ratio collection is spread per volume; 0 defers to
+		// shellECRatio (and is the always-0 OSS case).
+		VolumeRatio: volumeRatio,
 		// Balance the global phase by fractional fullness so heterogeneous-capacity
 		// nodes fill proportionally (matching the worker). This is identical to raw
 		// shard count when capacities are uniform.
@@ -914,11 +918,20 @@ func (ecb *ecBalancer) balance(collections []string) error {
 
 // toBalancerTopology builds an ecbalancer.Topology from the shell's EcNode model,
 // including the shards of the requested collections (all collections when empty).
-func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType) *ecbalancer.Topology {
+// It also returns a per-volume ratio lookup built from each shard's heartbeat
+// (0,0 when unreported, e.g. always in OSS), which Plan prefers over the
+// collection ratio for mixed-ratio clusters.
+func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int)) {
 	allowed := make(map[string]bool, len(collections))
 	for _, c := range collections {
 		allowed[c] = true
 	}
+
+	type volRatioKey struct {
+		collection string
+		vid        uint32
+	}
+	volRatios := make(map[volRatioKey][2]int)
 
 	topo := ecbalancer.NewTopology()
 	for _, en := range ecNodes {
@@ -939,9 +952,17 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 				continue
 			}
 			node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
+			if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
+				volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
+			}
 		}
 	}
-	return topo
+
+	volumeRatio := func(collection string, vid uint32) (int, int) {
+		r := volRatios[volRatioKey{collection, vid}]
+		return r[0], r[1]
+	}
+	return topo, volumeRatio
 }
 
 // executeMoves carries out the planned moves. Phases run in order (a within-rack
