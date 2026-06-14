@@ -2672,7 +2672,13 @@ impl VolumeServer for VolumeGrpcService {
                     let mut store = self.state.store.write().unwrap();
                     let _ = store.remove_ec_volume(vid);
                     for loc in &store.locations {
-                        loc.remove_ec_volume_files_full_teardown(&req.collection, vid);
+                        loc.remove_ec_volume_files_full_teardown(&req.collection, vid)
+                            .map_err(|e| {
+                                Status::internal(format!(
+                                    "full teardown of ec volume {}: {}",
+                                    req.volume_id, e
+                                ))
+                            })?;
                     }
                 }
             } else {
@@ -2697,7 +2703,13 @@ impl VolumeServer for VolumeGrpcService {
                     }
                     store.locations[disk_id].remove_ec_volume(vid);
                     store.locations[disk_id]
-                        .remove_ec_volume_files_full_teardown(&req.collection, vid);
+                        .remove_ec_volume_files_full_teardown(&req.collection, vid)
+                        .map_err(|e| {
+                            Status::internal(format!(
+                                "fenced teardown of ec volume {}: {}",
+                                req.volume_id, e
+                            ))
+                        })?;
                 }
             }
             self.state.volume_state_notify.notify_one();

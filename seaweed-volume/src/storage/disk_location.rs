@@ -157,7 +157,7 @@ impl DiskLocation {
                         volume_id = vid.0,
                         "EC volume validation failed, removing incomplete EC files"
                     );
-                    self.remove_ec_volume_files(&collection, vid);
+                    let _ = self.remove_ec_volume_files(&collection, vid);
                     // Fall through to load .dat file
                 }
             }
@@ -377,24 +377,25 @@ impl DiskLocation {
     /// `store_ec_reconcile.rs` can call it to scrub partial EC artefacts
     /// when a healthy `.dat` for the same vid lives on a sibling disk
     /// (seaweedfs/seaweedfs#9478).
-    pub(crate) fn remove_ec_volume_files(&self, collection: &str, vid: VolumeId) {
+    pub(crate) fn remove_ec_volume_files(&self, collection: &str, vid: VolumeId) -> io::Result<()> {
         let base = volume_file_name(&self.directory, collection, vid);
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
 
         // Remove index files from idx directory (.ecx, .ecj)
-        let _ = fs::remove_file(format!("{}.ecx", idx_base));
-        let _ = fs::remove_file(format!("{}.ecj", idx_base));
+        rm_if_present(format!("{}.ecx", idx_base))?;
+        rm_if_present(format!("{}.ecj", idx_base))?;
         // Also try data directory in case .ecx/.ecj were created before -dir.idx was configured
         if self.idx_directory != self.directory {
-            let _ = fs::remove_file(format!("{}.ecx", base));
-            let _ = fs::remove_file(format!("{}.ecj", base));
+            rm_if_present(format!("{}.ecx", base))?;
+            rm_if_present(format!("{}.ecj", base))?;
         }
 
         // Remove all EC shard files (.ec00 ~ .ec31)
         for i in 0..MAX_SHARD_COUNT {
-            let _ = fs::remove_file(format!("{}.ec{:02}", base, i));
+            rm_if_present(format!("{}.ec{:02}", base, i))?;
         }
+        Ok(())
     }
 
     /// Full-teardown variant: everything remove_ec_volume_files clears, PLUS the
@@ -405,8 +406,12 @@ impl DiskLocation {
     /// .vif. Reconcile/load-fallback call remove_ec_volume_files directly and
     /// intentionally preserve it, mirroring Go's removeEcVolumeFiles (reconcile) vs
     /// removeStaleEcArtifacts (teardown) split.
-    pub(crate) fn remove_ec_volume_files_full_teardown(&self, collection: &str, vid: VolumeId) {
-        self.remove_ec_volume_files(collection, vid);
+    pub(crate) fn remove_ec_volume_files_full_teardown(
+        &self,
+        collection: &str,
+        vid: VolumeId,
+    ) -> io::Result<()> {
+        self.remove_ec_volume_files(collection, vid)?;
         let base = volume_file_name(&self.directory, collection, vid);
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         // try_exists, not exists(): a stat error on a PRESENT .idx must not read as
@@ -416,16 +421,17 @@ impl DiskLocation {
             std::path::Path::new(&format!("{}.idx", idx_base)).try_exists(),
             Ok(false)
         ) {
-            let _ = fs::remove_file(format!("{}.vif", idx_base));
+            rm_if_present(format!("{}.vif", idx_base))?;
             if self.idx_directory != self.directory
                 && matches!(
                     std::path::Path::new(&format!("{}.idx", base)).try_exists(),
                     Ok(false)
                 )
             {
-                let _ = fs::remove_file(format!("{}.vif", base));
+                rm_if_present(format!("{}.vif", base))?;
             }
         }
+        Ok(())
     }
 
     /// EC encode generation recorded in this disk's .vif (data dir first, then idx
@@ -943,7 +949,7 @@ impl DiskLocation {
                 volume_id = vid.0,
                 "Incomplete or invalid EC volume: .dat exists but validation failed, cleaning up EC files",
             );
-            self.remove_ec_volume_files(collection, vid);
+            let _ = self.remove_ec_volume_files(collection, vid);
             return;
         }
 
@@ -985,7 +991,7 @@ impl DiskLocation {
                 "Found {} EC shards without .ecx file (incomplete encoding interrupted before .ecx), cleaning up",
                 shards.len(),
             );
-            self.remove_ec_volume_files(collection, vid);
+            let _ = self.remove_ec_volume_files(collection, vid);
             return true;
         }
         false
@@ -1065,6 +1071,16 @@ fn calculate_expected_shard_size(dat_file_size: i64, data_shards: usize) -> i64 
 /// Resolve the EC data-shard count from the volume's own `.vif` (the volume
 /// server never holds the cluster EC config in memory), checking the data dir
 /// then the idx dir. Falls back to the default ratio when no EC `.vif` is found.
+/// Remove a file, treating a missing file as success but propagating real errors
+/// (permissions, disk full). Mirrors Go's removeFileIfExists so a teardown failure
+/// surfaces instead of silently leaving stale artifacts.
+fn rm_if_present(path: String) -> io::Result<()> {
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &str, vid: VolumeId) -> usize {
     for dir in [directory, idx_directory] {
         let vif = format!("{}.vif", volume_file_name(dir, collection, vid));

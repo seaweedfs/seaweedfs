@@ -332,7 +332,7 @@ impl Store {
             // Also sweep any unmounted shard files (.ec00 .. .ec31)
             // that the per-disk loader skipped — destroy() only walks
             // the in-memory shards, but the disk may still hold others.
-            loc.remove_ec_volume_files(&v.collection, v.vid);
+            let _ = loc.remove_ec_volume_files(&v.collection, v.vid);
         }
     }
 
