@@ -784,6 +784,9 @@ func countExistingEcShardsForVolume(activeTopology *topology.ActiveTopology, vol
 			for _, node := range rack.DataNodeInfos {
 				for _, diskInfo := range node.DiskInfos {
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						if ecShardInfo == nil {
+							continue
+						}
 						if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
 							continue
 						}
