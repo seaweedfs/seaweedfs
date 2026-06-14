@@ -457,10 +457,40 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
+	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
+	// sidecars) on every disk.
 	for diskId, location := range vs.store.Locations {
 		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {
 			glog.Errorf("deleteEcShards from disk_id:%d %s %s.%v: %v", diskId, location.Directory, bName, req.ShardIds, err)
 			return nil, err
+		}
+	}
+
+	// Pass 2: the shared .ecx/.ecj index (and the .vif) is removed only when NO shard
+	// of this volume remains on ANY disk of this node. A per-disk check would orphan a
+	// sibling disk's shards (split-disk reconciled volumes) by deleting their index.
+	nodeWideShards := 0
+	type ecLocationStatus struct {
+		location   *storage.DiskLocation
+		hasEcxFile bool
+		hasIdxFile bool
+	}
+	statuses := make([]ecLocationStatus, 0, len(vs.store.Locations))
+	for _, location := range vs.store.Locations {
+		hasEcxFile, hasIdxFile, existingShardCount, err := checkEcVolumeStatus(bName, location)
+		if err != nil {
+			return nil, err
+		}
+		nodeWideShards += existingShardCount
+		statuses = append(statuses, ecLocationStatus{location, hasEcxFile, hasIdxFile})
+	}
+	if nodeWideShards == 0 {
+		// Reuse the status from the count pass above so the directory listing is not
+		// repeated per location.
+		for _, st := range statuses {
+			if err := removeEcSharedIndexFiles(bName, st.location, st.hasEcxFile, st.hasIdxFile); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -491,21 +521,17 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 		return nil
 	}
 
-	hasEcxFile, hasIdxFile, existingShardCount, err := checkEcVolumeStatus(bName, location)
+	_, _, existingShardCount, err := checkEcVolumeStatus(bName, location)
 	if err != nil {
 		return err
 	}
 
 	if existingShardCount == 0 {
-		// The whole EC generation is gone on this disk.
-
-		// Remove the bitrot checksum sidecar(s) (.ecsum and any .ecsum.v<N>)
-		// from both dirs. This is gated on the shards being gone, NOT on a
-		// stray .ecx still being present: a sidecar whose shards have all been
-		// deleted is orphaned and must go even when no .ecx remains, or it
-		// leaks. The per-shard-id delete that ec.rebuild uses for
-		// copied-survivor cleanup leaves shards behind, so this guard does not
-		// fire there.
+		// This disk's shards for the volume are gone. Remove the bitrot checksum
+		// sidecar(s) (.ecsum and any .ecsum.v<N>) here, since they protect this
+		// disk's shards and are now orphaned. The shared .ecx/.ecj/.vif index is
+		// NOT removed here: a sibling disk may still hold shards that need it; the
+		// caller removes the shared index only once no shard remains node-wide.
 		if err := removeBitrotSidecars(dataBaseFilename); err != nil {
 			return err
 		}
@@ -514,34 +540,45 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 				return err
 			}
 		}
+	}
 
-		if hasEcxFile {
-			// Remove .ecx/.ecj from both idx and data directories
-			// since they may be in either location depending on when -dir.idx was configured.
-			// A surviving stale .ecx is the orphan-index condition this path prevents,
-			// so surface a real removal failure instead of reporting cleanup as success.
-			for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
+	return nil
+}
+
+// removeEcSharedIndexFiles removes the shared .ecx/.ecj index (and the .vif when no
+// .idx is present) for an EC volume on one disk. The caller invokes it only after
+// the whole node's shards for the volume are gone, so a sibling disk's shards are
+// never orphaned by deleting their index. A surviving stale .ecx is the orphan-index
+// condition this prevents, so a real removal failure is surfaced. hasEcxFile and
+// hasIdxFile come from the caller's checkEcVolumeStatus so the directory is not
+// re-listed here.
+func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasEcxFile, hasIdxFile bool) error {
+	indexBaseFilename := path.Join(location.IdxDirectory, bName)
+	dataBaseFilename := path.Join(location.Directory, bName)
+	if hasEcxFile {
+		// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
+		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
+			if err := removeFileIfExists(p); err != nil {
+				return err
+			}
+		}
+		if location.IdxDirectory != location.Directory {
+			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
 				if err := removeFileIfExists(p); err != nil {
-					return err
-				}
-			}
-			if location.IdxDirectory != location.Directory {
-				for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
-					if err := removeFileIfExists(p); err != nil {
-						return err
-					}
-				}
-			}
-
-			if !hasIdxFile {
-				// .vif is used for ec volumes and normal volumes
-				if err := removeFileIfExists(dataBaseFilename + ".vif"); err != nil {
 					return err
 				}
 			}
 		}
 	}
-
+	// Remove the .vif when no .idx is present (so this is not a live normal/tiered
+	// volume), independent of .ecx presence: the caller only reaches here once no
+	// shard remains node-wide, so an EC .vif left without its .ecx is stale
+	// generation metadata that would otherwise leak.
+	if !hasIdxFile {
+		if err := removeFileIfExists(dataBaseFilename + ".vif"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
