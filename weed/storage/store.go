@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -756,6 +757,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	// duplicate guard). Unmount every copy, not just the first match, so a stale
 	// twin cannot survive and re-register as the volume's content. A no-op unmount
 	// (no copy present) is not an error, matching the prior behavior.
+	var errs []error
 	for _, location := range s.Locations {
 		v, found := location.FindVolume(i)
 		if !found {
@@ -774,12 +776,16 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 			if err == ErrVolumeNotFound {
 				continue
 			}
-			return err
+			// Keep going so the other copies are still unmounted; surface the
+			// failure so a copy left mounted is not reported as success.
+			glog.Errorf("UnmountVolume %d on %s: %v", i, location.Directory, err)
+			errs = append(errs, err)
+			continue
 		}
 		glog.V(0).Infof("UnmountVolume %d disk_id:%d", i, v.diskId)
 		s.DeletedVolumesChan <- &message
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
@@ -787,6 +793,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 	// a stale twin (e.g. a re-attached disk; NewStore has no cross-disk duplicate
 	// guard) cannot survive a delete and re-register as the volume's content.
 	deletedAny := false
+	var errs []error
 	for _, location := range s.Locations {
 		v, found := location.FindVolume(i)
 		if !found {
@@ -813,8 +820,14 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 			// partial result across disks.
 			return fmt.Errorf("DeleteVolume %d: %v", i, err)
 		} else {
+			// A real failure on one disk must not be masked by another copy's
+			// success: a stale copy left on the failing disk would re-register.
 			glog.Errorf("DeleteVolume %d: %v", i, err)
+			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))
 	}
 	if !deletedAny {
 		return fmt.Errorf("delete volume %d not found on disk", i)
