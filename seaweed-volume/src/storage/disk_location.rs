@@ -428,6 +428,25 @@ impl DiskLocation {
         }
     }
 
+    /// EC encode generation recorded in this disk's .vif (data dir first, then idx
+    /// dir for the split-disk layout). None if no .vif was readable, so the fenced
+    /// teardown preserves it (fail-safe). A present .vif with no ec_shard_config
+    /// yields Some(0) (a recovered or pre-upgrade live volume), also preserved.
+    pub(crate) fn ec_generation_ts_ns(&self, collection: &str, vid: VolumeId) -> Option<i64> {
+        for dir in [&self.directory, &self.idx_directory] {
+            let vif = format!("{}.vif", volume_file_name(dir, collection, vid));
+            if let Ok(s) = fs::read_to_string(&vif) {
+                if let Ok(vi) = serde_json::from_str::<VifVolumeInfo>(&s) {
+                    return Some(vi.ec_shard_config.map(|c| c.encode_ts_ns).unwrap_or(0));
+                }
+            }
+            if self.directory == self.idx_directory {
+                break;
+            }
+        }
+        None
+    }
+
     /// Find a volume by ID.
     pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
         self.volumes.get(&vid)
@@ -1276,6 +1295,61 @@ mod tests {
             !loc.validate_ec_volume("", VolumeId(71)),
             "shards smaller than the full source .dat should be reclaimable",
         );
+    }
+
+    // The per-disk generation reader behind the fenced EC teardown: a present .vif
+    // yields its generation (or 0 with no EC config), a missing .vif is unreadable
+    // (preserved, fail-safe), and the idx dir is a fallback for the split-disk layout.
+    #[test]
+    fn test_ec_generation_ts_ns_reads_and_fences() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&idx).unwrap();
+        let loc = DiskLocation::new(
+            data.to_str().unwrap(),
+            idx.to_str().unwrap(),
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+        let vid = VolumeId(88);
+        let dbase = volume_file_name(data.to_str().unwrap(), "", vid);
+        let ibase = volume_file_name(idx.to_str().unwrap(), "", vid);
+
+        // No .vif anywhere -> unreadable (the fenced teardown preserves on None).
+        assert_eq!(loc.ec_generation_ts_ns("", vid), None);
+
+        // .vif in the data dir carries its generation.
+        let with_gen = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns: 4242,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        std::fs::write(format!("{}.vif", dbase), serde_json::to_string(&with_gen).unwrap()).unwrap();
+        assert_eq!(loc.ec_generation_ts_ns("", vid), Some(4242));
+
+        // A .vif with no EC config reads as generation 0 (recovered/pre-upgrade live volume).
+        std::fs::remove_file(format!("{}.vif", dbase)).unwrap();
+        let no_cfg = VifVolumeInfo {
+            version: 3,
+            ..Default::default()
+        };
+        std::fs::write(format!("{}.vif", dbase), serde_json::to_string(&no_cfg).unwrap()).unwrap();
+        assert_eq!(loc.ec_generation_ts_ns("", vid), Some(0));
+
+        // idx-dir fallback: only the idx dir holds the .vif.
+        std::fs::remove_file(format!("{}.vif", dbase)).unwrap();
+        std::fs::write(format!("{}.vif", ibase), serde_json::to_string(&with_gen).unwrap()).unwrap();
+        assert_eq!(loc.ec_generation_ts_ns("", vid), Some(4242));
     }
 
     #[test]

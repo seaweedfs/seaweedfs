@@ -2662,15 +2662,42 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         if req.full_teardown {
-            // Pre-encode cleanup: evict the volume and wipe every EC artifact for it
-            // on every disk, not just the listed shards, so a remote node retains no
-            // stale generation that a fresh gen-0 copy would collide with. Echo the
-            // acknowledgement so the caller can tell a pre-upgrade server apart.
-            {
+            if req.encode_ts_ns == 0 {
+                // Blanket teardown (shell pre-encode cleanup / pre-upgrade caller): evict
+                // the volume and wipe every EC artifact for it on every disk, not just the
+                // listed shards, so a remote node retains no stale generation a fresh copy
+                // collides with. Echo the acknowledgement so the caller can tell a
+                // pre-upgrade server apart.
+                {
+                    let mut store = self.state.store.write().unwrap();
+                    let _ = store.remove_ec_volume(vid);
+                    for loc in &store.locations {
+                        loc.remove_ec_volume_files_full_teardown(&req.collection, vid);
+                    }
+                }
+            } else {
+                // Generation-fenced teardown (stale-worker pre-distribute cleanup): wipe
+                // only a disk whose .vif generation is strictly OLDER than the request;
+                // preserve same-or-newer, generation 0 (recovered/pre-upgrade live volume),
+                // and an unreadable .vif, so a stale run never wipes a newer run's live
+                // shards. Unload and remove only the strictly-older disks, never node-wide.
                 let mut store = self.state.store.write().unwrap();
-                let _ = store.remove_ec_volume(vid);
-                for loc in &store.locations {
-                    loc.remove_ec_volume_files_full_teardown(&req.collection, vid);
+                for disk_id in 0..store.locations.len() {
+                    let disk_gen = store.locations[disk_id].ec_generation_ts_ns(&req.collection, vid);
+                    let older = matches!(disk_gen, Some(g) if g > 0 && g < req.encode_ts_ns);
+                    if !older {
+                        tracing::info!(
+                            volume_id = vid.0,
+                            disk_id,
+                            ?disk_gen,
+                            req = req.encode_ts_ns,
+                            "ec full teardown preserved: generation not older than request"
+                        );
+                        continue;
+                    }
+                    store.locations[disk_id].remove_ec_volume(vid);
+                    store.locations[disk_id]
+                        .remove_ec_volume_files_full_teardown(&req.collection, vid);
                 }
             }
             self.state.volume_state_notify.notify_one();
@@ -2728,9 +2755,11 @@ impl VolumeServer for VolumeGrpcService {
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.UnmountEcShards(...) }
         let mut store = self.state.store.write().unwrap();
         for &shard_id in &req.shard_ids {
-            store.unmount_ec_shard(vid, shard_id).map_err(|e| {
-                Status::internal(format!("unmount {}.{}: {}", req.volume_id, shard_id, e))
-            })?;
+            store
+                .unmount_ec_shard(vid, shard_id, req.encode_ts_ns)
+                .map_err(|e| {
+                    Status::internal(format!("unmount {}.{}: {}", req.volume_id, shard_id, e))
+                })?;
         }
         drop(store);
         self.state.volume_state_notify.notify_one();

@@ -252,7 +252,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 	return fmt.Errorf("MountEcShards %d.%d load failures: %s", vid, shardId, string(b))
 }
 
-func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {
+func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId, reqEncodeTsNs int64) error {
 	// Walk every disk: a split-disk reconciled volume can mount the same vid on
 	// more than one disk, so a first-match unmount would leave a sibling copy
 	// mounted and heartbeating. Emit one deletion delta per disk.
@@ -268,6 +268,14 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 		var encodeTsNs int64
 		if ecVolume, ok := location.FindEcVolume(vid); ok {
 			encodeTsNs = ecVolume.EncodeTsNs
+		}
+		// Generation fence: when the caller carries a generation (stale-worker
+		// cleanup), only unmount a strictly-older generation; preserve a disk whose
+		// generation is same-or-newer, 0, or unknown, so a stale run cannot unmount
+		// a newer run's live shards. reqEncodeTsNs==0 (legacy/shell) unmounts all.
+		if reqEncodeTsNs > 0 && !(encodeTsNs > 0 && encodeTsNs < reqEncodeTsNs) {
+			glog.V(1).Infof("UnmountEcShards %d.%d disk_id:%d skipped: disk gen %d not older than request gen %d", vid, shardId, diskId, encodeTsNs, reqEncodeTsNs)
+			continue
 		}
 		if deleted := location.UnloadEcShard(vid, shardId); deleted {
 			si := erasure_coding.NewShardsInfo()
