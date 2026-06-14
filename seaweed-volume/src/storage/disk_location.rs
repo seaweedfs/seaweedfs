@@ -157,7 +157,7 @@ impl DiskLocation {
                         volume_id = vid.0,
                         "EC volume validation failed, removing incomplete EC files"
                     );
-                    self.remove_ec_volume_files(&collection, vid);
+                    let _ = self.remove_ec_volume_files(&collection, vid);
                     // Fall through to load .dat file
                 }
             }
@@ -377,24 +377,25 @@ impl DiskLocation {
     /// `store_ec_reconcile.rs` can call it to scrub partial EC artefacts
     /// when a healthy `.dat` for the same vid lives on a sibling disk
     /// (seaweedfs/seaweedfs#9478).
-    pub(crate) fn remove_ec_volume_files(&self, collection: &str, vid: VolumeId) {
+    pub(crate) fn remove_ec_volume_files(&self, collection: &str, vid: VolumeId) -> io::Result<()> {
         let base = volume_file_name(&self.directory, collection, vid);
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
 
         // Remove index files from idx directory (.ecx, .ecj)
-        let _ = fs::remove_file(format!("{}.ecx", idx_base));
-        let _ = fs::remove_file(format!("{}.ecj", idx_base));
+        rm_if_present(format!("{}.ecx", idx_base))?;
+        rm_if_present(format!("{}.ecj", idx_base))?;
         // Also try data directory in case .ecx/.ecj were created before -dir.idx was configured
         if self.idx_directory != self.directory {
-            let _ = fs::remove_file(format!("{}.ecx", base));
-            let _ = fs::remove_file(format!("{}.ecj", base));
+            rm_if_present(format!("{}.ecx", base))?;
+            rm_if_present(format!("{}.ecj", base))?;
         }
 
         // Remove all EC shard files (.ec00 ~ .ec31)
         for i in 0..MAX_SHARD_COUNT {
-            let _ = fs::remove_file(format!("{}.ec{:02}", base, i));
+            rm_if_present(format!("{}.ec{:02}", base, i))?;
         }
+        Ok(())
     }
 
     /// Full-teardown variant: everything remove_ec_volume_files clears, PLUS the
@@ -405,8 +406,12 @@ impl DiskLocation {
     /// .vif. Reconcile/load-fallback call remove_ec_volume_files directly and
     /// intentionally preserve it, mirroring Go's removeEcVolumeFiles (reconcile) vs
     /// removeStaleEcArtifacts (teardown) split.
-    pub(crate) fn remove_ec_volume_files_full_teardown(&self, collection: &str, vid: VolumeId) {
-        self.remove_ec_volume_files(collection, vid);
+    pub(crate) fn remove_ec_volume_files_full_teardown(
+        &self,
+        collection: &str,
+        vid: VolumeId,
+    ) -> io::Result<()> {
+        self.remove_ec_volume_files(collection, vid)?;
         let base = volume_file_name(&self.directory, collection, vid);
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         // try_exists, not exists(): a stat error on a PRESENT .idx must not read as
@@ -416,16 +421,36 @@ impl DiskLocation {
             std::path::Path::new(&format!("{}.idx", idx_base)).try_exists(),
             Ok(false)
         ) {
-            let _ = fs::remove_file(format!("{}.vif", idx_base));
+            rm_if_present(format!("{}.vif", idx_base))?;
             if self.idx_directory != self.directory
                 && matches!(
                     std::path::Path::new(&format!("{}.idx", base)).try_exists(),
                     Ok(false)
                 )
             {
-                let _ = fs::remove_file(format!("{}.vif", base));
+                rm_if_present(format!("{}.vif", base))?;
             }
         }
+        Ok(())
+    }
+
+    /// EC encode generation recorded in this disk's .vif (data dir first, then idx
+    /// dir for the split-disk layout). None if no .vif was readable, so the fenced
+    /// teardown preserves it (fail-safe). A present .vif with no ec_shard_config
+    /// yields Some(0) (a recovered or pre-upgrade live volume), also preserved.
+    pub(crate) fn ec_generation_ts_ns(&self, collection: &str, vid: VolumeId) -> Option<i64> {
+        for dir in [&self.directory, &self.idx_directory] {
+            let vif = format!("{}.vif", volume_file_name(dir, collection, vid));
+            if let Ok(s) = fs::read_to_string(&vif) {
+                if let Ok(vi) = serde_json::from_str::<VifVolumeInfo>(&s) {
+                    return Some(vi.ec_shard_config.map(|c| c.encode_ts_ns).unwrap_or(0));
+                }
+            }
+            if self.directory == self.idx_directory {
+                break;
+            }
+        }
+        None
     }
 
     /// Find a volume by ID.
@@ -924,7 +949,7 @@ impl DiskLocation {
                 volume_id = vid.0,
                 "Incomplete or invalid EC volume: .dat exists but validation failed, cleaning up EC files",
             );
-            self.remove_ec_volume_files(collection, vid);
+            let _ = self.remove_ec_volume_files(collection, vid);
             return;
         }
 
@@ -966,7 +991,7 @@ impl DiskLocation {
                 "Found {} EC shards without .ecx file (incomplete encoding interrupted before .ecx), cleaning up",
                 shards.len(),
             );
-            self.remove_ec_volume_files(collection, vid);
+            let _ = self.remove_ec_volume_files(collection, vid);
             return true;
         }
         false
@@ -1046,6 +1071,16 @@ fn calculate_expected_shard_size(dat_file_size: i64, data_shards: usize) -> i64 
 /// Resolve the EC data-shard count from the volume's own `.vif` (the volume
 /// server never holds the cluster EC config in memory), checking the data dir
 /// then the idx dir. Falls back to the default ratio when no EC `.vif` is found.
+/// Remove a file, treating a missing file as success but propagating real errors
+/// (permissions, disk full). Mirrors Go's removeFileIfExists so a teardown failure
+/// surfaces instead of silently leaving stale artifacts.
+fn rm_if_present(path: String) -> io::Result<()> {
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &str, vid: VolumeId) -> usize {
     for dir in [directory, idx_directory] {
         let vif = format!("{}.vif", volume_file_name(dir, collection, vid));
@@ -1276,6 +1311,61 @@ mod tests {
             !loc.validate_ec_volume("", VolumeId(71)),
             "shards smaller than the full source .dat should be reclaimable",
         );
+    }
+
+    // The per-disk generation reader behind the fenced EC teardown: a present .vif
+    // yields its generation (or 0 with no EC config), a missing .vif is unreadable
+    // (preserved, fail-safe), and the idx dir is a fallback for the split-disk layout.
+    #[test]
+    fn test_ec_generation_ts_ns_reads_and_fences() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&idx).unwrap();
+        let loc = DiskLocation::new(
+            data.to_str().unwrap(),
+            idx.to_str().unwrap(),
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+        let vid = VolumeId(88);
+        let dbase = volume_file_name(data.to_str().unwrap(), "", vid);
+        let ibase = volume_file_name(idx.to_str().unwrap(), "", vid);
+
+        // No .vif anywhere -> unreadable (the fenced teardown preserves on None).
+        assert_eq!(loc.ec_generation_ts_ns("", vid), None);
+
+        // .vif in the data dir carries its generation.
+        let with_gen = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns: 4242,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        std::fs::write(format!("{}.vif", dbase), serde_json::to_string(&with_gen).unwrap()).unwrap();
+        assert_eq!(loc.ec_generation_ts_ns("", vid), Some(4242));
+
+        // A .vif with no EC config reads as generation 0 (recovered/pre-upgrade live volume).
+        std::fs::remove_file(format!("{}.vif", dbase)).unwrap();
+        let no_cfg = VifVolumeInfo {
+            version: 3,
+            ..Default::default()
+        };
+        std::fs::write(format!("{}.vif", dbase), serde_json::to_string(&no_cfg).unwrap()).unwrap();
+        assert_eq!(loc.ec_generation_ts_ns("", vid), Some(0));
+
+        // idx-dir fallback: only the idx dir holds the .vif.
+        std::fs::remove_file(format!("{}.vif", dbase)).unwrap();
+        std::fs::write(format!("{}.vif", ibase), serde_json::to_string(&with_gen).unwrap()).unwrap();
+        assert_eq!(loc.ec_generation_ts_ns("", vid), Some(4242));
     }
 
     #[test]

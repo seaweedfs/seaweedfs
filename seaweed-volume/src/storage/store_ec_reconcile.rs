@@ -332,7 +332,7 @@ impl Store {
             // Also sweep any unmounted shard files (.ec00 .. .ec31)
             // that the per-disk loader skipped — destroy() only walks
             // the in-memory shards, but the disk may still hold others.
-            loc.remove_ec_volume_files(&v.collection, v.vid);
+            let _ = loc.remove_ec_volume_files(&v.collection, v.vid);
         }
     }
 
@@ -1044,7 +1044,7 @@ mod tests {
         let (mut store, _tmp) = build_split_disk_store(7003);
         let vid = VolumeId(7003);
 
-        store.unmount_ec_shard(vid, 1).unwrap();
+        store.unmount_ec_shard(vid, 1, 0).unwrap();
         assert_eq!(store.find_ec_shard_location(vid, 1), None);
         // Other shards untouched.
         assert_eq!(store.find_ec_shard_location(vid, 0), Some(0));

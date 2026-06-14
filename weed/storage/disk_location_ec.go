@@ -45,6 +45,13 @@ func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 	}
 }
 
+// UnloadEcVolume drops the in-memory EcVolume for vid from this one disk without
+// deleting files. Exported for the generation-fenced teardown, which unloads only
+// the strictly-older disks rather than node-wide.
+func (l *DiskLocation) UnloadEcVolume(vid needle.VolumeId) {
+	l.unloadEcVolume(vid)
+}
+
 // unloadEcVolume removes an EC volume from memory without deleting its files on disk.
 // This is useful for distributed EC volumes where shards may be on other servers.
 func (l *DiskLocation) unloadEcVolume(vid needle.VolumeId) {

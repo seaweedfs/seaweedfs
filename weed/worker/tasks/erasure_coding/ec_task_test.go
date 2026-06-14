@@ -170,6 +170,54 @@ func TestGenerateEcShardsLocallyStampsEncodeIdentity(t *testing.T) {
 	require.NotZero(t, vi.EcShardConfig.EncodeTsNs, "worker-encoded .vif must carry an encode identity")
 }
 
+// A fenced run must stamp the admin-issued generation (t.encodeTsNs) verbatim into
+// the distributed .vif, so the generation the worker distributes equals the one it
+// later sends on the teardown RPCs and the volume-server fence compares like-for-like.
+func TestGenerateEcShardsLocallyUsesAdminGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(957)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 2002, 0x5555EEEE)
+	resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("payload-for-admin-generation"))
+	_ = framework.ReadAllAndClose(t, resp)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	task := NewErasureCodingTask(
+		"ec-admin-generation",
+		clusterHarness.VolumeServerAddress(),
+		volumeID,
+		"",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	const adminGeneration int64 = 1_700_000_000_000_000_321
+	task.encodeTsNs = adminGeneration
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	require.NoError(t, task.markReplicasReadonly(ctx))
+	localFiles, err := task.copyVolumeFilesToWorker(ctx, t.TempDir())
+	require.NoError(t, err)
+
+	shardFiles, err := task.generateEcShardsLocally(localFiles, t.TempDir())
+	require.NoError(t, err)
+
+	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(shardFiles["vif"])
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NotNil(t, vi.EcShardConfig)
+	require.Equal(t, adminGeneration, vi.EcShardConfig.EncodeTsNs, "fenced run must stamp the admin generation verbatim, not a local timestamp")
+}
+
 func compactVolumeOnce(t *testing.T, grpcClient volume_server_pb.VolumeServerClient, volumeID uint32) {
 	t.Helper()
 

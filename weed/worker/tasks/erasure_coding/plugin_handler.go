@@ -241,6 +241,18 @@ func (h *ErasureCodingHandler) Detect(
 	if err != nil {
 		return err
 	}
+	// Stamp the admin-issued encode generation onto every EC proposal. DetectionSequence
+	// is minted once per cycle on the single admin clock, so generations are globally
+	// ordered even though detection runs on a rotating worker; this lets a stale worker's
+	// shard cleanup fence against a newer run instead of wiping it.
+	for _, result := range results {
+		if result == nil || result.TypedParams == nil {
+			continue
+		}
+		if ecp := result.TypedParams.GetErasureCodingParams(); ecp != nil {
+			ecp.EncodeTsNs = request.DetectionSequence
+		}
+	}
 	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results, maxResults, hasMore); traceErr != nil {
 		glog.Warningf("Plugin worker failed to emit erasure_coding detection trace: %v", traceErr)
 	}

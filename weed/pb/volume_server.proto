@@ -453,6 +453,7 @@ message VolumeEcShardsDeleteRequest {
     string collection = 2;
     repeated uint32 shard_ids = 3;
     bool full_teardown = 4; // pre-encode cleanup: wipe every EC artifact + generation for this volume, not just shard_ids
+    int64 encode_ts_ns = 5; // full_teardown generation fence: delete only a disk whose .vif generation is strictly OLDER than this; preserve same-or-newer, generation 0, and an unreadable .vif. 0 => wipe-all (shell pre-encode / pre-upgrade)
 }
 message VolumeEcShardsDeleteResponse {
     bool full_teardown_done = 1; // set by a new server that performed full_teardown; absent from an old server lets the caller detect the silent no-op
@@ -470,6 +471,7 @@ message VolumeEcShardsMountResponse {
 message VolumeEcShardsUnmountRequest {
     uint32 volume_id = 1;
     repeated uint32 shard_ids = 3;
+    int64 encode_ts_ns = 4; // generation fence: skip a disk whose mounted EC volume is this generation or newer (0 = unfenced, unmount all)
 }
 message VolumeEcShardsUnmountResponse {
 }

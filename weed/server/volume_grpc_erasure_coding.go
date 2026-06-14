@@ -418,17 +418,38 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
 	if req.FullTeardown {
-		// Pre-encode cleanup: evict the volume and wipe every EC artifact for it on
-		// every disk (the same teardown the generator does locally), not just the
-		// listed shards, so a remote node retains no stale generation that a fresh
-		// gen-0 copy would later collide with.
-		glog.V(0).Infof("ec volume %s full teardown", bName)
-		vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+		if req.EncodeTsNs == 0 {
+			// Blanket teardown (shell pre-encode cleanup / pre-upgrade caller): evict the
+			// volume and wipe every EC artifact for it on every disk, not just the listed
+			// shards, so a remote node retains no stale generation a fresh copy collides with.
+			glog.V(0).Infof("ec volume %s full teardown", bName)
+			vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+			for _, location := range vs.store.Locations {
+				dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+				idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+				if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
+					return nil, fmt.Errorf("full teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
+				}
+			}
+			return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
+		}
+		// Generation-fenced teardown (stale-worker pre-distribute cleanup): wipe only a
+		// disk whose .vif generation is strictly OLDER than the request; preserve
+		// same-or-newer, generation 0 (recovered/pre-upgrade live volume), and an
+		// unreadable .vif, so a stale run can never wipe a newer run's live shards.
+		// Unload and remove only the strictly-older disks, never node-wide.
+		glog.V(0).Infof("ec volume %s full teardown fenced at generation %d", bName, req.EncodeTsNs)
 		for _, location := range vs.store.Locations {
 			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
 			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			diskGen, readable := readEcGenerationTsNs(dataBase, idxBase)
+			if !readable || diskGen == 0 || diskGen >= req.EncodeTsNs {
+				glog.V(1).Infof("ec volume %d on %s preserved: disk generation %d (readable=%v) not older than request %d", req.VolumeId, location.Directory, diskGen, readable, req.EncodeTsNs)
+				continue
+			}
+			location.UnloadEcVolume(needle.VolumeId(req.VolumeId))
 			if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
-				return nil, fmt.Errorf("full teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
+				return nil, fmt.Errorf("fenced teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
 			}
 		}
 		return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
@@ -532,6 +553,24 @@ func removeFileIfExists(path string) error {
 		return err
 	}
 	return nil
+}
+
+// readEcGenerationTsNs returns the EC encode generation recorded in a disk's .vif
+// (data dir first, then idx dir for the split-disk layout) and whether a .vif file
+// was present. A present .vif with no EcShardConfig — or one that failed to parse —
+// yields (0, true): generation 0, which the fenced teardown preserves anyway (a
+// recovered or pre-upgrade live volume). (0, false) means no .vif file was found.
+// Both 0 and a missing .vif are preserved, so the read is fail-safe in every case.
+func readEcGenerationTsNs(dataBaseFileName, indexBaseFileName string) (int64, bool) {
+	for _, base := range []string{dataBaseFileName, indexBaseFileName} {
+		if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(base + ".vif"); found {
+			return vi.GetEcShardConfig().GetEncodeTsNs(), true
+		}
+		if dataBaseFileName == indexBaseFileName {
+			break
+		}
+	}
+	return 0, false
 }
 
 // removeStaleEcArtifacts deletes the shard, index, journal, and bitrot sidecar
@@ -663,7 +702,7 @@ func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_s
 	glog.V(0).Infof("VolumeEcShardsUnmount: %v", req)
 
 	for _, shardId := range req.ShardIds {
-		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.EncodeTsNs)
 
 		if err != nil {
 			glog.Errorf("ec shard unmount %v: %v", req, err)
