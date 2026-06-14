@@ -758,11 +758,18 @@ func cleanupOrphanSourceReplicas(ctx context.Context, clusterInfo *types.Cluster
 }
 
 // countExistingEcShardsForVolume returns the number of distinct EC shard IDs
-// for (volumeID, collection) present in the topology. Walks every disk's
-// EcIndexBits bitmap rather than trusting len(EcShardInfos), because a single
-// info entry can carry multiple shards. Used by the #9448 guard to decide
-// whether the EC shard set is complete enough that the orphaned regular
-// replica is safe to delete.
+// for (volumeID, collection) present in the topology, counting only the single
+// largest encode generation. Shards are grouped by encode_ts_ns (the per-encode
+// identity from .vif), so two interrupted encode runs whose shard sets overlap
+// are never unioned into a false-complete set that would wrongly trigger the
+// orphaned-source delete. Walks every disk's EcIndexBits bitmap rather than
+// trusting len(EcShardInfos), because a single info entry can carry multiple
+// shards. Shards reporting encode_ts_ns==0 (pre-upgrade servers) form their own
+// generation bucket.
+//
+// Limitation: the heartbeat carries one encode_ts_ns per (volume, disk), so this
+// separates generations living on different disks; same-disk mixing is prevented
+// upstream by the pre-encode artifact wipe and the cross-run read guard.
 func countExistingEcShardsForVolume(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) int {
 	if activeTopology == nil {
 		return 0
@@ -771,20 +778,29 @@ func countExistingEcShardsForVolume(activeTopology *topology.ActiveTopology, vol
 	if topologyInfo == nil {
 		return 0
 	}
-	var seen erasure_coding.ShardBits
+	perGeneration := make(map[int64]erasure_coding.ShardBits)
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
 				for _, diskInfo := range node.DiskInfos {
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						if ecShardInfo == nil {
+							continue
+						}
 						if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
 							continue
 						}
-						seen |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+						perGeneration[ecShardInfo.EncodeTsNs] |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 					}
 				}
 			}
 		}
 	}
-	return seen.Count()
+	best := 0
+	for _, bits := range perGeneration {
+		if c := bits.Count(); c > best {
+			best = c
+		}
+	}
+	return best
 }

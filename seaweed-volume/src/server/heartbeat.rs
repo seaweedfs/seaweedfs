@@ -314,6 +314,7 @@ fn collect_ec_shard_delta_messages(
                         disk_type: ec_vol.disk_type.to_string(),
                         expire_at_sec: ec_vol.expire_at_sec,
                         disk_id: disk_id as u32,
+                        encode_ts_ns: ec_vol.encode_ts_ns,
                         ..Default::default()
                     },
                 );

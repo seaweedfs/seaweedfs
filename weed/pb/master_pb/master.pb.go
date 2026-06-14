@@ -631,16 +631,20 @@ func (x *VolumeShortInformationMessage) GetDiskId() uint32 {
 }
 
 type VolumeEcShardInformationMessage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	EcIndexBits   uint32                 `protobuf:"varint,3,opt,name=ec_index_bits,json=ecIndexBits,proto3" json:"ec_index_bits,omitempty"`
-	DiskType      string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	ExpireAtSec   uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
-	DiskId        uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
-	ShardSizes    []int64                `protobuf:"varint,7,rep,packed,name=shard_sizes,json=shardSizes,proto3" json:"shard_sizes,omitempty"` // optimized: sizes for shards in order of set bits in ec_index_bits
-	FileCount     uint64                 `protobuf:"varint,8,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`           // total needles in the .ecx index (live + tombstoned)
-	DeleteCount   uint64                 `protobuf:"varint,9,opt,name=delete_count,json=deleteCount,proto3" json:"delete_count,omitempty"`     // node-local tombstones in the .ecj deletion journal
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Collection  string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	EcIndexBits uint32                 `protobuf:"varint,3,opt,name=ec_index_bits,json=ecIndexBits,proto3" json:"ec_index_bits,omitempty"`
+	DiskType    string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	ExpireAtSec uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
+	DiskId      uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	ShardSizes  []int64                `protobuf:"varint,7,rep,packed,name=shard_sizes,json=shardSizes,proto3" json:"shard_sizes,omitempty"` // optimized: sizes for shards in order of set bits in ec_index_bits
+	FileCount   uint64                 `protobuf:"varint,8,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`           // total needles in the .ecx index (live + tombstoned)
+	DeleteCount uint64                 `protobuf:"varint,9,opt,name=delete_count,json=deleteCount,proto3" json:"delete_count,omitempty"`     // node-local tombstones in the .ecj deletion journal
+	// encode-run identity (unix nanos) from the .vif EcShardConfig; lets the admin
+	// group shards by encode generation. Numbered 14 (not 10) to skip the
+	// enterprise fork's reserved 10-13.
+	EncodeTsNs    int64 `protobuf:"varint,14,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -734,6 +738,13 @@ func (x *VolumeEcShardInformationMessage) GetFileCount() uint64 {
 func (x *VolumeEcShardInformationMessage) GetDeleteCount() uint64 {
 	if x != nil {
 		return x.DeleteCount
+	}
+	return 0
+}
+
+func (x *VolumeEcShardInformationMessage) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
 	}
 	return 0
 }
@@ -4439,7 +4450,7 @@ const file_master_proto_rawDesc = "" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xb2\x02\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xd4\x02\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -4453,7 +4464,9 @@ const file_master_proto_rawDesc = "" +
 	"shardSizes\x12\x1d\n" +
 	"\n" +
 	"file_count\x18\b \x01(\x04R\tfileCount\x12!\n" +
-	"\fdelete_count\x18\t \x01(\x04R\vdeleteCount\"\xbe\x01\n" +
+	"\fdelete_count\x18\t \x01(\x04R\vdeleteCount\x12 \n" +
+	"\fencode_ts_ns\x18\x0e \x01(\x03R\n" +
+	"encodeTsNs\"\xbe\x01\n" +
 	"\x0eStorageBackend\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12I\n" +

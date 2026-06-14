@@ -375,6 +375,7 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 				DiskId:      diskId,
 				FileCount:   fileCount,
 				DeleteCount: deleteCount,
+				EncodeTsNs:  ev.EncodeTsNs,
 			}
 			ecInfoPerVolume[s.VolumeId] = m
 		}
