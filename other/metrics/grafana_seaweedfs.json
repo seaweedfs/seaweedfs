@@ -5064,7 +5064,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - SeaweedFS_filerSync_sync_offset{cluster=~\"$cluster\"} / 1e9",
+              "expr": "time() - (SeaweedFS_filerSync_sync_offset{cluster=~\"$cluster\"} > 0) / 1e9",
               "range": true,
               "refId": "A",
               "legendFormat": "{{clientName}} {{path}}"
@@ -5160,7 +5160,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - max by (clientName, path) (SeaweedFS_filer_last_send_timestamp_of_subscribe{cluster=~\"$cluster\"}) / 1e9",
+              "expr": "time() - max by (clientName, path) (SeaweedFS_filer_last_send_timestamp_of_subscribe{cluster=~\"$cluster\"} > 0) / 1e9",
               "range": true,
               "refId": "A",
               "legendFormat": "{{clientName}} {{path}}"
