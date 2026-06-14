@@ -250,8 +250,12 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if util.FileExists(noteFile) {
 		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
-		removeVolumeFiles(l.Directory+"/"+volumeName, false)
-		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, false)
+		// Keep the .vif when an .ecx for this vid coexists on the disk: the
+		// regular and EC volumes share <base>.vif, so removing the incomplete
+		// regular copy must not strip the EC volume's info file.
+		keepVif := l.hasEcxFile(volumeName)
+		removeVolumeFiles(l.Directory+"/"+volumeName, keepVif)
+		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, keepVif)
 		return false
 	}
 

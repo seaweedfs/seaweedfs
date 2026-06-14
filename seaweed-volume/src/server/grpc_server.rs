@@ -1080,21 +1080,15 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        // If volume already exists locally, delete it first
-        {
+        // A pre-existing local replica is NOT deleted up front. Deleting before
+        // the source is confirmed reachable destroys a healthy copy on a
+        // transient source outage (and, on retry, can lose the volume
+        // entirely). The delete is deferred until read_volume_file_status below
+        // proves the source holds the volume; readability alone is the gate.
+        let had_existing_volume = {
             let store = self.state.store.read().unwrap();
-            if store.find_volume(vid).is_some() {
-                drop(store);
-                let mut store = self.state.store.write().unwrap();
-                // keep remote data: the inbound copy carries a .vif that may
-                // point at the same cloud-tier object the existing volume
-                // references.
-                store.delete_volume(vid, false, true).map_err(|e| {
-                    Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
-                })?;
-                self.state.volume_state_notify.notify_one();
-            }
-        }
+            store.find_volume(vid).is_some()
+        };
 
         // Parse source_data_node address: "ip:port.grpcPort" or "ip:port" (grpc = port + 10000)
         let source = &req.source_data_node;
@@ -1135,6 +1129,19 @@ impl VolumeServer for VolumeGrpcService {
             .map_err(|e| Status::internal(format!("read volume file status failed, {}", e)))?
             .into_inner();
 
+        // Source is reachable and holds the volume: only now is it safe to drop
+        // an existing local replica before overwriting its files.
+        if had_existing_volume {
+            let mut store = self.state.store.write().unwrap();
+            // keep remote data: the inbound copy carries a .vif that may point
+            // at the same cloud-tier object the existing volume references.
+            store.delete_volume(vid, false, true).map_err(|e| {
+                Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
+            })?;
+            drop(store);
+            self.state.volume_state_notify.notify_one();
+        }
+
         let requested_disk_type = if !req.disk_type.is_empty() {
             DiskType::from_string(&req.disk_type)
         } else {
@@ -1166,9 +1173,12 @@ impl VolumeServer for VolumeGrpcService {
         let idx_base_name =
             crate::storage::volume::volume_file_name(&idx_base, &vol_info.collection, vid);
 
-        // Write a .note file to indicate copy in progress
+        // Write a .note file to indicate copy in progress. A leftover note
+        // fails the volume load on restart, so a write failure must abort.
         let note_path = format!("{}.note", data_base_name);
-        let _ = std::fs::write(&note_path, format!("copying from {}", source));
+        std::fs::write(&note_path, format!("copying from {}", source)).map_err(|e| {
+            Status::internal(format!("write .note for volume {}: {}", vid, e))
+        })?;
 
         let has_remote_dat = vol_info
             .volume_info
@@ -1299,8 +1309,16 @@ impl VolumeServer for VolumeGrpcService {
                     let _ = set_file_mtime(&vif_path, vif_modified_ts_ns);
                 }
 
-                // Remove the .note file
-                let _ = std::fs::remove_file(&note_path);
+                // Remove the .note file. A leftover note fails the load on the
+                // next restart, so a removal failure must fail the copy.
+                if let Err(e) = std::fs::remove_file(&note_path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        return Err(Status::internal(format!(
+                            "remove .note for volume {}: {}",
+                            vid, e
+                        )));
+                    }
+                }
 
                 // Verify file sizes
                 if !has_remote_dat {
