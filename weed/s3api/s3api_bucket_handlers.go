@@ -672,6 +672,16 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 // isUserAdmin securely checks if the authenticated user is an admin
 // This validates admin status through proper IAM authentication, not spoofable headers
 func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
+	// Reuse the identity the Auth middleware stored; re-authenticating here would
+	// fail once the request body has been read.
+	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+		if identity, ok := identityObj.(*Identity); ok {
+			return identity != nil && identity.isAdmin()
+		}
+	}
+	if s3a.iam == nil {
+		return false
+	}
 	// Use a minimal admin action to authenticate and check admin status
 	adminAction := Action("Admin")
 	identity, errCode := s3a.iam.authRequest(r, adminAction)

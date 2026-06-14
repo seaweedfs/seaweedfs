@@ -137,6 +137,19 @@ var (
 	}
 )
 
+// accountForUnscopedIdentity gives an identity with no configured account a
+// distinct account id from its name, so account-less identities are not all
+// collapsed into the shared admin account for ownership/ACL checks.
+func accountForUnscopedIdentity(name string) *Account {
+	if name == "" || name == AccountAdmin.Id {
+		return &AccountAdmin
+	}
+	return &Account{
+		Id:          name,
+		DisplayName: name,
+	}
+}
+
 type Credential struct {
 	AccessKey  string
 	SecretKey  string
@@ -614,7 +627,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
 		case ident.Account == nil:
-			t.Account = &AccountAdmin
+			t.Account = accountForUnscopedIdentity(t.Name)
 		default:
 			if account, ok := accounts[ident.Account.Id]; ok {
 				t.Account = account
@@ -833,7 +846,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
 		case ident.Account == nil:
-			t.Account = &AccountAdmin
+			t.Account = accountForUnscopedIdentity(t.Name)
 		default:
 			if account, ok := accounts[ident.Account.Id]; ok {
 				t.Account = account
