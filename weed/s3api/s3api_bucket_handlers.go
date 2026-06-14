@@ -677,7 +677,7 @@ func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
 	// fails once the request body has been consumed).
 	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
 		if identity, ok := identityObj.(*Identity); ok {
-			return identity.isAdmin()
+			return identity != nil && identity.isAdmin()
 		}
 	}
 	if s3a.iam == nil {
