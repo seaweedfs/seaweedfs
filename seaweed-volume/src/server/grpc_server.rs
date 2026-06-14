@@ -1080,21 +1080,15 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        // If volume already exists locally, delete it first
-        {
+        // A pre-existing local replica is NOT deleted up front. Deleting before
+        // the source is confirmed reachable destroys a healthy copy on a
+        // transient source outage (and, on retry, can lose the volume
+        // entirely). The delete is deferred until read_volume_file_status below
+        // proves the source holds the volume; readability alone is the gate.
+        let had_existing_volume = {
             let store = self.state.store.read().unwrap();
-            if store.find_volume(vid).is_some() {
-                drop(store);
-                let mut store = self.state.store.write().unwrap();
-                // keep remote data: the inbound copy carries a .vif that may
-                // point at the same cloud-tier object the existing volume
-                // references.
-                store.delete_volume(vid, false, true).map_err(|e| {
-                    Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
-                })?;
-                self.state.volume_state_notify.notify_one();
-            }
-        }
+            store.find_volume(vid).is_some()
+        };
 
         // Parse source_data_node address: "ip:port.grpcPort" or "ip:port" (grpc = port + 10000)
         let source = &req.source_data_node;
@@ -1135,6 +1129,19 @@ impl VolumeServer for VolumeGrpcService {
             .map_err(|e| Status::internal(format!("read volume file status failed, {}", e)))?
             .into_inner();
 
+        // Source is reachable and holds the volume: only now is it safe to drop
+        // an existing local replica before overwriting its files.
+        if had_existing_volume {
+            let mut store = self.state.store.write().unwrap();
+            // keep remote data: the inbound copy carries a .vif that may point
+            // at the same cloud-tier object the existing volume references.
+            store.delete_volume(vid, false, true).map_err(|e| {
+                Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
+            })?;
+            drop(store);
+            self.state.volume_state_notify.notify_one();
+        }
+
         let requested_disk_type = if !req.disk_type.is_empty() {
             DiskType::from_string(&req.disk_type)
         } else {
@@ -1166,9 +1173,12 @@ impl VolumeServer for VolumeGrpcService {
         let idx_base_name =
             crate::storage::volume::volume_file_name(&idx_base, &vol_info.collection, vid);
 
-        // Write a .note file to indicate copy in progress
+        // Write a .note file to indicate copy in progress. A leftover note
+        // fails the volume load on restart, so a write failure must abort.
         let note_path = format!("{}.note", data_base_name);
-        let _ = std::fs::write(&note_path, format!("copying from {}", source));
+        std::fs::write(&note_path, format!("copying from {}", source)).map_err(|e| {
+            Status::internal(format!("write .note for volume {}: {}", vid, e))
+        })?;
 
         let has_remote_dat = vol_info
             .volume_info
@@ -1247,7 +1257,7 @@ impl VolumeServer for VolumeGrpcService {
                     .await
                     .map_err(|e| Status::internal(e))?;
                     if dat_modified_ts_ns > 0 {
-                        set_file_mtime(&dat_path, dat_modified_ts_ns);
+                        let _ = set_file_mtime(&dat_path, dat_modified_ts_ns);
                     }
                 }
 
@@ -1272,7 +1282,7 @@ impl VolumeServer for VolumeGrpcService {
                 .await
                 .map_err(|e| Status::internal(e))?;
                 if idx_modified_ts_ns > 0 {
-                    set_file_mtime(&idx_path, idx_modified_ts_ns);
+                    let _ = set_file_mtime(&idx_path, idx_modified_ts_ns);
                 }
 
                 // Copy .vif file (ignore if not found on source)
@@ -1296,11 +1306,19 @@ impl VolumeServer for VolumeGrpcService {
                 .await
                 .map_err(|e| Status::internal(e))?;
                 if vif_modified_ts_ns > 0 {
-                    set_file_mtime(&vif_path, vif_modified_ts_ns);
+                    let _ = set_file_mtime(&vif_path, vif_modified_ts_ns);
                 }
 
-                // Remove the .note file
-                let _ = std::fs::remove_file(&note_path);
+                // Remove the .note file. A leftover note fails the load on the
+                // next restart, so a removal failure must fail the copy.
+                if let Err(e) = std::fs::remove_file(&note_path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        return Err(Status::internal(format!(
+                            "remove .note for volume {}: {}",
+                            vid, e
+                        )));
+                    }
+                }
 
                 // Verify file sizes
                 if !has_remote_dat {
@@ -3087,6 +3105,15 @@ impl VolumeServer for VolumeGrpcService {
             dat_path
         };
 
+        // Store the source .dat mtime, not the upload time, so a reload computes
+        // TTL from real data age (matches Go VolumeTierMoveDatToRemote).
+        let dat_modified_secs = std::fs::metadata(&dat_path)
+            .and_then(|m| m.modified())
+            .map_err(|e| Status::internal(format!("stat data file {}: {}", dat_path, e)))?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         // Look up the S3 tier backend
         let backend = {
             let registry = self.state.s3_tier_registry.read().unwrap();
@@ -3139,18 +3166,13 @@ impl VolumeServer for VolumeGrpcService {
                 {
                     let mut store = state.store.write().unwrap();
                     if let Some((_, vol)) = store.find_volume_mut(vid) {
-                        let now_unix = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-
                         vol.volume_info.files.push(volume_server_pb::RemoteFile {
                             backend_type: backend_type.clone(),
                             backend_id: backend_id.clone(),
                             key,
                             offset: 0,
                             file_size: size,
-                            modified_time: now_unix,
+                            modified_time: dat_modified_secs,
                             extension: ".dat".to_string(),
                         });
                         vol.refresh_remote_write_mode();
@@ -3201,7 +3223,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         // Validate volume and get remote storage info
-        let (dat_path, storage_name, storage_key) = {
+        let (dat_path, storage_name, storage_key, remote_modified_secs) = {
             let store = self.state.store.read().unwrap();
             let (_, vol) = store
                 .find_volume(vid)
@@ -3231,7 +3253,14 @@ impl VolumeServer for VolumeGrpcService {
                 )));
             }
 
-            (dat_path, storage_name, storage_key)
+            let remote_modified_secs = vol
+                .volume_info
+                .files
+                .first()
+                .map(|f| f.modified_time)
+                .unwrap_or(0);
+
+            (dat_path, storage_name, storage_key, remote_modified_secs)
         };
 
         // Look up the S3 tier backend
@@ -3278,6 +3307,15 @@ impl VolumeServer for VolumeGrpcService {
                             storage_name_clone, dat_path, e
                         ))
                     })?;
+
+                // Restore the .dat mtime so a reload computes TTL from real data age,
+                // not download time (matches Go VolumeTierMoveDatFromRemote).
+                if remote_modified_secs > 0 {
+                    let modified_ts_ns = (remote_modified_secs as i64).saturating_mul(1_000_000_000);
+                    if let Err(e) = set_file_mtime(&dat_path, modified_ts_ns) {
+                        tracing::warn!("volume {} restore data file {} modified time: {}", vid, dat_path, e);
+                    }
+                }
 
                 if !keep_remote {
                     // Delete remote file
@@ -4150,17 +4188,16 @@ async fn ping_filer_target(
 use super::grpc_client::parse_grpc_address;
 
 /// Set the modification time of a file from nanoseconds since Unix epoch.
-fn set_file_mtime(path: &str, modified_ts_ns: i64) {
+fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     use std::time::{Duration, SystemTime};
     let ts = if modified_ts_ns >= 0 {
         SystemTime::UNIX_EPOCH + Duration::from_nanos(modified_ts_ns as u64)
     } else {
         SystemTime::UNIX_EPOCH
     };
-    if let Ok(file) = std::fs::File::open(path) {
-        let ft = std::fs::FileTimes::new().set_accessed(ts).set_modified(ts);
-        let _ = file.set_times(ft);
-    }
+    let file = std::fs::File::open(path)?;
+    let ft = std::fs::FileTimes::new().set_accessed(ts).set_modified(ts);
+    file.set_times(ft)
 }
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.

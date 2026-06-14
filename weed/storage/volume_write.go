@@ -142,6 +142,8 @@ func removeVolumeFiles(filename string, keepVif bool) {
 	// compaction
 	deleteAndLog("cpd")
 	deleteAndLog("cpx")
+	// compaction commit marker
+	deleteAndLog("cpc")
 	// level db index file
 	deleteAndLog("ldb")
 	// redb index file (Rust volume server)

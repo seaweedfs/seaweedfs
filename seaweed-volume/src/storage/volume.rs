@@ -588,6 +588,36 @@ impl Volume {
         Ok(v)
     }
 
+    /// Build a minimal, unloaded Volume holding only the identity/path fields
+    /// reconcile_compact_state needs. Used by the disk-location load pre-pass to
+    /// recover an interrupted commit before the volume itself is loaded.
+    pub fn new_unloaded(dirname: &str, dir_idx: &str, collection: &str, id: VolumeId) -> Self {
+        Volume {
+            id,
+            dir: dirname.to_string(),
+            dir_idx: dir_idx.to_string(),
+            collection: collection.to_string(),
+            dat_file: None,
+            remote_dat_file: None,
+            nm: None,
+            needle_map_kind: NeedleMapKind::InMemory,
+            data_file_access_control: Arc::new(DataFileAccessControl::default()),
+            super_block: SuperBlock::default(),
+            no_write_or_delete: false,
+            no_write_can_delete: false,
+            location_disk_space_low: Arc::new(AtomicBool::new(false)),
+            last_modified_ts_seconds: 0,
+            last_append_at_ns: 0,
+            last_compact_index_offset: 0,
+            last_compact_revision: 0,
+            is_compacting: false,
+            compaction_byte_per_second: 0,
+            last_io_error: Mutex::new(None),
+            volume_info: PbVolumeInfo::default(),
+            has_remote_file: false,
+        }
+    }
+
     /// Returns true if the volume is currently being compacted.
     pub fn is_compacting(&self) -> bool {
         self.is_compacting
@@ -2897,28 +2927,14 @@ impl Volume {
         self.dat_file = None;
         self.remote_dat_file = None;
 
-        let cpd_path = self.file_name(".cpd");
-        let cpx_path = self.file_name(".cpx");
-        let dat_path = self.file_name(".dat");
-        let idx_path = self.file_name(".idx");
-
-        // Check that compact files exist
-        if !Path::new(&cpd_path).exists() || !Path::new(&cpx_path).exists() {
-            return Err(VolumeError::Io(io::Error::new(
-                io::ErrorKind::NotFound,
-                "compact files (.cpd/.cpx) not found",
-            )));
-        }
-
-        // Swap files: .cpd → .dat, .cpx → .idx
-        fs::rename(&cpd_path, &dat_path)?;
-        fs::rename(&cpx_path, &idx_path)?;
-
-        // Remove any leveldb/redb index files (rebuilt from .idx on reload)
-        let ldb_path = self.file_name(".ldb");
-        let _ = fs::remove_dir_all(&ldb_path);
-        let rdb_path = self.file_name(".rdb");
-        let _ = fs::remove_file(&rdb_path);
+        // makeup_diff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
+        // commit marker BEFORE the renames so the two-rename swap is atomic
+        // across a crash: a marker on disk means the swap is decided and
+        // reconcile rolls forward; no marker means roll back. Without it, a
+        // crash between the two renames leaves a stale .idx that a later vacuum
+        // compacts to empty.
+        self.write_compact_commit_marker()?;
+        self.apply_compact_swap()?;
 
         // Reload
         self.load(true, false, 0, self.version())?;
@@ -2926,30 +2942,165 @@ impl Volume {
         Ok(())
     }
 
+    /// Write and fsync the .cpc marker, then fsync the directory so the marker
+    /// survives a crash before apply_compact_swap.
+    fn write_compact_commit_marker(&self) -> Result<(), VolumeError> {
+        let marker_path = self.file_name(".cpc");
+        let f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&marker_path)?;
+        f.sync_all()?;
+        drop(f);
+        fsync_dir(&marker_path)?;
+        Ok(())
+    }
+
+    /// Perform the durable two-rename compaction commit. Idempotent: run both at
+    /// the tail of commit and by reconcile rolling forward after a crash. It
+    /// requires BOTH .cpd/.cpx to be present, so a stale or duplicate commit
+    /// returns an error without deleting the live .dat/.idx.
+    fn apply_compact_swap(&self) -> Result<(), VolumeError> {
+        // Normal commit: both temp files must be present, or a stale/duplicate
+        // commit could clobber the live .dat/.idx.
+        if !Path::new(&self.file_name(".cpd")).exists()
+            || !Path::new(&self.file_name(".cpx")).exists()
+        {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "compact files (.cpd/.cpx) not found",
+            )));
+        }
+        self.finish_compact_swap()
+    }
+
+    /// Renames whichever compaction temp file is still present (.cpd->.dat,
+    /// .cpx->.idx), fsyncs, drops the stale .ldb/.rdb, then clears the .cpc
+    /// marker. Tolerates a partial state: a crash after the .dat rename but
+    /// before the .idx rename leaves only .cpx, which must still be applied --
+    /// not abandoned, which would pair a fresh .dat with a stale .idx. Existence
+    /// is checked robustly so a transient error never silently skips the swap.
+    fn finish_compact_swap(&self) -> Result<(), VolumeError> {
+        let exists = |p: String| match fs::metadata(&p) {
+            Ok(_) => true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+            Err(_) => true,
+        };
+        let dat_path = self.file_name(".dat");
+        let idx_path = self.file_name(".idx");
+        let cpd_exists = exists(self.file_name(".cpd"));
+        let cpx_exists = exists(self.file_name(".cpx"));
+
+        if cpd_exists {
+            #[cfg(windows)]
+            {
+                let _ = fs::remove_file(&dat_path);
+            }
+            fs::rename(self.file_name(".cpd"), &dat_path)?;
+        }
+        if cpx_exists {
+            #[cfg(windows)]
+            {
+                let _ = fs::remove_file(&idx_path);
+            }
+            fs::rename(self.file_name(".cpx"), &idx_path)?;
+        }
+        if cpd_exists || cpx_exists {
+            fsync_dir(&dat_path)?;
+            if self.dir != self.dir_idx {
+                fsync_dir(&idx_path)?;
+            }
+            let _ = fs::remove_dir_all(self.file_name(".ldb"));
+            let _ = fs::remove_file(self.file_name(".rdb"));
+        }
+
+        // Clear the marker last and fsync the dir so a restart does not re-run a
+        // completed swap.
+        let marker_path = self.file_name(".cpc");
+        match fs::remove_file(&marker_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        fsync_dir(&marker_path)?;
+        Ok(())
+    }
+
+    /// Recover an interrupted compaction commit on load. When the .cpc marker is
+    /// present the swap was decided, so roll FORWARD by finishing the renames;
+    /// when it is absent any leftover .cpd/.cpx are an abandoned generation, so
+    /// roll BACK by deleting them (and any stale .ldb beside a healthy .idx).
+    pub fn reconcile_compact_state(&self) -> Result<(), VolumeError> {
+        let cpc_path = self.file_name(".cpc");
+        if Path::new(&cpc_path).exists() {
+            // Marker present: the swap was decided. Finish whichever rename is
+            // still pending -- a crash may have completed only the .dat rename,
+            // so the lone remaining .cpx must still be applied, not abandoned.
+            // If neither temp file remains, finish_compact_swap clears the marker.
+            tracing::info!(
+                volume_id = self.id.0,
+                "rolling forward interrupted compaction commit"
+            );
+            return self.finish_compact_swap();
+        }
+
+        // No marker: roll back any orphan compaction temp files.
+        let mut rolled_back = false;
+        for ext in &[".cpd", ".cpx"] {
+            let p = self.file_name(ext);
+            if Path::new(&p).exists() {
+                tracing::info!(
+                    volume_id = self.id.0,
+                    "rolling back orphan compaction file {}",
+                    ext
+                );
+                match fs::remove_file(&p) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e.into()),
+                }
+                rolled_back = true;
+            }
+        }
+        if rolled_back {
+            let _ = fs::remove_dir_all(self.file_name(".ldb"));
+            let _ = fs::remove_file(self.file_name(".rdb"));
+        }
+        Ok(())
+    }
+
     /// Clean up leftover compaction files (.cpd, .cpx).
     pub fn cleanup_compact(&self) -> Result<(), VolumeError> {
+        // Refuse to unlink .cpd/.cpx while a .cpc marker exists: those temp files
+        // are the only inputs reconcile can roll forward to, so removing them
+        // mid-commit would strand a decided swap.
+        if Path::new(&self.file_name(".cpc")).exists() {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "volume {}: refusing cleanup while commit marker present",
+                    self.id
+                ),
+            )));
+        }
+
         let cpd_path = self.file_name(".cpd");
         let cpx_path = self.file_name(".cpx");
         let cpldb_path = self.file_name(".cpldb");
+        let cpc_path = self.file_name(".cpc");
 
         let e1 = fs::remove_file(&cpd_path);
         let e2 = fs::remove_file(&cpx_path);
         let e3 = fs::remove_dir_all(&cpldb_path);
+        let e4 = fs::remove_file(&cpc_path);
 
         // Ignore NotFound errors
-        if let Err(e) = e1 {
-            if e.kind() != io::ErrorKind::NotFound {
-                return Err(e.into());
-            }
-        }
-        if let Err(e) = e2 {
-            if e.kind() != io::ErrorKind::NotFound {
-                return Err(e.into());
-            }
-        }
-        if let Err(e) = e3 {
-            if e.kind() != io::ErrorKind::NotFound {
-                return Err(e.into());
+        for e in [e1, e2, e3, e4] {
+            if let Err(e) = e {
+                if e.kind() != io::ErrorKind::NotFound {
+                    return Err(e.into());
+                }
             }
         }
 
@@ -3263,9 +3414,31 @@ fn get_append_at_ns(last: u64) -> u64 {
 
 /// Remove all files associated with a volume.
 /// .dat/.idx removals log at info level so destructive calls are traceable.
+/// fsync the parent directory of `path` so a rename/create/unlink inside it is
+/// durable, propagating a sync failure so the commit path can abort rather than
+/// proceed with an undurable rename or marker. A path with no openable parent is
+/// tolerated; directory fsync is unsupported on Windows, so it is a no-op there
+/// (matching the Go fsyncDir helper, which ignores that error).
+fn fsync_dir(path: &str) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(parent) = Path::new(path).parent() {
+            if let Ok(d) = File::open(parent) {
+                return d.sync_all();
+            }
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn remove_volume_files(base: &str, keep_vif: bool) {
     for ext in &[
-        ".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb",
+        ".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".cpc", ".note", ".rdb",
     ] {
         if *ext == ".vif" && keep_vif {
             continue;
@@ -4812,6 +4985,147 @@ mod tests {
         assert!(
             std::path::Path::new(&ecx_path).exists(),
             ".ecx is an EC sidecar, never touched here"
+        );
+    }
+
+    /// A crash after the .idx/.dat were consumed but before the .cpx->.idx
+    /// rename committed leaves only .cpd + .cpx + .cpc. reconcile_compact_state
+    /// must roll the swap FORWARD and produce a loadable, writable volume
+    /// holding the compacted needle count.
+    #[test]
+    fn test_reconcile_roll_forward_marker_only() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=6u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        for id in [2u64, 5u64] {
+            let mut del = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(id as u32),
+                ..Needle::default()
+            };
+            v.delete_needle(&mut del).unwrap();
+        }
+        let expected_live = v.file_count() - v.deleted_count();
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.close();
+
+        let cpd = v.file_name(".cpd");
+        let cpx = v.file_name(".cpx");
+        let cpc = v.file_name(".cpc");
+        let dat = v.file_name(".dat");
+        let idx = v.file_name(".idx");
+        assert!(Path::new(&cpd).exists());
+        assert!(Path::new(&cpx).exists());
+
+        // Simulate the mid-commit crash: original .dat/.idx are gone and only
+        // the compacted temp files plus the commit marker survive.
+        fs::remove_file(&dat).unwrap();
+        fs::remove_file(&idx).unwrap();
+        let _ = fs::remove_dir_all(v.file_name(".ldb"));
+        fs::write(&cpc, b"").unwrap();
+
+        v.reconcile_compact_state().unwrap();
+
+        assert!(!Path::new(&cpd).exists(), ".cpd consumed by roll-forward");
+        assert!(!Path::new(&cpx).exists(), ".cpx consumed by roll-forward");
+        assert!(!Path::new(&cpc).exists(), ".cpc cleared after swap");
+        assert!(Path::new(&dat).exists(), ".dat restored by roll-forward");
+        assert!(Path::new(&idx).exists(), ".idx restored by roll-forward");
+
+        // The rolled-forward files must load as a writable volume with the
+        // compacted needle count.
+        let reloaded = make_test_volume(dir);
+        assert!(!reloaded.is_read_only(), "rolled-forward volume read-only");
+        assert_eq!(
+            reloaded.file_count(),
+            expected_live,
+            "rolled-forward volume needle count"
+        );
+    }
+
+    /// With no .cpc marker, leftover .cpd/.cpx are an abandoned generation;
+    /// reconcile must roll BACK by deleting them and leave the live .dat/.idx.
+    #[test]
+    fn test_reconcile_roll_back_no_marker() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=4u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.compact_by_index(0, 0, |_| true).unwrap();
+
+        let cpd = v.file_name(".cpd");
+        let cpx = v.file_name(".cpx");
+        let dat = v.file_name(".dat");
+        let idx = v.file_name(".idx");
+        assert!(Path::new(&cpd).exists());
+        assert!(Path::new(&cpx).exists());
+        // No .cpc marker exists.
+
+        v.reconcile_compact_state().unwrap();
+
+        assert!(!Path::new(&cpd).exists(), ".cpd rolled back");
+        assert!(!Path::new(&cpx).exists(), ".cpx rolled back");
+        assert!(Path::new(&dat).exists(), "live .dat kept");
+        assert!(Path::new(&idx).exists(), "live .idx kept");
+    }
+
+    /// apply_compact_swap must abort without touching the live .dat/.idx when
+    /// the .cpd/.cpx temp files are missing (a stale or duplicate commit).
+    #[test]
+    fn test_apply_compact_swap_missing_temp_files_preserves_live() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let dat = v.file_name(".dat");
+        let idx = v.file_name(".idx");
+        let dat_len_before = fs::metadata(&dat).unwrap().len();
+
+        // No .cpd/.cpx present: the swap must refuse.
+        assert!(
+            v.apply_compact_swap().is_err(),
+            "swap should error when .cpd/.cpx are missing"
+        );
+        assert!(Path::new(&dat).exists(), "live .dat preserved");
+        assert!(Path::new(&idx).exists(), "live .idx preserved");
+        assert_eq!(
+            fs::metadata(&dat).unwrap().len(),
+            dat_len_before,
+            "live .dat unchanged"
         );
     }
 }
