@@ -23,20 +23,25 @@ type dashSample struct {
 	workers  float64
 }
 
-// TrendCard is one at-a-glance metric rendered on the dashboard: a current
-// value plus an inline SVG sparkline of its recent history.
-type TrendCard struct {
-	Title    string
-	Value    string
-	Icon     string // FontAwesome icon class, e.g. "fa-database"
-	Color    string // Bootstrap contextual color, e.g. "primary"
-	SparkSVG string // self-contained inline <svg>…</svg>
-}
-
-// DashboardTrends is the set of trend cards shown on the dashboard.
+// DashboardTrends carries inline-SVG sparklines of recent cluster history,
+// keyed to the dashboard's existing summary cards so each card shows a value
+// plus its trend (rather than a separate, duplicate row). Maintenance metrics
+// that have no existing card carry their current value too, and fill the
+// previously-empty columns of the EC row.
 type DashboardTrends struct {
-	Cards   []TrendCard `json:"-"`
-	Samples int         `json:"samples"`
+	Samples int `json:"samples"`
+
+	// Sparklines (raw <svg>) for the existing summary cards.
+	Volumes  string `json:"-"`
+	Files    string `json:"-"`
+	DiskUsed string `json:"-"`
+	EcShards string `json:"-"`
+
+	// Maintenance cards: value + sparkline.
+	Tasks        string `json:"-"`
+	TasksValue   string `json:"tasks"`
+	Workers      string `json:"-"`
+	WorkersValue string `json:"workers"`
 }
 
 // recordDashboardSample snapshots headline cluster numbers into the ring
@@ -94,22 +99,21 @@ func (s *AdminServer) GetDashboardTrends() DashboardTrends {
 		}
 		return out
 	}
-	vol := series(func(s dashSample) float64 { return s.volumes })
-	ec := series(func(s dashSample) float64 { return s.ecShards })
-	disk := series(func(s dashSample) float64 { return s.diskUsed })
-	files := series(func(s dashSample) float64 { return s.files })
 	tasks := series(func(s dashSample) float64 { return s.tasks })
 	workers := series(func(s dashSample) float64 { return s.workers })
 
-	cards := []TrendCard{
-		{Title: "Volumes", Value: trendCount(last(vol)), Icon: "fa-database", Color: "primary", SparkSVG: sparklineSVG(vol, "#4e73df")},
-		{Title: "EC Shards", Value: trendCount(last(ec)), Icon: "fa-th-large", Color: "info", SparkSVG: sparklineSVG(ec, "#36b9cc")},
-		{Title: "Disk Used", Value: trendBytes(last(disk)), Icon: "fa-hdd", Color: "success", SparkSVG: sparklineSVG(disk, "#1cc88a")},
-		{Title: "Files", Value: trendCount(last(files)), Icon: "fa-file", Color: "warning", SparkSVG: sparklineSVG(files, "#f6c23e")},
-		{Title: "Active Tasks", Value: trendCount(last(tasks)), Icon: "fa-tasks", Color: "secondary", SparkSVG: sparklineSVG(tasks, "#858796")},
-		{Title: "Workers", Value: trendCount(last(workers)), Icon: "fa-users-cog", Color: "dark", SparkSVG: sparklineSVG(workers, "#5a5c69")},
+	// Sparkline colors match the existing cards' border colors.
+	return DashboardTrends{
+		Samples:      len(samples),
+		Volumes:      sparklineSVG(series(func(s dashSample) float64 { return s.volumes }), "#1cc88a"),  // success
+		Files:        sparklineSVG(series(func(s dashSample) float64 { return s.files }), "#36b9cc"),    // info
+		DiskUsed:     sparklineSVG(series(func(s dashSample) float64 { return s.diskUsed }), "#f6c23e"), // warning
+		EcShards:     sparklineSVG(series(func(s dashSample) float64 { return s.ecShards }), "#5a5c69"), // dark
+		Tasks:        sparklineSVG(tasks, "#36b9cc"),
+		TasksValue:   trendCount(last(tasks)),
+		Workers:      sparklineSVG(workers, "#4e73df"),
+		WorkersValue: trendCount(last(workers)),
 	}
-	return DashboardTrends{Cards: cards, Samples: len(samples)}
 }
 
 func last(v []float64) float64 {
@@ -172,21 +176,4 @@ func trendCount(v float64) string {
 		out = append(out, c)
 	}
 	return string(out)
-}
-
-// trendBytes formats a byte count as a human-readable size.
-func trendBytes(v float64) string {
-	const unit = 1024.0
-	if v < unit {
-		return fmt.Sprintf("%.0f B", v)
-	}
-	const units = "KMGTPE"
-	div, exp := unit, 0
-	// Cap exp at the last unit so an anomalously huge value can't index past
-	// the units string and panic.
-	for n := v / unit; n >= unit && exp < len(units)-1; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", v/div, units[exp])
 }

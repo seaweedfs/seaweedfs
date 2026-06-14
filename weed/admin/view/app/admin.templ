@@ -21,32 +21,8 @@ templ Admin(data dash.AdminData) {
     </div>
 
     <div id="dashboard-content">
-        <!-- Cluster Trends: native at-a-glance sparklines from the admin's own
-             recent snapshots (no Prometheus required). -->
-        <div class="d-flex align-items-center mb-2">
-            <h6 class="text-uppercase text-muted small mb-0">
-                <i class="fas fa-chart-line me-1"></i>Cluster Trends
-            </h6>
-            <span class="text-muted small ms-2">({ fmt.Sprintf("%d", data.Trends.Samples) } recent samples)</span>
-        </div>
-        <div class="row mb-4">
-            for _, c := range data.Trends.Cards {
-                <div class="col-xl-2 col-md-4 col-6 mb-3">
-                    <div class="card shadow h-100 py-2">
-                        <div class="card-body py-2 px-3">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class={ fmt.Sprintf("text-xs font-weight-bold text-uppercase text-%s", c.Color) }>{ c.Title }</span>
-                                <i class={ fmt.Sprintf("fas %s text-gray-300", c.Icon) }></i>
-                            </div>
-                            <div class="h5 mb-1 font-weight-bold text-gray-800">{ c.Value }</div>
-                            @templ.Raw(c.SparkSVG)
-                        </div>
-                    </div>
-                </div>
-            }
-        </div>
-
-        <!-- Summary Cards -->
+        <!-- Summary Cards — each carries an inline sparkline of recent history
+             from the admin's own snapshots (no Prometheus required). -->
         <div class="row mb-4">
             <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-success shadow h-100 py-2">
@@ -64,6 +40,7 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-database fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.Volumes)
                     </div>
                 </div>
             </div>
@@ -84,6 +61,7 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-file fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.Files)
                     </div>
                 </div>
             </div>
@@ -104,6 +82,7 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-hdd fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.DiskUsed)
                     </div>
                 </div>
             </div>
@@ -167,13 +146,52 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-puzzle-piece fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.EcShards)
                     </div>
                 </div>
             </div>
 
-            <!-- Empty columns to balance the row -->
-            <div class="col-xl-3 col-md-6 mb-4"></div>
-            <div class="col-xl-3 col-md-6 mb-4"></div>
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Active Tasks
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { data.Trends.TasksValue }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-tasks fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.Tasks)
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Workers
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { data.Trends.WorkersValue }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-users-cog fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.Workers)
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Master Nodes Status -->
