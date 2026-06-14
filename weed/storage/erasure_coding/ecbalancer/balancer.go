@@ -219,8 +219,9 @@ func Plan(topo *Topology, opts Options) []Move {
 	dataShardsByVolume := make(map[volKey]int)
 	parityShardsByVolume := make(map[volKey]int)
 	for _, collection := range collections {
+		defaultD, defaultP := ratio(collection)
 		for _, vk := range byCollection[collection] {
-			d, p := ratio(collection)
+			d, p := defaultD, defaultP
 			if opts.VolumeRatio != nil {
 				vd, vp := opts.VolumeRatio(vk.collection, vk.vid)
 				if vd > 0 {
