@@ -553,26 +553,28 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 // hasIdxFile come from the caller's checkEcVolumeStatus so the directory is not
 // re-listed here.
 func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasEcxFile, hasIdxFile bool) error {
-	if !hasEcxFile {
-		return nil
-	}
 	indexBaseFilename := path.Join(location.IdxDirectory, bName)
 	dataBaseFilename := path.Join(location.Directory, bName)
-	// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
-	for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
-		if err := removeFileIfExists(p); err != nil {
-			return err
-		}
-	}
-	if location.IdxDirectory != location.Directory {
-		for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
+	if hasEcxFile {
+		// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
+		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
 			if err := removeFileIfExists(p); err != nil {
 				return err
 			}
 		}
+		if location.IdxDirectory != location.Directory {
+			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
+				if err := removeFileIfExists(p); err != nil {
+					return err
+				}
+			}
+		}
 	}
+	// Remove the .vif when no .idx is present (so this is not a live normal/tiered
+	// volume), independent of .ecx presence: the caller only reaches here once no
+	// shard remains node-wide, so an EC .vif left without its .ecx is stale
+	// generation metadata that would otherwise leak.
 	if !hasIdxFile {
-		// .vif is used for ec volumes and normal volumes
 		if err := removeFileIfExists(dataBaseFilename + ".vif"); err != nil {
 			return err
 		}
