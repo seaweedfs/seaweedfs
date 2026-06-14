@@ -37,6 +37,10 @@ type AdminData struct {
 	// EC shard totals for dashboard
 	TotalEcVolumes int `json:"total_ec_volumes"` // Total number of EC volumes across all servers
 	TotalEcShards  int `json:"total_ec_shards"`  // Total number of EC shards across all servers
+
+	// Trends holds at-a-glance sparklines built from the admin's own recent
+	// cluster snapshots (no Prometheus required).
+	Trends DashboardTrends `json:"trends"`
 }
 
 // Object Store Users management structures
@@ -198,6 +202,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		LastUpdated:       topology.UpdatedAt,
 		TotalEcVolumes:    totalEcVolumes,
 		TotalEcShards:     totalEcShards,
+		Trends:            s.GetDashboardTrends(),
 	}
 
 	return adminData, nil
