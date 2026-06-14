@@ -140,6 +140,27 @@ func TestGetAccountIDAdminActionKeepsAdminAccount(t *testing.T) {
 	assert.Equal(t, s3_constants.AccountAdminId, h.getAccountID(req), "an admin identity keeps the admin account as principal")
 }
 
+func TestDefaultAllowForOnlyAppliesToUnauthenticatedOrAnonymous(t *testing.T) {
+	h := NewS3TablesHandler()
+	h.SetDefaultAllow(true)
+
+	noIdentity := httptest.NewRequest(http.MethodGet, "/", nil)
+	assert.True(t, h.defaultAllowFor(noIdentity), "zero-config requests with no identity keep the open default")
+
+	anon := httptest.NewRequest(http.MethodGet, "/", nil)
+	anon = anon.WithContext(s3_constants.SetIdentityInContext(anon.Context(),
+		&testIdentity{Name: s3_constants.AccountAnonymousId}))
+	assert.True(t, h.defaultAllowFor(anon), "anonymous requests keep the open default")
+
+	authed := httptest.NewRequest(http.MethodGet, "/", nil)
+	authed = authed.WithContext(s3_constants.SetIdentityInContext(authed.Context(),
+		&testIdentity{Name: "readonly", Account: &testIdentityAccount{Id: s3_constants.AccountAdminId}, Actions: []string{"Read"}}))
+	assert.False(t, h.defaultAllowFor(authed), "an authenticated identity must not benefit from the open default")
+
+	h.SetDefaultAllow(false)
+	assert.False(t, h.defaultAllowFor(noIdentity), "default-allow disabled is never open")
+}
+
 func TestGetAccountIDNormalizesAccountIDARN(t *testing.T) {
 	h := NewS3TablesHandler()
 	id := &testIdentity{

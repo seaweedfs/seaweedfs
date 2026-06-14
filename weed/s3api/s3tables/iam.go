@@ -48,6 +48,20 @@ func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identit
 	return len(identityPolicyNames) > 0
 }
 
+// defaultAllowFor reports whether the open-by-default fallback applies to this
+// request. It only does for zero-config or anonymous access; an authenticated
+// identity must pass an explicit permission or policy check rather than be
+// allowed simply because no policy denied it.
+func (h *S3TablesHandler) defaultAllowFor(r *http.Request) bool {
+	if !h.defaultAllow {
+		return false
+	}
+	if s3_constants.GetIdentityFromContext(r) == nil {
+		return true
+	}
+	return isAnonymousIdentity(r)
+}
+
 func isAnonymousIdentity(r *http.Request) bool {
 	val, ok := getIdentityStructValue(r)
 	if !ok {
