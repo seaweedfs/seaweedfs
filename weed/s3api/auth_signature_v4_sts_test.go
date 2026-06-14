@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
@@ -14,11 +15,46 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// TestValidateSTSSessionTokenAssignsDistinctAccount asserts an STS session owns
+// resources as its assumed-role user rather than collapsing into the shared
+// admin account. Permissions still come from the session policies.
+func TestValidateSTSSessionTokenAssignsDistinctAccount(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		iamIntegration: &MockIAMIntegration{
+			validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
+				return &sts.SessionInfo{
+					AssumedRoleUser: "ReadOnlyRole/alice",
+					Principal:       "arn:aws:sts:::assumed-role/ReadOnlyRole/alice",
+					Subject:         "alice",
+					Credentials: &sts.Credentials{
+						AccessKeyId:     "AKIATEST",
+						SecretAccessKey: "secret",
+					},
+					ExpiresAt: time.Now().Add(time.Hour),
+					Policies:  []string{"ReadOnly"},
+				}, nil
+			},
+		},
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://s3/test", nil)
+	require.NoError(t, err)
+
+	identity, _, errCode := iam.validateSTSSessionToken(req, "session-token", "AKIATEST")
+	require.Equal(t, s3err.ErrNone, errCode)
+	require.NotNil(t, identity)
+	require.NotNil(t, identity.Account)
+	assert.Equal(t, "ReadOnlyRole/alice", identity.Account.Id, "STS session owns resources as its assumed-role user")
+	assert.NotEqual(t, AccountAdmin.Id, identity.Account.Id, "STS session must not share the admin account")
+	assert.False(t, identity.isAdmin(), "an STS session has no admin action")
+}
+
 // MockIAMIntegration is a mock implementation of IAM integration for testing
 type MockIAMIntegration struct {
 	authenticateJWTFunc     func(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
 	authorizeFunc           func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
 	validateTrustPolicyFunc func(ctx context.Context, roleArn, principalArn string) error
+	validateSessionFunc     func(ctx context.Context, token string) (*sts.SessionInfo, error)
 	authCalled              bool
 }
 
@@ -38,6 +74,9 @@ func (m *MockIAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Reques
 }
 
 func (m *MockIAMIntegration) ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error) {
+	if m.validateSessionFunc != nil {
+		return m.validateSessionFunc(ctx, token)
+	}
 	return nil, nil // Not needed for these tests
 }
 

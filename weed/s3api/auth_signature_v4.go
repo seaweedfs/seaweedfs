@@ -433,21 +433,18 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		claims[k] = v
 	}
 
-	// Create an identity for the STS session
-	// The identity represents the assumed role user
+	// Create an identity for the STS session. Its account id is the assumed-role
+	// user so ownership stays distinct per principal instead of collapsing into
+	// the shared admin account; permissions come from the session policies, and
+	// admin is granted only through Actions, never by sharing the admin account.
 	identity := &Identity{
-		Name:         sessionInfo.AssumedRoleUser, // Use the assumed role user as the identity name
-		Account:      &AccountAdmin,               // STS sessions use admin account
+		Name:         sessionInfo.AssumedRoleUser,
+		Account:      &Account{Id: sessionInfo.AssumedRoleUser, DisplayName: sessionInfo.AssumedRoleUser},
 		Credentials:  []*Credential{cred},
 		PrincipalArn: sessionInfo.Principal,
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
-
-	// Restore admin privileges if the session was created by an admin
-	// if isAdmin, ok := claims["is_admin"].(bool); ok && isAdmin {
-	// 	identity.Actions = append(identity.Actions, s3_constants.ACTION_ADMIN)
-	// }
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
