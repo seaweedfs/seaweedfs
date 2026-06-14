@@ -173,8 +173,13 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			ev.ECContext = NewDefaultECContext(collection, vid)
 		}
 	} else {
-		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, vifFileName)
-		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
+		// Don't fabricate a stub .vif here: a version-only stub implies the
+		// default 10+4 ratio with DatFileSize=0 and no encode identity, which
+		// the custom-ratio resolver and the startup credibility checks must not
+		// mistake for an authoritative config. Mount with in-memory defaults and
+		// leave the real .vif to the encoder or a recovery tool (the Rust volume
+		// server already behaves this way).
+		glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
 		ev.ECContext = NewDefaultECContext(collection, vid)
 	}
 

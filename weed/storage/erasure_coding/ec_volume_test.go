@@ -91,3 +91,31 @@ func TestNewEcVolumeLoadsEncodeTsNs(t *testing.T) {
 		t.Errorf("EncodeTsNs = %d, want %d", ev.EncodeTsNs, tsNs)
 	}
 }
+
+// TestNewEcVolumeDoesNotWriteStubVif pins that mounting an EC volume whose .vif
+// is missing does NOT fabricate a stub .vif. A version-only stub would imply
+// the default ratio with DatFileSize=0 and no encode identity, which the
+// custom-ratio resolver and startup credibility checks must not trust.
+func TestNewEcVolumeDoesNotWriteStubVif(t *testing.T) {
+	dir := t.TempDir()
+	const vid = needle.VolumeId(124)
+	base := EcShardFileName("", dir, int(vid))
+
+	if err := os.WriteFile(base+".ecx", nil, 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+
+	ev, err := NewEcVolume(types.HardDriveType, dir, dir, "", vid)
+	if err != nil {
+		t.Fatalf("NewEcVolume: %v", err)
+	}
+	defer ev.Close()
+
+	if _, statErr := os.Stat(base + ".vif"); !os.IsNotExist(statErr) {
+		t.Fatalf("mounting without a .vif must not create one, stat err=%v", statErr)
+	}
+	// Mount still succeeds with the build's default EC ratio in memory.
+	if ev.ECContext == nil || ev.ECContext.DataShards != int(DataShardsCount) {
+		t.Fatalf("expected default EC context, got %+v", ev.ECContext)
+	}
+}
