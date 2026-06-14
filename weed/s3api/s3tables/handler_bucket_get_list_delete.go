@@ -97,16 +97,9 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 		return err
 	}
 
-	principal := h.getAccountID(r)
+	// No account-level gate: visibility is enforced per bucket below, so an
+	// owner can always list its own buckets and others are filtered out.
 	accountID := h.getAccountID(r)
-	identityActions := getIdentityActions(r)
-	if !CheckPermissionWithContext("ListTableBuckets", principal, accountID, "", "", &PolicyContext{
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	}) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list table buckets")
-		return NewAuthError("ListTableBuckets", principal, "not authorized to list table buckets")
-	}
 
 	maxBuckets := req.MaxBuckets
 	if maxBuckets <= 0 {
