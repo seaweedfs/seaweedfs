@@ -470,16 +470,25 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	// of this volume remains on ANY disk of this node. A per-disk check would orphan a
 	// sibling disk's shards (split-disk reconciled volumes) by deleting their index.
 	nodeWideShards := 0
+	type ecLocationStatus struct {
+		location   *storage.DiskLocation
+		hasEcxFile bool
+		hasIdxFile bool
+	}
+	statuses := make([]ecLocationStatus, 0, len(vs.store.Locations))
 	for _, location := range vs.store.Locations {
-		_, _, existingShardCount, err := checkEcVolumeStatus(bName, location)
+		hasEcxFile, hasIdxFile, existingShardCount, err := checkEcVolumeStatus(bName, location)
 		if err != nil {
 			return nil, err
 		}
 		nodeWideShards += existingShardCount
+		statuses = append(statuses, ecLocationStatus{location, hasEcxFile, hasIdxFile})
 	}
 	if nodeWideShards == 0 {
-		for _, location := range vs.store.Locations {
-			if err := removeEcSharedIndexFiles(bName, location); err != nil {
+		// Reuse the status from the count pass above so the directory listing is not
+		// repeated per location.
+		for _, st := range statuses {
+			if err := removeEcSharedIndexFiles(bName, st.location, st.hasEcxFile, st.hasIdxFile); err != nil {
 				return nil, err
 			}
 		}
@@ -540,12 +549,10 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 // .idx is present) for an EC volume on one disk. The caller invokes it only after
 // the whole node's shards for the volume are gone, so a sibling disk's shards are
 // never orphaned by deleting their index. A surviving stale .ecx is the orphan-index
-// condition this prevents, so a real removal failure is surfaced.
-func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation) error {
-	hasEcxFile, hasIdxFile, _, err := checkEcVolumeStatus(bName, location)
-	if err != nil {
-		return err
-	}
+// condition this prevents, so a real removal failure is surfaced. hasEcxFile and
+// hasIdxFile come from the caller's checkEcVolumeStatus so the directory is not
+// re-listed here.
+func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasEcxFile, hasIdxFile bool) error {
 	if !hasEcxFile {
 		return nil
 	}
