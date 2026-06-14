@@ -2,9 +2,11 @@ package erasure_coding
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -76,6 +78,47 @@ func TestCopyVolumeFilesToWorkerUsesCurrentCompactionRevision(t *testing.T) {
 	idxInfo, err := os.Stat(localFiles["idx"])
 	require.NoError(t, err)
 	require.Equal(t, int64(fileStatus.GetIdxFileSize()), idxInfo.Size())
+}
+
+// markReplicasReadonly must persist the readonly mark into the .vif so a
+// source-server restart cannot silently reopen the volume to writes that the
+// EC shards would not contain.
+func TestMarkReplicasReadonlyPersists(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(954)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 3001, 0x4444DDDD)
+	resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("payload-for-readonly-persist"))
+	_ = framework.ReadAllAndClose(t, resp)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	task := NewErasureCodingTask(
+		"ec-readonly-persist",
+		clusterHarness.VolumeServerAddress(),
+		volumeID,
+		"",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	require.NoError(t, task.markReplicasReadonly(ctx))
+
+	vifPath := filepath.Join(clusterHarness.BaseDir(), "volume", fmt.Sprintf("%d.vif", volumeID))
+	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(vifPath)
+	require.NoError(t, err)
+	require.True(t, found, "volume must have a .vif after a persisted readonly mark")
+	require.True(t, vi.ReadOnly, "markReplicasReadonly must persist ReadOnly=true into the .vif")
 }
 
 // The worker-local encode path must stamp the EC ratio and an encode identity

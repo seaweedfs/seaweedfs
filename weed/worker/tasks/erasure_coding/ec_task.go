@@ -342,7 +342,10 @@ func (t *ErasureCodingTask) markReplicasReadonly(ctx context.Context) error {
 		addr := loc.ServerAddress()
 		err := operation.WithVolumeServerClient(false, addr, t.grpcDialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
-				_, e := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: t.volumeID})
+				// Persist the readonly mark so a source-server restart during or
+				// after encoding cannot silently reopen the volume to writes that
+				// the EC shards would not contain. rollbackReadonly clears it.
+				_, e := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: t.volumeID, Persist: true})
 				return e
 			})
 		if err != nil {
