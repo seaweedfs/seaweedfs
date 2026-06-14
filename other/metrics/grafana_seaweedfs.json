@@ -1750,7 +1750,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - SeaweedFS_master_start_time_seconds{cluster=~\"$cluster\"}",
+              "expr": "time() - (SeaweedFS_master_start_time_seconds{cluster=~\"$cluster\"} > 0)",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}}"
@@ -3585,7 +3585,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - max by (mode) (SeaweedFS_volumeServer_scrub_last_time_seconds{cluster=~\"$cluster\"})",
+              "expr": "time() - max by (mode) (SeaweedFS_volumeServer_scrub_last_time_seconds{cluster=~\"$cluster\"} > 0)",
               "range": true,
               "refId": "A",
               "legendFormat": "{{mode}}"
@@ -3681,7 +3681,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - SeaweedFS_volumeServer_start_time_seconds{cluster=~\"$cluster\"}",
+              "expr": "time() - (SeaweedFS_volumeServer_start_time_seconds{cluster=~\"$cluster\"} > 0)",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}}"
@@ -6804,7 +6804,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - max by (shard) (SeaweedFS_s3_lifecycle_cursor_min_ts_ns{cluster=~\"$cluster\"}) / 1e9",
+              "expr": "time() - max by (shard) (SeaweedFS_s3_lifecycle_cursor_min_ts_ns{cluster=~\"$cluster\"} > 0) / 1e9",
               "range": true,
               "refId": "A",
               "legendFormat": "shard {{shard}}"
@@ -7199,7 +7199,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "time() - max by (shard) (SeaweedFS_s3_lifecycle_daily_run_last_walked_ns{cluster=~\"$cluster\"}) / 1e9",
+              "expr": "time() - max by (shard) (SeaweedFS_s3_lifecycle_daily_run_last_walked_ns{cluster=~\"$cluster\"} > 0) / 1e9",
               "range": true,
               "refId": "A",
               "legendFormat": "shard {{shard}}"
