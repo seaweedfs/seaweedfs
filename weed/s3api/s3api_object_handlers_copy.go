@@ -713,8 +713,33 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 }
 
 type CopyPartResult struct {
-	LastModified time.Time `xml:"LastModified"`
-	ETag         string    `xml:"ETag"`
+	LastModified      time.Time `xml:"LastModified"`
+	ETag              string    `xml:"ETag"`
+	ChecksumCRC32     string    `xml:"ChecksumCRC32,omitempty"`
+	ChecksumCRC32C    string    `xml:"ChecksumCRC32C,omitempty"`
+	ChecksumCRC64NVME string    `xml:"ChecksumCRC64NVME,omitempty"`
+	ChecksumSHA1      string    `xml:"ChecksumSHA1,omitempty"`
+	ChecksumSHA256    string    `xml:"ChecksumSHA256,omitempty"`
+}
+
+func buildCopyPartResult(etag string, lastModified time.Time, metadata SSEResponseMetadata) CopyPartResult {
+	result := CopyPartResult{
+		ETag:         etag,
+		LastModified: lastModified,
+	}
+	switch metadata.ChecksumHeaderName {
+	case s3_constants.AmzChecksumCRC32:
+		result.ChecksumCRC32 = metadata.ChecksumValue
+	case s3_constants.AmzChecksumCRC32C:
+		result.ChecksumCRC32C = metadata.ChecksumValue
+	case s3_constants.AmzChecksumCRC64NVME:
+		result.ChecksumCRC64NVME = metadata.ChecksumValue
+	case s3_constants.AmzChecksumSHA1:
+		result.ChecksumSHA1 = metadata.ChecksumValue
+	case s3_constants.AmzChecksumSHA256:
+		result.ChecksumSHA256 = metadata.ChecksumValue
+	}
+	return result
 }
 
 // copyPartLocation returns the destination directory and filename for a
@@ -906,7 +931,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) {
+	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) || uploadEntryHasChecksum(uploadEntry) {
 		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
@@ -917,10 +942,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
 		// so clients can see the destination's encryption state.
 		s3a.setSSEResponseHeaders(w, r, sseMetadata)
-		writeSuccessResponseXML(w, r, CopyPartResult{
-			ETag:         etag,
-			LastModified: t,
-		})
+		writeSuccessResponseXML(w, r, buildCopyPartResult(etag, t, sseMetadata))
 		return
 	}
 
@@ -990,12 +1012,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	etag := copyEntryETag(dstEntry)
 	setEtag(w, etag)
 
-	response := CopyPartResult{
-		ETag:         etag,
-		LastModified: t,
-	}
-
-	writeSuccessResponseXML(w, r, response)
+	writeSuccessResponseXML(w, r, buildCopyPartResult(etag, t, SSEResponseMetadata{}))
 }
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
