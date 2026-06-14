@@ -429,6 +429,60 @@ func TestPlanBalancesSkewedDataParityWithEvenTotals(t *testing.T) {
 	}
 }
 
+// TestPlanVolumeRatioOverridesCollection verifies the per-volume ratio (reported on
+// the heartbeat, surfaced via Options.VolumeRatio) takes precedence over the
+// collection ratio, so a mixed-ratio collection is classified and spread by each
+// volume's own data/parity split. The same 14-shard volume is planned three ways:
+// the per-volume 7+7 override must reproduce the 7+7-collection plan and differ from
+// the 10+4-collection plan. A VolumeRatio that returns 0 defers to the collection
+// ratio (the always-0 OSS case), so existing collection-keyed behavior is preserved.
+func TestPlanVolumeRatioOverridesCollection(t *testing.T) {
+	build := func() *Topology {
+		topo := NewTopology()
+		n1 := topo.AddNode("node1", "dc1", "dc1:rack1", 100)
+		n1.AddDisk(0, "", 100, 7)
+		n1.AddShards(100, "col1", 0, bits(0, 1, 2, 3, 4, 5, 6))
+		n2 := topo.AddNode("node2", "dc1", "dc1:rack2", 100)
+		n2.AddDisk(0, "", 100, 7)
+		n2.AddShards(100, "col1", 0, bits(7, 8, 9, 10, 11, 12, 13))
+		return topo
+	}
+	crossRack := func(moves []Move) int {
+		n := 0
+		for _, m := range moves {
+			if m.Phase == "cross_rack" {
+				n++
+			}
+		}
+		return n
+	}
+
+	collection104 := crossRack(Plan(build(), Options{ImbalanceThreshold: 0, Ratio: ratio(10, 4)}))
+	collection77 := crossRack(Plan(build(), Options{ImbalanceThreshold: 0, Ratio: ratio(7, 7)}))
+	if collection104 == collection77 {
+		t.Fatalf("test setup: 10+4 and 7+7 collection plans must differ, both gave %d cross-rack moves", collection104)
+	}
+
+	// Collection ratio stays 10+4, but vol100 reports 7+7 per-volume; the planner
+	// must classify/spread vol100 as 7+7 and match the 7+7-collection plan.
+	perVolume := crossRack(Plan(build(), Options{
+		ImbalanceThreshold: 0,
+		Ratio:              ratio(10, 4),
+		VolumeRatio: func(collection string, vid uint32) (int, int) {
+			if collection == "col1" && vid == 100 {
+				return 7, 7
+			}
+			return 0, 0
+		},
+	}))
+	if perVolume != collection77 {
+		t.Errorf("per-volume 7+7 override gave %d cross-rack moves, want %d (the 7+7-collection plan)", perVolume, collection77)
+	}
+	if perVolume == collection104 {
+		t.Errorf("per-volume override had no effect: %d cross-rack moves, same as the 10+4 collection plan", perVolume)
+	}
+}
+
 // TestGlobalPrefersVolumeAbsentFromDestination guards the global phase's
 // volume-diversity preference: when draining a node, move a shard of a volume the
 // destination does not hold at all before piling a second shard of an
@@ -737,8 +791,8 @@ func TestGlobalDoesNotConcentrateVolumeAcrossMachines(t *testing.T) {
 	b2 := topo.AddNode("b2", "dc1", "dc1:rack1", 10) // empty -> low util, the min node
 	b2.SetHost("boxB")
 
-	data := map[string]int{"col1": 2}
-	parity := map[string]int{"col1": 2}
+	data := map[volKey]int{{collection: "col1", vid: 100}: 2}
+	parity := map[volKey]int{{collection: "col1", vid: 100}: 2}
 	for _, m := range detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.01, data, parity, 0, true) {
 		if m.source.host != m.target.host {
 			t.Errorf("cross-machine global move %d.%d from %s to %s concentrates the volume on a machine",
