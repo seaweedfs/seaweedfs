@@ -48,6 +48,7 @@ type S3TablesHandler struct {
 	region        string
 	accountID     string
 	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
+	trusted       bool // Whether the caller is trusted local tooling that bypasses authorization
 	iamAuthorizer IAMAuthorizer
 }
 
@@ -77,6 +78,13 @@ func (h *S3TablesHandler) SetAccountID(accountID string) {
 // SetDefaultAllow sets whether to allow access by default
 func (h *S3TablesHandler) SetDefaultAllow(allow bool) {
 	h.defaultAllow = allow
+}
+
+// SetTrusted marks the handler as serving trusted local tooling (shell, admin
+// console) that connects directly to the filer and bypasses authorization.
+// HTTP-facing callers must not set this.
+func (h *S3TablesHandler) SetTrusted(trusted bool) {
+	h.trusted = trusted
 }
 
 // FilerClient interface for filer operations

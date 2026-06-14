@@ -39,6 +39,7 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 	cases := []struct {
 		name         string
 		defaultAllow bool
+		trusted      bool
 		ctx          context.Context
 		identity     string
 		wantFiler    bool // true => authorization passed (filer reached)
@@ -61,9 +62,19 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 			wantFiler:    false,
 		},
 		{
-			// Trusted shell/admin and zero-config: open by default for name-only callers.
-			name:         "open manager allows a name without struct",
+			// An authenticated name (without the struct) must not be misclassified
+			// as anonymous and allowed under the open default.
+			name:         "untrusted name without struct is enforced",
 			defaultAllow: true,
+			ctx:          context.Background(),
+			identity:     "alice",
+			wantFiler:    false,
+		},
+		{
+			// Shell / admin console: trusted local tooling bypasses authorization.
+			name:         "trusted manager allows a name without struct",
+			defaultAllow: true,
+			trusted:      true,
 			ctx:          context.Background(),
 			identity:     "alice",
 			wantFiler:    true,
@@ -81,6 +92,7 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewManager()
 			m.SetDefaultAllow(tc.defaultAllow)
+			m.SetTrusted(tc.trusted)
 			fc := &recordingFilerClient{}
 			err := m.Execute(tc.ctx, fc, "CreateTableBucket", &CreateTableBucketRequest{Name: "testbucket"}, nil, tc.identity)
 			require.Error(t, err) // denied (403) or the filer sentinel (reached); never nil here
