@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/reedsolomon"
@@ -503,13 +504,19 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
 	}
 
+	// Snapshot the shard map size and refresh time under the lock: recover
+	// goroutines mutate ShardLocations via forgetShardId, so an unguarded read here
+	// races with a concurrent map write.
+	ecVolume.ShardLocationsLock.RLock()
 	shardCount := len(ecVolume.ShardLocations)
+	refreshTime := ecVolume.ShardLocationsRefreshTime
+	ecVolume.ShardLocationsLock.RUnlock()
 	if shardCount < ecCtx.DataShards &&
-		ecVolume.ShardLocationsRefreshTime.Add(11*time.Second).After(time.Now()) ||
+		refreshTime.Add(11*time.Second).After(time.Now()) ||
 		shardCount == ecCtx.Total() &&
-			ecVolume.ShardLocationsRefreshTime.Add(37*time.Minute).After(time.Now()) ||
+			refreshTime.Add(37*time.Minute).After(time.Now()) ||
 		shardCount >= ecCtx.DataShards &&
-			ecVolume.ShardLocationsRefreshTime.Add(7*time.Minute).After(time.Now()) {
+			refreshTime.Add(7*time.Minute).After(time.Now()) {
 		// still fresh
 		return nil
 	}
@@ -666,6 +673,10 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	bufs := make([][]byte, erasure_coding.MaxShardCount)
 
 	var wg sync.WaitGroup
+	// The recover goroutines run concurrently, so the deleted flag is collected
+	// atomically and folded into the named return after they join, rather than each
+	// goroutine writing the shared bool directly.
+	var isDeletedFlag atomic.Bool
 	ecVolume.ShardLocationsLock.RLock()
 	for shardId, locations := range ecVolume.ShardLocations {
 
@@ -689,7 +700,7 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 				forgetShardId(ecVolume, shardId)
 			}
 			if isDeleted {
-				is_deleted = true
+				isDeletedFlag.Store(true)
 			}
 			if nRead == len(buf) {
 				bufs[shardId] = data
@@ -699,10 +710,11 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	ecVolume.ShardLocationsLock.RUnlock()
 
 	wg.Wait()
+	is_deleted = isDeletedFlag.Load()
 
 	// Count and log available shards for diagnostics
-	availableShards := make([]erasure_coding.ShardId, 0, erasure_coding.TotalShardsCount)
-	missingShards := make([]erasure_coding.ShardId, 0, erasure_coding.ParityShardsCount+1)
+	availableShards := make([]erasure_coding.ShardId, 0, ecCtx.Total())
+	missingShards := make([]erasure_coding.ShardId, 0, ecCtx.ParityShards+1)
 	for shardId := 0; shardId < ecCtx.Total(); shardId++ {
 		if bufs[shardId] != nil {
 			availableShards = append(availableShards, erasure_coding.ShardId(shardId))
