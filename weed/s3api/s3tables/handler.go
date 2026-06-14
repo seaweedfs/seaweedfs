@@ -48,7 +48,7 @@ type S3TablesHandler struct {
 	region        string
 	accountID     string
 	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
-	trusted       bool // Whether the caller is trusted local tooling that bypasses authorization
+	trusted       bool // Trusted local tooling (shell/admin) bypasses authorization
 	iamAuthorizer IAMAuthorizer
 }
 
@@ -80,9 +80,8 @@ func (h *S3TablesHandler) SetDefaultAllow(allow bool) {
 	h.defaultAllow = allow
 }
 
-// SetTrusted marks the handler as serving trusted local tooling (shell, admin
-// console) that connects directly to the filer and bypasses authorization.
-// HTTP-facing callers must not set this.
+// SetTrusted lets local tooling that talks to the filer directly (shell, admin
+// console) bypass authorization. HTTP-facing callers must not set it.
 func (h *S3TablesHandler) SetTrusted(trusted bool) {
 	h.trusted = trusted
 }
@@ -220,11 +219,8 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 					idField := accountVal.FieldByName("Id")
 					if idField.IsValid() && idField.Kind() == reflect.String {
 						if principal := normalizePrincipalID(idField.String()); principal != "" {
-							// Account-less identities default to the shared admin
-							// account (see auth_credentials.go). Only honor that as the
-							// principal for identities that actually hold admin rights;
-							// otherwise fall through to the unique identity name so
-							// distinct users are not collapsed into "admin".
+							// Account-less identities default to the admin account; only
+							// keep it for real admins, else use the unique identity name.
 							if principal != s3_constants.AccountAdminId || hasAdminAction(getIdentityActions(r)) {
 								return principal
 							}

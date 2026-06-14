@@ -25,10 +25,8 @@ func (c *recordingFilerClient) WithFilerClient(streamingMode bool, fn func(clien
 	return errFilerReached
 }
 
-// TestManagerCreateTableBucketAuthorization locks in that the Manager path used
-// by the Iceberg catalog enforces authorization for authenticated callers and
-// only falls open for the trusted/zero-config case. Guards both the identity
-// struct propagation and the Iceberg default-allow wiring against regressions.
+// The Manager path (used by the Iceberg catalog) enforces authorization for
+// authenticated callers and only falls open for trusted/zero-config access.
 func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 	lowPriv := &testIdentity{
 		Name:    "alice",
@@ -45,8 +43,6 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 		wantFiler    bool // true => authorization passed (filer reached)
 	}{
 		{
-			// The Iceberg path: the full identity struct reaches the handler, so
-			// an authenticated low-priv caller is enforced even under the open default.
 			name:         "authenticated identity struct is enforced",
 			defaultAllow: true,
 			ctx:          s3_constants.SetIdentityInContext(context.Background(), lowPriv),
@@ -54,7 +50,6 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 			wantFiler:    false,
 		},
 		{
-			// Secured Iceberg: no fail-open even if only the name (not the struct) propagates.
 			name:         "secured manager denies a name without struct",
 			defaultAllow: false,
 			ctx:          context.Background(),
@@ -62,8 +57,6 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 			wantFiler:    false,
 		},
 		{
-			// An authenticated name (without the struct) must not be misclassified
-			// as anonymous and allowed under the open default.
 			name:         "untrusted name without struct is enforced",
 			defaultAllow: true,
 			ctx:          context.Background(),
@@ -71,7 +64,6 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 			wantFiler:    false,
 		},
 		{
-			// Shell / admin console: trusted local tooling bypasses authorization.
 			name:         "trusted manager allows a name without struct",
 			defaultAllow: true,
 			trusted:      true,

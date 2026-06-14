@@ -41,8 +41,7 @@ func (m *Manager) SetDefaultAllow(allow bool) {
 	m.handler.SetDefaultAllow(allow)
 }
 
-// SetTrusted marks the manager as trusted local tooling that bypasses
-// authorization. Used by the shell and admin console; never by the HTTP catalog.
+// SetTrusted lets trusted local tooling (shell, admin console) bypass authorization.
 func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }

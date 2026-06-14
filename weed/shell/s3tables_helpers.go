@@ -28,8 +28,7 @@ func executeS3Tables(commandEnv *CommandEnv, operation string, req interface{}, 
 	defer cancel()
 	return withFilerClient(commandEnv, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
-		// The shell connects directly to the filer with no S3 auth, so it acts as
-		// trusted local tooling and bypasses the per-operation authorization.
+		// The shell talks to the filer directly with no S3 auth, so it is trusted.
 		manager.SetTrusted(true)
 		mgrClient := s3tables.NewManagerClient(client)
 		return manager.Execute(ctx, mgrClient, operation, req, resp, accountID)
