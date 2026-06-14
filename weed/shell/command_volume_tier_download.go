@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -124,11 +125,20 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
+	// All replicas point at the same remote object; only the final download may delete
+	// it. Every earlier replica keeps it so the survivors are not left dangling.
 	// TODO parallelize this
-	for _, loc := range locations {
+	for i, loc := range locations {
+		keepRemote := i < len(locations)-1
 		// copy the .dat file from remote tier to local
-		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress())
+		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), keepRemote)
 		if err != nil {
+			// A replica already made local by a prior interrupted run is not a
+			// failure; skip it so the remaining remote replicas still download.
+			if strings.Contains(err.Error(), "already on local disk") {
+				fmt.Fprintf(writer, "volume %d on %s is already on local disk, skipping\n", vid, loc.Url)
+				continue
+			}
 			return fmt.Errorf("download dat file for volume %d to %s: %v", vid, loc.Url, err)
 		}
 	}
@@ -136,12 +146,13 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 	return nil
 }
 
-func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer pb.ServerAddress) error {
+func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer pb.ServerAddress, keepRemote bool) error {
 
 	err := operation.WithVolumeServerClient(true, targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
-			VolumeId:   uint32(volumeId),
-			Collection: collection,
+			VolumeId:          uint32(volumeId),
+			Collection:        collection,
+			KeepRemoteDatFile: keepRemote,
 		})
 
 		var lastProcessed int64
