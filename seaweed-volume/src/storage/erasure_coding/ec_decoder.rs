@@ -216,14 +216,16 @@ pub fn write_idx_file_from_ec_index(
         // Copy .ecx to the temp .idx
         std::fs::copy(&ecx_path, &tmp_path)?;
 
-        // Append deletions from .ecj as tombstones
+        // Append deletions from .ecj as tombstones. Read the journal directly
+        // and treat only NotFound as "no journal": Path::exists would also
+        // swallow a permission/IO error and silently skip deletions, which
+        // would resurrect deleted needles as live.
         let mut idx_file = std::fs::OpenOptions::new()
             .write(true)
             .append(true)
             .open(&tmp_path)?;
-        if std::path::Path::new(&ecj_path).exists() {
-            let ecj_data = std::fs::read(&ecj_path)?;
-            if !ecj_data.is_empty() {
+        match std::fs::read(&ecj_path) {
+            Ok(ecj_data) => {
                 let count = ecj_data.len() / NEEDLE_ID_SIZE;
                 for i in 0..count {
                     let start = i * NEEDLE_ID_SIZE;
@@ -236,6 +238,8 @@ pub fn write_idx_file_from_ec_index(
                     )?;
                 }
             }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
 
         // fsync, rename, then fsync the dir so the decoded .idx is durable and
