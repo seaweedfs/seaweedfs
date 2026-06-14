@@ -433,13 +433,19 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		claims[k] = v
 	}
 
-	// Create an identity for the STS session. Its account id is the assumed-role
-	// user so ownership stays distinct per principal instead of collapsing into
-	// the shared admin account; permissions come from the session policies, and
-	// admin is granted only through Actions, never by sharing the admin account.
+	// Resolve the principal to the OIDC subject so the same session maps to the
+	// same identity across the SigV4 and JWT auth paths (see s3_iam_middleware.go),
+	// falling back to the assumed-role user when no subject is present. Account and
+	// ownership stay distinct per principal rather than collapsing into the shared
+	// admin account; permissions come from the session policies, and admin is
+	// granted only through Actions.
+	principal := sessionInfo.Subject
+	if principal == "" {
+		principal = sessionInfo.AssumedRoleUser
+	}
 	identity := &Identity{
-		Name:         sessionInfo.AssumedRoleUser,
-		Account:      &Account{Id: sessionInfo.AssumedRoleUser, DisplayName: sessionInfo.AssumedRoleUser},
+		Name:         principal,
+		Account:      &Account{Id: principal, DisplayName: sessionInfo.SessionName, EmailAddress: principal + "@seaweedfs.local"},
 		Credentials:  []*Credential{cred},
 		PrincipalArn: sessionInfo.Principal,
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization

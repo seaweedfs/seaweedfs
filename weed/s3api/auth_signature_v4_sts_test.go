@@ -16,37 +16,52 @@ import (
 )
 
 // TestValidateSTSSessionTokenAssignsDistinctAccount asserts an STS session owns
-// resources as its assumed-role user rather than collapsing into the shared
-// admin account. Permissions still come from the session policies.
+// resources as its own principal (the OIDC subject, matching the JWT path, or
+// the assumed-role user when no subject is present) rather than collapsing into
+// the shared admin account. Permissions still come from the session policies.
 func TestValidateSTSSessionTokenAssignsDistinctAccount(t *testing.T) {
-	iam := &IdentityAccessManagement{
-		iamIntegration: &MockIAMIntegration{
-			validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
-				return &sts.SessionInfo{
-					AssumedRoleUser: "ReadOnlyRole/alice",
-					Principal:       "arn:aws:sts:::assumed-role/ReadOnlyRole/alice",
-					Subject:         "alice",
-					Credentials: &sts.Credentials{
-						AccessKeyId:     "AKIATEST",
-						SecretAccessKey: "secret",
-					},
-					ExpiresAt: time.Now().Add(time.Hour),
-					Policies:  []string{"ReadOnly"},
-				}, nil
-			},
-		},
+	cases := []struct {
+		name            string
+		subject         string
+		assumedRoleUser string
+		wantPrincipal   string
+	}{
+		{"prefers the subject", "alice", "ReadOnlyRole/alice", "alice"},
+		{"falls back to the assumed-role user", "", "ReadOnlyRole/bob", "ReadOnlyRole/bob"},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			iam := &IdentityAccessManagement{
+				iamIntegration: &MockIAMIntegration{
+					validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
+						return &sts.SessionInfo{
+							AssumedRoleUser: tc.assumedRoleUser,
+							Principal:       "arn:aws:sts:::assumed-role/" + tc.assumedRoleUser,
+							Subject:         tc.subject,
+							SessionName:     "sess",
+							Credentials: &sts.Credentials{
+								AccessKeyId:     "AKIATEST",
+								SecretAccessKey: "secret",
+							},
+							ExpiresAt: time.Now().Add(time.Hour),
+							Policies:  []string{"ReadOnly"},
+						}, nil
+					},
+				},
+			}
 
-	req, err := http.NewRequest(http.MethodGet, "http://s3/test", nil)
-	require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodGet, "http://s3/test", nil)
+			require.NoError(t, err)
 
-	identity, _, errCode := iam.validateSTSSessionToken(req, "session-token", "AKIATEST")
-	require.Equal(t, s3err.ErrNone, errCode)
-	require.NotNil(t, identity)
-	require.NotNil(t, identity.Account)
-	assert.Equal(t, "ReadOnlyRole/alice", identity.Account.Id, "STS session owns resources as its assumed-role user")
-	assert.NotEqual(t, AccountAdmin.Id, identity.Account.Id, "STS session must not share the admin account")
-	assert.False(t, identity.isAdmin(), "an STS session has no admin action")
+			identity, _, errCode := iam.validateSTSSessionToken(req, "session-token", "AKIATEST")
+			require.Equal(t, s3err.ErrNone, errCode)
+			require.NotNil(t, identity.Account)
+			assert.Equal(t, tc.wantPrincipal, identity.Account.Id, "STS session owns resources as its principal")
+			assert.Equal(t, tc.wantPrincipal, identity.Name)
+			assert.NotEqual(t, AccountAdmin.Id, identity.Account.Id, "STS session must not share the admin account")
+			assert.False(t, identity.isAdmin(), "an STS session has no admin action")
+		})
+	}
 }
 
 // MockIAMIntegration is a mock implementation of IAM integration for testing
