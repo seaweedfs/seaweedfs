@@ -218,7 +218,7 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 // as s3tables:* so shared admin policies still permit table access.
 func hasAdminAction(actions []string) bool {
 	for _, action := range actions {
-		if action == "*" || action == string(s3_constants.ACTION_ADMIN) || action == "s3:*" || action == "s3tables:*" {
+		if action == "*" || action == s3_constants.ACTION_ADMIN || action == "s3:*" || action == "s3tables:*" {
 			return true
 		}
 	}
