@@ -218,6 +218,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				DiskType:    string(ecVolume.DiskType()),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      uint32(diskId),
+				EncodeTsNs:  ecVolume.EncodeTsNs,
 			}
 			return nil
 		}

@@ -140,6 +140,7 @@ func NewStore(
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      diskId,
+				EncodeTsNs:  ecVolume.EncodeTsNs,
 			}:
 			default:
 				// Channel full during startup - this is OK, heartbeat will report EC shards later

@@ -448,6 +448,7 @@ impl EcVolume {
             disk_id,
             file_count,
             delete_count,
+            encode_ts_ns: self.encode_ts_ns,
             ..Default::default()
         }]
     }
