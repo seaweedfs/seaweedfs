@@ -174,4 +174,12 @@ func TestReadEcGenerationTsNs(t *testing.T) {
 	gen0, readable0 := readEcGenerationTsNs(noCfg, noCfg)
 	require.True(t, readable0)
 	require.Equal(t, int64(0), gen0)
+
+	// A present-but-unparseable .vif is reported as generation 0 (present), which the
+	// fenced teardown still preserves — never wiping on a parse error.
+	corrupt := filepath.Join(dir, "11")
+	require.NoError(t, os.WriteFile(corrupt+".vif", []byte("not-a-valid-vif"), 0o644))
+	genC, readableC := readEcGenerationTsNs(corrupt, corrupt)
+	require.True(t, readableC)
+	require.Equal(t, int64(0), genC)
 }

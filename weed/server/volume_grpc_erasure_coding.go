@@ -556,10 +556,11 @@ func removeFileIfExists(path string) error {
 }
 
 // readEcGenerationTsNs returns the EC encode generation recorded in a disk's .vif
-// (data dir first, then idx dir for the split-disk layout) and whether a .vif was
-// readable. A present .vif with no EcShardConfig yields (0, true): generation 0,
-// which the fenced teardown preserves (a recovered or pre-upgrade live volume).
-// (0, false) means no readable .vif — also preserved, fail-safe.
+// (data dir first, then idx dir for the split-disk layout) and whether a .vif file
+// was present. A present .vif with no EcShardConfig — or one that failed to parse —
+// yields (0, true): generation 0, which the fenced teardown preserves anyway (a
+// recovered or pre-upgrade live volume). (0, false) means no .vif file was found.
+// Both 0 and a missing .vif are preserved, so the read is fail-safe in every case.
 func readEcGenerationTsNs(dataBaseFileName, indexBaseFileName string) (int64, bool) {
 	for _, base := range []string{dataBaseFileName, indexBaseFileName} {
 		if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(base + ".vif"); found {
