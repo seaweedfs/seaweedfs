@@ -735,9 +735,7 @@ impl Store {
             // cleanup), only unmount a strictly-older generation; preserve a disk
             // whose generation is same-or-newer, 0, or unknown, so a stale run cannot
             // unmount a newer run's live shards. req 0 (legacy/shell) unmounts all.
-            let disk_gen = self.locations[disk_id]
-                .find_ec_volume(vid)
-                .map_or(0, |v| v.encode_ts_ns);
+            let disk_gen = ec_vol.map_or(0, |v| v.encode_ts_ns);
             if req_encode_ts_ns > 0 && !(disk_gen > 0 && disk_gen < req_encode_ts_ns) {
                 tracing::info!(
                     volume_id = vid.0,

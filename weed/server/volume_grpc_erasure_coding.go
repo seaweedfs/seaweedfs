@@ -566,6 +566,9 @@ func readEcGenerationTsNs(dataBaseFileName, indexBaseFileName string) (int64, bo
 		if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(base + ".vif"); found {
 			return vi.GetEcShardConfig().GetEncodeTsNs(), true
 		}
+		if dataBaseFileName == indexBaseFileName {
+			break
+		}
 	}
 	return 0, false
 }
