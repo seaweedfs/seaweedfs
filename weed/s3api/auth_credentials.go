@@ -627,13 +627,17 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
 		case ident.Account == nil:
-			t.Account = accountForUnscopedIdentity(t.Name)
-			// Register the synthesized account so its id resolves to a display
-			// name. Account-less identities own resources under this id, and
-			// ACL grantee validation / owner display look the id up via
-			// GetAccountNameById; without this the id is reported "not exists".
-			if _, ok := accounts[t.Account.Id]; !ok {
-				accounts[t.Account.Id] = t.Account
+			// Account-less identities own resources under a distinct id derived
+			// from their name. Reuse an explicitly-configured account with that
+			// id if one exists (preserving its display name/email); otherwise
+			// synthesize one and register it so the id resolves via
+			// GetAccountNameById (ACL grantee validation, owner display).
+			synthesized := accountForUnscopedIdentity(t.Name)
+			if existing, ok := accounts[synthesized.Id]; ok {
+				t.Account = existing
+			} else {
+				t.Account = synthesized
+				accounts[synthesized.Id] = synthesized
 			}
 		default:
 			if account, ok := accounts[ident.Account.Id]; ok {
@@ -853,13 +857,17 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
 		case ident.Account == nil:
-			t.Account = accountForUnscopedIdentity(t.Name)
-			// Register the synthesized account so its id resolves to a display
-			// name. Account-less identities own resources under this id, and
-			// ACL grantee validation / owner display look the id up via
-			// GetAccountNameById; without this the id is reported "not exists".
-			if _, ok := accounts[t.Account.Id]; !ok {
-				accounts[t.Account.Id] = t.Account
+			// Account-less identities own resources under a distinct id derived
+			// from their name. Reuse an explicitly-configured account with that
+			// id if one exists (preserving its display name/email); otherwise
+			// synthesize one and register it so the id resolves via
+			// GetAccountNameById (ACL grantee validation, owner display).
+			synthesized := accountForUnscopedIdentity(t.Name)
+			if existing, ok := accounts[synthesized.Id]; ok {
+				t.Account = existing
+			} else {
+				t.Account = synthesized
+				accounts[synthesized.Id] = synthesized
 			}
 		default:
 			if account, ok := accounts[ident.Account.Id]; ok {
