@@ -22,9 +22,23 @@ type AccountManager interface {
 
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
 func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
-	if r.Body != nil && r.Body != http.NoBody {
+	if r.Body != nil {
 		defer util_http.CloseRequest(r)
+	}
 
+	// A canned ACL is specified via the x-amz-acl header and carries no ACP
+	// body. Clients such as the AWS SDK (with default request checksums) may
+	// still attach a body to the request — an empty payload, or one wrapped in
+	// aws-chunked framing with a checksum trailer. PutObjectAcl/PutBucketAcl do
+	// not de-chunk the body, so honor the canned header first instead of
+	// mis-parsing that body as an AccessControlPolicy and rejecting it with
+	// InvalidRequest.
+	if r.Header.Get(s3_constants.AmzCannedAcl) != "" {
+		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, accountId, true)
+		return grants, errCode
+	}
+
+	if r.Body != nil && r.Body != http.NoBody {
 		var acp s3.AccessControlPolicy
 		err := xmlutil.UnmarshalXML(&acp, xml.NewDecoder(r.Body), "")
 		if err != nil || acp.Owner == nil || acp.Owner.ID == nil {
@@ -38,10 +52,10 @@ func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucke
 		}
 
 		return ValidateAndTransferGrants(accountManager, acp.Grants)
-	} else {
-		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, accountId, true)
-		return grants, errCode
 	}
+
+	_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, accountId, true)
+	return grants, errCode
 }
 
 // ParseAndValidateAclHeadersOrElseDefault will callParseAndValidateAclHeaders to get Grants, if empty, it will return Grant that grant `accountId` with `FullControl` permission
