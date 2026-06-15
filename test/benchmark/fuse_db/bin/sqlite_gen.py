@@ -14,6 +14,13 @@ ref_path     = sys.argv[5] if len(sys.argv) > 5 else None
 sync_mode    = sys.argv[6] if len(sys.argv) > 6 else "FULL"
 journal_mode = sys.argv[7] if len(sys.argv) > 7 else "DELETE"
 
+# Validate before interpolating into PRAGMAs: a typo must not silently weaken
+# durability and invalidate the comparison / crash-survival claims.
+if sync_mode.upper() not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
+    raise SystemExit(f"invalid synchronous mode: {sync_mode!r}")
+if journal_mode.upper() not in {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}:
+    raise SystemExit(f"invalid journal mode: {journal_mode!r}")
+
 def payload(i: int) -> bytes:
     # deterministic but incompressible (PRNG seeded by id) -> 4096 bytes that
     # actually consume ~1GB on the volume servers (defeats gzip storage).

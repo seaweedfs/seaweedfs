@@ -16,6 +16,8 @@ import sys, sqlite3, zlib, random
 db_path = sys.argv[1]
 expected_rows = int(sys.argv[2])
 mode = sys.argv[3] if len(sys.argv) > 3 else "exact"
+if mode not in ("exact", "atleast"):   # a typo must not silently relax checks
+    raise SystemExit(f"invalid mode: {mode!r} (want exact|atleast)")
 
 def payload(i: int) -> bytes:
     return random.Random(i).randbytes(4096)

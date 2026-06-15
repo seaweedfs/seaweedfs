@@ -33,7 +33,11 @@ mysql_load() {  # loads TOTAL rows in BATCH-sized committed inserts; progress ->
                   CRC32(AES_ENCRYPT(REPEAT('a',4080), SHA2(n+$O,256)))
            FROM seq;" \
       || { echo "INSERT failed at offset $O"; return 1; }
-    O=$((O+B)); echo $O > "$PROG"
+    # durable + atomic progress (matches sqlite_gen.py) so the crash-test lower
+    # bound is never stale or torn: write tmp, fsync, rename.
+    O=$((O+B)); printf '%s' "$O" > "$PROG.tmp"
+    python3 -c "import os,sys; fd=os.open(sys.argv[1],os.O_RDONLY); os.fsync(fd); os.close(fd)" "$PROG.tmp"
+    mv -f "$PROG.tmp" "$PROG"
   done
 }
 mysql_verify() {  # $1=expected $2=mode(exact|atleast) ; returns 0 on PASS
@@ -109,7 +113,7 @@ sleep 1
 cluster_start || exit 1; mount_start || exit 1
 say "restarting mysqld -> InnoDB recovery; in-flight txn must roll back, committed must survive"
 mysql_start || { echo "recovery failed"; tail -30 "$LOGS/mysqld.log"; chk 1 "C/crash-during-write"; }
-if mq -e "SELECT 1" >/dev/null 2>&1; then mysql_verify $LB atleast; chk $? "C/crash-during-write"; fi
+if mq -e "SELECT 1" >/dev/null 2>&1; then mysql_verify "$LB" atleast; chk $? "C/crash-during-write"; fi
 
 echo; echo "######## MySQL RESULT: PASS=$PASS FAIL=$FAIL ########"
 mysql_stop_graceful; mount_stop_graceful; cluster_stop_graceful

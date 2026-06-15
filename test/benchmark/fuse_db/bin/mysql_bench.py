@@ -4,7 +4,7 @@
 #   LOAD : bulk-load <rows> rows (4096B incompressible AES payload), <batch>-row txns
 #   OLTP : <oltp> single-row autocommit INSERTs (each fsyncs redo, trx_commit=1) -> tx/s
 #   SCAN : SUM(CRC32(payload)) over the table (reads every payload) -> MB/s
-import os, sys, subprocess, time
+import os, re, sys, subprocess, time
 
 sock  = sys.argv[1]
 db    = sys.argv[2]
@@ -13,9 +13,12 @@ batch = int(sys.argv[4])
 oltp  = int(sys.argv[5])
 MYSQL = os.environ.get("MYSQL_BIN", "mysql")   # lib.sh exports MYSQL_BIN; else use PATH
 
+if not re.fullmatch(r"[A-Za-z0-9_]+", db):     # db is interpolated into SQL
+    raise SystemExit(f"invalid database name: {db!r}")
+
 def run(sql):
     r = subprocess.run([MYSQL, "--socket", sock, "-uroot"], input=sql.encode(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800)
     if r.returncode != 0:
         sys.stderr.write(r.stderr.decode()[:500]); raise SystemExit("mysql failed")
 
