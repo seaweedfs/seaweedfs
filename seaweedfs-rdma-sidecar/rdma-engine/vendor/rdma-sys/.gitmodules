@@ -1,0 +1,4 @@
+[submodule "rdma-env-setup"]
+	path = rdma-env-setup
+	url = https://github.com/datenlord/rdma-env-setup.git
+	branch = main

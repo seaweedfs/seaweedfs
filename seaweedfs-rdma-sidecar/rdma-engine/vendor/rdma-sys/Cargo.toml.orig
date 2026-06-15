@@ -1,0 +1,19 @@
+[package]
+name = "rdma-sys"
+version = "0.3.0"
+authors = ["Pu Wang <nicolas.weeks@gmail.com>"]
+edition = "2021"
+description = "Rdma ibverbs lib Rust binding"
+license-file = "LICENSE"
+repository = "https://github.com/datenlord/rdma-sys"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2"
+memoffset = "0.6"
+paste = "1.0"
+# intrusive-collections = "0.9"
+
+[build-dependencies]
+bindgen = "0.59.2"
+pkg-config = "0.3"

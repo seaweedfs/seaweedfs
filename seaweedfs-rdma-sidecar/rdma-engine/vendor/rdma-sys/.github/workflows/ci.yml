@@ -1,0 +1,54 @@
+name: RDMA-SYS-CI
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  schedule: [cron: "0 */24 * * *"]
+
+env:
+  CI_RUST_TOOLCHAIN: 1.61.0
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+      - name: Git Sumbodule Update
+        run: |
+          git submodule update --remote --recursive
+      - name: Install dependencies
+        run: |
+          # Install libibverbs-dev as dependency automatically
+          sudo apt-get install -y librdmacm-dev
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          override: true
+      - name: Test
+        run: |
+          ./rdma-env-setup/scripts/setup.sh
+          ./scripts/run.sh
+      - name: Setup tmate session
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
+
+  fmt:
+    name: Fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          override: true
+      - run: rustup component add rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check

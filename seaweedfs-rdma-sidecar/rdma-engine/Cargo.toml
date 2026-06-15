@@ -10,6 +10,13 @@ license = "Apache-2.0"
 name = "rdma-engine-server"
 path = "src/main.rs"
 
+# Phase-1 proof: a real IBV_WR_RDMA_READ over SoftRoCE loopback (requires Linux +
+# libibverbs/librdmacm). Build with: cargo build --features real-rdma --bin rdma-loopback
+[[bin]]
+name = "rdma-loopback"
+path = "src/bin/rdma_loopback.rs"
+required-features = ["real-rdma"]
+
 [lib]
 name = "rdma_engine"
 path = "src/lib.rs"
@@ -48,6 +55,10 @@ parking_lot = "0.12"  # Fast mutexes
 nix = { version = "0.27", features = ["mman"] }  # Unix domain sockets and system calls
 async-trait = "0.1"  # Async traits
 
+# Real RDMA via libibverbs + librdmacm (raw FFI). Optional, Linux-only; pulled in
+# by the `real-rdma` feature. Used by src/rdma_real.rs (RealRdmaContext).
+rdma-sys = { version = "0.3", optional = true }
+
 # Configuration
 clap = { version = "4.0", features = ["derive"] }
 config = "0.13"
@@ -61,6 +72,7 @@ tempfile = "3.0"
 default = ["mock-ucx"]
 mock-ucx = []
 real-ucx = []  # UCX integration for production RDMA
+real-rdma = ["dep:rdma-sys"]  # real libibverbs/rdma_cm datapath (SoftRoCE/real NIC)
 
 [profile.release]
 opt-level = 3
@@ -72,3 +84,6 @@ panic = "abort"
 
 [package.metadata.docs.rs]
 features = ["real-rdma"]
+
+[patch.crates-io]
+rdma-sys = { path = "vendor/rdma-sys" }

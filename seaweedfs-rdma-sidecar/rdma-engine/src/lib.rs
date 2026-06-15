@@ -27,6 +27,8 @@ use anyhow::Result;
 
 pub mod ucx;
 pub mod rdma;
+#[cfg(feature = "real-rdma")]
+pub mod rdma_real; // real libibverbs/rdma_cm RDMA datapath (SoftRoCE/real NIC)
 pub mod ipc;
 pub mod session;
 pub mod memory;
