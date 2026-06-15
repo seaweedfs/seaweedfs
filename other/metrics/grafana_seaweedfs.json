@@ -5175,8 +5175,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "title": "Metadata Subscription Lag",
-          "description": "Seconds since the filer last sent a metadata-subscription event (per client/path); only present with active subscribers",
+          "title": "Time Since Last Subscription Send",
+          "description": "Seconds since the filer last sent to a metadata subscription (real event or idle heartbeat), per client/path. Low for healthy caught-up subscribers; clients that don't request idle heartbeats show time since the last real event.",
           "type": "timeseries",
           "id": 156,
           "gridPos": {
