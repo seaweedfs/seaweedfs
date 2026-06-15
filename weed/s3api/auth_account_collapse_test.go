@@ -70,3 +70,62 @@ func TestCheckAccessByOwnershipDeniesNonOwner(t *testing.T) {
 	owner.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
 	assert.Equal(t, s3err.ErrNone, s3a.checkAccessByOwnership(owner, "b"), "the actual owner is still allowed")
 }
+
+// An account-less identity's synthesized account must be registered in the
+// account lookup so its id resolves to a display name. Otherwise ACL grantee
+// validation and owner display report the id as "not exists" — the regression
+// where a canned PutObjectAcl granting to the caller's own account returned
+// 400 InvalidRequest.
+func TestUnscopedIdentityAccountResolvesByName(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "identities": [
+    {"name": "alice", "credentials": [{"accessKey": "alice_ak", "secretKey": "alice_sk"}], "actions": ["Read", "Write"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	assert.Equal(t, "alice", iam.GetAccountNameById("alice"),
+		"account-less identity id must resolve to a display name for ACL/owner validation")
+}
+
+// When an account is explicitly configured with the same id an account-less
+// identity would synthesize, the identity must reuse that configured account so
+// its custom display name/email are preserved.
+func TestUnscopedIdentityReusesConfiguredAccount(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "accounts": [
+    {"id": "alice", "displayName": "Alice Smith", "emailAddress": "alice@example.com"}
+  ],
+  "identities": [
+    {"name": "alice", "credentials": [{"accessKey": "alice_ak", "secretKey": "alice_sk"}], "actions": ["Read"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	assert.Equal(t, "Alice Smith", iam.GetAccountNameById("alice"),
+		"explicitly configured account display name must be preserved")
+
+	alice, _, found := iam.LookupByAccessKey("alice_ak")
+	require.True(t, found)
+	require.NotNil(t, alice.Account)
+	assert.Equal(t, "Alice Smith", alice.Account.DisplayName,
+		"identity must reuse the configured account, not the synthesized one")
+}
