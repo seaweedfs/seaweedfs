@@ -101,7 +101,7 @@ while :; do
   kill -0 $LPID 2>/dev/null || { say "loader exited early"; break; }
   sleep 0.2
 done
-LB=$(cat "$PROG" 2>/dev/null || echo 0)
+LB=$(cat "$PROG" 2>/dev/null); LB=${LB:-0}   # empty file (killed mid-write) -> 0
 say "durable committed lower-bound at crash = $LB rows; crashing now"
 hard_kill_all
 kill -9 $LPID 2>/dev/null; wait $LPID 2>/dev/null

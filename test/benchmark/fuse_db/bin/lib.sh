@@ -30,6 +30,7 @@ FILER_GRPC=19565
 MYSQL_BASE="${MYSQL_BASE:-/opt/homebrew/opt/mysql}"
 MYSQLD=$MYSQL_BASE/bin/mysqld
 MYSQL=$MYSQL_BASE/bin/mysql
+export MYSQL_BIN="${MYSQL_BIN:-$MYSQL}"   # propagated to mysql_bench.py
 MYSQLADMIN=$MYSQL_BASE/bin/mysqladmin
 MYSQL_PORT=3308
 MYSQL_SOCK=$LOCAL/mysql.sock      # socket on LOCAL disk, datadir on FUSE
@@ -39,6 +40,10 @@ ts() { date +%H:%M:%S; }
 say() { echo "[$(ts)] $*"; }
 
 ensure_dirs() { mkdir -p "$CLUSTER" "$MNT" "$LOGS" "$LOCAL" "$PIDS" "$RESULTS" "$LOCAL/mountcache"; }
+
+# Portable unmount: fusermount (Linux non-root) -> umount -> diskutil (macOS).
+fuse_umount()       { fusermount -u  "$1" 2>/dev/null || fusermount3 -u  "$1" 2>/dev/null || umount    "$1" 2>/dev/null || diskutil unmount       "$1" 2>/dev/null; }
+fuse_umount_force() { fusermount -uz "$1" 2>/dev/null || fusermount3 -uz "$1" 2>/dev/null || umount -f "$1" 2>/dev/null || diskutil unmount force "$1" 2>/dev/null; }
 
 # My (and only my) ports. Used for the kill-by-port safety net in clean_state.
 MY_PORTS="$MASTER_PORT $VOLUME_PORT $FILER_PORT 19555 19560 $FILER_GRPC $MYSQL_PORT"
@@ -114,7 +119,7 @@ mount_wait() {
 }
 mount_stop_graceful() {
   say "graceful unmount $MNT"
-  umount "$MNT" 2>/dev/null || diskutil unmount "$MNT" 2>/dev/null
+  fuse_umount "$MNT"
   local pid; pid=$(cat "$PIDS/mount.pid" 2>/dev/null)
   if [ -n "${pid:-}" ]; then
     for i in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
@@ -126,8 +131,8 @@ mount_kill_hard() {
   local pid; pid=$(cat "$PIDS/mount.pid" 2>/dev/null)
   [ -n "${pid:-}" ] && { say "HARD kill -9 mount pid $pid"; kill -9 "$pid" 2>/dev/null; }
   rm -f "$PIDS/mount.pid"
-  # clean up the stale macFUSE mountpoint
-  diskutil unmount force "$MNT" >/dev/null 2>&1 || umount -f "$MNT" 2>/dev/null
+  # clean up the stale mountpoint
+  fuse_umount_force "$MNT"
 }
 
 # ---- MySQL ----
@@ -194,7 +199,7 @@ kill_my_ports() {
 clean_state() {
   say "cleaning test state"
   stop_all
-  diskutil unmount force "$MNT" >/dev/null 2>&1 || umount -f "$MNT" 2>/dev/null
+  fuse_umount_force "$MNT"
   kill_my_ports
   for p in $MASTER_PORT $VOLUME_PORT $FILER_PORT; do wait_port_free "$p" 40 || say "WARN port $p still busy"; done
   rm -rf "$CLUSTER" "$MNT" "$LOCAL/mountcache" "$PIDS" 2>/dev/null

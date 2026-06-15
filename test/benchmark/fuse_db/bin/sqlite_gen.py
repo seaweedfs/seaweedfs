@@ -25,8 +25,12 @@ con.execute(f"PRAGMA synchronous={sync_mode};")
 con.execute("CREATE TABLE IF NOT EXISTS t(id INTEGER PRIMARY KEY, payload BLOB, chk INTEGER);")
 
 def write_progress(n):
-    with open(progress_path, "w") as f:
+    # atomic: write tmp + fsync + rename, so a kill -9 mid-write can't leave an
+    # empty/torn progress file (the crash-test lower bound must stay trustworthy).
+    tmp = progress_path + ".tmp"
+    with open(tmp, "w") as f:
         f.write(str(n)); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, progress_path)
 
 done = 0
 sum_chk = 0

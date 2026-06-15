@@ -23,9 +23,10 @@ con.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, payload BLOB, chk INTEGER);"
 # LOAD
 mb = rows * 4096 / 1048576
 t = time.time(); done = 0
+rnd = random.Random(12345)   # reuse one PRNG; this probe doesn't verify payloads
 while done < rows:
     end = min(done + batch, rows)
-    data = [(i, random.Random(i).randbytes(4096), 0) for i in range(done, end)]
+    data = [(i, rnd.randbytes(4096), 0) for i in range(done, end)]
     con.execute("BEGIN")
     con.executemany("INSERT INTO t VALUES(?,?,?)", data)
     con.execute("COMMIT")

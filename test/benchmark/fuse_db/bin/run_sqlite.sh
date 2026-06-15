@@ -53,7 +53,7 @@ while :; do
   kill -0 $GENPID 2>/dev/null || { say "loader exited early"; break; }
   sleep 0.2
 done
-LB=$(cat "$PROG" 2>/dev/null || echo 0)
+LB=$(cat "$PROG" 2>/dev/null); LB=${LB:-0}   # empty file (killed mid-write) -> 0
 say "durable committed lower-bound at crash = $LB rows; crashing storage now"
 hard_kill_all                      # storage dies under the still-writing loader
 kill -9 $GENPID 2>/dev/null; wait $GENPID 2>/dev/null

@@ -11,7 +11,7 @@ db    = sys.argv[2]
 rows  = int(sys.argv[3])
 batch = int(sys.argv[4])
 oltp  = int(sys.argv[5])
-MYSQL = os.environ.get("MYSQL_BIN", "/opt/homebrew/opt/mysql/bin/mysql")
+MYSQL = os.environ.get("MYSQL_BIN", "mysql")   # lib.sh exports MYSQL_BIN; else use PATH
 
 def run(sql):
     r = subprocess.run([MYSQL, "--socket", sock, "-uroot"], input=sql.encode(),
