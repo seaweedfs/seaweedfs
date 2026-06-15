@@ -113,6 +113,9 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
+	// live metadata subscribers (FUSE mounts, S3, peer filers, ...) keyed by
+	// clientId, guarded by knownListenersLock. Exposed via ListMetadataSubscribers.
+	subscribers map[int32]*metadataSubscriber
 
 	// deduplicates concurrent remote object caching operations
 	remoteCacheGroup singleflight.Group
@@ -183,6 +186,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		option:                option,
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]int32),
+		subscribers:           make(map[int32]*metadataSubscriber),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		recentCopyRequests:    make(map[string]recentCopyRequest),
 		CredentialManager:     option.CredentialManager,
