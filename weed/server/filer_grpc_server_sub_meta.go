@@ -567,7 +567,11 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	// A heartbeat is a send too: advance the freshness gauge so an idle but
 	// healthy subscriber doesn't look stale. The gauge otherwise only moves on
 	// real matching events, which never arrive on a quiet path.
-	stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(fs.option.Host.String(), req.ClientName, req.PathPrefix).Set(float64(now))
+	var sourceFiler string
+	if fs.option != nil {
+		sourceFiler = fs.option.Host.String()
+	}
+	stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(sourceFiler, req.ClientName, req.PathPrefix).Set(float64(now))
 	return now
 }
 
