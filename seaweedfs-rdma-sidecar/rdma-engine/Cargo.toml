@@ -17,6 +17,17 @@ name = "rdma-loopback"
 path = "src/bin/rdma_loopback.rs"
 required-features = ["real-rdma"]
 
+# Standalone cross-process RDMA target + client (real file data over rxe).
+[[bin]]
+name = "rdma-target"
+path = "src/bin/rdma_target.rs"
+required-features = ["real-rdma"]
+
+[[bin]]
+name = "rdma-client"
+path = "src/bin/rdma_client.rs"
+required-features = ["real-rdma"]
+
 [lib]
 name = "rdma_engine"
 path = "src/lib.rs"
