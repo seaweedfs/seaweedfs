@@ -9,17 +9,17 @@ import (
 )
 
 func TestRunFuseDoesNotSkipOptionAfterConcurrentWriters(t *testing.T) {
-	oldUmask := *mountOptions.umaskString
-	oldWriters := *mountOptions.concurrentWriters
-	oldReaders := *mountOptions.concurrentReaders
+	oldUmask := mountOptions.umaskString
+	oldWriters := mountOptions.concurrentWriters
+	oldReaders := mountOptions.concurrentReaders
 	oldFuseCommandPid := mountOptions.fuseCommandPid
-	oldDir := *mountOptions.dir
+	oldDir := mountOptions.dir
 	defer func() {
-		*mountOptions.umaskString = oldUmask
-		*mountOptions.concurrentWriters = oldWriters
-		*mountOptions.concurrentReaders = oldReaders
+		mountOptions.umaskString = oldUmask
+		mountOptions.concurrentWriters = oldWriters
+		mountOptions.concurrentReaders = oldReaders
 		mountOptions.fuseCommandPid = oldFuseCommandPid
-		*mountOptions.dir = oldDir
+		mountOptions.dir = oldDir
 
 		recovered := recover()
 		if recovered == nil {
