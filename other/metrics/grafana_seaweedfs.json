@@ -3779,7 +3779,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (instance) (SeaweedFS_volumeServer_volumes{cluster=~\"$cluster\", type=\"volume\"}) / sum by (instance) (SeaweedFS_volumeServer_max_volumes{cluster=~\"$cluster\"}) * 100",
+              "expr": "100 * sum by (instance) (SeaweedFS_volumeServer_volumes{cluster=~\"$cluster\", type=\"volume\"}) / clamp_min(sum by (instance) (SeaweedFS_volumeServer_max_volumes{cluster=~\"$cluster\"}), 1)",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}}"
@@ -9117,7 +9117,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(SeaweedFS_s3_request_total, bucket)",
+        "definition": "label_values(SeaweedFS_s3_bucket_size_bytes{cluster=~\"$cluster\"}, bucket)",
         "hide": 0,
         "includeAll": true,
         "allValue": ".*",
@@ -9128,7 +9128,7 @@
         "refresh": 2,
         "query": {
           "qryType": 1,
-          "query": "label_values(SeaweedFS_s3_request_total, bucket)",
+          "query": "label_values(SeaweedFS_s3_bucket_size_bytes{cluster=~\"$cluster\"}, bucket)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "regex": "",
