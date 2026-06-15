@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/pubsub v1.50.2
-	cloud.google.com/go/storage v1.62.1
+	cloud.google.com/go/storage v1.62.3
 	github.com/Shopify/sarama v1.38.1
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/beorn7/perks v1.0.1 // indirect
