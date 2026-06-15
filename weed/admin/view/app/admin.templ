@@ -194,6 +194,34 @@ templ Admin(data dash.AdminData) {
             </div>
         </div>
 
+        <!-- Mount Clients -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-plug me-2"></i>Mount Clients
+                        </h6>
+                        <a id="mountClientsDetailsLink" href="/cluster/mount-clients" class="btn btn-sm btn-outline-primary">
+                            View Details <i class="fas fa-arrow-right ms-1"></i>
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-plug fa-2x text-gray-300 me-3"></i>
+                            <div>
+                                <div class="h4 mb-0 font-weight-bold text-gray-800">{fmt.Sprintf("%d", data.TotalMountClients)}</div>
+                                <div class="text-xs text-muted text-uppercase">Connected FUSE/VFS mount clients</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+        (function(){var l=document.getElementById('mountClientsDetailsLink'); if(l){l.href=(window.__BASE_PATH__||'')+'/cluster/mount-clients';}})();
+        </script>
+
         <!-- Master Nodes Status -->
         <div class="row mb-4">
             <div class="col-lg-4">

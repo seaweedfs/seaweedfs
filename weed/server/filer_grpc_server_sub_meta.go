@@ -165,7 +165,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	ctx := stream.Context()
 	peerAddress := findClientAddress(ctx, 0)
 
-	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.ClientId, req.ClientEpoch)
+	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
 	if isReplacing {
 		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
@@ -314,7 +314,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	// use negative client id to differentiate from addClient()/deleteClient() used in SubscribeMetadata()
 	req.ClientId = -req.ClientId
 
-	isReplacing, alreadyKnown, clientName := fs.addClient("local", req.ClientName, peerAddress, req.ClientId, req.ClientEpoch)
+	isReplacing, alreadyKnown, clientName := fs.addClient("local", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
 	if isReplacing {
 		fs.listenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
@@ -661,9 +661,9 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 	}
 }
 
-func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress string, clientId int32, clientEpoch int32) (isReplacing, alreadyKnown bool, clientName string) {
+func (fs *FilerServer) addClient(scope string, clientType string, clientAddress string, pathPrefix string, clientId int32, clientEpoch int32) (isReplacing, alreadyKnown bool, clientName string) {
 	clientName = clientType + "@" + clientAddress
-	glog.V(0).Infof("+ %v listener %v clientId %v clientEpoch %v", prefix, clientName, clientId, clientEpoch)
+	glog.V(0).Infof("+ %v listener %v clientId %v clientEpoch %v", scope, clientName, clientId, clientEpoch)
 	if clientId != 0 {
 		fs.knownListenersLock.Lock()
 		defer fs.knownListenersLock.Unlock()
@@ -671,6 +671,15 @@ func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress
 		if !found || epoch < clientEpoch {
 			fs.knownListeners[clientId] = clientEpoch
 			isReplacing = true
+			fs.subscribers[clientId] = &metadataSubscriber{
+				clientName:    clientName,
+				clientType:    clientType,
+				address:       clientAddress,
+				pathPrefix:    pathPrefix,
+				clientId:      clientId,
+				clientEpoch:   clientEpoch,
+				connectedAtNs: time.Now().UnixNano(),
+			}
 		} else {
 			alreadyKnown = true
 		}
@@ -678,14 +687,15 @@ func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress
 	return
 }
 
-func (fs *FilerServer) deleteClient(prefix string, clientName string, clientId int32, clientEpoch int32) {
-	glog.V(0).Infof("- %v listener %v clientId %v clientEpoch %v", prefix, clientName, clientId, clientEpoch)
+func (fs *FilerServer) deleteClient(scope string, clientName string, clientId int32, clientEpoch int32) {
+	glog.V(0).Infof("- %v listener %v clientId %v clientEpoch %v", scope, clientName, clientId, clientEpoch)
 	if clientId != 0 {
 		fs.knownListenersLock.Lock()
 		defer fs.knownListenersLock.Unlock()
 		epoch, found := fs.knownListeners[clientId]
 		if found && epoch <= clientEpoch {
 			delete(fs.knownListeners, clientId)
+			delete(fs.subscribers, clientId)
 		}
 	}
 }

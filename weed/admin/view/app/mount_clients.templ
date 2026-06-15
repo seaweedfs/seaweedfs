@@ -1,0 +1,142 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ MountClients(data dash.MountClientsData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-plug me-2"></i>Mount Clients
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportMountClients()">
+					<i class="fas fa-download me-1"></i>Export
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="mount-clients-content">
+		<!-- Summary Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-12 col-md-12 mb-4">
+				<div class="card border-left-info shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+									Connected Mount Clients
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalMountClients) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-plug fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Mount Clients Table -->
+		<div class="card shadow mb-4">
+			<div class="card-header py-3">
+				<h6 class="m-0 font-weight-bold text-primary">
+					<i class="fas fa-plug me-2"></i>Mount Clients
+				</h6>
+			</div>
+			<div class="card-body">
+				if len(data.MountClients) > 0 {
+					<div class="table-responsive">
+						<table class="table table-hover" id="mountClientsTable">
+							<thead>
+								<tr>
+									<th>Address</th>
+									<th>Type</th>
+									<th>Path Prefix</th>
+									<th>Client ID</th>
+									<th>Connected Since</th>
+									<th>Filer</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, c := range data.MountClients {
+									<tr>
+										<td><code>{ c.Address }</code></td>
+										<td>
+											<span class="badge bg-info text-dark">{ c.ClientType }</span>
+										</td>
+										<td><code>{ c.PathPrefix }</code></td>
+										<td>{ fmt.Sprintf("%d", c.ClientId) }</td>
+										<td>
+											if !c.ConnectedAt.IsZero() {
+												{ c.ConnectedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<span class="text-muted">N/A</span>
+											}
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ c.FilerAddress }</span>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="text-center py-5">
+						<i class="fas fa-plug fa-3x text-muted mb-3"></i>
+						<h5 class="text-muted">No Mount Clients Found</h5>
+						<p class="text-muted">No FUSE or VFS mounts are currently connected to the cluster's filers.</p>
+					</div>
+				}
+			</div>
+		</div>
+
+		<!-- Last Updated -->
+		<div class="row">
+			<div class="col-12">
+				<small class="text-muted">
+					<i class="fas fa-clock me-1"></i>
+					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
+				</small>
+			</div>
+		</div>
+	</div>
+
+	<script>
+	function exportMountClients() {
+		const rows = Array.from(document.querySelectorAll('#mountClientsTable tbody tr')).map(row => {
+			const cells = row.querySelectorAll('td');
+			if (cells.length > 1) {
+				return {
+					address: cells[0].textContent.trim(),
+					type: cells[1].textContent.trim(),
+					path: cells[2].textContent.trim(),
+					clientId: cells[3].textContent.trim(),
+					connected: cells[4].textContent.trim(),
+					filer: cells[5].textContent.trim()
+				};
+			}
+			return null;
+		}).filter(row => row !== null);
+
+		const csvContent = "data:text/csv;charset=utf-8," +
+			"Address,Type,Path Prefix,Client ID,Connected Since,Filer\n" +
+			rows.map(r => '"' + r.address + '","' + r.type + '","' + r.path + '","' + r.clientId + '","' + r.connected + '","' + r.filer + '"').join("\n");
+
+		const encodedUri = encodeURI(csvContent);
+		const link = document.createElement("a");
+		link.setAttribute("href", encodedUri);
+		link.setAttribute("download", "mount-clients.csv");
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+	}
+	</script>
+}
