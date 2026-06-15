@@ -628,6 +628,13 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			identityAnonymous = t
 		case ident.Account == nil:
 			t.Account = accountForUnscopedIdentity(t.Name)
+			// Register the synthesized account so its id resolves to a display
+			// name. Account-less identities own resources under this id, and
+			// ACL grantee validation / owner display look the id up via
+			// GetAccountNameById; without this the id is reported "not exists".
+			if _, ok := accounts[t.Account.Id]; !ok {
+				accounts[t.Account.Id] = t.Account
+			}
 		default:
 			if account, ok := accounts[ident.Account.Id]; ok {
 				t.Account = account
@@ -847,6 +854,13 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			identityAnonymous = t
 		case ident.Account == nil:
 			t.Account = accountForUnscopedIdentity(t.Name)
+			// Register the synthesized account so its id resolves to a display
+			// name. Account-less identities own resources under this id, and
+			// ACL grantee validation / owner display look the id up via
+			// GetAccountNameById; without this the id is reported "not exists".
+			if _, ok := accounts[t.Account.Id]; !ok {
+				accounts[t.Account.Id] = t.Account
+			}
 		default:
 			if account, ok := accounts[ident.Account.Id]; ok {
 				t.Account = account
