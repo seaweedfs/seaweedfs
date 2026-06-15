@@ -114,29 +114,26 @@ templ MountClients(data dash.MountClientsData) {
 		const rows = Array.from(document.querySelectorAll('#mountClientsTable tbody tr')).map(row => {
 			const cells = row.querySelectorAll('td');
 			if (cells.length > 1) {
-				return {
-					address: cells[0].textContent.trim(),
-					type: cells[1].textContent.trim(),
-					path: cells[2].textContent.trim(),
-					clientId: cells[3].textContent.trim(),
-					connected: cells[4].textContent.trim(),
-					filer: cells[5].textContent.trim()
-				};
+				return Array.from(cells).slice(0, 6).map(c => c.textContent.trim());
 			}
 			return null;
 		}).filter(row => row !== null);
 
-		const csvContent = "data:text/csv;charset=utf-8," +
-			"Address,Type,Path Prefix,Client ID,Connected Since,Filer\n" +
-			rows.map(r => '"' + r.address + '","' + r.type + '","' + r.path + '","' + r.clientId + '","' + r.connected + '","' + r.filer + '"').join("\n");
+		// Quote every field and escape embedded quotes so special characters in
+		// paths (#, ?, %, commas) survive. Build a Blob rather than a data: URI.
+		const esc = v => '"' + String(v).replace(/"/g, '""') + '"';
+		const csv = "Address,Type,Path Prefix,Client ID,Connected Since,Filer\n" +
+			rows.map(r => r.map(esc).join(",")).join("\n");
 
-		const encodedUri = encodeURI(csvContent);
+		const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+		const url = URL.createObjectURL(blob);
 		const link = document.createElement("a");
-		link.setAttribute("href", encodedUri);
-		link.setAttribute("download", "mount-clients.csv");
+		link.href = url;
+		link.download = "mount-clients.csv";
 		document.body.appendChild(link);
 		link.click();
 		document.body.removeChild(link);
+		URL.revokeObjectURL(url);
 	}
 	</script>
 }

@@ -671,6 +671,9 @@ func (fs *FilerServer) addClient(scope string, clientType string, clientAddress 
 		if !found || epoch < clientEpoch {
 			fs.knownListeners[clientId] = clientEpoch
 			isReplacing = true
+			if fs.subscribers == nil {
+				fs.subscribers = make(map[int32]*metadataSubscriber)
+			}
 			fs.subscribers[clientId] = &metadataSubscriber{
 				clientName:    clientName,
 				clientType:    clientType,
