@@ -14,6 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 // TestEcLifecycleAcrossMultipleDisks drives encode, mount, read, drop-dat,
@@ -482,7 +484,6 @@ func plantPartialEc(t testing.TB, dir, collection string, volumeID uint32, shard
 	}{
 		{".ecx", []byte("dummy ecx")},
 		{".ecj", nil},
-		{".vif", nil},
 	} {
 		p := filepath.Join(dir, sideFileName(collection, volumeID, side.ext))
 		f, err := os.Create(p)
@@ -496,6 +497,19 @@ func plantPartialEc(t testing.TB, dir, collection string, volumeID uint32, shard
 			}
 		}
 		f.Close()
+	}
+	// Record the encode-time source size so the prune's byte-exact gate
+	// recognizes the sibling .dat as the source, as a real encoded volume does.
+	vifPath := filepath.Join(dir, sideFileName(collection, volumeID, ".vif"))
+	if err := volume_info.SaveVolumeInfo(vifPath, &volume_server_pb.VolumeInfo{
+		Version:     uint32(needle.Version3),
+		DatFileSize: datFileSize,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards:   uint32(erasure_coding.DataShardsCount),
+			ParityShards: uint32(erasure_coding.ParityShardsCount),
+		},
+	}); err != nil {
+		t.Fatalf("save planted .vif: %v", err)
 	}
 }
 

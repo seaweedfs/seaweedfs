@@ -84,6 +84,14 @@ type Options struct {
 	// Ratio returns a collection's (dataShards, parityShards); nil defaults to the
 	// standard scheme. This is where a caller plugs in custom-ratio resolution.
 	Ratio func(collection string) (dataShards, parityShards int)
+	// VolumeRatio returns a single volume's (dataShards, parityShards) when its
+	// heartbeat reported a per-volume ratio; either return <=0 to defer to Ratio
+	// (the collection ratio). A single collection can hold volumes of mixed ratios
+	// (a ratio change after some volumes were encoded), so placement must classify
+	// and spread each volume by its OWN data/parity split, not the collection's.
+	// nil (and the 0/OSS case) makes the planner fall back to Ratio per collection,
+	// preserving the collection-keyed behavior.
+	VolumeRatio func(collection string, vid uint32) (dataShards, parityShards int)
 	// GlobalMaxMovesPerRack caps how many shards the global (cross-volume) phase
 	// moves out of one rack in a single Plan. 0 means unlimited (drain to balance
 	// in one pass), which the shell uses; the worker sets a small value to make
@@ -185,8 +193,7 @@ func Plan(topo *Topology, opts Options) []Move {
 	racks := buildRacks(nodes)
 
 	// Group volumes by collection (deterministic order), keyed by (collection, id)
-	// so volumes that reuse a numeric id across collections stay distinct. Resolve
-	// each collection's data-shard count once for the global phase's disk scoring.
+	// so volumes that reuse a numeric id across collections stay distinct.
 	byCollection := make(map[string][]volKey)
 	seen := make(map[volKey]bool)
 	for _, n := range nodes {
@@ -198,39 +205,57 @@ func Plan(topo *Topology, opts Options) []Move {
 		}
 	}
 	collections := make([]string, 0, len(byCollection))
-	dataShardsByCollection := make(map[string]int)
-	parityShardsByCollection := make(map[string]int)
 	for c := range byCollection {
 		collections = append(collections, c)
 		sort.Slice(byCollection[c], func(i, j int) bool { return byCollection[c][i].vid < byCollection[c][j].vid })
-		d, p := ratio(c)
-		dataShardsByCollection[c] = d
-		parityShardsByCollection[c] = p
 	}
 	sort.Strings(collections)
 
+	// Resolve each volume's data/parity split: prefer the per-volume ratio the
+	// heartbeat reported (Options.VolumeRatio), fall back to the collection ratio,
+	// then the build defaults via `ratio`. Keyed by volume so a mixed-ratio
+	// collection (e.g. a 9+3 volume beside a 10+4 one) is classified and spread per
+	// volume rather than against one collection-wide split.
+	dataShardsByVolume := make(map[volKey]int)
+	parityShardsByVolume := make(map[volKey]int)
+	for _, collection := range collections {
+		defaultD, defaultP := ratio(collection)
+		for _, vk := range byCollection[collection] {
+			d, p := defaultD, defaultP
+			if opts.VolumeRatio != nil {
+				vd, vp := opts.VolumeRatio(vk.collection, vk.vid)
+				if vd > 0 {
+					d = vd
+				}
+				if vp > 0 {
+					p = vp
+				}
+			}
+			dataShardsByVolume[vk] = d
+			parityShardsByVolume[vk] = p
+		}
+	}
+
 	var all []*move
 	for _, collection := range collections {
-		dataShards, parityShards := ratio(collection)
-
 		for _, vk := range byCollection[collection] {
 			m := detectDuplicateShards(vk, nodes)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
-			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
+			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShardsByVolume[vk], parityShardsByVolume[vk], opts.ReplicaPlacement)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
-			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShards, parityShards, opts.ReplicaPlacement)
+			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShardsByVolume[vk], parityShardsByVolume[vk], opts.ReplicaPlacement)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 	}
 
-	all = append(all, detectGlobalImbalance(nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShardsByCollection, parityShardsByCollection, opts.GlobalMaxMovesPerRack, opts.GlobalUtilizationBased)...)
+	all = append(all, detectGlobalImbalance(nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShardsByVolume, parityShardsByVolume, opts.GlobalMaxMovesPerRack, opts.GlobalUtilizationBased)...)
 
 	out := make([]Move, 0, len(all))
 	for _, m := range all {
@@ -650,7 +675,7 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 // detectGlobalImbalance balances total EC shard load across the nodes of each
 // rack (across all volumes), using utilization ratios so heterogeneous-capacity
 // nodes are compared fairly.
-func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShardsByCollection, parityShardsByCollection map[string]int, maxMovesPerRack int, byUtilization bool) []*move {
+func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskType string, threshold float64, dataShardsByVolume, parityShardsByVolume map[volKey]int, maxMovesPerRack int, byUtilization bool) []*move {
 	var moves []*move
 
 	for _, rackID := range sortedKeys(racks) {
@@ -754,7 +779,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 						// doesn't raise the destination machine's count past the source's.
 						// Where it isn't achievable, capacity rules and any leveling move
 						// is fine. Feasibility uses the rack's shards, not the whole volume.
-						parity := parityShardsByCollection[vk.collection]
+						parity := parityShardsByVolume[vk]
 						spreadFeasible := parity > 0 && rackMachineCount >= ceilDivide(rackVolumeShardCount(r, vk), parity)
 						if spreadFeasible && minNode.host != maxNode.host &&
 							machineVolumeCount(r, minNode.host, vk) >= machineVolumeCount(r, maxNode.host, vk) {
@@ -768,7 +793,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 						if minInfo != nil && minInfo.shardBits.Has(sid) {
 							continue
 						}
-						dataShards := dataShardsByCollection[vk.collection]
+						dataShards := dataShardsByVolume[vk]
 						if dataShards <= 0 {
 							dataShards = erasure_coding.DataShardsCount
 						}

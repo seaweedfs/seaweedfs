@@ -8,6 +8,27 @@ import (
 	"github.com/gorilla/mux"
 )
 
+func TestIsValidTablePath(t *testing.T) {
+	tests := []struct {
+		tablePath string
+		want      bool
+	}{
+		{"sales.orders", true},
+		{"ns/table", true},
+		{"ns//table", true},
+		{"", true},
+		{"../other", false},
+		{"ns/../../etc", false},
+		{"ns/./x", false},
+		{`ns\..\x`, false},
+	}
+	for _, tt := range tests {
+		if got := isValidTablePath(tt.tablePath); got != tt.want {
+			t.Errorf("isValidTablePath(%q) = %v, want %v", tt.tablePath, got, tt.want)
+		}
+	}
+}
+
 func TestValidateRequestPath_RejectsTraversal(t *testing.T) {
 	tests := []struct {
 		name     string

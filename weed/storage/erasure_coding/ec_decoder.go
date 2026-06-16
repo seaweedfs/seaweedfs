@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
@@ -40,23 +41,53 @@ func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 	}
 	defer ecxFile.Close()
 
-	idxFile, openErr := os.OpenFile(baseFileName+".idx", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// Write to a temp file and atomically rename into place, so a crash mid-write
+	// never leaves a partial .idx at the final name beside the source shards.
+	idxFileName := baseFileName + ".idx"
+	tmpFileName := idxFileName + ".tmp"
+	idxFile, openErr := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot open %s.idx: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot open %s: %v", tmpFileName, openErr)
 	}
-	defer idxFile.Close()
+	committed := false
+	defer func() {
+		idxFile.Close()
+		if !committed {
+			os.Remove(tmpFileName)
+		}
+	}()
 
-	io.Copy(idxFile, ecxFile)
+	if _, err = io.Copy(idxFile, ecxFile); err != nil {
+		return fmt.Errorf("copy ecx to idx for %s: %v", baseFileName, err)
+	}
 
 	err = iterateEcjFile(baseFileName, func(key types.NeedleId) error {
-
 		bytes := needle_map.ToBytes(key, types.Offset{}, types.TombstoneFileSize)
-		idxFile.Write(bytes)
-
+		if _, writeErr := idxFile.Write(bytes); writeErr != nil {
+			return writeErr
+		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	// fsync, rename, then fsync the dir so the decoded .idx is durable and
+	// atomically published before the caller deletes the source shards.
+	if err = idxFile.Sync(); err != nil {
+		return fmt.Errorf("sync idx for %s: %v", baseFileName, err)
+	}
+	if err = idxFile.Close(); err != nil {
+		return fmt.Errorf("close idx for %s: %v", baseFileName, err)
+	}
+	if err = os.Rename(tmpFileName, idxFileName); err != nil {
+		return fmt.Errorf("rename idx for %s: %v", baseFileName, err)
+	}
+	if err = util.FsyncDir(filepath.Dir(idxFileName)); err != nil {
+		return fmt.Errorf("fsync dir for %s: %v", baseFileName, err)
+	}
+	committed = true
+	return nil
 }
 
 // FindDatFileSize calculate .dat file size from max offset entry
@@ -175,22 +206,30 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 // WriteDatFile generates .dat from EC shard files (e.g., .ec00 ~ .ec09 for 10+4)
 func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []string) error {
 
-	datFile, openErr := os.OpenFile(baseFileName+".dat", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// Write to a temp file and atomically rename into place, so a crash mid-write
+	// never leaves a partial .dat at the final name beside the source shards.
+	datFileName := baseFileName + ".dat"
+	tmpFileName := datFileName + ".tmp"
+	datFile, openErr := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot write volume %s.dat: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot write volume %s: %v", tmpFileName, openErr)
 	}
-	defer datFile.Close()
 
 	// Use the actual number of data shards passed in rather than the global
 	// constant, so the de-striping matches the caller's shard set.
 	dataShards := len(shardFileNames)
 	inputFiles := make([]*os.File, dataShards)
 
+	committed := false
 	defer func() {
+		datFile.Close()
 		for shardId := 0; shardId < dataShards; shardId++ {
 			if inputFiles[shardId] != nil {
 				inputFiles[shardId].Close()
 			}
+		}
+		if !committed {
+			os.Remove(tmpFileName)
 		}
 	}()
 
@@ -222,6 +261,21 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 		}
 	}
 
+	// fsync, rename, then fsync the dir so the decoded .dat is durable and
+	// atomically published before the caller deletes the source shards.
+	if err := datFile.Sync(); err != nil {
+		return fmt.Errorf("sync dat for %s: %v", baseFileName, err)
+	}
+	if err := datFile.Close(); err != nil {
+		return fmt.Errorf("close dat for %s: %v", baseFileName, err)
+	}
+	if err := os.Rename(tmpFileName, datFileName); err != nil {
+		return fmt.Errorf("rename dat for %s: %v", baseFileName, err)
+	}
+	if err := util.FsyncDir(filepath.Dir(datFileName)); err != nil {
+		return fmt.Errorf("fsync dir for %s: %v", baseFileName, err)
+	}
+	committed = true
 	return nil
 }
 

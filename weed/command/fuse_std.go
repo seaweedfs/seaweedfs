@@ -165,7 +165,6 @@ func runFuse(cmd *Command, args []string) bool {
 				panic(fmt.Errorf("dirIdleEvictSec: %s", err))
 			}
 		case "concurrentWriters":
-			i++
 			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.concurrentWriters = &intValue

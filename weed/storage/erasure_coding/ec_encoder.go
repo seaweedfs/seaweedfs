@@ -510,6 +510,29 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		return fmt.Errorf("failed to create encoder: %w", err)
 	}
 
+	// The output shard size equals the present input shards' size (all EC
+	// shards are equal length). Deriving it up front turns a short read on a
+	// truncated/corrupt input into an error instead of a silent early return
+	// that would publish truncated shards as restored redundancy.
+	var expectedShardSize int64 = -1
+	for i := 0; i < ctx.Total(); i++ {
+		if !shardHasData[i] {
+			continue
+		}
+		fi, statErr := inputFiles[i].Stat()
+		if statErr != nil {
+			return fmt.Errorf("stat input shard %d: %w", i, statErr)
+		}
+		if expectedShardSize < 0 {
+			expectedShardSize = fi.Size()
+		} else if fi.Size() != expectedShardSize {
+			return fmt.Errorf("ec rebuild: input shard %d size %d != %d (truncated input?)", i, fi.Size(), expectedShardSize)
+		}
+	}
+	if expectedShardSize <= 0 {
+		return fmt.Errorf("ec rebuild: no input shard data (expected shard size %d)", expectedShardSize)
+	}
+
 	buffers := make([][]byte, ctx.Total())
 	for i := range buffers {
 		if shardHasData[i] {
@@ -517,46 +540,61 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		}
 	}
 
-	var startOffset int64
-	var inputBufferDataSize int
-	for {
-
-		// read the input data from files
-		for i := 0; i < ctx.Total(); i++ {
-			if shardHasData[i] {
-				n, _ := inputFiles[i].ReadAt(buffers[i], startOffset)
-				if n == 0 {
-					return nil
-				}
-				if inputBufferDataSize == 0 {
-					inputBufferDataSize = n
-				}
-				if inputBufferDataSize != n {
-					return fmt.Errorf("ec shard size expected %d actual %d", inputBufferDataSize, n)
-				}
-			} else {
-				buffers[i] = nil
-			}
+	for startOffset := int64(0); startOffset < expectedShardSize; {
+		thisBlock := int64(ErasureCodingSmallBlockSize)
+		if remaining := expectedShardSize - startOffset; remaining < thisBlock {
+			thisBlock = remaining
 		}
 
-		// encode the data
-		err = enc.Reconstruct(buffers)
-		if err != nil {
+		// read the input data; a short read means a truncated input shard.
+		shards := make([][]byte, ctx.Total())
+		for i := 0; i < ctx.Total(); i++ {
+			if !shardHasData[i] {
+				continue // nil: reconstructed below
+			}
+			b := buffers[i][:thisBlock]
+			n, readErr := inputFiles[i].ReadAt(b, startOffset)
+			if readErr != nil && readErr != io.EOF {
+				return fmt.Errorf("ec rebuild read shard %d at %d: %w", i, startOffset, readErr)
+			}
+			if int64(n) != thisBlock {
+				return fmt.Errorf("ec rebuild short read shard %d at %d: got %d want %d", i, startOffset, n, thisBlock)
+			}
+			shards[i] = b
+		}
+
+		if err = enc.Reconstruct(shards); err != nil {
 			return fmt.Errorf("reconstruct: %w", err)
 		}
 
-		// write the data to output files
 		for i := 0; i < ctx.Total(); i++ {
-			if !shardHasData[i] {
-				n, _ := outputFiles[i].WriteAt(buffers[i][:inputBufferDataSize], startOffset)
-				if inputBufferDataSize != n {
-					return fmt.Errorf("fail to write to %s", outputFiles[i].Name())
-				}
+			if shardHasData[i] {
+				continue
+			}
+			n, writeErr := outputFiles[i].WriteAt(shards[i][:thisBlock], startOffset)
+			if writeErr != nil {
+				return fmt.Errorf("ec rebuild write shard %d at %d: %w", i, startOffset, writeErr)
+			}
+			if int64(n) != thisBlock {
+				return fmt.Errorf("ec rebuild short write shard %d at %d: got %d want %d", i, startOffset, n, thisBlock)
 			}
 		}
-		startOffset += int64(inputBufferDataSize)
+		startOffset += thisBlock
 	}
 
+	// Flush every regenerated shard before it is mounted/renamed and published
+	// as restored redundancy, so a crash cannot leave a peer trusting a shard
+	// whose bytes never reached disk.
+	for i := 0; i < ctx.Total(); i++ {
+		if shardHasData[i] {
+			continue
+		}
+		if err = outputFiles[i].Sync(); err != nil {
+			return fmt.Errorf("ec rebuild sync shard %d: %w", i, err)
+		}
+	}
+
+	return nil
 }
 
 func readNeedleMap(baseFileName string) (*needle_map.MemDb, error) {

@@ -295,6 +295,25 @@ type ClusterFilersData struct {
 	LastUpdated time.Time   `json:"last_updated"`
 }
 
+// MountClient is one connected FUSE/VFS mount as reported by a filer's
+// metadata-subscriber registry.
+type MountClient struct {
+	ClientName   string    `json:"client_name"`
+	ClientType   string    `json:"client_type"` // "mount" (Go) or "sw-vfs" (Rust VFS)
+	Address      string    `json:"address"`
+	PathPrefix   string    `json:"path_prefix"`
+	ClientId     int32     `json:"client_id"`
+	ConnectedAt  time.Time `json:"connected_at"`
+	FilerAddress string    `json:"filer_address"`
+}
+
+type MountClientsData struct {
+	Username          string        `json:"username"`
+	MountClients      []MountClient `json:"mount_clients"`
+	TotalMountClients int           `json:"total_mount_clients"`
+	LastUpdated       time.Time     `json:"last_updated"`
+}
+
 type MessageBrokerInfo struct {
 	Address    string    `json:"address"`
 	DataCenter string    `json:"datacenter"`

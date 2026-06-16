@@ -35,3 +35,6 @@ var Shell string
 
 //go:embed credential.toml
 var Credential string
+
+//go:embed admin.toml
+var Admin string

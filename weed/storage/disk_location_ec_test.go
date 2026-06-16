@@ -54,14 +54,18 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 			expectLoadSuccess: false,
 		},
 		{
-			name:              "Incomplete EC: shards with .ecx but < 10 shards, .dat exists - should cleanup",
+			// Full-size shards beside a .dat are NOT an interrupted local
+			// encode (which leaves equally-truncated shards smaller than the
+			// .dat); they may be sole copies of a distributed volume, so the
+			// safe behavior is to keep them rather than delete on a low count.
+			name:              "Distributed EC: full-size shards with .ecx, < 10 of them, .dat exists - keep",
 			volumeId:          102,
 			collection:        "",
 			createDatFile:     true,
 			createEcxFile:     true,
 			createEcjFile:     false,
-			numShards:         7, // Less than DataShardsCount (10)
-			expectCleanup:     true,
+			numShards:         7, // Less than DataShardsCount (10), but full size
+			expectCleanup:     false,
 			expectLoadSuccess: false,
 		},
 		{
@@ -275,12 +279,16 @@ func TestValidateEcVolume(t *testing.T) {
 			expectValid:   true,
 		},
 		{
-			name:          "Invalid: .dat exists with < 10 shards",
+			// Full-size shards smaller in count than dataShards may be sole
+			// copies of a distributed volume (a real interrupted local encode
+			// leaves equally-truncated shards, not full-size ones), so they
+			// are kept rather than deleted in favor of the .dat.
+			name:          "Keep: .dat exists with < 10 full-size shards (possible distributed sole copies)",
 			volumeId:      201,
 			collection:    "",
 			createDatFile: true,
 			numShards:     9,
-			expectValid:   false,
+			expectValid:   true,
 		},
 		{
 			name:          "Valid: .dat deleted (distributed EC) with any shards",
@@ -307,12 +315,15 @@ func TestValidateEcVolume(t *testing.T) {
 			expectValid:   false,
 		},
 		{
-			name:          "Invalid: .dat exists with different size shards",
+			// Inconsistent shard sizes signal corruption or mixed generations,
+			// not a clean interrupted encode; deleting them could destroy the
+			// only copy, so validation keeps them.
+			name:          "Keep: .dat exists with different size shards (inconsistent, not trusted for deletion)",
 			volumeId:      205,
 			collection:    "",
 			createDatFile: true,
 			numShards:     10, // Will create shards with varying sizes
-			expectValid:   false,
+			expectValid:   true,
 		},
 	}
 

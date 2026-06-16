@@ -190,6 +190,13 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 
 	tr := accounting.NewStats(ctx).NewTransfer(obj, fs)
 	defer func() {
+		// fsync the .dat before closing so its content is durable before the caller
+		// trims the remote reference and deletes the shared remote object.
+		if syncer, ok := file.(interface{ Sync() error }); ok {
+			if syncErr := syncer.Sync(); err == nil && syncErr != nil {
+				err = syncErr
+			}
+		}
 		if closeErr := file.Close(); err == nil && closeErr != nil {
 			err = closeErr
 		}

@@ -171,8 +171,17 @@ var cmdAdmin = &Command{
     - Metrics are disabled when -metricsPort is 0 (the default)
     - Example: weed admin -metricsPort=9327 -master="localhost:9333"
 
+  Maintenance Configuration:
+    - An optional admin.toml declares maintenance task settings
+      ([maintenance.vacuum], [maintenance.balance], [maintenance.erasure_coding])
+    - Settings in admin.toml are applied at every startup, overriding values
+      saved from the admin UI, so they can be managed declaratively
+    - Requires -dataDir; values can also be set via WEED_* environment
+      variables, e.g. WEED_MAINTENANCE_VACUUM_GARBAGE_THRESHOLD=0.3
+    - Generate example admin.toml: weed scaffold -config=admin
+
   Configuration File:
-    - The security.toml file is read from ".", "$HOME/.seaweedfs/",
+    - The security.toml and admin.toml files are read from ".", "$HOME/.seaweedfs/",
       "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order
     - Generate example security.toml: weed scaffold -config=security
 
@@ -190,6 +199,9 @@ func runAdmin(cmd *Command, args []string) bool {
 
 	// Load security configuration
 	util.LoadSecurityConfiguration()
+
+	// Optional admin.toml with maintenance task settings
+	util.LoadConfiguration("admin", false)
 
 	// Apply security.toml / env var fallbacks for credential flags.
 	// CLI flags take precedence over security.toml / WEED_* env vars.
@@ -337,6 +349,12 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		glog.Infof("Data directory created/verified: %s", dataDir)
 	}
 
+	// Write maintenance task settings from admin.toml into the persisted
+	// task configs before the server loads them
+	if err := dash.NewConfigPersistence(dataDir).ApplyMaintenanceConfigFromToml(util.GetViper()); err != nil {
+		return fmt.Errorf("apply admin.toml: %w", err)
+	}
+
 	// Detect TLS configuration to set Secure cookie flag
 	cookieSecure := viper.GetString("https.admin.key") != ""
 
@@ -360,15 +378,9 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		SameSite: http.SameSiteLaxMode,
 	}
 
-	// Static files - serve from embedded filesystem
-	staticFS, err := admin.GetStaticFS()
-	if err != nil {
-		log.Printf("Warning: Failed to load embedded static files: %v", err)
-	} else {
-		staticHandler := http.FileServer(http.FS(staticFS))
-		r.Handle("/static", http.RedirectHandler("/static/", http.StatusMovedPermanently))
-		r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", staticHandler))
-	}
+	// Static files - pre-gzipped and embedded in the binary
+	r.Handle("/static", http.RedirectHandler("/static/", http.StatusMovedPermanently))
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", admin.StaticHandler()))
 
 	// Create admin server (plugin is always enabled)
 	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)

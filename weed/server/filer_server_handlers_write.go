@@ -81,8 +81,18 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	ctx := r.Context()
 
 	destination := r.RequestURI
-	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
-		destination = finalDestination
+	headerDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader)
+	if headerDestination != "" {
+		destination = headerDestination
+	}
+
+	// The destination header picks storage rules for a logical destination, but
+	// the entry is written at r.URL.Path. Enforce the read-only/quota rule on the
+	// actual write path too, so the header cannot route a write into a read-only
+	// location.
+	if headerDestination != "" && fs.filer.FilerConf.MatchStorageRule(r.URL.Path).ReadOnly {
+		writeJsonError(w, r, http.StatusInsufficientStorage, ErrReadOnly)
+		return
 	}
 
 	query := r.URL.Query()

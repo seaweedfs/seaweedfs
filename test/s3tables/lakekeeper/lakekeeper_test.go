@@ -68,7 +68,6 @@ func TestLakekeeperIntegration(t *testing.T) {
 	env.StartSeaweedFS(t)
 	fmt.Printf(">>> SeaweedFS started.\n")
 
-	// Run python script in docker to test STS and S3 operations
 	runLakekeeperRepro(t, env)
 }
 
@@ -80,7 +79,6 @@ func TestLakekeeperTableBucketIntegration(t *testing.T) {
 	env.StartSeaweedFS(t)
 	fmt.Printf(">>> SeaweedFS started.\n")
 
-	// Run python script in docker to test STS and S3 Tables operations
 	runLakekeeperTableBucketRepro(t, env)
 }
 

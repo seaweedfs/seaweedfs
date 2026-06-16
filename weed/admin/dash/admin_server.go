@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -88,6 +89,12 @@ type AdminServer struct {
 	cacheExpiration time.Duration
 	lastCacheUpdate time.Time
 	cachedTopology  *ClusterTopology
+
+	// dashSamples is a bounded in-memory ring of recent cluster snapshots that
+	// powers the dashboard's at-a-glance sparklines (see dashboard_metrics.go),
+	// filled on the maintenance-metrics ticker. No Prometheus dependency.
+	dashSamples   []dashSample
+	dashSamplesMu sync.Mutex
 
 	// Filer discovery and caching
 	cachedFilers         []string
@@ -375,12 +382,16 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Seed one sample so the dashboard has something to draw before the first tick.
+	s.recordDashboardSample()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.collectMaintenanceMetrics()
+			s.recordDashboardSample()
 		}
 	}
 }

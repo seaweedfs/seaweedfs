@@ -51,6 +51,28 @@ func (h *ClusterHandlers) ShowClusterVolumeServers(w http.ResponseWriter, r *htt
 	}
 }
 
+// ShowMountClients renders the connected FUSE/VFS mount clients page
+func (h *ClusterHandlers) ShowMountClients(w http.ResponseWriter, r *http.Request) {
+	data, err := h.adminServer.GetMountClients()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get mount clients: "+err.Error())
+		return
+	}
+
+	username := usernameOrDefault(r)
+	data.Username = username
+
+	// Render HTML template
+	w.Header().Set("Content-Type", "text/html")
+	mountClientsComponent := app.MountClients(*data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, mountClientsComponent)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+		return
+	}
+}
+
 // ShowClusterVolumes renders the cluster volumes page
 func (h *ClusterHandlers) ShowClusterVolumes(w http.ResponseWriter, r *http.Request) {
 	// Get pagination and sorting parameters from query string
