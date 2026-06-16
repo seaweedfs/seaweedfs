@@ -4,27 +4,54 @@ import "sync/atomic"
 
 type WriterPattern struct {
 	isSequentialCounter int64
-	lastWriteStopOffset int64
+	writeFrontier       int64 // highest (offset+size) observed across writes
 	chunkSize           int64
 }
 
 const ModeChangeLimit = 3
 
-// For streaming write: only cache the first chunk
-// For random write: fall back to temp file approach
+// SeqTolerance: a write whose start is within this many bytes of the current
+// write frontier still counts as sequential. Using a tolerance window rather
+// than strict contiguity absorbs reordered/concurrent FUSE writeback — multiple
+// Write upcalls for one handle interleave (MonitorWriteAt runs before the
+// per-handle write lock) and writeback flushes dirty pages slightly out of
+// offset order — while still rejecting far random seeks.
+const SeqTolerance = 8 << 20 // 8 MiB
+
+// For streaming write: keep dirty chunks in memory (NewMemChunk).
+// For random write: fall back to the on-disk swap file (NewSwapFileChunk).
 
 func NewWriterPattern(chunkSize int64) *WriterPattern {
 	return &WriterPattern{
 		isSequentialCounter: 0,
-		lastWriteStopOffset: 0,
+		writeFrontier:       0,
 		chunkSize:           chunkSize,
 	}
 }
 
 func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
-	lastOffset := atomic.SwapInt64(&rp.lastWriteStopOffset, offset+int64(size))
+	// Snapshot the frontier this write is judged against, then advance it to
+	// max(frontier, offset+size). The CAS loop keeps this lock-free under the
+	// concurrent writeback upcalls described above, consistent with the atomic
+	// counter below.
+	frontier := atomic.LoadInt64(&rp.writeFrontier)
+	end := offset + int64(size)
+	for {
+		cur := atomic.LoadInt64(&rp.writeFrontier)
+		if end <= cur || atomic.CompareAndSwapInt64(&rp.writeFrontier, cur, end) {
+			break
+		}
+	}
+
+	// near = this write starts within SeqTolerance of where writes had reached.
+	// Hysteresis (the ±ModeChangeLimit counter) keeps a single outlier write
+	// from flipping the mode and spilling a sequential stream to the swap file.
+	diff := offset - frontier
+	if diff < 0 {
+		diff = -diff
+	}
 	counter := atomic.LoadInt64(&rp.isSequentialCounter)
-	if lastOffset == offset {
+	if diff <= SeqTolerance {
 		if counter < ModeChangeLimit {
 			atomic.AddInt64(&rp.isSequentialCounter, 1)
 		}
