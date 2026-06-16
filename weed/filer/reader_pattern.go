@@ -28,14 +28,16 @@ func NewReaderPattern() *ReaderPattern {
 }
 
 func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
-	// Snapshot the frontier this read is judged against, then advance it to
-	// max(frontier, offset+size). The CAS loop keeps this lock-free under
-	// concurrent reads, consistent with the rest of this type.
-	frontier := atomic.LoadInt64(&rp.readFrontier)
+	// Advance the frontier to max(frontier, offset+size) and capture, in the same
+	// CAS loop, the pre-image this read is judged against. Reading the frontier
+	// inside the loop (rather than once up front) keeps `diff` below comparing
+	// against the freshest value even if a concurrent readahead advances the
+	// frontier while we loop. Lock-free, consistent with the rest of this type.
 	end := offset + int64(size)
+	var frontier int64
 	for {
-		cur := atomic.LoadInt64(&rp.readFrontier)
-		if end <= cur || atomic.CompareAndSwapInt64(&rp.readFrontier, cur, end) {
+		frontier = atomic.LoadInt64(&rp.readFrontier)
+		if end <= frontier || atomic.CompareAndSwapInt64(&rp.readFrontier, frontier, end) {
 			break
 		}
 	}
