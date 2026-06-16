@@ -33,7 +33,7 @@ type MetaCache struct {
 	isCachedFn           func(fullpath util.FullPath) bool
 	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
 	onDirectoryUpdate    func(dir util.FullPath)
-	pinnedChildFn        func(util.FullPath) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
+	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
 	visitGroup           singleflight.Group       // deduplicates concurrent EnsureVisited calls for the same path
 	applyCh              chan metadataApplyRequest
 	applyDone            chan struct{}
@@ -342,7 +342,7 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 
 // SetPinnedChildFn installs a predicate reporting whether a child holds
 // local-only state a rebuild must not discard. See deleteFolderChildrenForRebuild.
-func (mc *MetaCache) SetPinnedChildFn(fn func(util.FullPath) bool) {
+func (mc *MetaCache) SetPinnedChildFn(fn func(*filer.Entry) bool) {
 	mc.pinnedChildFn = fn
 }
 
@@ -360,7 +360,7 @@ func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath
 	}
 	var pinned []*filer.Entry
 	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
-		if mc.pinnedChildFn(entry.FullPath) {
+		if mc.pinnedChildFn(entry) {
 			pinned = append(pinned, entry)
 		}
 		return true, nil
