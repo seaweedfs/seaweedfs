@@ -25,6 +25,14 @@ type CircuitBreaker struct {
 	counters    map[string]*int64
 	limitations map[string]int64
 	s3a         *S3ApiServer
+
+	// Interceptor, if set, wraps the per-route handler ahead of ALL
+	// circuit-breaker logic (upload limiting and the breaker checks) and runs
+	// even when the breaker is disabled. It is a general per-request
+	// interceptor seam: an implementation may reject the request (write its own
+	// response and not call next) or wrap next to observe/shape it. Nil by
+	// default, so it is a no-op unless explicitly set.
+	Interceptor func(next http.HandlerFunc, action string) http.HandlerFunc
 }
 
 func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
@@ -92,7 +100,7 @@ func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerCo
 }
 
 func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), action string) (http.HandlerFunc, Action) {
-	return func(w http.ResponseWriter, r *http.Request) {
+	inner := func(w http.ResponseWriter, r *http.Request) {
 		// Apply upload limiting for write actions if configured
 		if cb.s3a != nil && (action == s3_constants.ACTION_WRITE) &&
 			(cb.s3a.option.ConcurrentUploadLimit != 0 || cb.s3a.option.ConcurrentFileUploadLimit != 0) {
@@ -161,7 +169,14 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 			return
 		}
 		s3err.WriteErrorResponse(w, r, errCode)
-	}, Action(action)
+	}
+
+	// Run the optional interceptor outermost, so it executes before upload
+	// limiting and the breaker checks and regardless of cb.Enabled.
+	if cb.Interceptor != nil {
+		return cb.Interceptor(inner, action), Action(action)
+	}
+	return inner, Action(action)
 }
 
 func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (rollback []func(), errCode s3err.ErrorCode) {
