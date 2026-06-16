@@ -15,6 +15,10 @@ func (wfs *WFS) applyLocalMetadataEvent(ctx context.Context, event *filer_pb.Sub
 	return wfs.metaCache.ApplyMetadataResponseOwned(ctx, event, meta_cache.LocalMetadataResponseApplyOptions)
 }
 
+func (wfs *WFS) applyLocalMetadataEventAsync(event *filer_pb.SubscribeMetadataResponse) {
+	wfs.metaCache.ApplyMetadataResponseOwnedAsync(event, meta_cache.LocalMetadataResponseApplyOptions)
+}
+
 func metadataDeleteEvent(directory, name string, isDirectory bool) *filer_pb.SubscribeMetadataResponse {
 	if name == "" {
 		return nil
