@@ -34,7 +34,7 @@ type MetaCache struct {
 	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
 	onDirectoryUpdate    func(dir util.FullPath)
 	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
-	visitGroup           singleflight.Group       // deduplicates concurrent EnsureVisited calls for the same path
+	visitGroup           singleflight.Group      // deduplicates concurrent EnsureVisited calls for the same path
 	applyCh              chan metadataApplyRequest
 	applyDone            chan struct{}
 	applyStateMu         sync.Mutex
@@ -226,6 +226,25 @@ func (mc *MetaCache) ApplyMetadataResponseOwned(ctx context.Context, resp *filer
 		return nil
 	}
 	return mc.applyMetadataResponseEnqueue(ctx, resp, options)
+}
+
+// ApplyMetadataResponseOwnedAsync enqueues resp without waiting, for callers holding a
+// lock the apply loop's invalidateFunc also needs. Best-effort: the subscription re-delivers.
+func (mc *MetaCache) ApplyMetadataResponseOwnedAsync(resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) {
+	if resp == nil || resp.EventNotification == nil {
+		return
+	}
+	req := metadataApplyRequest{
+		ctx:     context.Background(),
+		kind:    metadataApplyEvent,
+		resp:    resp,
+		options: options,
+		done:    make(chan error, 1),
+	}
+	select {
+	case mc.applyCh <- req:
+	default:
+	}
 }
 
 func (mc *MetaCache) applyMetadataResponseEnqueue(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
