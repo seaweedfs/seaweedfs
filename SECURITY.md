@@ -8,12 +8,9 @@ unsupported versions are not eligible for a fix or an advisory.
 
 ## Reporting a vulnerability
 
-Report privately. Do not open a public issue.
-
-- Preferred: GitHub private vulnerability reporting (the "Report a vulnerability"
-  button under the repository's Security tab). This keeps the report, the fix,
-  and any CVE in one place.
-- Alternative: email support@seaweedfs.com
+Report privately through GitHub private vulnerability reporting (the "Report a
+vulnerability" button under the repository's Security tab). This keeps the
+report, the fix, and any CVE in one place. Do not open a public issue.
 
 ### What a report must include
 
