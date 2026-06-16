@@ -320,6 +320,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				wfs.markDirectoryReadThrough(dirPath)
 			}
 		})
+	wfs.metaCache.SetPinnedChildFn(wfs.isLocalOnlyEntry)
 	grace.OnInterrupt(func() {
 		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
 		// after server.Serve() would never execute.  Drain here first.
@@ -547,6 +548,25 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 		entry, status = wfs.maybeLoadEntry(path)
 	}
 	return
+}
+
+// isLocalOnlyEntry reports whether fullpath holds local-only state not yet on the
+// filer — an open handle with dirty metadata, or a pending async flush. A
+// directory rebuild refills from a filer listing that omits such an entry, so it
+// must be preserved across the wipe; this is the same signal lookupEntry trusts
+// over a filer ErrNotFound for deferred creates.
+func (wfs *WFS) isLocalOnlyEntry(fullpath util.FullPath) bool {
+	inode, found := wfs.inodeToPath.GetInode(fullpath)
+	if !found {
+		return false
+	}
+	if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
+		return true
+	}
+	wfs.pendingAsyncFlushMu.Lock()
+	_, pending := wfs.pendingAsyncFlush[inode]
+	wfs.pendingAsyncFlushMu.Unlock()
+	return pending
 }
 
 func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {

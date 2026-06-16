@@ -82,7 +82,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				return
 			}
 			cleanupDone = true
-			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+			if deleteErr := mc.deleteFolderChildrenForRebuild(context.Background(), path); deleteErr != nil {
 				glog.V(2).Infof("clear %s build %s: %v", reason, path, deleteErr)
 			}
 			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
@@ -101,7 +101,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
 			batch = nil // Reset batch on retry, allow GC of previous entries
-			if err := mc.DeleteFolderChildren(ctx, path); err != nil {
+			if err := mc.deleteFolderChildrenForRebuild(ctx, path); err != nil {
 				return fmt.Errorf("clear existing entries for %s: %w", path, err)
 			}
 			var err error
