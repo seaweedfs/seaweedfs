@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -548,8 +549,8 @@ func TestCacheRemoteObjectForStreamingTimeout(t *testing.T) {
 	})
 	s3a := newRemoteCacheTestServer(filerAddr)
 
-	defer func(prev time.Duration) { remoteCacheStreamingTimeout = prev }(remoteCacheStreamingTimeout)
-	remoteCacheStreamingTimeout = 200 * time.Millisecond
+	defer func(prev int64) { atomic.StoreInt64(&remoteCacheStreamingTimeoutNS, prev) }(atomic.LoadInt64(&remoteCacheStreamingTimeoutNS))
+	atomic.StoreInt64(&remoteCacheStreamingTimeoutNS, int64(200*time.Millisecond))
 
 	r := httptest.NewRequest(http.MethodGet, "/mybucket/large.bin", nil)
 	start := time.Now()
