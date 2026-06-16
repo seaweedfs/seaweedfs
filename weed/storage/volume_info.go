@@ -75,8 +75,12 @@ func (vi VolumeInfo) IsRemote() bool {
 }
 
 func (vi VolumeInfo) String() string {
-	return fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, Ttl:%s, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v, ModifiedAtSecond:%d",
+	s := fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, Ttl:%s, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v, ModifiedAtSecond:%d",
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.Ttl.String(), vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly, vi.ModifiedAtSecond)
+	if vi.IsRemote() {
+		s += fmt.Sprintf(", RemoteStorageName:%s, RemoteStorageKey:%s", vi.RemoteStorageName, vi.RemoteStorageKey)
+	}
+	return s
 }
 
 func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
