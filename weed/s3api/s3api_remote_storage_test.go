@@ -1,13 +1,23 @@
 package s3api
 
 import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestIsInRemoteOnly tests the IsInRemoteOnly method on filer_pb.Entry
@@ -483,4 +493,92 @@ func TestCopyObjectRemoteOnlySourceDetection(t *testing.T) {
 			assert.Equal(t, tt.expectBrokenWithoutFix, brokenWithoutFix)
 		})
 	}
+}
+
+// fakeCacheFiler is a minimal SeaweedFiler gRPC server whose
+// CacheRemoteObjectToLocalCluster behavior is driven by a callback, so tests can
+// model a slow (still-caching) filer or one that returns cached chunks.
+type fakeCacheFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	cache func(context.Context, *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error)
+}
+
+func (f *fakeCacheFiler) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	return f.cache(ctx, req)
+}
+
+// startFakeCacheFiler serves impl on a random localhost port and returns the
+// S3-style filer address whose ToGrpcAddress resolves back to that port.
+func startFakeCacheFiler(t *testing.T, impl *fakeCacheFiler) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, impl)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	port := lis.Addr().(*net.TCPAddr).Port
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+}
+
+func newRemoteCacheTestServer(filerAddr pb.ServerAddress) *S3ApiServer {
+	return &S3ApiServer{
+		option: &S3ApiServerOption{
+			Filers:         []pb.ServerAddress{filerAddr},
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+	}
+}
+
+func remoteOnlyEntry(name string, size int64) *filer_pb.Entry {
+	return &filer_pb.Entry{Name: name, RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: size}}
+}
+
+// TestCacheRemoteObjectForStreamingTimeout pins the fix for large-file cold
+// GetObject: when the filer is still caching, the streaming path returns nil
+// within its bound (so the handler emits 503 + Retry-After) instead of blocking
+// on the raw request context until the client gives up.
+func TestCacheRemoteObjectForStreamingTimeout(t *testing.T) {
+	filerAddr := startFakeCacheFiler(t, &fakeCacheFiler{
+		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+			<-ctx.Done() // never finishes within the bound
+			return nil, ctx.Err()
+		},
+	})
+	s3a := newRemoteCacheTestServer(filerAddr)
+
+	defer func(prev time.Duration) { remoteCacheStreamingTimeout = prev }(remoteCacheStreamingTimeout)
+	remoteCacheStreamingTimeout = 200 * time.Millisecond
+
+	r := httptest.NewRequest(http.MethodGet, "/mybucket/large.bin", nil)
+	start := time.Now()
+	got := s3a.cacheRemoteObjectForStreaming(r, remoteOnlyEntry("large.bin", 1<<30), "mybucket", "large.bin", "")
+	elapsed := time.Since(start)
+
+	assert.Nil(t, got, "uncached object must return nil so the caller maps to 503")
+	assert.Less(t, elapsed, 5*time.Second, "must not block on the full download")
+	assert.NoError(t, r.Context().Err(), "request context stays alive so the caller chooses 503, not cancellation")
+}
+
+// TestCacheRemoteObjectForStreamingCached confirms that once the filer reports
+// local chunks, the streaming path returns the cached entry to stream from.
+func TestCacheRemoteObjectForStreamingCached(t *testing.T) {
+	filerAddr := startFakeCacheFiler(t, &fakeCacheFiler{
+		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+			return &filer_pb.CacheRemoteObjectToLocalClusterResponse{
+				Entry: &filer_pb.Entry{
+					Name:   req.Name,
+					Chunks: []*filer_pb.FileChunk{{FileId: "1,abc", Size: 100, Offset: 0}},
+				},
+			}, nil
+		},
+	})
+	s3a := newRemoteCacheTestServer(filerAddr)
+
+	r := httptest.NewRequest(http.MethodGet, "/mybucket/obj.bin", nil)
+	got := s3a.cacheRemoteObjectForStreaming(r, remoteOnlyEntry("obj.bin", 100), "mybucket", "obj.bin", "")
+
+	require.NotNil(t, got)
+	assert.Len(t, got.GetChunks(), 1)
 }
