@@ -23,7 +23,6 @@ use tracing::{info, warn};
 use crate::storage::disk_location::{is_ec_shard_extension, parse_collection_volume_id_pub};
 use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::store::Store;
-use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::VolumeId;
 
 pub(crate) fn ec_local_ecx_path(dir: &str, collection: &str, vid: VolumeId) -> String {
@@ -237,8 +236,15 @@ impl Store {
         let mut victims: Vec<Victim> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             for (vid, ev) in loc.ec_volumes() {
+                // Use the volume's own ratio, not the OSS default, so a full
+                // custom-ratio data set (e.g. 9 of a 9+3) is not mistaken for a leftover.
+                let data_shards = if ev.data_shards > 0 {
+                    ev.data_shards as usize
+                } else {
+                    DATA_SHARDS_COUNT
+                };
                 let shard_count = ev.shard_count();
-                if shard_count >= DATA_SHARDS_COUNT {
+                if shard_count >= data_shards {
                     continue;
                 }
                 let key = EcKey {
@@ -254,15 +260,10 @@ impl Store {
                     // per-disk pass; don't second-guess it here.
                     continue;
                 }
-                // Credible source size: prefer .vif's encode-time size; when
-                // unknown (0) require more than a bare superblock so an empty
-                // 8-byte stub (e.g. a phantom .dat) can't pass.
-                let required = if ev.dat_file_size > 0 {
-                    ev.dat_file_size as u64
-                } else {
-                    SUPER_BLOCK_SIZE as u64 + 1
-                };
-                if owner.size < required {
+                // Delete only against a byte-exact committed source: the sibling
+                // .dat must equal the size .vif recorded at encode time. An
+                // unknown (0) or mismatched size cannot prove the .dat holds this data.
+                if ev.dat_file_size <= 0 || owner.size != ev.dat_file_size as u64 {
                     warn!(
                         volume_id = vid.0,
                         collection = %ev.collection,
@@ -270,8 +271,30 @@ impl Store {
                         shard_count,
                         sibling_dir = %self.locations[owner.location].directory,
                         sibling_dat_size = owner.size,
-                        required,
-                        "sibling .dat is smaller than the EC source size; leaving partial EC in place so distributed reconstruction is still possible (issue 9478)",
+                        recorded = ev.dat_file_size,
+                        "sibling .dat does not byte-exactly match the recorded EC source size; leaving partial EC in place",
+                    );
+                    continue;
+                }
+                // Never prune when the shards are recoverable node-wide (a set
+                // split across sibling disks summing to >= data_shards); they
+                // may be sole copies of a distributed volume.
+                let mut node_wide_bits = ev.shard_bits().0;
+                for other in &self.locations {
+                    if let Some(other_ev) = other.find_ec_volume(*vid) {
+                        if other_ev.collection == ev.collection {
+                            node_wide_bits |= other_ev.shard_bits().0;
+                        }
+                    }
+                }
+                let node_wide = node_wide_bits.count_ones() as usize;
+                if node_wide >= data_shards {
+                    warn!(
+                        volume_id = vid.0,
+                        collection = %ev.collection,
+                        node_wide,
+                        data_shards,
+                        "shards present node-wide are independently recoverable; leaving EC in place despite a sibling .dat",
                     );
                     continue;
                 }
@@ -309,7 +332,7 @@ impl Store {
             // Also sweep any unmounted shard files (.ec00 .. .ec31)
             // that the per-disk loader skipped — destroy() only walks
             // the in-memory shards, but the disk may still hold others.
-            loc.remove_ec_volume_files(&v.collection, v.vid);
+            let _ = loc.remove_ec_volume_files(&v.collection, v.vid);
         }
     }
 
@@ -455,6 +478,7 @@ mod tests {
             ec_shard_config: Some(VifEcShardConfig {
                 data_shards,
                 parity_shards,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -463,6 +487,105 @@ mod tests {
             serde_json::to_string(&vif).unwrap(),
         )
         .unwrap();
+    }
+
+    fn write_ec_vif(dir: &str, collection: &str, vid: u32) {
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        std::fs::write(
+            format!("{}/{}_{}.vif", dir, collection, vid),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// An empty `.dat` (<= a superblock, i.e. zero needles) for an EC volume
+    /// is a leftover stub from the pre-fix loader. It must be swept on startup,
+    /// not loaded as a phantom empty volume. With the same vid's stub on two
+    /// disks this also unblocks startup, which previously failed the
+    /// duplicate-vid check (the volume6 incident).
+    #[test]
+    fn test_empty_ec_dat_stub_removed_and_unblocks_startup() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        let d1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&d0).unwrap();
+        std::fs::create_dir_all(&d1).unwrap();
+        let coll = "warp-cal";
+        let vid = 41u32;
+
+        // A real (loadable) but empty superblock: without the sweep both disks
+        // load it as vid 41 and add_location fails the duplicate-vid check.
+        let stub = crate::storage::super_block::SuperBlock {
+            version: crate::storage::types::Version::current(),
+            ..Default::default()
+        }
+        .to_bytes();
+        for d in [&d0, &d1] {
+            let dir = d.to_str().unwrap();
+            std::fs::write(format!("{}/{}_{}.dat", dir, coll, vid), &stub).unwrap();
+            write_ec_vif(dir, coll, vid);
+        }
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&d0, &d1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .expect("a same-vid empty stub on two disks must not block startup");
+        }
+
+        let loaded: usize = store.locations.iter().map(|l| l.volume_ids().len()).sum();
+        assert_eq!(loaded, 0, "empty EC stub was loaded as a phantom volume");
+        for d in [&d0, &d1] {
+            assert!(
+                !std::path::Path::new(&format!("{}/{}_{}.dat", d.to_str().unwrap(), coll, vid))
+                    .exists(),
+                "empty .dat stub was not removed",
+            );
+        }
+    }
+
+    /// Safety: an empty `.dat` for a NON-EC volume (no EC `.vif`) is left
+    /// alone — only EC stubs are swept, so freshly-allocated empty volumes
+    /// survive.
+    #[test]
+    fn test_keeps_empty_dat_for_non_ec_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("data0");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dat = format!("{}/7.dat", dir.to_str().unwrap());
+        std::fs::write(&dat, vec![0u8; 8]).unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir.to_str().unwrap(),
+                dir.to_str().unwrap(),
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        assert!(
+            std::path::Path::new(&dat).exists(),
+            "a non-EC empty .dat must not be swept",
+        );
     }
 
     /// Regression: a lone `.vif` whose `.ecx` is on a sibling disk must not
@@ -511,6 +634,97 @@ mod tests {
         );
         let total: usize = store.locations.iter().map(|l| l.ec_shard_count()).sum();
         assert_eq!(total, 2, "real EC shards were deleted (total={})", total);
+    }
+
+    /// A disk holding a few local shards of a healthy distributed EC volume
+    /// plus a leftover empty `.dat` stub: the stub must be swept before EC
+    /// validation can mistake the volume for an interrupted local encode
+    /// (fewer than data_shards local shards) and delete the only copies of
+    /// those shards.
+    #[test]
+    fn test_empty_dat_stub_next_to_ecx_does_not_delete_shards() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        std::fs::create_dir_all(&d0).unwrap();
+        let dir = d0.to_str().unwrap();
+        let coll = "warp-rec";
+        let vid = 87u32;
+
+        write_shard(dir, coll, vid, 0);
+        write_shard(dir, coll, vid, 5);
+        write_index_files(dir, coll, vid, 10, 4);
+        // Zero-byte stub .dat: the phantom left by the pre-fix loader.
+        std::fs::write(d0.join(format!("{}_{}.dat", coll, vid)), b"").unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        assert!(
+            !d0.join(format!("{}_{}.dat", coll, vid)).exists(),
+            "empty .dat stub was not swept"
+        );
+        assert_eq!(
+            store.locations[0].ec_shard_count(),
+            2,
+            "EC shards were deleted on the stub's account"
+        );
+        assert_eq!(
+            store.locations[0].volume_ids().len(),
+            0,
+            "stub was loaded as a phantom volume"
+        );
+    }
+
+    /// Same shard-holding disk but the stub has no `.vif` at all, so the
+    /// sweep has no EC evidence and must leave it. The empty `.dat` still
+    /// must not count as an encode source: the shards survive and load as
+    /// a distributed EC volume.
+    #[test]
+    fn test_empty_dat_without_vif_does_not_delete_shards() {
+        let tmp = TempDir::new().unwrap();
+        let d0 = tmp.path().join("data0");
+        std::fs::create_dir_all(&d0).unwrap();
+        let dir = d0.to_str().unwrap();
+        let coll = "warp-rec";
+        let vid = 88u32;
+
+        write_shard(dir, coll, vid, 1);
+        write_shard(dir, coll, vid, 7);
+        write_index_files(dir, coll, vid, 10, 4);
+        std::fs::remove_file(d0.join(format!("{}_{}.vif", coll, vid))).unwrap();
+        std::fs::write(d0.join(format!("{}_{}.dat", coll, vid)), b"").unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                100,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.locations[0].ec_shard_count(),
+            2,
+            "EC shards were deleted on the empty .dat's account"
+        );
+        assert_eq!(
+            store.locations[0].volume_ids().len(),
+            0,
+            "empty .dat was loaded as a phantom volume"
+        );
     }
 
     /// Regression for the prune credibility gate: when the EC `.vif`
@@ -830,7 +1044,7 @@ mod tests {
         let (mut store, _tmp) = build_split_disk_store(7003);
         let vid = VolumeId(7003);
 
-        store.unmount_ec_shard(vid, 1).unwrap();
+        store.unmount_ec_shard(vid, 1, 0).unwrap();
         assert_eq!(store.find_ec_shard_location(vid, 1), None);
         // Other shards untouched.
         assert_eq!(store.find_ec_shard_location(vid, 0), Some(0));
@@ -1059,14 +1273,33 @@ mod tests {
         let collection = "pics";
         let vid = 122u32;
 
-        // Disk A (sdd): a .dat whose name must be present so index_dat_owners
-        // records this disk as the .dat owner (content doesn't matter).
+        // Disk A (sdd): a .dat whose size must byte-exactly match the EC
+        // source size recorded in the sibling .vif for the prune to treat it
+        // as the committed source.
         let dat_path = dat_dir.join(format!("{}_{}.dat", collection, vid));
         std::fs::write(&dat_path, vec![0u8; 1024]).unwrap();
 
         // Disk B (sdf): partial EC — one shard, plus .ecx / .ecj / .vif.
         write_shard(ec_dir.to_str().unwrap(), collection, vid, 1);
         write_index_files(ec_dir.to_str().unwrap(), collection, vid, 10, 4);
+        // Record the encode-time source size in the EC .vif so the prune's
+        // byte-exact credibility gate recognizes the 1024-byte sibling .dat as
+        // the source (a real encoded volume records this).
+        std::fs::write(
+            ec_dir.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&VifVolumeInfo {
+                version: 3,
+                dat_file_size: 1024,
+                ec_shard_config: Some(VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
 
         let mut store = Store::new(NeedleMapKind::InMemory);
         store
@@ -1165,6 +1398,7 @@ mod tests {
             ec_shard_config: Some(VifEcShardConfig {
                 data_shards: 10,
                 parity_shards: 4,
+                ..Default::default()
             }),
             ..Default::default()
         };

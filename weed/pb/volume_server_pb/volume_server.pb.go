@@ -3605,6 +3605,8 @@ type VolumeEcShardsDeleteRequest struct {
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	FullTeardown  bool                   `protobuf:"varint,4,opt,name=full_teardown,json=fullTeardown,proto3" json:"full_teardown,omitempty"` // pre-encode cleanup: wipe every EC artifact + generation for this volume, not just shard_ids
+	EncodeTsNs    int64                  `protobuf:"varint,5,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"`     // full_teardown generation fence: delete only a disk whose .vif generation is strictly OLDER than this; preserve same-or-newer, generation 0, and an unreadable .vif. 0 => wipe-all (shell pre-encode / pre-upgrade)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3660,10 +3662,25 @@ func (x *VolumeEcShardsDeleteRequest) GetShardIds() []uint32 {
 	return nil
 }
 
+func (x *VolumeEcShardsDeleteRequest) GetFullTeardown() bool {
+	if x != nil {
+		return x.FullTeardown
+	}
+	return false
+}
+
+func (x *VolumeEcShardsDeleteRequest) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
+	}
+	return 0
+}
+
 type VolumeEcShardsDeleteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	FullTeardownDone bool                   `protobuf:"varint,1,opt,name=full_teardown_done,json=fullTeardownDone,proto3" json:"full_teardown_done,omitempty"` // set by a new server that performed full_teardown; absent from an old server lets the caller detect the silent no-op
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *VolumeEcShardsDeleteResponse) Reset() {
@@ -3694,6 +3711,13 @@ func (x *VolumeEcShardsDeleteResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use VolumeEcShardsDeleteResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) {
 	return file_volume_server_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *VolumeEcShardsDeleteResponse) GetFullTeardownDone() bool {
+	if x != nil {
+		return x.FullTeardownDone
+	}
+	return false
 }
 
 type VolumeEcShardsMountRequest struct {
@@ -3804,6 +3828,7 @@ type VolumeEcShardsUnmountRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	EncodeTsNs    int64                  `protobuf:"varint,4,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"` // generation fence: skip a disk whose mounted EC volume is this generation or newer (0 = unfenced, unmount all)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3852,6 +3877,13 @@ func (x *VolumeEcShardsUnmountRequest) GetShardIds() []uint32 {
 	return nil
 }
 
+func (x *VolumeEcShardsUnmountRequest) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
+	}
+	return 0
+}
+
 type VolumeEcShardsUnmountResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3895,6 +3927,7 @@ type VolumeEcShardReadRequest struct {
 	Offset        int64                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	Size          int64                  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
 	FileKey       uint64                 `protobuf:"varint,5,opt,name=file_key,json=fileKey,proto3" json:"file_key,omitempty"`
+	EncodeTsNs    int64                  `protobuf:"varint,7,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"` // caller's expected encode time; the server rejects a shard from a different encode run
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3964,10 +3997,18 @@ func (x *VolumeEcShardReadRequest) GetFileKey() uint64 {
 	return 0
 }
 
+func (x *VolumeEcShardReadRequest) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
+	}
+	return 0
+}
+
 type VolumeEcShardReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	IsDeleted     bool                   `protobuf:"varint,2,opt,name=is_deleted,json=isDeleted,proto3" json:"is_deleted,omitempty"`
+	EncodeTsNs    int64                  `protobuf:"varint,3,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"` // identity of the shard actually served; client rejects a mismatch (0 = pre-upgrade server)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4014,6 +4055,13 @@ func (x *VolumeEcShardReadResponse) GetIsDeleted() bool {
 		return x.IsDeleted
 	}
 	return false
+}
+
+func (x *VolumeEcShardReadResponse) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
+	}
+	return 0
 }
 
 type VolumeEcBlobDeleteRequest struct {
@@ -4946,6 +4994,7 @@ type EcShardConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DataShards    uint32                 `protobuf:"varint,1,opt,name=data_shards,json=dataShards,proto3" json:"data_shards,omitempty"`       // Number of data shards (e.g., 10)
 	ParityShards  uint32                 `protobuf:"varint,2,opt,name=parity_shards,json=parityShards,proto3" json:"parity_shards,omitempty"` // Number of parity shards (e.g., 4)
+	EncodeTsNs    int64                  `protobuf:"varint,3,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"`     // encode time (unix nanos); a read served from a shard of a different encode run is rejected
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4990,6 +5039,13 @@ func (x *EcShardConfig) GetDataShards() uint32 {
 func (x *EcShardConfig) GetParityShards() uint32 {
 	if x != nil {
 		return x.ParityShards
+	}
+	return 0
+}
+
+func (x *EcShardConfig) GetEncodeTsNs() int64 {
+	if x != nil {
+		return x.EncodeTsNs
 	}
 	return 0
 }
@@ -7228,14 +7284,18 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rcopy_vif_file\x18\a \x01(\bR\vcopyVifFile\x12\x17\n" +
 	"\adisk_id\x18\b \x01(\rR\x06diskId\x12&\n" +
 	"\x0fcopy_ecsum_file\x18\t \x01(\bR\rcopyEcsumFile\"\x1c\n" +
-	"\x1aVolumeEcShardsCopyResponse\"w\n" +
+	"\x1aVolumeEcShardsCopyResponse\"\xbe\x01\n" +
 	"\x1bVolumeEcShardsDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1e\n" +
-	"\x1cVolumeEcShardsDeleteResponse\"\xa0\x01\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12#\n" +
+	"\rfull_teardown\x18\x04 \x01(\bR\ffullTeardown\x12 \n" +
+	"\fencode_ts_ns\x18\x05 \x01(\x03R\n" +
+	"encodeTsNs\"L\n" +
+	"\x1cVolumeEcShardsDeleteResponse\x12,\n" +
+	"\x12full_teardown_done\x18\x01 \x01(\bR\x10fullTeardownDone\"\xa0\x01\n" +
 	"\x1aVolumeEcShardsMountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
@@ -7243,21 +7303,27 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x12\x1b\n" +
 	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12(\n" +
 	"\x10source_disk_type\x18\x04 \x01(\tR\x0esourceDiskType\"\x1d\n" +
-	"\x1bVolumeEcShardsMountResponse\"X\n" +
+	"\x1bVolumeEcShardsMountResponse\"z\n" +
 	"\x1cVolumeEcShardsUnmountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1f\n" +
-	"\x1dVolumeEcShardsUnmountResponse\"\x99\x01\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12 \n" +
+	"\fencode_ts_ns\x18\x04 \x01(\x03R\n" +
+	"encodeTsNs\"\x1f\n" +
+	"\x1dVolumeEcShardsUnmountResponse\"\xc1\x01\n" +
 	"\x18VolumeEcShardReadRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x19\n" +
 	"\bshard_id\x18\x02 \x01(\rR\ashardId\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x12\n" +
 	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x19\n" +
-	"\bfile_key\x18\x05 \x01(\x04R\afileKey\"N\n" +
+	"\bfile_key\x18\x05 \x01(\x04R\afileKey\x12 \n" +
+	"\fencode_ts_ns\x18\a \x01(\x03R\n" +
+	"encodeTsNsJ\x04\b\x06\x10\a\"p\n" +
 	"\x19VolumeEcShardReadResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
-	"is_deleted\x18\x02 \x01(\bR\tisDeleted\"\x8d\x01\n" +
+	"is_deleted\x18\x02 \x01(\bR\tisDeleted\x12 \n" +
+	"\fencode_ts_ns\x18\x03 \x01(\x03R\n" +
+	"encodeTsNs\"\x8d\x01\n" +
 	"\x19VolumeEcBlobDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
@@ -7346,11 +7412,13 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rdat_file_size\x18\x05 \x01(\x03R\vdatFileSize\x12\"\n" +
 	"\rexpire_at_sec\x18\x06 \x01(\x04R\vexpireAtSec\x12\x1b\n" +
 	"\tread_only\x18\a \x01(\bR\breadOnly\x12G\n" +
-	"\x0fec_shard_config\x18\b \x01(\v2\x1f.volume_server_pb.EcShardConfigR\recShardConfig\"U\n" +
+	"\x0fec_shard_config\x18\b \x01(\v2\x1f.volume_server_pb.EcShardConfigR\recShardConfig\"w\n" +
 	"\rEcShardConfig\x12\x1f\n" +
 	"\vdata_shards\x18\x01 \x01(\rR\n" +
 	"dataShards\x12#\n" +
-	"\rparity_shards\x18\x02 \x01(\rR\fparityShards\"\xbc\x02\n" +
+	"\rparity_shards\x18\x02 \x01(\rR\fparityShards\x12 \n" +
+	"\fencode_ts_ns\x18\x03 \x01(\x03R\n" +
+	"encodeTsNs\"\xbc\x02\n" +
 	"\x12EcBitrotProtection\x12A\n" +
 	"\talgorithm\x18\x01 \x01(\x0e2#.volume_server_pb.ChecksumAlgorithmR\talgorithm\x12\x1d\n" +
 	"\n" +

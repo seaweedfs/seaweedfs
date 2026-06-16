@@ -369,6 +369,16 @@ impl Store {
             let vif_path = format!("{}.vif", base);
             if std::path::Path::new(&dat_path).exists() || std::path::Path::new(&vif_path).exists()
             {
+                // A persisting .note means the copy that produced these files
+                // never completed; mounting it would expose a truncated volume.
+                // Fail the mount so the caller (VolumeCopy) treats it as an error.
+                let note_path = format!("{}.note", base);
+                if std::path::Path::new(&note_path).exists() {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("volume {} copy incomplete: .note still present", vid),
+                    )));
+                }
                 return loc.create_volume(
                     vid,
                     collection,
@@ -706,15 +716,35 @@ impl Store {
 
     /// Unmount a single EC shard, searching all locations.
     /// Matches Go's Store.UnmountEcShards which unmounts one shard at a time.
-    pub fn unmount_ec_shard(&mut self, vid: VolumeId, shard_id: u32) -> Result<(), VolumeError> {
+    pub fn unmount_ec_shard(
+        &mut self,
+        vid: VolumeId,
+        shard_id: u32,
+        req_encode_ts_ns: i64,
+    ) -> Result<(), VolumeError> {
         // Walk all locations rather than stopping at the first with the
         // vid — split-disk reconciled volumes can have the same vid on
         // multiple disks, with the target shard on any of them.
         for disk_id in 0..self.locations.len() {
-            let has_shard = self.locations[disk_id]
-                .find_ec_volume(vid)
-                .is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
+            let ec_vol = self.locations[disk_id].find_ec_volume(vid);
+            let has_shard = ec_vol.is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
             if !has_shard {
+                continue;
+            }
+            // Generation fence: when the caller carries a generation (stale-worker
+            // cleanup), only unmount a strictly-older generation; preserve a disk
+            // whose generation is same-or-newer, 0, or unknown, so a stale run cannot
+            // unmount a newer run's live shards. req 0 (legacy/shell) unmounts all.
+            let disk_gen = ec_vol.map_or(0, |v| v.encode_ts_ns);
+            if req_encode_ts_ns > 0 && !(disk_gen > 0 && disk_gen < req_encode_ts_ns) {
+                tracing::info!(
+                    volume_id = vid.0,
+                    shard_id,
+                    disk_id,
+                    disk_gen,
+                    req = req_encode_ts_ns,
+                    "UnmountEcShards skipped: generation not older than request"
+                );
                 continue;
             }
             tracing::info!(

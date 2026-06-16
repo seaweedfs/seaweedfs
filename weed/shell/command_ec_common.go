@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -216,6 +217,52 @@ func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string, disk
 
 func collectEcNodes(commandEnv *CommandEnv, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
 	return collectEcNodesForDC(commandEnv, "", diskType)
+}
+
+// assertEncodableRegularVolumes rejects volume ids that are not encodable
+// regular volumes in the topology snapshot: an already-EC volume (present only
+// as EC shards, with no .dat) or an id absent from the cluster. Encoding an
+// already-EC volume would clear its shards before failing, destroying the only
+// copy. A volume present as BOTH a regular .dat and stale orphan shards (a
+// failed-encode retry) passes, so the retry + orphan sweep still works.
+func assertEncodableRegularVolumes(t *master_pb.TopologyInfo, vids []needle.VolumeId) error {
+	want := make(map[needle.VolumeId]bool, len(vids))
+	for _, vid := range vids {
+		want[vid] = true
+	}
+	regular := make(map[needle.VolumeId]bool)
+	hasEcShards := make(map[needle.VolumeId]bool)
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, diskInfo := range dn.DiskInfos {
+					if diskInfo == nil {
+						continue
+					}
+					for _, vi := range diskInfo.VolumeInfos {
+						if want[needle.VolumeId(vi.Id)] {
+							regular[needle.VolumeId(vi.Id)] = true
+						}
+					}
+					for _, ec := range diskInfo.EcShardInfos {
+						if want[needle.VolumeId(ec.Id)] {
+							hasEcShards[needle.VolumeId(ec.Id)] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, vid := range vids {
+		if regular[vid] {
+			continue
+		}
+		if hasEcShards[vid] {
+			return fmt.Errorf("volume %d is already EC-encoded (no .dat replica); refusing to re-encode, which would destroy its shards", vid)
+		}
+		return fmt.Errorf("volume %d not found as a regular volume in the cluster; refusing to encode", vid)
+	}
+	return nil
 }
 
 // collectVolumeIdToCollection returns a map from volume ID to its collection name
@@ -536,6 +583,58 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 }
 
+// errFullTeardownNotAcked marks a reachable server that completed the delete RPC
+// but did not report full_teardown_done (a pre-upgrade volume server). The orphan
+// sweep must treat this as fatal: the node may still hold an orphan that a later
+// copy would re-stamp into the new generation.
+var errFullTeardownNotAcked = errors.New("delete did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain")
+
+// pingVolumeServer probes node liveness with an empty-target Ping, which is never
+// maintenance-gated, and returns the raw Ping error (nil on success). It lets the
+// orphan sweep disambiguate a delete codes.Unavailable: a Rust volume server in
+// maintenance mode fails the maintenance-gated delete with Unavailable yet answers
+// Ping, whereas a genuinely-down node fails Ping with a transport Unavailable too.
+// A Go server returns Unknown for maintenance, which isNodeUnreachable already
+// treats as fatal. The caller classifies the result with classifyNodeLiveness:
+// only a Ping that itself transport-failed (codes.Unavailable) confirms the node
+// is down; a nil error (reachable) or any other Ping error (inconclusive — e.g. a
+// pre-Ping server returning Unimplemented, which means the node is up) is fatal.
+func pingVolumeServer(grpcDialOption grpc.DialOption, location pb.ServerAddress) error {
+	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, pingErr := client.Ping(context.Background(), &volume_server_pb.PingRequest{})
+		return pingErr
+	})
+}
+
+// unmountAndDeleteEcShardsQuiet unmounts then deletes shards on one server in a
+// single connection, without the per-call logging the interactive helpers emit.
+// Used by the orphan sweep, which fans out to every node x volume and would
+// otherwise flood the shell with no-op lines.
+func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, location pb.ServerAddress, shardIds []erasure_coding.ShardId) error {
+	ids := erasure_coding.ShardIdsToUint32(shardIds)
+	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		if _, err := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
+			VolumeId: uint32(volumeId),
+			ShardIds: ids,
+		}); err != nil {
+			return fmt.Errorf("unmount: %w", err)
+		}
+		resp, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:     uint32(volumeId),
+			Collection:   collection,
+			ShardIds:     ids,
+			FullTeardown: true,
+		})
+		if err != nil {
+			return fmt.Errorf("delete: %w", err)
+		}
+		if !resp.GetFullTeardownDone() {
+			return fmt.Errorf("delete on %s: %w", location, errFullTeardownNotAcked)
+		}
+		return nil
+	})
+}
+
 func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeUnmountedShardIds []erasure_coding.ShardId) error {
 
 	fmt.Printf("unmount %d.%v from %s\n", volumeId, toBeUnmountedShardIds, sourceLocation)
@@ -741,12 +840,35 @@ type ecBalancer struct {
 	diskType           types.DiskType
 }
 
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool) (err error) {
+// excludeNodes is a set of server addresses kept out of the balance as copy/move
+// targets and sources. ec.encode passes the nodes its orphan sweep could not
+// reach: such a node may still hold a stale-generation shard orphan, and pairing
+// it with a new-generation shard from a balance copy would mix generations on one
+// node. The standalone ec.balance command passes nil.
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}) (err error) {
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc, diskType)
 	if err != nil {
 		return err
 	}
+
+	// Drop excluded nodes (and the slots they contribute) before planning so they
+	// can be neither a target nor a source for any move this balance plans.
+	if len(excludeNodes) > 0 {
+		kept := allEcNodes[:0]
+		var excludedFreeSlots int
+		for _, en := range allEcNodes {
+			if _, skip := excludeNodes[pb.NewServerAddressFromDataNode(en.info)]; skip {
+				excludedFreeSlots += en.freeEcSlot
+				glog.V(0).Infof("EC balance excluding node %s: skipped as unreachable by the encode orphan sweep", en.info.Id)
+				continue
+			}
+			kept = append(kept, en)
+		}
+		allEcNodes = kept
+		totalFreeEcSlots -= excludedFreeSlots
+	}
+
 	if totalFreeEcSlots < 1 {
 		return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
 	}
@@ -776,12 +898,16 @@ func shellECRatio(_ string) (int, int) {
 // balance plans EC shard moves with the shared planner and executes them. When
 // collections is empty all collections present are balanced.
 func (ecb *ecBalancer) balance(collections []string) error {
-	topo := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType)
+	topo, volumeRatio := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType)
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{
 		DiskType:           string(ecb.diskType),
 		ImbalanceThreshold: 0, // the shell balances to an even distribution
 		ReplicaPlacement:   ecb.replicaPlacement,
 		Ratio:              shellECRatio,
+		// Prefer each volume's own heartbeat-reported ratio over the collection
+		// default so a mixed-ratio collection is spread per volume; 0 defers to
+		// shellECRatio (and is the always-0 OSS case).
+		VolumeRatio: volumeRatio,
 		// Balance the global phase by fractional fullness so heterogeneous-capacity
 		// nodes fill proportionally (matching the worker). This is identical to raw
 		// shard count when capacities are uniform.
@@ -792,11 +918,20 @@ func (ecb *ecBalancer) balance(collections []string) error {
 
 // toBalancerTopology builds an ecbalancer.Topology from the shell's EcNode model,
 // including the shards of the requested collections (all collections when empty).
-func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType) *ecbalancer.Topology {
+// It also returns a per-volume ratio lookup built from each shard's heartbeat
+// (0,0 when unreported, e.g. always in OSS), which Plan prefers over the
+// collection ratio for mixed-ratio clusters.
+func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int)) {
 	allowed := make(map[string]bool, len(collections))
 	for _, c := range collections {
 		allowed[c] = true
 	}
+
+	type volRatioKey struct {
+		collection string
+		vid        uint32
+	}
+	volRatios := make(map[volRatioKey][2]int)
 
 	topo := ecbalancer.NewTopology()
 	for _, en := range ecNodes {
@@ -817,9 +952,17 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 				continue
 			}
 			node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
+			if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
+				volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
+			}
 		}
 	}
-	return topo
+
+	volumeRatio := func(collection string, vid uint32) (int, int) {
+		r := volRatios[volRatioKey{collection, vid}]
+		return r[0], r[1]
+	}
+	return topo, volumeRatio
 }
 
 // executeMoves carries out the planned moves. Phases run in order (a within-rack

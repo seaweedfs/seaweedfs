@@ -41,7 +41,7 @@ func ecTopo(node1Collection string) *master_pb.TopologyInfo {
 
 func TestBuildBalancerTopology(t *testing.T) {
 	config := NewDefaultConfig()
-	topo, nodeCount := buildBalancerTopology(ecTopo("col1"), config)
+	topo, nodeCount, _ := buildBalancerTopology(ecTopo("col1"), config)
 	if nodeCount != 2 {
 		t.Fatalf("nodeCount = %d, want 2", nodeCount)
 	}
@@ -77,7 +77,7 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 		}},
 	}
 
-	topo, _ := buildBalancerTopology(topoInfo, NewDefaultConfig())
+	topo, _, _ := buildBalancerTopology(topoInfo, NewDefaultConfig())
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{ImbalanceThreshold: 0.01})
 
 	host := func(nodeID string) string { h, _, _ := net.SplitHostPort(nodeID); return h }
@@ -99,7 +99,7 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 func TestBuildBalancerTopologyCollectionFilter(t *testing.T) {
 	config := NewDefaultConfig()
 	config.CollectionFilter = "other" // does not match the volume's collection
-	topo, nodeCount := buildBalancerTopology(ecTopo("col1"), config)
+	topo, nodeCount, _ := buildBalancerTopology(ecTopo("col1"), config)
 	if nodeCount != 2 {
 		t.Fatalf("nodeCount = %d, want 2", nodeCount)
 	}

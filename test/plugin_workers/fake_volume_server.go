@@ -309,9 +309,11 @@ func (v *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_se
 
 // VolumeEcShardsDelete is a no-op stub paired with VolumeEcShardsUnmount
 // above; the fake server doesn't persist shard files beyond what
-// ReceiveFile wrote, so there's nothing to remove.
+// ReceiveFile wrote, so there's nothing to remove. It still echoes the
+// full_teardown acknowledgement so the worker doesn't treat the fake as a
+// pre-upgrade server that silently skipped the teardown.
 func (v *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
-	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: req.FullTeardown}, nil
 }
 
 func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {

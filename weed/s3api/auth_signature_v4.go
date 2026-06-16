@@ -433,21 +433,21 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		claims[k] = v
 	}
 
-	// Create an identity for the STS session
-	// The identity represents the assumed role user
+	// Key the principal on the OIDC subject so a session resolves to the same
+	// identity on the SigV4 and JWT paths (see s3_iam_middleware.go); fall back to
+	// the assumed-role user when absent. Distinct per principal, not shared admin.
+	principal := sessionInfo.Subject
+	if principal == "" {
+		principal = sessionInfo.AssumedRoleUser
+	}
 	identity := &Identity{
-		Name:         sessionInfo.AssumedRoleUser, // Use the assumed role user as the identity name
-		Account:      &AccountAdmin,               // STS sessions use admin account
+		Name:         principal,
+		Account:      &Account{Id: principal, DisplayName: sessionInfo.SessionName, EmailAddress: principal + "@seaweedfs.local"},
 		Credentials:  []*Credential{cred},
 		PrincipalArn: sessionInfo.Principal,
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
-
-	// Restore admin privileges if the session was created by an admin
-	// if isAdmin, ok := claims["is_admin"].(bool); ok && isAdmin {
-	// 	identity.Actions = append(identity.Actions, s3_constants.ACTION_ADMIN)
-	// }
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
@@ -559,6 +559,10 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 	if query.Get("X-Amz-Expires") == "" {
 		return nil, s3err.ErrInvalidQueryParams
 	}
+	signedHeaders, errCode := parseSignedHeaderList(query.Get("X-Amz-SignedHeaders"))
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
 
 	// Parse date
 	dateStr := query.Get("X-Amz-Date")
@@ -584,7 +588,7 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 	return &v4AuthInfo{
 		Signature:     query.Get("X-Amz-Signature"),
 		AccessKey:     credHeader.accessKey,
-		SignedHeaders: strings.Split(query.Get("X-Amz-SignedHeaders"), ";"),
+		SignedHeaders: signedHeaders,
 		Date:          t,
 		Region:        credHeader.scope.region,
 		Service:       credHeader.scope.service,
@@ -716,10 +720,19 @@ func parseSignedHeader(signedHdrElement string) ([]string, s3err.ErrorCode) {
 	if signedHdrFields[0] != "SignedHeaders" {
 		return nil, s3err.ErrMissingSignHeadersTag
 	}
-	if signedHdrFields[1] == "" {
+	return parseSignedHeaderList(signedHdrFields[1])
+}
+
+func parseSignedHeaderList(signedHeadersValue string) ([]string, s3err.ErrorCode) {
+	if signedHeadersValue == "" {
 		return nil, s3err.ErrMissingFields
 	}
-	signedHeaders := strings.Split(signedHdrFields[1], ";")
+	signedHeaders := strings.Split(signedHeadersValue, ";")
+	for _, header := range signedHeaders {
+		if strings.TrimSpace(header) == "" {
+			return nil, s3err.ErrMissingFields
+		}
+	}
 	return signedHeaders, s3err.ErrNone
 }
 

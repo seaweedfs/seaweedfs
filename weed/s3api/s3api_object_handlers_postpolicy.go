@@ -56,7 +56,12 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	if fileName != "" && strings.Contains(formValues.Get("Key"), "${filename}") {
 		formValues.Set("Key", strings.Replace(formValues.Get("Key"), "${filename}", fileName, -1))
 	}
-	object := s3_constants.NormalizeObjectKey(formValues.Get("Key"))
+	rawObject := formValues.Get("Key")
+	if rawObject == "" || !s3_constants.IsValidObjectKey(rawObject) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+	object := s3_constants.NormalizeObjectKey(rawObject)
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return

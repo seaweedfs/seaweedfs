@@ -127,6 +127,7 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/cluster/filers", h.clusterHandlers.ShowClusterFilers).Methods(http.MethodGet)
 	r.HandleFunc("/cluster/s3", h.clusterHandlers.ShowClusterS3Servers).Methods(http.MethodGet)
 	r.HandleFunc("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/mount-clients", h.clusterHandlers.ShowMountClients).Methods(http.MethodGet)
 
 	// Storage management routes
 	r.HandleFunc("/storage/volumes", h.clusterHandlers.ShowClusterVolumes).Methods(http.MethodGet)

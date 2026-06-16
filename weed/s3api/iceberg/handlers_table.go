@@ -175,6 +175,18 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// location/name are client-supplied; confine the metadata write to the
+	// authorized catalog bucket and reject traversal segments so path.Join in
+	// saveMetadataFile cannot escape into another bucket.
+	if metadataBucket != bucketName {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "table location must be within bucket "+bucketName)
+		return
+	}
+	if !isValidTablePath(metadataPath) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid table location path")
+		return
+	}
+
 	// Authoritative existence check: ask the catalog whether a table is registered
 	// at this name. If it is, short-circuit with the existing table (idempotent
 	// CreateTable). Any leftover objects at the target path from a previous

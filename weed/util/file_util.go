@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -38,6 +39,24 @@ func GetFileSize(file *os.File) (size int64, err error) {
 		size = fi.Size()
 	}
 	return
+}
+
+// FsyncDir flushes a directory entry so a rename/create/unlink inside it
+// survives a crash. Directory fsync is not supported on every platform
+// (notably Windows), where it is skipped rather than treated as an error.
+func FsyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err = d.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
+		return fmt.Errorf("sync dir %s: %v", dir, err)
+	}
+	return nil
 }
 
 func FileExists(filename string) bool {

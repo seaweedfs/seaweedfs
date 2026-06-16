@@ -41,6 +41,7 @@ type ErasureCodingTask struct {
 	dataShards       int32
 	parityShards     int32
 	sourceDiskType   string                  // source volume's disk type, forwarded to Mount RPC (#9423)
+	encodeTsNs       int64                   // admin-issued encode generation; stamps the .vif and fences the stale-shard cleanup. 0 => unfenced (legacy/shell)
 	targets          []*worker_pb.TaskTarget // Unified targets for EC shards
 	sources          []*worker_pb.TaskSource // Unified sources for cleanup
 	shardAssignment  map[string][]string     // destination -> assigned shard types
@@ -79,6 +80,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.dataShards = ecParams.DataShards
 	t.parityShards = ecParams.ParityShards
 	t.sourceDiskType = ecParams.SourceDiskType
+	t.encodeTsNs = ecParams.EncodeTsNs
 	t.workDir = ecParams.WorkingDir
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
@@ -342,7 +344,10 @@ func (t *ErasureCodingTask) markReplicasReadonly(ctx context.Context) error {
 		addr := loc.ServerAddress()
 		err := operation.WithVolumeServerClient(false, addr, t.grpcDialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
-				_, e := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: t.volumeID})
+				// Persist the readonly mark so a source-server restart during or
+				// after encoding cannot silently reopen the volume to writes that
+				// the EC shards would not contain. rollbackReadonly clears it.
+				_, e := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: t.volumeID, Persist: true})
 				return e
 			})
 		if err != nil {
@@ -616,10 +621,31 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		}).Info("EC journal file generated")
 	}
 
-	// Generate .vif file (volume info)
+	// Always stamp the encode identity into the .vif so the read guard stays on.
+	// The ratio is the resolved one from the encoder's protection, defaulting to
+	// the context this path encodes with (not t.dataShards, which this path does
+	// not pass to the encoder).
 	vifFile := baseName + ".vif"
+	defaultCtx := erasure_coding.NewDefaultECContext("", 0)
+	// Use the admin-issued generation when present so the distributed .vif carries
+	// the same generation the stale-shard cleanup fences on; fall back to a local
+	// timestamp only for the unfenced legacy/shell path (keeps the read guard on).
+	encodeTsNs := t.encodeTsNs
+	if encodeTsNs == 0 {
+		encodeTsNs = time.Now().UnixNano()
+	}
+	ecShardConfig := &volume_server_pb.EcShardConfig{
+		DataShards:   uint32(defaultCtx.DataShards),
+		ParityShards: uint32(defaultCtx.ParityShards),
+		EncodeTsNs:   encodeTsNs,
+	}
+	if ecBitrot != nil && ecBitrot.EcShardConfig != nil {
+		ecShardConfig.DataShards = ecBitrot.EcShardConfig.DataShards
+		ecShardConfig.ParityShards = ecBitrot.EcShardConfig.ParityShards
+	}
 	volumeInfo := &volume_server_pb.VolumeInfo{
-		Version: uint32(needle.GetCurrentVersion()),
+		Version:       uint32(needle.GetCurrentVersion()),
+		EcShardConfig: ecShardConfig,
 	}
 	if err := volume_info.SaveVolumeInfo(vifFile, volumeInfo); err != nil {
 		glog.Warningf("Failed to create .vif file: %v", err)
@@ -694,13 +720,25 @@ func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) erro
 		"per_server":    summary,
 	}).Info("EC shard inventory before source deletion")
 
-	if err := erasure_coding.RequireFullShardSet(t.volumeID, union, totalShards); err != nil {
+	degraded, err := erasure_coding.RequireRecoverableShardSet(t.volumeID, union, int(t.dataShards), totalShards)
+	if err != nil {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":  t.volumeID,
 			"per_server": summary,
 			"error":      err.Error(),
 		}).Error("EC shard verification failed — source volume will be kept")
 		return err
+	}
+	if degraded {
+		// Enough shards to reconstruct; the missing ones can be rebuilt from
+		// the survivors, while keeping the source next to live shards is the
+		// more dangerous mixed state.
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":    t.volumeID,
+			"shards_seen":  union.Count(),
+			"shards_total": totalShards,
+			"per_server":   summary,
+		}).Warning("EC shard set incomplete but recoverable; proceeding with source deletion")
 	}
 	return nil
 }
@@ -909,7 +947,7 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 			"shard_ids":   allShards,
 		}).Info("Clearing stale EC shards on destination before re-distribute")
 
-		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards); err != nil {
+		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards, t.encodeTsNs); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
 			t.GetLogger().WithFields(map[string]interface{}{
 				"volume_id":   t.volumeID,
@@ -954,21 +992,32 @@ func unmountAndDeleteEcShards(
 	volumeID uint32,
 	collection string,
 	shardIds []uint32,
+	encodeTsNs int64,
 ) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(destination), dialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
+			// encodeTsNs fences both RPCs against a newer run on a shared node: the
+			// server skips a disk whose mounted/on-disk generation is same-or-newer.
+			// 0 (legacy/shell) leaves the unconditional unmount + blanket teardown.
 			if _, err := client.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
-				VolumeId: volumeID,
-				ShardIds: shardIds,
+				VolumeId:   volumeID,
+				ShardIds:   shardIds,
+				EncodeTsNs: encodeTsNs,
 			}); err != nil {
 				return fmt.Errorf("unmount: %w", err)
 			}
-			if _, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-				VolumeId:   volumeID,
-				Collection: collection,
-				ShardIds:   shardIds,
-			}); err != nil {
+			resp, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+				VolumeId:     volumeID,
+				Collection:   collection,
+				ShardIds:     shardIds,
+				FullTeardown: true,
+				EncodeTsNs:   encodeTsNs,
+			})
+			if err != nil {
 				return fmt.Errorf("delete: %w", err)
+			}
+			if !resp.GetFullTeardownDone() {
+				return fmt.Errorf("delete: %s did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain", destination)
 			}
 			return nil
 		})

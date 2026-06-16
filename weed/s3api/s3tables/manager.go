@@ -41,6 +41,11 @@ func (m *Manager) SetDefaultAllow(allow bool) {
 	m.handler.SetDefaultAllow(allow)
 }
 
+// SetTrusted lets trusted local tooling (shell, admin console) bypass authorization.
+func (m *Manager) SetTrusted(trusted bool) {
+	m.handler.SetTrusted(trusted)
+}
+
 // Execute runs an S3 Tables operation and decodes the response into resp (if provided).
 func (m *Manager) Execute(ctx context.Context, filerClient FilerClient, operation string, req interface{}, resp interface{}, identity string) error {
 	body, err := json.Marshal(req)

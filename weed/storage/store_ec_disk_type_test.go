@@ -26,7 +26,7 @@ import (
 // and would otherwise pollute the captured slice). The returned slice
 // is appended to only by the goroutine; tests should not race against
 // it directly — use waitForShardMsg instead.
-func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[]master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId, collection string, plant func()) {
+func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[]*master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId, collection string, plant func()) {
 	t.Helper()
 	tempDir := t.TempDir()
 	hddDir := filepath.Join(tempDir, "hdd")
@@ -56,7 +56,7 @@ func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[
 		diskIOProbeConfig,
 	)
 
-	captured := []master_pb.VolumeEcShardInformationMessage{}
+	captured := []*master_pb.VolumeEcShardInformationMessage{}
 	drainedShardMsgs = &captured
 	done := make(chan struct{})
 	go func() {
@@ -116,7 +116,7 @@ func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[
 
 // waitForShardMsg returns the first captured mount message for vid, polling
 // briefly because the goroutine reads asynchronously from MountEcShards.
-func waitForShardMsg(t *testing.T, captured *[]master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId) master_pb.VolumeEcShardInformationMessage {
+func waitForShardMsg(t *testing.T, captured *[]*master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId) *master_pb.VolumeEcShardInformationMessage {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -128,7 +128,7 @@ func waitForShardMsg(t *testing.T, captured *[]master_pb.VolumeEcShardInformatio
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("no NewEcShardsChan message captured for volume %d within 2s", vid)
-	return master_pb.VolumeEcShardInformationMessage{}
+	return nil
 }
 
 // findHeartbeatShard returns the EC-shard heartbeat entry for vid.

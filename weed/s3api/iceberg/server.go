@@ -46,6 +46,13 @@ type Server struct {
 // NewServer creates a new Iceberg REST Catalog server.
 func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	manager := s3tables.NewManager()
+	// Mirror the S3 port: fall open by default only when the gateway itself is
+	// open. With auth configured, an authenticated catalog caller must pass the
+	// normal permission check instead of being allowed because no policy denied
+	// it — even if the full identity struct ever fails to reach the handler.
+	if authenticator != nil {
+		manager.SetDefaultAllow(authenticator.DefaultAllow())
+	}
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,

@@ -21,7 +21,8 @@ templ Admin(data dash.AdminData) {
     </div>
 
     <div id="dashboard-content">
-        <!-- Summary Cards -->
+        <!-- Summary Cards — each carries an inline sparkline of recent history
+             from the admin's own snapshots (no Prometheus required). -->
         <div class="row mb-4">
             <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-success shadow h-100 py-2">
@@ -39,6 +40,7 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-database fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.Volumes)
                     </div>
                 </div>
             </div>
@@ -59,6 +61,7 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-file fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.Files)
                     </div>
                 </div>
             </div>
@@ -79,6 +82,7 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-hdd fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.DiskUsed)
                     </div>
                 </div>
             </div>
@@ -142,14 +146,81 @@ templ Admin(data dash.AdminData) {
                                 <i class="fas fa-puzzle-piece fa-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.EcShards)
                     </div>
                 </div>
             </div>
 
-            <!-- Empty columns to balance the row -->
-            <div class="col-xl-3 col-md-6 mb-4"></div>
-            <div class="col-xl-3 col-md-6 mb-4"></div>
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Active Tasks
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { data.Trends.TasksValue }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-tasks fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.Tasks)
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Workers
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { data.Trends.WorkersValue }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-users-cog fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.Workers)
+                    </div>
+                </div>
+            </div>
         </div>
+
+        <!-- Mount Clients -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-plug me-2"></i>Mount Clients
+                        </h6>
+                        <a id="mountClientsDetailsLink" href="/cluster/mount-clients" class="btn btn-sm btn-outline-primary">
+                            View Details <i class="fas fa-arrow-right ms-1"></i>
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-plug fa-2x text-gray-300 me-3"></i>
+                            <div>
+                                <div class="h4 mb-0 font-weight-bold text-gray-800">{fmt.Sprintf("%d", data.TotalMountClients)}</div>
+                                <div class="text-xs text-muted text-uppercase">Connected FUSE/VFS mount clients</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+        (function(){var l=document.getElementById('mountClientsDetailsLink'); if(l){l.href=(window.__BASE_PATH__||'')+'/cluster/mount-clients';}})();
+        </script>
 
         <!-- Master Nodes Status -->
         <div class="row mb-4">

@@ -45,7 +45,7 @@ jobs:
       - name: Pre-pull Spark image
         run: |
           pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
-          pull apache/spark:3.5.8
+          pull apache/spark:3.5.1
 
       - name: Run S3 Spark integration tests
         working-directory: test/s3/spark

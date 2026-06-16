@@ -310,6 +310,19 @@ func (v *Volume) Close() {
 	v.doClose()
 }
 
+// SwapDataBackend atomically replaces the data backend (e.g. swapping a
+// remote-tier backend for a freshly downloaded local .dat), closing the old
+// one. Held under dataFileAccessLock so a concurrent read/write never observes
+// a half-swapped or closed backend.
+func (v *Volume) SwapDataBackend(newBackend backend.BackendStorageFile) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if v.DataBackend != nil {
+		v.DataBackend.Close()
+	}
+	v.DataBackend = newBackend
+}
+
 func (v *Volume) doClose() {
 	if v.nm != nil {
 		if err := v.nm.Sync(); err != nil {

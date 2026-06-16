@@ -138,6 +138,7 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 		}
 		locPrefix := s3a.option.BucketsPath + "/" + bucket.Name + "/"
 		readOnly, flipped := fc.ApplyBucketQuotaReadOnly(locPrefix, size, float64(bucket.Quota))
+		stats.UpdateBucketQuotaMetrics(bucket.Name, float64(bucket.Quota), readOnly)
 		if flipped {
 			changed = true
 			glog.V(0).Infof("bucket %s quota enforcement: readOnly=%v (size=%.0f quota=%d)", bucket.Name, readOnly, size, bucket.Quota)

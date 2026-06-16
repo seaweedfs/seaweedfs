@@ -28,6 +28,7 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 			ExpireAtSec: shardInfo.ExpireAtSec,
 			FileCount:   shardInfo.FileCount,
 			DeleteCount: shardInfo.DeleteCount,
+			EncodeTsNs:  shardInfo.EncodeTsNs,
 		}
 
 		shards = append(shards, ecVolumeInfo)
@@ -57,6 +58,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 			ExpireAtSec: shardInfo.ExpireAtSec,
 			FileCount:   shardInfo.FileCount,
 			DeleteCount: shardInfo.DeleteCount,
+			EncodeTsNs:  shardInfo.EncodeTsNs,
 		}
 
 		newShards = append(newShards, ecVolumeInfo)
@@ -72,6 +74,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 			ExpireAtSec: shardInfo.ExpireAtSec,
 			FileCount:   shardInfo.FileCount,
 			DeleteCount: shardInfo.DeleteCount,
+			EncodeTsNs:  shardInfo.EncodeTsNs,
 		}
 
 		deletedShards = append(deletedShards, ecVolumeInfo)

@@ -4,7 +4,16 @@
 #    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, filer, and worker
 
-# comma separated origins allowed to make requests to the filer and s3 gateway. 
+# Any value below can also be supplied as an environment variable instead of
+# living in this file: prefix the key with WEED_, upper-case it, and replace
+# "." with "_". This is the recommended way to inject the secrets in here from
+# a Kubernetes Secret (env valueFrom.secretKeyRef) rather than a ConfigMap.
+# The JWT signing keys map to:
+#   WEED_JWT_SIGNING_KEY, WEED_JWT_SIGNING_READ_KEY              (master <-> volume)
+#   WEED_JWT_FILER_SIGNING_KEY, WEED_JWT_FILER_SIGNING_READ_KEY  (s3/clients <-> filer)
+# A set env var wins over the file, so the file can stay empty (or absent).
+
+# comma separated origins allowed to make requests to the filer and s3 gateway.
 # enter in this format: https://domain.com, or http://localhost:port
 [cors.allowed_origins]
 values = "*"

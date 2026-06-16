@@ -37,6 +37,13 @@ type AdminData struct {
 	// EC shard totals for dashboard
 	TotalEcVolumes int `json:"total_ec_volumes"` // Total number of EC volumes across all servers
 	TotalEcShards  int `json:"total_ec_shards"`  // Total number of EC shards across all servers
+
+	// TotalMountClients is the number of connected FUSE/VFS mount clients across filers.
+	TotalMountClients int `json:"total_mount_clients"`
+
+	// Trends holds at-a-glance sparklines built from the admin's own recent
+	// cluster snapshots (no Prometheus required).
+	Trends DashboardTrends `json:"trends"`
 }
 
 // Object Store Users management structures
@@ -182,6 +189,12 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	}
 	totalEcVolumes = len(ecVolumeSet)
 
+	// Count connected FUSE/VFS mount clients (best-effort; don't fail the dashboard)
+	totalMountClients := 0
+	if mountData, mountErr := s.GetMountClients(); mountErr == nil {
+		totalMountClients = mountData.TotalMountClients
+	}
+
 	// Prepare admin data
 	adminData := AdminData{
 		Username:          username,
@@ -198,6 +211,8 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		LastUpdated:       topology.UpdatedAt,
 		TotalEcVolumes:    totalEcVolumes,
 		TotalEcShards:     totalEcShards,
+		TotalMountClients: totalMountClients,
+		Trends:            s.GetDashboardTrends(),
 	}
 
 	return adminData, nil

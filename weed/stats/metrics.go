@@ -549,6 +549,22 @@ var (
 			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
 		}, []string{"bucket"})
 
+	S3BucketQuotaBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_quota_bytes",
+			Help:      "Configured quota of each S3 bucket in bytes. Only present for buckets with an enabled quota.",
+		}, []string{"bucket"})
+
+	S3BucketReadOnlyGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_read_only",
+			Help:      "Whether each S3 bucket is read-only (1) or writable (0), e.g. after exceeding its quota.",
+		}, []string{"bucket"})
+
 	UploadErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -805,6 +821,8 @@ func init() {
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
 	Gather.MustRegister(S3BucketObjectCountGauge)
+	Gather.MustRegister(S3BucketQuotaBytesGauge)
+	Gather.MustRegister(S3BucketReadOnlyGauge)
 
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)
@@ -899,6 +917,8 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+	c += S3BucketQuotaBytesGauge.DeletePartialMatch(labels)
+	c += S3BucketReadOnlyGauge.DeletePartialMatch(labels)
 	c += S3LifecycleDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleMetadataOnlyCounter.DeletePartialMatch(labels)
@@ -946,6 +966,8 @@ func bucketMetricTTLControl() {
 			c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
 			c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
 			c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+			c += S3BucketQuotaBytesGauge.DeletePartialMatch(labels)
+			c += S3BucketReadOnlyGauge.DeletePartialMatch(labels)
 			glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 		}
 
@@ -963,4 +985,20 @@ func UpdateBucketSizeMetrics(bucket string, logicalSize, physicalSize float64, o
 	S3BucketPhysicalSizeBytesGauge.WithLabelValues(bucket).Set(physicalSize)
 	S3BucketObjectCountGauge.WithLabelValues(bucket).Set(objectCount)
 	RecordBucketActiveTime(bucket)
+}
+
+// UpdateBucketQuotaMetrics updates the per-bucket quota gauges. A non-positive
+// quota removes the quota series so utilization queries like
+// bucket_size_bytes / bucket_quota_bytes only see enforced quotas.
+func UpdateBucketQuotaMetrics(bucket string, quota float64, readOnly bool) {
+	if quota > 0 {
+		S3BucketQuotaBytesGauge.WithLabelValues(bucket).Set(quota)
+	} else {
+		S3BucketQuotaBytesGauge.DeleteLabelValues(bucket)
+	}
+	readOnlyValue := float64(0)
+	if readOnly {
+		readOnlyValue = 1
+	}
+	S3BucketReadOnlyGauge.WithLabelValues(bucket).Set(readOnlyValue)
 }

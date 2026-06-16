@@ -69,6 +69,55 @@ jobs:
           echo "Security configuration renders correctly"
 
           echo ""
+          echo "=== Testing JWT expiration overrides ==="
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
+            > /tmp/jwt-volume-write-expiration.yaml
+          grep -q "security-config" /tmp/jwt-volume-write-expiration.yaml
+          grep -q "expires_after_seconds = 11" /tmp/jwt-volume-write-expiration.yaml
+
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeRead=22 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.filerWrite=33 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.filerRead=44 \
+            > /tmp/jwt-expiration.yaml
+
+          assert_jwt_expiration() {
+            local section="$1"
+            local seconds="$2"
+            awk -v section="[$section]" -v seconds="$seconds" '
+              /^[[:space:]]*\[.*\][[:space:]]*$/ {
+                in_section = index($0, section) > 0
+              }
+              in_section && $0 ~ "^[[:space:]]*expires_after_seconds = " seconds "$" {
+                found = 1
+              }
+              END { exit !found }
+            ' /tmp/jwt-expiration.yaml
+          }
+
+          assert_jwt_expiration jwt.signing 11
+          assert_jwt_expiration jwt.signing.read 22
+          assert_jwt_expiration jwt.filer_signing 33
+          assert_jwt_expiration jwt.filer_signing.read 44
+
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.enableSecurity=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            > /tmp/jwt-default-expiration.yaml
+          if grep -q "expires_after_seconds =" /tmp/jwt-default-expiration.yaml; then
+            echo "FAIL: zero JWT expiration values should preserve runtime defaults"
+            exit 1
+          fi
+          echo "JWT expiration overrides render correctly"
+
+          echo ""
           echo "=== Testing IAM gRPC opt-in path ==="
           # Regression test: the filer registers the IAM gRPC service the
           # Admin UI Users tab calls only when jwt.filer_signing.key is in
