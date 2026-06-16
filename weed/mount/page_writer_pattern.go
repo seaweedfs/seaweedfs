@@ -30,15 +30,16 @@ func NewWriterPattern(chunkSize int64) *WriterPattern {
 }
 
 func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
-	// Snapshot the frontier this write is judged against, then advance it to
-	// max(frontier, offset+size). The CAS loop keeps this lock-free under the
-	// concurrent writeback upcalls described above, consistent with the atomic
-	// counter below.
-	frontier := atomic.LoadInt64(&rp.writeFrontier)
+	// Advance the frontier to max(frontier, offset+size) and capture, in the same
+	// CAS loop, the pre-image this write is judged against. Reading the frontier
+	// inside the loop (rather than once up front) keeps `diff` below comparing
+	// against the freshest value even if a concurrent writeback upcall advances
+	// the frontier while we loop. Lock-free, consistent with the atomic counter.
 	end := offset + int64(size)
+	var frontier int64
 	for {
-		cur := atomic.LoadInt64(&rp.writeFrontier)
-		if end <= cur || atomic.CompareAndSwapInt64(&rp.writeFrontier, cur, end) {
+		frontier = atomic.LoadInt64(&rp.writeFrontier)
+		if end <= frontier || atomic.CompareAndSwapInt64(&rp.writeFrontier, frontier, end) {
 			break
 		}
 	}
