@@ -550,16 +550,20 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 	return
 }
 
-// isLocalOnlyEntry reports whether fullpath holds local-only state not yet on the
+// isLocalOnlyEntry reports whether entry holds local-only state not yet on the
 // filer — an open handle with dirty metadata, or a pending async flush. A
 // directory rebuild refills from a filer listing that omits such an entry, so it
 // must be preserved across the wipe; this is the same signal lookupEntry trusts
 // over a filer ErrNotFound for deferred creates.
-func (wfs *WFS) isLocalOnlyEntry(fullpath util.FullPath) bool {
-	inode, found := wfs.inodeToPath.GetInode(fullpath)
-	if !found {
+//
+// Keyed off the inode the entry carries, not inodeToPath: a kernel Forget can
+// drop the path→inode mapping while an async writeback flush is still in flight,
+// and the entry must stay pinned until that flush reaches the filer.
+func (wfs *WFS) isLocalOnlyEntry(entry *filer.Entry) bool {
+	if entry == nil || entry.Attr.Inode == 0 {
 		return false
 	}
+	inode := entry.Attr.Inode
 	if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
 		return true
 	}

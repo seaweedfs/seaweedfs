@@ -473,11 +473,19 @@ func TestEnsureVisitedPreservesLocalOnlyEntry(t *testing.T) {
 	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
-	// The mount pins the un-flushed create (open dirty handle / pending flush).
-	mc.SetPinnedChildFn(func(p util.FullPath) bool { return p == "/dir/pending.txt" })
+	// The mount pins the un-flushed create (open dirty handle / pending flush),
+	// keyed off the inode the entry carries so a kernel Forget that dropped the
+	// path→inode mapping cannot unpin an in-flight create.
+	mc.SetPinnedChildFn(func(e *filer.Entry) bool { return e.Attr.Inode == 42 })
 
 	// A deferred local create lands before the rebuild; /dir is not yet cached.
-	insertCacheEntry(t, mc, "/dir/pending.txt")
+	// It carries its allocated inode, as createFile's placeholder does.
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/pending.txt",
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1, Inode: 42},
+	}); err != nil {
+		t.Fatalf("insert pending entry: %v", err)
+	}
 
 	// A concurrent rebuild lists the filer, whose snapshot pre-dates the
 	// un-flushed create, so it returns only the already-persisted sibling.
@@ -522,7 +530,7 @@ func TestEnsureVisitedDropsUnpinnedStaleEntry(t *testing.T) {
 	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
-	mc.SetPinnedChildFn(func(util.FullPath) bool { return false })
+	mc.SetPinnedChildFn(func(*filer.Entry) bool { return false })
 
 	// A stale child sits in the cache; the filer no longer has it.
 	insertCacheEntry(t, mc, "/dir/stale.txt")
