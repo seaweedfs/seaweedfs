@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -3105,18 +3106,37 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
 }
 
+// remoteCacheStreamingTimeoutNS bounds (nanoseconds) how long the streaming read
+// path waits for the filer to finish caching a remote-only object. Without a
+// bound a multi-GB download outlasts the client's read timeout, so the request
+// is canceled before the caller can emit 503 + Retry-After. Kept under common S3
+// client read timeouts (~60s) given the 30s dedup attempt that precedes it.
+// Atomic so tests can shorten it without racing the read path.
+var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
+
 // cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
-// Uses the request context (no artificial timeout) so the caching can complete.
-// Returns the cached entry only when chunks are present; the streaming caller
-// is not wired to read inline Content from a cache result here.
+// Bounded so a slow large-file download returns to the caller (which emits 503 +
+// Retry-After) before the client gives up; the filer keeps caching on a detached
+// context, so a retry streams from the cached chunks. Returns the cached entry
+// only when chunks are present; the caller cannot read inline Content here.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
+	timeout := time.Duration(atomic.LoadInt64(&remoteCacheStreamingTimeoutNS))
+	cacheCtx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
 	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
 	glog.V(1).Infof("cacheRemoteObjectForStreaming: caching %s/%s (remote size: %d, versionId: %s)", dir, name, entry.RemoteEntry.RemoteSize, versionId)
 
-	cachedEntry, err := s3a.doCacheRemoteObject(r.Context(), dir, name)
+	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
 	if err != nil {
-		glog.Errorf("cacheRemoteObjectForStreaming: failed to cache %s/%s: %v", dir, name, err)
+		// A bounded-wait timeout (or client disconnect) is not a cache failure:
+		// the filer keeps downloading and the caller maps a nil return to 503.
+		if cacheCtx.Err() != nil {
+			glog.V(1).Infof("cacheRemoteObjectForStreaming: %s/%s not ready within %v (will retry)", dir, name, timeout)
+		} else {
+			glog.Errorf("cacheRemoteObjectForStreaming: failed to cache %s/%s: %v", dir, name, err)
+		}
 		return nil
 	}
 
