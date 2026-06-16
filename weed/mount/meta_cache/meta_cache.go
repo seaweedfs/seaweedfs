@@ -3,6 +3,7 @@ package meta_cache
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -32,7 +33,8 @@ type MetaCache struct {
 	isCachedFn           func(fullpath util.FullPath) bool
 	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
 	onDirectoryUpdate    func(dir util.FullPath)
-	visitGroup           singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	pinnedChildFn        func(util.FullPath) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
+	visitGroup           singleflight.Group       // deduplicates concurrent EnsureVisited calls for the same path
 	applyCh              chan metadataApplyRequest
 	applyDone            chan struct{}
 	applyStateMu         sync.Mutex
@@ -336,6 +338,42 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	mc.Lock()
 	defer mc.Unlock()
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
+}
+
+// SetPinnedChildFn installs a predicate reporting whether a child holds
+// local-only state a rebuild must not discard. See deleteFolderChildrenForRebuild.
+func (mc *MetaCache) SetPinnedChildFn(fn func(util.FullPath) bool) {
+	mc.pinnedChildFn = fn
+}
+
+// deleteFolderChildrenForRebuild clears a directory's cached children ahead of a
+// rebuild, but keeps any child flagged pinned by pinnedChildFn — a local-only
+// create not yet flushed to the filer. A rebuild refills from a filer listing
+// that does not include such a create; a blind wipe would drop it and then
+// markCachedFn publishes the directory authoritatively cached without a file the
+// client created, so it vanishes from the mount.
+func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath util.FullPath) error {
+	mc.Lock()
+	defer mc.Unlock()
+	if mc.pinnedChildFn == nil {
+		return mc.localStore.DeleteFolderChildren(ctx, dirPath)
+	}
+	var pinned []*filer.Entry
+	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
+		if mc.pinnedChildFn(entry.FullPath) {
+			pinned = append(pinned, entry)
+		}
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
+		return err
+	}
+	if len(pinned) > 0 {
+		return mc.doBatchInsertEntries(ctx, pinned)
+	}
+	return nil
 }
 
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
