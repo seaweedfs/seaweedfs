@@ -86,7 +86,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}()
 
 	if err := c.collectVolumeIds(); err != nil {
-		return parseErr
+		return err
 	}
 
 	if *c.concurrency > 0 {
