@@ -549,8 +549,9 @@ func TestCacheRemoteObjectForStreamingTimeout(t *testing.T) {
 	})
 	s3a := newRemoteCacheTestServer(filerAddr)
 
+	const shortTimeout = 200 * time.Millisecond
 	defer func(prev int64) { atomic.StoreInt64(&remoteCacheStreamingTimeoutNS, prev) }(atomic.LoadInt64(&remoteCacheStreamingTimeoutNS))
-	atomic.StoreInt64(&remoteCacheStreamingTimeoutNS, int64(200*time.Millisecond))
+	atomic.StoreInt64(&remoteCacheStreamingTimeoutNS, int64(shortTimeout))
 
 	r := httptest.NewRequest(http.MethodGet, "/mybucket/large.bin", nil)
 	start := time.Now()
@@ -558,6 +559,7 @@ func TestCacheRemoteObjectForStreamingTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 
 	assert.Nil(t, got, "uncached object must return nil so the caller maps to 503")
+	assert.GreaterOrEqual(t, elapsed, shortTimeout/2, "must wait on the bounded timeout, not return early on a setup error")
 	assert.Less(t, elapsed, 5*time.Second, "must not block on the full download")
 	assert.NoError(t, r.Context().Err(), "request context stays alive so the caller chooses 503, not cancellation")
 }
