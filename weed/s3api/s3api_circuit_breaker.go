@@ -171,12 +171,19 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 		s3err.WriteErrorResponse(w, r, errCode)
 	}
 
-	// Run the optional interceptor outermost, so it executes before upload
-	// limiting and the breaker checks and regardless of cb.Enabled.
-	if cb.Interceptor != nil {
-		return cb.Interceptor(inner, action), Action(action)
-	}
-	return inner, Action(action)
+	// The interceptor is consulted per request rather than captured here, so it
+	// can be installed after the routes are registered (e.g. once the server and
+	// its dependencies are constructed) and so a nil CircuitBreaker is never
+	// dereferenced at registration time. When unset this is just a nil check.
+	// It runs outermost: before upload limiting and the breaker checks, and
+	// regardless of cb.Enabled.
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cb.Interceptor != nil {
+			cb.Interceptor(inner, action)(w, r)
+			return
+		}
+		inner(w, r)
+	}, Action(action)
 }
 
 func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (rollback []func(), errCode s3err.ErrorCode) {

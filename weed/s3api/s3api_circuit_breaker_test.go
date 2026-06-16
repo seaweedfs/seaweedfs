@@ -182,4 +182,24 @@ func TestLimitInterceptor(t *testing.T) {
 			t.Fatalf("interceptor must run before the handler, got %v", order)
 		}
 	})
+
+	// 4. installed AFTER Limit() returns: still takes effect, because the
+	//    interceptor is consulted per request rather than captured at
+	//    registration time (the handlers are built during router registration,
+	//    before dependencies that need the running server exist).
+	t.Run("interceptor installed after registration takes effect", func(t *testing.T) {
+		cb := newCB()
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {}, readAction) // built while nil
+		ran := false
+		cb.Interceptor = func(next http.HandlerFunc, action string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				ran = true
+				next(w, r)
+			}
+		}
+		h(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+		if !ran {
+			t.Fatal("interceptor set after Limit() must still run (request-time evaluation)")
+		}
+	})
 }
