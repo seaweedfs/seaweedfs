@@ -327,6 +327,7 @@ async fn run(
             seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
         ),
         read_mode: config.read_mode,
+        allow_untrusted_remote_endpoints: config.allow_untrusted_remote_endpoints,
         master_url,
         master_urls,
         seed_master_set,
