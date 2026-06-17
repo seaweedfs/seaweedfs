@@ -93,8 +93,8 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.46.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/image v0.39.0
-	golang.org/x/net v0.54.0
+	golang.org/x/image v0.41.0
+	golang.org/x/net v0.55.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/text v0.37.0 // indirect
@@ -142,7 +142,7 @@ require (
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/pkg/sftp v1.13.10
 	github.com/rabbitmq/amqp091-go v1.11.0
-	github.com/rclone/rclone v1.74.1
+	github.com/rclone/rclone v1.74.3
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/schollz/progressbar/v3 v3.19.0
