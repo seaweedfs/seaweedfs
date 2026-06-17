@@ -565,7 +565,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		if status >= 200 && status < 300 {
+		// Only log errors; 2xx/3xx (including 304 Not Modified cache hits) are normal.
+		if status < 400 {
 			return
 		}
 
