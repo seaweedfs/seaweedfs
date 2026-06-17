@@ -100,6 +100,7 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 3 {
 		t.Fatalf("directory notifications for /dir = %d, want 3", got)
 	}
+	mc.WaitForEntryInvalidations()
 	if got := countPath(invalidations.paths(), util.FullPath("/dir/file.txt")); got != 3 {
 		t.Fatalf("invalidations for /dir/file.txt = %d, want 3 (create + update + delete)", got)
 	}
@@ -170,6 +171,7 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 	if got := countPath(notifications.paths(), util.FullPath("/dst")); got != 1 {
 		t.Fatalf("directory notifications for /dst = %d, want 1", got)
 	}
+	mc.WaitForEntryInvalidations()
 	if got := countPath(invalidations.paths(), util.FullPath("/src/file.tmp")); got != 1 {
 		t.Fatalf("invalidations for /src/file.tmp = %d, want 1", got)
 	}
@@ -230,6 +232,7 @@ func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
 	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 1 {
 		t.Fatalf("directory notifications for /dir = %d, want 1", got)
 	}
+	mc.WaitForEntryInvalidations()
 	if got := len(invalidations.paths()); got != 0 {
 		t.Fatalf("invalidations = %d, want 0", got)
 	}
@@ -292,6 +295,7 @@ func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
 	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 1 {
 		t.Fatalf("directory notifications for /dir = %d, want 1", got)
 	}
+	mc.WaitForEntryInvalidations()
 	if got := countPath(invalidations.paths(), util.FullPath("/dir/file.txt")); got != 1 {
 		t.Fatalf("invalidations for /dir/file.txt = %d, want 1", got)
 	}

@@ -42,6 +42,23 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
+
+	// Entry invalidations run on a dedicated worker, never on the apply loop.
+	// invalidateFunc (wfs) acquires the open file handle's lock, which can be
+	// held by a flush that is itself waiting on the apply loop
+	// (flushMetadataToFiler -> applyLocalMetadataEvent). Running the
+	// invalidation inline on the loop deadlocks the whole mount: the loop
+	// waits for the fh lock, the fh lock holder waits for the loop, and every
+	// later EnsureVisited/flush backs up behind them until the kernel FUSE
+	// queue jams. The queue is unbounded on purpose — bounding it would let a
+	// blocked worker stall the apply loop again through a full queue.
+	invalidateMu        sync.Mutex
+	invalidateCond      *sync.Cond
+	invalidateQueue     []metadataInvalidation
+	invalidateEnqueued  int64
+	invalidateProcessed int64
+	invalidateClosed    bool
+	invalidateDone      chan struct{}
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -104,12 +121,15 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
-		applyCh:      make(chan metadataApplyRequest, 128),
-		applyDone:    make(chan struct{}),
-		buildingDirs: make(map[util.FullPath]*directoryBuildState),
-		dedupRing:    newDedupRingBuffer(),
+		applyCh:        make(chan metadataApplyRequest, 128),
+		applyDone:      make(chan struct{}),
+		buildingDirs:   make(map[util.FullPath]*directoryBuildState),
+		dedupRing:      newDedupRingBuffer(),
+		invalidateDone: make(chan struct{}),
 	}
+	mc.invalidateCond = sync.NewCond(&mc.invalidateMu)
 	go mc.runApplyLoop()
+	go mc.runInvalidateLoop()
 	return mc
 }
 
@@ -437,6 +457,10 @@ func (mc *MetaCache) Shutdown() {
 
 	<-mc.applyDone
 
+	// The apply loop is the only dispatcher of entry invalidations; with it
+	// stopped, drain and stop the invalidate worker before closing the store.
+	mc.shutdownInvalidateLoop()
+
 	mc.Lock()
 	defer mc.Unlock()
 	mc.localStore.Shutdown()
@@ -606,9 +630,7 @@ func (mc *MetaCache) applyMetadataSideEffects(resp *filer_pb.SubscribeMetadataRe
 	for _, dirPath := range sideEffects.dirsToNotify {
 		mc.noteDirectoryUpdate(dirPath)
 	}
-	for _, invalidation := range sideEffects.invalidations {
-		mc.invalidateFunc(invalidation.path, invalidation.entry)
-	}
+	mc.dispatchEntryInvalidations(sideEffects.invalidations)
 }
 
 // applyMetadataSideEffectsSkippingBuildingDirs is like applyMetadataSideEffects
@@ -627,9 +649,71 @@ func (mc *MetaCache) applyMetadataSideEffectsSkippingBuildingDirs(resp *filer_pb
 			mc.noteDirectoryUpdate(dirPath)
 		}
 	}
-	for _, invalidation := range sideEffects.invalidations {
-		mc.invalidateFunc(invalidation.path, invalidation.entry)
+	mc.dispatchEntryInvalidations(sideEffects.invalidations)
+}
+
+// dispatchEntryInvalidations hands entry invalidations to the invalidate
+// worker. Called from the apply loop, which must never run invalidateFunc
+// inline (see the invalidate* field comments for the deadlock this prevents).
+// FIFO order is preserved by the single worker goroutine.
+func (mc *MetaCache) dispatchEntryInvalidations(invalidations []metadataInvalidation) {
+	if len(invalidations) == 0 {
+		return
 	}
+	mc.invalidateMu.Lock()
+	if mc.invalidateClosed {
+		mc.invalidateMu.Unlock()
+		return
+	}
+	mc.invalidateQueue = append(mc.invalidateQueue, invalidations...)
+	mc.invalidateEnqueued += int64(len(invalidations))
+	mc.invalidateMu.Unlock()
+	mc.invalidateCond.Signal()
+}
+
+func (mc *MetaCache) runInvalidateLoop() {
+	defer close(mc.invalidateDone)
+	for {
+		mc.invalidateMu.Lock()
+		for len(mc.invalidateQueue) == 0 && !mc.invalidateClosed {
+			mc.invalidateCond.Wait()
+		}
+		if len(mc.invalidateQueue) == 0 {
+			mc.invalidateMu.Unlock()
+			return
+		}
+		batch := mc.invalidateQueue
+		mc.invalidateQueue = nil
+		mc.invalidateMu.Unlock()
+
+		for _, invalidation := range batch {
+			mc.invalidateFunc(invalidation.path, invalidation.entry)
+			mc.invalidateMu.Lock()
+			mc.invalidateProcessed++
+			mc.invalidateMu.Unlock()
+			mc.invalidateCond.Broadcast()
+		}
+	}
+}
+
+// WaitForEntryInvalidations blocks until every invalidation enqueued so far
+// has been processed by the invalidate worker. Intended for tests and
+// shutdown paths that need the previously-synchronous behavior.
+func (mc *MetaCache) WaitForEntryInvalidations() {
+	mc.invalidateMu.Lock()
+	defer mc.invalidateMu.Unlock()
+	target := mc.invalidateEnqueued
+	for mc.invalidateProcessed < target && !mc.invalidateClosed {
+		mc.invalidateCond.Wait()
+	}
+}
+
+func (mc *MetaCache) shutdownInvalidateLoop() {
+	mc.invalidateMu.Lock()
+	mc.invalidateClosed = true
+	mc.invalidateMu.Unlock()
+	mc.invalidateCond.Broadcast()
+	<-mc.invalidateDone
 }
 
 func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, _ MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {
