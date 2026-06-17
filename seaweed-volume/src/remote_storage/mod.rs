@@ -3,8 +3,11 @@
 //! Provides a trait-based abstraction over cloud storage providers (S3, GCS, Azure, etc.)
 //! and a registry to create clients from protobuf RemoteConf messages.
 
+pub mod endpoint_guard;
 pub mod s3;
 pub mod s3_tier;
+
+pub use endpoint_guard::validate_remote_endpoint;
 
 use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
 
