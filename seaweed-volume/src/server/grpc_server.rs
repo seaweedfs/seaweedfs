@@ -3490,6 +3490,25 @@ impl VolumeServer for VolumeGrpcService {
             .as_ref()
             .ok_or_else(|| Status::invalid_argument("remote storage configuration is required"))?;
 
+        // Reject SSRF-prone endpoints unless the operator opted out. Every
+        // S3-compatible backend (s3, wasabi, backblaze, ...) dials a
+        // caller-supplied endpoint URL directly via make_remote_storage_client,
+        // so validate whichever endpoint applies. An empty endpoint means the
+        // provider default (e.g. real AWS S3) and cannot target an internal
+        // host, so skip it. Extends the Go volume server's validateRemoteEndpoint
+        // gate, which only covered type "s3".
+        if !self.state.allow_untrusted_remote_endpoints {
+            if let Some(endpoint) = crate::remote_storage::s3_compatible_endpoint(remote_conf) {
+                if !endpoint.trim().is_empty() {
+                    crate::remote_storage::validate_remote_endpoint(endpoint)
+                        .await
+                        .map_err(|e| {
+                            Status::invalid_argument(format!("reject remote endpoint: {}", e))
+                        })?;
+                }
+            }
+        }
+
         // Create remote storage client
         let client =
             crate::remote_storage::make_remote_storage_client(remote_conf).map_err(|e| {
@@ -4728,6 +4747,7 @@ mod tests {
                 crate::remote_storage::s3_tier::S3TierRegistry::new(),
             ),
             read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
             master_urls: Vec::new(),
             seed_master_set: std::collections::HashSet::new(),
@@ -4832,6 +4852,7 @@ mod tests {
                 crate::remote_storage::s3_tier::S3TierRegistry::new(),
             ),
             read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
             master_urls: Vec::new(),
             seed_master_set: std::collections::HashSet::new(),
@@ -4940,6 +4961,7 @@ mod tests {
                 crate::remote_storage::s3_tier::S3TierRegistry::new(),
             ),
             read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
             master_url: master_urls.first().cloned().unwrap_or_default(),
             master_urls,
             seed_master_set,

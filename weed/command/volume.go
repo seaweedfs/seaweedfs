@@ -23,7 +23,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
@@ -248,9 +247,6 @@ var (
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	minFreeSpacePercent   = cmdVolume.Flag.String("minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly (deprecated, use minFreeSpace instead).")
 	minFreeSpace          = cmdVolume.Flag.String("minFreeSpace", "", "min free disk space (value<=100 as percentage like 1, other as human readable bytes, like 10GiB). Low disk space will mark all volumes as ReadOnly.")
-
-	ecBitrotChecksum    = cmdVolume.Flag.Bool("ec.bitrotChecksum", true, "write a bitrot checksum sidecar (.ecsum) when generating EC shards, enabling silent-corruption detection on scrub/rebuild")
-	ecBitrotBlockSizeMB = cmdVolume.Flag.Int("ec.bitrotBlockSizeMB", 16, "EC bitrot checksum block granularity in MiB; must be a power of two and at least 1")
 )
 
 func runVolume(cmd *Command, args []string) bool {
@@ -283,24 +279,6 @@ func runVolume(cmd *Command, args []string) bool {
 	// Backward compatibility: if -mserver is provided, use it
 	if *v.mserverString != "" {
 		*v.mastersString = *v.mserverString
-	}
-
-	// Apply EC bitrot checksum settings.
-	erasure_coding.BitrotProtectionEnabled = *ecBitrotChecksum
-	// Bound-check before the multiply so a huge value cannot overflow int64 past
-	// the power-of-two check. Cap = shared MaxBitrotBlockSize, kept in sync with
-	// ValidateBitrotManifest.
-	const maxBitrotBlockSizeMB = erasure_coding.MaxBitrotBlockSize / (1024 * 1024)
-	if mb := *ecBitrotBlockSizeMB; mb >= 1 && mb <= maxBitrotBlockSizeMB {
-		if blockSize := int64(mb) * 1024 * 1024; blockSize&(blockSize-1) == 0 {
-			erasure_coding.BitrotBlockSize = blockSize
-		} else if mb != 16 {
-			glog.Warningf("ignoring invalid -ec.bitrotBlockSizeMB=%d (must be a power of two); using %d MiB",
-				mb, erasure_coding.BitrotBlockSize/(1024*1024))
-		}
-	} else if *ecBitrotBlockSizeMB != 16 {
-		glog.Warningf("ignoring out-of-range -ec.bitrotBlockSizeMB=%d (must be a power of two in [1, %d] MiB); using %d MiB",
-			*ecBitrotBlockSizeMB, maxBitrotBlockSizeMB, erasure_coding.BitrotBlockSize/(1024*1024))
 	}
 
 	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
