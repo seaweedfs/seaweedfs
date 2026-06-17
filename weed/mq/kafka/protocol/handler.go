@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -1317,28 +1318,8 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(name) {
+			if h.ensureTopicExists(name, h.GetDefaultPartitions()) {
 				topicsToReturn = append(topicsToReturn, name)
-			} else {
-				// Topic doesn't exist according to current cache, check broker directly
-				// This handles the race condition where producers just created topics
-				// and consumers are requesting metadata before cache TTL expires
-				glog.V(3).Infof("[METADATA v0] Topic %s not in cache, checking broker directly", name)
-				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
-				if h.seaweedMQHandler.TopicExists(name) {
-					glog.V(3).Infof("[METADATA v0] Topic %s found on broker after cache refresh", name)
-					topicsToReturn = append(topicsToReturn, name)
-				} else {
-					glog.V(3).Infof("[METADATA v0] Topic %s not found, auto-creating with default partitions", name)
-					// Auto-create topic (matches Kafka's auto.create.topics.enable=true)
-					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
-						glog.V(2).Infof("[METADATA v0] Failed to auto-create topic %s: %v", name, err)
-						// Don't add to topicsToReturn - client will get error
-					} else {
-						glog.V(2).Infof("[METADATA v0] Successfully auto-created topic %s", name)
-						topicsToReturn = append(topicsToReturn, name)
-					}
-				}
 			}
 		}
 	}
@@ -1412,24 +1393,8 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(name) {
+			if h.ensureTopicExists(name, h.GetDefaultPartitions()) {
 				topicsToReturn = append(topicsToReturn, name)
-			} else {
-				// Topic doesn't exist according to current cache, check broker directly
-				glog.V(3).Infof("[METADATA v1] Topic %s not in cache, checking broker directly", name)
-				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
-				if h.seaweedMQHandler.TopicExists(name) {
-					glog.V(3).Infof("[METADATA v1] Topic %s found on broker after cache refresh", name)
-					topicsToReturn = append(topicsToReturn, name)
-				} else {
-					glog.V(3).Infof("[METADATA v1] Topic %s not found, auto-creating with default partitions", name)
-					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
-						glog.V(2).Infof("[METADATA v1] Failed to auto-create topic %s: %v", name, err)
-					} else {
-						glog.V(2).Infof("[METADATA v1] Successfully auto-created topic %s", name)
-						topicsToReturn = append(topicsToReturn, name)
-					}
-				}
 			}
 		}
 	}
@@ -1546,24 +1511,8 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(name) {
+			if h.ensureTopicExists(name, h.GetDefaultPartitions()) {
 				topicsToReturn = append(topicsToReturn, name)
-			} else {
-				// Topic doesn't exist according to current cache, check broker directly
-				glog.V(3).Infof("[METADATA v2] Topic %s not in cache, checking broker directly", name)
-				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
-				if h.seaweedMQHandler.TopicExists(name) {
-					glog.V(3).Infof("[METADATA v2] Topic %s found on broker after cache refresh", name)
-					topicsToReturn = append(topicsToReturn, name)
-				} else {
-					glog.V(3).Infof("[METADATA v2] Topic %s not found, auto-creating with default partitions", name)
-					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
-						glog.V(2).Infof("[METADATA v2] Failed to auto-create topic %s: %v", name, err)
-					} else {
-						glog.V(2).Infof("[METADATA v2] Successfully auto-created topic %s", name)
-						topicsToReturn = append(topicsToReturn, name)
-					}
-				}
 			}
 		}
 	}
@@ -1670,24 +1619,8 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(name) {
+			if h.ensureTopicExists(name, h.GetDefaultPartitions()) {
 				topicsToReturn = append(topicsToReturn, name)
-			} else {
-				// Topic doesn't exist according to current cache, check broker directly
-				glog.V(3).Infof("[METADATA v3/v4] Topic %s not in cache, checking broker directly", name)
-				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
-				if h.seaweedMQHandler.TopicExists(name) {
-					glog.V(3).Infof("[METADATA v3/v4] Topic %s found on broker after cache refresh", name)
-					topicsToReturn = append(topicsToReturn, name)
-				} else {
-					glog.V(3).Infof("[METADATA v3/v4] Topic %s not found, auto-creating with default partitions", name)
-					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
-						glog.V(2).Infof("[METADATA v3/v4] Failed to auto-create topic %s: %v", name, err)
-					} else {
-						glog.V(2).Infof("[METADATA v3/v4] Successfully auto-created topic %s", name)
-						topicsToReturn = append(topicsToReturn, name)
-					}
-				}
 			}
 		}
 	}
@@ -1828,44 +1761,15 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 		// 4. Client will call CreateTopics for non-existent topics
 		// 5. Then request metadata again to see the created topics
 		for _, topic := range requestedTopics {
+			partitions := h.GetDefaultPartitions()
 			if isSystemTopic(topic) {
-				// Always try to auto-create system topics during metadata requests
-				glog.V(3).Infof("[METADATA v%d] Ensuring system topic %s exists during metadata request", apiVersion, topic)
-				if !h.seaweedMQHandler.TopicExists(topic) {
-					glog.V(3).Infof("[METADATA v%d] Auto-creating system topic %s during metadata request", apiVersion, topic)
-					if err := h.createTopicWithSchemaSupport(topic, 1); err != nil {
-						glog.V(0).Infof("[METADATA v%d] Failed to auto-create system topic %s: %v", apiVersion, topic, err)
-						// Continue without adding to topicsToReturn - client will get UNKNOWN_TOPIC_OR_PARTITION
-					} else {
-						glog.V(3).Infof("[METADATA v%d] Successfully auto-created system topic %s", apiVersion, topic)
-					}
-				} else {
-					glog.V(3).Infof("[METADATA v%d] System topic %s already exists", apiVersion, topic)
-				}
+				// System topics use a single partition. ensureTopicExists tolerates
+				// the auto-create race, so a false result means the topic genuinely
+				// does not exist - don't advertise it with error_code=0.
+				partitions = 1
+			}
+			if h.ensureTopicExists(topic, partitions) {
 				topicsToReturn = append(topicsToReturn, topic)
-			} else if h.seaweedMQHandler.TopicExists(topic) {
-				topicsToReturn = append(topicsToReturn, topic)
-			} else {
-				// Topic doesn't exist according to current cache, but let's check broker directly
-				// This handles the race condition where producers just created topics
-				// and consumers are requesting metadata before cache TTL expires
-				glog.V(3).Infof("[METADATA v%d] Topic %s not in cache, checking broker directly", apiVersion, topic)
-				// Force cache invalidation to do fresh broker check
-				h.seaweedMQHandler.InvalidateTopicExistsCache(topic)
-				if h.seaweedMQHandler.TopicExists(topic) {
-					glog.V(3).Infof("[METADATA v%d] Topic %s found on broker after cache refresh", apiVersion, topic)
-					topicsToReturn = append(topicsToReturn, topic)
-				} else {
-					glog.V(3).Infof("[METADATA v%d] Topic %s not found on broker, auto-creating with default partitions", apiVersion, topic)
-					// Auto-create non-system topics with default partitions (matches Kafka behavior)
-					if err := h.createTopicWithSchemaSupport(topic, h.GetDefaultPartitions()); err != nil {
-						glog.V(2).Infof("[METADATA v%d] Failed to auto-create topic %s: %v", apiVersion, topic, err)
-						// Don't add to topicsToReturn - client will get UNKNOWN_TOPIC_OR_PARTITION
-					} else {
-						glog.V(2).Infof("[METADATA v%d] Successfully auto-created topic %s", apiVersion, topic)
-						topicsToReturn = append(topicsToReturn, topic)
-					}
-				}
 			}
 		}
 		glog.V(3).Infof("[METADATA v%d] Returning topics: %v (requested: %v)", apiVersion, topicsToReturn, requestedTopics)
@@ -4065,6 +3969,39 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 		respPreview = 32
 	}
 	return response, nil
+}
+
+// ensureTopicExists reports whether the named topic exists, auto-creating it
+// when missing (matching auto.create.topics.enable=true).
+//
+// TopicExists can return a transient false negative for a topic that is in fact
+// present: a broker/filer blip, or a just-created topic whose existence cache is
+// still stale. When that happens the auto-create attempt fails with
+// ErrTopicAlreadyExists - which confirms the topic exists. Treating that as
+// success (rather than dropping the topic) is what keeps producers from getting
+// a spurious UNKNOWN_TOPIC_OR_PARTITION right after the topic was created.
+func (h *Handler) ensureTopicExists(topicName string, partitions int32) bool {
+	if h.seaweedMQHandler.TopicExists(topicName) {
+		return true
+	}
+	// Existence cache may be stale right after creation; force a fresh broker check.
+	h.seaweedMQHandler.InvalidateTopicExistsCache(topicName)
+	if h.seaweedMQHandler.TopicExists(topicName) {
+		return true
+	}
+	if err := h.createTopicWithSchemaSupport(topicName, partitions); err != nil {
+		if errors.Is(err, integration.ErrTopicAlreadyExists) {
+			// The topic exists; the recheck above just cached a stale negative.
+			// Clear it so direct TopicExists callers don't see the false negative.
+			h.seaweedMQHandler.InvalidateTopicExistsCache(topicName)
+			return true
+		}
+		glog.V(2).Infof("[METADATA] Failed to auto-create topic %s: %v", topicName, err)
+		return false
+	}
+	// Topic just created - clear the negative cache so callers see it immediately.
+	h.seaweedMQHandler.InvalidateTopicExistsCache(topicName)
+	return true
 }
 
 // createTopicWithSchemaSupport creates a topic with optional schema integration
