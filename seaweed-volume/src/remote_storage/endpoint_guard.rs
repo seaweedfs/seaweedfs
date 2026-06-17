@@ -77,6 +77,17 @@ fn is_cgnat(ip: IpAddr) -> bool {
 /// Returns an error if `ip` is not safe to dial from a server that can reach
 /// cluster-internal hosts. Mirrors Go's `checkBlockedIP`.
 pub fn check_blocked_ip(endpoint: &str, ip: IpAddr) -> Result<(), String> {
+    // Normalize IPv4-mapped IPv6 (`::ffff:a.b.c.d`) to its IPv4 form so the
+    // IPv4 deny rules apply. The OS routes these to the embedded IPv4 address,
+    // so without this `::ffff:127.0.0.1` / `::ffff:169.254.169.254` would slip
+    // past the IPv6-only checks. Mirrors Go's reliance on net.IP.To4().
+    let ip = match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(v6),
+        },
+        other => other,
+    };
     if ip == IMDS_IPV4 {
         return Err(format!(
             "remote endpoint {:?} targets instance metadata service {}",
@@ -320,5 +331,29 @@ mod tests {
             .contains("private"));
         assert!(check_blocked_ip("e", ip("52.216.10.10")).is_ok());
         assert!(check_blocked_ip("e", ip("2606:4700:4700::1111")).is_ok());
+    }
+
+    #[test]
+    fn rejects_ipv4_mapped_ipv6() {
+        // IPv4-mapped IPv6 must be unmapped so the IPv4 rules catch it.
+        assert!(check_blocked_ip("e", ip("::ffff:127.0.0.1"))
+            .unwrap_err()
+            .contains("loopback"));
+        assert!(check_blocked_ip("e", ip("::ffff:169.254.169.254"))
+            .unwrap_err()
+            .contains("metadata"));
+        assert!(check_blocked_ip("e", ip("::ffff:10.0.0.1"))
+            .unwrap_err()
+            .contains("private"));
+        // A mapped public address still passes, and genuine IPv6 loopback is
+        // still caught by the V6 path.
+        assert!(check_blocked_ip("e", ip("::ffff:52.216.10.10")).is_ok());
+        assert!(check_blocked_ip("e", ip("::1"))
+            .unwrap_err()
+            .contains("loopback"));
+        // Bracketed mapped literal via the full endpoint path.
+        assert!(precheck_endpoint("http://[::ffff:127.0.0.1]/")
+            .unwrap_err()
+            .contains("loopback"));
     }
 }
