@@ -3,8 +3,26 @@ name: "Ceph S3 tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/iam/**'
+      - 'test/s3/compatibility/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/iam/**'
+      - 'test/s3/compatibility/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3tests.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/s3tests

@@ -3,8 +3,24 @@ name: "PostgreSQL Gateway Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/server/postgres/**'
+      - 'weed/query/**'
+      - 'weed/mq/**'
+      - 'test/postgres/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/postgres-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/server/postgres/**'
+      - 'weed/query/**'
+      - 'weed/mq/**'
+      - 'test/postgres/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/postgres-tests.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/postgres-tests

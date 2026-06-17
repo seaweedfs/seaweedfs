@@ -2,6 +2,14 @@ name: "S3 Tables Integration Tests"
 
 on:
   pull_request:
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'test/s3tables/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-tables-tests.yml'
 
 permissions:
   contents: read

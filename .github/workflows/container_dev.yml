@@ -3,6 +3,12 @@ name: "docker: build dev containers"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'docker/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/container_dev.yml'
 
 permissions:
   contents: read

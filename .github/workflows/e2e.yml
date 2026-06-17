@@ -3,8 +3,20 @@ name: "End to End"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'docker/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/e2e.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'docker/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/e2e.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/e2e

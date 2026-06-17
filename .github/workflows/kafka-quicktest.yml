@@ -3,8 +3,24 @@ name: "Kafka Quick Test (Load Test with Schema Registry)"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-quicktest.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-quicktest.yml'
   workflow_dispatch:  # Allow manual trigger
 
 concurrency:

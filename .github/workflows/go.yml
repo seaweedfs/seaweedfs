@@ -3,8 +3,18 @@ name: "go: build binary"
 on:
   push:
     branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/go

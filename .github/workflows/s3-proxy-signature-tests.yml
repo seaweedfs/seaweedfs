@@ -3,8 +3,22 @@ name: "S3 Proxy Signature Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/**'
+      - 'test/s3/proxy_signature/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-proxy-signature-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/**'
+      - 'test/s3/proxy_signature/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-proxy-signature-tests.yml'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/s3-proxy-signature-tests
