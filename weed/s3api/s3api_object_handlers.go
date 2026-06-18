@@ -776,11 +776,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Handle remote storage objects: cache to local cluster if object is remote-only
-	// This uses singleflight to deduplicate concurrent caching requests for the same object
-	// On cache error, gracefully falls back to streaming from remote
+	// Handle remote storage objects: initiate background caching without blocking
+	// This implements stream-through caching: serve first byte immediately while
+	// caching happens in the background, improving TTFB for large files
 	if objectEntryForSSE.IsInRemoteOnly() {
-		objectEntryForSSE = s3a.cacheRemoteObjectWithDedup(r.Context(), bucket, object, objectEntryForSSE)
+		// Start background cache without waiting (non-blocking)
+		s3a.startBackgroundRemoteCache(bucket, object, objectEntryForSSE)
+		// Continue with streaming immediately - will serve from remote or cached chunks
 	}
 
 	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
@@ -978,28 +980,22 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		len(chunks), totalSize, isRangeRequest, offset, size)
 
 	if len(chunks) == 0 {
-		// Check if this is a remote-only entry that needs caching
-		// This handles the case where initial caching attempt timed out or failed
+		// Check if this is a remote-only entry
 		if entry.IsInRemoteOnly() {
-			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting to cache before streaming")
-			// Latest-version reads carry an empty query versionId even when the
-			// entry lives at .versions/v_<id>; resolve from the entry itself.
+			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting stream-through cache")
 			cacheVersionId := resolvedSourceVersionId(versionId, entry)
-			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, cacheVersionId)
+			cachedEntry := s3a.cacheRemoteObjectForStreamingWithShortTimeout(r, entry, bucket, object, cacheVersionId)
 			if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+				// Cache completed, use cached chunks
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
 			} else {
-				// Client disconnected: report cancellation, not 503.
-				if ctxErr := r.Context().Err(); ctxErr != nil {
-					return ctxErr
-				}
-				// Cache still filling: 503 + Retry-After so SDKs back off and retry.
+				// Cache not ready yet; return 503 with Retry-After for client backoff
 				glog.V(1).Infof("streamFromVolumeServers: remote object %s/%s not cached yet, returning 503 for retry", bucket, object)
-				w.Header().Set("Retry-After", "5")
+				w.Header().Set("Retry-After", "2")
 				s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
-				return newStreamErrorWithResponse(fmt.Errorf("remote object not cached yet"))
+				return newStreamErrorWithResponse(fmt.Errorf("remote object not cached yet, will be available on retry"))
 			}
 		} else if totalSize > 0 && len(entry.Content) == 0 {
 			// Not a remote entry but has size without content - this is a data integrity issue
@@ -3114,6 +3110,40 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 // Atomic so tests can shorten it without racing the read path.
 var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 
+// cacheRemoteObjectForStreaming polls for cache completion with a short timeout.
+// Used by streamFromVolumeServers after background cache is initiated.
+// Very short timeout (5s) ensures TTFB is not blocked; if cache isn't ready,
+// returns nil so caller emits 503 for retry. The filer continues caching on
+// detached context, so retry finds cached chunks. Returns the cached entry
+// only when chunks are present.
+func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
+	const pollTimeout = 5 * time.Second
+	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
+	defer cancel()
+
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
+
+	glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: polling cache status for %s/%s", dir, name)
+
+	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	if err != nil {
+		// Timeout is expected for large files - the background cache continues
+		if cacheCtx.Err() != nil {
+			glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: %s/%s not cached within %v", dir, name, pollTimeout)
+		} else {
+			glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: cache error for %s/%s: %v", dir, name, err)
+		}
+		return nil
+	}
+
+	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+		glog.V(1).Infof("cacheRemoteObjectForStreamingWithShortTimeout: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
+		return cachedEntry
+	}
+
+	return nil
+}
+
 // cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
 // Bounded so a slow large-file download returns to the caller (which emits 503 +
 // Retry-After) before the client gives up; the filer keeps caching on a detached
@@ -3177,6 +3207,32 @@ func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, ob
 	}
 
 	return nil
+}
+
+// startBackgroundRemoteCache initiates caching without blocking the request.
+// This enables fast TTFB: the client's request returns immediately (via 503 if not
+// cached), while a background task fills the cache. Subsequent requests will find
+// cached chunks via singleflight deduplication in the filer's CacheRemoteObjectToLocalCluster.
+// Uses detached context so caching continues even if the client disconnects.
+func (s3a *S3ApiServer) startBackgroundRemoteCache(bucket, object string, entry *filer_pb.Entry) {
+	if !entry.IsInRemoteOnly() {
+		return
+	}
+
+	dir, name := s3a.buildRemoteObjectPath(bucket, object)
+
+	// Start background cache without blocking. The filer's CacheRemoteObjectToLocalCluster
+	// uses singleflight internally, so concurrent requests will all benefit from the same
+	// cache operation.
+	go func() {
+		bgCtx := context.WithoutCancel(context.Background())
+		_, err := s3a.doCacheRemoteObject(bgCtx, dir, name)
+		if err != nil {
+			glog.V(2).Infof("startBackgroundRemoteCache: cache failed for %s/%s: %v", bucket, object, err)
+		} else {
+			glog.V(2).Infof("startBackgroundRemoteCache: cached %s/%s in background", bucket, object)
+		}
+	}()
 }
 
 // resolvedSourceVersionId falls back to the version recorded on the entry

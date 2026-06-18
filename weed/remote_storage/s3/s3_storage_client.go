@@ -261,6 +261,21 @@ func (s *s3RemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteSto
 	return writerAt.Bytes(), nil
 }
 
+func (s *s3RemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
+	output, err := s.conn.GetObjectWithContext(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(loc.Bucket),
+		Key:    aws.String(loc.Path[1:]),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+size-1)),
+	})
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == s3.ErrCodeNoSuchKey {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+	return output.Body, nil
+}
+
 func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
