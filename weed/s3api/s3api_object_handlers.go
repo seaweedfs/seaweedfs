@@ -3110,20 +3110,30 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 // Atomic so tests can shorten it without racing the read path.
 var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 
-// cacheRemoteObjectForStreaming polls for cache completion with a short timeout.
-// Used by streamFromVolumeServers after background cache is initiated.
-// Very short timeout (5s) ensures TTFB is not blocked; if cache isn't ready,
-// returns nil so caller emits 503 for retry. The filer continues caching on
-// detached context, so retry finds cached chunks. Returns the cached entry
-// only when chunks are present.
+// cacheRemoteObjectForStreamingWithShortTimeout polls for cache completion with an adaptive timeout.
+// Timeout is based on file size: small files wait longer to maximize cache hits, large files
+// fail-fast to improve TTFB. If cache isn't ready, returns nil so caller emits 503 for retry.
+// The filer continues caching on detached context, so retry finds cached chunks.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
-	const pollTimeout = 5 * time.Second
+	// Adaptive timeout: smaller files can afford to wait longer since cache completes faster
+	pollTimeout := 5 * time.Second
+	if entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0 {
+		// For very large files (>500MB), use shorter timeout to improve TTFB
+		// For smaller files, allow longer to increase cache hit rate
+		remoteSize := entry.RemoteEntry.RemoteSize
+		if remoteSize > 500*1024*1024 {
+			pollTimeout = 2 * time.Second
+		} else if remoteSize < 50*1024*1024 {
+			pollTimeout = 10 * time.Second
+		}
+	}
+
 	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
 	defer cancel()
 
 	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
-	glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: polling cache status for %s/%s", dir, name)
+	glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: polling cache status for %s/%s (timeout=%v)", dir, name, pollTimeout)
 
 	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
 	if err != nil {
