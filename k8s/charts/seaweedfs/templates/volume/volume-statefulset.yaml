@@ -4,6 +4,10 @@
 {{- $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
 {{- $volume := mergeOverwrite (deepCopy $.Values.volume) (dict "enabled" true) $volume }}
 
+{{- if and $volume.idx (eq ($volume.idx.type | toString) "emptyDir") }}
+{{- fail (printf "%s: idx.type \"emptyDir\" is not supported. An ephemeral index is wiped on every pod restart while the data persists, forcing a full index rebuild from the .dat on each start (a fatal crash on older versions). Use the default (idx: {}, kept next to the data) or a persistentVolumeClaim/hostPath/existingClaim for a separate persistent index." $volumeName) }}
+{{- end }}
+
 {{- if $volume.enabled }}
 ---
 apiVersion: apps/v1
@@ -79,7 +83,23 @@ spec:
           image: {{ template "seaweedfs.volume.image" $ }}
           imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
-          args: [ '{{range $dir :=  $volume.dataDirs }}if ls /{{$dir.name}}/*.idx  >/dev/null 2>&1; then mv /{{$dir.name}}/*.idx /idx/ ; fi; {{end}}' ]
+          args:
+            - |
+              for dir in {{ range $index, $dir := $volume.dataDirs }}{{ if ne $index 0 }} {{ end }}/{{ $dir.name }}{{ end }}; do
+                # Rebuild a .idx missing from both dirs (e.g. an index volume that lost files) from the .dat, else the server fatally exits on its idx check.
+                for dat in "$dir"/*.dat; do
+                  [ -e "$dat" ] || continue
+                  base=${dat##*/}; base=${base%.dat}
+                  if [ ! -e "$dir/$base.idx" ] && [ ! -e "/idx/$base.idx" ]; then
+                    echo "rebuilding missing idx in $dir (trigger: volume $base)"
+                    weed fix "$dir"
+                    break
+                  fi
+                done
+                if ls "$dir"/*.idx >/dev/null 2>&1; then
+                  mv "$dir"/*.idx /idx/
+                fi
+              done
           volumeMounts:
             - name: idx
               mountPath: /idx

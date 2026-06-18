@@ -385,7 +385,7 @@ volume:
     enabled: true
     image: alpine/k8s:1.28.4
 
-  # idx can be defined by:
+  # idx (the volume index) may use a separate PERSISTENT volume:
   #
   # idx:
   #  type: "hostPath"
@@ -404,13 +404,14 @@ volume:
   #   type: "existingClaim"
   #   claimName: "myClaim"
   #
-  # or
+  # "emptyDir" is rejected for idx (the chart fails to render): an ephemeral
+  # index is wiped on every restart while the data persists, forcing a full
+  # rebuild each start (a fatal crash on older versions). "logs" may still use
+  # any of the above or emptyDir.
   #
-  # idx:
-  #  type: "emptyDir"
-
-  # same applies to "logs"
-
+  # Default {} keeps the index next to the data, so it persists with the data and
+  # needs no separate volume. Recommended unless you must split the index onto
+  # its own persistent storage.
   idx: {}
 
   # Resource requests, limits, etc. for the vol-move-idx initContainer. This
