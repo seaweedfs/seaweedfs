@@ -111,6 +111,19 @@ func TestExtractV4AuthInfoFromQueryRejectsEmptySignedHeaderNames(t *testing.T) {
 	}
 }
 
+func TestGetCanonicalQueryStringSortsRepeatedValues(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://localhost/bucket/key?partNumber=2&partNumber=10&uploadId=z", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+
+	got := getCanonicalQueryString(req, false)
+	want := "partNumber=10&partNumber=2&uploadId=z"
+	if got != want {
+		t.Fatalf("canonical query = %q, want %q", got, want)
+	}
+}
+
 func TestBuildPathWithForwardedPrefix(t *testing.T) {
 	tests := []struct {
 		name            string

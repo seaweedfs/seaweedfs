@@ -599,15 +599,14 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 }
 
 func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
-	var queryToEncode string
-	if !isPresigned {
-		queryToEncode = r.URL.Query().Encode()
-	} else {
-		queryForCanonical := r.URL.Query()
+	queryForCanonical := r.URL.Query()
+	if isPresigned {
 		queryForCanonical.Del("X-Amz-Signature")
-		queryToEncode = queryForCanonical.Encode()
 	}
-	return queryToEncode
+	for key := range queryForCanonical {
+		sort.Strings(queryForCanonical[key])
+	}
+	return queryForCanonical.Encode()
 }
 
 func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
