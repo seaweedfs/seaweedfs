@@ -426,7 +426,7 @@ If the hot/warm data is split as 20/80, with 20 servers, you can achieve storage
 
 ## SeaweedFS Filer ##
 
-Built on top of the blob store, SeaweedFS Filer adds directory structure to create a file system. The directory sturcture is an interface that is implemented in many key-value stores or databases.
+Built on top of the blob store, SeaweedFS Filer adds directory structure to create a file system. The directory structure is an interface that is implemented in many key-value stores or databases.
 
 The content of a file is mapped to one or many blobs, distributed to multiple volumes on multiple volume servers.
 
