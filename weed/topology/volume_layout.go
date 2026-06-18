@@ -774,6 +774,18 @@ func (vl *VolumeLayout) CloneWritableVolumes() (writables []needle.VolumeId) {
 	return writables
 }
 
+func (vl *VolumeLayout) CountUnderReplicatedVolumes() int {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	count := 0
+	for vid := range vl.vid2location {
+		if !vl.enoughCopies(vid) {
+			count++
+		}
+	}
+	return count
+}
+
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 	toDeleteIndex := -1
 	for k, id := range vl.writables {

@@ -63,4 +63,16 @@ const (
 	ErrorCompletedEtagInvalid       = "errorCompletedEtagInvalid"
 	ErrorCompletedEtagMismatch      = "errorCompletedEtagMismatch"
 	ErrorCompletedPartEntryMismatch = "errorCompletedPartEntryMismatch"
+
+	// replication metrics
+	ReplicationOpWrite  = "write"
+	ReplicationOpDelete = "delete"
+	ReplicationSuccess  = "success"
+	ReplicationFailure  = "failure"
+
+	// replication failure reasons (bounded cardinality)
+	FailureTimeout           = "timeout"
+	FailureConnectionRefused = "connection_refused"
+	FailureContextCancelled  = "context_cancelled"
+	FailureServerError       = "server_error"
 )

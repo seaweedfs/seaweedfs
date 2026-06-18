@@ -118,6 +118,14 @@ var (
 			Help:      "Number of crowded volumes in volume layouts",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	MasterUnderReplicatedVolumes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "under_replicated_volumes",
+			Help:      "Current number of volumes that do not have enough replicas per collection/layout. 0 = healthy.",
+		}, []string{"collection", "disk", "rp", "ttl"})
+
 	MasterPickForWriteErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -435,6 +443,39 @@ var (
 			Name:      "scrub_shard_failures",
 			Help:      "Counter of overall EC shards with issues detected during scrubbing.",
 		}, []string{"mode"})
+
+	VolumeServerReplicationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_operations_total",
+			Help:      "Counter of replication operations by type (write, delete) and result (success, failure).",
+		}, []string{"operation", "result"})
+
+	VolumeServerReplicationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_duration_seconds",
+			Help:      "Bucketed histogram of replication operation duration in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"operation"})
+
+	VolumeServerReplicationTargets = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_targets",
+			Help:      "Current number of replica targets for the volume server.",
+		})
+
+	VolumeServerReplicationFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_failures_total",
+			Help:      "Counter of replication failures by operation and reason (timeout, connection_refused, context_cancelled, server_error).",
+		}, []string{"operation", "reason"})
 
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -806,6 +847,11 @@ func init() {
 	Gather.MustRegister(VolumeServerScrubLastTimeSeconds)
 	Gather.MustRegister(VolumeServerScrubVolumeFailures)
 	Gather.MustRegister(VolumeServerScrubShardFailures)
+	Gather.MustRegister(VolumeServerReplicationCounter)
+	Gather.MustRegister(VolumeServerReplicationHistogram)
+	Gather.MustRegister(VolumeServerReplicationTargets)
+	Gather.MustRegister(VolumeServerReplicationFailures)
+	Gather.MustRegister(MasterUnderReplicatedVolumes)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
@@ -931,6 +977,7 @@ func DeleteCollectionMetrics(collection string) {
 	c := MasterReplicaPlacementMismatch.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutWritable.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutCrowded.DeletePartialMatch(labels)
+	c += MasterUnderReplicatedVolumes.DeletePartialMatch(labels)
 	c += VolumeServerDiskSizeGauge.DeletePartialMatch(labels)
 	c += VolumeServerVolumeGauge.DeletePartialMatch(labels)
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)

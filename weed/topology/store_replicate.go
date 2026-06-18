@@ -46,6 +46,13 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		fsync = true
 	}
 
+	replicaCount := len(remoteLocations)
+
+	// Record replication duration histogram for the overall write operation
+	defer func(t time.Time) {
+		stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpWrite).Observe(time.Since(t).Seconds())
+	}(time.Now())
+
 	if s.GetVolume(volumeId) != nil {
 		start := time.Now()
 
@@ -57,13 +64,14 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
+			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
 			err = fmt.Errorf("failed to write to local disk: %w", err)
 			glog.V(0).Infoln(err)
 			return
 		}
 	}
 
-	if len(remoteLocations) > 0 { //send to other replica locations
+	if replicaCount > 0 { //send to other replica locations
 		start := time.Now()
 
 		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToReplicas)
@@ -131,17 +139,32 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 			return err
 		})
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
+		stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
+			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
+			reason := classifyReplicationError(err)
+			stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, reason).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			glog.V(0).Infoln(err)
 			return false, err
 		}
+		stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationSuccess).Inc()
 	}
 	return
 }
 
 func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
+
+	// Record replication duration and operation counter for delete
+	defer func(t time.Time) {
+		stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpDelete).Observe(time.Since(t).Seconds())
+		if err != nil {
+			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationFailure).Inc()
+		} else {
+			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationSuccess).Inc()
+		}
+	}(time.Now())
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -155,17 +178,22 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 		}
 	}
 
+	replicaCount := len(remoteLocations)
+
 	size, err = store.DeleteVolumeNeedle(volumeId, n)
 	if err != nil {
 		glog.V(0).Infoln("delete error:", err)
 		return
 	}
 
-	if len(remoteLocations) > 0 { //send to other replica locations
+	if replicaCount > 0 { //send to other replica locations
+		stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
+			reason := classifyReplicationError(err)
+			stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpDelete, reason).Inc()
 			size = 0
 		}
 	}
@@ -254,4 +282,21 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	}
 
 	return
+}
+
+func classifyReplicationError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return stats.FailureTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return stats.FailureContextCancelled
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "connection refused") {
+		return stats.FailureConnectionRefused
+	}
+	return stats.FailureServerError
 }
