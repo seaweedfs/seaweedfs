@@ -24,6 +24,11 @@ import (
 	"google.golang.org/grpc"
 )
 
+// ReplicatedWrite writes a needle to the local volume and fans it out to all
+// remote replica locations. When type=replicate is set, the request is itself
+// a forwarded replication and no further remote lookups are performed.
+// Returns isUnchanged=true when the local write determined the needle content
+// was already present.
 func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
 
 	//check JWT
@@ -66,7 +71,6 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
-			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
 			err = fmt.Errorf("failed to write to local disk: %w", err)
 			glog.V(0).Infoln(err)
 			return
@@ -158,6 +162,10 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 	return
 }
 
+// ReplicatedDelete deletes a needle from the local volume and sends delete
+// requests to all remote replica locations. Replica deletes use
+// context.Background() so that a client disconnect does not orphan replica
+// deletes.
 func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
 
 	//check JWT
@@ -292,6 +300,9 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	return
 }
 
+// classifyReplicationError maps a Go error to a bounded-cardinality failure
+// reason label for the replication_failures_total metric. Returns an empty
+// string for nil errors.
 func classifyReplicationError(err error) string {
 	if err == nil {
 		return ""

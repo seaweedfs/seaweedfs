@@ -8,6 +8,21 @@ import (
 )
 
 func TestReplicationMetricsRegistered(t *testing.T) {
+
+	VolumeServerReplicationCounter.Reset()
+	VolumeServerReplicationHistogram.Reset()
+	VolumeServerReplicationFailures.Reset()
+	VolumeServerReplicationTargets.Set(0)
+	MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(0)
+
+	t.Cleanup(func() {
+		VolumeServerReplicationCounter.Reset()
+		VolumeServerReplicationHistogram.Reset()
+		VolumeServerReplicationFailures.Reset()
+		VolumeServerReplicationTargets.Set(0)
+		MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(0)
+	})
+
 	// Seed CounterVec and HistogramVec with a value so collection returns them
 	VolumeServerReplicationCounter.WithLabelValues(ReplicationOpWrite, ReplicationSuccess).Inc()
 	VolumeServerReplicationHistogram.WithLabelValues(ReplicationOpWrite).Observe(0.1)
@@ -77,6 +92,11 @@ func TestReplicationFailuresCounter(t *testing.T) {
 	VolumeServerReplicationFailures.WithLabelValues(ReplicationOpDelete, FailureConnectionRefused).Inc()
 
 	got := testutil.ToFloat64(VolumeServerReplicationFailures.WithLabelValues(ReplicationOpWrite, FailureTimeout))
+	if got != 1 {
+		t.Errorf("expected 1.0, got %f", got)
+	}
+
+	got = testutil.ToFloat64(VolumeServerReplicationFailures.WithLabelValues(ReplicationOpDelete, FailureConnectionRefused))
 	if got != 1 {
 		t.Errorf("expected 1.0, got %f", got)
 	}

@@ -461,12 +461,13 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"operation"})
 
-	VolumeServerReplicationTargets = prometheus.NewGauge(
-		prometheus.GaugeOpts{
+	VolumeServerReplicationTargets = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
 			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "replication_targets",
-			Help:      "Current number of replica targets for the volume server.",
+			Help:      "Histogram of replica targets count per replication operation.",
+			Buckets:   []float64{1, 2, 3, 4, 5},
 		})
 
 	VolumeServerReplicationFailures = prometheus.NewCounterVec(
