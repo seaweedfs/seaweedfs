@@ -686,13 +686,18 @@ func (mc *MetaCache) runInvalidateLoop() {
 		mc.invalidateQueue = nil
 		mc.invalidateMu.Unlock()
 
+		// Run invalidations without holding invalidateMu — invalidateFunc takes
+		// the fh lock, which is the whole reason this runs off the apply loop.
+		// Bump the processed counter and wake waiters once per batch, not per
+		// item: WaitForEntryInvalidations only needs the count to reach its
+		// target, and a batch always completes together.
 		for _, invalidation := range batch {
 			mc.invalidateFunc(invalidation.path, invalidation.entry)
-			mc.invalidateMu.Lock()
-			mc.invalidateProcessed++
-			mc.invalidateMu.Unlock()
-			mc.invalidateCond.Broadcast()
 		}
+		mc.invalidateMu.Lock()
+		mc.invalidateProcessed += int64(len(batch))
+		mc.invalidateMu.Unlock()
+		mc.invalidateCond.Broadcast()
 	}
 }
 
