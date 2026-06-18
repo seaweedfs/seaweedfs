@@ -73,6 +73,9 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}
 	}
 
+	// Update replication targets gauge for all operations (including zero)
+	stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
+
 	if replicaCount > 0 { //send to other replica locations
 		start := time.Now()
 
@@ -141,7 +144,6 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 			return err
 		})
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
-		stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
 			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
@@ -190,8 +192,10 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 		return
 	}
 
+	// Update replication targets gauge for all operations (including zero)
+	stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
+
 	if replicaCount > 0 { //send to other replica locations
-		stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
