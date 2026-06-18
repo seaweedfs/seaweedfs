@@ -29,6 +29,8 @@ var (
 	}
 )
 
+// cachedLookupSupplementaryGroupIDs returns supplementary group IDs for a UID,
+// caching results to avoid repeated expensive system calls.
 func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
 	supplementaryGroupCacheMu.RLock()
 	groupIDs, ok := supplementaryGroupCache[callerUid]
@@ -49,6 +51,7 @@ func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
 	return groupIDs, nil
 }
 
+// clearSupplementaryGroupCache wipes the UID->groups cache for test isolation.
 func clearSupplementaryGroupCache() {
 	supplementaryGroupCacheMu.Lock()
 	defer supplementaryGroupCacheMu.Unlock()
