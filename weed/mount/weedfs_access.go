@@ -3,24 +3,58 @@ package mount
 import (
 	"os/user"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-var lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
-	u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+var (
+	supplementaryGroupCache   = make(map[uint32][]string)
+	supplementaryGroupCacheMu sync.RWMutex
+
+	lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
+		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+		if err != nil {
+			glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
+			return nil, err
+		}
+		groupIDs, err := u.GroupIds()
+		if err != nil {
+			glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
+			return nil, err
+		}
+		return groupIDs, nil
+	}
+)
+
+func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
+	supplementaryGroupCacheMu.RLock()
+	groupIDs, ok := supplementaryGroupCache[callerUid]
+	supplementaryGroupCacheMu.RUnlock()
+	if ok {
+		return groupIDs, nil
+	}
+
+	groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
 	if err != nil {
-		glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
 		return nil, err
 	}
-	groupIDs, err := u.GroupIds()
-	if err != nil {
-		glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
-		return nil, err
-	}
+
+	supplementaryGroupCacheMu.Lock()
+	supplementaryGroupCache[callerUid] = groupIDs
+	supplementaryGroupCacheMu.Unlock()
+
 	return groupIDs, nil
+}
+
+func clearSupplementaryGroupCache() {
+	supplementaryGroupCacheMu.Lock()
+	defer supplementaryGroupCacheMu.Unlock()
+	for k := range supplementaryGroupCache {
+		delete(supplementaryGroupCache, k)
+	}
 }
 
 /**
@@ -67,7 +101,7 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 
 	isMember := callerGid == fileGid
 	if !isMember {
-		groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
+		groupIDs, err := cachedLookupSupplementaryGroupIDs(callerUid)
 		if err != nil {
 			// Cannot determine supplementary group membership.
 			// Fall through to "other" permission check since we already
