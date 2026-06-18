@@ -307,8 +307,10 @@ func TestAccessChecksPermissions(t *testing.T) {
 	lookupSupplementaryGroupIDs = func(uint32) ([]string, error) {
 		return nil, nil
 	}
+	clearSupplementaryGroupCache()
 	t.Cleanup(func() {
 		lookupSupplementaryGroupIDs = oldLookupSupplementaryGroupIDs
+		clearSupplementaryGroupCache()
 	})
 
 	fullPath := util.FullPath("/visible.txt")
@@ -380,12 +382,41 @@ func TestHasAccessUsesSupplementaryGroups(t *testing.T) {
 	lookupSupplementaryGroupIDs = func(uint32) ([]string, error) {
 		return []string{"456"}, nil
 	}
+	clearSupplementaryGroupCache()
 	t.Cleanup(func() {
 		lookupSupplementaryGroupIDs = oldLookupSupplementaryGroupIDs
+		clearSupplementaryGroupCache()
 	})
 
 	if got := hasAccess(999, 999, 123, 456, 0o060, fuse.R_OK|fuse.W_OK); !got {
 		t.Fatal("supplementary group membership should grant matching group permissions")
+	}
+}
+
+func TestSupplementaryGroupCaching(t *testing.T) {
+	callCount := 0
+	oldLookupSupplementaryGroupIDs := lookupSupplementaryGroupIDs
+	lookupSupplementaryGroupIDs = func(uid uint32) ([]string, error) {
+		callCount++
+		return []string{"456"}, nil
+	}
+	clearSupplementaryGroupCache()
+	t.Cleanup(func() {
+		lookupSupplementaryGroupIDs = oldLookupSupplementaryGroupIDs
+		clearSupplementaryGroupCache()
+	})
+
+	cachedLookupSupplementaryGroupIDs(999)
+	cachedLookupSupplementaryGroupIDs(999)
+	cachedLookupSupplementaryGroupIDs(999)
+
+	if callCount != 1 {
+		t.Fatalf("lookupSupplementaryGroupIDs called %d times, expected 1 (cache should prevent repeated calls)", callCount)
+	}
+
+	cachedLookupSupplementaryGroupIDs(1000)
+	if callCount != 2 {
+		t.Fatalf("lookupSupplementaryGroupIDs called %d times after different UID, expected 2", callCount)
 	}
 }
 
