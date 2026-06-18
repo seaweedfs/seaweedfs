@@ -48,10 +48,12 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 
 	replicaCount := len(remoteLocations)
 
-	// Record replication duration histogram for the overall write operation
-	defer func(t time.Time) {
-		stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpWrite).Observe(time.Since(t).Seconds())
-	}(time.Now())
+	if replicaCount > 0 {
+		// Record replication duration histogram for the overall write operation
+		defer func(t time.Time) {
+			stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpWrite).Observe(time.Since(t).Seconds())
+		}(time.Now())
+	}
 
 	if s.GetVolume(volumeId) != nil {
 		start := time.Now()
@@ -156,16 +158,6 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 
 func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
 
-	// Record replication duration and operation counter for delete
-	defer func(t time.Time) {
-		stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpDelete).Observe(time.Since(t).Seconds())
-		if err != nil {
-			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationFailure).Inc()
-		} else {
-			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationSuccess).Inc()
-		}
-	}(time.Now())
-
 	//check JWT
 	jwt := security.GetJwt(r)
 
@@ -179,6 +171,18 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	}
 
 	replicaCount := len(remoteLocations)
+
+	if replicaCount > 0 {
+		// Record replication duration and operation counter for delete
+		defer func(t time.Time) {
+			stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpDelete).Observe(time.Since(t).Seconds())
+			if err != nil {
+				stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationFailure).Inc()
+			} else {
+				stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationSuccess).Inc()
+			}
+		}(time.Now())
+	}
 
 	size, err = store.DeleteVolumeNeedle(volumeId, n)
 	if err != nil {
