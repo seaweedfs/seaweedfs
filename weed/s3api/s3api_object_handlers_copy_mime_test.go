@@ -3,6 +3,8 @@ package s3api
 import (
 	"net/http"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 func TestResolveDestinationMime(t *testing.T) {
@@ -277,5 +279,18 @@ func TestProcessMetadataBytes_CopyInheritsSystemHeaders(t *testing.T) {
 	}
 	if got := string(out["Content-Encoding"]); got != "gzip" {
 		t.Errorf("Content-Encoding = %q, want %q", got, "gzip")
+	}
+}
+
+func TestProcessMetadataBytes_CopyAppliesRequestedSSES3Header(t *testing.T) {
+	req := http.Header{}
+	req.Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+
+	out, err := processMetadataBytes(req, nil, false, false)
+	if err != nil {
+		t.Fatalf("processMetadataBytes returned error: %v", err)
+	}
+	if got := string(out[s3_constants.AmzServerSideEncryption]); got != s3_constants.SSEAlgorithmAES256 {
+		t.Fatalf("%s = %q, want %q", s3_constants.AmzServerSideEncryption, got, s3_constants.SSEAlgorithmAES256)
 	}
 }

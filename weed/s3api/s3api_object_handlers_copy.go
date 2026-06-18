@@ -1029,26 +1029,28 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 		metadata[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 
-	// Handle SSE-KMS headers - these are always processed from request headers if present
-	if sseAlgorithm := reqHeader.Get(s3_constants.AmzServerSideEncryption); sseAlgorithm == "aws:kms" {
+	// Handle destination SSE headers from the request when present.
+	if sseAlgorithm := reqHeader.Get(s3_constants.AmzServerSideEncryption); sseAlgorithm != "" {
 		metadata[s3_constants.AmzServerSideEncryption] = []byte(sseAlgorithm)
 
-		// KMS Key ID (optional - can use default key)
-		if kmsKeyID := reqHeader.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId); kmsKeyID != "" {
-			metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(kmsKeyID)
-		}
+		if sseAlgorithm == "aws:kms" {
+			// KMS Key ID (optional - can use default key)
+			if kmsKeyID := reqHeader.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId); kmsKeyID != "" {
+				metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(kmsKeyID)
+			}
 
-		// Encryption Context (optional)
-		if encryptionContext := reqHeader.Get(s3_constants.AmzServerSideEncryptionContext); encryptionContext != "" {
-			metadata[s3_constants.AmzServerSideEncryptionContext] = []byte(encryptionContext)
-		}
+			// Encryption Context (optional)
+			if encryptionContext := reqHeader.Get(s3_constants.AmzServerSideEncryptionContext); encryptionContext != "" {
+				metadata[s3_constants.AmzServerSideEncryptionContext] = []byte(encryptionContext)
+			}
 
-		// Bucket Key Enabled (optional)
-		if bucketKeyEnabled := reqHeader.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled != "" {
-			metadata[s3_constants.AmzServerSideEncryptionBucketKeyEnabled] = []byte(bucketKeyEnabled)
+			// Bucket Key Enabled (optional)
+			if bucketKeyEnabled := reqHeader.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled != "" {
+				metadata[s3_constants.AmzServerSideEncryptionBucketKeyEnabled] = []byte(bucketKeyEnabled)
+			}
 		}
 	} else {
-		// If not explicitly setting SSE-KMS, preserve existing SSE headers from source
+		// If not explicitly setting SSE, preserve existing SSE headers from source
 		for _, sseHeader := range []string{
 			s3_constants.AmzServerSideEncryption,
 			s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
