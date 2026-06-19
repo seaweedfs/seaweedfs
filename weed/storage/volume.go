@@ -415,23 +415,26 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 	}
 
 	// Detect phantom volumes: files deleted from disk but held open as deleted FDs.
+	// Only check if volume has substantial size (should have files on disk).
 	// Check cached result to avoid frequent syscalls; only re-validate every 30s.
 	// See github.com/seaweedfs/seaweedfs/issues/10004
-	const diskCheckIntervalNs = 30 * int64(time.Second)
-	now := time.Now().UnixNano()
-	lastCheck := v.lastDiskCheckNs.Load()
-	if now-lastCheck > diskCheckIntervalNs {
-		if _, err := os.Stat(v.DataFileName()); os.IsNotExist(err) {
-			glog.Warningf("Volume %d: data file missing (held open as deleted FD) - not reporting to master", v.Id)
+	if volumeSize > 0 {
+		const diskCheckIntervalNs = 30 * int64(time.Second)
+		now := time.Now().UnixNano()
+		lastCheck := v.lastDiskCheckNs.Load()
+		if now-lastCheck > diskCheckIntervalNs {
+			if _, err := os.Stat(v.DataFileName()); os.IsNotExist(err) {
+				glog.Warningf("Volume %d: data file missing (held open as deleted FD) - not reporting to master", v.Id)
+				v.lastDiskCheckNs.Store(now)
+				return 0, nil
+			}
+			if _, err := os.Stat(v.IndexFileName()); os.IsNotExist(err) {
+				glog.Warningf("Volume %d: index file missing (held open as deleted FD) - not reporting to master", v.Id)
+				v.lastDiskCheckNs.Store(now)
+				return 0, nil
+			}
 			v.lastDiskCheckNs.Store(now)
-			return 0, nil
 		}
-		if _, err := os.Stat(v.IndexFileName()); os.IsNotExist(err) {
-			glog.Warningf("Volume %d: index file missing (held open as deleted FD) - not reporting to master", v.Id)
-			v.lastDiskCheckNs.Store(now)
-			return 0, nil
-		}
-		v.lastDiskCheckNs.Store(now)
 	}
 
 	volumeInfo := &master_pb.VolumeInformationMessage{
