@@ -548,6 +548,7 @@ func initMiniAdminFlags() {
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
 	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
+	miniAdminOptions.urlPrefix = cmdMini.Flag.String("admin.urlPrefix", "", "URL path prefix when running the admin UI behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 }
 
 func init() {
@@ -1549,6 +1550,12 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		*miniAdminOptions.dataDir = filepath.Join(*miniDataFolders, "admin")
 	}
 
+	// Normalize URL prefix the same way `weed admin` does.
+	urlPrefix := strings.TrimRight(*miniAdminOptions.urlPrefix, "/")
+	if urlPrefix != "" && !strings.HasPrefix(urlPrefix, "/") {
+		urlPrefix = "/" + urlPrefix
+	}
+
 	// Start admin server in background. trackMiniClient lets the Ctrl+C
 	// handler wait for startAdminServer's graceful shutdown before filer/
 	// volume/master tear down.
@@ -1563,7 +1570,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, ""); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
