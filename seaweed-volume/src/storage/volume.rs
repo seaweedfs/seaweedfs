@@ -503,6 +503,7 @@ pub struct Volume {
 
     last_modified_ts_seconds: u64,
     last_append_at_ns: u64,
+    pub last_disk_check_ns: Arc<std::sync::atomic::AtomicI64>, // for phantom volume detection cache
 
     last_compact_index_offset: u64,
     last_compact_revision: u16,
@@ -575,6 +576,7 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
             is_compacting: false,
@@ -608,6 +610,7 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
             is_compacting: false,
