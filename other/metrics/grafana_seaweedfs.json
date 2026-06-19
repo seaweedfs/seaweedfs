@@ -4163,7 +4163,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_replication_duration_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le, operation))",
+              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_replication_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le, operation))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{operation}}"

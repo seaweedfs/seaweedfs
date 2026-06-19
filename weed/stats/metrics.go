@@ -462,7 +462,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
 			Subsystem: "volumeServer",
-			Name:      "replication_duration_seconds",
+			Name:      "replication_seconds",
 			Help:      "Bucketed histogram of replication operation duration in seconds.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"operation"})
