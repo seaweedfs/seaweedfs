@@ -225,7 +225,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				}
 			}
 			if *c.verbose {
-				fmt.Fprintf(c.writer, "dn %+v filtred %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
+				fmt.Fprintf(c.writer, "dn %+v filtered %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
 			}
 			return nil
 		})

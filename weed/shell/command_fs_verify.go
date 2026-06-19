@@ -194,7 +194,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 			return nil
 		}
 		if *c.verbose {
-			fmt.Fprintf(c.writer, "file: %s needles:%d verifed\n", entryPath, chunkCount)
+			fmt.Fprintf(c.writer, "file: %s needles:%d verified\n", entryPath, chunkCount)
 		}
 		fileCount++
 		return nil
@@ -312,7 +312,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 				itemPath := string(i.path)
 				if c.verifyEntry(itemPath, i.chunks, itemErrCount, &wg) {
 					if *c.verbose {
-						fmt.Fprintf(c.writer, "file: %s needles:%d verifed\n", itemPath, len(i.chunks))
+						fmt.Fprintf(c.writer, "file: %s needles:%d verified\n", itemPath, len(i.chunks))
 					}
 					fileCount++
 				}
