@@ -4,9 +4,10 @@
 //! matching Go's `server/volume_grpc_client_to_master.go`.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -827,6 +828,29 @@ fn build_heartbeat_with_ec_status(
                 delete_vids.push(vol.id);
                 should_delete_volume = true;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
+                // Detect phantom volumes: files deleted from disk but held open as deleted FDs.
+                // Check cached result to avoid frequent syscalls; only re-validate every 30s.
+                // See github.com/seaweedfs/seaweedfs/issues/10004
+                const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
+                let now_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::ZERO)
+                    .as_nanos() as i64;
+                let last_check_ns = vol.last_disk_check_ns.load(Ordering::Relaxed);
+                if now_ns - last_check_ns > DISK_CHECK_INTERVAL_NS {
+                    if !Path::new(&vol.data_file_name()).exists() {
+                        warn!("Volume {}: data file missing (held open as deleted FD) - not reporting to master", vol.id.0);
+                        vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                        continue;
+                    }
+                    if !Path::new(&vol.index_file_name()).exists() {
+                        warn!("Volume {}: index file missing (held open as deleted FD) - not reporting to master", vol.id.0);
+                        vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                        continue;
+                    }
+                    vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                }
+
                 let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
                 volumes.push(master_pb::VolumeInformationMessage {
                     id: vol.id.0,

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -47,6 +48,7 @@ type Volume struct {
 	ldbTimeout             int64
 
 	isCompactionInProgress atomic.Bool
+	lastDiskCheckNs        atomic.Int64 // unix time in nanoseconds for phantom volume detection
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
@@ -410,6 +412,26 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 
 	if !ok {
 		return 0, nil
+	}
+
+	// Detect phantom volumes: files deleted from disk but held open as deleted FDs.
+	// Check cached result to avoid frequent syscalls; only re-validate every 30s.
+	// See github.com/seaweedfs/seaweedfs/issues/10004
+	const diskCheckIntervalNs = 30 * int64(time.Second)
+	now := time.Now().UnixNano()
+	lastCheck := v.lastDiskCheckNs.Load()
+	if now-lastCheck > diskCheckIntervalNs {
+		if _, err := os.Stat(v.DataFileName()); os.IsNotExist(err) {
+			glog.Warningf("Volume %d: data file missing (held open as deleted FD) - not reporting to master", v.Id)
+			v.lastDiskCheckNs.Store(now)
+			return 0, nil
+		}
+		if _, err := os.Stat(v.IndexFileName()); os.IsNotExist(err) {
+			glog.Warningf("Volume %d: index file missing (held open as deleted FD) - not reporting to master", v.Id)
+			v.lastDiskCheckNs.Store(now)
+			return 0, nil
+		}
+		v.lastDiskCheckNs.Store(now)
 	}
 
 	volumeInfo := &master_pb.VolumeInformationMessage{
