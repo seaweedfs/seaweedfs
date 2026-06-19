@@ -1164,6 +1164,7 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 	util.LoadConfiguration("volume", false)
+	util.LoadConfiguration("admin", false)
 	miniOptions.v.applyDiskIOProbeConfig()
 
 	ensureMiniVolumeGrowthDefaults()
