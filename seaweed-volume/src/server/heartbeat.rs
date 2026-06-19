@@ -829,26 +829,29 @@ fn build_heartbeat_with_ec_status(
                 should_delete_volume = true;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
                 // Detect phantom volumes: files deleted from disk but held open as deleted FDs.
+                // Only check if volume has substantial size (should have files on disk).
                 // Check cached result to avoid frequent syscalls; only re-validate every 30s.
                 // See github.com/seaweedfs/seaweedfs/issues/10004
-                const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
-                let now_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or(Duration::ZERO)
-                    .as_nanos() as i64;
-                let last_check_ns = vol.last_disk_check_ns.load(Ordering::Relaxed);
-                if now_ns - last_check_ns > DISK_CHECK_INTERVAL_NS {
-                    if !Path::new(&vol.data_file_name()).exists() {
-                        warn!("Volume {}: data file missing (held open as deleted FD) - not reporting to master", vol.id.0);
+                if volume_size > 0 {
+                    const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
+                    let now_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or(Duration::ZERO)
+                        .as_nanos() as i64;
+                    let last_check_ns = vol.last_disk_check_ns.load(Ordering::Relaxed);
+                    if now_ns - last_check_ns > DISK_CHECK_INTERVAL_NS {
+                        if !Path::new(&vol.data_file_name()).exists() {
+                            warn!("Volume {}: data file missing (held open as deleted FD) - not reporting to master", vol.id.0);
+                            vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                            continue;
+                        }
+                        if !Path::new(&vol.index_file_name()).exists() {
+                            warn!("Volume {}: index file missing (held open as deleted FD) - not reporting to master", vol.id.0);
+                            vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                            continue;
+                        }
                         vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
-                        continue;
                     }
-                    if !Path::new(&vol.index_file_name()).exists() {
-                        warn!("Volume {}: index file missing (held open as deleted FD) - not reporting to master", vol.id.0);
-                        vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
-                        continue;
-                    }
-                    vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
                 }
 
                 let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
