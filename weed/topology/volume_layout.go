@@ -774,6 +774,21 @@ func (vl *VolumeLayout) CloneWritableVolumes() (writables []needle.VolumeId) {
 	return writables
 }
 
+// CountUnderReplicatedVolumes returns the number of volumes in this layout
+// that do not have enough replicas according to their replica placement
+// configuration. Safe for concurrent access (RLock).
+func (vl *VolumeLayout) CountUnderReplicatedVolumes() int {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	count := 0
+	for vid := range vl.vid2location {
+		if !vl.enoughCopies(vid) {
+			count++
+		}
+	}
+	return count
+}
+
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 	toDeleteIndex := -1
 	for k, id := range vl.writables {
