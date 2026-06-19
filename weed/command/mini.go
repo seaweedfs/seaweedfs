@@ -1487,6 +1487,18 @@ func startS3Service() {
 	miniS3Options.startS3Server()
 }
 
+// applyMiniAdminCredentialFallback fills the admin credential flags from
+// security.toml [admin] / WEED_ADMIN_* env vars when they were not set on the
+// command line, mirroring the standalone `weed admin` command. CLI flags take
+// precedence. Note the read-only viper keys (admin.readonly.*) differ from the
+// mini flag names (admin.readOnly*).
+func applyMiniAdminCredentialFallback(options *AdminOptions) {
+	applyViperFallback(cmdMini, options.adminUser, "admin.user", "admin.user")
+	applyViperFallback(cmdMini, options.adminPassword, "admin.password", "admin.password")
+	applyViperFallback(cmdMini, options.readOnlyUser, "admin.readOnlyUser", "admin.readonly.user")
+	applyViperFallback(cmdMini, options.readOnlyPassword, "admin.readOnlyPassword", "admin.readonly.password")
+}
+
 // startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
@@ -1502,6 +1514,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
+
+	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
+	// vars, matching the standalone `weed admin` command.
+	applyMiniAdminCredentialFallback(&miniAdminOptions)
 
 	// Security validation: prevent empty username when password is set
 	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
