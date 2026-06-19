@@ -4259,7 +4259,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum(rate(SeaweedFS_volumeServer_replication_targets_sum{cluster=~\"$cluster\"}[$__rate_interval])) / sum(rate(SeaweedFS_volumeServer_replication_targets_count{cluster=~\"$cluster\"}[$__rate_interval]))",
+              "expr": "sum(rate(SeaweedFS_volumeServer_replication_targets_sum{cluster=~\"$cluster\"}[$__rate_interval])) / clamp_min(sum(rate(SeaweedFS_volumeServer_replication_targets_count{cluster=~\"$cluster\"}[$__rate_interval])), 1e-9)",
               "range": true,
               "refId": "A",
               "legendFormat": "avg targets"
