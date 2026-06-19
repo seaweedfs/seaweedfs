@@ -414,23 +414,18 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		return 0, nil
 	}
 
-	// Detect phantom volumes: files deleted from disk but held open as deleted FDs.
-	// Only check if volume has file count (indicates it actually held data).
-	// Check cached result to avoid frequent syscalls; only re-validate every 30s.
-	// See github.com/seaweedfs/seaweedfs/issues/10004
-	if fileCount > 0 {
+	// Detect phantom volumes: the .dat was unlinked from disk but is still held
+	// open as a deleted FD, so the volume keeps serving and heartbeating while no
+	// disk-path operation can ever succeed. Skip remote-tiered volumes, whose .dat
+	// legitimately lives in cloud storage. Only a present .dat is cached for 30s; a
+	// missing one is re-checked every heartbeat so the volume stays suppressed until
+	// the file returns. See github.com/seaweedfs/seaweedfs/issues/10004
+	if fileCount > 0 && !v.HasRemoteFile() {
 		const diskCheckIntervalNs = 30 * int64(time.Second)
 		now := time.Now().UnixNano()
-		lastCheck := v.lastDiskCheckNs.Load()
-		if now-lastCheck > diskCheckIntervalNs {
-			if _, err := os.Stat(v.DataFileName()); os.IsNotExist(err) {
-				glog.Warningf("Volume %d: data file missing (held open as deleted FD) - not reporting to master", v.Id)
-				v.lastDiskCheckNs.Store(now)
-				return 0, nil
-			}
-			if _, err := os.Stat(v.IndexFileName()); os.IsNotExist(err) {
-				glog.Warningf("Volume %d: index file missing (held open as deleted FD) - not reporting to master", v.Id)
-				v.lastDiskCheckNs.Store(now)
+		if now-v.lastDiskCheckNs.Load() > diskCheckIntervalNs {
+			if _, err := os.Stat(v.FileName(".dat")); os.IsNotExist(err) {
+				glog.Warningf("Volume %d: data file %s missing (held open as deleted FD) - not reporting to master", v.Id, v.FileName(".dat"))
 				return 0, nil
 			}
 			v.lastDiskCheckNs.Store(now)
