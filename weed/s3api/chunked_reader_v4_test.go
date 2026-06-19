@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"fmt"
@@ -37,6 +38,14 @@ func TestExtractChecksumAlgorithmIsCaseInsensitive(t *testing.T) {
 	}
 	if got != ChecksumAlgorithmCRC32 {
 		t.Fatalf("extractChecksumAlgorithm() = %v, want %v", got, ChecksumAlgorithmCRC32)
+	}
+}
+
+func TestParseChunkChecksumRejectsDuplicateChecksumHeaders(t *testing.T) {
+	trailer := "x-amz-checksum-crc32:first\r\nx-amz-checksum-crc32:second\r\n\r\n"
+	_, _, err := parseChunkChecksum(bufio.NewReader(strings.NewReader(trailer)))
+	if err == nil {
+		t.Fatal("parseChunkChecksum accepted duplicate checksum trailer headers")
 	}
 }
 
