@@ -118,6 +118,8 @@ var (
 			Help:      "Number of crowded volumes in volume layouts",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	// MasterUnderReplicatedVolumes tracks volumes that do not have enough replicas,
+	// partitioned by collection, disk type, replication type, and TTL.
 	MasterUnderReplicatedVolumes = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -444,6 +446,8 @@ var (
 			Help:      "Counter of overall EC shards with issues detected during scrubbing.",
 		}, []string{"mode"})
 
+	// VolumeServerReplicationCounter counts replication operations by operation type
+	// (write, delete) and result (success, failure).
 	VolumeServerReplicationCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -452,6 +456,8 @@ var (
 			Help:      "Counter of replication operations by type (write, delete) and result (success, failure).",
 		}, []string{"operation", "result"})
 
+	// VolumeServerReplicationHistogram records replication operation duration in seconds,
+	// partitioned by operation type (write, delete).
 	VolumeServerReplicationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -461,6 +467,8 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"operation"})
 
+	// VolumeServerReplicationTargets records the number of replica targets per replication
+	// operation, useful for observing fan-out width.
 	VolumeServerReplicationTargets = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -470,6 +478,8 @@ var (
 			Buckets:   []float64{1, 2, 3, 4, 5},
 		})
 
+	// VolumeServerReplicationFailures counts replication failures by operation type
+	// and failure reason (timeout, connection_refused, context_cancelled, server_error).
 	VolumeServerReplicationFailures = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,

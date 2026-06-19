@@ -12,15 +12,13 @@ func TestReplicationMetricsRegistered(t *testing.T) {
 	VolumeServerReplicationCounter.Reset()
 	VolumeServerReplicationHistogram.Reset()
 	VolumeServerReplicationFailures.Reset()
-	VolumeServerReplicationTargets.Observe(0)
-	MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(0)
+	MasterUnderReplicatedVolumes.Reset()
 
 	t.Cleanup(func() {
 		VolumeServerReplicationCounter.Reset()
 		VolumeServerReplicationHistogram.Reset()
 		VolumeServerReplicationFailures.Reset()
-		VolumeServerReplicationTargets.Observe(0)
-		MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(0)
+		MasterUnderReplicatedVolumes.Reset()
 	})
 
 	// Seed CounterVec and HistogramVec with a value so collection returns them
@@ -70,10 +68,32 @@ func TestReplicationCounterIncrement(t *testing.T) {
 }
 
 func TestReplicationTargetsHistogram(t *testing.T) {
+	// VolumeServerReplicationTargets is a plain prometheus.Histogram
+	// (not a HistogramVec) and does not expose a Reset() method, so the
+	// histogram state is cumulative across tests that share the Gather
+	// registry.  We check >= to tolerate prior observations.
 	VolumeServerReplicationTargets.Observe(3)
-	count := testutil.CollectAndCount(VolumeServerReplicationTargets)
-	if count < 1 {
-		t.Errorf("expected at least 1 collection, got %d", count)
+
+	metrics, err := Gather.Gather()
+	if err != nil {
+		t.Fatalf("Failed to gather metrics: %v", err)
+	}
+
+	found := false
+	for _, mf := range metrics {
+		if mf.GetName() == "SeaweedFS_volumeServer_replication_targets" {
+			found = true
+			h := mf.GetMetric()[0].GetHistogram()
+			if h.GetSampleCount() < 1 {
+				t.Errorf("expected histogram_count>=1, got %d", h.GetSampleCount())
+			}
+			if h.GetSampleSum() < 3 {
+				t.Errorf("expected histogram_sum>=3, got %f", h.GetSampleSum())
+			}
+		}
+	}
+	if !found {
+		t.Error("SeaweedFS_volumeServer_replication_targets not found in gathered metrics")
 	}
 }
 
