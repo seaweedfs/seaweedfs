@@ -26,12 +26,14 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			return
 		}
 
+		// WantMd5 gives mount writes a real filer.ETag (server echoes Content-MD5 back).
 		uploadOption := &operation.UploadOption{
 			Filename:          filename,
 			Cipher:            wfs.option.Cipher,
 			IsInputCompressed: false,
 			MimeType:          "",
 			PairMap:           nil,
+			WantMd5:           true,
 		}
 		genFileUrlFn := func(host, fileId string) string {
 			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
