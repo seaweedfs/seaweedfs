@@ -5,14 +5,21 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
+type cachedGroupIDs struct {
+	groups    []string
+	expiresAt time.Time
+}
+
 var (
-	supplementaryGroupCache   = make(map[uint32][]string)
+	supplementaryGroupCache   = make(map[uint32]*cachedGroupIDs)
 	supplementaryGroupCacheMu sync.RWMutex
+	supplementaryGroupCacheTTL = 5 * time.Minute
 
 	lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
 		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
@@ -30,13 +37,15 @@ var (
 )
 
 // cachedLookupSupplementaryGroupIDs returns supplementary group IDs for a UID,
-// caching results to avoid repeated expensive system calls.
+// caching results for 5 minutes to avoid repeated expensive system calls.
 func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
+	now := time.Now()
+
 	supplementaryGroupCacheMu.RLock()
-	groupIDs, ok := supplementaryGroupCache[callerUid]
+	cached, ok := supplementaryGroupCache[callerUid]
 	supplementaryGroupCacheMu.RUnlock()
-	if ok {
-		return groupIDs, nil
+	if ok && now.Before(cached.expiresAt) {
+		return cached.groups, nil
 	}
 
 	groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
@@ -45,7 +54,10 @@ func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
 	}
 
 	supplementaryGroupCacheMu.Lock()
-	supplementaryGroupCache[callerUid] = groupIDs
+	supplementaryGroupCache[callerUid] = &cachedGroupIDs{
+		groups:    groupIDs,
+		expiresAt: now.Add(supplementaryGroupCacheTTL),
+	}
 	supplementaryGroupCacheMu.Unlock()
 
 	return groupIDs, nil

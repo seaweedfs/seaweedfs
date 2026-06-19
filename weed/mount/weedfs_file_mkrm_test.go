@@ -420,6 +420,33 @@ func TestSupplementaryGroupCaching(t *testing.T) {
 	}
 }
 
+func TestSupplementaryGroupCacheExpiry(t *testing.T) {
+	callCount := 0
+	oldLookupSupplementaryGroupIDs := lookupSupplementaryGroupIDs
+	oldTTL := supplementaryGroupCacheTTL
+	supplementaryGroupCacheTTL = 0
+	lookupSupplementaryGroupIDs = func(uid uint32) ([]string, error) {
+		callCount++
+		return []string{"456"}, nil
+	}
+	clearSupplementaryGroupCache()
+	t.Cleanup(func() {
+		lookupSupplementaryGroupIDs = oldLookupSupplementaryGroupIDs
+		supplementaryGroupCacheTTL = oldTTL
+		clearSupplementaryGroupCache()
+	})
+
+	cachedLookupSupplementaryGroupIDs(999)
+	if callCount != 1 {
+		t.Fatalf("Expected 1 lookup on first call, got %d", callCount)
+	}
+
+	cachedLookupSupplementaryGroupIDs(999)
+	if callCount != 2 {
+		t.Fatalf("Expected 2 lookups after TTL expiry, got %d", callCount)
+	}
+}
+
 func TestCreateExistingFileIgnoresQuotaPreflight(t *testing.T) {
 	wfs, _ := newCreateTestWFS(t)
 	wfs.option.Quota = 1
