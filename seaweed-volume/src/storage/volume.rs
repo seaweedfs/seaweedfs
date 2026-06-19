@@ -503,7 +503,7 @@ pub struct Volume {
 
     last_modified_ts_seconds: u64,
     last_append_at_ns: u64,
-    last_disk_check_ns: Arc<std::sync::atomic::AtomicI64>, // for phantom volume detection cache
+    pub last_disk_check_ns: Arc<std::sync::atomic::AtomicI64>, // for phantom volume detection cache
 
     last_compact_index_offset: u64,
     last_compact_revision: u16,
