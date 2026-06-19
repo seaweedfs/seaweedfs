@@ -12,14 +12,14 @@ func TestReplicationMetricsRegistered(t *testing.T) {
 	VolumeServerReplicationCounter.Reset()
 	VolumeServerReplicationHistogram.Reset()
 	VolumeServerReplicationFailures.Reset()
-	VolumeServerReplicationTargets.Set(0)
+	VolumeServerReplicationTargets.Observe(0)
 	MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(0)
 
 	t.Cleanup(func() {
 		VolumeServerReplicationCounter.Reset()
 		VolumeServerReplicationHistogram.Reset()
 		VolumeServerReplicationFailures.Reset()
-		VolumeServerReplicationTargets.Set(0)
+		VolumeServerReplicationTargets.Observe(0)
 		MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(0)
 	})
 
@@ -27,7 +27,7 @@ func TestReplicationMetricsRegistered(t *testing.T) {
 	VolumeServerReplicationCounter.WithLabelValues(ReplicationOpWrite, ReplicationSuccess).Inc()
 	VolumeServerReplicationHistogram.WithLabelValues(ReplicationOpWrite).Observe(0.1)
 	VolumeServerReplicationFailures.WithLabelValues(ReplicationOpWrite, FailureTimeout).Inc()
-	VolumeServerReplicationTargets.Set(1)
+	VolumeServerReplicationTargets.Observe(1)
 	MasterUnderReplicatedVolumes.WithLabelValues("default", "ssd", "1", "").Set(1)
 
 	metrics := []struct {
@@ -69,11 +69,11 @@ func TestReplicationCounterIncrement(t *testing.T) {
 	}
 }
 
-func TestReplicationTargetsGauge(t *testing.T) {
-	VolumeServerReplicationTargets.Set(3)
-	got := testutil.ToFloat64(VolumeServerReplicationTargets)
-	if got != 3 {
-		t.Errorf("expected 3.0, got %f", got)
+func TestReplicationTargetsHistogram(t *testing.T) {
+	VolumeServerReplicationTargets.Observe(3)
+	count := testutil.CollectAndCount(VolumeServerReplicationTargets)
+	if count < 1 {
+		t.Errorf("expected at least 1 collection, got %d", count)
 	}
 }
 

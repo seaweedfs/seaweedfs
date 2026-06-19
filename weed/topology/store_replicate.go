@@ -77,8 +77,8 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}
 	}
 
-	// Update replication targets gauge for all operations (including zero)
-	stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
+	// Observe replication targets histogram for all operations (including zero)
+	stats.VolumeServerReplicationTargets.Observe(float64(replicaCount))
 
 	if replicaCount > 0 { //send to other replica locations
 		start := time.Now()
@@ -200,8 +200,8 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 		return
 	}
 
-	// Update replication targets gauge for all operations (including zero)
-	stats.VolumeServerReplicationTargets.Set(float64(replicaCount))
+	// Observe replication targets histogram for all operations (including zero)
+	stats.VolumeServerReplicationTargets.Observe(float64(replicaCount))
 
 	if replicaCount > 0 { //send to other replica locations
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
