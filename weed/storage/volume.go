@@ -415,10 +415,10 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 	}
 
 	// Detect phantom volumes: files deleted from disk but held open as deleted FDs.
-	// Only check if volume has substantial size (should have files on disk).
+	// Only check if volume has file count (indicates it actually held data).
 	// Check cached result to avoid frequent syscalls; only re-validate every 30s.
 	// See github.com/seaweedfs/seaweedfs/issues/10004
-	if volumeSize > 0 {
+	if fileCount > 0 {
 		const diskCheckIntervalNs = 30 * int64(time.Second)
 		now := time.Now().UnixNano()
 		lastCheck := v.lastDiskCheckNs.Load()

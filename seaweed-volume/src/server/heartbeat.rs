@@ -829,10 +829,10 @@ fn build_heartbeat_with_ec_status(
                 should_delete_volume = true;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
                 // Detect phantom volumes: files deleted from disk but held open as deleted FDs.
-                // Only check if volume has substantial size (should have files on disk).
+                // Only check if volume has file count (indicates it actually held data).
                 // Check cached result to avoid frequent syscalls; only re-validate every 30s.
                 // See github.com/seaweedfs/seaweedfs/issues/10004
-                if volume_size > 0 {
+                if vol.file_count() > 0 {
                     const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
                     let now_ns = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
