@@ -928,7 +928,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		IsTruncated:  aws.Bool(false),
 	}
 
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
+	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", "", false, math.MaxInt32)
 	if err != nil {
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
 		return

@@ -79,6 +79,17 @@ func TestListMultipartUploadsResultKeyMarkers(t *testing.T) {
 			},
 			expectedUploadIDs: []string{"UID-3", "UID-4"},
 		},
+		{
+			name: "cross-key regression: ensures key > KeyMarker is included even if uploadId <= UploadIdMarker",
+			input: &s3.ListMultipartUploadsInput{
+					Bucket:         aws.String("test-bucket"),
+					KeyMarker:      aws.String("fileB"),
+					UploadIdMarker: aws.String("UID-3"),
+					Prefix:         aws.String(""),
+					MaxUploads:     aws.Int64(10),
+			},
+			expectedUploadIDs: []string{"UID-4"},
+		},
 	}
 
 	for _, tt := range tests {
