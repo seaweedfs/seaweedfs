@@ -2,7 +2,9 @@ package s3api
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -285,5 +287,81 @@ func TestDoesSignV2Match(t *testing.T) {
 				t.Errorf("Identity name = %q, want %q", identity.Name, "testUser")
 			}
 		})
+	}
+}
+
+func TestDoesSignV2MatchUnicodePath(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "CJK conversation key from ai-dial-core",
+			path: "/dialcore/core/Users/test-user/conversations/qwen3.5-35b-a3b__%E5%A4%9A%E7%9D%87%E3%80%82",
+		},
+		{
+			name: "Japanese filename from issue 8598",
+			path: "/voyage-dev1/public/1773200112088-998898991/%E3%81%9F%E3%81%82%E3%81%84%E3%81%BEd%C2%B7.jpg",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, "http://example.com"+tt.path, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			req.Header.Set("Date", "Mon, 09 Sep 2011 23:36:00 GMT")
+
+			// Clients (jclouds, AWS SDK) sign percent-encoded paths, not decoded Path.
+			authHeader := signatureV2(cred, req.Method, tt.path, req.URL.Query().Encode(), req.Header)
+			req.Header.Set("Authorization", authHeader)
+
+			identity, errCode := iam.doesSignV2Match(req)
+			if errCode != s3err.ErrNone {
+				t.Fatalf("doesSignV2Match() error = %v, want %v; path=%q escaped=%q",
+					errCode, s3err.ErrNone, req.URL.Path, req.URL.EscapedPath())
+			}
+			if identity == nil {
+				t.Fatal("Expected non-nil identity")
+			}
+		})
+	}
+}
+
+func TestDoesPresignV2MatchUnicodePath(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+
+	path := "/dialcore/core/Users/test-user/conversations/qwen3.5-35b-a3b__%E5%A4%9A%E7%9D%87%E3%80%82"
+	expires := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+
+	req, err := http.NewRequest(http.MethodGet, "http://example.com"+path, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	query := req.URL.Query()
+	query.Set("AWSAccessKeyId", cred.AccessKey)
+	query.Set("Expires", expires)
+	query.Set("Signature", preSignatureV2(cred, req.Method, path, query.Encode(), req.Header, expires))
+	req.URL.RawQuery = query.Encode()
+
+	identity, errCode := iam.doesPresignV2SignatureMatch(req)
+	if errCode != s3err.ErrNone {
+		t.Fatalf("doesPresignV2SignatureMatch() error = %v, want %v; path=%q escaped=%q",
+			errCode, s3err.ErrNone, req.URL.Path, req.URL.EscapedPath())
+	}
+	if identity == nil {
+		t.Fatal("Expected non-nil identity")
 	}
 }
