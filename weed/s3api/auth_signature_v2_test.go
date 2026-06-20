@@ -2,7 +2,9 @@ package s3api
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -318,13 +320,13 @@ func TestDoesSignV2MatchUnicodePath(t *testing.T) {
 			req.Header.Set("Date", "Mon, 09 Sep 2011 23:36:00 GMT")
 
 			// Clients (jclouds, AWS SDK) sign percent-encoded paths, not decoded Path.
-			authHeader := signatureV2(cred, req.Method, pathForSignature(req), req.URL.Query().Encode(), req.Header)
+			authHeader := signatureV2(cred, req.Method, tt.path, req.URL.Query().Encode(), req.Header)
 			req.Header.Set("Authorization", authHeader)
 
 			identity, errCode := iam.doesSignV2Match(req)
 			if errCode != s3err.ErrNone {
 				t.Fatalf("doesSignV2Match() error = %v, want %v; path=%q escaped=%q",
-					errCode, s3err.ErrNone, req.URL.Path, pathForSignature(req))
+					errCode, s3err.ErrNone, req.URL.Path, req.URL.EscapedPath())
 			}
 			if identity == nil {
 				t.Fatal("Expected non-nil identity")
@@ -341,7 +343,7 @@ func TestDoesPresignV2MatchUnicodePath(t *testing.T) {
 	}
 
 	path := "/dialcore/core/Users/test-user/conversations/qwen3.5-35b-a3b__%E5%A4%9A%E7%9D%87%E3%80%82"
-	expires := "1931620800"
+	expires := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
 
 	req, err := http.NewRequest(http.MethodGet, "http://example.com"+path, nil)
 	if err != nil {
@@ -351,13 +353,13 @@ func TestDoesPresignV2MatchUnicodePath(t *testing.T) {
 	query := req.URL.Query()
 	query.Set("AWSAccessKeyId", cred.AccessKey)
 	query.Set("Expires", expires)
-	query.Set("Signature", preSignatureV2(cred, req.Method, pathForSignature(req), query.Encode(), req.Header, expires))
+	query.Set("Signature", preSignatureV2(cred, req.Method, path, query.Encode(), req.Header, expires))
 	req.URL.RawQuery = query.Encode()
 
 	identity, errCode := iam.doesPresignV2SignatureMatch(req)
 	if errCode != s3err.ErrNone {
 		t.Fatalf("doesPresignV2SignatureMatch() error = %v, want %v; path=%q escaped=%q",
-			errCode, s3err.ErrNone, req.URL.Path, pathForSignature(req))
+			errCode, s3err.ErrNone, req.URL.Path, req.URL.EscapedPath())
 	}
 	if identity == nil {
 		t.Fatal("Expected non-nil identity")

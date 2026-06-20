@@ -103,13 +103,3 @@ func getRequestAuthType(r *http.Request) authType {
 
 	return authType
 }
-
-// pathForSignature returns the URI-encoded path used for AWS signature verification.
-// S3 clients sign percent-encoded request paths (e.g. jclouds getRawPath(), AWS SDK
-// EscapedPath). Go's net/http decodes r.URL.Path before handlers run.
-func pathForSignature(r *http.Request) string {
-	if p := r.URL.EscapedPath(); p != "" {
-		return p
-	}
-	return r.URL.Path
-}
