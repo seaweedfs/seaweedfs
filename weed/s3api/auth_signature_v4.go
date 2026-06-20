@@ -315,12 +315,9 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 8. Verify the signature, trying with X-Forwarded-Prefix first
-	pathForSignature := r.URL.EscapedPath()
-	if pathForSignature == "" {
-		pathForSignature = r.URL.Path
-	}
+	urlPathForSignature := pathForSignature(r)
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, urlPathForSignature)
 		calculatedSignature, errCode = verify(cleanedPath)
 		if errCode == s3err.ErrNone {
 			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
@@ -328,13 +325,13 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 9. Verify with the original path
-	calculatedSignature, errCode = verify(pathForSignature)
+	calculatedSignature, errCode = verify(urlPathForSignature)
 	if errCode == s3err.ErrNone {
 		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
 	// 10. Retry with decoded path if signature used raw path encoding
-	if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+	if decodedPath, decodeErr := url.PathUnescape(urlPathForSignature); decodeErr == nil && decodedPath != urlPathForSignature {
 		calculatedSignature, errCode = verify(decodedPath)
 		if errCode == s3err.ErrNone {
 			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
