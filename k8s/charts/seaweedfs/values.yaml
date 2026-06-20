@@ -877,8 +877,6 @@ filer:
       # Service name to expose. Must be an existing Service in the release
       # namespace. Common values: "filer", "all-in-one", or a custom service.
       service: ""
-      # gRPC port on the target service.
-      port: 18888
       # Hosts to expose. Empty list = wildcard (no host restriction).
       # Example: ["filer.example.com"]
       hosts: []

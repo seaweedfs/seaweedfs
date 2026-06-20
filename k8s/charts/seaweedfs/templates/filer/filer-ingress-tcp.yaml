@@ -37,14 +37,14 @@ spec:
     - match: HostSNI(`{{ $host }}`)
       services:
         - name: {{ $serviceName }}
-          port: {{ .Values.filer.ingresses.tcp.port }}
+          port: {{ $.Values.filer.grpcPort }}
           passthrough: true
     {{- end }}
     {{- else }}
     - match: HostSNI(`*`)
       services:
         - name: {{ $serviceName }}
-          port: {{ .Values.filer.ingresses.tcp.port }}
+          port: {{ $.Values.filer.grpcPort }}
           passthrough: true
     {{- end }}
   tls:
