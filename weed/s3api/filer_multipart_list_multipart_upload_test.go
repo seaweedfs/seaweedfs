@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -28,6 +29,11 @@ func isMultipartUploadSkipped(entry *filer_pb.Entry, input *s3.ListMultipartUplo
 			return true, key
 		}
 	}
+	
+	if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
+		return true, key
+	}
+	
 	return false, key
 }
 
@@ -89,6 +95,28 @@ func TestListMultipartUploadsResultKeyMarkers(t *testing.T) {
 					MaxUploads:     aws.Int64(10),
 			},
 			expectedUploadIDs: []string{"UID-4"},
+		},
+		{
+			name: "with prefix matching some uploads",
+			input: &s3.ListMultipartUploadsInput{
+				Bucket:         aws.String("test-bucket"),
+				KeyMarker:      aws.String(""),
+				UploadIdMarker: aws.String(""),
+				Prefix:         aws.String("fileB"),
+				MaxUploads:     aws.Int64(10),
+			},
+			expectedUploadIDs: []string{"UID-2", "UID-3"},
+		},
+		{
+			name: "with prefix matching no uploads",
+			input: &s3.ListMultipartUploadsInput{
+				Bucket:         aws.String("test-bucket"),
+				KeyMarker:      aws.String(""),
+				UploadIdMarker: aws.String(""),
+				Prefix:         aws.String("fileX"),
+				MaxUploads:     aws.Int64(10),
+			},
+			expectedUploadIDs: nil,
 		},
 	}
 
