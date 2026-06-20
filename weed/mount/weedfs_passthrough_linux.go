@@ -111,7 +111,10 @@ func (wfs *WFS) setupPassthroughBacking(fh *FileHandle, fileSize int64) (int32, 
 // path the kernel Read handler uses, so the backing bytes are identical to what
 // a normal read would return.
 func materializeFile(fh *FileHandle, dst *os.File, fileSize int64) error {
-	buf := make([]byte, 1024*1024)
+	// Reuse the shared copy buffer pool (ChunkSizeLimit-sized) rather than
+	// allocating a fresh buffer per materialization.
+	buf := fh.wfs.copyBufferPool.Get().([]byte)
+	defer fh.wfs.copyBufferPool.Put(buf)
 	for offset := int64(0); offset < fileSize; {
 		// readDataByFileHandle reads chunks + dirty pages and maps EOF to nil.
 		n, err := readDataByFileHandle(buf, fh, offset)

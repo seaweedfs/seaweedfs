@@ -153,6 +153,12 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (fh *FileHandle) ReleaseHandle() {
+	// Tear down FUSE passthrough first, outside the fhLockTable lock.
+	// teardownPassthrough is self-synchronized by passthroughMu and needs no
+	// other lock, so keeping it out of the fhLockTable critical section avoids
+	// any lock-order coupling between passthroughMu and fhLockTable.
+	fh.teardownPassthrough()
+
 	// Release distributed lock before cleaning up, so other mounts can
 	// proceed as soon as this handle is done flushing.
 	if fh.dlmLock != nil {
@@ -165,7 +171,6 @@ func (fh *FileHandle) ReleaseHandle() {
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	fh.dirtyPages.Destroy()
-	fh.teardownPassthrough()
 	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()
 	}
