@@ -936,20 +936,31 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	uploadsCount := int64(0)
 	for _, entry := range entries {
-		if entry.Extended != nil {
-			key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
-			if *input.KeyMarker != "" && *input.KeyMarker != key {
-				continue
-			}
-			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
-				continue
-			}
-			output.Upload = append(output.Upload, &s3.MultipartUpload{
-				Key:      objectKey(aws.String(key)),
-				UploadId: aws.String(entry.Name),
-			})
-			uploadsCount += 1
+		if entry.Extended == nil {
+			continue
 		}
+		keyBytes, ok := entry.Extended[s3_constants.ExtMultipartObjectKey]
+		if !ok {
+			glog.Warningf("listMultipartUploads %s: missing object key metadata for upload entry %s", *input.Bucket, entry.Name)
+			continue
+		}
+		key := string(keyBytes)
+		if *input.KeyMarker != "" {
+			if key < *input.KeyMarker {
+					continue
+			}
+			if key == *input.KeyMarker && (*input.UploadIdMarker == "" || entry.Name <= *input.UploadIdMarker) {
+					continue
+			}
+		}
+		if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
+			continue
+		}
+		output.Upload = append(output.Upload, &s3.MultipartUpload{
+			Key:      objectKey(aws.String(key)),
+			UploadId: aws.String(entry.Name),
+		})
+		uploadsCount += 1
 		if uploadsCount >= *input.MaxUploads {
 			output.IsTruncated = aws.Bool(true)
 			output.NextUploadIdMarker = aws.String(entry.Name)
