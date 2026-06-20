@@ -51,22 +51,71 @@ jobs:
           
           echo "=== Testing default configuration ==="
           helm template test $CHART_DIR > /tmp/default.yaml
-          echo "✓ Default configuration renders successfully"
+          echo "Default configuration renders successfully"
           
           echo "=== Testing with S3 enabled ==="
           helm template test $CHART_DIR --set s3.enabled=true > /tmp/s3.yaml
           grep -q "kind: Deployment" /tmp/s3.yaml && grep -q "seaweedfs-s3" /tmp/s3.yaml
-          echo "✓ S3 deployment renders correctly"
+          echo "S3 deployment renders correctly"
           
           echo "=== Testing with all-in-one mode ==="
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
           grep -q "seaweedfs-all-in-one" /tmp/allinone.yaml
-          echo "✓ All-in-one deployment renders correctly"
+          echo "All-in-one deployment renders correctly"
           
           echo "=== Testing with security enabled ==="
           helm template test $CHART_DIR --set global.seaweedfs.enableSecurity=true > /tmp/security.yaml
           grep -q "security-config" /tmp/security.yaml
-          echo "✓ Security configuration renders correctly"
+          echo "Security configuration renders correctly"
+
+          echo ""
+          echo "=== Testing JWT expiration overrides ==="
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
+            > /tmp/jwt-volume-write-expiration.yaml
+          grep -q "security-config" /tmp/jwt-volume-write-expiration.yaml
+          grep -q "expires_after_seconds = 11" /tmp/jwt-volume-write-expiration.yaml
+
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeRead=22 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.filerWrite=33 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.filerRead=44 \
+            > /tmp/jwt-expiration.yaml
+
+          assert_jwt_expiration() {
+            local section="$1"
+            local seconds="$2"
+            awk -v section="[$section]" -v seconds="$seconds" '
+              /^[[:space:]]*\[.*\][[:space:]]*$/ {
+                in_section = index($0, section) > 0
+              }
+              in_section && $0 ~ "^[[:space:]]*expires_after_seconds = " seconds "$" {
+                found = 1
+              }
+              END { exit !found }
+            ' /tmp/jwt-expiration.yaml
+          }
+
+          assert_jwt_expiration jwt.signing 11
+          assert_jwt_expiration jwt.signing.read 22
+          assert_jwt_expiration jwt.filer_signing 33
+          assert_jwt_expiration jwt.filer_signing.read 44
+
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.enableSecurity=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            > /tmp/jwt-default-expiration.yaml
+          if grep -q "expires_after_seconds =" /tmp/jwt-default-expiration.yaml; then
+            echo "FAIL: zero JWT expiration values should preserve runtime defaults"
+            exit 1
+          fi
+          echo "JWT expiration overrides render correctly"
 
           echo ""
           echo "=== Testing IAM gRPC opt-in path ==="
@@ -121,7 +170,7 @@ jobs:
           if configmap(out, "test-seaweedfs-security-config") is not None:
               failed.append("defaults: security ConfigMap should not render")
           else:
-              print("✓ defaults: no security-config ConfigMap (unchanged)")
+              print("defaults: no security-config ConfigMap (unchanged)")
 
           # Case 2: filerWrite=true alone is the documented opt-in for
           # the Admin UI Users tab. Configmap must render with
@@ -141,7 +190,7 @@ jobs:
               if "[grpc" in toml:
                   failed.append("filerWrite=true: security.toml unexpectedly has [grpc.*] (would need cert mounts)")
               if "[jwt.filer_signing]" in toml and "[grpc" not in toml:
-                  print("✓ filerWrite=true: security.toml has [jwt.filer_signing], no [grpc.*]")
+                  print("filerWrite=true: security.toml has [jwt.filer_signing], no [grpc.*]")
 
           # Case 3: filer + admin pods must MOUNT the security ConfigMap
           # under filerWrite=true so the JWT key reaches both processes.
@@ -154,7 +203,7 @@ jobs:
               if "security-config" not in vols or "security-config" not in mounts:
                   failed.append(f"filerWrite=true: {wl} does not mount security-config (IAM gRPC would still fail)")
               else:
-                  print(f"✓ filerWrite=true: {wl} mounts security-config")
+                  print(f"filerWrite=true: {wl} mounts security-config")
               cert_vols = {v for v in vols if v.endswith("-cert")}
               if cert_vols:
                   failed.append(f"filerWrite=true: {wl} unexpectedly has cert volumes {sorted(cert_vols)}")
@@ -172,7 +221,7 @@ jobs:
               if missing:
                   failed.append(f"enableSecurity=true: security.toml missing {missing}")
               else:
-                  print("✓ enableSecurity=true: security.toml has [jwt.signing] + [grpc.*] preserved")
+                  print("enableSecurity=true: security.toml has [jwt.signing] + [grpc.*] preserved")
 
           # Case 5: helper must tolerate explicit nulls (gemini-code-assist
           # PR review). securityConfig=null was the parens-pattern crash
@@ -187,7 +236,7 @@ jobs:
               if configmap(out, "test-seaweedfs-security-config") is not None:
                   failed.append(f"{null_path}=null: should not render configmap")
               else:
-                  print(f"✓ {null_path}=null: render tolerates explicit null")
+                  print(f"{null_path}=null: render tolerates explicit null")
 
           if failed:
               print("\nFAIL:", file=sys.stderr)
@@ -195,14 +244,14 @@ jobs:
                   print(f"  - {f}", file=sys.stderr)
               sys.exit(1)
           PYEOF
-          echo "✓ IAM gRPC decoupling tests passed"
+          echo "IAM gRPC decoupling tests passed"
 
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
             --set global.seaweedfs.monitoring.enabled=true \
             --set global.seaweedfs.monitoring.gatewayHost=prometheus \
             --set global.seaweedfs.monitoring.gatewayPort=9091 > /tmp/monitoring.yaml
-          echo "✓ Monitoring configuration renders correctly"
+          echo "Monitoring configuration renders correctly"
           
           echo "=== Testing with PVC storage ==="
           helm template test $CHART_DIR \
@@ -210,25 +259,25 @@ jobs:
             --set master.data.size=10Gi \
             --set master.data.storageClass=standard > /tmp/pvc.yaml
           grep -q "PersistentVolumeClaim" /tmp/pvc.yaml
-          echo "✓ PVC configuration renders correctly"
+          echo "PVC configuration renders correctly"
           
           echo "=== Testing with custom replicas ==="
           helm template test $CHART_DIR \
             --set master.replicas=3 \
             --set filer.replicas=2 \
             --set volume.replicas=3 > /tmp/replicas.yaml
-          echo "✓ Custom replicas configuration renders correctly"
+          echo "Custom replicas configuration renders correctly"
           
           echo "=== Testing filer with S3 gateway ==="
           helm template test $CHART_DIR \
             --set filer.s3.enabled=true \
             --set filer.s3.enableAuth=true > /tmp/filer-s3.yaml
-          echo "✓ Filer S3 gateway renders correctly"
+          echo "Filer S3 gateway renders correctly"
           
           echo "=== Testing SFTP enabled ==="
           helm template test $CHART_DIR --set sftp.enabled=true > /tmp/sftp.yaml
           grep -q "seaweedfs-sftp" /tmp/sftp.yaml
-          echo "✓ SFTP deployment renders correctly"
+          echo "SFTP deployment renders correctly"
           
           echo "=== Testing ingress configurations ==="
           helm template test $CHART_DIR \
@@ -237,12 +286,12 @@ jobs:
             --set s3.enabled=true \
             --set s3.ingress.enabled=true > /tmp/ingress.yaml
           grep -q "kind: Ingress" /tmp/ingress.yaml
-          echo "✓ Ingress configurations render correctly"
+          echo "Ingress configurations render correctly"
           
           echo "=== Testing COSI driver ==="
           helm template test $CHART_DIR --set cosi.enabled=true > /tmp/cosi.yaml
           grep -q "seaweedfs-cosi" /tmp/cosi.yaml
-          echo "✓ COSI driver renders correctly"
+          echo "COSI driver renders correctly"
           
           echo ""
           echo "=== Testing long release name: service names match DNS references ==="
@@ -285,7 +334,7 @@ jobs:
           [ "$MASTER_SVC" = "$MASTER_ADDR_SVC" ] || { echo "FAIL: master service name mismatch"; exit 1; }
           [ "$FILER_CLIENT_SVC" = "$FILER_ADDR_SVC" ] || { echo "FAIL: filer-client service name mismatch"; exit 1; }
           [ "$FILER_CLIENT_SVC" = "$S3_FILER_SVC" ] || { echo "FAIL: S3 -filer= does not match filer-client service"; exit 1; }
-          echo "✓ Normal mode: service names match DNS references with long release name"
+          echo "Normal mode: service names match DNS references with long release name"
 
           # --- All-in-one mode: all-in-one service vs both helper addresses ---
           helm template "$LONG_RELEASE" $CHART_DIR \
@@ -305,7 +354,7 @@ jobs:
 
           [ "$AIO_SVC" = "$AIO_MASTER_ADDR_SVC" ] || { echo "FAIL: all-in-one master address mismatch"; exit 1; }
           [ "$AIO_SVC" = "$AIO_FILER_ADDR_SVC" ] || { echo "FAIL: all-in-one filer address mismatch"; exit 1; }
-          echo "✓ All-in-one mode: service names match DNS references with long release name"
+          echo "All-in-one mode: service names match DNS references with long release name"
 
           echo ""
           echo "=== Testing security+S3: no blank lines in shell command blocks ==="
@@ -343,7 +392,7 @@ jobs:
                   print(f"FAIL: {e}", file=sys.stderr)
               print("Rendered with: global.seaweedfs.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
               sys.exit(1)
-          print("✓ No blank lines in security+S3 command blocks")
+          print("No blank lines in security+S3 command blocks")
           PYEOF
 
           echo ""
@@ -421,7 +470,7 @@ jobs:
                             f"(got cert={has_cert} key={has_key} https={has_https})", file=sys.stderr)
                       failed = True
                   else:
-                      print(f"✓ {label}: cert/key/https args emitted together")
+                      print(f"{label}: cert/key/https args emitted together")
               else:
                   if has_cert or has_key or has_https:
                       print(f"FAIL: {label}: expected none of {cert_flag}/{key_flag}/{https_flag}; "
@@ -429,7 +478,7 @@ jobs:
                             f"(got cert={has_cert} key={has_key} https={has_https})", file=sys.stderr)
                       failed = True
                   else:
-                      print(f"✓ {label}: no TLS args emitted, main -port stays HTTP")
+                      print(f"{label}: no TLS args emitted, main -port stays HTTP")
 
               # bash -n: pin down that the rendered script parses. Guards against
               # a future helper change that leaves a dangling `\` with nothing
@@ -446,7 +495,49 @@ jobs:
           sys.exit(1 if failed else 0)
           PYEOF
 
-          echo "✅ All template rendering tests passed!"
+          echo ""
+          echo "=== Testing all-in-one env: a key in both global and component renders once ==="
+          # Regression: all-in-one looped global and component extraEnvironmentVars
+          # in two separate ranges, emitting duplicate env entries for any key set
+          # in both maps. Render a shared key and assert it appears exactly once in
+          # the all-in-one container, with the component value winning (consistent
+          # with the merge helper the other components already use). pyyaml is
+          # installed by the earlier IAM gRPC block in this same step.
+          helm template test $CHART_DIR \
+            --set allInOne.enabled=true \
+            --set global.seaweedfs.extraEnvironmentVars.WEED_SHARED=fromGlobal \
+            --set allInOne.extraEnvironmentVars.WEED_SHARED=fromComponent > /tmp/aio-env.yaml
+          python3 - /tmp/aio-env.yaml <<'PYEOF'
+          import sys, yaml
+          from collections import Counter
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          dep = next(d for d in docs if d.get("kind") == "Deployment"
+                     and d["metadata"]["name"].endswith("all-in-one"))
+          envs = [e["name"] for c in dep["spec"]["template"]["spec"]["containers"]
+                  for e in c.get("env", [])]
+          dups = {k: v for k, v in Counter(envs).items() if v > 1}
+          if dups:
+              print(f"FAIL: duplicate env entries in all-in-one container: {dups}", file=sys.stderr)
+              sys.exit(1)
+          val = next(e.get("value") for c in dep["spec"]["template"]["spec"]["containers"]
+                     for e in c.get("env", []) if e["name"] == "WEED_SHARED")
+          if val != "fromComponent":
+              print(f"FAIL: WEED_SHARED should take the component value 'fromComponent', got '{val}'",
+                    file=sys.stderr)
+              sys.exit(1)
+          print("all-in-one env: shared key renders once, component value wins")
+          PYEOF
+
+          echo "=== Testing bucket versioning: YAML bool false suspends like string \"false\" ==="
+          # bool false used to be a silent no-op while string "false" suspended.
+          BOOL_FALSE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=verbucket \
+            --set s3.createBuckets[0].versioning=false | grep 's3.bucket.versioning -name verbucket' || true)
+          echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
+          echo "Bucket versioning: YAML bool false suspends consistently with string \"false\""
+
+          echo "All template rendering tests passed!"
 
       - name: Create kind cluster
         uses: helm/kind-action@v1.14.0

@@ -102,7 +102,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		cipherKey = util.GenCipherKey()
 	}
 
-	err = doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+	err = doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, true, func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 		if !entry.Entry.IsDirectory {
 			ext := filepath.Ext(entry.Entry.Name)
 			if encrypted, encErr := util.Encrypt([]byte(entry.Entry.Name), cipherKey); encErr == nil {
@@ -147,7 +147,12 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 }
 
-func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, genFn func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) error, saveFn func(outputChan chan interface{}) error) error {
+// skipSystemLog excludes the metadata-log subtree (SystemLogDir) from the
+// traversal. fs.meta.save sets it so the export doesn't carry the whole change
+// log; volume.fsck and fs.verify must leave it false so the live log-file
+// chunks are accounted for — otherwise fsck reports them as orphans and could
+// delete referenced needles.
+func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, skipSystemLog bool, genFn func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) error, saveFn func(outputChan chan interface{}) error) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -199,11 +204,14 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	}
 
 	defer cancel()
+	systemLogChildPrefix := filer.SystemLogDir + "/"
 	err := filer_pb.TraverseBfs(ctx, filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 
-		parent := string(parentPath)
-		if parent == filer.SystemLogDir || strings.HasPrefix(parent, filer.SystemLogDir+"/") {
-			return nil
+		if skipSystemLog {
+			parent := string(parentPath)
+			if parent == filer.SystemLogDir || strings.HasPrefix(parent, systemLogChildPrefix) {
+				return nil
+			}
 		}
 
 		protoMessage := &filer_pb.FullEntry{

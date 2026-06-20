@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -88,6 +89,12 @@ type AdminServer struct {
 	cacheExpiration time.Duration
 	lastCacheUpdate time.Time
 	cachedTopology  *ClusterTopology
+
+	// dashSamples is a bounded in-memory ring of recent cluster snapshots that
+	// powers the dashboard's at-a-glance sparklines (see dashboard_metrics.go),
+	// filled on the maintenance-metrics ticker. No Prometheus dependency.
+	dashSamples   []dashSample
+	dashSamplesMu sync.Mutex
 
 	// Filer discovery and caching
 	cachedFilers         []string
@@ -375,12 +382,16 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Seed one sample so the dashboard has something to draw before the first tick.
+	s.recordDashboardSample()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.collectMaintenanceMetrics()
+			s.recordDashboardSample()
 		}
 	}
 }
@@ -1189,6 +1200,52 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 	}, nil
 }
 
+// GetClusterS3Servers retrieves cluster S3 servers data
+func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
+	var s3Servers []S3ServerInfo
+
+	// Get S3 server information from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.S3Type,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each S3 server node
+		for _, node := range resp.ClusterNodes {
+			createdAt := time.Unix(0, node.CreatedAtNs)
+
+			s3ServerInfo := S3ServerInfo{
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
+				DataCenter: node.DataCenter,
+				Version:    node.Version,
+				CreatedAt:  createdAt,
+			}
+
+			s3Servers = append(s3Servers, s3ServerInfo)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get S3 server nodes from master: %w", err)
+	}
+
+	// Sort S3 servers by address for consistent ordering on page refresh
+	sort.Slice(s3Servers, func(i, j int) bool {
+		return s3Servers[i].Address < s3Servers[j].Address
+	})
+
+	return &ClusterS3ServersData{
+		S3Servers:      s3Servers,
+		TotalS3Servers: len(s3Servers),
+		LastUpdated:    time.Now(),
+	}, nil
+}
+
 // GetAllFilers method moved to client_management.go
 
 // GetVolumeDetails method moved to volume_management.go
@@ -1778,7 +1835,7 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 						data := collectionMap[collection]
 						data.PhysicalSize += int64(shards.TotalSize())
-						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
+						data.LogicalSize += int64(shards.MinusParityShards(erasure_coding.DataShardsCount).TotalSize())
 						collectionMap[collection] = data
 
 						// fileCount is volume-wide (same .ecx on every shard

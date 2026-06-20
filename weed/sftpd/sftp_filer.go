@@ -89,7 +89,7 @@ func (fs *SftpServer) AdjustedUrl(location *filer_pb.Location) string { return l
 func (fs *SftpServer) GetDataCenter() string                          { return fs.dataCenter }
 func (fs *SftpServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	addr := fs.filerAddr.ToGrpcAddress()
-	return pb.WithGrpcClient(streamingMode, util.RandomInt32(), func(conn *grpc.ClientConn) error {
+	return pb.WithGrpcClient(context.Background(), streamingMode, util.RandomInt32(), func(conn *grpc.ClientConn) error {
 		return fn(filer_pb.NewSeaweedFilerClient(conn))
 	}, addr, false, fs.grpcDialOption)
 }

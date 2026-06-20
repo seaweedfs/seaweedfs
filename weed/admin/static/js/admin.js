@@ -736,6 +736,18 @@ function exportVolumes() {
     downloadCSV(csv, 'seaweedfs-volumes.csv');
 }
 
+// Export the full cluster volume list (all volumes + EC shards, more fields than
+// the table) as a JSON report served by the admin API. Carries the active
+// collection filter from the page URL.
+function exportVolumeList() {
+    let url = basePath('/api/volumes/export');
+    const collection = new URLSearchParams(window.location.search).get('collection');
+    if (collection) {
+        url += '?collection=' + encodeURIComponent(collection);
+    }
+    window.open(url, '_blank');
+}
+
 // Export collections data as CSV
 function exportCollections() {
     const table = document.getElementById('collectionsTable');
@@ -1788,7 +1800,7 @@ function createFileViewerContent(file, content) {
     if (file.mime.startsWith('image/')) {
         return `
             <div class="text-center">
-                <img src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path))}"
+                <img src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path) + '&inline=true')}"
                      class="img-fluid" alt="${file.name}" style="max-height: 500px;">
             </div>
         `;
@@ -1806,7 +1818,7 @@ function createFileViewerContent(file, content) {
     } else if (file.mime === 'application/pdf') {
         return `
             <div class="text-center">
-                <embed src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path))}"
+                <embed src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path) + '&inline=true')}"
                        type="application/pdf" width="100%" height="500px">
             </div>
         `;

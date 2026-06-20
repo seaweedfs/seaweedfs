@@ -428,6 +428,7 @@ message VolumeEcShardsGenerateResponse {
 message VolumeEcShardsRebuildRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    bool unsafe_ignore_sidecar = 3; // bypass the bitrot-sidecar fail-closed guard (operator override; distinct from ec.rebuild -force)
 }
 message VolumeEcShardsRebuildResponse {
     repeated uint32 rebuilt_shard_ids = 1;
@@ -442,6 +443,7 @@ message VolumeEcShardsCopyRequest {
     bool copy_ecj_file = 6;
     bool copy_vif_file = 7;
     uint32 disk_id = 8;  // Target disk ID for storing EC shards
+    bool copy_ecsum_file = 9; // copy the bitrot checksum sidecar (.ecsum) when present; tolerant of a missing source (no-op), since this non-2PC path has no Prepare backstop
 }
 message VolumeEcShardsCopyResponse {
 }
@@ -450,8 +452,11 @@ message VolumeEcShardsDeleteRequest {
     uint32 volume_id = 1;
     string collection = 2;
     repeated uint32 shard_ids = 3;
+    bool full_teardown = 4; // pre-encode cleanup: wipe every EC artifact + generation for this volume, not just shard_ids
+    int64 encode_ts_ns = 5; // full_teardown generation fence: delete only a disk whose .vif generation is strictly OLDER than this; preserve same-or-newer, generation 0, and an unreadable .vif. 0 => wipe-all (shell pre-encode / pre-upgrade)
 }
 message VolumeEcShardsDeleteResponse {
+    bool full_teardown_done = 1; // set by a new server that performed full_teardown; absent from an old server lets the caller detect the silent no-op
 }
 
 message VolumeEcShardsMountRequest {
@@ -466,6 +471,7 @@ message VolumeEcShardsMountResponse {
 message VolumeEcShardsUnmountRequest {
     uint32 volume_id = 1;
     repeated uint32 shard_ids = 3;
+    int64 encode_ts_ns = 4; // generation fence: skip a disk whose mounted EC volume is this generation or newer (0 = unfenced, unmount all)
 }
 message VolumeEcShardsUnmountResponse {
 }
@@ -476,10 +482,13 @@ message VolumeEcShardReadRequest {
     int64 offset = 3;
     int64 size = 4;
     uint64 file_key = 5;
+    reserved 6;
+    int64 encode_ts_ns = 7; // caller's expected encode time; the server rejects a shard from a different encode run
 }
 message VolumeEcShardReadResponse {
     bytes data = 1;
     bool is_deleted = 2;
+    int64 encode_ts_ns = 3; // identity of the shard actually served; client rejects a mismatch (0 = pre-upgrade server)
 }
 
 message VolumeEcBlobDeleteRequest {
@@ -540,6 +549,7 @@ message DiskStatus {
     float percent_free = 5;
     float percent_used = 6;
     string disk_type = 7;
+    string error = 8;
 }
 
 message MemStatus {
@@ -577,6 +587,31 @@ message VolumeInfo {
 message EcShardConfig {
     uint32 data_shards = 1;   // Number of data shards (e.g., 10)
     uint32 parity_shards = 2; // Number of parity shards (e.g., 4)
+    int64 encode_ts_ns = 3;   // encode time (unix nanos); a read served from a shard of a different encode run is rejected
+}
+
+// EcBitrotProtection is the entire content of a bitrot checksum sidecar
+// (<base>.ecsum for the legacy generation, <base>.ecsum.v<N> for vacuum
+// generation N). On disk it is wrapped in a fixed header carrying a CRC32C
+// over this serialized payload (see weed/storage/erasure_coding/ec_bitrot.go).
+message EcBitrotProtection {
+    ChecksumAlgorithm algorithm = 1;       // CRC32C (Castagnoli)
+    uint32 block_size = 2;                  // bytes per checksum block; default 16777216 (16 MiB), a power-of-two multiple of 1 MiB
+    uint32 generation = 3;                  // EC vacuum generation these checksums describe (0 = legacy/fresh); must match the sidecar filename version
+    EcShardConfig ec_shard_config = 4;      // data/parity shard counts at encode time
+    repeated EcShardChecksums shards = 5;   // one entry per shard id in the active layout
+    bytes encode_uuid = 6;                  // random per-encode identity, for stale-sidecar detection across in-place re-encodes
+}
+
+message EcShardChecksums {
+    uint32 shard_id = 1;     // 0..MaxShardCount-1 (custom EC ratios go up to 32)
+    int64 covered_size = 2;  // shard byte length these checksums cover (must equal the on-disk shard length)
+    bytes block_crc32c = 3;  // packed little-endian uint32[] = ceil(covered_size/block_size) entries
+}
+
+enum ChecksumAlgorithm {
+    CHECKSUM_NONE = 0;
+    CHECKSUM_CRC32C = 1;
 }
 message OldVersionVolumeInfo {
     repeated RemoteFile files = 1;
@@ -655,6 +690,7 @@ enum VolumeScrubMode {
     INDEX = 1;
     FULL = 2;
     LOCAL = 3;
+    CHECKSUM = 4; // EC only: verify each local shard's raw bytes against the bitrot checksum sidecar
 }
 
 message ScrubVolumeRequest {

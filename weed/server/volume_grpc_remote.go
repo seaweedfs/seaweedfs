@@ -229,8 +229,16 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	if readRemoteErr != nil {
 		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
 	}
+	// The chunk is recorded with the requested size, so a short read would be
+	// cached as a full-size chunk with a zero-padded or truncated tail. Fail
+	// loudly instead of persisting silently corrupt content.
+	if int64(len(data)) != req.Size {
+		return nil, fmt.Errorf("read from remote %+v: got %d bytes, want %d", remoteStorageLocation, len(data), req.Size)
+	}
 
 	var wg sync.WaitGroup
+	var localErr error
+	replicaErrs := make([]error, len(req.Replicas))
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -244,43 +252,50 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		n.LastModified = uint64(time.Now().Unix())
 		n.SetHasLastModifiedDate()
 		if _, localWriteErr := vs.store.WriteVolumeNeedle(v.Id, n, true, false); localWriteErr != nil {
-			if err == nil {
-				err = fmt.Errorf("local write needle %d size %d: %v", req.NeedleId, req.Size, localWriteErr)
-			}
+			localErr = fmt.Errorf("local write needle %d size %d: %v", req.NeedleId, req.Size, localWriteErr)
 		} else {
 			resp.ETag = n.Etag()
 		}
 	}()
 	if len(req.Replicas) > 0 {
 		fileId := needle.NewFileId(v.Id, req.NeedleId, req.Cookie)
-		for _, replica := range req.Replicas {
+		for i, replica := range req.Replicas {
 			wg.Add(1)
-			go func(targetVolumeServer string) {
+			go func(idx int, targetVolumeServer string) {
 				defer wg.Done()
 				uploadOption := &operation.UploadOption{
 					UploadUrl:         fmt.Sprintf("http://%s/%s?type=replicate", targetVolumeServer, fileId.String()),
 					Filename:          "",
 					Cipher:            false,
 					IsInputCompressed: false,
+					IsReplication:     true,
 					MimeType:          "",
 					PairMap:           nil,
 					Jwt:               security.EncodedJwt(req.Auth),
 				}
 
 				uploader, uploaderErr := operation.NewUploader()
-				if uploaderErr != nil && err == nil {
-					err = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
+				if uploaderErr != nil {
+					replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
 					return
 				}
 
-				if _, replicaWriteErr := uploader.UploadData(ctx, data, uploadOption); replicaWriteErr != nil && err == nil {
-					err = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, replicaWriteErr)
+				if _, replicaWriteErr := uploader.UploadData(ctx, data, uploadOption); replicaWriteErr != nil {
+					replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, replicaWriteErr)
 				}
-			}(replica.Url)
+			}(i, replica.Url)
 		}
 	}
 
 	wg.Wait()
+
+	// local write error wins; otherwise surface the first replica failure
+	err = localErr
+	for _, replicaErr := range replicaErrs {
+		if err == nil {
+			err = replicaErr
+		}
+	}
 
 	return resp, err
 }

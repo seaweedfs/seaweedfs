@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -46,7 +47,7 @@ func Detection(
 		return nil, false, fmt.Errorf("topology info not available")
 	}
 
-	topo, nodeCount := buildBalancerTopology(topoInfo, ecConfig)
+	topo, nodeCount, volumeRatio := buildBalancerTopology(topoInfo, ecConfig)
 	if nodeCount < ecConfig.MinServerCount {
 		glog.V(1).Infof("EC balance: only %d servers, need at least %d", nodeCount, ecConfig.MinServerCount)
 		return nil, false, nil
@@ -71,6 +72,10 @@ func Detection(
 		Ratio: func(collection string) (int, int) {
 			return resolveECRatio(clusterInfo, collection)
 		},
+		// Prefer each volume's own heartbeat-reported ratio over the collection
+		// default so a mixed-ratio collection is spread per volume; 0 defers to
+		// resolveECRatio (and is the always-0 OSS case).
+		VolumeRatio: volumeRatio,
 		// Move incrementally across detection cycles rather than draining a rack
 		// in one batch; the scheduler re-evaluates each cycle.
 		GlobalMaxMovesPerRack: 10,
@@ -136,10 +141,19 @@ func Detection(
 // applying the data-center, disk-type, and collection filters. Rack keys are
 // dc:rack composites to avoid cross-DC name collisions. Per-disk free capacity
 // is split evenly from the node total because the wire collapses same-type disks.
-// Returns the topology and the number of eligible nodes (for MinServerCount).
-func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*ecbalancer.Topology, int) {
+// Returns the topology, the number of eligible nodes (for MinServerCount), and a
+// per-volume ratio lookup built from each shard's heartbeat (0,0 when unreported,
+// e.g. always in OSS) which Plan prefers over the collection ratio for mixed-ratio
+// clusters.
+func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
 	topo := ecbalancer.NewTopology()
 	allowedCollections := wildcard.CompileWildcardMatchers(config.CollectionFilter)
+
+	type volRatioKey struct {
+		collection string
+		vid        uint32
+	}
+	volRatios := make(map[volRatioKey][2]int)
 
 	// Normalize the disk-type filter: "hdd" (and the default "") map to the
 	// HardDriveType, which the topology reports under the empty-string key. Keep a
@@ -198,6 +212,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				}
 
 				node := topo.AddNode(dn.Id, dc.Id, rackKey, freeSlots)
+				// Group servers sharing a host so a volume's shards spread across
+				// machines, not just nodes (servers on one host are one fault domain).
+				node.SetHost(pb.NewServerAddressFromDataNode(dn).ToHost())
 
 				perDiskFree := 0
 				if diskCount := len(diskTypeOf); diskCount > 0 && freeSlots > 0 {
@@ -218,6 +235,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 							continue
 						}
 						node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
+						if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
+							volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
+						}
 					}
 				}
 
@@ -226,7 +246,11 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 		}
 	}
 
-	return topo, nodeCount
+	volumeRatio := func(collection string, vid uint32) (int, int) {
+		r := volRatios[volRatioKey{collection, vid}]
+		return r[0], r[1]
+	}
+	return topo, nodeCount, volumeRatio
 }
 
 // resolveECRatio returns the (dataShards, parityShards) for a collection from the

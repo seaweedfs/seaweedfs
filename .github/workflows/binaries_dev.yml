@@ -3,6 +3,11 @@ name: "go: build dev binaries"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/binaries_dev.yml'
 
 concurrency:
   group: binaries-dev-${{ github.ref }}

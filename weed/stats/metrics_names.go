@@ -63,4 +63,22 @@ const (
 	ErrorCompletedEtagInvalid       = "errorCompletedEtagInvalid"
 	ErrorCompletedEtagMismatch      = "errorCompletedEtagMismatch"
 	ErrorCompletedPartEntryMismatch = "errorCompletedPartEntryMismatch"
+
+	// ReplicationOpWrite is the label value for write replication operations.
+	ReplicationOpWrite = "write"
+	// ReplicationOpDelete is the label value for delete replication operations.
+	ReplicationOpDelete = "delete"
+	// ReplicationSuccess is the label value for successful replication operations.
+	ReplicationSuccess = "success"
+	// ReplicationFailure is the label value for failed replication operations.
+	ReplicationFailure = "failure"
+
+	// FailureTimeout is the failure reason label for deadline-exceeded errors.
+	FailureTimeout = "timeout"
+	// FailureConnectionRefused is the failure reason label for connection-refused errors.
+	FailureConnectionRefused = "connection_refused"
+	// FailureContextCancelled is the failure reason label for context-cancelled errors.
+	FailureContextCancelled = "context_cancelled"
+	// FailureServerError is the failure reason label for generic server-side errors.
+	FailureServerError = "server_error"
 )

@@ -95,6 +95,9 @@ func StoreObjectLockConfigurationInExtended(entry *filer_pb.Entry, config *Objec
 	if config.Rule != nil && config.Rule.DefaultRetention != nil {
 		defaultRetention := config.Rule.DefaultRetention
 
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultDaysKey)
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultYearsKey)
+
 		// Store mode
 		if defaultRetention.Mode != "" {
 			entry.Extended[s3_constants.ExtObjectLockDefaultModeKey] = []byte(defaultRetention.Mode)
@@ -323,6 +326,11 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 
 	// Check for invalid Days value (zero is invalid when explicitly provided)
 	if retention.DaysSet && retention.Days == 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	// Check for invalid Years value (zero is invalid when explicitly provided)
+	if retention.YearsSet && retention.Years == 0 {
 		return ErrInvalidRetentionPeriod
 	}
 

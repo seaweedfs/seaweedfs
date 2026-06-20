@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -42,9 +41,7 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 		glog.V(1).Infof("automatic volume grow failed: %+v", err)
 		return
 	}
-	for _, newVidLocation := range newVidLocations {
-		ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: newVidLocation})
-	}
+	ms.broadcastVolumeLocationsToClients(newVidLocations)
 }
 
 func (ms *MasterServer) ProcessGrowRequest() {
@@ -71,8 +68,10 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				writable, crowded := vl.GetWritableVolumeCount()
 				mustGrow := int(lastGrowCount) - writable
 				vgr := vlc.ToVolumeGrowRequest()
+				underReplicated := vl.CountUnderReplicatedVolumes()
 				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
 				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
+				stats.MasterUnderReplicatedVolumes.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(underReplicated))
 
 				switch {
 				case mustGrow > 0:
@@ -91,22 +90,12 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				if err != nil {
 					glog.V(0).Infof("volume grow request failed: %+v", err)
 				}
-				writableVolumes := vl.CloneWritableVolumes()
-				for dcId, racks := range dcs {
-					for _, rackId := range racks {
-						if vl.ShouldGrowVolumesByDcAndRack(&writableVolumes, dcId, rackId) {
-							vgr.DataCenter = string(dcId)
-							vgr.Rack = string(rackId)
-							if lastGrowCount > 0 {
-								vgr.WritableVolumeCount = uint32(math.Ceil(float64(lastGrowCount) / float64(len(dcs)*len(racks))))
-							} else {
-								vgr.WritableVolumeCount = volumeGrowStepCount
-							}
-
-							if _, err = ms.VolumeGrow(ctx, vgr); err != nil {
-								glog.V(0).Infof("volume grow request for dc:%s rack:%s failed: %+v", dcId, rackId, err)
-							}
-						}
+				for _, plan := range vl.PlanRackAwareGrowth(dcs, lastGrowCount, volumeGrowStepCount) {
+					vgr.DataCenter = plan.DataCenter
+					vgr.Rack = plan.Rack
+					vgr.WritableVolumeCount = plan.WritableVolumeCount
+					if _, err = ms.VolumeGrow(ctx, vgr); err != nil {
+						glog.V(0).Infof("volume grow request for dc:%s rack:%s failed: %+v", plan.DataCenter, plan.Rack, err)
 					}
 				}
 			}
@@ -152,9 +141,10 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			// we have lock called inside vg
 			glog.V(0).Infof("volume grow %+v", req)
 			go func(req *topology.VolumeGrowRequest, vl *topology.VolumeLayout) {
+				// defer so a panic can't strand growRequest.
+				defer filter.Delete(req)
+				defer vl.DoneGrowRequest()
 				ms.DoAutomaticVolumeGrow(req)
-				vl.DoneGrowRequest()
-				filter.Delete(req)
 			}(req, vl)
 		}
 	}()
@@ -184,7 +174,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			}
 			var auth string
 			if commaSep > 0 { // this is a file id
-				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
+				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey(), ms.guard.ExpiresAfterSec(), result.VolumeOrFileId))
 			}
 			if result.NotFound {
 				notFoundCount++

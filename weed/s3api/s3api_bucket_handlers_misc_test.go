@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 func newMiscTestServer(t *testing.T, bucket string) *S3ApiServer {
@@ -31,6 +33,32 @@ func newBucketRequest(method, bucket, query, body string) *http.Request {
 	req := httptest.NewRequest(method, "/"+bucket+"?"+query, strings.NewReader(body))
 	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
 	return req
+}
+
+func TestHasExplicitBucketACL(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{name: "none", headers: nil, want: false},
+		{name: "private is default", headers: map[string]string{s3_constants.AmzCannedAcl: "private"}, want: false},
+		{name: "canned public-read", headers: map[string]string{s3_constants.AmzCannedAcl: "public-read"}, want: true},
+		{name: "canned case-insensitive private", headers: map[string]string{s3_constants.AmzCannedAcl: "PRIVATE"}, want: false},
+		{name: "grant read", headers: map[string]string{s3_constants.AmzAclRead: `id="x"`}, want: true},
+		{name: "grant full control", headers: map[string]string{s3_constants.AmzAclFullControl: `id="x"`}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newBucketRequest(http.MethodPut, "b", "", "")
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			if got := hasExplicitBucketACL(req); got != tc.want {
+				t.Fatalf("hasExplicitBucketACL = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestGetBucketPolicyStatusIsPublic(t *testing.T) {
@@ -99,6 +127,36 @@ func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "MalformedXML") {
 		t.Fatalf("body missing MalformedXML: %s", rec.Body.String())
+	}
+}
+
+func TestPutBucketOwnershipControlsRejectsRuleWithoutObjectOwnership(t *testing.T) {
+	ownerID := AccountAdmin.Id
+	s3a := &S3ApiServer{
+		bucketRegistry: &BucketRegistry{
+			metadataCache: map[string]*BucketMetaData{
+				"b": {
+					Name: "b",
+					Owner: &s3.Owner{
+						ID: &ownerID,
+					},
+				},
+			},
+			notFound: map[string]struct{}{},
+		},
+	}
+	body := `<OwnershipControls><Rule></Rule></OwnershipControls>`
+	req := newBucketRequest(http.MethodPut, "b", "ownershipControls=", body)
+	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	rec := httptest.NewRecorder()
+
+	s3a.PutBucketOwnershipControls(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "InvalidRequest") {
+		t.Fatalf("body missing InvalidRequest: %s", rec.Body.String())
 	}
 }
 

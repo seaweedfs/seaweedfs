@@ -110,7 +110,8 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 	commaSep := strings.LastIndex(r.URL.Path, ",")
 	dotSep := strings.LastIndex(r.URL.Path, ".")
 	fid := r.URL.Path[commaSep+1:]
-	if dotSep > 0 {
+	// dot must be after comma; otherwise path[commaSep+1:dotSep] panics
+	if dotSep > commaSep {
 		fid = r.URL.Path[commaSep+1 : dotSep]
 	}
 

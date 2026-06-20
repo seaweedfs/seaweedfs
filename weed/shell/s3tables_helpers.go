@@ -17,7 +17,7 @@ const s3TablesDefaultRegion = ""
 const timeFormat = "2006-01-02T15:04:05Z07:00"
 
 func withFilerClient(commandEnv *CommandEnv, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+	return pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(conn)
 		return fn(client)
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
@@ -28,6 +28,8 @@ func executeS3Tables(commandEnv *CommandEnv, operation string, req interface{}, 
 	defer cancel()
 	return withFilerClient(commandEnv, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
+		// The shell talks to the filer directly with no S3 auth, so it is trusted.
+		manager.SetTrusted(true)
 		mgrClient := s3tables.NewManagerClient(client)
 		return manager.Execute(ctx, mgrClient, operation, req, resp, accountID)
 	})

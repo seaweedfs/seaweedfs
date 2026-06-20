@@ -3,24 +3,73 @@ package mount
 import (
 	"os/user"
 	"strconv"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-var lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
-	u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+type cachedGroupIDs struct {
+	groups    []string
+	expiresAt time.Time
+}
+
+var (
+	supplementaryGroupCache   = make(map[uint32]*cachedGroupIDs)
+	supplementaryGroupCacheMu sync.RWMutex
+	supplementaryGroupCacheTTL = 5 * time.Minute
+
+	lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
+		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+		if err != nil {
+			glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
+			return nil, err
+		}
+		groupIDs, err := u.GroupIds()
+		if err != nil {
+			glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
+			return nil, err
+		}
+		return groupIDs, nil
+	}
+)
+
+// cachedLookupSupplementaryGroupIDs returns supplementary group IDs for a UID,
+// caching results for 5 minutes to avoid repeated expensive system calls.
+func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
+	now := time.Now()
+
+	supplementaryGroupCacheMu.RLock()
+	cached, ok := supplementaryGroupCache[callerUid]
+	supplementaryGroupCacheMu.RUnlock()
+	if ok && now.Before(cached.expiresAt) {
+		return cached.groups, nil
+	}
+
+	groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
 	if err != nil {
-		glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
 		return nil, err
 	}
-	groupIDs, err := u.GroupIds()
-	if err != nil {
-		glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
-		return nil, err
+
+	supplementaryGroupCacheMu.Lock()
+	supplementaryGroupCache[callerUid] = &cachedGroupIDs{
+		groups:    groupIDs,
+		expiresAt: now.Add(supplementaryGroupCacheTTL),
 	}
+	supplementaryGroupCacheMu.Unlock()
+
 	return groupIDs, nil
+}
+
+// clearSupplementaryGroupCache wipes the UID->groups cache for test isolation.
+func clearSupplementaryGroupCache() {
+	supplementaryGroupCacheMu.Lock()
+	defer supplementaryGroupCacheMu.Unlock()
+	for k := range supplementaryGroupCache {
+		delete(supplementaryGroupCache, k)
+	}
 }
 
 /**
@@ -67,7 +116,7 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 
 	isMember := callerGid == fileGid
 	if !isMember {
-		groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
+		groupIDs, err := cachedLookupSupplementaryGroupIDs(callerUid)
 		if err != nil {
 			// Cannot determine supplementary group membership.
 			// Fall through to "other" permission check since we already

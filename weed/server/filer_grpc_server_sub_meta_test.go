@@ -188,7 +188,8 @@ func TestEachEventNotificationFnMatchesRenameTargetsForAllWatchTypes(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stream := &collectingStream{}
-			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client")
+			var unsyncedEvents int64
+			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client", &unsyncedEvents)
 
 			newDir := "/etc/remote"
 			if len(tt.req.Directories) > 0 {
@@ -495,4 +496,49 @@ func TestMaybeSendIdleHeartbeat(t *testing.T) {
 			t.Fatalf("expected lastHeartbeat unchanged on send error, got %d", got)
 		}
 	})
+}
+
+// TestFilteredEventsEmitMaxUnsyncedMarker pins the source-side shape the client
+// keys off: after MaxUnsyncedEvents filtered events, eachEventNotificationFn
+// emits a marker with a fresh timestamp and a non-nil but empty EventNotification.
+// Consumed by TestFilerSyncOffsetStaysFreshOnFilteredMarker.
+func TestFilteredEventsEmitMaxUnsyncedMarker(t *testing.T) {
+	fs := &FilerServer{
+		option: &FilerOption{Host: pb.ServerAddress("127.0.0.1:8888")},
+		filer:  &filer.Filer{Signature: 123},
+	}
+	req := &filer_pb.SubscribeMetadataRequest{ClientName: "syncFrom_A_To_B", PathPrefix: "/watched/"}
+
+	stream := &collectingStream{}
+	var unsyncedEvents int64
+	eachEventFn := fs.eachEventNotificationFn(req, stream, "client", &unsyncedEvents)
+
+	base := time.Now().UnixNano()
+	var lastTsNs int64
+	// Feed MaxUnsyncedEvents+1 events on a NON-watched path so every one is filtered.
+	total := int(MaxUnsyncedEvents) + 1
+	for i := 0; i < total; i++ {
+		lastTsNs = base + int64(i)
+		err := eachEventFn("/other/dir", &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: fmt.Sprintf("file%d", i)},
+		}, lastTsNs)
+		if err != nil {
+			t.Fatalf("eachEventFn: %v", err)
+		}
+	}
+
+	if len(stream.messages) != 1 {
+		t.Fatalf("expected exactly 1 MaxUnsyncedEvents marker, got %d", len(stream.messages))
+	}
+	marker := stream.messages[0]
+	if !filer_pb.IsEmpty(marker) {
+		t.Errorf("marker should have empty EventNotification (IsEmpty), got %+v", marker.EventNotification)
+	}
+	if marker.EventNotification == nil {
+		t.Error("marker EventNotification should be non-nil but empty (the shape the client keys off)")
+	}
+	if marker.TsNs != lastTsNs {
+		t.Errorf("marker TsNs = %d, want fresh source ts %d", marker.TsNs, lastTsNs)
+	}
+	t.Logf("source emits marker{EventNotification:&{}, TsNs:%d} after %d filtered events", marker.TsNs, total)
 }

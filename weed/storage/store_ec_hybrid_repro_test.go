@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -85,8 +87,17 @@ func TestIssue9478_PartialEcOnSiblingDiskOfHealthyDat(t *testing.T) {
 	if f, err := os.Create(ecBase + ".ecj"); err == nil {
 		f.Close()
 	}
-	if f, err := os.Create(ecBase + ".vif"); err == nil {
-		f.Close()
+	// A credible EC .vif records the encode-time source size and ratio. The
+	// prune now deletes a partial leftover only when the sibling .dat matches
+	// that recorded size byte-for-byte (a real encoded volume records it), so
+	// the test reflects production rather than a loose "any .dat > superblock"
+	// gate.
+	if err := volume_info.SaveVolumeInfo(ecBase+".vif", &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		DatFileSize:   datFileSize,
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+	}); err != nil {
+		t.Fatalf("save ec .vif: %v", err)
 	}
 
 	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
@@ -112,11 +123,11 @@ func TestIssue9478_PartialEcOnSiblingDiskOfHealthyDat(t *testing.T) {
 	// consistent state.
 	store := &Store{
 		Locations:           []*DiskLocation{datLoc, ecLoc},
-		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, 16),
-		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, 16),
+		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, 16),
+		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, 16),
 	}
 	ecLoc.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
-		store.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+		store.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
 			Id:         uint32(vid),
 			Collection: collection,
 		}
@@ -231,8 +242,8 @@ func TestIssue9478_ZeroByteSiblingDatKeepsPartialEc(t *testing.T) {
 
 	store := &Store{
 		Locations:           []*DiskLocation{datLoc, ecLoc},
-		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, 16),
-		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, 16),
+		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, 16),
+		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, 16),
 	}
 
 	if err := ecLoc.loadAllEcShards(nil); err != nil {

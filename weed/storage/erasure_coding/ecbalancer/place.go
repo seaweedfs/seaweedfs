@@ -388,9 +388,16 @@ func rackHasFreeDisk(r *rack, eligible func(*disk) bool) bool {
 // pickNodeInRackEligible is pickNodeInRack restricted to nodes that have a free
 // eligible disk. FromActiveTopology keeps all disk types/tags in the snapshot, so
 // without this a node with free volume slots but no eligible disk could be chosen.
+//
+// Among eligible nodes it ranks by fewest shards of the volume per machine, then per
+// node, with free capacity breaking ties. The free-capacity tie-break (not sorted id)
+// keeps the lowest-id machine from winning every volume's first shard against the
+// shared encode snapshot and piling up load.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool) *Node {
+	machineShards := countShardsByHost(vk, r.nodes)
+	machineFree := freeSlotsByHost(r.nodes)
 	var best *Node
-	bestCount := -1
+	var bestMCount, bestMFree, bestNCount, bestNFree int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
 		if node.freeSlots <= 0 {
@@ -403,8 +410,22 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
-		if best == nil || count < bestCount {
-			best, bestCount = node, count
+		mCount, mFree := machineShards[node.host], machineFree[node.host]
+		better := false
+		switch {
+		case best == nil:
+			better = true
+		case mCount != bestMCount:
+			better = mCount < bestMCount
+		case mFree != bestMFree:
+			better = mFree > bestMFree
+		case count != bestNCount:
+			better = count < bestNCount
+		default:
+			better = node.freeSlots > bestNFree
+		}
+		if better {
+			best, bestMCount, bestMFree, bestNCount, bestNFree = node, mCount, mFree, count, node.freeSlots
 		}
 	}
 	return best

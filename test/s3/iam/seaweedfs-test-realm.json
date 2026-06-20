@@ -1,0 +1,107 @@
+{
+  "realm": "seaweedfs-test",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      { "name": "s3-admin" },
+      { "name": "s3-read-only" },
+      { "name": "s3-write-only" },
+      { "name": "s3-read-write" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "seaweedfs-s3",
+      "enabled": true,
+      "secret": "seaweedfs-s3-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "usermodel.realmRoleMapping.rolePrefix": "",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "seaweedfs-s3",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin-user",
+      "enabled": true,
+      "email": "admin-user@test.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "emailVerified": true,
+      "requiredActions": [],
+      "realmRoles": ["s3-admin"],
+      "credentials": [
+        { "type": "password", "value": "adminuser123", "temporary": false }
+      ]
+    },
+    {
+      "username": "read-user",
+      "enabled": true,
+      "email": "read-user@test.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "emailVerified": true,
+      "requiredActions": [],
+      "realmRoles": ["s3-read-only"],
+      "credentials": [
+        { "type": "password", "value": "readuser123", "temporary": false }
+      ]
+    },
+    {
+      "username": "write-user",
+      "enabled": true,
+      "email": "write-user@test.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "emailVerified": true,
+      "requiredActions": [],
+      "realmRoles": ["s3-read-write"],
+      "credentials": [
+        { "type": "password", "value": "writeuser123", "temporary": false }
+      ]
+    },
+    {
+      "username": "write-only-user",
+      "enabled": true,
+      "email": "write-only-user@test.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "emailVerified": true,
+      "requiredActions": [],
+      "realmRoles": ["s3-write-only"],
+      "credentials": [
+        { "type": "password", "value": "writeonlyuser123", "temporary": false }
+      ]
+    }
+  ]
+}

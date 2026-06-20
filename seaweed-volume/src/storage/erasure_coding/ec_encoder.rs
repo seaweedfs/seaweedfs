@@ -136,11 +136,22 @@ pub fn rebuild_ec_files(
         // Allocate buffers for all shards. Option<Vec<u8>> is required by rs.reconstruct()
         let mut buffers: Vec<Option<Vec<u8>>> = vec![None; total_shards];
 
-        // Read available shards
+        // Read available shards. A short read means a truncated/corrupt input
+        // shard; treat it as an error rather than reconstructing over a
+        // zero-padded tail and publishing the result as restored redundancy.
         for (i, shard) in shards.iter().enumerate() {
             if !missing_shard_ids.contains(&(i as u32)) {
                 let mut buf = vec![0u8; to_process];
-                shard.read_at(&mut buf, offset)?;
+                let n = shard.read_at(&mut buf, offset)?;
+                if n != to_process {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!(
+                            "ec rebuild short read shard {} at {}: got {} want {}",
+                            i, offset, n, to_process
+                        ),
+                    ));
+                }
                 buffers[i] = Some(buf);
             }
         }
@@ -653,6 +664,81 @@ mod tests {
         // Verify .ecx exists
         let ecx_path = format!("{}/1.ecx", dir);
         assert!(std::path::Path::new(&ecx_path).exists());
+    }
+
+    // encode_sample_volume writes a small volume and EC-encodes it, returning
+    // the dir path so a test can drop/truncate shards and rebuild.
+    fn encode_sample_volume(tmp: &TempDir) -> String {
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let mut v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=20 {
+            let data = format!("test data for needle {} padded with bytes", i).repeat(64);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        write_ec_files(&dir, &dir, "", VolumeId(1), 10, 4).unwrap();
+        dir
+    }
+
+    // A truncated/corrupt input shard must abort rebuild_ec_files with an error
+    // rather than reconstructing over a zero-padded tail and publishing a
+    // truncated shard as restored redundancy.
+    #[test]
+    fn test_rebuild_ec_files_short_read_input_errors() {
+        let tmp = TempDir::new().unwrap();
+        let dir = encode_sample_volume(&tmp);
+
+        // Truncate a present input shard to half its size.
+        let victim = format!("{}/1.ec03", dir);
+        let full = std::fs::metadata(&victim).unwrap().len();
+        assert!(full > 0, "encoded shard should be non-empty");
+        let f = std::fs::OpenOptions::new().write(true).open(&victim).unwrap();
+        f.set_len(full / 2).unwrap();
+        drop(f);
+
+        // Rebuild a different (genuinely missing) shard.
+        std::fs::remove_file(format!("{}/1.ec07", dir)).unwrap();
+        let res = rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4);
+        assert!(res.is_err(), "truncated input shard must abort the rebuild");
+    }
+
+    // Happy path: dropping a shard and rebuilding it from the rest must succeed
+    // and recreate the shard file (the short-read guard must not false-positive).
+    #[test]
+    fn test_rebuild_ec_files_happy_path() {
+        let tmp = TempDir::new().unwrap();
+        let dir = encode_sample_volume(&tmp);
+
+        let dropped = format!("{}/1.ec07", dir);
+        std::fs::remove_file(&dropped).unwrap();
+        rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4).unwrap();
+        assert!(
+            std::path::Path::new(&dropped).exists(),
+            "rebuilt shard .ec07 should exist"
+        );
+        assert!(
+            std::fs::metadata(&dropped).unwrap().len() > 0,
+            "rebuilt shard should be non-empty"
+        );
     }
 
     #[test]

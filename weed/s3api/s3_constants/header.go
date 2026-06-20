@@ -212,6 +212,16 @@ func IsValidBucketName(bucket string) bool {
 	return !strings.ContainsAny(bucket, "/\\\x00")
 }
 
+// IsValidPathSegment reports whether value is safe to use as one filer path
+// component. It intentionally does not enforce any application-specific
+// format; callers can layer stricter checks on top.
+func IsValidPathSegment(value string) bool {
+	if value == "" || value == "." || value == ".." {
+		return false
+	}
+	return !strings.ContainsAny(value, "/\\\x00")
+}
+
 // NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
 // It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.

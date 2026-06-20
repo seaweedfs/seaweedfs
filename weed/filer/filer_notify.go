@@ -200,7 +200,25 @@ func isChunkNotFoundError(err error) bool {
 		httpNotFoundPattern.MatchString(errMsg)
 }
 
-func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
+// persistedLogReplayLimit caps concurrent legacy replays; decodes are shared
+// through the persisted-log cache, so this only bounds the listing fan-out.
+const persistedLogReplayLimit = 64
+
+var persistedLogReplaySem = make(chan struct{}, persistedLogReplayLimit)
+
+func (f *Filer) ReadPersistedLogBuffer(ctx context.Context, startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
+
+	// Cap concurrent replays; bail if the stream is already gone so cancelled
+	// clients do not park on the semaphore.
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	select {
+	case persistedLogReplaySem <- struct{}{}:
+		defer func() { <-persistedLogReplaySem }()
+	case <-ctx.Done():
+		return 0, false, ctx.Err()
+	}
 
 	visitor, visitErr := f.collectPersistedLogBuffer(startPosition, stopTsNs)
 	if visitErr != nil {
@@ -220,8 +238,10 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 	}
 	ch := make(chan entryOrErr, readaheadSize)
 	stopReadahead := make(chan struct{})
+	readaheadDone := make(chan struct{})
 	go func() {
 		defer close(ch)
+		defer close(readaheadDone)
 		for {
 			entry, readErr := visitor.GetNext()
 			if readErr != nil {
@@ -240,7 +260,13 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 			}
 		}
 	}()
-	defer close(stopReadahead)
+	// Stop the readahead goroutine, wait for it to exit, then release any log
+	// file readers it left open (e.g. on early return or cancellation).
+	defer func() {
+		close(stopReadahead)
+		<-readaheadDone
+		visitor.Close()
+	}()
 
 	for item := range ch {
 		if item.err != nil {
@@ -261,4 +287,3 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 
 	return
 }
-

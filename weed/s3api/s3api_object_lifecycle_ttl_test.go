@@ -205,7 +205,9 @@ func TestPopulateBucketConfigDerivedFields_RefreshesLifecycleTTL(t *testing.T) {
 	xmlAdd := []byte(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>7</Days></Expiration></Rule></LifecycleConfiguration>`)
 	xmlReplace := []byte(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>30</Days></Expiration></Rule></LifecycleConfiguration>`)
 
-	cfg := &BucketConfig{Name: "bk", Entry: &filer_pb.Entry{Extended: map[string][]byte{}}}
+	cfg := &BucketConfig{Name: "bk", Entry: &filer_pb.Entry{Extended: map[string][]byte{
+		s3_constants.ExtLifecycleTtlFastPathKey: []byte("true"),
+	}}}
 
 	// 1) No XML yet → no resolver.
 	s.populateBucketConfigDerivedFields(cfg)
@@ -249,6 +251,7 @@ func TestPopulateBucketConfigDerivedFields_ObjectLockTreatedAsVersioned(t *testi
 		Name: "bk",
 		Entry: &filer_pb.Entry{Extended: map[string][]byte{
 			s3_constants.ExtObjectLockEnabledKey:    []byte(s3_constants.ObjectLockEnabled),
+			s3_constants.ExtLifecycleTtlFastPathKey: []byte("true"),
 			bucketLifecycleConfigurationXMLKey:      xml,
 		}},
 	}
@@ -258,5 +261,29 @@ func TestPopulateBucketConfigDerivedFields_ObjectLockTreatedAsVersioned(t *testi
 	}
 	if cfg.LifecycleTTL != nil {
 		t.Fatalf("ObjectLock buckets must skip the fast-path resolver, got %v", cfg.LifecycleTTL)
+	}
+}
+
+func TestPopulateBucketConfigDerivedFields_TtlFastPathOptIn(t *testing.T) {
+	// The fast path is opt-in per bucket: lifecycle XML alone must not
+	// stamp volume TTL on writes. Only the explicit flag builds the
+	// resolver.
+	s := &S3ApiServer{}
+	xml := []byte(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>7</Days></Expiration></Rule></LifecycleConfiguration>`)
+
+	// XML present but flag off → nil resolver (worker drives expiration).
+	cfg := &BucketConfig{Name: "bk", Entry: &filer_pb.Entry{Extended: map[string][]byte{
+		bucketLifecycleConfigurationXMLKey: xml,
+	}}}
+	s.populateBucketConfigDerivedFields(cfg)
+	if cfg.LifecycleTTL != nil {
+		t.Fatalf("fast path off must yield nil resolver, got %v", cfg.LifecycleTTL)
+	}
+
+	// Flag on → resolver applies the rule.
+	cfg.Entry.Extended[s3_constants.ExtLifecycleTtlFastPathKey] = []byte("true")
+	s.populateBucketConfigDerivedFields(cfg)
+	if got := cfg.LifecycleTTL.Resolve("logs/foo", 1); got != 7*86400 {
+		t.Fatalf("fast path on, want 7d, got %d", got)
 	}
 }

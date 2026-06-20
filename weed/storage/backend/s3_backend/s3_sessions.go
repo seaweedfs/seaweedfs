@@ -15,16 +15,8 @@ import (
 
 var (
 	s3Sessions   = make(map[string]s3iface.S3API)
-	sessionsLock sync.RWMutex
+	sessionsLock sync.Mutex
 )
-
-func getSession(region string) (s3iface.S3API, bool) {
-	sessionsLock.RLock()
-	defer sessionsLock.RUnlock()
-
-	sess, found := s3Sessions[region]
-	return sess, found
-}
 
 func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, forcePathStyle bool) (s3iface.S3API, error) {
 
@@ -56,7 +48,7 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, 
 
 	t := s3.New(sess)
 
-	s3Sessions[region] = t
+	s3Sessions[cacheKey] = t
 
 	return t, nil
 

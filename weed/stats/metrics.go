@@ -118,6 +118,16 @@ var (
 			Help:      "Number of crowded volumes in volume layouts",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	// MasterUnderReplicatedVolumes tracks volumes that do not have enough replicas,
+	// partitioned by collection, disk type, replication type, and TTL.
+	MasterUnderReplicatedVolumes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "under_replicated_volumes",
+			Help:      "Current number of volumes that do not have enough replicas per collection/layout. 0 = healthy.",
+		}, []string{"collection", "disk", "rp", "ttl"})
+
 	MasterPickForWriteErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -198,6 +208,16 @@ var (
 			Name:      "last_send_timestamp_of_subscribe",
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
+
+	// Sampled only on first creation, so counts track distinct objects.
+	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "object_size_bytes",
+			Help:      "Distribution of object sizes in bytes, sampled when an object is first created.",
+			Buckets:   []float64{1024, 102400, 1048576, 104857600, 1073741824},
+		})
 
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -330,6 +350,14 @@ var (
 			Help:      "Resource usage",
 		}, []string{"name", "type"})
 
+	VolumeServerDiskErrorGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "disk_error_status",
+			Help:      "Disk error status",
+		}, []string{"name", "type"})
+
 	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -417,6 +445,48 @@ var (
 			Name:      "scrub_shard_failures",
 			Help:      "Counter of overall EC shards with issues detected during scrubbing.",
 		}, []string{"mode"})
+
+	// VolumeServerReplicationCounter counts replication operations by operation type
+	// (write, delete) and result (success, failure).
+	VolumeServerReplicationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_operations_total",
+			Help:      "Counter of replication operations by type (write, delete) and result (success, failure).",
+		}, []string{"operation", "result"})
+
+	// VolumeServerReplicationHistogram records replication operation duration in seconds,
+	// partitioned by operation type (write, delete).
+	VolumeServerReplicationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_seconds",
+			Help:      "Bucketed histogram of replication operation duration in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"operation"})
+
+	// VolumeServerReplicationTargets records the number of replica targets per replication
+	// operation, useful for observing fan-out width.
+	VolumeServerReplicationTargets = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_targets",
+			Help:      "Histogram of replica targets count per replication operation.",
+			Buckets:   []float64{1, 2, 3, 4, 5},
+		})
+
+	// VolumeServerReplicationFailures counts replication failures by operation type
+	// and failure reason (timeout, connection_refused, context_cancelled, server_error).
+	VolumeServerReplicationFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "replication_failures_total",
+			Help:      "Counter of replication failures by operation and reason (timeout, connection_refused, context_cancelled, server_error).",
+		}, []string{"operation", "reason"})
 
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -529,6 +599,22 @@ var (
 			Subsystem: "s3",
 			Name:      "bucket_object_count",
 			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
+		}, []string{"bucket"})
+
+	S3BucketQuotaBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_quota_bytes",
+			Help:      "Configured quota of each S3 bucket in bytes. Only present for buckets with an enabled quota.",
+		}, []string{"bucket"})
+
+	S3BucketReadOnlyGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_read_only",
+			Help:      "Whether each S3 bucket is read-only (1) or writable (0), e.g. after exceeding its quota.",
 		}, []string{"bucket"})
 
 	UploadErrorCounter = prometheus.NewCounterVec(
@@ -743,6 +829,7 @@ func init() {
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
+	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
@@ -759,6 +846,7 @@ func init() {
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
+	Gather.MustRegister(VolumeServerDiskErrorGauge)
 	Gather.MustRegister(VolumeServerConcurrentDownloadLimit)
 	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)
@@ -770,6 +858,11 @@ func init() {
 	Gather.MustRegister(VolumeServerScrubLastTimeSeconds)
 	Gather.MustRegister(VolumeServerScrubVolumeFailures)
 	Gather.MustRegister(VolumeServerScrubShardFailures)
+	Gather.MustRegister(VolumeServerReplicationCounter)
+	Gather.MustRegister(VolumeServerReplicationHistogram)
+	Gather.MustRegister(VolumeServerReplicationTargets)
+	Gather.MustRegister(VolumeServerReplicationFailures)
+	Gather.MustRegister(MasterUnderReplicatedVolumes)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
@@ -785,6 +878,8 @@ func init() {
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
 	Gather.MustRegister(S3BucketObjectCountGauge)
+	Gather.MustRegister(S3BucketQuotaBytesGauge)
+	Gather.MustRegister(S3BucketReadOnlyGauge)
 
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)
@@ -879,6 +974,8 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+	c += S3BucketQuotaBytesGauge.DeletePartialMatch(labels)
+	c += S3BucketReadOnlyGauge.DeletePartialMatch(labels)
 	c += S3LifecycleDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleMetadataOnlyCounter.DeletePartialMatch(labels)
@@ -891,6 +988,7 @@ func DeleteCollectionMetrics(collection string) {
 	c := MasterReplicaPlacementMismatch.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutWritable.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutCrowded.DeletePartialMatch(labels)
+	c += MasterUnderReplicatedVolumes.DeletePartialMatch(labels)
 	c += VolumeServerDiskSizeGauge.DeletePartialMatch(labels)
 	c += VolumeServerVolumeGauge.DeletePartialMatch(labels)
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)
@@ -926,6 +1024,8 @@ func bucketMetricTTLControl() {
 			c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
 			c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
 			c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+			c += S3BucketQuotaBytesGauge.DeletePartialMatch(labels)
+			c += S3BucketReadOnlyGauge.DeletePartialMatch(labels)
 			glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 		}
 
@@ -943,4 +1043,20 @@ func UpdateBucketSizeMetrics(bucket string, logicalSize, physicalSize float64, o
 	S3BucketPhysicalSizeBytesGauge.WithLabelValues(bucket).Set(physicalSize)
 	S3BucketObjectCountGauge.WithLabelValues(bucket).Set(objectCount)
 	RecordBucketActiveTime(bucket)
+}
+
+// UpdateBucketQuotaMetrics updates the per-bucket quota gauges. A non-positive
+// quota removes the quota series so utilization queries like
+// bucket_size_bytes / bucket_quota_bytes only see enforced quotas.
+func UpdateBucketQuotaMetrics(bucket string, quota float64, readOnly bool) {
+	if quota > 0 {
+		S3BucketQuotaBytesGauge.WithLabelValues(bucket).Set(quota)
+	} else {
+		S3BucketQuotaBytesGauge.DeleteLabelValues(bucket)
+	}
+	readOnlyValue := float64(0)
+	if readOnly {
+		readOnlyValue = 1
+	}
+	S3BucketReadOnlyGauge.WithLabelValues(bucket).Set(readOnlyValue)
 }

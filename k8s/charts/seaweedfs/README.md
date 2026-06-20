@@ -384,4 +384,4 @@ helm install seaweedfs seaweedfs/seaweedfs \
 ## Enterprise
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
-which has a self-healing storage format with better data protection.
+which has advanced features, including data recovery, self-healing storage, customizable erasure coding, EC vacuum and repair, etc.

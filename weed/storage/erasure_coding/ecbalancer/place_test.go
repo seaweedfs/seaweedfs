@@ -73,6 +73,86 @@ func TestPlaceStrictSpreadAndCaps(t *testing.T) {
 	}
 }
 
+// TestPlaceDistributesEvenlyAcrossManyVolumes: placing many volumes against the shared
+// encode snapshot must not pile shards onto the sorted-first machine.
+func TestPlaceDistributesEvenlyAcrossManyVolumes(t *testing.T) {
+	topo := NewTopology()
+	hosts := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
+	for _, h := range hosts {
+		for _, port := range []string{":8080", ":8081"} {
+			n := topo.AddNode(h+port, "dc1", "dc1:rack1", 1000)
+			n.SetHost(h)
+			n.AddDisk(0, "", 1000, 0)
+		}
+	}
+
+	const volumes = 120
+	for v := 0; v < volumes; v++ {
+		if _, err := topo.Place(uint32(v), "c1", allShards(), Constraints{}, PlaceDurabilityFirst); err != nil {
+			t.Fatalf("Place volume %d: %v", v, err)
+		}
+	}
+
+	perMachine := map[string]int{}
+	for _, n := range topo.nodes {
+		for _, d := range n.disks {
+			perMachine[n.host] += d.shardCount
+		}
+	}
+	min, max := 1<<30, 0
+	for _, c := range perMachine {
+		if c < min {
+			min = c
+		}
+		if c > max {
+			max = c
+		}
+	}
+	// Even distribution is 120*14/6 = 280 shards/machine. Catch a lopsided pileup
+	// (the production symptom was the first machine at ~1.7x the rest).
+	if float64(max) > 1.25*float64(min) {
+		t.Errorf("EC shards piled unevenly across machines: min=%d max=%d %v", min, max, perMachine)
+	}
+}
+
+// TestPlaceSpreadsAcrossMachines: one rack runs two physical machines (each with
+// four volume servers). Placing a 10+4 volume must spread its shards across both
+// machines so no single machine holds more than ceil(14/2)=7, otherwise losing one
+// box would take out more shards than EC can recover even though they look spread
+// across distinct nodes.
+func TestPlaceSpreadsAcrossMachines(t *testing.T) {
+	topo := NewTopology()
+	host := map[string]string{}
+	add := func(id, h string) {
+		n := topo.AddNode(id, "dc1", "dc1:rack0", 50)
+		n.SetHost(h)
+		n.AddDisk(0, "", 50, 0)
+		host[id] = h
+	}
+	for i := 0; i < 4; i++ {
+		add(fmt.Sprintf("a%d", i), "10.0.0.1")
+		add(fmt.Sprintf("b%d", i), "10.0.0.2")
+	}
+
+	res, err := topo.Place(1, "c1", allShards(), Constraints{}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	perMachine := map[string]int{}
+	for _, d := range res.Destinations {
+		perMachine[host[d.Node]]++
+	}
+	if len(perMachine) < 2 {
+		t.Fatalf("shards not spread across machines: %v", perMachine)
+	}
+	maxPerMachine := ceilDivide(erasure_coding.TotalShardsCount, 2)
+	for h, c := range perMachine {
+		if c > maxPerMachine {
+			t.Errorf("machine %s holds %d shards, want <=%d (ceil(14/2))", h, c, maxPerMachine)
+		}
+	}
+}
+
 // TestPlaceStrictFailsAndRollsBack: a single tiny disk cannot hold 14 shards, so
 // strict Place fails and leaves the snapshot untouched.
 func TestPlaceStrictFailsAndRollsBack(t *testing.T) {

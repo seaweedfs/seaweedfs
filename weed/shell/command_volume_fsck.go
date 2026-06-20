@@ -225,7 +225,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				}
 			}
 			if *c.verbose {
-				fmt.Fprintf(c.writer, "dn %+v filtred %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
+				fmt.Fprintf(c.writer, "dn %+v filtered %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
 			}
 			return nil
 		})
@@ -297,7 +297,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false,
+	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
@@ -448,6 +448,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	// MasterClient.GetLocations, so iterating per replica here (as the old
 	// code did) would issue N*N delete RPCs for N replicas.
 	if applyPurging {
+		var skippedVolumeIds []uint32
 		for volumeId, orphanReplicaFileIds := range volumeIdOrphanFileIds {
 			if len(orphanReplicaFileIds) == 0 {
 				continue
@@ -458,10 +459,18 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 			}
 			// Call out to a closure per volume so the deferred "mark
 			// readonly again" fires between volumes instead of piling up
-			// until findExtraChunksInVolumeServers returns.
+			// until findExtraChunksInVolumeServers returns. Per-volume
+			// failures (e.g. a replica stuck read-only) don't halt the
+			// rest of the run; the volume is remembered and its deletes
+			// are skipped.
 			if err := c.purgeOneVolume(volumeId, orphanReplicaFileIds, volumeReplicaCounts[volumeId], readOnlyServerReplicas[volumeId]); err != nil {
-				return err
+				fmt.Fprintf(c.writer, "skip purging volume %d: %v\n", volumeId, err)
+				skippedVolumeIds = append(skippedVolumeIds, volumeId)
 			}
+		}
+		if len(skippedVolumeIds) > 0 {
+			sort.Slice(skippedVolumeIds, func(i, j int) bool { return skippedVolumeIds[i] < skippedVolumeIds[j] })
+			fmt.Fprintf(c.writer, "skipped purge on %d volume(s): %v\n", len(skippedVolumeIds), skippedVolumeIds)
 		}
 	}
 
@@ -510,7 +519,8 @@ func (c *commandVolumeFsck) purgeOneVolume(volumeId uint32, orphanReplicaFileIds
 	needleVID := needle.VolumeId(volumeId)
 	for _, server := range readOnlyReplicas {
 		if err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
-			return fmt.Errorf("mark volume %d on %v read/write: %v", volumeId, server, err)
+			// Replicas flipped writable earlier roll back via the defer.
+			return fmt.Errorf("mark %v writable: %v", server, err)
 		}
 		fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
 		defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)

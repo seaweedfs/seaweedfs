@@ -3,8 +3,20 @@ name: "TLS Rotation Integration Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'test/tls_rotation/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/tls-rotation-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'test/tls_rotation/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/tls-rotation-tests.yml'
 
 permissions:
   contents: read

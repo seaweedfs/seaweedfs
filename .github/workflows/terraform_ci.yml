@@ -1,0 +1,80 @@
+name: "terraform: validate and test modules"
+
+on:
+  push:
+    branches: [ master ]
+    paths: ['terraform/**', '.github/workflows/terraform_ci.yml']
+  pull_request:
+    branches: [ master ]
+    paths: ['terraform/**', '.github/workflows/terraform_ci.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: fmt, validate, plan-level tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: 1.12.1
+
+      - name: fmt check
+        working-directory: terraform
+        run: tofu fmt -recursive -check -diff
+
+      - name: validate core
+        working-directory: terraform/modules/core
+        run: |
+          tofu init -backend=false -input=false
+          tofu validate
+
+      - name: validate security
+        working-directory: terraform/modules/security
+        run: |
+          tofu init -backend=false -input=false
+          tofu validate
+
+      - name: plan-level tests (core)
+        working-directory: terraform/modules/core
+        run: tofu test
+
+      - name: validate examples
+        run: |
+          set -e
+          for ex in terraform/examples/*/; do
+            echo "== validate $ex =="
+            tofu -chdir="$ex" init -backend=false -input=false
+            tofu -chdir="$ex" validate
+          done
+
+  smoke:
+    name: local cluster smoke test (real weed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build weed
+        run: go build -o "$RUNNER_TEMP/weed" ./weed
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: 1.12.1
+
+      - name: Run local cluster harness
+        working-directory: terraform/test/local
+        run: WEED="$RUNNER_TEMP/weed" ./run_local_cluster.sh
+
+      - name: Run local mTLS cluster harness
+        working-directory: terraform/test/local-secure
+        run: WEED="$RUNNER_TEMP/weed" ./run_local_secure.sh

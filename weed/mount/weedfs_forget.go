@@ -1,8 +1,6 @@
 package mount
 
 import (
-	"context"
-
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -68,6 +66,9 @@ func (wfs *WFS) Forget(nodeid, nlookup uint64) {
 	// fhMap here would couple two unrelated refcounts and could tear down a
 	// still-live handle if Forget ever raced ahead of Release.
 	wfs.inodeToPath.Forget(nodeid, nlookup, func(dir util.FullPath) {
-		wfs.metaCache.DeleteFolderChildren(context.Background(), dir)
+		// Runs after Forget releases its lock; a concurrent lookup+rebuild can
+		// re-cache the directory in that window, so purge through the apply loop
+		// rather than wiping the store directly.
+		wfs.purgeDirectoryCache(dir)
 	})
 }

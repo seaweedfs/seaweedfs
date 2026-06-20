@@ -3,8 +3,20 @@ name: "test s3 over https using aws-cli"
 on:
   push:
     branches: [master, test-https-s3-awscli]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/test-s3-over-https-using-awscli.yml'
   pull_request:
     branches: [master, test-https-s3-awscli]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/test-s3-over-https-using-awscli.yml'
 
 env:
   AWS_ACCESS_KEY_ID: some_access_key1

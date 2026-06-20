@@ -98,6 +98,12 @@ type S3ApiServer struct {
 	newObjectWriteLock    func(bucket, object string) objectWriteLock
 	// objectWriteLockClient resolves a key's owner filer for route-by-key.
 	objectWriteLockClient *cluster.LockClient
+	// unreachableOwners holds owners (pb.ServerAddress -> expiry time.Time) whose
+	// last owner-first read hit a transport error, so route-by-key reads briefly
+	// skip them instead of re-dialing a dead owner every request until the ring
+	// drops it. Bypasses the gateway's filer health tracking, which no-ops for an
+	// owner outside the static -filer list.
+	unreachableOwners sync.Map
 	// Shared ReaderCache used by the S3 GET streaming path. It lives for the
 	// lifetime of the server so that concurrent and repeat reads share a
 	// single in-flight download per chunk, and so that no per-request
@@ -167,7 +173,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if clientHost == "0.0.0.0" || clientHost == "" {
 			clientHost = util.DetectedHostAddress()
 		}
-		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), option.DataCenter, "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Build the object-write lock client and subscribe to the master's
 		// lock-ring updates BEFORE starting the master loop, so the initial
 		// LockRingUpdate sent on connect isn't dropped (the master only delivers
@@ -386,10 +392,24 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
 				glog.V(1).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
-				s3ApiServer.iam.updateCredentialManagerStaticIdentities()
 			}
 		})
 	}
+
+	// Refresh the JWT signing keys on SIGHUP so an operator can rotate them
+	// without restarting; otherwise filer/volume auth stays stuck on the stale
+	// key after a rotation.
+	grace.OnReload(func() {
+		util.LoadConfiguration("security", false)
+		v := util.GetViper()
+		s3ApiServer.filerGuard.UpdateSigningKeys(
+			v.GetString("jwt.filer_signing.key"),
+			v.GetInt("jwt.filer_signing.expires_after_seconds"),
+			v.GetString("jwt.filer_signing.read.key"),
+			v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
+		)
+		util_http.ReloadJwtSigningReadConfig()
+	})
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 
 	// Update IAM with the final filer client (already handled by SetFilerClient above,
@@ -698,9 +718,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// plus REST-style endpoints for AWS CLI
 	s3a.registerS3TablesRoutes(apiRouter)
 
-	// Readiness Probe
+	// Health probes
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/healthz").HandlerFunc(s3a.StatusHandler)
+	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/readyz").HandlerFunc(s3a.StatusHandler)
 
 	// Object path pattern with (?s) flag to match newlines in object keys
 	const objectPath = "/{object:(?s).+}"

@@ -186,8 +186,8 @@ func (r *Plugin) runLaneSchedulerIterationLocked(ls *schedulerLaneState, jobType
 		}
 	}
 
-	r.pruneSchedulerState(active)
-	r.pruneDetectorLeases(active)
+	r.pruneSchedulerState(ls.lane, active)
+	r.pruneDetectorLeases(ls.lane, active)
 	r.setLaneLoopState(ls, "", "idle")
 	return hadJobs
 }
@@ -213,8 +213,8 @@ func (r *Plugin) runLaneSchedulerIterationConcurrent(ls *schedulerLaneState, job
 	}
 	wg.Wait()
 
-	r.pruneSchedulerState(active)
-	r.pruneDetectorLeases(active)
+	r.pruneSchedulerState(ls.lane, active)
+	r.pruneDetectorLeases(ls.lane, active)
 	r.setLaneLoopState(ls, "", "idle")
 	return hadJobs.Load()
 }
@@ -746,11 +746,16 @@ func (r *Plugin) finishDetection(jobType string) {
 	r.schedulerMu.Unlock()
 }
 
-func (r *Plugin) pruneSchedulerState(activeJobTypes map[string]struct{}) {
+// pruneSchedulerState removes next-detection state for inactive job types
+// in lane only. Prune must not touch other lanes' entries in the global map.
+func (r *Plugin) pruneSchedulerState(lane SchedulerLane, activeJobTypes map[string]struct{}) {
 	r.schedulerMu.Lock()
 	defer r.schedulerMu.Unlock()
 
 	for jobType := range r.nextDetectionAt {
+		if JobTypeLane(jobType) != lane {
+			continue
+		}
 		if _, ok := activeJobTypes[jobType]; !ok {
 			delete(r.nextDetectionAt, jobType)
 			delete(r.detectionInFlight, jobType)
@@ -766,11 +771,15 @@ func (r *Plugin) clearSchedulerJobType(jobType string) {
 	r.clearDetectorLease(jobType, "")
 }
 
-func (r *Plugin) pruneDetectorLeases(activeJobTypes map[string]struct{}) {
+// pruneDetectorLeases removes detector leases for inactive job types in lane only.
+func (r *Plugin) pruneDetectorLeases(lane SchedulerLane, activeJobTypes map[string]struct{}) {
 	r.detectorLeaseMu.Lock()
 	defer r.detectorLeaseMu.Unlock()
 
 	for jobType := range r.detectorLeases {
+		if JobTypeLane(jobType) != lane {
+			continue
+		}
 		if _, ok := activeJobTypes[jobType]; !ok {
 			delete(r.detectorLeases, jobType)
 		}

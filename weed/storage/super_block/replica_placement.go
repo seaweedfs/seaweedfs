@@ -69,6 +69,9 @@ func (rp *ReplicaPlacement) Byte() byte {
 }
 
 func (rp *ReplicaPlacement) String() string {
+	if rp == nil {
+		return ""
+	}
 	b := make([]byte, 3)
 	b[0] = byte(rp.DiffDataCenterCount + '0')
 	b[1] = byte(rp.DiffRackCount + '0')

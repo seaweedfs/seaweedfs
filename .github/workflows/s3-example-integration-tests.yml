@@ -2,7 +2,16 @@ name: "S3 Authenticated Integration Tests"
 
 on:
   pull_request:
-  
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/iam/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'test/s3/normal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-example-integration-tests.yml'
+
 concurrency:
   group: ${{ github.head_ref }}/s3-integration-tests
   cancel-in-progress: true

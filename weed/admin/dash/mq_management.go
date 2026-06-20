@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 
@@ -325,7 +325,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 
 			// Only process directories that are versions (start with "v")
 			if versionResp.Entry != nil && versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
-				versionDir := filepath.Join(topicDir, versionResp.Entry.Name)
+				versionDir := path.Join(topicDir, versionResp.Entry.Name)
 
 				// List all partition directories under the version directory (e.g., 0315-0630)
 				partitionStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
@@ -360,7 +360,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 							continue
 						}
 
-						partitionDir := filepath.Join(versionDir, partitionResp.Entry.Name)
+						partitionDir := path.Join(versionDir, partitionResp.Entry.Name)
 
 						// List all .offset files in this partition directory
 						offsetStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{

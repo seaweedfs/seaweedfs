@@ -3,8 +3,26 @@ name: "Ceph S3 tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/iam/**'
+      - 'test/s3/compatibility/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/iam/**'
+      - 'test/s3/compatibility/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3tests.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/s3tests
@@ -45,7 +63,7 @@ jobs:
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
-          python3 test/s3/fix_s3_tests_bucket_conflicts.py
+          python3 test/s3/compatibility/fix_s3_tests_bucket_conflicts.py
         env:
           S3_TESTS_PATH: s3-tests
 
@@ -388,7 +406,7 @@ jobs:
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
-          python3 test/s3/fix_s3_tests_bucket_conflicts.py
+          python3 test/s3/compatibility/fix_s3_tests_bucket_conflicts.py
         env:
           S3_TESTS_PATH: s3-tests
 

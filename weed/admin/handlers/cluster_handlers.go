@@ -1,14 +1,19 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"mime"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // ClusterHandlers contains all the HTTP handlers for cluster management
@@ -40,6 +45,28 @@ func (h *ClusterHandlers) ShowClusterVolumeServers(w http.ResponseWriter, r *htt
 	volumeServersComponent := app.ClusterVolumeServers(*volumeServersData)
 	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, volumeServersComponent)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+		return
+	}
+}
+
+// ShowMountClients renders the connected FUSE/VFS mount clients page
+func (h *ClusterHandlers) ShowMountClients(w http.ResponseWriter, r *http.Request) {
+	data, err := h.adminServer.GetMountClients()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get mount clients: "+err.Error())
+		return
+	}
+
+	username := usernameOrDefault(r)
+	data.Username = username
+
+	// Render HTML template
+	w.Header().Set("Content-Type", "text/html")
+	mountClientsComponent := app.MountClients(*data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, mountClientsComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
@@ -85,6 +112,30 @@ func (h *ClusterHandlers) ShowClusterVolumes(w http.ResponseWriter, r *http.Requ
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
+	}
+}
+
+// ExportClusterVolumes streams the full-cluster volume list as a downloadable
+// JSON report: every volume and EC shard across the topology, with more fields
+// than the paginated table (a superset of the volume.list shell command).
+func (h *ClusterHandlers) ExportClusterVolumes(w http.ResponseWriter, r *http.Request) {
+	collection := r.URL.Query().Get("collection") // Optional collection filter
+
+	export, err := h.adminServer.ExportClusterVolumeList(r.Context(), collection, time.Now().UTC())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to export volume list: "+err.Error())
+		return
+	}
+
+	filename := fmt.Sprintf("seaweedfs-volumes-%s.json", export.GeneratedAt.Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(export); err != nil {
+		// The response is already streaming, so we can only log a late failure.
+		glog.Errorf("export volume list: encode failed: %v", err)
 	}
 }
 
@@ -306,6 +357,29 @@ func (h *ClusterHandlers) ShowClusterFilers(w http.ResponseWriter, r *http.Reque
 	filersComponent := app.ClusterFilers(*filersData)
 	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, filersComponent)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+		return
+	}
+}
+
+// ShowClusterS3Servers renders the cluster S3 servers page
+func (h *ClusterHandlers) ShowClusterS3Servers(w http.ResponseWriter, r *http.Request) {
+	// Get cluster S3 servers data
+	s3ServersData, err := h.adminServer.GetClusterS3Servers()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get cluster S3 servers: "+err.Error())
+		return
+	}
+
+	username := usernameOrDefault(r)
+	s3ServersData.Username = username
+
+	// Render HTML template
+	w.Header().Set("Content-Type", "text/html")
+	s3ServersComponent := app.ClusterS3Servers(*s3ServersData)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, s3ServersComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return

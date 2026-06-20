@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// ErrTopicAlreadyExists is returned by the CreateTopic* methods when the topic
+// already exists in the filer. Callers performing auto-creation can treat it as
+// confirmation the topic exists rather than a hard failure.
+var ErrTopicAlreadyExists = errors.New("topic already exists")
 
 // CreateTopic creates a new topic in both Kafka registry and SeaweedMQ
 func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
@@ -29,7 +35,7 @@ func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, 
 func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, keyRecordType *schema_pb.RecordType, valueRecordType *schema_pb.RecordType) error {
 	// Check if topic already exists in filer
 	if h.checkTopicInFiler(name) {
-		return fmt.Errorf("topic %s already exists", name)
+		return fmt.Errorf("%s: %w", name, ErrTopicAlreadyExists)
 	}
 
 	// Create SeaweedMQ topic reference
@@ -90,7 +96,7 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
 	// Check if topic already exists in filer
 	if h.checkTopicInFiler(name) {
-		return fmt.Errorf("topic %s already exists", name)
+		return fmt.Errorf("%s: %w", name, ErrTopicAlreadyExists)
 	}
 
 	// Create SeaweedMQ topic reference

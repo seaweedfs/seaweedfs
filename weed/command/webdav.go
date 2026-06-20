@@ -89,6 +89,8 @@ func (wo *WebDavOption) resolvePaths() {
 
 func (wo *WebDavOption) startWebDav() bool {
 
+	util.SetOutboundLocalIP(*wo.ipBind)
+
 	// detect current user
 	uid, gid := uint32(0), uint32(0)
 	if u, err := user.Current(); err == nil {

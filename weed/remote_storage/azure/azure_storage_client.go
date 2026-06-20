@@ -324,7 +324,7 @@ func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.Remot
 	}
 
 	data = make([]byte, size)
-	_, err = blobClient.DownloadBuffer(context.Background(), data, &blob.DownloadBufferOptions{
+	n, err := blobClient.DownloadBuffer(context.Background(), data, &blob.DownloadBufferOptions{
 		Range: blob.HTTPRange{
 			Offset: offset,
 			Count:  size,
@@ -335,8 +335,29 @@ func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.Remot
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s%s: %w", loc.Bucket, loc.Path, err)
 	}
+	// Pre-sized buffer: a short read stays zero-padded. Reject it rather than
+	// cache corrupt content.
+	if n != size {
+		return nil, fmt.Errorf("short read from %s%s at offset %d: got %d bytes, want %d", loc.Bucket, loc.Path, offset, n, size)
+	}
 
 	return data, nil
+}
+
+func (az *azureRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
+	key := loc.Path[1:]
+	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
+
+	downloadResponse, err := blobClient.DownloadStream(ctx, &blob.DownloadStreamOptions{
+		Range: blob.HTTPRange{
+			Offset: offset,
+			Count:  size,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+	return downloadResponse.Body, nil
 }
 
 func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {

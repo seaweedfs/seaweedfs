@@ -327,6 +327,7 @@ mod tests {
             ec_shard_config: Some(VifEcShardConfig {
                 data_shards,
                 parity_shards,
+                ..Default::default()
             }),
             ..Default::default()
         };

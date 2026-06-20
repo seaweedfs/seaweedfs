@@ -15,6 +15,7 @@ type EcVolumeInfo struct {
 	ShardsInfo  *ShardsInfo
 	FileCount   uint64 // live needle count for this EC volume (same on every node holding shards)
 	DeleteCount uint64 // tombstoned needle count for this EC volume
+	EncodeTsNs  int64  // encode-run identity (unix nanos); one value per (volume, disk)
 }
 
 func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
@@ -27,6 +28,7 @@ func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
 		ExpireAtSec: ecInfo.ExpireAtSec,
 		FileCount:   ecInfo.FileCount,
 		DeleteCount: ecInfo.DeleteCount,
+		EncodeTsNs:  ecInfo.EncodeTsNs,
 	}
 }
 
@@ -41,5 +43,6 @@ func (evi *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.Vol
 		DiskId:      evi.DiskId,
 		FileCount:   evi.FileCount,
 		DeleteCount: evi.DeleteCount,
+		EncodeTsNs:  evi.EncodeTsNs,
 	}
 }

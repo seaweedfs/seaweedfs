@@ -42,6 +42,7 @@ const (
 	SeaweedFiler_TraverseBfsMetadata_FullMethodName             = "/filer_pb.SeaweedFiler/TraverseBfsMetadata"
 	SeaweedFiler_SubscribeMetadata_FullMethodName               = "/filer_pb.SeaweedFiler/SubscribeMetadata"
 	SeaweedFiler_SubscribeLocalMetadata_FullMethodName          = "/filer_pb.SeaweedFiler/SubscribeLocalMetadata"
+	SeaweedFiler_ListMetadataSubscribers_FullMethodName         = "/filer_pb.SeaweedFiler/ListMetadataSubscribers"
 	SeaweedFiler_KvGet_FullMethodName                           = "/filer_pb.SeaweedFiler/KvGet"
 	SeaweedFiler_KvPut_FullMethodName                           = "/filer_pb.SeaweedFiler/KvPut"
 	SeaweedFiler_CacheRemoteObjectToLocalCluster_FullMethodName = "/filer_pb.SeaweedFiler/CacheRemoteObjectToLocalCluster"
@@ -81,6 +82,9 @@ type SeaweedFilerClient interface {
 	TraverseBfsMetadata(ctx context.Context, in *TraverseBfsMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TraverseBfsMetadataResponse], error)
 	SubscribeMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeMetadataResponse], error)
 	SubscribeLocalMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeMetadataResponse], error)
+	// List the metadata subscribers currently connected to this filer
+	// (FUSE mounts, S3, filer.sync, peer filers, ...).
+	ListMetadataSubscribers(ctx context.Context, in *ListMetadataSubscribersRequest, opts ...grpc.CallOption) (*ListMetadataSubscribersResponse, error)
 	KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error)
 	KvPut(ctx context.Context, in *KvPutRequest, opts ...grpc.CallOption) (*KvPutResponse, error)
 	CacheRemoteObjectToLocalCluster(ctx context.Context, in *CacheRemoteObjectToLocalClusterRequest, opts ...grpc.CallOption) (*CacheRemoteObjectToLocalClusterResponse, error)
@@ -382,6 +386,16 @@ func (c *seaweedFilerClient) SubscribeLocalMetadata(ctx context.Context, in *Sub
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedFiler_SubscribeLocalMetadataClient = grpc.ServerStreamingClient[SubscribeMetadataResponse]
 
+func (c *seaweedFilerClient) ListMetadataSubscribers(ctx context.Context, in *ListMetadataSubscribersRequest, opts ...grpc.CallOption) (*ListMetadataSubscribersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMetadataSubscribersResponse)
+	err := c.cc.Invoke(ctx, SeaweedFiler_ListMetadataSubscribers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedFilerClient) KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(KvGetResponse)
@@ -509,6 +523,9 @@ type SeaweedFilerServer interface {
 	TraverseBfsMetadata(*TraverseBfsMetadataRequest, grpc.ServerStreamingServer[TraverseBfsMetadataResponse]) error
 	SubscribeMetadata(*SubscribeMetadataRequest, grpc.ServerStreamingServer[SubscribeMetadataResponse]) error
 	SubscribeLocalMetadata(*SubscribeMetadataRequest, grpc.ServerStreamingServer[SubscribeMetadataResponse]) error
+	// List the metadata subscribers currently connected to this filer
+	// (FUSE mounts, S3, filer.sync, peer filers, ...).
+	ListMetadataSubscribers(context.Context, *ListMetadataSubscribersRequest) (*ListMetadataSubscribersResponse, error)
 	KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error)
 	KvPut(context.Context, *KvPutRequest) (*KvPutResponse, error)
 	CacheRemoteObjectToLocalCluster(context.Context, *CacheRemoteObjectToLocalClusterRequest) (*CacheRemoteObjectToLocalClusterResponse, error)
@@ -600,6 +617,9 @@ func (UnimplementedSeaweedFilerServer) SubscribeMetadata(*SubscribeMetadataReque
 }
 func (UnimplementedSeaweedFilerServer) SubscribeLocalMetadata(*SubscribeMetadataRequest, grpc.ServerStreamingServer[SubscribeMetadataResponse]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeLocalMetadata not implemented")
+}
+func (UnimplementedSeaweedFilerServer) ListMetadataSubscribers(context.Context, *ListMetadataSubscribersRequest) (*ListMetadataSubscribersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListMetadataSubscribers not implemented")
 }
 func (UnimplementedSeaweedFilerServer) KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method KvGet not implemented")
@@ -1020,6 +1040,24 @@ func _SeaweedFiler_SubscribeLocalMetadata_Handler(srv interface{}, stream grpc.S
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedFiler_SubscribeLocalMetadataServer = grpc.ServerStreamingServer[SubscribeMetadataResponse]
 
+func _SeaweedFiler_ListMetadataSubscribers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMetadataSubscribersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).ListMetadataSubscribers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedFiler_ListMetadataSubscribers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).ListMetadataSubscribers(ctx, req.(*ListMetadataSubscribersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedFiler_KvGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(KvGetRequest)
 	if err := dec(in); err != nil {
@@ -1274,6 +1312,10 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetFilerConfiguration",
 			Handler:    _SeaweedFiler_GetFilerConfiguration_Handler,
+		},
+		{
+			MethodName: "ListMetadataSubscribers",
+			Handler:    _SeaweedFiler_ListMetadataSubscribers_Handler,
 		},
 		{
 			MethodName: "KvGet",

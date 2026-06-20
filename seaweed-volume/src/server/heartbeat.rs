@@ -4,9 +4,10 @@
 //! matching Go's `server/volume_grpc_client_to_master.go`.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -314,6 +315,7 @@ fn collect_ec_shard_delta_messages(
                         disk_type: ec_vol.disk_type.to_string(),
                         expire_at_sec: ec_vol.expire_at_sec,
                         disk_id: disk_id as u32,
+                        encode_ts_ns: ec_vol.encode_ts_ns,
                         ..Default::default()
                     },
                 );
@@ -826,6 +828,27 @@ fn build_heartbeat_with_ec_status(
                 delete_vids.push(vol.id);
                 should_delete_volume = true;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
+                // Detect phantom volumes: the .dat was unlinked from disk but is still
+                // held open as a deleted FD, so the volume keeps serving and heartbeating
+                // while no disk-path operation can ever succeed. Skip remote-tiered volumes,
+                // whose .dat legitimately lives in cloud storage. Only a present .dat is
+                // cached for 30s; a missing one is re-checked every heartbeat so the volume
+                // stays suppressed until the file returns. See issues/10004
+                if vol.file_count() > 0 && !vol.has_remote_file {
+                    const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
+                    let now_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or(Duration::ZERO)
+                        .as_nanos() as i64;
+                    if now_ns - vol.last_disk_check_ns.load(Ordering::Relaxed) > DISK_CHECK_INTERVAL_NS {
+                        if !Path::new(&vol.file_name(".dat")).exists() {
+                            warn!("Volume {}: data file {} missing (held open as deleted FD) - not reporting to master", vol.id.0, vol.file_name(".dat"));
+                            continue;
+                        }
+                        vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                    }
+                }
+
                 let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
                 volumes.push(master_pb::VolumeInformationMessage {
                     id: vol.id.0,
@@ -1046,6 +1069,7 @@ mod tests {
             write_queue: std::sync::OnceLock::new(),
             s3_tier_registry: std::sync::RwLock::new(S3TierRegistry::new()),
             read_mode: ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
             master_urls: Vec::new(),
             seed_master_set: std::collections::HashSet::new(),

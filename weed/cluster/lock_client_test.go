@@ -1,7 +1,9 @@
 package cluster
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -88,5 +90,63 @@ func TestLockClientPrimaryForKey(t *testing.T) {
 	}
 	if got != lc.hostForKey("k") {
 		t.Errorf("PrimaryForKey %q disagrees with hostForKey %q", got, lc.hostForKey("k"))
+	}
+}
+
+// A moved key reports its previous owner within the cooling-off window; an unmoved
+// key reports none.
+func TestLockClientPriorOwnerForKey(t *testing.T) {
+	lc := NewLockClient(nil, "seed:8888")
+
+	setA := []pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888"}
+	lc.SetRing(setA, 1)
+	// One ring: nothing to fall back to.
+	if got := lc.PriorOwnerForKey("any"); got != "" {
+		t.Fatalf("single ring should have no prior owner, got %q", got)
+	}
+
+	priorRing := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
+	priorRing.SetServers(setA)
+
+	// Add a server so some keys' ownership moves.
+	setB := []pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888", "filer-d:8888"}
+	lc.SetRing(setB, 2)
+
+	var moved, stable string
+	for i := 0; i < 2000 && (moved == "" || stable == ""); i++ {
+		key := fmt.Sprintf("key-%d", i)
+		if lc.PrimaryForKey(key) != priorRing.GetPrimary(key) {
+			if moved == "" {
+				moved = key
+			}
+		} else if stable == "" {
+			stable = key
+		}
+	}
+	if moved == "" || stable == "" {
+		t.Skip("could not find both a moved and a stable key")
+	}
+
+	if got, want := lc.PriorOwnerForKey(moved), priorRing.GetPrimary(moved); got != want {
+		t.Fatalf("PriorOwnerForKey(moved)=%q, want %q", got, want)
+	}
+	if got := lc.PriorOwnerForKey(stable); got != "" {
+		t.Fatalf("unmoved key should have no prior owner, got %q", got)
+	}
+}
+
+// The prior owner is only offered within the cooling-off window.
+func TestLockClientPriorOwnerForKeyExpires(t *testing.T) {
+	lc := NewLockClient(nil, "seed:8888")
+	lc.priorWindow = 20 * time.Millisecond
+
+	lc.SetRing([]pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888"}, 1)
+	lc.SetRing([]pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888", "filer-d:8888"}, 2)
+
+	time.Sleep(40 * time.Millisecond)
+	for i := 0; i < 2000; i++ {
+		if got := lc.PriorOwnerForKey(fmt.Sprintf("key-%d", i)); got != "" {
+			t.Fatalf("prior owner should expire after the cooling window, got %q", got)
+		}
 	}
 }

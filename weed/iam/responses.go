@@ -183,6 +183,21 @@ type GetPolicyVersionResponse struct {
 	CommonResponse
 }
 
+// CreatePolicyVersionResponse is the response for CreatePolicyVersion action.
+type CreatePolicyVersionResponse struct {
+	XMLName                   xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreatePolicyVersionResponse"`
+	CreatePolicyVersionResult struct {
+		PolicyVersion iam.PolicyVersion `xml:"PolicyVersion"`
+	} `xml:"CreatePolicyVersionResult"`
+	CommonResponse
+}
+
+// DeletePolicyVersionResponse is the response for DeletePolicyVersion action.
+type DeletePolicyVersionResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeletePolicyVersionResponse"`
+	CommonResponse
+}
+
 // CreateUserResponse is the response for CreateUser action.
 type CreateUserResponse struct {
 	XMLName          xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateUserResponse"`

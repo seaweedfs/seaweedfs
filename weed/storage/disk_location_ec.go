@@ -13,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 var (
@@ -41,6 +43,13 @@ func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 		ecVolume.Destroy()
 		delete(l.ecVolumes, vid)
 	}
+}
+
+// UnloadEcVolume drops the in-memory EcVolume for vid from this one disk without
+// deleting files. Exported for the generation-fenced teardown, which unloads only
+// the strictly-older disks rather than node-wide.
+func (l *DiskLocation) UnloadEcVolume(vid needle.VolumeId) {
+	l.unloadEcVolume(vid)
 }
 
 // unloadEcVolume removes an EC volume from memory without deleting its files on disk.
@@ -369,30 +378,24 @@ func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, vo
 		return
 	}
 
-	// Attempt to load the EC shards
+	// A load failure (corrupt/locked .ecx, EMFILE, transient I/O) is not proof
+	// the shards are disposable -- validateEcVolume already decided they may be
+	// the only copy. Release FDs but keep the files for retry; never delete here.
 	if err := l.loadEcShards(shards, collection, volumeId, onShardLoad); err != nil {
-		// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
-		// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
-		if datExists {
-			glog.Warningf("Failed to load EC shards for volume %d and .dat exists: %v, cleaning up EC files to use .dat...", volumeId, err)
-			// Unload first to release FDs, then remove files
-			l.unloadEcVolume(volumeId)
-			l.removeEcVolumeFiles(collection, volumeId)
-		} else {
-			glog.Warningf("Failed to load EC shards for volume %d: %v (this may be normal for distributed EC volumes)", volumeId, err)
-			// Clean up any partially loaded in-memory state. This does not delete files.
-			l.unloadEcVolume(volumeId)
-		}
+		glog.Warningf("Failed to load EC shards for volume %d: %v; keeping files for retry", volumeId, err)
+		l.unloadEcVolume(volumeId)
 		return
 	}
 }
 
-// checkDatFileExists checks if .dat file exists with robust error handling.
-// Unexpected errors (permission, I/O) are treated as "exists" to avoid misclassifying
-// local EC as distributed EC, which is the safer fallback.
+// checkDatFileExists checks if a .dat file with actual data exists with robust
+// error handling. An empty .dat (<= a superblock, zero needles) is a leftover
+// stub, not an encode source, and is treated as absent so it never justifies
+// deleting shards. Unexpected errors (permission, I/O) are treated as "exists"
+// to avoid misclassifying local EC as distributed EC, which is the safer fallback.
 func (l *DiskLocation) checkDatFileExists(datFileName string) bool {
-	if _, err := os.Stat(datFileName); err == nil {
-		return true
+	if fi, err := os.Stat(datFileName); err == nil {
+		return fi.Size() > int64(super_block.SuperBlockSize)
 	} else if !os.IsNotExist(err) {
 		glog.Warningf("Failed to stat .dat file %s: %v", datFileName, err)
 		// Safer to assume local .dat exists to avoid misclassifying as distributed EC
@@ -454,86 +457,104 @@ func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
 	return shardSize
 }
 
-// validateEcVolume checks if EC volume has enough shards to be functional
-// For distributed EC volumes (where .dat is deleted), any number of shards is valid
-// For incomplete EC encoding (where .dat still exists), we need at least DataShardsCount shards
-// Also validates that all shards have the same size (required for Reed-Solomon EC)
-// If .dat exists, it also validates shards match the expected size based on .dat file size
+// validateEcVolume reports whether the EC files for (collection, vid) on this
+// disk may be deleted to reclaim the local .dat. It returns false (delete)
+// only when that provably loses no data; every ambiguity returns true (keep),
+// since the shards may be the only copy of distributed-EC data.
 func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) bool {
 	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
 	datFileName := baseFileName + ".dat"
 
+	// Custom ratio comes from the volume's own .vif; the server holds no
+	// cluster EC config in memory.
+	dataShards := l.ecDataShardsFromVif(collection, vid)
+
+	// On-disk .dat size, or -1 when absent (an empty <= superblock .dat is a
+	// stub). A transient stat error keeps the shards rather than deleting.
 	var expectedShardSize int64 = -1
 	datExists := false
-
-	// If .dat file exists, compute exact expected shard size from it.
-	// Pass the build's default data-shard count; calculateExpectedShardSize
-	// takes it as a parameter so tests / enterprise builds can supply
-	// their own.
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
-		datExists = true
-		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), erasure_coding.DataShardsCount)
+		if datFileInfo.Size() > int64(super_block.SuperBlockSize) {
+			datExists = true
+			expectedShardSize = calculateExpectedShardSize(datFileInfo.Size(), dataShards)
+		}
 	} else if !os.IsNotExist(err) {
-		// If stat fails with unexpected error (permission, I/O), fail validation
-		// Don't treat this as "distributed EC" - it could be a temporary error
-		glog.Warningf("Failed to stat .dat file %s: %v", datFileName, err)
-		return false
+		glog.Warningf("EC volume %d: cannot stat .dat %s (%v); keeping EC shards", vid, datFileName, err)
+		return true
 	}
 
+	// Count local shards; a transient stat error or inconsistent sizes -> keep.
 	shardCount := 0
 	var actualShardSize int64 = -1
-
-	// Count shards and validate they all have the same size (required for Reed-Solomon EC)
-	// Check up to MaxShardCount (32) to support custom EC ratios
 	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		shardFileName := baseFileName + erasure_coding.ToExt(i)
 		fi, err := os.Stat(shardFileName)
-
 		if err == nil {
-			// Check if file has non-zero size
 			if fi.Size() > 0 {
-				// Validate all shards are the same size (required for Reed-Solomon EC)
 				if actualShardSize == -1 {
 					actualShardSize = fi.Size()
 				} else if fi.Size() != actualShardSize {
-					glog.Warningf("EC volume %d shard %d has size %d, expected %d (all EC shards must be same size)",
-						vid, i, fi.Size(), actualShardSize)
-					return false
+					glog.Warningf("EC volume %d shard %d size %d != %d; keeping EC shards", vid, i, fi.Size(), actualShardSize)
+					return true
 				}
 				shardCount++
 			}
 		} else if !os.IsNotExist(err) {
-			// If stat fails with unexpected error (permission, I/O), fail validation
-			// This is consistent with .dat file error handling
-			glog.Warningf("Failed to stat shard file %s: %v", shardFileName, err)
-			return false
+			glog.Warningf("EC volume %d: cannot stat shard %s (%v); keeping EC shards", vid, shardFileName, err)
+			return true
 		}
 	}
 
-	// If .dat file exists, validate shard size matches expected size
-	if datExists && actualShardSize > 0 && expectedShardSize > 0 {
-		if actualShardSize != expectedShardSize {
-			glog.Warningf("EC volume %d: shard size %d doesn't match expected size %d (based on .dat file size)",
-				vid, actualShardSize, expectedShardSize)
-			return false
-		}
-	}
-
-	// If .dat file is gone, this is a distributed EC volume - any shard count is valid
 	if !datExists {
-		glog.V(1).Infof("EC volume %d: distributed EC (.dat removed) with %d shards", vid, shardCount)
-		return true
+		return true // distributed EC; any shard count is valid
 	}
 
-	// If .dat file exists, we need at least DataShardsCount shards locally
-	// Otherwise it's an incomplete EC encoding that should be cleaned up
-	if shardCount < erasure_coding.DataShardsCount {
-		glog.Warningf("EC volume %d has .dat file but only %d shards (need at least %d for local EC)",
-			vid, shardCount, erasure_coding.DataShardsCount)
+	// Reclaim only when it loses no data. Shards smaller than this .dat's full
+	// encode are an interrupted encode whose .dat is the complete source ->
+	// reclaim. Shards >= expected (valid/distributing EC, or a stale/partial
+	// .dat beside larger real shards) may be the only copy -> keep.
+	if shardCount == 0 {
 		return false
 	}
-
+	if expectedShardSize > 0 && actualShardSize > 0 && actualShardSize < expectedShardSize {
+		glog.Warningf("EC volume %d: %d shards of %d bytes are smaller than the .dat's full encode (%d bytes); reclaiming the complete .dat",
+			vid, shardCount, actualShardSize, expectedShardSize)
+		return false
+	}
 	return true
+}
+
+// ecDataShardsFromVif resolves the data-shard count for an EC volume from
+// its own .vif (EcShardConfig), checking the data dir then the idx dir. The
+// .vif is the source of truth for custom ratios on the volume server, which
+// never holds the cluster EC config in memory. Falls back to the default
+// ratio when the .vif carries no EC shard config.
+func (l *DiskLocation) ecDataShardsFromVif(collection string, vid needle.VolumeId) int {
+	// At most two dirs to check; avoid slice/map allocations on this
+	// per-volume startup path.
+	if l.Directory != "" {
+		if ds := ecDataShardsFromVifDir(collection, l.Directory, vid); ds > 0 {
+			return ds
+		}
+	}
+	if l.IdxDirectory != "" && l.IdxDirectory != l.Directory {
+		if ds := ecDataShardsFromVifDir(collection, l.IdxDirectory, vid); ds > 0 {
+			return ds
+		}
+	}
+	return erasure_coding.DataShardsCount
+}
+
+// ecDataShardsFromVifDir returns the .vif EcShardConfig data-shard count for
+// (collection, vid) under dir, or 0 when absent / not custom.
+func ecDataShardsFromVifDir(collection, dir string, vid needle.VolumeId) int {
+	vifName := erasure_coding.EcShardFileName(collection, dir, int(vid)) + ".vif"
+	if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifName); found && vi.EcShardConfig != nil {
+		if ds := int(vi.EcShardConfig.DataShards); ds > 0 {
+			return ds
+		}
+	}
+	return 0
 }
 
 // removeEcVolumeFiles removes all EC-related files for a volume

@@ -278,3 +278,54 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 		t.Logf("Speedup: %.1fx (parallel + prefetch + no gRPC vs server-side sequential)", directRate/serverRate)
 	}
 }
+
+// failingReaderFn returns err for the given file key, delegating otherwise.
+func failingReaderFn(base LogFileReaderFn, failKey string, err error) LogFileReaderFn {
+	return func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+		if len(chunks) > 0 && chunks[0].FileId == failKey {
+			return nil, err
+		}
+		return base(chunks)
+	}
+}
+
+// A real (non not-found) read error must fail the whole replay, not silently
+// drop the file and advance the cursor.
+func TestReadLogFileRefsMultiFilerGenuineErrorAborts(t *testing.T) {
+	files := newTestLogFiles(3, 2, 10, 0)
+	failKey := files.refs[2].Chunks[0].FileId // filer01's first file
+	readerFn := failingReaderFn(files.readerFn(), failKey, fmt.Errorf("failed to locate %s", failKey))
+
+	var count int64
+	_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			atomic.AddInt64(&count, 1)
+			return nil
+		})
+	if err == nil {
+		t.Fatalf("expected error from genuine read failure, got nil (delivered=%d)", count)
+	}
+}
+
+// A chunk-not-found error skips only that file (volume gone), not the replay.
+func TestReadLogFileRefsMultiFilerNotFoundSkips(t *testing.T) {
+	files := newTestLogFiles(3, 2, 10, 0)
+	skipKey := files.refs[2].Chunks[0].FileId // filer01's first file
+	readerFn := failingReaderFn(files.readerFn(), skipKey, fmt.Errorf("volume not found: %s", skipKey))
+
+	var count int64
+	_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			atomic.AddInt64(&count, 1)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("chunk-not-found should be skipped, got error: %v", err)
+	}
+	expected := int64(files.totalEvents() - 10) // one skipped file's events
+	if count != expected {
+		t.Fatalf("expected %d events after skipping one file, got %d", expected, count)
+	}
+}

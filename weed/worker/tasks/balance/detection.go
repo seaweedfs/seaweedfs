@@ -662,6 +662,7 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 				DataCenter: disk.DataCenter,
 				Rack:       disk.Rack,
 				NodeID:     disk.NodeID,
+				Host:       hostFromAddress(disk.Address, disk.NodeID),
 			}
 			if !IsGoodMove(rp, replicas, selectedVolume.Server, target) {
 				continue
@@ -771,6 +772,7 @@ func isValidBalanceDestination(plan *topology.DestinationPlan, allowedServers ma
 		DataCenter: plan.TargetDC,
 		Rack:       plan.TargetRack,
 		NodeID:     plan.TargetNode,
+		Host:       hostFromAddress(plan.TargetAddress, plan.TargetNode),
 	}
 	return IsGoodMove(rp, replicas, sourceNodeID, target)
 }
