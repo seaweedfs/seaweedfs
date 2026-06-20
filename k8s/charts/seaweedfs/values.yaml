@@ -850,8 +850,36 @@ filer:
       pathType: ImplementationSpecific
       annotations:
         nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
-        # traefik.ingress.kubernetes.io/service.serversscheme: h2c
+        # traefik.ingress.kubernetes.io/service.serverscheme: h2c
       tls: []
+
+    # ── TCP passthrough (Traefik IngressRouteTCP) ──
+    # Use this when the filer has mTLS enabled and you need to expose gRPC
+    # via Traefik with TLS passthrough. The standard HTTP Ingress terminates
+    # TLS at the ingress, which conflicts with the filer's mTLS requirement.
+    #
+    # IngressRouteTCP is a Traefik CRD (traefik.io/v1alpha1) that forwards
+    # raw TCP traffic. With tls.passthrough: true, Traefik does not terminate
+    # TLS — the certificate negotiation happens directly between the client
+    # and the filer.
+    tcp:
+      enabled: false
+      # Traefik ingress class for the IngressRouteTCP resource.
+      className: "traefik"
+      # Service name to expose. Must be an existing Service in the release
+      # namespace. Common values: "filer", "all-in-one", or a custom service.
+      service: ""
+      # gRPC port on the target service.
+      port: 18888
+      # Hosts to expose. Empty list = wildcard (no host restriction).
+      # Example: ["filer.example.com"]
+      hosts: []
+      # Annotations on the IngressRouteTCP resource.
+      # The template automatically injects tls.passthrough: true.
+      # You can add Traefik TLS options, certResolver, etc. here:
+      #   traefik.ingressroute.traefik.io/tls.options: "default"
+      #   traefik.ingressroute.traefik.io/tls.certresolver: "letsencrypt"
+      annotations: {}
 
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:

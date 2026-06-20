@@ -1,0 +1,52 @@
+{{- /*
+  Filer TCP IngressRoute (Traefik IngressRouteTCP).
+
+  Use when the filer has mTLS enabled and you need to expose gRPC via
+  Traefik with TLS passthrough.  The standard HTTP Ingress terminates TLS
+  at the ingress level, which breaks the filer's mutual-TLS negotiation.
+
+  IngressRouteTCP is a Traefik CRD (traefik.io/v1alpha1).
+  It forwards raw TCP; tls.passthrough: true keeps the TLS stream end-to-end.
+*/}}
+{{- $filerEnabled := or .Values.filer.enabled .Values.allInOne.enabled }}
+{{- if and $filerEnabled .Values.filer.ingresses.tcp.enabled }}
+
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: ingress-{{ include "seaweedfs.fullname" . }}-filer-tcp
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.filer.ingresses.tcp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: filer-tcp
+spec:
+  ingressClassName: {{ .Values.filer.ingresses.tcp.className | quote }}
+  routes:
+    {{- $hosts := .Values.filer.ingresses.tcp.hosts | default list }}
+    {{- /* Determine service name: all-in-one uses the combined service, standalone uses the filer service */}}
+    {{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
+    {{- if $hosts }}
+    {{- range $host := $hosts }}
+    - match: HostSNI(`{{ $host }}`)
+      services:
+        - name: {{ $serviceName }}
+          port: {{ .Values.filer.ingresses.tcp.port }}
+          passthrough: true
+    {{- end }}
+    {{- else }}
+    - match: HostSNI(`*`)
+      services:
+        - name: {{ $serviceName }}
+          port: {{ .Values.filer.ingresses.tcp.port }}
+          passthrough: true
+    {{- end }}
+  tls:
+    passthrough: true
+{{- end }}
