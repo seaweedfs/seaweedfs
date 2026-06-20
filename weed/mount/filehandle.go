@@ -51,6 +51,16 @@ type FileHandle struct {
 
 	// for debugging
 	mirrorFile *os.File
+
+	// FUSE_PASSTHROUGH (Linux >= 6.9) state. On a read-only open the whole
+	// file is materialized into passthroughFile and registered with the
+	// kernel so reads/mmap bypass this daemon. There is one handle per inode,
+	// so this state is shared by all concurrent opens and torn down in
+	// ReleaseHandle when the last open closes. Guarded by passthroughMu.
+	passthroughMu        sync.Mutex
+	passthroughTried     bool
+	passthroughBackingID int32
+	passthroughFile      *os.File
 }
 
 func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_pb.Entry) *FileHandle {
@@ -155,6 +165,7 @@ func (fh *FileHandle) ReleaseHandle() {
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	fh.dirtyPages.Destroy()
+	fh.teardownPassthrough()
 	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()
 	}

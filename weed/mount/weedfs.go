@@ -114,6 +114,16 @@ type Option struct {
 	// When false (default), directories report nlink=2.
 	PosixDirNlink bool
 
+	// FusePassthroughMaxMB auto-enables Linux FUSE_PASSTHROUGH for read-only
+	// opens of files up to this size (MB). When > 0 (the default) and the
+	// kernel supports it (>= 6.9, privileged mount), the whole file is
+	// materialized into a local backing file and the kernel serves reads/mmap
+	// directly from it, bypassing this mount process. Support is auto-detected
+	// and silently falls back when unavailable; set to 0 to disable. NOTE: a
+	// passthrough handle reads a point-in-time snapshot — concurrent writes are
+	// not reflected while the file stays open.
+	FusePassthroughMaxMB int64
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -138,6 +148,10 @@ type WFS struct {
 	dhMap                *DirectoryHandleToInode
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
+	// passthroughDisabled latches true after the first RegisterBackingFd
+	// failure (unprivileged mount, or a kernel without passthrough), so we
+	// stop attempting the ioctl on every subsequent open.
+	passthroughDisabled atomic.Bool
 	fhLockTable          *util.LockTable[FileHandleId]
 	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable

@@ -315,6 +315,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if option.cacheSymlink != nil && *option.cacheSymlink {
 		fuseMountOptions.EnableSymlinkCaching = true
 	}
+	if option.fusePassthroughMaxMB != nil && *option.fusePassthroughMaxMB > 0 {
+		// FUSE_PASSTHROUGH requires a non-zero stacking depth advertised in
+		// FUSE_INIT; without it the kernel rejects backing-file registration.
+		fuseMountOptions.MaxStackDepth = 1
+	}
 
 	// find mount point
 	mountRoot := filerMountRootPath
@@ -326,6 +331,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	cacheDirForWrite := util.ResolvePath(*option.cacheDirForWrite)
 	if cacheDirForWrite == "" {
 		cacheDirForWrite = cacheDirForRead
+	}
+
+	passthroughMaxMB := int64(0)
+	if option.fusePassthroughMaxMB != nil {
+		passthroughMaxMB = *option.fusePassthroughMaxMB
 	}
 
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
@@ -373,6 +383,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
 		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
 		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
+		FusePassthroughMaxMB:  passthroughMaxMB,
 		// Peer chunk sharing
 		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
 		PeerListen:     peerStringOrEmpty(option.peerListen),

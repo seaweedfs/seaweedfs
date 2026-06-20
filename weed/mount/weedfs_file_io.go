@@ -68,10 +68,15 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = 0
 
-		// For read-only opens, set FOPEN_KEEP_CACHE when the file's mtime
-		// has not changed since the last open.  This tells the kernel to
-		// preserve its existing page cache, avoiding redundant reads.
+		// For read-only opens, first try FUSE passthrough (auto-enabled where
+		// the kernel supports it): the kernel serves reads/mmap directly from a
+		// local backing file, bypassing this daemon. If passthrough is not
+		// enabled, fall back to FOPEN_KEEP_CACHE when the file's mtime has not
+		// changed since the last open, preserving the kernel page cache.
 		if in.Flags&fuse.O_ANYWRITE == 0 {
+			if wfs.tryEnablePassthrough(fileHandle, out) {
+				return status
+			}
 			if entry := fileHandle.GetEntry(); entry != nil && entry.Attributes != nil {
 				wfs.applyKeepCacheFlag(in.NodeId, entry, out)
 			}
