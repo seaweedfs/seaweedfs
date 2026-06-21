@@ -4355,7 +4355,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "rate(SeaweedFS_volumeServer_volume_creation_total{cluster=~\"$cluster\"}[5m])",
+              "expr": "rate(SeaweedFS_master_volume_creation_total{cluster=~\"$cluster\"}[5m])",
               "range": true,
               "refId": "A",
               "legendFormat": "{{result}}"

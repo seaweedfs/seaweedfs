@@ -137,13 +137,13 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	for i := uint32(0); i < targetCount; i++ {
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
+			stats.MasterVolumeCreationCounter.WithLabelValues("success").Inc()
 		} else {
 			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
-			stats.VolumeServerVolumeCreationCounter.WithLabelValues("failure").Inc()
+			stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
 			return result, e
 		}
 	}
-	stats.VolumeServerVolumeCreationCounter.WithLabelValues("success").Inc()
 	return
 }
 
