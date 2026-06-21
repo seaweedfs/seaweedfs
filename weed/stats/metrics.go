@@ -128,6 +128,16 @@ var (
 			Help:      "Current number of volumes that do not have enough replicas per collection/layout. 0 = healthy.",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	// MasterVolumeCreationCounter counts volume creation (growth) operations by result (success, failure).
+	// Volume growth is orchestrated by the master, so this metric is exported by the master process.
+	MasterVolumeCreationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "volume_creation_total",
+			Help:      "Counter of volume creation operations by result (success, failure).",
+		}, []string{"result"})
+
 	MasterPickForWriteErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -863,6 +873,7 @@ func init() {
 	Gather.MustRegister(VolumeServerReplicationTargets)
 	Gather.MustRegister(VolumeServerReplicationFailures)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
+	Gather.MustRegister(MasterVolumeCreationCounter)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
