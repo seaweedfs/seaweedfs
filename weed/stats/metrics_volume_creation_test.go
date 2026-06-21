@@ -27,14 +27,18 @@ func TestVolumeCreationMetricsRegistered(t *testing.T) {
 	}
 	for _, m := range metrics {
 		count := testutil.CollectAndCount(m.c)
-		if count < 1 {
-			t.Errorf("%s: expected at least 1 collection, got %d", m.name, count)
+		if count != 2 {
+			t.Errorf("%s: expected 2 collections (success, failure), got %d", m.name, count)
 		}
 	}
 }
 
 func TestVolumeCreationCounterIncrement(t *testing.T) {
 	VolumeServerVolumeCreationCounter.Reset()
+
+	t.Cleanup(func() {
+		VolumeServerVolumeCreationCounter.Reset()
+	})
 
 	VolumeServerVolumeCreationCounter.WithLabelValues("success").Inc()
 	VolumeServerVolumeCreationCounter.WithLabelValues("failure").Inc()
