@@ -488,6 +488,15 @@ var (
 			Help:      "Counter of replication failures by operation and reason (timeout, connection_refused, context_cancelled, server_error).",
 		}, []string{"operation", "reason"})
 
+	// VolumeServerVolumeCreationCounter counts volume creation operations by result (success, failure).
+	VolumeServerVolumeCreationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "volume_creation_total",
+			Help:      "Counter of volume creation operations by result (success, failure).",
+		}, []string{"result"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -862,6 +871,7 @@ func init() {
 	Gather.MustRegister(VolumeServerReplicationHistogram)
 	Gather.MustRegister(VolumeServerReplicationTargets)
 	Gather.MustRegister(VolumeServerReplicationFailures)
+	Gather.MustRegister(VolumeServerVolumeCreationCounter)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
 
 	Gather.MustRegister(S3RequestCounter)

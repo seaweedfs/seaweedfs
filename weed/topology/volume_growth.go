@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 /*
@@ -140,6 +141,11 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
 			return result, e
 		}
+	}
+	if err == nil {
+		stats.VolumeServerVolumeCreationCounter.WithLabelValues("success").Inc()
+	} else {
+		stats.VolumeServerVolumeCreationCounter.WithLabelValues("failure").Inc()
 	}
 	return
 }
