@@ -173,7 +173,7 @@ func TestSplitWhereConjunctionQuoteAware(t *testing.T) {
 
 func TestPartitionPredicateMatchesUsesPartitionFieldIDs(t *testing.T) {
 	spec := iceberg.NewPartitionSpec(iceberg.PartitionField{
-		SourceID:  2,
+		SourceIDs: []int{2},
 		FieldID:   1000,
 		Name:      "name",
 		Transform: iceberg.IdentityTransform{},
@@ -193,7 +193,7 @@ func TestCompactDataFilesWhereFilter(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
 	partitionSpec := iceberg.NewPartitionSpec(iceberg.PartitionField{
-		SourceID:  2,
+		SourceIDs: []int{2},
 		FieldID:   1000,
 		Name:      "name",
 		Transform: iceberg.IdentityTransform{},

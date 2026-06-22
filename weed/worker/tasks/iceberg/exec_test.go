@@ -2930,7 +2930,7 @@ func TestCompactDataFilesSortStrategyUsesAscendingTableSortOrder(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
 	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
-		SourceID:  1,
+		SourceIDs: []int{1},
 		Transform: iceberg.IdentityTransform{},
 		Direction: table.SortASC,
 		NullOrder: table.NullsFirst,
@@ -2994,7 +2994,7 @@ func TestCompactDataFilesSortStrategyUsesTableSortOrder(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
 	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
-		SourceID:  2,
+		SourceIDs: []int{2},
 		Transform: iceberg.IdentityTransform{},
 		Direction: table.SortDESC,
 		NullOrder: table.NullsLast,
@@ -3063,7 +3063,7 @@ func TestDetectSkipsSortCompactionBinsAboveCap(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
 	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
-		SourceID:  1,
+		SourceIDs: []int{1},
 		Transform: iceberg.IdentityTransform{},
 		Direction: table.SortASC,
 		NullOrder: table.NullsFirst,
@@ -3117,7 +3117,7 @@ func TestDetectSplitsSortCompactionBinsByCap(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
 	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
-		SourceID:  1,
+		SourceIDs: []int{1},
 		Transform: iceberg.IdentityTransform{},
 		Direction: table.SortASC,
 		NullOrder: table.NullsFirst,
@@ -3624,7 +3624,7 @@ func TestRewritePositionDeleteFilesRebuildsMixedDeleteManifests(t *testing.T) {
 
 func TestResolveCompactionRewritePlanFallsBackForUnsupportedSortTransform(t *testing.T) {
 	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
-		SourceID:  1,
+		SourceIDs: []int{1},
 		Transform: iceberg.BucketTransform{NumBuckets: 16},
 		Direction: table.SortASC,
 		NullOrder: table.NullsFirst,
