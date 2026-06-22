@@ -59,7 +59,7 @@ func (c *commandVolumeBalance) Help() string {
 
 	The -volumesPerStep parameter limits the maximum number of volume moves in one command execution.
 	If unset - the command will try to balance all volumes at once.
-	It might be beneficial to set, if your cluster has lots of blocks growing and topology changes faster than balancing can occur.
+	It might be beneficial to set, if your cluster has lots of volumes growing and topology changes faster than balancing can occur.
 
 	Algorithm:
 
@@ -131,6 +131,9 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
 	c.applyBalancing = *applyBalancing
+	if *volumesPerStep < 0 {
+		return fmt.Errorf("volumesPerStep must be >= 0")
+	}
 	c.volumesPerStep = *volumesPerStep
 	c.movedCount = 0
 
