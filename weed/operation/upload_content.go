@@ -3,6 +3,8 @@ package operation
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,6 +41,7 @@ type UploadOption struct {
 	Jwt               security.EncodedJwt
 	RetryForever      bool
 	Md5               string
+	WantMd5           bool // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
 	BytesBuffer       *bytes.Buffer
 	SourceUrl         string // optional: for logging when reading from a remote source
 	MaxAttempts       int    // <=0 uses the default
@@ -194,6 +197,14 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 	// doesn't fall back to the 1 MB DefaultNeedleSizeEstimate per fid.
 	if assignRequest.ExpectedDataSize == 0 {
 		assignRequest.ExpectedDataSize = uint64(len(data))
+	}
+
+	// Hash the buffer we already hold so the server echoes Content-MD5 back as
+	// the chunk ETag (std-base64 of the raw digest, the form ParseUpload
+	// verifies). Never under cipher: the server sees only ciphertext.
+	if uploadOption.WantMd5 && uploadOption.Md5 == "" && !uploadOption.Cipher {
+		digest := md5.Sum(data)
+		uploadOption.Md5 = base64.StdEncoding.EncodeToString(digest[:])
 	}
 
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {

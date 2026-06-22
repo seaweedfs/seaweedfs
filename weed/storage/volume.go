@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -47,6 +48,7 @@ type Volume struct {
 	ldbTimeout             int64
 
 	isCompactionInProgress atomic.Bool
+	lastDiskCheckNs        atomic.Int64 // unix time in nanoseconds for phantom volume detection
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
@@ -410,6 +412,24 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 
 	if !ok {
 		return 0, nil
+	}
+
+	// Detect phantom volumes: the .dat was unlinked from disk but is still held
+	// open as a deleted FD, so the volume keeps serving and heartbeating while no
+	// disk-path operation can ever succeed. Skip remote-tiered volumes, whose .dat
+	// legitimately lives in cloud storage. Only a present .dat is cached for 30s; a
+	// missing one is re-checked every heartbeat so the volume stays suppressed until
+	// the file returns. See github.com/seaweedfs/seaweedfs/issues/10004
+	if fileCount > 0 && !v.HasRemoteFile() {
+		const diskCheckIntervalNs = 30 * int64(time.Second)
+		now := time.Now().UnixNano()
+		if now-v.lastDiskCheckNs.Load() > diskCheckIntervalNs {
+			if _, err := os.Stat(v.FileName(".dat")); os.IsNotExist(err) {
+				glog.Warningf("Volume %d: data file %s missing (held open as deleted FD) - not reporting to master", v.Id, v.FileName(".dat"))
+				return 0, nil
+			}
+			v.lastDiskCheckNs.Store(now)
+		}
 	}
 
 	volumeInfo := &master_pb.VolumeInformationMessage{

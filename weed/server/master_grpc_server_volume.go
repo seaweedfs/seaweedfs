@@ -68,8 +68,10 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				writable, crowded := vl.GetWritableVolumeCount()
 				mustGrow := int(lastGrowCount) - writable
 				vgr := vlc.ToVolumeGrowRequest()
+				underReplicated := vl.CountUnderReplicatedVolumes()
 				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
 				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
+				stats.MasterUnderReplicatedVolumes.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(underReplicated))
 
 				switch {
 				case mustGrow > 0:

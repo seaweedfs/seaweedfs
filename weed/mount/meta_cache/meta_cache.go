@@ -42,6 +42,12 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
+
+	// Entry invalidations run on a worker, not inline on the apply loop:
+	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
+	// the apply loop (flushMetadataToFiler -> applyLocalMetadataEvent), so inline
+	// invalidation deadlocks the mount.
+	invalidateWorker *util.AsyncBatchWorker[metadataInvalidation]
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -109,6 +115,11 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs: make(map[util.FullPath]*directoryBuildState),
 		dedupRing:    newDedupRingBuffer(),
 	}
+	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
+		for _, invalidation := range batch {
+			mc.invalidateFunc(invalidation.path, invalidation.entry)
+		}
+	})
 	go mc.runApplyLoop()
 	return mc
 }
@@ -437,6 +448,10 @@ func (mc *MetaCache) Shutdown() {
 
 	<-mc.applyDone
 
+	// The apply loop is the only dispatcher of entry invalidations; with it
+	// stopped, drain and stop the invalidate worker before closing the store.
+	mc.invalidateWorker.Shutdown()
+
 	mc.Lock()
 	defer mc.Unlock()
 	mc.localStore.Shutdown()
@@ -606,9 +621,7 @@ func (mc *MetaCache) applyMetadataSideEffects(resp *filer_pb.SubscribeMetadataRe
 	for _, dirPath := range sideEffects.dirsToNotify {
 		mc.noteDirectoryUpdate(dirPath)
 	}
-	for _, invalidation := range sideEffects.invalidations {
-		mc.invalidateFunc(invalidation.path, invalidation.entry)
-	}
+	mc.invalidateWorker.Enqueue(sideEffects.invalidations...)
 }
 
 // applyMetadataSideEffectsSkippingBuildingDirs is like applyMetadataSideEffects
@@ -627,9 +640,14 @@ func (mc *MetaCache) applyMetadataSideEffectsSkippingBuildingDirs(resp *filer_pb
 			mc.noteDirectoryUpdate(dirPath)
 		}
 	}
-	for _, invalidation := range sideEffects.invalidations {
-		mc.invalidateFunc(invalidation.path, invalidation.entry)
-	}
+	mc.invalidateWorker.Enqueue(sideEffects.invalidations...)
+}
+
+// WaitForEntryInvalidations blocks until every invalidation enqueued so far
+// has been processed by the invalidate worker. Intended for tests and
+// shutdown paths that need the previously-synchronous behavior.
+func (mc *MetaCache) WaitForEntryInvalidations() {
+	mc.invalidateWorker.Drain()
 }
 
 func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, _ MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {

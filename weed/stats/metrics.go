@@ -40,6 +40,20 @@ const (
 	bucketAtiveTTL   = 10 * time.Minute
 )
 
+// Prometheus metric subsystems.
+const (
+	subsystemBuild        = "build"
+	subsystemMaster       = "master"
+	subsystemWDClient     = "wdclient"
+	subsystemFiler        = "filer"
+	subsystemFilerStore   = "filerStore"
+	subsystemFilerSync    = "filerSync"
+	subsystemVolumeServer = "volumeServer"
+	subsystemS3           = "s3"
+	subsystemS3Lifecycle  = "s3_lifecycle"
+	subsystemAdmin        = "admin"
+)
+
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
 var bucketLastActiveLock sync.Mutex
 
@@ -49,7 +63,7 @@ var (
 	BuildInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "build",
+			Subsystem: subsystemBuild,
 			Name:      "info",
 			Help:      "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built.",
 		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
@@ -57,7 +71,7 @@ var (
 	MasterStartTimeSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "start_time_seconds",
 			Help:      "Start time of the master, as seconds since UNIX epoch.",
 		})
@@ -65,7 +79,7 @@ var (
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "wdclient",
+			Subsystem: subsystemWDClient,
 			Name:      "connect_updates",
 			Help:      "Counter of master client leader updates.",
 		}, []string{"type"})
@@ -73,7 +87,7 @@ var (
 	MasterRaftIsleader = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "is_leader",
 			Help:      "is leader",
 		})
@@ -81,7 +95,7 @@ var (
 	MasterAdminLock = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "admin_lock",
 			Help:      "admin lock",
 		}, []string{"client"})
@@ -89,7 +103,7 @@ var (
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "received_heartbeats",
 			Help:      "Counter of master received heartbeat.",
 		}, []string{"type"})
@@ -97,7 +111,7 @@ var (
 	MasterReplicaPlacementMismatch = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "replica_placement_mismatch",
 			Help:      "replica placement mismatch",
 		}, []string{"collection", "id"})
@@ -105,7 +119,7 @@ var (
 	MasterVolumeLayoutWritable = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "volume_layout_writable",
 			Help:      "Number of writable volumes in volume layouts",
 		}, []string{"collection", "disk", "rp", "ttl"})
@@ -113,15 +127,35 @@ var (
 	MasterVolumeLayoutCrowded = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "volume_layout_crowded",
 			Help:      "Number of crowded volumes in volume layouts",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	// MasterUnderReplicatedVolumes tracks volumes that do not have enough replicas,
+	// partitioned by collection, disk type, replication type, and TTL.
+	MasterUnderReplicatedVolumes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "under_replicated_volumes",
+			Help:      "Current number of volumes that do not have enough replicas per collection/layout. 0 = healthy.",
+		}, []string{"collection", "disk", "rp", "ttl"})
+
+	// MasterVolumeCreationCounter counts volume creation (growth) operations by result (success, failure).
+	// Volume growth is orchestrated by the master, so this metric is exported by the master process.
+	MasterVolumeCreationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "volume_creation_total",
+			Help:      "Counter of volume creation operations by result (success, failure).",
+		}, []string{"result"})
+
 	MasterPickForWriteErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "pick_for_write_error",
 			Help:      "Counter of master pick for write error",
 		})
@@ -129,7 +163,7 @@ var (
 	MasterBroadcastToFullErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "broadcast_to_full",
 			Help:      "Counter of master broadcast send to full message channel err",
 		})
@@ -137,7 +171,7 @@ var (
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "master",
+			Subsystem: subsystemMaster,
 			Name:      "leader_changes",
 			Help:      "Counter of master leader changes.",
 		}, []string{"type"})
@@ -145,7 +179,7 @@ var (
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "request_total",
 			Help:      "Counter of filer requests.",
 		}, []string{"type", "code"})
@@ -153,7 +187,7 @@ var (
 	FilerHandlerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "handler_total",
 			Help:      "Counter of filer handlers.",
 		}, []string{"type"})
@@ -161,7 +195,7 @@ var (
 	FilerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of filer request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
@@ -170,7 +204,7 @@ var (
 	FilerInFlightRequestsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "in_flight_requests",
 			Help:      "Current number of in-flight requests being handled by filer.",
 		}, []string{"type"})
@@ -178,7 +212,7 @@ var (
 	FilerInFlightUploadBytesGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "in_flight_upload_bytes",
 			Help:      "Current number of bytes being uploaded to filer.",
 		})
@@ -186,7 +220,7 @@ var (
 	FilerInFlightUploadCountGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "in_flight_upload_count",
 			Help:      "Current number of uploads in progress to filer.",
 		})
@@ -194,7 +228,7 @@ var (
 	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "last_send_timestamp_of_subscribe",
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
@@ -203,7 +237,7 @@ var (
 	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "filer",
+			Subsystem: subsystemFiler,
 			Name:      "object_size_bytes",
 			Help:      "Distribution of object sizes in bytes, sampled when an object is first created.",
 			Buckets:   []float64{1024, 102400, 1048576, 104857600, 1073741824},
@@ -212,7 +246,7 @@ var (
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "filerStore",
+			Subsystem: subsystemFilerStore,
 			Name:      "request_total",
 			Help:      "Counter of filer store requests.",
 		}, []string{"store", "type"})
@@ -220,7 +254,7 @@ var (
 	FilerStoreHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "filerStore",
+			Subsystem: subsystemFilerStore,
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of filer store request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
@@ -229,7 +263,7 @@ var (
 	FilerSyncOffsetGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "filerSync",
+			Subsystem: subsystemFilerSync,
 			Name:      "sync_offset",
 			Help:      "The offset of the filer synchronization service.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
@@ -237,7 +271,7 @@ var (
 	VolumeServerStartTimeSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "start_time_seconds",
 			Help:      "Start time of the volume server, as seconds since UNIX epoch.",
 		})
@@ -245,7 +279,7 @@ var (
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "request_total",
 			Help:      "Counter of volume server requests.",
 		}, []string{"type", "code"})
@@ -253,7 +287,7 @@ var (
 	VolumeServerHandlerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "handler_total",
 			Help:      "Counter of volume server handlers.",
 		}, []string{"type"})
@@ -261,7 +295,7 @@ var (
 	VolumeServerVacuumingCompactCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "vacuuming_compact_count",
 			Help:      "Counter of volume vacuuming Compact counter",
 		}, []string{"success"})
@@ -269,7 +303,7 @@ var (
 	VolumeServerVacuumingCommitCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "vacuuming_commit_count",
 			Help:      "Counter of volume vacuuming commit counter",
 		}, []string{"success"})
@@ -277,7 +311,7 @@ var (
 	VolumeServerVacuumingHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "vacuuming_seconds",
 			Help:      "Bucketed histogram of volume server vacuuming processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
@@ -286,7 +320,7 @@ var (
 	VolumeServerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of volume server request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
@@ -295,7 +329,7 @@ var (
 	VolumeServerInFlightRequestsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "in_flight_requests",
 			Help:      "Current number of in-flight requests being handled by volume server.",
 		}, []string{"type"})
@@ -303,7 +337,7 @@ var (
 	VolumeServerVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "volumes",
 			Help:      "Number of volumes or shards.",
 		}, []string{"collection", "type"})
@@ -311,7 +345,7 @@ var (
 	VolumeServerReadOnlyVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "read_only_volumes",
 			Help:      "Number of read only volumes.",
 		}, []string{"collection", "type"})
@@ -319,7 +353,7 @@ var (
 	VolumeServerMaxVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "max_volumes",
 			Help:      "Maximum number of volumes.",
 		})
@@ -327,7 +361,7 @@ var (
 	VolumeServerDiskSizeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "total_disk_size",
 			Help:      "Actual disk size used by volumes.",
 		}, []string{"collection", "type"})
@@ -335,7 +369,7 @@ var (
 	VolumeServerResourceGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "resource",
 			Help:      "Resource usage",
 		}, []string{"name", "type"})
@@ -343,7 +377,7 @@ var (
 	VolumeServerDiskErrorGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "disk_error_status",
 			Help:      "Disk error status",
 		}, []string{"name", "type"})
@@ -351,7 +385,7 @@ var (
 	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "concurrent_download_limit",
 			Help:      "Limit total concurrent download size.",
 		})
@@ -359,7 +393,7 @@ var (
 	VolumeServerConcurrentUploadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "concurrent_upload_limit",
 			Help:      "Limit total concurrent upload size.",
 		})
@@ -367,7 +401,7 @@ var (
 	VolumeServerInFlightDownloadSize = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "in_flight_download_size",
 			Help:      "In flight total download size.",
 		})
@@ -375,7 +409,7 @@ var (
 	VolumeServerInFlightUploadSize = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "in_flight_upload_size",
 			Help:      "In flight total upload size.",
 		})
@@ -383,7 +417,7 @@ var (
 	VolumeServerMasterDisconnections = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "master_disconnections",
 			Help:      "Number of master server disconnections.",
 		}, []string{"address"})
@@ -391,7 +425,7 @@ var (
 	VolumeServerFileReadFailures = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "file_read_failures",
 			Help:      "Counter of overall failed file read requests from clients.",
 		})
@@ -399,7 +433,7 @@ var (
 	VolumeServerFileReadInvalidNeedles = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "file_read_invalid_needles",
 			Help:      "Counter of failed file read requests due to invalid needle IDs from clients.",
 		})
@@ -407,7 +441,7 @@ var (
 	VolumeServerFileWriteFailures = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "file_write_failures",
 			Help:      "Counter of overall failed file write requests from clients.",
 		})
@@ -415,7 +449,7 @@ var (
 	VolumeServerScrubLastTimeSeconds = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "scrub_last_time_seconds",
 			Help:      "Last scrub execution time, as seconds since UNIX epoch.",
 		}, []string{"mode"})
@@ -423,7 +457,7 @@ var (
 	VolumeServerScrubVolumeFailures = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "scrub_volume_failures",
 			Help:      "Counter of overall volumes with issues detected during scrubbing.",
 		}, []string{"mode"})
@@ -431,15 +465,57 @@ var (
 	VolumeServerScrubShardFailures = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "volumeServer",
+			Subsystem: subsystemVolumeServer,
 			Name:      "scrub_shard_failures",
 			Help:      "Counter of overall EC shards with issues detected during scrubbing.",
 		}, []string{"mode"})
 
+	// VolumeServerReplicationCounter counts replication operations by operation type
+	// (write, delete) and result (success, failure).
+	VolumeServerReplicationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "replication_operations_total",
+			Help:      "Counter of replication operations by type (write, delete) and result (success, failure).",
+		}, []string{"operation", "result"})
+
+	// VolumeServerReplicationHistogram records replication operation duration in seconds,
+	// partitioned by operation type (write, delete).
+	VolumeServerReplicationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "replication_seconds",
+			Help:      "Bucketed histogram of replication operation duration in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"operation"})
+
+	// VolumeServerReplicationTargets records the number of replica targets per replication
+	// operation, useful for observing fan-out width.
+	VolumeServerReplicationTargets = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "replication_targets",
+			Help:      "Histogram of replica targets count per replication operation.",
+			Buckets:   []float64{1, 2, 3, 4, 5},
+		})
+
+	// VolumeServerReplicationFailures counts replication failures by operation type
+	// and failure reason (timeout, connection_refused, context_cancelled, server_error).
+	VolumeServerReplicationFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "replication_failures_total",
+			Help:      "Counter of replication failures by operation and reason (timeout, connection_refused, context_cancelled, server_error).",
+		}, []string{"operation", "reason"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
 		}, []string{"type", "code", "bucket"})
@@ -447,7 +523,7 @@ var (
 	S3HandlerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "handler_total",
 			Help:      "Counter of s3 server handlers.",
 		}, []string{"type"})
@@ -455,7 +531,7 @@ var (
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
@@ -464,7 +540,7 @@ var (
 	S3TimeToFirstByteHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "time_to_first_byte_millisecond",
 			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
@@ -472,7 +548,7 @@ var (
 	S3InFlightRequestsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "in_flight_requests",
 			Help:      "Current number of in-flight requests being handled by s3.",
 		}, []string{"type"})
@@ -480,7 +556,7 @@ var (
 	S3InFlightUploadBytesGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "in_flight_upload_bytes",
 			Help:      "Current number of bytes being uploaded to S3.",
 		})
@@ -488,7 +564,7 @@ var (
 	S3InFlightUploadCountGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "in_flight_upload_count",
 			Help:      "Current number of uploads in progress to S3.",
 		})
@@ -496,7 +572,7 @@ var (
 	S3BucketTrafficReceivedBytesCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_traffic_received_bytes_total",
 			Help:      "Total number of bytes received by an S3 bucket from clients.",
 		}, []string{"bucket"})
@@ -504,7 +580,7 @@ var (
 	S3BucketTrafficSentBytesCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_traffic_sent_bytes_total",
 			Help:      "Total number of bytes sent from an S3 bucket to clients.",
 		}, []string{"bucket"})
@@ -512,7 +588,7 @@ var (
 	S3DeletedObjectsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "deleted_objects",
 			Help:      "Number of objects deleted in each bucket.",
 		}, []string{"bucket"})
@@ -520,7 +596,7 @@ var (
 	S3UploadedObjectsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "uploaded_objects",
 			Help:      "Number of objects uploaded in each bucket.",
 		}, []string{"bucket"})
@@ -528,7 +604,7 @@ var (
 	S3BucketSizeBytesGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_size_bytes",
 			Help:      "Current size of each S3 bucket in bytes (logical size, deduplicated across replicas).",
 		}, []string{"bucket"})
@@ -536,7 +612,7 @@ var (
 	S3BucketPhysicalSizeBytesGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_physical_size_bytes",
 			Help:      "Current physical size of each S3 bucket in bytes (including all replicas).",
 		}, []string{"bucket"})
@@ -544,7 +620,7 @@ var (
 	S3BucketObjectCountGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_object_count",
 			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
 		}, []string{"bucket"})
@@ -552,7 +628,7 @@ var (
 	S3BucketQuotaBytesGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_quota_bytes",
 			Help:      "Configured quota of each S3 bucket in bytes. Only present for buckets with an enabled quota.",
 		}, []string{"bucket"})
@@ -560,7 +636,7 @@ var (
 	S3BucketReadOnlyGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3",
+			Subsystem: subsystemS3,
 			Name:      "bucket_read_only",
 			Help:      "Whether each S3 bucket is read-only (1) or writable (0), e.g. after exceeding its quota.",
 		}, []string{"bucket"})
@@ -575,7 +651,7 @@ var (
 	S3LifecycleDispatchCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "dispatch_total",
 			Help:      "Counter of LifecycleDelete RPC outcomes by bucket, action kind, and outcome.",
 		}, []string{"bucket", "kind", "outcome"})
@@ -583,7 +659,7 @@ var (
 	S3LifecycleScheduleDepthGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "schedule_depth",
 			Help:      "Number of pending matches in the dispatcher schedule per shard.",
 		}, []string{"shard"})
@@ -591,7 +667,7 @@ var (
 	S3LifecycleCursorMinTsNs = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "cursor_min_ts_ns",
 			Help:      "Per-shard min cursor timestamp in nanoseconds since epoch (lag = now - min).",
 		}, []string{"shard"})
@@ -599,7 +675,7 @@ var (
 	S3LifecycleEventCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "events_total",
 			Help:      "Counter of meta-log events the reader emitted to the router, partitioned by shard.",
 		}, []string{"shard"})
@@ -607,7 +683,7 @@ var (
 	S3LifecycleBootstrapDispatchCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "bootstrap_dispatch_total",
 			Help:      "Counter of bootstrap-walk Delete dispatches by bucket and action kind.",
 		}, []string{"bucket", "kind"})
@@ -622,7 +698,7 @@ var (
 	S3LifecycleMetadataOnlyCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "metadata_only_total",
 			Help:      "Counter of LifecycleDelete completions that skipped per-chunk delete (volume TTL reclaim).",
 		}, []string{"bucket", "rule_hash"})
@@ -637,7 +713,7 @@ var (
 	S3LifecycleDispatchLimiterWaitSeconds = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "dispatch_limiter_wait_seconds",
 			Help:      "Time spent waiting on the cluster rate limiter before issuing a LifecycleDelete RPC. Non-zero values indicate the cluster cap is binding.",
 			Buckets:   []float64{0.0001, 0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
@@ -646,7 +722,7 @@ var (
 	S3LifecycleDailyRunShardDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "daily_run_shard_duration_seconds",
 			Help:      "Wall-clock seconds spent in one shard's daily_replay pass. p95 climbing toward MaxRuntime means the shard is brushing its budget.",
 			Buckets:   []float64{0.1, 0.5, 1, 5, 15, 60, 300, 900, 1800, 3600},
@@ -655,7 +731,7 @@ var (
 	S3LifecycleDailyRunEventsScanned = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "daily_run_events_scanned_total",
 			Help:      "Counter of meta-log events drainShardEvents processed on the daily_replay path, partitioned by shard.",
 		}, []string{"shard"})
@@ -673,7 +749,7 @@ var (
 	S3LifecycleDailyRunLastWalkedNs = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "s3_lifecycle",
+			Subsystem: subsystemS3Lifecycle,
 			Name:      "daily_run_last_walked_ns",
 			Help:      "Per-shard timestamp (UnixNano) of the most recent successful walker fire. 0 means the shard hasn't completed a walk yet.",
 		}, []string{"shard"})
@@ -681,7 +757,7 @@ var (
 	AdminMaintenanceTasksByStatus = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "maintenance_tasks_by_status",
 			Help:      "Current number of maintenance tasks by status (pending, assigned, in_progress, completed, failed, cancelled).",
 		}, []string{"status"})
@@ -689,7 +765,7 @@ var (
 	AdminMaintenanceTasksByType = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "maintenance_tasks_by_type",
 			Help:      "Current number of maintenance tasks by type.",
 		}, []string{"type"})
@@ -697,7 +773,7 @@ var (
 	AdminMaintenanceTasksCompletedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "maintenance_tasks_completed_total",
 			Help:      "Counter of maintenance tasks that reached a terminal state, by type and outcome (completed, failed).",
 		}, []string{"type", "outcome"})
@@ -705,7 +781,7 @@ var (
 	AdminMaintenanceTaskDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "maintenance_task_duration_seconds",
 			Help:      "Execution time of maintenance tasks that reached a terminal state, by type.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
@@ -714,7 +790,7 @@ var (
 	AdminMaintenanceLastScanTimestampSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "maintenance_last_scan_timestamp_seconds",
 			Help:      "Unix timestamp of the most recent maintenance scan. 0 means no scan has run yet.",
 		})
@@ -722,7 +798,7 @@ var (
 	AdminMaintenanceNextScanTimestampSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "maintenance_next_scan_timestamp_seconds",
 			Help:      "Unix timestamp of the next expected maintenance scan.",
 		})
@@ -730,7 +806,7 @@ var (
 	AdminWorkersConnected = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "workers_connected",
 			Help:      "Current number of maintenance workers known to the admin server.",
 		})
@@ -738,7 +814,7 @@ var (
 	AdminWorkerSlots = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "worker_slots",
 			Help:      "Maintenance worker task slots aggregated across workers, by state (used, max).",
 		}, []string{"state"})
@@ -746,7 +822,7 @@ var (
 	AdminWorkerEventsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Subsystem: "admin",
+			Subsystem: subsystemAdmin,
 			Name:      "worker_events_total",
 			Help:      "Counter of maintenance worker lifecycle events by type (registered, unregistered, stale_removed).",
 		}, []string{"event"})
@@ -806,6 +882,12 @@ func init() {
 	Gather.MustRegister(VolumeServerScrubLastTimeSeconds)
 	Gather.MustRegister(VolumeServerScrubVolumeFailures)
 	Gather.MustRegister(VolumeServerScrubShardFailures)
+	Gather.MustRegister(VolumeServerReplicationCounter)
+	Gather.MustRegister(VolumeServerReplicationHistogram)
+	Gather.MustRegister(VolumeServerReplicationTargets)
+	Gather.MustRegister(VolumeServerReplicationFailures)
+	Gather.MustRegister(MasterUnderReplicatedVolumes)
+	Gather.MustRegister(MasterVolumeCreationCounter)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
@@ -931,6 +1013,7 @@ func DeleteCollectionMetrics(collection string) {
 	c := MasterReplicaPlacementMismatch.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutWritable.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutCrowded.DeletePartialMatch(labels)
+	c += MasterUnderReplicatedVolumes.DeletePartialMatch(labels)
 	c += VolumeServerDiskSizeGauge.DeletePartialMatch(labels)
 	c += VolumeServerVolumeGauge.DeletePartialMatch(labels)
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)

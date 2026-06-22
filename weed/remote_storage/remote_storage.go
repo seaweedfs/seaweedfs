@@ -95,6 +95,12 @@ type RemoteStorageConcurrentReader interface {
 	ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error)
 }
 
+// RemoteStorageStreamReader is an optional interface for remote storage clients
+// that support streaming reads with io.Reader for efficient memory usage.
+type RemoteStorageStreamReader interface {
+	ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error)
+}
+
 type RemoteStorageClientMaker interface {
 	Make(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error)
 	HasBucket() bool

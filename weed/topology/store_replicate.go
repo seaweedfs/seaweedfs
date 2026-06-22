@@ -24,6 +24,11 @@ import (
 	"google.golang.org/grpc"
 )
 
+// ReplicatedWrite writes a needle to the local volume and fans it out to all
+// remote replica locations. When type=replicate is set, the request is itself
+// a forwarded replication and no further remote lookups are performed.
+// Returns isUnchanged=true when the local write determined the needle content
+// was already present.
 func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
 
 	//check JWT
@@ -46,6 +51,15 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		fsync = true
 	}
 
+	replicaCount := len(remoteLocations)
+
+	if replicaCount > 0 {
+		// Record replication duration histogram for the overall write operation
+		defer func(t time.Time) {
+			stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpWrite).Observe(time.Since(t).Seconds())
+		}(time.Now())
+	}
+
 	if s.GetVolume(volumeId) != nil {
 		start := time.Now()
 
@@ -63,7 +77,10 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}
 	}
 
-	if len(remoteLocations) > 0 { //send to other replica locations
+	// Observe replication targets histogram for all operations (including zero)
+	stats.VolumeServerReplicationTargets.Observe(float64(replicaCount))
+
+	if replicaCount > 0 { //send to other replica locations
 		start := time.Now()
 
 		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToReplicas)
@@ -133,14 +150,22 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
+			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
+			reason := classifyReplicationError(err)
+			stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, reason).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			glog.V(0).Infoln(err)
 			return false, err
 		}
+		stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationSuccess).Inc()
 	}
 	return
 }
 
+// ReplicatedDelete deletes a needle from the local volume and sends delete
+// requests to all remote replica locations. Replica deletes use
+// context.Background() so that a client disconnect does not orphan replica
+// deletes.
 func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
 
 	//check JWT
@@ -155,17 +180,36 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 		}
 	}
 
+	replicaCount := len(remoteLocations)
+
+	if replicaCount > 0 {
+		// Record replication duration and operation counter for delete
+		defer func(t time.Time) {
+			stats.VolumeServerReplicationHistogram.WithLabelValues(stats.ReplicationOpDelete).Observe(time.Since(t).Seconds())
+			if err != nil {
+				stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationFailure).Inc()
+			} else {
+				stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpDelete, stats.ReplicationSuccess).Inc()
+			}
+		}(time.Now())
+	}
+
 	size, err = store.DeleteVolumeNeedle(volumeId, n)
 	if err != nil {
 		glog.V(0).Infoln("delete error:", err)
 		return
 	}
 
-	if len(remoteLocations) > 0 { //send to other replica locations
+	// Observe replication targets histogram for all operations (including zero)
+	stats.VolumeServerReplicationTargets.Observe(float64(replicaCount))
+
+	if replicaCount > 0 { //send to other replica locations
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
 			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
+			reason := classifyReplicationError(err)
+			stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpDelete, reason).Inc()
 			size = 0
 		}
 	}
@@ -254,4 +298,24 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	}
 
 	return
+}
+
+// classifyReplicationError maps a Go error to a bounded-cardinality failure
+// reason label for the replication_failures_total metric. Returns an empty
+// string for nil errors.
+func classifyReplicationError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return stats.FailureTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return stats.FailureContextCancelled
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "connection refused") {
+		return stats.FailureConnectionRefused
+	}
+	return stats.FailureServerError
 }
