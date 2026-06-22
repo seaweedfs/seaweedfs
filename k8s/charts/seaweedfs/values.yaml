@@ -1783,6 +1783,7 @@ cosi:
 
 certificates:
   commonName: "SeaweedFS CA"
+  dnsNames: []
   ipAddresses: []
   keyAlgorithm: RSA
   keySize: 2048
