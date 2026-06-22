@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // topoWith builds a one-node topology snapshot where regularVids appear as
@@ -189,5 +191,45 @@ func TestPrepareDataToRecover_SelfSourceNotCopied(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("self-sourced shard 5 should be classified local, got local=%v", local)
+	}
+}
+
+func TestPrepareDataToRecover_ApplyCopyFailureDoesNotCountAsRecoverable(t *testing.T) {
+	var log bytes.Buffer
+	rebuilder := newEcNode("dc1", "rack1", "127.0.0.1:1", 100).
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8})
+	remote := newEcNode("dc1", "rack1", "127.0.0.1:2", 100).
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{9})
+	erb := &ecRebuilder{
+		commandEnv: &CommandEnv{
+			env:    make(map[string]string),
+			noLock: true,
+			option: &ShellOptions{
+				GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+			},
+		},
+		ecNodes:      []*EcNode{rebuilder, remote},
+		writer:       &log,
+		applyChanges: true,
+	}
+
+	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+	for i := 0; i < 9; i++ {
+		locations[i] = []*EcNode{rebuilder}
+	}
+	locations[9] = []*EcNode{remote}
+
+	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations)
+	if err == nil {
+		t.Fatalf("copy failure must leave only 9 usable shards and fail recoverability gate; copied=%v local=%v log:\n%s", copied, local, log.String())
+	}
+	if !strings.Contains(err.Error(), "9 shards are not enough") {
+		t.Fatalf("expected recoverability error to count only successful/local shards, got %v; log:\n%s", err, log.String())
+	}
+	if len(copied) != 0 {
+		t.Fatalf("failed copy must not be recorded as copied/deletable, got %v", copied)
+	}
+	if !strings.Contains(log.String(), "failed to copy 1.9") {
+		t.Fatalf("expected failed copy to be logged, got:\n%s", log.String())
 	}
 }

@@ -265,14 +265,12 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	// collect shard files to rebuilder local disk
 	var generatedShardIds []erasure_coding.ShardId
 	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
-	if err != nil {
-		return err
-	}
 	defer func() {
-		// Clean up the working copies this run actually made. In dry-run
-		// nothing was copied (copiedShardIds is empty), so this issues no
-		// delete RPC. Use a local error so a cleanup failure cannot mask a
-		// successful rebuild's return value.
+		// Clean up the working copies this run actually made, even when the
+		// recoverability gate failed after some copies already succeeded:
+		// they are temp files on the rebuilder nothing else reclaims. Dry-run
+		// copies nothing (copiedShardIds is empty), so this issues no delete
+		// RPC. Use a local error so a cleanup failure cannot mask the return.
 		if !erb.applyChanges || len(copiedShardIds) == 0 {
 			return
 		}
@@ -280,6 +278,9 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 			erb.write("%s delete copied ec shards %s %d.%v: %v\n", rebuilder.info.Id, collection, volumeId, copiedShardIds, derr)
 		}
 	}()
+	if err != nil {
+		return err
+	}
 
 	if !erb.applyChanges {
 		return nil
@@ -344,11 +345,9 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 		}
 	}
 
-	// wouldCopy counts shards available on a remote holder that the rebuilder
-	// could pull. It drives the recoverability gate below independently of
-	// whether we actually copy (dry-run copies nothing), so a dry-run still
-	// reports the plan instead of erroring "not enough shards".
-	wouldCopy := 0
+	// recoverableRemoteShards counts remote shards that can contribute to the
+	// rebuild. Dry-run counts the plan; apply mode counts only successful copies.
+	recoverableRemoteShards := 0
 	for i := 0; i < targetShardCount; i++ {
 		ecNodes := locations[i]
 		shardId := erasure_coding.ShardId(i)
@@ -372,9 +371,8 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 			continue
 		}
 
-		wouldCopy++
-
 		if !erb.applyChanges {
+			recoverableRemoteShards++
 			erb.write("would copy %d.%d from %s\n", volumeId, shardId, ecNodes[0].info.Id)
 			continue
 		}
@@ -395,6 +393,7 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 			erb.write("%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id, copyErr)
 			continue
 		}
+		recoverableRemoteShards++
 		if needEcxFile {
 			needEcxFile = false
 		}
@@ -404,11 +403,13 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 		copiedShardIds = append(copiedShardIds, shardId)
 	}
 
-	if len(localShardIds)+wouldCopy >= erasure_coding.DataShardsCount {
+	if len(localShardIds)+recoverableRemoteShards >= erasure_coding.DataShardsCount {
 		return copiedShardIds, localShardIds, nil
 	}
 
-	return nil, nil, fmt.Errorf("%d shards are not enough to recover volume %d", len(localShardIds)+wouldCopy, volumeId)
+	// Hand back what was copied so the caller deletes these orphaned working
+	// shards: recovery failed, but the temp files are already on the rebuilder.
+	return copiedShardIds, localShardIds, fmt.Errorf("%d shards are not enough to recover volume %d", len(localShardIds)+recoverableRemoteShards, volumeId)
 
 }
 
