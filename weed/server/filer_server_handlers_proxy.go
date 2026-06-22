@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -61,9 +62,21 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.IntN(len(urlStrings))], r.Body)
+	// Build target URL. urlStrings from LookupFileId already contain the fileId
+	// in the path (e.g. http://server:8080/6,08136bdce4). Forward any original
+	// query params (e.g. readDeleted=true from weed mount).
+	targetURL := urlStrings[rand.IntN(len(urlStrings))]
+	if r.URL.RawQuery != "" {
+		if strings.Contains(targetURL, "?") {
+			targetURL += "&" + r.URL.RawQuery
+		} else {
+			targetURL += "?" + r.URL.RawQuery
+		}
+	}
+
+	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "NewRequest %s: %v", urlStrings[0], err)
+		glog.ErrorfCtx(ctx, "NewRequest %s: %v", targetURL, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
