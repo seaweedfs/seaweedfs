@@ -61,9 +61,19 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.IntN(len(urlStrings))], r.Body)
+	// urlStrings from LookupFileId already contain the fileId in the path
+	// (e.g. http://server:8080/6,08136bdce4). Forward the caller's query params
+	// (e.g. readDeleted=true from weed mount) but drop the internal proxyChunkId.
+	targetURL := urlStrings[rand.IntN(len(urlStrings))]
+	query := r.URL.Query()
+	query.Del("proxyChunkId")
+	if encoded := query.Encode(); encoded != "" {
+		targetURL += "?" + encoded
+	}
+
+	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "NewRequest %s: %v", urlStrings[0], err)
+		glog.ErrorfCtx(ctx, "NewRequest %s: %v", targetURL, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
