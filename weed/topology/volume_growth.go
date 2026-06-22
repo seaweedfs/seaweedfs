@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -136,8 +137,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	for i := uint32(0); i < targetCount; i++ {
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
+			stats.MasterVolumeCreationCounter.WithLabelValues("success").Inc()
 		} else {
 			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+			stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
 			return result, e
 		}
 	}

@@ -344,6 +344,22 @@ func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.Remot
 	return data, nil
 }
 
+func (az *azureRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
+	key := loc.Path[1:]
+	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
+
+	downloadResponse, err := blobClient.DownloadStream(ctx, &blob.DownloadStreamOptions{
+		Range: blob.HTTPRange{
+			Offset: offset,
+			Count:  size,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+	return downloadResponse.Body, nil
+}
+
 func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
