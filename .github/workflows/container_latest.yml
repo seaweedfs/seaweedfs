@@ -72,7 +72,7 @@ jobs:
             cross: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
 
@@ -141,7 +141,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       - name: Free Disk Space
@@ -282,7 +282,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
       - name: Checkout for local scan build
         if: needs.setup.outputs.publish != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       - name: Download pre-built Rust binaries for local scan
@@ -408,7 +408,7 @@ jobs:
         variant: ${{ fromJSON(needs.setup.outputs.variants) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       
