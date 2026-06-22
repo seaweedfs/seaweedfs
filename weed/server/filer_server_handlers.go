@@ -58,7 +58,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	// proxy to volume servers
 	var fileId string
-	if strings.HasPrefix(r.RequestURI, "/?proxyChunkId=") {
+	if r.URL.Path == "/" {
 		fileId = r.URL.Query().Get("proxyChunkId")
 	}
 	if fileId != "" {
