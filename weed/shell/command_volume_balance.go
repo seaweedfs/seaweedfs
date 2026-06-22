@@ -47,44 +47,44 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-        volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerStep=5]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerStep=5]
 
-        The -collection parameter supports:
-          - ALL_COLLECTIONS: balance across all collections
-          - EACH_COLLECTION: balance each collection separately
-          - Regular expressions for pattern matching:
-            * Use exact match: volume.balance -collection="^mybucket$"
-            * Match multiple buckets: volume.balance -collection="bucket.*"
-            * Match all user collections: volume.balance -collection="user-.*"
-
-        The -volumesPerStep parameter limits the maximum number of volume moves in one run.
-
-        Algorithm:
-
-        For each type of volume server (different max volume count limit){
-                for each collection {
-                        balanceWritableVolumes()
-                        balanceReadOnlyVolumes()
-                }
-        }
-
-        func balanceWritableVolumes(){
-                idealWritableVolumeRatio = totalWritableVolumes / totalNumberOfMaxVolumes
-                for hasMovedOneVolume {
-                        sort all volume servers ordered by the localWritableVolumeRatio = localWritableVolumes to localVolumeMax
-                        pick the volume server B with the highest localWritableVolumeRatio y
-                        for any the volume server A with the number of writable volumes x + 1 <= idealWritableVolumeRatio * localVolumeMax {
-                                if y > localWritableVolumeRatio {
-                                        if B has a writable volume id v that A does not have, and satisfy v replication requirements {
-                                                move writable volume v from A to B
-                                        }
-                                }
-                        }
-                }
-        }
-        func balanceReadOnlyVolumes(){
-                //similar to balanceWritableVolumes
-        }
+	The -collection parameter supports:
+	  - ALL_COLLECTIONS: balance across all collections
+	  - EACH_COLLECTION: balance each collection separately
+	  - Regular expressions for pattern matching:
+	    * Use exact match: volume.balance -collection="^mybucket$"
+	    * Match multiple buckets: volume.balance -collection="bucket.*"
+	    * Match all user collections: volume.balance -collection="user-.*"
+	
+	The -volumesPerStep parameter limits the maximum number of volume moves in one run.
+	
+	Algorithm:
+	
+	For each type of volume server (different max volume count limit){
+		for each collection {
+			balanceWritableVolumes()
+			balanceReadOnlyVolumes()
+		}
+	}
+	
+	func balanceWritableVolumes(){
+		idealWritableVolumeRatio = totalWritableVolumes / totalNumberOfMaxVolumes
+		for hasMovedOneVolume {
+			sort all volume servers ordered by the localWritableVolumeRatio = localWritableVolumes to localVolumeMax
+			pick the volume server B with the highest localWritableVolumeRatio y
+			for any the volume server A with the number of writable volumes x + 1 <= idealWritableVolumeRatio * localVolumeMax {
+				if y > localWritableVolumeRatio {
+					if B has a writable volume id v that A does not have, and satisfy v replication requirements {
+						move writable volume v from A to B
+					}
+				}
+			}
+		}
+	}
+	func balanceReadOnlyVolumes(){
+		//similar to balanceWritableVolumes
+	}
 
 `
 }
