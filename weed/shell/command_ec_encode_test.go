@@ -246,3 +246,27 @@ func TestEcEncodeNodeCountCheck(t *testing.T) {
 	willProceed = forceChanges || nodeCount >= minNodeCount
 	assert.True(t, willProceed, "Should proceed with -force even with %d nodes", nodeCount)
 }
+
+func TestParseEcEncodeVolumeIds(t *testing.T) {
+	vids, err := parseEcEncodeVolumeIds("101, 102,101, 103")
+	assert.NoError(t, err)
+	assert.Equal(t, []needle.VolumeId{101, 102, 103}, vids)
+
+	_, err = parseEcEncodeVolumeIds("101,abc")
+	assert.Error(t, err)
+
+	_, err = parseEcEncodeVolumeIds(" , ")
+	assert.Error(t, err)
+}
+
+func TestChunkEcEncodeVolumeIds(t *testing.T) {
+	vids := []needle.VolumeId{101, 102, 103, 104, 105}
+
+	assert.Equal(t, [][]needle.VolumeId{
+		{101, 102},
+		{103, 104},
+		{105},
+	}, chunkEcEncodeVolumeIds(vids, 2))
+
+	assert.Equal(t, [][]needle.VolumeId{vids}, chunkEcEncodeVolumeIds(vids, 0))
+}
