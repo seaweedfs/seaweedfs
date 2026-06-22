@@ -36,7 +36,7 @@ type commandVolumeBalance struct {
 	commandEnv        *CommandEnv
 	volumeByActive    *bool
 	applyBalancing    bool
-	volumesPerStep    int
+	volumesPerExec    int
 	movedCount        int
 }
 
@@ -47,7 +47,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerStep=5]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5]
 
 	The -collection parameter supports:
 	  - ALL_COLLECTIONS: balance across all collections
@@ -57,7 +57,7 @@ func (c *commandVolumeBalance) Help() string {
 	    * Match multiple buckets: volume.balance -collection="bucket.*"
 	    * Match all user collections: volume.balance -collection="user-.*"
 
-	The -volumesPerStep parameter limits the maximum number of volume moves in one command execution.
+	The -volumesPerExec parameter limits the maximum number of volume moves in one command execution.
 	If unset - the command will try to balance all volumes at once.
 	It might be beneficial to set, if your cluster has lots of volumes growing and topology changes faster than balancing can occur.
 
@@ -112,7 +112,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan.")
 	// TODO: remove this alias
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
-	volumesPerStep := balanceCommand.Int("volumesPerStep", 0, "how many volumes to move in one run (default is 0 for unlimited)")
+	volumesPerExec := balanceCommand.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)")
 
 	balanceCommand.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
 		if flagValue == "" {
@@ -131,10 +131,10 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
 	c.applyBalancing = *applyBalancing
-	if *volumesPerStep < 0 {
-		return fmt.Errorf("volumesPerStep must be >= 0")
+	if *volumesPerExec < 0 {
+		return fmt.Errorf("volumesPerExec must be >= 0")
 	}
-	c.volumesPerStep = *volumesPerStep
+	c.volumesPerExec = *volumesPerExec
 	c.movedCount = 0
 
 	infoAboutSimulationMode(writer, c.applyBalancing, "-apply")
@@ -166,7 +166,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, col := range collections {
-			if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+			if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
 				break
 			}
 			// Use direct string comparison for exact match (more efficient than regex)
@@ -195,7 +195,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 
 func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
 	for _, diskType := range diskTypes {
-		if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+		if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
 			break
 		}
 		if err := c.balanceVolumeServersByDiskType(diskType, volumeReplicas, nodes, collectionPattern, collectionName); err != nil {
@@ -439,7 +439,7 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 	}
 	for hasMoved {
 		hasMoved = false
-		if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+		if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
 			break
 		}
 		slices.SortFunc(nodesWithCapacity, func(a, b *Node) int {
@@ -475,7 +475,7 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		}
 		sortCandidatesFn(candidateVolumes)
 		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
-			if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+			if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
 				break
 			}
 			if !(fullNode.localVolumeDensityNextRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeDensityNextRatio(capacityFunc) <= idealVolumeRatio) {
