@@ -356,8 +356,8 @@ func TestBalanceDoesNotDrainOntoOneNode(t *testing.T) {
 	}
 }
 
-// volumesPerStep caps the number of moves performed in a single execution.
-func TestBalanceVolumesPerStep(t *testing.T) {
+// volumesPerExec caps the number of moves performed in a single execution.
+func TestBalanceVolumesPerExec(t *testing.T) {
 	const mb = 1024 * 1024
 	volumeSizeLimitMb := uint64(100)
 
@@ -396,13 +396,13 @@ func TestBalanceVolumesPerStep(t *testing.T) {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool { return true })
 	}
 
-	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, volumesPerStep: 1}
+	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, volumesPerExec: 1}
 	if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
 		t.Fatalf("balanceSelectedVolume: %v", err)
 	}
 
 	if c.movedCount != 1 {
-		t.Fatalf("expected exactly 1 move with volumesPerStep=1, got %d", c.movedCount)
+		t.Fatalf("expected exactly 1 move with volumesPerExec=1, got %d", c.movedCount)
 	}
 	if got := len(emptyNode.info.DiskInfos[""].VolumeInfos); got != 1 {
 		t.Fatalf("expected empty node to receive exactly 1 volume, got %d", got)
