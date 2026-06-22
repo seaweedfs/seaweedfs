@@ -36,6 +36,8 @@ type commandVolumeBalance struct {
 	commandEnv        *CommandEnv
 	volumeByActive    *bool
 	applyBalancing    bool
+	volumesPerStep    int
+	movedCount        int
 }
 
 func (c *commandVolumeBalance) Name() string {
@@ -45,42 +47,44 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080]
+        volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerStep=5]
 
-	The -collection parameter supports:
-	  - ALL_COLLECTIONS: balance across all collections
-	  - EACH_COLLECTION: balance each collection separately
-	  - Regular expressions for pattern matching:
-	    * Use exact match: volume.balance -collection="^mybucket$"
-	    * Match multiple buckets: volume.balance -collection="bucket.*"
-	    * Match all user collections: volume.balance -collection="user-.*"
+        The -collection parameter supports:
+          - ALL_COLLECTIONS: balance across all collections
+          - EACH_COLLECTION: balance each collection separately
+          - Regular expressions for pattern matching:
+            * Use exact match: volume.balance -collection="^mybucket$"
+            * Match multiple buckets: volume.balance -collection="bucket.*"
+            * Match all user collections: volume.balance -collection="user-.*"
 
-	Algorithm:
+        The -volumesPerStep parameter limits the maximum number of volume moves in one run.
 
-	For each type of volume server (different max volume count limit){
-		for each collection {
-			balanceWritableVolumes()
-			balanceReadOnlyVolumes()
-		}
-	}
+        Algorithm:
 
-	func balanceWritableVolumes(){
-		idealWritableVolumeRatio = totalWritableVolumes / totalNumberOfMaxVolumes
-		for hasMovedOneVolume {
-			sort all volume servers ordered by the localWritableVolumeRatio = localWritableVolumes to localVolumeMax
-			pick the volume server B with the highest localWritableVolumeRatio y
-			for any the volume server A with the number of writable volumes x + 1 <= idealWritableVolumeRatio * localVolumeMax {
-				if y > localWritableVolumeRatio {
-					if B has a writable volume id v that A does not have, and satisfy v replication requirements {
-						move writable volume v from A to B
-					}
-				}
-			}
-		}
-	}
-	func balanceReadOnlyVolumes(){
-		//similar to balanceWritableVolumes
-	}
+        For each type of volume server (different max volume count limit){
+                for each collection {
+                        balanceWritableVolumes()
+                        balanceReadOnlyVolumes()
+                }
+        }
+
+        func balanceWritableVolumes(){
+                idealWritableVolumeRatio = totalWritableVolumes / totalNumberOfMaxVolumes
+                for hasMovedOneVolume {
+                        sort all volume servers ordered by the localWritableVolumeRatio = localWritableVolumes to localVolumeMax
+                        pick the volume server B with the highest localWritableVolumeRatio y
+                        for any the volume server A with the number of writable volumes x + 1 <= idealWritableVolumeRatio * localVolumeMax {
+                                if y > localWritableVolumeRatio {
+                                        if B has a writable volume id v that A does not have, and satisfy v replication requirements {
+                                                move writable volume v from A to B
+                                        }
+                                }
+                        }
+                }
+        }
+        func balanceReadOnlyVolumes(){
+                //similar to balanceWritableVolumes
+        }
 
 `
 }
@@ -106,6 +110,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan.")
 	// TODO: remove this alias
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
+	volumesPerStep := balanceCommand.Int("volumesPerStep", 0, "how many volumes to move in one run")
+
 	balanceCommand.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
 		if flagValue == "" {
 			return nil
@@ -123,6 +129,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
 	c.applyBalancing = *applyBalancing
+	c.volumesPerStep = *volumesPerStep
+	c.movedCount = 0
 
 	infoAboutSimulationMode(writer, c.applyBalancing, "-apply")
 
@@ -153,6 +161,9 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, col := range collections {
+			if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+				break
+			}
 			// Use direct string comparison for exact match (more efficient than regex)
 			if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, col); err != nil {
 				return err
@@ -179,6 +190,9 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 
 func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
 	for _, diskType := range diskTypes {
+		if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+			break
+		}
 		if err := c.balanceVolumeServersByDiskType(diskType, volumeReplicas, nodes, collectionPattern, collectionName); err != nil {
 			return err
 		}
@@ -208,7 +222,7 @@ func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.Dis
 			return selectVolumesByActive(v.Size, c.volumeByActive, c.volumeSizeLimitMb)
 		})
 	}
-	if err := balanceSelectedVolume(c.commandEnv, diskType, volumeReplicas, nodes, sortWritableVolumes, c.volumeSizeLimitMb, c.applyBalancing); err != nil {
+	if err := c.balanceSelectedVolume(diskType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
 		return err
 	}
 
@@ -392,9 +406,10 @@ func selectVolumesByActive(volumeSize uint64, volumeByActive *bool, volumeSizeLi
 	}
 }
 
-func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), volumeSizeLimitMb uint64, applyBalancing bool) (err error) {
+func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage)) (err error) {
 	selectedVolumeCount, volumeCapacities := uint64(0), float64(0)
 	var nodesWithCapacity []*Node
+	volumeSizeLimitMb := c.volumeSizeLimitMb
 	if volumeSizeLimitMb == 0 {
 		volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 	}
@@ -414,16 +429,19 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 
 	hasMoved := true
 
-	if commandEnv != nil && commandEnv.verbose {
+	if c.commandEnv != nil && c.commandEnv.verbose {
 		fmt.Fprintf(os.Stdout, "selected nodes %d, volumes:%d, cap:%d, idealVolumeRatio %f\n", len(nodesWithCapacity), selectedVolumeCount, int64(volumeCapacities), idealVolumeRatio*100)
 	}
 	for hasMoved {
 		hasMoved = false
+		if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+			break
+		}
 		slices.SortFunc(nodesWithCapacity, func(a, b *Node) int {
 			return cmp.Compare(a.localVolumeDensityRatio(capacityFunc), b.localVolumeDensityRatio(capacityFunc))
 		})
 		if len(nodesWithCapacity) == 0 {
-			if commandEnv != nil && commandEnv.verbose {
+			if c.commandEnv != nil && c.commandEnv.verbose {
 				fmt.Fprintf(os.Stdout, "no volume server found with capacity for %s", diskType.ReadableString())
 			}
 			return nil
@@ -445,28 +463,31 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 			candidateVolumes = append(candidateVolumes, v)
 		}
 		if fullNodeIndex == -1 {
-			if commandEnv != nil && commandEnv.verbose {
+			if c.commandEnv != nil && c.commandEnv.verbose {
 				fmt.Fprintf(os.Stdout, "no nodes with capacity found for %s, nodes %d", diskType.ReadableString(), len(nodesWithCapacity))
 			}
 			return nil
 		}
 		sortCandidatesFn(candidateVolumes)
 		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
+			if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+				break
+			}
 			if !(fullNode.localVolumeDensityNextRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeDensityNextRatio(capacityFunc) <= idealVolumeRatio) {
-				if commandEnv != nil && commandEnv.verbose {
+				if c.commandEnv != nil && c.commandEnv.verbose {
 					fmt.Printf("no more volume servers with empty slots %s, idealVolumeRatio %f\n", emptyNode.info.Id, idealVolumeRatio)
 				}
 				break
 			}
 			fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio,
 				fullNode.localVolumeDensityRatio(capacityFunc), emptyNode.localVolumeDensityNextRatio(capacityFunc))
-			if commandEnv != nil && commandEnv.verbose {
+			if c.commandEnv != nil && c.commandEnv.verbose {
 				fmt.Fprintf(os.Stdout, "%s %.1f %.1f:%.1f\t", diskType.ReadableString(), idealVolumeRatio*100,
 					fullNode.localVolumeDensityRatio(capacityFunc)*100, emptyNode.localVolumeDensityNextRatio(capacityFunc)*100)
 			}
-			hasMoved, err = attemptToMoveOneVolume(commandEnv, volumeReplicas, fullNode, candidateVolumes, emptyNode, applyBalancing)
+			hasMoved, err = c.attemptToMoveOneVolume(volumeReplicas, fullNode, candidateVolumes, emptyNode)
 			if err != nil {
-				if commandEnv != nil && commandEnv.verbose {
+				if c.commandEnv != nil && c.commandEnv.verbose {
 					fmt.Fprintf(os.Stdout, "attempt to move one volume error %+v\n", err)
 				}
 				if strings.Contains(err.Error(), util.ErrVolumeNoSpaceLeft) {
@@ -483,10 +504,13 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 	return nil
 }
 
-func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node, applyBalancing bool) (hasMoved bool, err error) {
+func (c *commandVolumeBalance) attemptToMoveOneVolume(volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node) (hasMoved bool, err error) {
 
 	for _, v := range candidateVolumes {
-		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, fullNode, v, emptyNode, applyBalancing)
+		if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+			return false, nil
+		}
+		hasMoved, err = c.maybeMoveOneVolume(volumeReplicas, fullNode, v, emptyNode)
 		if err != nil {
 			return
 		}
@@ -497,13 +521,17 @@ func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]
 	return
 }
 
-func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
-	if !commandEnv.isLocked() {
+func (c *commandVolumeBalance) maybeMoveOneVolume(volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node) (hasMoved bool, err error) {
+	if !c.commandEnv.isLocked() {
 		return false, fmt.Errorf("lock is lost")
 	}
 
 	if candidateVolume.RemoteStorageName != "" {
 		return false, fmt.Errorf("does not move volume in remote storage")
+	}
+
+	if c.volumesPerStep > 0 && c.movedCount >= c.volumesPerStep {
+		return false, nil
 	}
 
 	if candidateVolume.ReplicaPlacement > 0 {
@@ -513,8 +541,9 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 		}
 	}
 	if _, found := emptyNode.selectedVolumes[candidateVolume.Id]; !found {
-		if err = moveVolume(commandEnv, candidateVolume, fullNode, emptyNode, applyChange); err == nil {
+		if err = moveVolume(c.commandEnv, candidateVolume, fullNode, emptyNode, c.applyBalancing); err == nil {
 			adjustAfterMove(candidateVolume, volumeReplicas, fullNode, emptyNode)
+			c.movedCount++
 			return true, nil
 		} else {
 			return
