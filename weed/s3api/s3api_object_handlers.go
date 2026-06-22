@@ -190,14 +190,22 @@ func (s3a *S3ApiServer) parseAndValidateRange(w http.ResponseWriter, r *http.Req
 		endOffset = totalSize - 1
 
 		if parts[0] != "" {
-			if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-				startOffset = parsed
+			parsed, parseErr := strconv.ParseInt(parts[0], 10, 64)
+			if parseErr != nil {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+				return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range start: %w", parseErr))
 			}
+			startOffset = parsed
 		}
 		if parts[1] != "" {
-			if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-				endOffset = parsed
+			parsed, parseErr := strconv.ParseInt(parts[1], 10, 64)
+			if parseErr != nil {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+				return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range end: %w", parseErr))
 			}
+			endOffset = parsed
 		}
 
 		// Special case: range requests on empty files should return 416
