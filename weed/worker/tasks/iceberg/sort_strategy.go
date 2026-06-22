@@ -63,20 +63,20 @@ func resolveCompactionSortFields(meta table.Metadata) ([]compactionSortField, er
 	schema := meta.CurrentSchema()
 	seen := make(map[string]struct{})
 	fields := make([]compactionSortField, 0, sortOrder.Len())
-	for sortField := range sortOrder.Fields() {
+	for _, sortField := range sortOrder.Fields() {
 		if _, ok := sortField.Transform.(iceberg.IdentityTransform); !ok {
 			return nil, errUnsupportedTableSortOrder
 		}
 
-		field, ok := schema.FindFieldByID(sortField.SourceID)
+		field, ok := schema.FindFieldByID(sortField.SourceID())
 		if !ok {
-			return nil, fmt.Errorf("table sort field %d not found in schema", sortField.SourceID)
+			return nil, fmt.Errorf("table sort field %d not found in schema", sortField.SourceID())
 		}
 		if _, ok := field.Type.(iceberg.PrimitiveType); !ok {
 			return nil, fmt.Errorf("table sort field %q is not a primitive column", field.Name)
 		}
 
-		columnPath, ok := schema.FindColumnName(sortField.SourceID)
+		columnPath, ok := schema.FindColumnName(sortField.SourceID())
 		if !ok {
 			columnPath = field.Name
 		}

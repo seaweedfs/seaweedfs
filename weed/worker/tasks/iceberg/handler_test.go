@@ -601,7 +601,7 @@ func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
 	partA := map[int]any{1: "us-east"}
 	partB := map[int]any{1: "eu-west"}
 	partitionSpec := iceberg.NewPartitionSpec(iceberg.PartitionField{
-		SourceID:  1,
+		SourceIDs: []int{1},
 		FieldID:   1000,
 		Name:      "region",
 		Transform: iceberg.IdentityTransform{},

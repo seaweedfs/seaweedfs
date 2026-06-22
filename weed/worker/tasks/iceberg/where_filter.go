@@ -186,7 +186,7 @@ func splitLiteralList(raw string) ([]string, error) {
 }
 
 func specHasFieldByName(spec iceberg.PartitionSpec, fieldName string) bool {
-	for field := range spec.Fields() {
+	for _, field := range spec.Fields() {
 		if field.Name == fieldName {
 			return true
 		}
@@ -211,7 +211,7 @@ func (p *partitionPredicate) Matches(spec iceberg.PartitionSpec, partition map[i
 	}
 
 	valuesByName := make(map[string]any)
-	for field := range spec.Fields() {
+	for _, field := range spec.Fields() {
 		if value, ok := partition[field.FieldID]; ok {
 			valuesByName[field.Name] = value
 		}
