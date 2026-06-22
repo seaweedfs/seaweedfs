@@ -30,12 +30,20 @@ type AdminData struct {
 	VolumeServers     []VolumeServer      `json:"volume_servers"`
 	FilerNodes        []FilerNode         `json:"filer_nodes"`
 	MessageBrokers    []MessageBrokerNode `json:"message_brokers"`
+	S3Nodes           []S3Node            `json:"s3_nodes"`
 	DataCenters       []DataCenter        `json:"datacenters"`
 	LastUpdated       time.Time           `json:"last_updated"`
 
 	// EC shard totals for dashboard
 	TotalEcVolumes int `json:"total_ec_volumes"` // Total number of EC volumes across all servers
 	TotalEcShards  int `json:"total_ec_shards"`  // Total number of EC shards across all servers
+
+	// TotalMountClients is the number of connected FUSE/VFS mount clients across filers.
+	TotalMountClients int `json:"total_mount_clients"`
+
+	// Trends holds at-a-glance sparklines built from the admin's own recent
+	// cluster snapshots (no Prometheus required).
+	Trends DashboardTrends `json:"trends"`
 }
 
 // Object Store Users management structures
@@ -115,6 +123,12 @@ type MessageBrokerNode struct {
 	LastUpdated time.Time `json:"last_updated"`
 }
 
+type S3Node struct {
+	Address     string    `json:"address"`
+	DataCenter  string    `json:"datacenter"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
 // GetAdminData retrieves admin data as a struct (for reuse by both JSON and HTML handlers)
 func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	if username == "" {
@@ -144,6 +158,9 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	// Get message broker nodes status
 	messageBrokers := s.getMessageBrokerNodesStatus()
 
+	// Get S3 nodes status
+	s3Nodes := s.getS3NodesStatus()
+
 	// Get volume size limit from master configuration
 	var volumeSizeLimitMB uint64 = 30000 // Default to 30GB
 	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -172,6 +189,12 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	}
 	totalEcVolumes = len(ecVolumeSet)
 
+	// Count connected FUSE/VFS mount clients (best-effort; don't fail the dashboard)
+	totalMountClients := 0
+	if mountData, mountErr := s.GetMountClients(); mountErr == nil {
+		totalMountClients = mountData.TotalMountClients
+	}
+
 	// Prepare admin data
 	adminData := AdminData{
 		Username:          username,
@@ -183,10 +206,13 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		VolumeServers:     volumeServersData.VolumeServers,
 		FilerNodes:        filerNodes,
 		MessageBrokers:    messageBrokers,
+		S3Nodes:           s3Nodes,
 		DataCenters:       topology.DataCenters,
 		LastUpdated:       topology.UpdatedAt,
 		TotalEcVolumes:    totalEcVolumes,
 		TotalEcShards:     totalEcShards,
+		TotalMountClients: totalMountClients,
+		Trends:            s.GetDashboardTrends(),
 	}
 
 	return adminData, nil
@@ -359,4 +385,44 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 	})
 
 	return messageBrokers
+}
+
+// getS3NodesStatus checks status of all S3 nodes using master's ListClusterNodes
+func (s *AdminServer) getS3NodesStatus() []S3Node {
+	var s3Nodes []S3Node
+
+	// Get S3 nodes from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.S3Type,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each S3 node
+		for _, node := range resp.ClusterNodes {
+			s3Nodes = append(s3Nodes, S3Node{
+				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
+				DataCenter:  node.DataCenter,
+				LastUpdated: time.Now(),
+			})
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to get S3 nodes from master %s: %v", currentMaster, err)
+		// Return empty list if we can't get S3 info from master
+		return []S3Node{}
+	}
+
+	// Sort S3 nodes by address for consistent ordering on page refresh
+	sort.Slice(s3Nodes, func(i, j int) bool {
+		return s3Nodes[i].Address < s3Nodes[j].Address
+	})
+
+	return s3Nodes
 }

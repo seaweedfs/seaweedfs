@@ -50,6 +50,12 @@ func downloadFromS3(sess s3iface.S3API, destFileName string, sourceBucket string
 		return fileSize, fmt.Errorf("failed to download /buckets/%s/%s to %s: %v", sourceBucket, sourceKey, destFileName, err)
 	}
 
+	// fsync the downloaded .dat so its content is durable before the caller trims the
+	// remote reference and deletes the shared remote object.
+	if syncErr := f.Sync(); syncErr != nil {
+		return fileSize, fmt.Errorf("failed to fsync %s: %v", destFileName, syncErr)
+	}
+
 	glog.V(1).Infof("downloaded file %s\n", destFileName)
 
 	return

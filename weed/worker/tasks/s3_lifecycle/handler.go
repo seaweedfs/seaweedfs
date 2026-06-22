@@ -256,7 +256,27 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
-	return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
+	if err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender); err != nil {
+		return err
+	}
+
+	return sendSuccessCompletion(request, sender)
+}
+
+const dailyReplaySuccessSummary = "s3 lifecycle daily replay completed"
+
+// JobCompleted must set JobType to the handler's jobType constant;
+// routed requests may leave request.Job.JobType empty, and the admin
+// ignores completions with empty JobType.
+func sendSuccessCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginworker.ExecutionSender) error {
+	return sender.SendCompleted(&plugin_pb.JobCompleted{
+		JobId:   request.Job.JobId,
+		JobType: jobType,
+		Success: true,
+		Result: &plugin_pb.JobResult{
+			Summary: dailyReplaySuccessSummary,
+		},
+	})
 }
 
 // executeDailyReplay runs one bounded daily-replay pass via

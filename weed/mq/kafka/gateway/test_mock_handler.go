@@ -62,7 +62,7 @@ func (m *mockSeaweedMQHandler) CreateTopic(topic string, partitions int32) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.topics[topic]; exists {
-		return fmt.Errorf("topic already exists")
+		return fmt.Errorf("%s: %w", topic, integration.ErrTopicAlreadyExists)
 	}
 	m.topics[topic] = &integration.KafkaTopicInfo{
 		Name:       topic,
@@ -75,7 +75,7 @@ func (m *mockSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions in
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.topics[name]; exists {
-		return fmt.Errorf("topic already exists")
+		return fmt.Errorf("%s: %w", name, integration.ErrTopicAlreadyExists)
 	}
 	m.topics[name] = &integration.KafkaTopicInfo{
 		Name:       name,

@@ -107,53 +107,13 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	objectOwnerDisplayName = s3a.iam.GetAccountNameById(objectOwner)
 
-	// Build ACL response
+	// Build ACL response from stored ACL metadata (or the owner's default grant).
 	response := AccessControlPolicy{
 		Owner: CanonicalUser{
 			ID:          objectOwner,
 			DisplayName: objectOwnerDisplayName,
 		},
-	}
-
-	// Get grants from stored ACL metadata
-	grants := GetAcpGrants(entry.Extended)
-	if len(grants) > 0 {
-		// Convert AWS SDK grants to local Grant format
-		for _, grant := range grants {
-			localGrant := Grant{
-				Permission: Permission(*grant.Permission),
-			}
-
-			if grant.Grantee != nil {
-				localGrant.Grantee = Grantee{
-					Type:   *grant.Grantee.Type,
-					XMLXSI: "CanonicalUser",
-					XMLNS:  "http://www.w3.org/2001/XMLSchema-instance",
-				}
-
-				if grant.Grantee.ID != nil {
-					localGrant.Grantee.ID = *grant.Grantee.ID
-					localGrant.Grantee.DisplayName = s3a.iam.GetAccountNameById(*grant.Grantee.ID)
-				}
-
-				if grant.Grantee.URI != nil {
-					localGrant.Grantee.URI = *grant.Grantee.URI
-				}
-			}
-
-			response.AccessControlList.Grant = append(response.AccessControlList.Grant, localGrant)
-		}
-	} else {
-		// Fallback to default full control for object owner
-		response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-			Grantee: Grantee{
-				ID:          objectOwner,
-				DisplayName: objectOwnerDisplayName,
-				Type:        "CanonicalUser",
-				XMLXSI:      "CanonicalUser",
-				XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-			Permission: Permission(s3_constants.PermissionFullControl),
-		})
+		AccessControlList: buildAccessControlList(s3a.iam, GetAcpGrants(entry.Extended), objectOwner, objectOwnerDisplayName),
 	}
 
 	writeSuccessResponseXML(w, r, response)

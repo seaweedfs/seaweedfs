@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -45,6 +46,7 @@ func TestMountEcShards_LocatesEcxOnSiblingDisk(t *testing.T) {
 	const datSize int64 = 10 * 1024 * 1024
 	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
 	const shardOnDisk0 erasure_coding.ShardId = 6
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
@@ -55,6 +57,7 @@ func TestMountEcShards_LocatesEcxOnSiblingDisk(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {
@@ -166,6 +169,7 @@ func TestMountEcShards_SameDiskEcxStillWorks(t *testing.T) {
 	const datSize int64 = 10 * 1024 * 1024
 	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
 	const shardOnDisk0 erasure_coding.ShardId = 3
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
@@ -176,6 +180,7 @@ func TestMountEcShards_SameDiskEcxStillWorks(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {
@@ -248,6 +253,7 @@ func startEcMountStore(t *testing.T, dirs []string) *Store {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		dirs,
 		[]int32{100, 100},
@@ -257,6 +263,7 @@ func startEcMountStore(t *testing.T, dirs []string) *Store {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {

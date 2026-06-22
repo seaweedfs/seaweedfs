@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 type scriptedHTTPResponse struct {
@@ -196,5 +199,157 @@ func TestUploadRewindsBodyOnConnectionReset(t *testing.T) {
 					len(client.bodies[1]), len(client.bodies[0]))
 			}
 		})
+	}
+}
+
+func TestReplicationUploadPreservesUncompressedNeedle(t *testing.T) {
+	testCases := []struct {
+		name    string
+		payload []byte
+	}{
+		{
+			name:    "unknown binary sampling",
+			payload: bytes.Repeat([]byte{0}, 32*1024),
+		},
+		{
+			name:    "receiver MIME detection",
+			payload: bytes.Repeat([]byte("plain text content\n"), 2048),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var replicatedNeedle *needle.Needle
+			var parseErr error
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				replicatedNeedle, _, _, parseErr = needle.CreateNeedleFromRequest(r, false, 1024*1024, &bytes.Buffer{})
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"name":"payload.custom","size":32768}`)
+			}))
+			defer server.Close()
+
+			uploader := newUploader(server.Client())
+			_, err := uploader.UploadData(context.Background(), tc.payload, &UploadOption{
+				UploadUrl:     server.URL + "/3,01637037d6?type=replicate",
+				Filename:      "payload.custom",
+				IsReplication: true,
+				MaxAttempts:   1,
+			})
+			if err != nil {
+				t.Fatalf("replication upload failed: %v", err)
+			}
+			if parseErr != nil {
+				t.Fatalf("parse replicated upload: %v", parseErr)
+			}
+			if replicatedNeedle == nil {
+				t.Fatal("replica did not receive a needle")
+			}
+			if replicatedNeedle.IsCompressed() {
+				t.Fatal("replication changed an uncompressed needle to compressed")
+			}
+			if !bytes.Equal(replicatedNeedle.Data, tc.payload) {
+				t.Fatalf("replicated data differs: got %d bytes, want %d", len(replicatedNeedle.Data), len(tc.payload))
+			}
+		})
+	}
+}
+
+// deadReplicaClient simulates an unreachable replica: every request blocks for
+// dialDelay (standing in for the TCP dial timeout) and then fails, unless the
+// request context is cancelled first.
+type deadReplicaClient struct {
+	mu        sync.Mutex
+	calls     int
+	dialDelay time.Duration
+}
+
+func (c *deadReplicaClient) attempts() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func (c *deadReplicaClient) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	select {
+	case <-time.After(c.dialDelay):
+		return nil, fmt.Errorf("dial tcp %s: i/o timeout", req.URL.Host)
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+}
+
+// TestUploadToDeadReplicaRetriesThreeTimes reproduces the dead-replica upload
+// stall: a synchronous replica write to an unreachable host pays the dial
+// timeout three times over, so one dead replica stalls the caller for ~3x the
+// dial timeout. In production dialDelay is the 10s dialer timeout, so the
+// caller blocks ~30s before the failure surfaces.
+func TestUploadToDeadReplicaRetriesThreeTimes(t *testing.T) {
+	client := &deadReplicaClient{dialDelay: 100 * time.Millisecond}
+	uploader := newUploader(client)
+
+	start := time.Now()
+	_, err := uploader.UploadData(context.Background(), []byte("hello"), &UploadOption{
+		UploadUrl: "http://dead-replica:8080/3,01",
+		Filename:  "test.bin",
+	})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error uploading to a dead replica")
+	}
+	if got := client.attempts(); got != 3 {
+		t.Fatalf("dial attempts = %d, want 3 (each attempt pays the full dial timeout)", got)
+	}
+	t.Logf("dead replica stalled the caller for %v across %d attempts", elapsed, client.attempts())
+}
+
+// TestUploadToDeadReplicaSingleAttempt verifies the fix: a synchronous replica
+// write makes a single attempt (MaxAttempts=1), so a dead replica fails after
+// one dial timeout instead of three. The outer client write still retries.
+func TestUploadToDeadReplicaSingleAttempt(t *testing.T) {
+	client := &deadReplicaClient{dialDelay: 100 * time.Millisecond}
+	uploader := newUploader(client)
+
+	_, err := uploader.UploadData(context.Background(), []byte("hello"), &UploadOption{
+		UploadUrl:   "http://dead-replica:8080/3,01",
+		Filename:    "test.bin",
+		MaxAttempts: 1,
+	})
+	if err == nil {
+		t.Fatal("expected an error uploading to a dead replica")
+	}
+	if got := client.attempts(); got != 1 {
+		t.Fatalf("dial attempts = %d, want 1", got)
+	}
+}
+
+// TestUploadRetryStopsOnContextCancel verifies the retry loop honors context
+// cancellation so DistributedOperation can abandon a slow replica once the
+// write outcome is already decided by another replica.
+func TestUploadRetryStopsOnContextCancel(t *testing.T) {
+	client := &deadReplicaClient{dialDelay: time.Hour} // would block ~forever per attempt
+	uploader := newUploader(client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already decided elsewhere
+
+	start := time.Now()
+	_, err := uploader.UploadData(ctx, []byte("hello"), &UploadOption{
+		UploadUrl: "http://dead-replica:8080/3,01",
+		Filename:  "test.bin",
+	})
+	if err == nil {
+		t.Fatal("expected a context error")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("upload did not abort on cancellation: took %v", elapsed)
+	}
+	if got := client.attempts(); got > 1 {
+		t.Fatalf("dial attempts = %d, want at most 1 after cancellation", got)
 	}
 }

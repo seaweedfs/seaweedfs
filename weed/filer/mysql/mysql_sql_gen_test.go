@@ -26,3 +26,45 @@ func TestEmptyUpsertTemplateFallsBackToPlainInsert(t *testing.T) {
 		t.Fatalf("plain INSERT path should not contain ON DUPLICATE KEY UPDATE, got: %s", got)
 	}
 }
+
+func TestListSqlDefaultOrderingFollowsColumn(t *testing.T) {
+	gen := &SqlGenMysql{}
+	for _, got := range []string{gen.GetSqlListExclusive("filemeta"), gen.GetSqlListInclusive("filemeta")} {
+		if strings.Contains(got, "BINARY") {
+			t.Fatalf("default list query should not force BINARY, got: %s", got)
+		}
+		if !strings.Contains(got, "ORDER BY `name` ASC") {
+			t.Fatalf("expected plain name ordering, got: %s", got)
+		}
+	}
+}
+
+func TestListSqlBinaryOrderingOnNonBinaryColumn(t *testing.T) {
+	gen := &SqlGenMysql{ForceBinaryCollation: true}
+	for _, got := range []string{gen.GetSqlListExclusive("filemeta"), gen.GetSqlListInclusive("filemeta")} {
+		if !strings.Contains(got, "ORDER BY BINARY `name` ASC") {
+			t.Fatalf("expected BINARY ordering, got: %s", got)
+		}
+		if !strings.Contains(got, "BINARY `name` LIKE ?") {
+			t.Fatalf("expected BINARY prefix filter, got: %s", got)
+		}
+		if strings.Contains(got, "AND `name` > ?") || strings.Contains(got, "AND `name` >= ?") {
+			t.Fatalf("pagination comparison must also be BINARY, got: %s", got)
+		}
+	}
+}
+
+func TestIsBinaryCollation(t *testing.T) {
+	binary := []string{"", "binary", "utf8mb4_bin", "utf8mb3_bin", "latin1_bin", "UTF8MB4_BIN"}
+	for _, c := range binary {
+		if !isBinaryCollation(c) {
+			t.Fatalf("expected %q to be treated as binary", c)
+		}
+	}
+	ci := []string{"utf8mb4_general_ci", "utf8mb3_general_ci", "utf8mb4_0900_ai_ci", "latin1_swedish_ci"}
+	for _, c := range ci {
+		if isBinaryCollation(c) {
+			t.Fatalf("expected %q to be treated as non-binary", c)
+		}
+	}
+}

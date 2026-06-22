@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"sort"
 
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -15,6 +16,21 @@ func Hash(s *string) string {
 	h := sha1.New()
 	h.Write([]byte(*s))
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// UserArn builds an AWS-compatible IAM user ARN.
+func UserArn(userName string) string {
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", DefaultAccountID, userName)
+}
+
+// NewUser builds an iam.User for IAM API responses. The Arn must be a real ARN:
+// the terraform aws provider (>= 6.41) reads a user back after creating it and
+// blocks until GetUser returns a value that passes arn.IsARN, so an empty Arn
+// leaves apply hanging until it times out.
+func NewUser(userName string) iam.User {
+	arn := UserArn(userName)
+	path := "/"
+	return iam.User{UserName: &userName, Arn: &arn, Path: &path}
 }
 
 // GenerateRandomString generates a cryptographically secure random string.

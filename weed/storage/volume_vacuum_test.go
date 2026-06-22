@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -151,9 +152,57 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 
 }
 
+// A deletion replayed by makeupDiff appends a tombstone to the compacted .dat.
+// When that tombstone is the .dat tail, its .idx entry must carry the real
+// offset, not 0, or the post-commit integrity check can't see the trailing
+// tombstone and wrongly flips the volume read-only — loading a
+// SortedFileNeedleMap instead of the writable LevelDb map.
+func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapLevelDb, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	for i := uint64(1); i <= 5; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+
+	v.CompactByIndex(nil)
+
+	// The sole change in the commit window is a deletion, so makeupDiff appends
+	// its tombstone last, putting it at the .dat tail.
+	if _, err := v.deleteNeedle2(newEmptyNeedle(3)); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	if _, ok := v.nm.(*LevelDbNeedleMap); !ok {
+		t.Fatalf("after compaction v.nm is %T, want *LevelDbNeedleMap (volume wrongly marked read-only)", v.nm)
+	}
+	v.Close()
+
+	// Reload from disk to confirm the integrity check passes and the volume
+	// stays writable.
+	v, err = NewVolume(dir, dir, "", 1, NeedleMapLevelDb, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer v.Close()
+	if v.noWriteOrDelete {
+		t.Fatal("volume reloaded read-only after a deletion-tail compaction")
+	}
+}
+
 func TestCompactVolumeFilesOffline(t *testing.T) {
 	dir := t.TempDir()
-	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil)
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
 	defer location.Close()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -188,7 +237,7 @@ func TestCompactVolumeFilesOffline(t *testing.T) {
 
 func TestCleanupCompactRemovesTempFiles(t *testing.T) {
 	dir := t.TempDir()
-	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil)
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
 	defer location.Close()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)

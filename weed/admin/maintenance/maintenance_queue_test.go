@@ -697,8 +697,7 @@ func (m *MockPersistence) DeleteAllTaskStates() error                           
 func (m *MockPersistence) CleanupCompletedTasks() error                             { return nil }
 func (m *MockPersistence) SaveTaskPolicy(taskType string, policy *TaskPolicy) error { return nil }
 
-func TestMaintenanceQueue_LoadTasksStartsEmpty(t *testing.T) {
-	// Setup
+func TestMaintenanceQueue_LoadRequeuesInFlightTasks(t *testing.T) {
 	policy := &MaintenancePolicy{
 		TaskPolicies: map[string]*worker_pb.TaskPolicy{
 			"balance": {MaxConcurrent: 1},
@@ -706,24 +705,30 @@ func TestMaintenanceQueue_LoadTasksStartsEmpty(t *testing.T) {
 	}
 	mq := NewMaintenanceQueue(policy)
 
-	// Setup mock persistence with tasks — these should NOT be loaded
-	mockTask := &MaintenanceTask{
-		ID:     "old_task_123",
-		Type:   "balance",
-		Status: TaskStatusPending,
-	}
-	mq.SetPersistence(&MockPersistence{tasks: []*MaintenanceTask{mockTask}})
+	// Non-terminal tasks must be re-queued across a restart; an in-progress
+	// task is reset to pending (its worker is gone). Terminal tasks are dropped.
+	mq.SetPersistence(&MockPersistence{tasks: []*MaintenanceTask{
+		{ID: "pending_1", Type: "balance", Status: TaskStatusPending},
+		{ID: "inprogress_1", Type: "balance", Status: TaskStatusInProgress, WorkerID: "gone", Progress: 42},
+		{ID: "done_1", Type: "balance", Status: TaskStatusCompleted},
+	}})
 
-	// LoadTasksFromPersistence should be a no-op — scanner will re-detect
-	err := mq.LoadTasksFromPersistence()
-	if err != nil {
+	if err := mq.LoadTasksFromPersistence(); err != nil {
 		t.Fatalf("LoadTasksFromPersistence failed: %v", err)
 	}
 
-	// Queue should be empty — tasks will be re-detected by scanner
-	stats := mq.GetStats()
-	if stats.TotalTasks != 0 {
-		t.Errorf("Expected 0 tasks after startup, got %d", stats.TotalTasks)
+	if stats := mq.GetStats(); stats.TotalTasks != 2 {
+		t.Errorf("expected 2 re-queued tasks, got %d", stats.TotalTasks)
+	}
+	ip := mq.tasks["inprogress_1"]
+	if ip == nil {
+		t.Fatal("in-progress task was not re-queued")
+	}
+	if ip.Status != TaskStatusPending || ip.WorkerID != "" || ip.Progress != 0 {
+		t.Errorf("in-progress task not reset to pending: status=%q worker=%q progress=%v", ip.Status, ip.WorkerID, ip.Progress)
+	}
+	if mq.tasks["done_1"] != nil {
+		t.Error("completed task should not be re-queued")
 	}
 }
 

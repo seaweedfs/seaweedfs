@@ -195,13 +195,12 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
 		fh.SetEntry(resp.Entry)
 
+		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataUpdateEvent(request.Directory, resp.Entry)
 		}
-		if applyErr := fh.wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("CacheRemoteObject %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
-		}
+		fh.wfs.applyLocalMetadataEventAsync(event)
 
 		return nil
 	})

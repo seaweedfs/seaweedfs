@@ -4,12 +4,54 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEnsureEntryInodeMatchesFuseDerivation(t *testing.T) {
+	f := &Filer{}
+	crtime := time.Unix(1700000000, 0)
+
+	entry := &Entry{
+		FullPath: util.FullPath("/dir/file.txt"),
+		Attr:     Attr{Crtime: crtime},
+	}
+	f.ensureEntryInode(entry)
+
+	// The filer stores exactly what the FUSE mount would compute for a
+	// non-hard-linked entry, and it is deterministic across calls.
+	assert.Equal(t, entry.FullPath.AsInode(crtime.Unix()), entry.Attr.Inode)
+	again := &Entry{FullPath: entry.FullPath, Attr: Attr{Crtime: crtime}}
+	f.ensureEntryInode(again)
+	assert.Equal(t, entry.Attr.Inode, again.Attr.Inode)
+}
+
+func TestEnsureEntryInodeSharesAcrossHardLinks(t *testing.T) {
+	f := &Filer{}
+	hardLinkId := NewHardLinkId()
+
+	a := &Entry{
+		FullPath:   util.FullPath("/links/a.txt"),
+		Attr:       Attr{Crtime: time.Unix(1700000000, 0)},
+		HardLinkId: hardLinkId,
+	}
+	b := &Entry{
+		FullPath:   util.FullPath("/links/b.txt"),
+		Attr:       Attr{Crtime: time.Unix(1800000000, 0)},
+		HardLinkId: hardLinkId,
+	}
+	f.ensureEntryInode(a)
+	f.ensureEntryInode(b)
+
+	// Every link to the same target resolves to one inode, independent of path
+	// or creation time.
+	assert.Equal(t, uint64(util.HashStringToLong(string(hardLinkId))), a.Attr.Inode)
+	assert.Equal(t, a.Attr.Inode, b.Attr.Inode)
+}
 
 func newTestFilerWithStubStore() (*Filer, *stubFilerStore) {
 	store := newStubFilerStore()

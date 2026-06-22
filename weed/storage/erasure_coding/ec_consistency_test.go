@@ -18,7 +18,7 @@ import (
 // existed in VolumeEcShardsGenerate before the fix in this PR.
 //
 // Previously, the order was:
-//  1. WriteEcFilesWithContext(baseFileName, ecCtx)        — EC shards from .dat
+//  1. WriteEcFiles(baseFileName, ecCtx)        — EC shards from .dat
 //  2. WriteSortedFileFromIdx(v.IndexFileName(), ".ecx")   — .ecx from .idx
 //
 // If a write appended data to .dat/.idx between steps 1 and 2, the .ecx would
@@ -48,7 +48,7 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 	})
 
 	// Phase 2: EC encode — generates .ec00-.ec13 from current .dat
-	err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx)
+	_, err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx)
 	require.NoError(t, err, "EC encoding")
 
 	// Phase 3: SIMULATE a write between EC encoding and .ecx generation
@@ -145,7 +145,7 @@ func TestEcConsistency_ExactLargeRowEncoding(t *testing.T) {
 	require.NoError(t, err)
 
 	// EC encode
-	err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx)
+	_, err = generateEcFiles(baseFileName, int(smallBlockSize), largeBlockSize, smallBlockSize, ctx)
 	require.NoError(t, err)
 
 	// Check shard sizes — each shard should be exactly largeBlockSize

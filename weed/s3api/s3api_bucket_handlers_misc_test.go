@@ -35,6 +35,32 @@ func newBucketRequest(method, bucket, query, body string) *http.Request {
 	return req
 }
 
+func TestHasExplicitBucketACL(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{name: "none", headers: nil, want: false},
+		{name: "private is default", headers: map[string]string{s3_constants.AmzCannedAcl: "private"}, want: false},
+		{name: "canned public-read", headers: map[string]string{s3_constants.AmzCannedAcl: "public-read"}, want: true},
+		{name: "canned case-insensitive private", headers: map[string]string{s3_constants.AmzCannedAcl: "PRIVATE"}, want: false},
+		{name: "grant read", headers: map[string]string{s3_constants.AmzAclRead: `id="x"`}, want: true},
+		{name: "grant full control", headers: map[string]string{s3_constants.AmzAclFullControl: `id="x"`}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newBucketRequest(http.MethodPut, "b", "", "")
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			if got := hasExplicitBucketACL(req); got != tc.want {
+				t.Fatalf("hasExplicitBucketACL = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGetBucketPolicyStatusIsPublic(t *testing.T) {
 	cases := []struct {
 		name string

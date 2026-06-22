@@ -425,7 +425,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		return nil
 
 	case filer_pb.ObjectMutation_RECOMPUTE_LATEST:
-		return fs.applyRecomputeLatest(ctx, m)
+		return fs.applyRecomputeLatest(ctx, m, fromOtherCluster, signatures)
 
 	default:
 		return fmt.Errorf("unknown mutation type %v", m.Type)
@@ -439,7 +439,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 // name_to_key. When the scanned directory is empty the pointer keys are cleared.
 // The caller, which knows the versioning scheme, supplies the direction and the
 // key mappings. A missing pointer entry is a no-op (idempotent on replay).
-func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.ObjectMutation) error {
+func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.ObjectMutation, fromOtherCluster bool, signatures []int32) error {
 	rc := m.Recompute
 	if rc == nil {
 		return fmt.Errorf("RECOMPUTE_LATEST requires recompute parameters")
@@ -452,6 +452,15 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 	if err != nil {
 		return err
 	}
+
+	// Capture the pre-update image so the metadata notification carries a correct
+	// diff; pointer.Extended is mutated in place below.
+	oldPointer := pointer.ShallowClone()
+	oldPointer.Extended = make(map[string][]byte, len(pointer.Extended))
+	for k, v := range pointer.Extended {
+		oldPointer.Extended[k] = v
+	}
+
 	if pointer.Extended == nil {
 		pointer.Extended = make(map[string][]byte)
 	}
@@ -512,9 +521,13 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		}
 	}
 
-	if err := fs.filer.UpdateEntry(ctx, pointer, pointer); err != nil {
+	if err := fs.filer.UpdateEntry(ctx, oldPointer, pointer); err != nil {
 		return err
 	}
+	// Replicate the recomputed pointer to peer filers and subscribers. Without
+	// this the latest-version pointer stays in this filer's store only, so other
+	// filers never learn the current version and ListObjects undercounts.
+	fs.filer.NotifyUpdateEvent(ctx, oldPointer, pointer, false, fromOtherCluster, signatures)
 
 	// Stamp the displaced prior child (e.g. NoncurrentSinceNs for lifecycle).
 	newName := ""
@@ -529,11 +542,20 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		if perr != nil {
 			return perr
 		}
+		oldPrior := priorEntry.ShallowClone()
+		oldPrior.Extended = make(map[string][]byte, len(priorEntry.Extended))
+		for k, v := range priorEntry.Extended {
+			oldPrior.Extended[k] = v
+		}
 		if priorEntry.Extended == nil {
 			priorEntry.Extended = make(map[string][]byte)
 		}
 		priorEntry.Extended[rc.DemoteKey] = rc.DemoteValue
-		return fs.filer.UpdateEntry(ctx, priorEntry, priorEntry)
+		if err := fs.filer.UpdateEntry(ctx, oldPrior, priorEntry); err != nil {
+			return err
+		}
+		fs.filer.NotifyUpdateEvent(ctx, oldPrior, priorEntry, false, fromOtherCluster, signatures)
+		return nil
 	}
 
 	return nil

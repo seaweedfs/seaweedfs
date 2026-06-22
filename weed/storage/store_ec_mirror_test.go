@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -70,6 +71,8 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 		t.Fatalf("save .vif: %v", err)
 	}
 
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
+
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
 		[]int32{100, 100},
@@ -79,6 +82,7 @@ func TestMirrorEcMetadataOnStartup_PhysicallyCopiesSidecars(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {
@@ -230,6 +234,8 @@ func TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored(t *testing.T) {
 
 	base0 := erasure_coding.EcShardFileName(collection, dir0, int(vid))
 
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
+
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
 		[]int32{100, 100},
@@ -239,6 +245,7 @@ func TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {

@@ -424,6 +424,10 @@ mod tests {
     #[tokio::test]
     async fn test_push_metrics_once() {
         register_metrics();
+        // A CounterVec with no children emits nothing, so create a labelset
+        // instead of depending on another test having touched the counter
+        // first (test order is nondeterministic).
+        REQUEST_COUNTER.with_label_values(&["GET", "200"]).inc();
 
         let captured = Arc::new(Mutex::new(None::<String>));
         let captured_clone = captured.clone();

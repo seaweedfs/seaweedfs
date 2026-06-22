@@ -21,10 +21,16 @@ install-templ:
 
 # Generate templ files
 .PHONY: generate
-generate: install-templ
+generate: install-templ static-gz
 	@echo "Generating templ files..."
 	@templ generate ./view
 	@echo "Generated: $(TEMPL_GO_FILES)"
+
+# Regenerate the gzipped static mirror embedded into the binary
+.PHONY: static-gz
+static-gz:
+	@echo "Generating gzipped static assets..."
+	@go run gen_static_gz.go
 
 # Clean generated files
 .PHONY: clean-templ

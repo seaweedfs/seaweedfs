@@ -57,6 +57,7 @@ const (
 	ErrNoSuchCORSConfiguration
 	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
+	ErrNoSuchVersion
 	ErrNoSuchUpload
 	ErrInvalidBucketName
 	ErrInvalidBucketState
@@ -144,6 +145,9 @@ const (
 	// Bucket encryption errors
 	ErrNoSuchBucketEncryptionConfiguration
 	ErrInvalidStorageClass
+
+	ErrInvalidMetadataDirective
+	ErrInvalidTagDirective
 
 	ErrInvalidAttributeName
 
@@ -276,6 +280,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchKey: {
 		Code:           "NoSuchKey",
 		Description:    "The specified key does not exist.",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchVersion: {
+		Code:           "NoSuchVersion",
+		Description:    "The specified version does not exist.",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchUpload: {
@@ -611,6 +620,18 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidStorageClass: {
 		Code:           "InvalidStorageClass",
 		Description:    "The storage class you specified is not valid",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrInvalidMetadataDirective: {
+		Code:           "InvalidArgument",
+		Description:    "Unknown metadata directive.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrInvalidTagDirective: {
+		Code:           "InvalidArgument",
+		Description:    "Unknown tag directive.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

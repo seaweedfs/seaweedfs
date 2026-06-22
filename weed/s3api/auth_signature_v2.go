@@ -147,7 +147,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 		return nil, s3err.ErrAccessDenied
 	}
 
-	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
+	expectedAuth := signatureV2(cred, r.Method, r.URL.EscapedPath(), r.URL.Query().Encode(), r.Header)
 
 	// Extract signatures from both auth headers
 	v2Signature := ""
@@ -224,7 +224,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 		return nil, s3err.ErrAccessDenied
 	}
 
-	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)
+	expectedSignature := preSignatureV2(cred, r.Method, r.URL.EscapedPath(), r.URL.Query().Encode(), r.Header, expires)
 	if !compareSignatureV2(signature, expectedSignature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
@@ -239,7 +239,8 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 
 	// Signature V2 authorization header format:
 	// Authorization: AWS AKIAIOSFODNN7EXAMPLE:frJIUN8DYpKDtOLCwo//yllqDzg=
-	if !strings.HasPrefix(v2Auth, signV2Algorithm) {
+	const signV2AlgorithmPrefix = signV2Algorithm + " "
+	if !strings.HasPrefix(v2Auth, signV2AlgorithmPrefix) {
 		return "", s3err.ErrSignatureVersionNotSupported
 	}
 

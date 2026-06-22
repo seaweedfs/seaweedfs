@@ -219,16 +219,14 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	var signingKey security.SigningKey
 
 	if isWrite {
-		if len(fs.filerGuard.SigningKey) == 0 {
+		signingKey = fs.filerGuard.SigningKey()
+		if len(signingKey) == 0 {
 			return true
-		} else {
-			signingKey = fs.filerGuard.SigningKey
 		}
 	} else {
-		if len(fs.filerGuard.ReadSigningKey) == 0 {
+		signingKey = fs.filerGuard.ReadSigningKey()
+		if len(signingKey) == 0 {
 			return true
-		} else {
-			signingKey = fs.filerGuard.ReadSigningKey
 		}
 	}
 
@@ -255,16 +253,14 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	}
 
 	if len(claims.AllowedPrefixes) > 0 {
-		hasPrefix := false
-		for _, prefix := range claims.AllowedPrefixes {
-			if pathHasComponentPrefix(r.URL.Path, prefix) {
-				hasPrefix = true
-				break
+		// Copy and move name their source via a query parameter, not r.URL.Path.
+		// Scope every path the request reads or relocates, or a prefix-restricted
+		// token could reach data outside its allowed subtree.
+		for _, p := range jwtScopedRequestPaths(r) {
+			if !anyComponentPrefixMatches(claims.AllowedPrefixes, p) {
+				glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, p)
+				return false
 			}
-		}
-		if !hasPrefix {
-			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, r.URL.Path)
-			return false
 		}
 	}
 	if len(claims.AllowedMethods) > 0 {
@@ -282,6 +278,32 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	}
 
 	return true
+}
+
+// jwtScopedRequestPaths returns every filer path a request touches that must be
+// covered by the JWT AllowedPrefixes: the write target (r.URL.Path) plus any
+// copy/move source named by the cp.from / mv.from query parameters.
+func jwtScopedRequestPaths(r *http.Request) []string {
+	paths := []string{r.URL.Path}
+	if query := r.URL.Query(); query.Has("cp.from") || query.Has("mv.from") {
+		if from := query.Get("cp.from"); from != "" {
+			paths = append(paths, from)
+		}
+		if from := query.Get("mv.from"); from != "" {
+			paths = append(paths, from)
+		}
+	}
+	return paths
+}
+
+// anyComponentPrefixMatches reports whether p is within any of the prefixes.
+func anyComponentPrefixMatches(prefixes []string, p string) bool {
+	for _, prefix := range prefixes {
+		if pathHasComponentPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // pathHasComponentPrefix reports whether reqPath is contained within the

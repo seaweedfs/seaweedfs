@@ -99,6 +99,7 @@ fn test_state_with_guard(
             seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
         ),
         read_mode: seaweed_volume::config::ReadMode::Local,
+        allow_untrusted_remote_endpoints: false,
         master_url: String::new(),
         master_urls: Vec::new(),
         seed_master_set: std::collections::HashSet::new(),

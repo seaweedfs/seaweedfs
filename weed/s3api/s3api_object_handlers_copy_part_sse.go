@@ -65,6 +65,14 @@ func uploadEntryHasSSE(uploadEntry *filer_pb.Entry) bool {
 	return false
 }
 
+func uploadEntryHasChecksum(uploadEntry *filer_pb.Entry) bool {
+	if uploadEntry == nil || uploadEntry.Extended == nil {
+		return false
+	}
+	headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm])
+	return checksumAlgorithmFromHeaderName(headerName) != ChecksumAlgorithmNone
+}
+
 // sourceEntryHasSSE reports whether the source object's chunks are SSE
 // ciphertext on disk and therefore cannot be raw-copied — they must be
 // decrypted on read.
@@ -315,10 +323,18 @@ func (s3a *S3ApiServer) applyDestSSEHeadersToCopyRequest(
 	return s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID)
 }
 
-// fakeContentRequest builds a minimal request representing "PUT this body" for
-// the multipart-part write path used by UploadPartCopy. It clones the original
-// request's headers (so things like AmzAccountId carry over) and clears the
-// copy-only headers; SSE setup is added later by applyDestSSEHeadersToCopyRequest.
+func applyDestChecksumHeaderToCopyRequest(r *http.Request, uploadEntry *filer_pb.Entry) {
+	if uploadEntry == nil || uploadEntry.Extended == nil {
+		return
+	}
+	headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm])
+	if algorithm := checksumAlgorithmNameFromHeaderName(headerName); algorithm != "" {
+		// Drop any inherited sdk-checksum selector; it outranks the header we set.
+		r.Header.Del(s3_constants.AmzSdkChecksumAlgorithm)
+		r.Header.Set(s3_constants.AmzChecksumAlgorithm, algorithm)
+	}
+}
+
 func fakeContentRequest(orig *http.Request, body io.ReadCloser, contentLength int64) *http.Request {
 	cloned := orig.Clone(orig.Context())
 	cloned.Body = body
@@ -339,22 +355,11 @@ func fakeContentRequest(orig *http.Request, body io.ReadCloser, contentLength in
 	return cloned
 }
 
-// copyObjectPartViaReencryption implements the slow path of UploadPartCopy when
-// either the source object is SSE-encrypted or the destination multipart upload
-// is configured for SSE encryption. It:
-//
-//  1. Opens a plaintext reader of the source range (decrypting if needed).
-//  2. Stages the destination's SSE-S3 / SSE-KMS multipart headers on a cloned
-//     request so handleAllSSEEncryption (called from putToFiler) routes the
-//     body through the matching multipart-encryption helper.
-//  3. Calls putToFiler with the plaintext reader, which encrypts using the
-//     destination upload session's key+baseIV (consistent with PutObjectPart),
-//     auto-chunks, and writes the part entry with proper per-chunk SSE metadata.
-//
-// Without this path, copyChunksForRange's raw byte copy leaves destination
-// chunks SseType=NONE; completedMultipartChunk then "backfills" SSE-S3 metadata
-// with destination-baseIV-derived IVs, but the bytes on disk were encrypted
-// with the source's key — yielding deterministic byte corruption on GET (#8908).
+// copyObjectPartViaReencryption is the UploadPartCopy slow path: it re-streams the
+// source range through putToFiler so the destination's SSE re-encryption and/or
+// requested checksum are produced on write. A raw chunk copy can't: it would leave
+// dest chunks under the source key (corrupt GET) and parts with no checksum
+// (completion fails).
 func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	r *http.Request,
 	srcEntry *filer_pb.Entry,
@@ -363,11 +368,14 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	partID int,
 	uploadEntry *filer_pb.Entry,
 ) (etag string, sseMetadata SSEResponseMetadata, errCode s3err.ErrorCode) {
-	if endOffset < startOffset {
+	if endOffset < startOffset && !uploadEntryHasChecksum(uploadEntry) {
 		tag, code := s3a.writeEmptyCopyPart(dstBucket, uploadID, partID)
 		return tag, SSEResponseMetadata{}, code
 	}
-	sliceLen := endOffset - startOffset + 1
+	sliceLen := int64(0)
+	if endOffset >= startOffset {
+		sliceLen = endOffset - startOffset + 1
+	}
 
 	srcReader, err := s3a.openSourcePlaintextReader(r.Context(), srcEntry, startOffset, endOffset)
 	if err != nil {
@@ -388,15 +396,9 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 		glog.Errorf("UploadPartCopy: apply destination SSE headers: %v", err)
 		return "", SSEResponseMetadata{}, s3err.ErrInternalError
 	}
+	applyDestChecksumHeaderToCopyRequest(cloned, uploadEntry)
 
-	// Surface putToFiler's SSE response metadata to the caller so the handler
-	// can mirror PutObjectPart's behavior of writing
-	// x-amz-server-side-encryption / x-amz-server-side-encryption-aws-kms-key-id
-	// on the UploadPartCopy response. Without this, clients have no way to
-	// see that the destination was encrypted.
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
-	// Copy-part is an MPU part write under .uploads/<id>/<n>; lifecycle
-	// TTL only applies to the eventual completed object. Pass 0.
 	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false)
 	if code != s3err.ErrNone {
 		return "", SSEResponseMetadata{}, code

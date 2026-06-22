@@ -3,8 +3,24 @@ name: "Kafka Gateway Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-tests.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/kafka-tests

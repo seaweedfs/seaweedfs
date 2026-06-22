@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -124,37 +123,4 @@ func TestWriteNeedle_CompatibilityWithLegacy(t *testing.T) {
 			}
 		})
 	}
-}
-
-type mockBackendWriter struct {
-	buf *bytes.Buffer
-}
-
-func (m *mockBackendWriter) WriteAt(p []byte, off int64) (n int, err error) {
-	return m.buf.Write(p)
-}
-
-func (m *mockBackendWriter) GetStat() (int64, time.Time, error) {
-	return 0, time.Time{}, nil
-}
-
-func (m *mockBackendWriter) Truncate(size int64) error {
-	return nil
-}
-
-func (m *mockBackendWriter) Name() string {
-	return "mock"
-}
-
-func (m *mockBackendWriter) Close() error {
-	return nil
-}
-
-func (m *mockBackendWriter) Sync() error {
-	return nil
-}
-
-func (m *mockBackendWriter) ReadAt(p []byte, off int64) (n int, err error) {
-	// Not used in this test
-	return 0, nil
 }

@@ -164,6 +164,7 @@ func buildVolumeMetrics(
 							DataCenter: dc.Id,
 							Rack:       rack.Id,
 							NodeID:     node.Id,
+							Host:       pb.NewServerAddressFromDataNode(node).ToHost(),
 						})
 
 						if collectionRegex != nil && !collectionRegex.MatchString(volume.Collection) {

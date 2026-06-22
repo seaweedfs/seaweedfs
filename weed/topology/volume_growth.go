@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -98,20 +99,25 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
 
+// VolumeGrowthCountForCopies returns the configured number of logical volumes
+// to create at once for a given replica copy count (master.volume_growth.copy_N).
+func VolumeGrowthCountForCopies(copyCount int) uint32 {
+	switch copyCount {
+	case 1:
+		return VolumeGrowStrategy.Copy1Count
+	case 2:
+		return VolumeGrowStrategy.Copy2Count
+	case 3:
+		return VolumeGrowStrategy.Copy3Count
+	default:
+		return VolumeGrowStrategy.CopyOtherCount
+	}
+}
+
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count uint32) {
-	switch copyCount {
-	case 1:
-		count = VolumeGrowStrategy.Copy1Count
-	case 2:
-		count = VolumeGrowStrategy.Copy2Count
-	case 3:
-		count = VolumeGrowStrategy.Copy3Count
-	default:
-		count = VolumeGrowStrategy.CopyOtherCount
-	}
-	return
+	return VolumeGrowthCountForCopies(copyCount)
 }
 
 func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount uint32) (result []*master_pb.VolumeLocation, err error) {
@@ -131,8 +137,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	for i := uint32(0); i < targetCount; i++ {
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
+			stats.MasterVolumeCreationCounter.WithLabelValues("success").Inc()
 		} else {
 			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+			stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
 			return result, e
 		}
 	}

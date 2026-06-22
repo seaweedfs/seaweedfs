@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -63,6 +64,95 @@ func TestCheckEcVolumeStatusCountOnlyDataShards(t *testing.T) {
 	}
 }
 
+// TestRemoveStaleEcArtifacts: a fresh encode deletes every prior EC artifact
+// (incl. shard ids beyond the default ratio and versioned bitrot sidecars)
+// while leaving the source .dat/.idx/.vif untouched.
+func TestRemoveStaleEcArtifacts(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	idxDir := filepath.Join(tempDir, "idx")
+	for _, d := range []string{dataDir, idxDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	const baseName = "7"
+	dataBase := filepath.Join(dataDir, baseName)
+	idxBase := filepath.Join(idxDir, baseName)
+
+	// EC artifacts that must be removed, including a shard id past the default
+	// 10+4 ratio (proves the MaxShardCount scan) and a versioned sidecar.
+	var ecFiles []string
+	for _, id := range []int{0, 9, 13, 20, erasure_coding.MaxShardCount - 1} {
+		ecFiles = append(ecFiles, dataBase+erasure_coding.ToExt(id))
+	}
+	ecFiles = append(ecFiles,
+		dataBase+".ecx", dataBase+".ecj",
+		idxBase+".ecx", idxBase+".ecj",
+		dataBase+erasure_coding.BitrotSidecarExt,       // .ecsum (generation 0)
+		dataBase+erasure_coding.BitrotSidecarExt+".v2", // versioned sidecar
+	)
+
+	// Source files that must survive — the authoritative input for the encode.
+	srcFiles := []string{dataBase + ".dat", idxBase + ".idx", dataBase + ".vif"}
+
+	for _, f := range append(append([]string{}, ecFiles...), srcFiles...) {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("create %s: %v", f, err)
+		}
+	}
+
+	removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount)
+
+	for _, f := range ecFiles {
+		if util.FileExists(f) {
+			t.Errorf("expected EC artifact removed: %s", f)
+		}
+	}
+	for _, f := range srcFiles {
+		if !util.FileExists(f) {
+			t.Errorf("expected source file preserved: %s", f)
+		}
+	}
+}
+
+// TestDeleteEcShardsWithoutLocalEcx: the delete handler removes the requested
+// shard files even on a disk with no local .ecx, so a failed-copy orphan stays
+// cleanable rather than being mounted later under a foreign index.
+func TestDeleteEcShardsWithoutLocalEcx(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	idxDir := filepath.Join(tempDir, "idx")
+	for _, d := range []string{dataDir, idxDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	const baseName = "7"
+	// Orphan shard files with NO .ecx/.idx anywhere — a failed-copy leftover.
+	orphans := []string{
+		filepath.Join(dataDir, baseName+".ec03"),
+		filepath.Join(dataDir, baseName+".ec11"),
+	}
+	for _, f := range orphans {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("create %s: %v", f, err)
+		}
+	}
+
+	location := &storage.DiskLocation{Directory: dataDir, IdxDirectory: idxDir}
+	if err := deleteEcShardIdsForEachLocation(baseName, location, []uint32{3, 11}); err != nil {
+		t.Fatalf("deleteEcShardIdsForEachLocation: %v", err)
+	}
+	for _, f := range orphans {
+		if util.FileExists(f) {
+			t.Errorf("expected orphan shard removed without a local .ecx: %s", f)
+		}
+	}
+}
+
 // TestVolumeEcShardsInfo_AggregatesAcrossDisks pins the multi-disk path:
 // when a volume server mounts EC shards for the same volume on more than
 // one disk (each disk holds its own EcVolume entry — Store.FindEcVolume
@@ -91,6 +181,7 @@ func TestVolumeEcShardsInfo_AggregatesAcrossDisks(t *testing.T) {
 	// cross-disk fallback in NewEcVolume.
 	shardsOnDisk0 := []erasure_coding.ShardId{0, 5}
 	shardsOnDisk1 := []erasure_coding.ShardId{7, 12}
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 
 	store := storage.NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
 		[]string{dir0, dir1},
@@ -101,6 +192,7 @@ func TestVolumeEcShardsInfo_AggregatesAcrossDisks(t *testing.T) {
 		[]types.DiskType{types.HardDriveType, types.HardDriveType},
 		nil,
 		3,
+		diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {

@@ -17,7 +17,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -45,8 +47,9 @@ type DiskLocation struct {
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
 
-	isDiskSpaceLow bool
-	closeCh        chan struct{}
+	isDiskSpaceLow    atomic.Bool
+	isDiskUnavailable atomic.Bool
+	closeCh           chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -77,7 +80,7 @@ func writeNewUuid(fileName string) (string, error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string, config stats.DiskIOProbeConfig) *DiskLocation {
 	glog.V(4).Infof("Added new Disk %s: maxVolumes=%d", dir, maxVolumeCount)
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
@@ -109,13 +112,13 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	location.closeCh = make(chan struct{})
 	go func() {
-		location.CheckDiskSpace()
+		location.CheckDiskSpace(config)
 		for {
 			select {
 			case <-location.closeCh:
 				return
 			case <-time.After(time.Minute):
-				location.CheckDiskSpace()
+				location.CheckDiskSpace(config)
 			}
 		}
 	}()
@@ -165,6 +168,36 @@ func (l *DiskLocation) hasEcxFile(volumeName string) bool {
 	return false
 }
 
+// removeEmptyEcDatStub removes a leftover empty EC .dat stub and returns
+// whether one was swept. A stub is an empty .dat (<= a superblock, i.e. zero
+// needles) whose .vif records an EC shard config. An EC volume keeps no local
+// .dat, so the stub holds no data -- its shards live on other servers. Such
+// stubs (phantoms from the pre-fix loader) otherwise load as phantom empty
+// volumes, and a same-vid stub on two disks can shadow a real replica. The
+// .dat and its empty .idx are removed; non-EC empty .dat files are left alone.
+// The .vif is looked up in both the data and idx directories (which differ
+// only when -dir.idx is configured).
+func (l *DiskLocation) removeEmptyEcDatStub(volumeName string, vid needle.VolumeId, collection string) bool {
+	datPath := l.Directory + "/" + volumeName + ".dat"
+	if fi, err := os.Stat(datPath); err != nil || fi.Size() > int64(super_block.SuperBlockSize) {
+		return false
+	}
+	if !vifIsEcVolume(l.Directory+"/"+volumeName+".vif") &&
+		!(l.IdxDirectory != l.Directory && vifIsEcVolume(l.IdxDirectory+"/"+volumeName+".vif")) {
+		return false
+	}
+	glog.Warningf("removing leftover empty .dat stub for EC volume %d (collection=%q)", vid, collection)
+	os.Remove(datPath)
+	os.Remove(l.IdxDirectory + "/" + volumeName + ".idx")
+	return true
+}
+
+// vifIsEcVolume reports whether the .vif at vifPath records an EC shard config.
+func vifIsEcVolume(vifPath string) bool {
+	vi, _, _, err := volume_info.MaybeLoadVolumeInfo(vifPath)
+	return err == nil && vi.GetEcShardConfig() != nil
+}
+
 func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32) bool {
 	basename := dirEntry.Name()
 	if dirEntry.IsDir() {
@@ -179,6 +212,14 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	vid, collection, err := volumeIdFromFileName(basename)
 	if err != nil {
 		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
+		return false
+	}
+
+	// Sweep a leftover empty .dat stub before any EC presence checks below.
+	// It must go first: next to an .ecx it would otherwise make
+	// validateEcVolume mistake a healthy distributed EC volume for an
+	// interrupted local encode and delete its shards.
+	if l.removeEmptyEcDatStub(volumeName, vid, collection) {
 		return false
 	}
 
@@ -209,8 +250,12 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if util.FileExists(noteFile) {
 		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
-		removeVolumeFiles(l.Directory + "/" + volumeName)
-		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
+		// Keep the .vif when an .ecx for this vid coexists on the disk: the
+		// regular and EC volumes share <base>.vif, so removing the incomplete
+		// regular copy must not strip the EC volume's info file.
+		keepVif := l.hasEcxFile(volumeName)
+		removeVolumeFiles(l.Directory+"/"+volumeName, keepVif)
+		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, keepVif)
 		return false
 	}
 
@@ -221,6 +266,23 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if found {
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
+	}
+
+	// Load existing data only; never let NewVolume create a phantom .dat. A
+	// lone .vif/.idx (e.g. an EC sidecar whose .ecx is on a sibling disk,
+	// which the same-disk hasEcxFile() guard misses) would otherwise get an
+	// 8-byte stub that the sibling-.dat prune deletes real shards against.
+	// Remote-tiered volumes also have no local .dat, but their .vif points at
+	// remote files and must still load via the remote path.
+	if !util.FileExists(l.Directory + "/" + volumeName + ".dat") {
+		_, hasRemote, _, _ := volume_info.MaybeLoadVolumeInfo(l.Directory + "/" + volumeName + ".vif")
+		if !hasRemote && l.IdxDirectory != l.Directory {
+			_, hasRemote, _, _ = volume_info.MaybeLoadVolumeInfo(l.IdxDirectory + "/" + volumeName + ".vif")
+		}
+		if !hasRemote {
+			glog.V(1).Infof("loadExistingVolume: skipping volume %d (collection=%q); no .dat and no remote file", vid, collection)
+			return false
+		}
 	}
 
 	// load the volume
@@ -293,12 +355,74 @@ func (l *DiskLocation) loadExistingVolumesWithId(needleMapKind NeedleMapKind, ld
 			workerNum = 10
 		}
 	}
+	// Recover any interrupted compaction commit before the volume scan. This
+	// must run here, not inside loadExistingVolume: that loop is keyed on
+	// .idx/.vif entries and would miss the marker-only or already-renamed-.idx
+	// states a mid-commit crash can leave behind.
+	l.reconcileCompactStates()
+
 	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout, diskId)
 	glog.V(2).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
 
 	l.loadAllEcShards(l.ecShardNotifyHandler)
 	glog.V(2).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
 
+}
+
+// reconcileCompactStates is the directory pre-pass that recovers interrupted
+// compaction commits. It collects every volume id that still has a .cpc commit
+// marker or a leftover .cpd/.cpx temp file across the data and idx directories,
+// then runs reconcileCompactState per volume to roll the swap forward (marker
+// present) or back (marker absent).
+func (l *DiskLocation) reconcileCompactStates() {
+	type volKey struct {
+		collection string
+		vid        needle.VolumeId
+	}
+	pending := make(map[volKey]bool)
+	collect := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !strings.HasSuffix(name, ".cpc") && !strings.HasSuffix(name, ".cpd") && !strings.HasSuffix(name, ".cpx") {
+				continue
+			}
+			collection, vid, err := parseCollectionVolumeId(name[:len(name)-4])
+			if err != nil {
+				continue
+			}
+			pending[volKey{collection, vid}] = true
+		}
+	}
+	collect(l.Directory)
+	if l.IdxDirectory != l.Directory {
+		collect(l.IdxDirectory)
+	}
+
+	for k := range pending {
+		// On a runtime reload (SIGHUP -> LoadNewVolumes), an already-loaded
+		// volume may be mid-vacuum: its .cpd/.cpx are live, not crash
+		// leftovers, and rolling them back would clobber the in-flight
+		// compaction (and remove a live .ldb). Only reconcile vids that are
+		// not currently loaded; genuine startup recovery runs before any
+		// volume is loaded, so the map is empty then.
+		l.volumesLock.RLock()
+		_, loaded := l.volumes[k.vid]
+		l.volumesLock.RUnlock()
+		if loaded {
+			continue
+		}
+		v := &Volume{dir: l.Directory, dirIdx: l.IdxDirectory, Collection: k.collection, Id: k.vid}
+		if err := v.reconcileCompactState(); err != nil {
+			glog.Errorf("volume %d: reconcile interrupted compaction failed: %v", k.vid, err)
+		}
+	}
 }
 
 func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
@@ -539,9 +663,17 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 	return
 }
 
-func (l *DiskLocation) CheckDiskSpace() {
+func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
-		s := stats.NewDiskStatus(dir)
+		s := stats.NewDiskStatusOnStart(dir, config)
+		if len(s.Error) != 0 {
+			l.isDiskUnavailable.Store(true)
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
+			glog.V(1).Infof("disk %s is not healthy: %s", dir, s.Error)
+		} else {
+			l.isDiskUnavailable.Store(false)
+			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(0)
+		}
 		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
@@ -549,12 +681,12 @@ func (l *DiskLocation) CheckDiskSpace() {
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
 		l.AvailableSpace.Store(available)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
-		if isLow != l.isDiskSpaceLow {
-			l.isDiskSpaceLow = !l.isDiskSpaceLow
+		if isLow != l.isDiskSpaceLow.Load() {
+			l.isDiskSpaceLow.Store(isLow)
 		}
 
 		logLevel := glog.Level(4)
-		if l.isDiskSpaceLow {
+		if l.isDiskSpaceLow.Load() {
 			logLevel = glog.Level(0)
 		}
 

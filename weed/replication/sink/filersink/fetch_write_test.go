@@ -2,6 +2,8 @@ package filersink
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,12 +26,13 @@ func TestMain(m *testing.M) {
 
 func TestTargetPathToSourcePath(t *testing.T) {
 	tests := []struct {
-		name       string
-		targetRoot string
-		sourceRoot string
-		targetPath string
-		wantPath   util.FullPath
-		wantOK     bool
+		name        string
+		targetRoot  string
+		sourceRoot  string
+		targetPath  string
+		incremental bool
+		wantPath    util.FullPath
+		wantOK      bool
 	}{
 		{
 			name:       "basic mapping",
@@ -38,6 +41,16 @@ func TestTargetPathToSourcePath(t *testing.T) {
 			targetPath: "/target/path/file.txt",
 			wantPath:   "/source/path/file.txt",
 			wantOK:     true,
+		},
+		{
+			// incremental keys carry a date prefix that can't be reversed; unmappable
+			name:        "incremental sink is unmappable",
+			targetRoot:  "/target",
+			sourceRoot:  "/source",
+			targetPath:  "/target/2026-06-09/path/file.txt",
+			incremental: true,
+			wantPath:    "",
+			wantOK:      false,
 		},
 		{
 			name:       "trailing slash roots",
@@ -76,7 +89,8 @@ func TestTargetPathToSourcePath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &FilerSink{
-				dir: tc.targetRoot,
+				dir:           tc.targetRoot,
+				isIncremental: tc.incremental,
 				filerSource: &source.FilerSource{
 					Dir: tc.sourceRoot,
 				},
@@ -164,9 +178,9 @@ func TestValidateReplicatedChunkSize(t *testing.T) {
 }
 
 // End-to-end regression :
-// a source volume that responds 200 OK with Content-Length: 0 
-// for a chunk that filer metadata claims is 5171 bytes must be rejected 
-// by fetchAndWrite with a (non-retriable) size mismatch error, 
+// a source volume that responds 200 OK with Content-Length: 0
+// for a chunk that filer metadata claims is 5171 bytes must be rejected
+// by fetchAndWrite with a (non-retriable) size mismatch error,
 // instead of being silently propagated to the destination as a 0-byte needle.
 func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 	const fid = "74,047d16a94aa581"
@@ -242,6 +256,45 @@ func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 	}
 }
 
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "synthetic timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// A transient network failure (interrupted read, idle-deadline timeout while
+// the destination reads the upload body, reset/broken pipe) must route through
+// the escalating backoff so an overloaded destination can recover instead of
+// being hammered. The volume server returns its idle timeout as a JSON error
+// string, so the text path matters as much as the net.Error interface.
+func TestIsRetryableNetworkError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"eof", io.EOF, true},
+		{"unexpected eof", io.ErrUnexpectedEOF, true},
+		{"volume idle timeout json", fmt.Errorf("upload result: read tcp 10.0.0.1:8082->10.0.0.1:54848: i/o timeout"), true},
+		{"volume idle timeout capitalized", fmt.Errorf("Upload result: read tcp 10.0.0.1:8082->10.0.0.1:54848: I/O timeout"), true},
+		{"connection reset", fmt.Errorf("upload data: write tcp ...: connection reset by peer"), true},
+		{"connection reset capitalized", fmt.Errorf("Connection reset by peer"), true},
+		{"broken pipe", fmt.Errorf("broken pipe"), true},
+		{"broken pipe capitalized", fmt.Errorf("Broken pipe"), true},
+		{"net.Error timeout", fmt.Errorf("dial: %w", timeoutErr{}), true},
+		{"size mismatch is permanent", errChunkSizeMismatch, false},
+		{"unrelated error", errors.New("not found"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryableNetworkError(tc.err); got != tc.want {
+				t.Fatalf("isRetryableNetworkError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 // Lock in that the errChunkSizeMismatch sentinel survives the wrap in
 // replicateOneChunk + pass-through in util.Retry, so filer_sink.go's
 // errors.Is check actually fires.
@@ -278,5 +331,56 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 	}
 	if !errors.Is(err, errChunkSizeMismatch) {
 		t.Fatalf("error chain broken: errors.Is(err, errChunkSizeMismatch) = false; got %v", err)
+	}
+}
+
+// sourceSupersedes decides whether to skip a stale replayed event. The replayed
+// mtime is fixed; the table varies what the source lookup returned.
+func TestSourceSupersedes(t *testing.T) {
+	const eventNs int64 = 5_000_000_500 // the version being replayed (sec 5, ns 500)
+
+	withMtime := func(sec int64, ns int32) *filer_pb.Entry {
+		return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: sec, MtimeNs: ns}}
+	}
+
+	tests := []struct {
+		name      string
+		entry     *filer_pb.Entry
+		lookupErr error
+		want      bool
+	}{
+		// deleted on source: ErrNotFound in several shapes, all read as gone -> skip
+		{"not-found sentinel", nil, filer_pb.ErrNotFound, true},
+		{"not-found wrapped", nil, fmt.Errorf("lookup /x: %w", filer_pb.ErrNotFound), true},
+		{"not-found as string (gRPC)", nil, errors.New("rpc error: " + filer_pb.ErrNotFound.Error()), true},
+		{"nil entry, nil error", nil, nil, true},
+		// transient lookup failure must NOT skip a possibly-live file
+		{"network error", nil, errors.New("dial tcp: i/o timeout"), false},
+		// live entry: compare full-ns mtime against the replayed version
+		{"source strictly newer", withMtime(5, 600), nil, true},
+		{"source same version", withMtime(5, 500), nil, false},
+		{"source older (out-of-order replay)", withMtime(5, 400), nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sourceSupersedes("/source/x/config", tc.entry, tc.lookupErr, eventNs)
+			if got != tc.want {
+				t.Fatalf("sourceSupersedes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An epoch/unset replayed mtime (0) must not block "gone" detection: a deleted
+// source still reports superseded so the event is skipped instead of wedging on
+// permanent retries. A live source stays not-superseded — no valid mtime to compare.
+func TestSourceSupersedesEpochMtime(t *testing.T) {
+	live := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 5, MtimeNs: 600}}
+	if !sourceSupersedes("/source/x", nil, filer_pb.ErrNotFound, 0) {
+		t.Fatal("epoch-mtime deleted source must be reported gone")
+	}
+	if sourceSupersedes("/source/x", live, nil, 0) {
+		t.Fatal("epoch-mtime live source must not be reported superseded")
 	}
 }

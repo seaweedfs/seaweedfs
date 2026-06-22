@@ -56,6 +56,21 @@ func validateRequestPath(next http.Handler) http.Handler {
 	})
 }
 
+// isValidTablePath reports whether a "/"-separated table path (the part below
+// the bucket) is free of segments that path.Join would collapse to escape the
+// bucket directory. Empty segments (from leading/duplicate slashes) are ignored.
+func isValidTablePath(tablePath string) bool {
+	for _, segment := range strings.Split(tablePath, "/") {
+		if segment == "" {
+			continue
+		}
+		if !isValidNameSegment(segment) {
+			return false
+		}
+	}
+	return true
+}
+
 // isValidNameSegment rejects a single path-segment value (bucket prefix slot,
 // table name, or one namespace part) that would be unsafe to embed in a filer
 // path: `.`, `..`, embedded slash/backslash, or NUL.

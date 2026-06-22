@@ -148,6 +148,29 @@ func TestIsValidBucketName(t *testing.T) {
 	}
 }
 
+func TestIsValidPathSegment(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"opaque-id_123", true},
+		{"..hidden", true},
+		{"", false},
+		{".", false},
+		{"..", false},
+		{"dir/value", false},
+		{"dir\\value", false},
+		{"nul\x00value", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := IsValidPathSegment(tt.input); got != tt.want {
+				t.Errorf("IsValidPathSegment(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRemoveDuplicateSlashes(t *testing.T) {
 	tests := []struct {
 		name     string

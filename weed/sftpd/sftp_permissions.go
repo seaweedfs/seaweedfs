@@ -3,7 +3,7 @@ package sftpd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	stdpath "path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -66,7 +66,7 @@ func (fs *SftpServer) CheckFilePermission(path string, perm string) error {
 		// If the path doesn't exist and we're checking for create/write/mkdir permission,
 		// check permissions on the parent directory instead
 		if err == os.ErrNotExist {
-			parentPath := filepath.Dir(path)
+			parentPath := stdpath.Dir(path)
 			// Check if user can write to the parent directory
 			return fs.CheckFilePermission(parentPath, perm)
 		}

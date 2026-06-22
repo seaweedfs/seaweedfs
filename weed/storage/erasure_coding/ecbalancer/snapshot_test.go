@@ -102,6 +102,47 @@ func TestFromActiveTopology(t *testing.T) {
 	}
 }
 
+// TestFromActiveTopologyGroupsByAddressHost verifies the snapshot derives a node's
+// machine from its address, not its (possibly opaque) id: two volume servers with
+// distinct ids but the same host must land on one machine so EC placement spreads
+// shards across boxes even when explicit node ids are configured.
+func TestFromActiveTopologyGroupsByAddressHost(t *testing.T) {
+	at := topology.NewActiveTopology(10)
+	mk := func(id, addr string) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id:        id,
+			Address:   addr,
+			DiskInfos: map[string]*master_pb.DiskInfo{"hdd": {DiskId: 0, MaxVolumeCount: 100, VolumeCount: 0}},
+		}
+	}
+	// vs-a and vs-b are two servers on the same physical host; vs-c is another box.
+	nodes := []*master_pb.DataNodeInfo{
+		mk("vs-a", "10.0.0.9:8080"),
+		mk("vs-b", "10.0.0.9:8081"),
+		mk("vs-c", "10.0.0.10:8080"),
+	}
+	if err := at.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id:        "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: nodes}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+
+	topo := FromActiveTopology(at, 0)
+	if topo.nodes["vs-a"].host != topo.nodes["vs-b"].host {
+		t.Errorf("vs-a host %q != vs-b host %q; same-machine servers not grouped",
+			topo.nodes["vs-a"].host, topo.nodes["vs-b"].host)
+	}
+	if topo.nodes["vs-a"].host == topo.nodes["vs-c"].host {
+		t.Errorf("vs-a and vs-c share host %q but are different machines", topo.nodes["vs-a"].host)
+	}
+	if got := topo.nodes["vs-a"].host; got != "10.0.0.9" {
+		t.Errorf("vs-a host = %q, want 10.0.0.9", got)
+	}
+}
+
 // TestEcShardSlotsOnDiskRoundsUp covers the mixed-ratio (targetDataShards <
 // existingDataShards) conversion: an existing shard's fractional footprint must
 // round up so it is never floored to zero, which would overstate free capacity.

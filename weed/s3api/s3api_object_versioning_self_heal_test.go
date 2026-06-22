@@ -109,7 +109,8 @@ func TestSelectLatestVersion_OnlyDeleteMarkers(t *testing.T) {
 }
 
 // TestSelectLatestVersion_EmptyOrUntagged verifies nil latestEntry when there
-// is no version-id-tagged entry at all.
+// is no version entry at all. Names that are neither tagged with a version id
+// nor shaped like a v_<versionId> file are ignored.
 func TestSelectLatestVersion_EmptyOrUntagged(t *testing.T) {
 	entries := []*filer_pb.Entry{
 		nil,
@@ -124,4 +125,96 @@ func TestSelectLatestVersion_EmptyOrUntagged(t *testing.T) {
 	assert.Empty(t, latestId)
 	assert.Empty(t, latestName)
 	assert.False(t, isDM)
+}
+
+// newUntaggedVersionFile builds a v_<versionId> entry missing the
+// Seaweed-X-Amz-Version-Id attribute, like ones the filename fallback recovers.
+func newUntaggedVersionFile(versionId string) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name:       "v_" + versionId,
+		Attributes: &filer_pb.FuseAttributes{},
+		Extended:   map[string][]byte{"X-Amz-Storage-Class": []byte("STANDARD")},
+	}
+}
+
+// TestVersionIdFromEntry covers the attribute-first, filename-fallback contract
+// that lets selectLatestVersion recover version files written outside the
+// normal versioned-PUT path.
+func TestVersionIdFromEntry(t *testing.T) {
+	id := "6775adb0d7b0d2e303e0fced6989bb57"
+
+	// Attribute present: used verbatim.
+	assert.Equal(t, id, versionIdFromEntry(newVersionEntry("v_"+id, id, false)))
+
+	// Attribute absent but named v_<id>: derived from the filename.
+	assert.Equal(t, id, versionIdFromEntry(newUntaggedVersionFile(id)))
+
+	// Empty attribute value falls back to the filename.
+	emptyAttr := &filer_pb.Entry{Name: "v_" + id, Extended: map[string][]byte{s3_constants.ExtVersionIdKey: []byte("")}}
+	assert.Equal(t, id, versionIdFromEntry(emptyAttr))
+
+	// Not a version file and not tagged: no id.
+	assert.Empty(t, versionIdFromEntry(&filer_pb.Entry{Name: "not-a-version", Extended: map[string][]byte{"x": []byte("y")}}))
+
+	// Nil and directory entries are ignored even if named like a version file.
+	assert.Empty(t, versionIdFromEntry(nil))
+	assert.Empty(t, versionIdFromEntry(&filer_pb.Entry{Name: "v_" + id, IsDirectory: true}))
+}
+
+// TestSelectLatestVersion_FilenameFallback verifies untagged version files are
+// still selected by deriving the id from the v_<versionId> filename.
+func TestSelectLatestVersion_FilenameFallback(t *testing.T) {
+	baseTs := int64(1700000000000000000)
+	olderId := createNewFormatVersionId(baseTs)
+	newerId := createNewFormatVersionId(baseTs + int64(time.Minute))
+
+	entries := []*filer_pb.Entry{
+		newUntaggedVersionFile(olderId),
+		newUntaggedVersionFile(newerId),
+	}
+
+	latest, latestId, latestName, isDM := selectLatestVersion(entries)
+
+	assert.NotNil(t, latest, "untagged version files must still be selectable by filename")
+	assert.Equal(t, newerId, latestId, "newest version wins via filename-derived id")
+	assert.Equal(t, "v_"+newerId, latestName)
+	assert.False(t, isDM)
+}
+
+// TestSelectLatestVersion_FilenameFallbackMixedWithTagged ensures filename-only
+// entries compete correctly against properly tagged ones.
+func TestSelectLatestVersion_FilenameFallbackMixedWithTagged(t *testing.T) {
+	baseTs := int64(1700000000000000000)
+	taggedOlderId := createNewFormatVersionId(baseTs)
+	untaggedNewerId := createNewFormatVersionId(baseTs + int64(time.Minute))
+
+	entries := []*filer_pb.Entry{
+		newVersionEntry("v_"+taggedOlderId, taggedOlderId, false),
+		newUntaggedVersionFile(untaggedNewerId),
+	}
+
+	latest, latestId, latestName, isDM := selectLatestVersion(entries)
+
+	assert.NotNil(t, latest)
+	assert.Equal(t, untaggedNewerId, latestId, "newer untagged version must win over older tagged one")
+	assert.Equal(t, "v_"+untaggedNewerId, latestName)
+	assert.False(t, isDM)
+}
+
+// TestSelectLatestVersion_FilenameFallbackDeleteMarker verifies a delete marker
+// whose version-id attribute is missing is still recognized (id from filename)
+// and still reported as a delete marker so the caller renders NoSuchKey.
+func TestSelectLatestVersion_FilenameFallbackDeleteMarker(t *testing.T) {
+	id := createNewFormatVersionId(1700000000000000000)
+	entry := &filer_pb.Entry{
+		Name:       "v_" + id,
+		Attributes: &filer_pb.FuseAttributes{},
+		Extended:   map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+	}
+
+	latest, latestId, _, isDM := selectLatestVersion([]*filer_pb.Entry{entry})
+
+	assert.NotNil(t, latest)
+	assert.Equal(t, id, latestId)
+	assert.True(t, isDM, "delete marker recognized by filename must still report isDeleteMarker")
 }

@@ -2,6 +2,11 @@ name: "Code Scanning - Action"
 
 on:
   pull_request:
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/codeql.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/codeql

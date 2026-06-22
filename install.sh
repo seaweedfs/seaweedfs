@@ -6,7 +6,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.sh | bash
 #   curl -fsSL ... | bash -s -- --component volume-rust --large-disk
-#   curl -fsSL ... | bash -s -- --version v3.93 --dir /usr/local/bin
+#   curl -fsSL ... | bash -s -- --version 4.34 --dir /usr/local/bin
 #
 # Options:
 #   --component COMP   Which binary to install: weed, volume-rust, all (default: weed)

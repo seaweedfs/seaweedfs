@@ -369,6 +369,16 @@ impl Store {
             let vif_path = format!("{}.vif", base);
             if std::path::Path::new(&dat_path).exists() || std::path::Path::new(&vif_path).exists()
             {
+                // A persisting .note means the copy that produced these files
+                // never completed; mounting it would expose a truncated volume.
+                // Fail the mount so the caller (VolumeCopy) treats it as an error.
+                let note_path = format!("{}.note", base);
+                if std::path::Path::new(&note_path).exists() {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("volume {} copy incomplete: .note still present", vid),
+                    )));
+                }
                 return loc.create_volume(
                     vid,
                     collection,
@@ -598,8 +608,16 @@ impl Store {
                     as i32;
                 let mut max_count = vol_count + ec_equivalent;
 
-                if unclaimed > volume_size_limit as i64 {
-                    max_count += (unclaimed as u64 / volume_size_limit) as i32 - 1;
+                // One slot per full volume that fits in the unclaimed space.
+                // A "- 1" here used to zero the count when the disk had room for
+                // exactly one volume (free between 1x and 2x the limit), stranding
+                // auto-sized disks at max_volume_count 0 with no writable volume.
+                if unclaimed > 0 {
+                    max_count += (unclaimed as u64 / volume_size_limit) as i32;
+                }
+                // An auto-sized disk with free space always hosts at least one volume.
+                if max_count < 1 {
+                    max_count = 1;
                 }
 
                 loc.max_volume_count.store(max_count, Ordering::Relaxed);
@@ -698,15 +716,35 @@ impl Store {
 
     /// Unmount a single EC shard, searching all locations.
     /// Matches Go's Store.UnmountEcShards which unmounts one shard at a time.
-    pub fn unmount_ec_shard(&mut self, vid: VolumeId, shard_id: u32) -> Result<(), VolumeError> {
+    pub fn unmount_ec_shard(
+        &mut self,
+        vid: VolumeId,
+        shard_id: u32,
+        req_encode_ts_ns: i64,
+    ) -> Result<(), VolumeError> {
         // Walk all locations rather than stopping at the first with the
         // vid — split-disk reconciled volumes can have the same vid on
         // multiple disks, with the target shard on any of them.
         for disk_id in 0..self.locations.len() {
-            let has_shard = self.locations[disk_id]
-                .find_ec_volume(vid)
-                .is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
+            let ec_vol = self.locations[disk_id].find_ec_volume(vid);
+            let has_shard = ec_vol.is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
             if !has_shard {
+                continue;
+            }
+            // Generation fence: when the caller carries a generation (stale-worker
+            // cleanup), only unmount a strictly-older generation; preserve a disk
+            // whose generation is same-or-newer, 0, or unknown, so a stale run cannot
+            // unmount a newer run's live shards. req 0 (legacy/shell) unmounts all.
+            let disk_gen = ec_vol.map_or(0, |v| v.encode_ts_ns);
+            if req_encode_ts_ns > 0 && !(disk_gen > 0 && disk_gen < req_encode_ts_ns) {
+                tracing::info!(
+                    volume_id = vid.0,
+                    shard_id,
+                    disk_id,
+                    disk_gen,
+                    req = req_encode_ts_ns,
+                    "UnmountEcShards skipped: generation not older than request"
+                );
                 continue;
             }
             tracing::info!(
@@ -1460,6 +1498,47 @@ mod tests {
         let with_preallocate = store.locations[0].max_volume_count.load(Ordering::Relaxed);
 
         assert!(with_preallocate > without_preallocate);
+    }
+
+    #[test]
+    fn test_maybe_adjust_volume_max_no_dead_zone() {
+        // With auto max (original_max_volume_count == 0) and a large volume size
+        // limit, a disk with room for at least one volume must not report 0
+        // slots. It once did so for disks sized between 1x and 2x the limit,
+        // leaving no writable volume and timing out every assign.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+        if free < 4 {
+            return; // cannot determine free disk space
+        }
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                0, // auto
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        // free disk is 1.5x the limit: room for one full volume, less than two.
+        let volume_size_limit = free * 2 / 3;
+        store
+            .volume_size_limit
+            .store(volume_size_limit, Ordering::Relaxed);
+
+        store.maybe_adjust_volume_max();
+
+        let max = store.locations[0].max_volume_count.load(Ordering::Relaxed);
+        assert!(
+            max >= 1,
+            "auto-sized disk with room for one volume reported max_volume_count={max}; want >= 1"
+        );
     }
 
     #[test]

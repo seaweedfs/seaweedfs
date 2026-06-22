@@ -112,6 +112,9 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 // object (serializing the pointer recompute); for object-lock buckets the
 // condition gates the delete on the version's WORM guards evaluated on the owner.
 func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
+	if !isValidVersionID(versionId) {
+		return s3err.ErrInvalidRequest
+	}
 	versionFileName := s3a.getVersionFileName(versionId)
 	versionsPath := s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder)
 	cond := wormDeleteCondition(worm, bypass)
@@ -170,19 +173,20 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 	}
 }
 
-// versionedAfterCreate returns the putToFiler hook that finalizes a versioned
-// write: the routed RECOMPUTE_LATEST when the owner is known, else the existing
-// lock-free updateLatestVersionInDirectory.
-func (s3a *S3ApiServer) versionedAfterCreate(bucket, object, versionId, versionFileName string, useInvertedFormat bool) func(*filer_pb.Entry) s3err.ErrorCode {
-	owner := s3a.objectWriteOwner(bucket, object)
-	return func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-		if owner != "" {
-			return s3a.routedVersionedFinalize(owner, bucket, object, useInvertedFormat)
-		}
-		if err := s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName, versionEntry); err != nil {
-			glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
-			return s3err.ErrInternalError
-		}
-		return s3err.ErrNone
+// versionedFinalize flips the .versions latest pointer for a versioned PutObject:
+// on the routed path RECOMPUTE_LATEST rides in the version file's PUT transaction,
+// committing atomically under the object's per-path lock; off the ring
+// updateLatestVersionInDirectory does it under the object write lock.
+func (s3a *S3ApiServer) versionedFinalize(bucket, object, versionId, versionFileName string, useInvertedFormat bool) *putFinalize {
+	return &putFinalize{
+		lockKey:   s3a.toFilerPath(bucket, object),
+		mutations: []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)},
+		afterCreate: func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
+			if err := s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName, versionEntry); err != nil {
+				glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
+				return s3err.ErrInternalError
+			}
+			return s3err.ErrNone
+		},
 	}
 }

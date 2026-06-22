@@ -78,6 +78,11 @@ service SeaweedFiler {
     rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
+    // List the metadata subscribers currently connected to this filer
+    // (FUSE mounts, S3, filer.sync, peer filers, ...).
+    rpc ListMetadataSubscribers (ListMetadataSubscribersRequest) returns (ListMetadataSubscribersResponse) {
+    }
+
     rpc KvGet (KvGetRequest) returns (KvGetResponse) {
     }
 
@@ -388,7 +393,13 @@ message PosixLockRequest {
     bool is_moved = 2;
     PosixLockOp op = 3;
     PosixLockRange lock = 4;
+    // locks carries the full set a mount holds on key for a KEEP_ALIVE
+    // re-assertion, so the current owner filer can rebuild its in-memory state
+    // after an ownership change or restart. lock.sid identifies the session.
     repeated PosixLockRange locks = 5;
+    // cooling_probe marks a dual-read a new owner sends to the previous owner
+    // during a ring change, so the previous owner answers from local state
+    // without itself cooling-off (no recursion).
     bool cooling_probe = 6;
 }
 
@@ -614,6 +625,22 @@ message SubscribeMetadataResponse {
     int64 ts_ns = 3;
     repeated SubscribeMetadataResponse events = 4; // batch of additional events (backlog catch-up)
     repeated LogFileChunkRef log_file_refs = 5;    // log file chunk refs for client direct-read
+}
+message ListMetadataSubscribersRequest {
+    repeated string client_types = 1; // optional filter by client type, e.g. "mount"; empty = all
+}
+message ListMetadataSubscribersResponse {
+    repeated MetadataSubscriber subscribers = 1;
+}
+message MetadataSubscriber {
+    string client_name = 1;     // "<type>@<address>"
+    string client_type = 2;     // e.g. "mount", "sw-vfs", "s3", "filer:<addr>"
+    string address = 3;         // client peer address
+    string path_prefix = 4;     // subscribed path prefix
+    int32 client_id = 5;
+    int32 client_epoch = 6;
+    int64 connected_at_ns = 7;
+    string filer_address = 8;   // the filer this subscriber is connected to
 }
 // A persisted log file that the client can read directly from volume servers.
 // The file format is: [4-byte size | protobuf LogEntry] repeated.

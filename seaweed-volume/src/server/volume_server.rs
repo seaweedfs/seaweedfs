@@ -77,6 +77,9 @@ pub struct VolumeServerState {
     pub s3_tier_registry: std::sync::RwLock<crate::remote_storage::s3_tier::S3TierRegistry>,
     /// Read mode: local, proxy, or redirect for non-local volumes.
     pub read_mode: ReadMode,
+    /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation,
+    /// allowing arbitrary (incl. loopback / link-local / metadata) hosts.
+    pub allow_untrusted_remote_endpoints: bool,
     /// First master address for volume lookups (e.g., "localhost:9333").
     pub master_url: String,
     /// Seed master addresses for UI rendering.

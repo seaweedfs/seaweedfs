@@ -188,6 +188,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if *masterOption.ipBind == "" {
 		*masterOption.ipBind = *masterOption.ip
 	}
+	util.SetOutboundLocalIP(*masterOption.ipBind)
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
@@ -355,6 +356,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	grace.OnInterrupt(ms.Shutdown)
 	grace.OnInterrupt(grpcS.Stop)
+	grace.OnReload(ms.Reload)
 	grace.OnReload(func() {
 		if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()

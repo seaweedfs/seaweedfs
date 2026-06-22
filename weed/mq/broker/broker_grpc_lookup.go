@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -232,14 +233,20 @@ func (b *MessageQueueBroker) TopicExists(ctx context.Context, request *mq_pb.Top
 	exists := false
 	err := b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		topicPath := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, request.Topic.Namespace, request.Topic.Name)
-		confResp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+		_, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: topicPath,
 			Name:      filer.TopicConfFile,
 		})
-		if err == nil && confResp.Entry != nil {
+		if lookupErr == nil {
 			exists = true
+			return nil
 		}
-		return nil // Don't propagate error, just check existence
+		// A definitive "not found" means the topic does not exist; surface any
+		// other (transient) error so we never cache a false negative.
+		if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return lookupErr
 	})
 
 	if err != nil {
