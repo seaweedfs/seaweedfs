@@ -341,7 +341,8 @@ func TestBalanceDoesNotDrainOntoOneNode(t *testing.T) {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool { return true })
 	}
 
-	if err := balanceSelectedVolume(nil, types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes, volumeSizeLimitMb, false); err != nil {
+	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb}
+	if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
 		t.Fatalf("balanceSelectedVolume: %v", err)
 	}
 
@@ -352,6 +353,59 @@ func TestBalanceDoesNotDrainOntoOneNode(t *testing.T) {
 	}
 	if diff := fullCount - emptyCount; diff > 1 || diff < -1 {
 		t.Fatalf("expected balanced distribution within one volume, got full=%d empty=%d", fullCount, emptyCount)
+	}
+}
+
+// volumesPerStep caps the number of moves performed in a single execution.
+func TestBalanceVolumesPerStep(t *testing.T) {
+	const mb = 1024 * 1024
+	volumeSizeLimitMb := uint64(100)
+
+	makeNode := func(id string, volumes []*master_pb.VolumeInformationMessage) *Node {
+		return &Node{
+			info: &master_pb.DataNodeInfo{
+				Id: id,
+				DiskInfos: map[string]*master_pb.DiskInfo{
+					"": {
+						MaxVolumeCount: 10,
+						VolumeCount:    int64(len(volumes)),
+						VolumeInfos:    volumes,
+					},
+				},
+			},
+			dc:   "dc1",
+			rack: "rack1",
+		}
+	}
+
+	var fullVolumes []*master_pb.VolumeInformationMessage
+	for id := uint32(1); id <= 6; id++ {
+		fullVolumes = append(fullVolumes, &master_pb.VolumeInformationMessage{Id: id, Size: 95 * mb})
+	}
+	fullNode := makeNode("full", fullVolumes)
+	emptyNode := makeNode("empty", nil)
+	nodes := []*Node{fullNode, emptyNode}
+
+	volumeReplicas := map[uint32][]*VolumeReplica{}
+	for _, v := range fullVolumes {
+		loc := newLocation("dc1", "rack1", fullNode.info)
+		volumeReplicas[v.Id] = []*VolumeReplica{{location: &loc, info: v}}
+	}
+
+	for _, n := range nodes {
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool { return true })
+	}
+
+	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, volumesPerStep: 1}
+	if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
+		t.Fatalf("balanceSelectedVolume: %v", err)
+	}
+
+	if c.movedCount != 1 {
+		t.Fatalf("expected exactly 1 move with volumesPerStep=1, got %d", c.movedCount)
+	}
+	if got := len(emptyNode.info.DiskInfos[""].VolumeInfos); got != 1 {
+		t.Fatalf("expected empty node to receive exactly 1 volume, got %d", got)
 	}
 }
 
