@@ -28,12 +28,6 @@ metadata:
     app.kubernetes.io/component: filer-tcp
 spec:
   ingressClassName: {{ .Values.filer.ingresses.tcp.className | quote }}
-  {{- if .Values.filer.ingresses.tcp.entryPoints }}
-  entryPoints:
-    {{- range .Values.filer.ingresses.tcp.entryPoints }}
-    - {{ . | quote }}
-    {{- end }}
-  {{- end }}
   routes:
     {{- $hosts := .Values.filer.ingresses.tcp.hosts | default list }}
     {{- /* Determine service name: all-in-one uses the combined service, standalone uses the filer service */}}
@@ -43,14 +37,14 @@ spec:
     - match: HostSNI(`{{ $host }}`)
       services:
         - name: {{ $serviceName }}
-          port: {{ .Values.filer.ingresses.tcp.port }}
+          port: {{ $.Values.filer.grpcPort }}
           passthrough: true
     {{- end }}
     {{- else }}
     - match: HostSNI(`*`)
       services:
         - name: {{ $serviceName }}
-          port: {{ .Values.filer.ingresses.tcp.port }}
+          port: {{ $.Values.filer.grpcPort }}
           passthrough: true
     {{- end }}
   tls:
