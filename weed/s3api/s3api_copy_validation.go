@@ -115,9 +115,19 @@ func validateSSEKMSCopyRequirements(srcMetadata map[string][]byte, headers http.
 
 // validateEncryptionCompatibility validates that encryption methods are not conflicting
 func validateEncryptionCompatibility(headers http.Header) error {
+	sseAlgorithm := headers.Get(s3_constants.AmzServerSideEncryption)
 	hasSSEC := hasSSECHeaders(headers)
-	hasSSEKMS := headers.Get(s3_constants.AmzServerSideEncryption) == "aws:kms"
-	hasSSES3 := headers.Get(s3_constants.AmzServerSideEncryption) == "AES256"
+	hasSSEKMS := sseAlgorithm == s3_constants.SSEAlgorithmKMS
+	hasSSES3 := sseAlgorithm == s3_constants.SSEAlgorithmAES256
+
+	// Reject unsupported algorithms so they are never persisted as a bogus
+	// destination header advertising encryption that was never applied.
+	if sseAlgorithm != "" && !hasSSEKMS && !hasSSES3 {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidEncryptionAlgorithm,
+			Message: fmt.Sprintf("Unsupported server-side encryption algorithm: %s", sseAlgorithm),
+		}
+	}
 
 	// Count how many encryption methods are specified
 	encryptionCount := 0
