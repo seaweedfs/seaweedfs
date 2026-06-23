@@ -564,7 +564,8 @@ func (s *Server) handleRenameTable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		if tableErr, ok := err.(*s3tables.S3TablesError); ok {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
 			switch tableErr.Type {
 			case s3tables.ErrCodeNoSuchTable:
 				writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", req.Source.Name))
