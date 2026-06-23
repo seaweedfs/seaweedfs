@@ -350,8 +350,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0 {
 		dstEntry.Chunks = nil
 
-		// Handle inline encrypted content - fixes GitHub #7562
-		if len(entry.Content) > 0 {
+		// Handle inline encrypted content - fixes GitHub #7562.
+		// Also run when the destination requests encryption with no content so
+		// empty objects get real key metadata, not just a bare algorithm header.
+		if len(entry.Content) > 0 || dstWantsSSEC || dstWantsSSEKMS || dstWantsSSES3 {
 			inlineContent, inlineMetadata, inlineErr := s3a.processInlineContentForCopy(
 				entry, r, dstBucket, dstObject,
 				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
