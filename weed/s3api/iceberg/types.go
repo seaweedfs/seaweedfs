@@ -62,6 +62,19 @@ type GetNamespaceResponse struct {
 	Properties map[string]string `json:"properties"`
 }
 
+// UpdateNamespacePropertiesRequest is sent to POST /v1/namespaces/{namespace}/properties.
+type UpdateNamespacePropertiesRequest struct {
+	Removals []string          `json:"removals,omitempty"`
+	Updates  map[string]string `json:"updates,omitempty"`
+}
+
+// UpdateNamespacePropertiesResponse is returned by POST /v1/namespaces/{namespace}/properties.
+type UpdateNamespacePropertiesResponse struct {
+	Removed []string `json:"removed"`
+	Updated []string `json:"updated"`
+	Missing []string `json:"missing"`
+}
+
 // ListTablesResponse is returned by GET /v1/namespaces/{namespace}/tables.
 type ListTablesResponse struct {
 	NextPageToken string            `json:"next-page-token,omitempty"`

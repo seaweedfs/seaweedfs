@@ -193,6 +193,95 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// applyNamespacePropertyUpdates applies removals and updates to a copy of
+// current and returns the merged property map alongside the Iceberg REST
+// summary of which keys were removed, updated, or were missing.
+func applyNamespacePropertyUpdates(current map[string]string, removals []string, updates map[string]string) (map[string]string, UpdateNamespacePropertiesResponse) {
+	properties := make(map[string]string, len(current))
+	for k, v := range current {
+		properties[k] = v
+	}
+
+	summary := UpdateNamespacePropertiesResponse{Removed: []string{}, Updated: []string{}, Missing: []string{}}
+	for _, key := range removals {
+		if _, ok := properties[key]; ok {
+			delete(properties, key)
+			summary.Removed = append(summary.Removed, key)
+		} else {
+			summary.Missing = append(summary.Missing, key)
+		}
+	}
+	for key, value := range updates {
+		properties[key] = value
+		summary.Updated = append(summary.Updated, key)
+	}
+	return properties, summary
+}
+
+// handleUpdateNamespaceProperties applies a set of removals and updates to a
+// namespace's properties and returns which keys were removed, updated, or
+// missing, per the Iceberg REST spec.
+func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	namespace := parseNamespace(vars["namespace"])
+	if len(namespace) == 0 {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
+		return
+	}
+
+	var req UpdateNamespacePropertiesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	// A key cannot be both removed and updated in the same request.
+	for _, key := range req.Removals {
+		if _, ok := req.Updates[key]; ok {
+			writeError(w, http.StatusUnprocessableEntity, "UnprocessableEntityException",
+				fmt.Sprintf("Cannot remove and update the same key: %s", key))
+			return
+		}
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	// Load the current properties so we can compute the summary and the merged map.
+	getReq := &s3tables.GetNamespaceRequest{TableBucketARN: bucketARN, Namespace: namespace}
+	var getResp s3tables.GetNamespaceResponse
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, identityName)
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
+			return
+		}
+		glog.V(1).Infof("Iceberg: UpdateNamespaceProperties GetNamespace error: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		return
+	}
+
+	properties, summary := applyNamespacePropertyUpdates(getResp.Properties, req.Removals, req.Updates)
+
+	updReq := &s3tables.UpdateNamespaceRequest{TableBucketARN: bucketARN, Namespace: namespace, Properties: properties}
+	var updResp s3tables.UpdateNamespaceResponse
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateNamespace", updReq, &updResp, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateNamespaceProperties error: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
+}
+
 // handleNamespaceExists checks if a namespace exists.
 func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
