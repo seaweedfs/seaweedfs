@@ -173,16 +173,15 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool) (o
 
 	if !fsync {
 		return v.syncWrite(n, checkCookie)
-	} else {
-		asyncRequest := needle.NewAsyncRequest(n, true)
-		// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
-		asyncRequest.ActualSize = needle.GetActualSize(Size(len(n.Data)), v.Version())
-
-		v.asyncRequestAppend(asyncRequest)
-		offset, _, isUnchanged, err = asyncRequest.WaitComplete()
-
-		return
 	}
+	asyncRequest := needle.NewAsyncRequest(n, true)
+	// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
+	asyncRequest.ActualSize = needle.GetActualSize(Size(len(n.Data)), v.Version())
+
+	v.asyncRequestAppend(asyncRequest)
+	offset, _, isUnchanged, err = asyncRequest.WaitComplete()
+
+	return
 }
 
 func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint64, size Size, isUnchanged bool, err error) {
@@ -251,19 +250,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 
 func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
 	// todo: delete info is always appended no fsync, it may need fsync in future
-	fsync := false
-
-	if !fsync {
-		return v.syncDelete(n)
-	} else {
-		asyncRequest := needle.NewAsyncRequest(n, false)
-		asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
-
-		v.asyncRequestAppend(asyncRequest)
-		_, size, _, err := asyncRequest.WaitComplete()
-
-		return Size(size), err
-	}
+	return v.syncDelete(n)
 }
 
 func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {

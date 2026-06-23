@@ -734,6 +734,9 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
+			if v == nil {
+				return fmt.Errorf("volume %d not found after LoadVolume", i)
+			}
 			v.diskId = uint32(diskId) // Set disk ID when mounting
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:               uint32(v.Id),
