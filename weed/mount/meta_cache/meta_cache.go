@@ -3,6 +3,7 @@ package meta_cache
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -32,7 +33,8 @@ type MetaCache struct {
 	isCachedFn           func(fullpath util.FullPath) bool
 	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
 	onDirectoryUpdate    func(dir util.FullPath)
-	visitGroup           singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
+	visitGroup           singleflight.Group      // deduplicates concurrent EnsureVisited calls for the same path
 	applyCh              chan metadataApplyRequest
 	applyDone            chan struct{}
 	applyStateMu         sync.Mutex
@@ -40,6 +42,12 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
+
+	// Entry invalidations run on a worker, not inline on the apply loop:
+	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
+	// the apply loop (flushMetadataToFiler -> applyLocalMetadataEvent), so inline
+	// invalidation deadlocks the mount.
+	invalidateWorker *util.AsyncBatchWorker[metadataInvalidation]
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -72,6 +80,7 @@ const (
 	metadataBeginBuild
 	metadataCompleteBuild
 	metadataAbortBuild
+	metadataPurgeDir
 	metadataShutdown
 )
 
@@ -82,6 +91,7 @@ type metadataApplyRequest struct {
 	options      MetadataResponseApplyOptions
 	buildPath    util.FullPath
 	snapshotTsNs int64
+	resetFn      func()
 	done         chan error
 }
 
@@ -105,6 +115,11 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs: make(map[util.FullPath]*directoryBuildState),
 		dedupRing:    newDedupRingBuffer(),
 	}
+	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
+		for _, invalidation := range batch {
+			mc.invalidateFunc(invalidation.path, invalidation.entry)
+		}
+	})
 	go mc.runApplyLoop()
 	return mc
 }
@@ -224,6 +239,25 @@ func (mc *MetaCache) ApplyMetadataResponseOwned(ctx context.Context, resp *filer
 	return mc.applyMetadataResponseEnqueue(ctx, resp, options)
 }
 
+// ApplyMetadataResponseOwnedAsync enqueues resp without waiting, for callers holding a
+// lock the apply loop's invalidateFunc also needs. Best-effort: the subscription re-delivers.
+func (mc *MetaCache) ApplyMetadataResponseOwnedAsync(resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) {
+	if resp == nil || resp.EventNotification == nil {
+		return
+	}
+	req := metadataApplyRequest{
+		ctx:     context.Background(),
+		kind:    metadataApplyEvent,
+		resp:    resp,
+		options: options,
+		done:    make(chan error, 1),
+	}
+	select {
+	case mc.applyCh <- req:
+	default:
+	}
+}
+
 func (mc *MetaCache) applyMetadataResponseEnqueue(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -269,6 +303,20 @@ func (mc *MetaCache) AbortDirectoryBuild(ctx context.Context, dirPath util.FullP
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
 		kind:      metadataAbortBuild,
 		buildPath: dirPath,
+	})
+}
+
+// PurgeDirectoryChildren asynchronously clears a directory's cached children and
+// resets its cached flag (resetFn) via the apply loop. Asynchronous so callers
+// like kernel Forget don't block; see purgeDirectoryChildrenNow for why off-loop
+// callers must route through here rather than wiping the store directly.
+func (mc *MetaCache) PurgeDirectoryChildren(dirPath util.FullPath, resetFn func()) {
+	_ = mc.enqueueApplyRequest(metadataApplyRequest{
+		ctx:       context.Background(),
+		kind:      metadataPurgeDir,
+		buildPath: dirPath,
+		resetFn:   resetFn,
+		done:      make(chan error, 1),
 	})
 }
 
@@ -322,6 +370,42 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
 
+// SetPinnedChildFn installs a predicate reporting whether a child holds
+// local-only state a rebuild must not discard. See deleteFolderChildrenForRebuild.
+func (mc *MetaCache) SetPinnedChildFn(fn func(*filer.Entry) bool) {
+	mc.pinnedChildFn = fn
+}
+
+// deleteFolderChildrenForRebuild clears a directory's cached children ahead of a
+// rebuild, but keeps any child flagged pinned by pinnedChildFn — a local-only
+// create not yet flushed to the filer. A rebuild refills from a filer listing
+// that does not include such a create; a blind wipe would drop it and then
+// markCachedFn publishes the directory authoritatively cached without a file the
+// client created, so it vanishes from the mount.
+func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath util.FullPath) error {
+	mc.Lock()
+	defer mc.Unlock()
+	if mc.pinnedChildFn == nil {
+		return mc.localStore.DeleteFolderChildren(ctx, dirPath)
+	}
+	var pinned []*filer.Entry
+	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
+		if mc.pinnedChildFn(entry) {
+			pinned = append(pinned, entry)
+		}
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
+		return err
+	}
+	if len(pinned) > 0 {
+		return mc.doBatchInsertEntries(ctx, pinned)
+	}
+	return nil
+}
+
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
 	mc.RLock()
 	defer mc.RUnlock()
@@ -363,6 +447,10 @@ func (mc *MetaCache) Shutdown() {
 	}
 
 	<-mc.applyDone
+
+	// The apply loop is the only dispatcher of entry invalidations; with it
+	// stopped, drain and stop the invalidate worker before closing the store.
+	mc.invalidateWorker.Shutdown()
 
 	mc.Lock()
 	defer mc.Unlock()
@@ -465,6 +553,8 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs)
 	case metadataAbortBuild:
 		return mc.abortDirectoryBuildNow(req.buildPath)
+	case metadataPurgeDir:
+		return mc.purgeDirectoryChildrenNow(req.ctx, req.buildPath, req.resetFn)
 	case metadataShutdown:
 		return nil
 	default:
@@ -531,9 +621,7 @@ func (mc *MetaCache) applyMetadataSideEffects(resp *filer_pb.SubscribeMetadataRe
 	for _, dirPath := range sideEffects.dirsToNotify {
 		mc.noteDirectoryUpdate(dirPath)
 	}
-	for _, invalidation := range sideEffects.invalidations {
-		mc.invalidateFunc(invalidation.path, invalidation.entry)
-	}
+	mc.invalidateWorker.Enqueue(sideEffects.invalidations...)
 }
 
 // applyMetadataSideEffectsSkippingBuildingDirs is like applyMetadataSideEffects
@@ -552,9 +640,14 @@ func (mc *MetaCache) applyMetadataSideEffectsSkippingBuildingDirs(resp *filer_pb
 			mc.noteDirectoryUpdate(dirPath)
 		}
 	}
-	for _, invalidation := range sideEffects.invalidations {
-		mc.invalidateFunc(invalidation.path, invalidation.entry)
-	}
+	mc.invalidateWorker.Enqueue(sideEffects.invalidations...)
+}
+
+// WaitForEntryInvalidations blocks until every invalidation enqueued so far
+// has been processed by the invalidate worker. Intended for tests and
+// shutdown paths that need the previously-synchronous behavior.
+func (mc *MetaCache) WaitForEntryInvalidations() {
+	mc.invalidateWorker.Drain()
 }
 
 func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, _ MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {
@@ -619,6 +712,24 @@ func (mc *MetaCache) beginDirectoryBuildNow(dirPath util.FullPath) error {
 func (mc *MetaCache) abortDirectoryBuildNow(dirPath util.FullPath) error {
 	delete(mc.buildingDirs, dirPath)
 	return nil
+}
+
+// purgeDirectoryChildrenNow runs in the apply loop, serialized with
+// completeDirectoryBuildNow's markCachedFn, so no build publish interleaves
+// between resetFn (clears the cached flag) and the store wipe. Skipping a
+// building directory avoids deleting entries the build inserted but hasn't yet
+// published. Together these keep a directory from ending up flagged cached over
+// an empty store — which hides every file in it though they remain on the filer.
+func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util.FullPath, resetFn func()) error {
+	if mc.isBuildingDir(dirPath) {
+		return nil
+	}
+	if resetFn != nil {
+		resetFn()
+	}
+	mc.Lock()
+	defer mc.Unlock()
+	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
 func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {

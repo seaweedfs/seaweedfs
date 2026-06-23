@@ -2,6 +2,13 @@ name: "TUS Protocol Tests"
 
 on:
   pull_request:
+    paths:
+      - 'weed/server/**'
+      - 'weed/filer/**'
+      - 'test/tus/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/tus-tests.yml'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/tus-tests
@@ -22,7 +29,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6

@@ -147,7 +147,17 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 					glog.V(4).Infof("%s: Caught up to disk head, backing off to %s poll", readerName, caughtUpDiskPollInterval)
 				}
 			} else if logBuffer.HasData() {
-				return lastReadPosition, isDone, ResumeFromDiskError
+				// HasData() and ReadFromBuffer lock separately, so a racing write can make
+				// HasData() see data the empty-buffer read missed. Re-read; only bail if the
+				// position is genuinely behind the in-memory window (flushed to disk).
+				reBuf, _, reErr := logBuffer.ReadFromBuffer(lastReadPosition)
+				if reErr == ResumeFromDiskError {
+					return lastReadPosition, isDone, ResumeFromDiskError
+				}
+				if reBuf != nil {
+					logBuffer.ReleaseMemory(reBuf)
+				}
+				continue
 			}
 
 			// CRITICAL: Check if client is still connected
@@ -276,7 +286,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
 			if isDone, err = eachLogDataFn(logEntry); err != nil {
-				glog.Errorf("LoopProcessLogData: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
+				glog.Errorf("LoopProcessLogData: %s process log entry %d key:%q ts_ns:%d offset:%d size:%d: %v", readerName, batchSize+1, logEntry.Key, logEntry.TsNs, logEntry.Offset, len(logEntry.Data), err)
 				return
 			}
 			if isDone {
@@ -362,7 +372,17 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 					glog.V(4).Infof("%s: Caught up to disk head, backing off to %s poll", readerName, caughtUpDiskPollInterval)
 				}
 			} else if logBuffer.HasData() {
-				return lastReadPosition, isDone, ResumeFromDiskError
+				// HasData() and ReadFromBuffer lock separately, so a racing write can make
+				// HasData() see data the empty-buffer read missed. Re-read; only bail if the
+				// position is genuinely behind the in-memory window (flushed to disk).
+				reBuf, _, reErr := logBuffer.ReadFromBuffer(lastReadPosition)
+				if reErr == ResumeFromDiskError {
+					return lastReadPosition, isDone, ResumeFromDiskError
+				}
+				if reBuf != nil {
+					logBuffer.ReleaseMemory(reBuf)
+				}
+				continue
 			}
 
 			// CRITICAL: Check if client is still connected after disk read
@@ -536,7 +556,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 
 			glog.V(4).Infof("Calling eachLogDataFn for entry at offset %d, next position will be %d", logEntry.Offset, logEntry.Offset+1)
 			if isDone, err = eachLogDataFn(logEntry, logEntry.Offset); err != nil {
-				glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
+				glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d key:%q ts_ns:%d offset:%d size:%d: %v", readerName, batchSize+1, logEntry.Key, logEntry.TsNs, logEntry.Offset, len(logEntry.Data), err)
 				return
 			}
 			if isDone {

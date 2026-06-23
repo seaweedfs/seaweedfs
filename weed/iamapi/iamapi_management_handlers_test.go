@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -629,6 +631,23 @@ func TestListAttachedUserPolicies(t *testing.T) {
 	_, iamErr = iama.ListAttachedUserPolicies(s3cfg, values)
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+// TestUserArnIsValid is a regression test for issue #9786: the terraform aws
+// provider (>= 6.41) reads a user back after creating it and blocks until
+// GetUser returns a value that passes arn.IsARN.
+func TestUserArnIsValid(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+
+	createResp := iama.CreateUser(s3cfg, url.Values{"UserName": []string{"alice"}})
+	assert.True(t, arn.IsARN(aws.StringValue(createResp.CreateUserResult.User.Arn)),
+		"CreateUser must return a valid ARN, got %q", aws.StringValue(createResp.CreateUserResult.User.Arn))
+
+	getResp, iamErr := iama.GetUser(s3cfg, "alice")
+	assert.Nil(t, iamErr)
+	assert.True(t, arn.IsARN(aws.StringValue(getResp.GetUserResult.User.Arn)),
+		"GetUser must return a valid ARN, got %q", aws.StringValue(getResp.GetUserResult.User.Arn))
 }
 
 func TestCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {

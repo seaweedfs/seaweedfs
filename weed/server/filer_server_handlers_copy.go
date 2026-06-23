@@ -169,7 +169,7 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 
 	// Pass o_excl = !overwrite so the default copy refuses to replace an
 	// existing destination, while overwrite=true updates the pre-created target.
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, !overwrite, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
+	if createErr := fs.filer.CreateEntry(ctx, newEntry, nil, !overwrite, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
 		err = fmt.Errorf("failed to create copied entry from '%s' to '%s': %w", src, dst, createErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

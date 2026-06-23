@@ -118,7 +118,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllow,
+		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
 		glog.Infof("S3Tables: Permission denied for CreateNamespace - principal=%s, owner=%s", principal, bucketMetadata.OwnerAccountID)
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
@@ -259,7 +259,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllow,
+		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied
@@ -269,6 +269,110 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		Namespace:      metadata.Namespace,
 		CreatedAt:      metadata.CreatedAt,
 		OwnerAccountID: metadata.OwnerAccountID,
+		Properties:     metadata.Properties,
+	}
+
+	h.writeJSON(w, http.StatusOK, resp)
+	return nil
+}
+
+// handleUpdateNamespace replaces the stored properties of an existing namespace.
+// AWS S3 Tables namespaces have no properties; this backs the Iceberg REST
+// catalog's namespace-property updates, which carry the merged map.
+func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req UpdateNamespaceRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	if req.TableBucketARN == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
+		return fmt.Errorf("tableBucketARN is required")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
+	bucketPath := GetTableBucketPath(bucketName)
+
+	var metadata namespaceMetadata
+	var bucketPolicy string
+	var bucketTags map[string]string
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return err
+		}
+
+		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err == nil {
+			bucketPolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket policy: %v", err)
+		}
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get namespace: %v", err))
+		}
+		return err
+	}
+
+	bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
+	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("UpdateNamespace", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllowFor(r),
+	}) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update namespace")
+		return ErrAccessDenied
+	}
+
+	metadata.Properties = req.Properties
+	metadataBytes, err := json.Marshal(&metadata)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal namespace metadata")
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return h.setExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata, metadataBytes)
+	})
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to update namespace")
+		return err
+	}
+
+	resp := &UpdateNamespaceResponse{
+		Namespace:      metadata.Namespace,
+		TableBucketARN: req.TableBucketARN,
 		Properties:     metadata.Properties,
 	}
 
@@ -346,7 +450,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 		TableBucketName: bucketName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllow,
+		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
@@ -531,7 +635,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllow,
+		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied

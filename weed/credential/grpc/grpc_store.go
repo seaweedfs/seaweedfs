@@ -98,7 +98,7 @@ func (store *IamGrpcStore) withIamClient(ctx context.Context, fn func(ctx contex
 		}
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+	return pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
 		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
 		return fn(ctx, client)
 	}, filerAddress.ToGrpcAddress(), false, dialOption)

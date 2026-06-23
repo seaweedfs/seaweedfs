@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -188,6 +189,17 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		Username:    username,
 		Actions:     identity.Actions,
 		PolicyNames: identity.PolicyNames,
+	}
+
+	// Inline user policies are stored separately from the identity record and
+	// are authoritative at enforcement time (they take precedence over the
+	// legacy Actions list). Surface their names alongside attached policies so
+	// the admin reflects the user's actual permissions rather than only the
+	// (potentially overridden) Actions.
+	if inlinePolicyNames, err := s.credentialManager.ListUserInlinePolicies(ctx, username); err != nil {
+		glog.Warningf("failed to list inline policies for user %s: %v", username, err)
+	} else if len(inlinePolicyNames) > 0 {
+		details.PolicyNames = append(details.PolicyNames, inlinePolicyNames...)
 	}
 
 	// Set email from account if available

@@ -267,7 +267,7 @@ func (wfs *WFS) updateServerSideWholeFileCopyMetaCache(dstPath util.FullPath, en
 	event := metadataUpdateEvent(dir, entry)
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("CopyFileRange metadata update %s: %v", dstPath, applyErr)
-		wfs.markDirectoryReadThrough(util.FullPath(dir))
+		wfs.purgeDirectoryCache(util.FullPath(dir))
 	}
 }
 

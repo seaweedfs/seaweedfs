@@ -37,10 +37,43 @@ func isAccessDenied(err error) bool {
 	return ok && awsErr.Code() == "AccessDenied"
 }
 
+// localSourceAllowCIDRs lists every address a loopback-targeted test client may
+// present as aws:SourceIp. The SDK reaches the server over localhost, but
+// depending on resolver order and host routing the source the server observes
+// can be IPv4 loopback, IPv6 loopback, or one of the host's RFC1918 addresses
+// (CI runners advertise the S3 endpoint on a 10.x interface). An allow policy
+// meant to match "this local client" must cover all of them or the
+// positive-condition assertion flakes.
+var localSourceAllowCIDRs = []string{
+	"127.0.0.0/8",
+	"::1/128",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+}
+
+// sourceIpAllowPolicy builds an Allow policy for s3:* on bucketName gated by an
+// aws:SourceIp IpAddress condition over the given CIDRs.
+func sourceIpAllowPolicy(bucketName string, cidrs ...string) string {
+	quoted := make([]string, len(cidrs))
+	for i, c := range cidrs {
+		quoted[i] = `"` + c + `"`
+	}
+	return `{
+		"Version":"2012-10-17",
+		"Statement":[{
+			"Effect":"Allow",
+			"Action":"s3:*",
+			"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
+			"Condition":{"IpAddress":{"aws:SourceIp":[` + strings.Join(quoted, ",") + `]}}
+		}]
+	}`
+}
+
 // TestIAMUserInlinePolicySourceIpCondition verifies that an aws:SourceIp condition
-// on a user inline policy is honored. Tests run from localhost (127.0.0.1), so a
-// policy that only allows access from a non-loopback CIDR must deny the request,
-// and a policy that allows access from 127.0.0.0/8 must allow it.
+// on a user inline policy is honored. Tests run against a local server, so a
+// policy that only allows a non-local CIDR must deny the request, and a policy
+// that allows the local client's address (see localSourceAllowCIDRs) must allow it.
 func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 	framework := NewS3IAMTestFramework(t)
 	defer framework.Cleanup()
@@ -87,30 +120,13 @@ func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 		}
 	})
 
-	policyDoc := func(cidrs ...string) string {
-		quoted := make([]string, len(cidrs))
-		for i, c := range cidrs {
-			quoted[i] = `"` + c + `"`
-		}
-		return `{
-			"Version":"2012-10-17",
-			"Statement":[{
-				"Effect":"Allow",
-				"Action":"s3:*",
-				"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
-				"Condition":{"IpAddress":{"aws:SourceIp":[` + strings.Join(quoted, ",") + `]}}
-			}]
-		}`
-	}
-
 	t.Run("denies_when_source_ip_does_not_match", func(t *testing.T) {
 		// SourceIp 198.51.100.0/24 is RFC5737 TEST-NET-2; the test client is on
-		// loopback (127.0.0.1 or ::1 depending on resolver), so the condition
-		// must fail and the action must be denied.
+		// the local host, so the condition must fail and the action be denied.
 		_, err = iamClient.PutUserPolicy(&iam.PutUserPolicyInput{
 			UserName:       aws.String(userName),
 			PolicyName:     aws.String(policyName),
-			PolicyDocument: aws.String(policyDoc("198.51.100.0/24")),
+			PolicyDocument: aws.String(sourceIpAllowPolicy(bucketName, "198.51.100.0/24")),
 		})
 		require.NoError(t, err)
 
@@ -127,25 +143,25 @@ func TestIAMUserInlinePolicySourceIpCondition(t *testing.T) {
 	})
 
 	t.Run("allows_when_source_ip_matches", func(t *testing.T) {
-		// Cover both IPv4 and IPv6 loopback: on CI runners `localhost` may
-		// resolve to ::1 first, in which case a 127.0.0.0/8-only allow would
-		// silently never match and the test would hang.
 		_, err = iamClient.PutUserPolicy(&iam.PutUserPolicyInput{
 			UserName:       aws.String(userName),
 			PolicyName:     aws.String(policyName),
-			PolicyDocument: aws.String(policyDoc("127.0.0.0/8", "::1/128")),
+			PolicyDocument: aws.String(sourceIpAllowPolicy(bucketName, localSourceAllowCIDRs...)),
 		})
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
-			_, err := userS3.PutObject(&s3.PutObjectInput{
+			_, putErr := userS3.PutObject(&s3.PutObjectInput{
 				Bucket: aws.String(bucketName),
 				Key:    aws.String("allowed.txt"),
 				Body:   aws.ReadSeekCloser(strings.NewReader("ok")),
 			})
-			return err == nil
+			if putErr != nil {
+				t.Logf("allow attempt denied (source IP not in %v?): %v", localSourceAllowCIDRs, putErr)
+			}
+			return putErr == nil
 		}, 10*time.Second, 500*time.Millisecond,
-			"PutObject must succeed when aws:SourceIp condition matches the loopback range")
+			"PutObject must succeed when aws:SourceIp condition matches the local client address")
 	})
 }
 
@@ -215,27 +231,8 @@ func TestIAMGroupInlinePolicyEnforcement(t *testing.T) {
 		}
 	})
 
-	// Cover both IPv4 and IPv6 loopback in the allow CIDR list: on CI runners
-	// `localhost` may resolve to ::1 first, in which case a 127.0.0.0/8-only
-	// allow would silently never match and the test would hang.
-	allowDoc := `{
-		"Version":"2012-10-17",
-		"Statement":[{
-			"Effect":"Allow",
-			"Action":"s3:*",
-			"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
-			"Condition":{"IpAddress":{"aws:SourceIp":["127.0.0.0/8","::1/128"]}}
-		}]
-	}`
-	denyDoc := `{
-		"Version":"2012-10-17",
-		"Statement":[{
-			"Effect":"Allow",
-			"Action":"s3:*",
-			"Resource":["arn:aws:s3:::` + bucketName + `","arn:aws:s3:::` + bucketName + `/*"],
-			"Condition":{"IpAddress":{"aws:SourceIp":"198.51.100.0/24"}}
-		}]
-	}`
+	allowDoc := sourceIpAllowPolicy(bucketName, localSourceAllowCIDRs...)
+	denyDoc := sourceIpAllowPolicy(bucketName, "198.51.100.0/24")
 
 	t.Run("crud_round_trip", func(t *testing.T) {
 		_, err := iamClient.PutGroupPolicy(&iam.PutGroupPolicyInput{
@@ -277,12 +274,15 @@ func TestIAMGroupInlinePolicyEnforcement(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
-			_, err := userS3.PutObject(&s3.PutObjectInput{
+			_, putErr := userS3.PutObject(&s3.PutObjectInput{
 				Bucket: aws.String(bucketName),
 				Key:    aws.String("group-allowed.txt"),
 				Body:   aws.ReadSeekCloser(strings.NewReader("ok")),
 			})
-			return err == nil
+			if putErr != nil {
+				t.Logf("allow attempt denied (source IP not in %v?): %v", localSourceAllowCIDRs, putErr)
+			}
+			return putErr == nil
 		}, 10*time.Second, 500*time.Millisecond,
 			"group member must be allowed when the group policy condition matches")
 	})

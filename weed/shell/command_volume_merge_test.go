@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -23,6 +24,24 @@ func (s *sliceNeedleStream) Next() (*needle.Needle, bool) {
 
 func (s *sliceNeedleStream) Err() error {
 	return nil
+}
+
+func TestEvaluateMergedVolume(t *testing.T) {
+	const vid = needle.VolumeId(7)
+	a, b := pb.ServerAddress("a:8080"), pb.ServerAddress("b:8080")
+
+	if err := evaluateMergedVolume(vid, 0, map[pb.ServerAddress]uint64{a: 5}); err == nil {
+		t.Fatal("expected empty merged volume to be rejected")
+	}
+	if err := evaluateMergedVolume(vid, 4, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
+		t.Fatal("expected short merged volume to be rejected")
+	}
+	if err := evaluateMergedVolume(vid, 5, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
+		t.Fatalf("expected merged volume matching largest replica to pass: %v", err)
+	}
+	if err := evaluateMergedVolume(vid, 9, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
+		t.Fatalf("expected larger merged volume to pass: %v", err)
+	}
 }
 
 func TestMergeNeedleStreamsOrdersByTimestamp(t *testing.T) {

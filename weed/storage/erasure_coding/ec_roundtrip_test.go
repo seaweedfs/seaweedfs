@@ -81,7 +81,7 @@ func testEcRead(t *testing.T, large, small, datSize int64) {
 	ctx := NewDefaultECContext("", 0)
 
 	// 2. EC encode with test block sizes
-	err = generateEcFiles(baseFileName, int(small), large, small, ctx)
+	_, err = generateEcFiles(baseFileName, int(small), large, small, ctx)
 	require.NoError(t, err, "EC encoding")
 
 	// 3. Open EC shard files for reading
@@ -213,7 +213,7 @@ func TestEcOffByOneBug_Issue8947(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := NewDefaultECContext("", 0)
-	err = generateEcFiles(baseFileName, int(small), large, small, ctx)
+	_, err = generateEcFiles(baseFileName, int(small), large, small, ctx)
 	require.NoError(t, err, "EC encoding")
 
 	ecFiles, err := openEcFiles(baseFileName, true, ctx)
@@ -316,7 +316,7 @@ func testDecodeDat(t *testing.T, datSize int64) {
 	ctx := NewDefaultECContext("", 0)
 
 	// 2. EC encode with PRODUCTION block sizes
-	err = generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
+	_, err = generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
 	require.NoError(t, err, "EC encoding")
 
 	// 3. Decode via WriteDatFile
@@ -328,6 +328,10 @@ func testDecodeDat(t *testing.T, datSize int64) {
 
 	err = WriteDatFile(decodedBase, datSize, shardFileNames)
 	require.NoError(t, err, "WriteDatFile")
+
+	// The atomic publish must rename the temp file away, never leaving it behind.
+	_, statErr := os.Stat(decodedBase + ".dat.tmp")
+	require.True(t, os.IsNotExist(statErr), "WriteDatFile must not leave a .dat.tmp")
 
 	// 4. Verify decoded .dat matches original
 	decodedData, err := os.ReadFile(decodedBase + ".dat")

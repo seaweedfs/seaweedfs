@@ -7,10 +7,18 @@ import (
 	"unicode"
 )
 
+// Reserved because it is the default table/collection name of the filer
+// store; a bucket of the same name collides with it and wedges the bucket
+// (cannot be deleted, breaks fsck) on SQL backends with per-bucket tables.
+const reservedBucketName = "filemeta"
+
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
 func VerifyS3BucketName(name string) (err error) {
 	if len(name) < 3 || len(name) > 63 {
 		return fmt.Errorf("bucket name must between [3, 63] characters")
+	}
+	if name == reservedBucketName {
+		return fmt.Errorf("bucket name %q is reserved", name)
 	}
 	for idx, ch := range name {
 		if !(unicode.IsLower(ch) || ch == '.' || ch == '-' || unicode.IsNumber(ch)) {

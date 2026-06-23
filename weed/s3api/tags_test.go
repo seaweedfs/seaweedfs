@@ -71,6 +71,15 @@ func TestParseTagsHeader(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name:  "unescaped equals in value",
+			input: "token=part1=part2&normal=test",
+			expected: map[string]string{
+				"token":  "part1=part2",
+				"normal": "test",
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // NewMaintenanceQueue creates a new maintenance queue
@@ -33,16 +34,66 @@ func (mq *MaintenanceQueue) SetPersistence(persistence TaskPersistence) {
 	glog.V(1).Infof("Maintenance queue configured with task persistence")
 }
 
-// LoadTasksFromPersistence is called on startup. Previous task states are NOT loaded
-// into memory — the maintenance scanner will re-detect current needs from the live
-// cluster state. Stale task files from previous runs are deleted from disk.
+// LoadTasksFromPersistence is called on startup to restore in-flight tasks
+// across an admin restart. Non-terminal tasks (pending/assigned/in_progress)
+// are re-queued as pending — the worker that held an in-flight task is gone
+// after a restart, and maintenance tasks are idempotent, so re-running a
+// partially-done one is safe. Terminal task files are deleted. Anything missed
+// is still re-detected by the scanner from live cluster state.
 func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
-	if mq.persistence != nil {
-		if err := mq.persistence.DeleteAllTaskStates(); err != nil {
-			glog.Warningf("Failed to clean up old task files: %v", err)
+	if mq.persistence == nil {
+		glog.Infof("Task queue initialized (no persistence configured)")
+		return nil
+	}
+	tasks, err := mq.persistence.LoadAllTaskStates()
+	if err != nil {
+		glog.Warningf("Failed to load persisted task states: %v; starting with an empty queue", err)
+		return nil
+	}
+
+	var terminal []string
+	var restored []*MaintenanceTask
+	mq.mutex.Lock()
+	requeued := 0
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		switch task.Status {
+		case TaskStatusPending, TaskStatusAssigned, TaskStatusInProgress:
+			task.Status = TaskStatusPending
+			task.WorkerID = ""
+			task.Progress = 0
+			mq.tasks[task.ID] = task
+			mq.pendingTasks = append(mq.pendingTasks, task)
+			restored = append(restored, snapshotTask(task))
+			requeued++
+		default:
+			terminal = append(terminal, task.ID)
 		}
 	}
-	glog.Infof("Task queue initialized (previous tasks will be re-detected by scanner)")
+	sort.Slice(mq.pendingTasks, func(i, j int) bool {
+		if mq.pendingTasks[i].Priority != mq.pendingTasks[j].Priority {
+			return mq.pendingTasks[i].Priority > mq.pendingTasks[j].Priority
+		}
+		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
+	})
+	mq.mutex.Unlock()
+
+	// ActiveTopology is in-memory and starts empty, so restored tasks must be
+	// re-synced or GetNextTask's AssignTask would reject them as unknown and
+	// they'd sit pending forever. Done outside the lock, like the retry path.
+	if mq.integration != nil {
+		for _, task := range restored {
+			mq.integration.SyncTask(task)
+		}
+	}
+
+	// Delete stale terminal files outside the lock to avoid blocking on disk I/O.
+	for _, id := range terminal {
+		mq.deleteTaskState(id)
+	}
+	glog.Infof("Task queue initialized: re-queued %d in-flight task(s) from persistence; scanner will re-detect the rest", requeued)
 	return nil
 }
 
@@ -482,12 +533,14 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 
 	// Calculate task duration
 	var duration time.Duration
-	if task.StartedAt != nil {
+	hadStart := task.StartedAt != nil
+	if hadStart {
 		duration = completedTime.Sub(*task.StartedAt)
 	}
 
 	// Capture workerID before it may be cleared during retry
 	originalWorkerID := task.WorkerID
+	taskType := string(task.Type)
 
 	var taskToSave *MaintenanceTask
 	var logFn func()
@@ -576,6 +629,18 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 		taskToSaveSnapshot = snapshotTask(taskToSave)
 	}
 	mq.mutex.Unlock()
+
+	// Record terminal-state metrics. A retry leaves the task pending, so it
+	// is not counted as completed or failed here.
+	switch taskStatus {
+	case TaskStatusCompleted:
+		stats_collect.AdminMaintenanceTasksCompletedTotal.WithLabelValues(taskType, "completed").Inc()
+	case TaskStatusFailed:
+		stats_collect.AdminMaintenanceTasksCompletedTotal.WithLabelValues(taskType, "failed").Inc()
+	}
+	if hadStart && (taskStatus == TaskStatusCompleted || taskStatus == TaskStatusFailed) {
+		stats_collect.AdminMaintenanceTaskDurationSeconds.WithLabelValues(taskType).Observe(duration.Seconds())
+	}
 
 	// Only persist non-terminal tasks (retries). Completed/failed tasks stay
 	// in memory for the UI but are not written to disk — they would just
@@ -817,6 +882,20 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 		workers = append(workers, worker)
 	}
 	return workers
+}
+
+// GetWorkerSlotTotals aggregates worker count and used/max task slots under the
+// lock, so callers don't read live worker fields that task updates mutate.
+func (mq *MaintenanceQueue) GetWorkerSlotTotals() (workers, used, max int) {
+	mq.mutex.RLock()
+	defer mq.mutex.RUnlock()
+
+	for _, worker := range mq.workers {
+		workers++
+		used += worker.CurrentLoad
+		max += worker.MaxConcurrent
+	}
+	return
 }
 
 // generateTaskID generates a unique ID for tasks

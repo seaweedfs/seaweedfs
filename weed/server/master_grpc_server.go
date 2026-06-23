@@ -120,9 +120,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		if !ms.Topo.IsLeader() {
 			// tell the volume servers about the leader
-			newLeader, err := ms.Topo.MaybeLeader()
-			if err != nil || newLeader == "" {
-				glog.Warningf("SendHeartbeat find leader: %v, %v", newLeader, err)
+			newLeader, err := ms.Topo.Leader()
+			if err != nil {
+				glog.Warningf("SendHeartbeat find leader: %v", err)
 				return raft.NotLeaderError
 			}
 			if err := stream.Send(&master_pb.HeartbeatResponse{
@@ -393,7 +393,13 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 }
 
 func (ms *MasterServer) initialLockRingUpdate(clientType string, filerGroup string) *master_pb.KeepConnectedResponse {
-	if clientType != cluster.FilerType || ms.LockRingManager == nil {
+	if ms.LockRingManager == nil {
+		return nil
+	}
+	// Filers are ring members; S3 gateways are lock clients that need the same
+	// view to dial a key's primary directly. Both get the initial snapshot;
+	// later membership changes already broadcast to every connected client.
+	if clientType != cluster.FilerType && clientType != cluster.S3Type {
 		return nil
 	}
 
@@ -419,6 +425,13 @@ func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedRespo
 		}
 	}
 	ms.clientChansLock.RUnlock()
+}
+
+// broadcastVolumeLocationsToClients notifies connected clients about newly created volume locations.
+func (ms *MasterServer) broadcastVolumeLocationsToClients(locations []*master_pb.VolumeLocation) {
+	for _, location := range locations {
+		ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: location})
+	}
 }
 
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {

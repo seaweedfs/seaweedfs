@@ -170,10 +170,17 @@ func (ms *MasterServer) isKnownPingTarget(ctx context.Context, target string, ta
 	case cluster.FilerType, cluster.BrokerType, cluster.S3Type:
 		return ms.Cluster.IsKnownNode(targetType, addr)
 	case cluster.VolumeServerType:
-		if ms.Topo == nil {
-			return false
+		if ms.Topo != nil && ms.Topo.LookupDataNodeByAddress(addr) != nil {
+			return true
 		}
-		return ms.Topo.LookupDataNodeByAddress(addr) != nil
+		// Only the leader receives volume-server heartbeats, so a follower's
+		// topology is empty. Fall back to the volume-server set the master
+		// learns over its own MasterClient subscription to the leader, the
+		// same source the filer gate trusts.
+		if ms.MasterClient != nil {
+			return ms.MasterClient.HasVolumeServer(addr)
+		}
+		return false
 	case cluster.MasterType:
 		if ms.option != nil && ms.option.Master.Equals(addr) {
 			return true
@@ -215,7 +222,7 @@ func (ms *MasterServer) Ping(ctx context.Context, req *master_pb.PingRequest) (r
 		})
 	}
 	if req.TargetType == cluster.MasterType {
-		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		pingErr = pb.WithMasterClient(context.Background(), false, pb.ServerAddress(req.Target), ms.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			pingResp, err := client.Ping(ctx, &master_pb.PingRequest{})
 			if pingResp != nil {
 				resp.RemoteTimeNs = pingResp.StartTimeNs

@@ -12,6 +12,7 @@ type ReplicaLocation struct {
 	DataCenter string
 	Rack       string
 	NodeID     string
+	Host       string // physical machine (host/IP); servers sharing a host are one fault domain
 }
 
 // ClusterInfo contains cluster information for task detection
@@ -22,6 +23,10 @@ type ClusterInfo struct {
 	LastUpdated      time.Time
 	ActiveTopology   *topology.ActiveTopology // Added for destination planning in detection
 	VolumeReplicaMap map[uint32][]ReplicaLocation
+	// DefaultReplicaPlacement is the master's configured default replication
+	// (GetMasterConfiguration). Detectors use it as the fallback when no explicit
+	// replica placement is set, matching the shell's behavior. Empty = none.
+	DefaultReplicaPlacement string
 	// GrpcDialOption is set when a detector needs to make targeted gRPC calls
 	// during detection (e.g., the EC detector auto-cleans up an orphaned
 	// regular replica that survived a previous encode; see #9448). Optional:

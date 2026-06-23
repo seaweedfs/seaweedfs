@@ -21,7 +21,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 
 	dirStr, dirHash, name := GenDirAndName(key)
 
-	res, err := db.ExecContext(ctx, store.GetSqlInsert(DEFAULT_TABLE), dirHash, name, dirStr, value)
+	_, err = db.ExecContext(ctx, store.GetSqlInsert(DEFAULT_TABLE), dirHash, name, dirStr, value)
 	if err == nil {
 		return
 	}
@@ -34,7 +34,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	// now the insert failed possibly due to duplication constraints
 	glog.V(1).InfofCtx(ctx, "kv insert falls back to update: %s", err)
 
-	res, err = db.ExecContext(ctx, store.GetSqlUpdate(DEFAULT_TABLE), value, dirHash, name, dirStr)
+	res, err := db.ExecContext(ctx, store.GetSqlUpdate(DEFAULT_TABLE), value, dirHash, name, dirStr)
 	if err != nil {
 		return fmt.Errorf("kv upsert: %s", err)
 	}

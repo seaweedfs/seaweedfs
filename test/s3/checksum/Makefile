@@ -1,5 +1,5 @@
 # S3 Checksum Integration Tests
-# Covers flexible-checksum behavior on presigned URL uploads (issue #9075).
+# Covers flexible-checksum behavior on presigned uploads and multipart copy.
 
 .PHONY: help build-weed check-deps start-server stop-server test test-with-server logs clean health-check
 
@@ -8,7 +8,7 @@ S3_PORT := 8333
 ACCESS_KEY ?= some_access_key1
 SECRET_KEY ?= some_secret_key1
 TEST_TIMEOUT := 10m
-TEST_PATTERN ?= TestPresignedPut
+TEST_PATTERN ?= .
 SERVER_DIR := ./test-volume-data/server-data
 
 help:

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -30,9 +31,9 @@ func newTestStore(t *testing.T, numDirs int) *Store {
 		minFreeSpaces = append(minFreeSpaces, util.MinFreeSpace{})
 		diskTypes = append(diskTypes, types.HardDriveType)
 	}
-
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "",
-		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, nil, 3)
+		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, nil, 3, diskIOProbeConfig)
 
 	// Consume channel messages to prevent blocking
 	done := make(chan bool)

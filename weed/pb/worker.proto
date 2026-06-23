@@ -178,6 +178,7 @@ message ErasureCodingTaskParams {
   string master_client = 5;               // Master server address
   bool cleanup_source = 6;                // Whether to cleanup source volume after EC
   string source_disk_type = 8;            // Source volume's disk type, passed to VolumeEcShardsMount so shards report under it (#9423)
+  int64 encode_ts_ns = 9;                 // admin-issued encode generation (unix nanos); fences a stale worker's shard cleanup against a newer run. 0 => unfenced (legacy/shell), falls back to a blanket teardown.
 }
 
 // TaskSource represents a unified source location for any task type
@@ -374,6 +375,7 @@ message ErasureCodingTaskConfig {
   int32 min_volume_size_mb = 3;     // Minimum volume size for EC
   string collection_filter = 4;     // Only process volumes from specific collections
   repeated string preferred_tags = 5; // Disk tags to prioritize for EC shard placement
+  string replica_placement = 6;     // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 }
 
 // BalanceTaskConfig contains balance-specific configuration
@@ -413,6 +415,7 @@ message EcBalanceTaskConfig {
   string collection_filter = 3;           // Collection filter
   string disk_type = 4;                   // Disk type filter
   repeated string preferred_tags = 5;     // Preferred disk tags for placement
+  string replica_placement = 6;           // EC shard replica placement (e.g. "020"); empty falls back to master default replication
 }
 
 // ========== Task Persistence Messages ==========

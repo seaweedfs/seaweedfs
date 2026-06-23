@@ -3,7 +3,7 @@ package user
 
 import (
 	"math/rand/v2"
-	"path/filepath"
+	"path"
 )
 
 // User represents an SFTP user with authentication and permission details
@@ -27,7 +27,7 @@ func NewUser(username string) *User {
 	return &User{
 		Username:    username,
 		Permissions: make(map[string][]string),
-		HomeDir:     filepath.Join("/home", username),
+		HomeDir:     path.Join("/home", username),
 		Uid:         uint32(randomId),
 		Gid:         uint32(randomId),
 	}

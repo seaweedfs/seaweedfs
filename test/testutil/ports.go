@@ -11,6 +11,29 @@ import (
 // GrpcPortOffset is the offset weed mini uses to derive gRPC ports from HTTP ports.
 const GrpcPortOffset = 10000
 
+// miniDefaultPorts are the weed mini flag defaults (see weed/command/mini.go).
+// A test only overrides services it uses; unspecified services still bind
+// these defaults, so allocation must avoid handing them out (or any value
+// whose gRPC offset would collide with them).
+var miniDefaultPorts = []int{
+	9333,  // master.port
+	8888,  // filer.port
+	9340,  // volume.port
+	8333,  // s3.port
+	8181,  // s3.port.iceberg
+	7333,  // webdav.port
+	23646, // admin.port
+}
+
+func reservedMiniPorts() map[int]bool {
+	r := make(map[int]bool, len(miniDefaultPorts)*2)
+	for _, p := range miniDefaultPorts {
+		r[p] = true
+		r[p+GrpcPortOffset] = true
+	}
+	return r
+}
+
 // AllocatePorts allocates count unique free ports atomically.
 // All listeners are held open until every port is obtained, preventing
 // the OS from recycling a port between successive allocations.
@@ -63,7 +86,7 @@ func AllocateMiniPorts(count int) ([]int, error) {
 		minPort = 10000
 		maxPort = 55000
 	)
-	reserved := make(map[int]bool)
+	reserved := reservedMiniPorts()
 	ports := make([]int, 0, count)
 	var listeners []net.Listener
 	defer func() {
@@ -135,7 +158,7 @@ func AllocatePortSet(miniCount, regularCount int) (mini []int, regular []int, er
 		minPort = 10000
 		maxPort = 55000
 	)
-	reserved := make(map[int]bool)
+	reserved := reservedMiniPorts()
 	mini = make([]int, 0, miniCount)
 	var listeners []net.Listener
 	defer func() {

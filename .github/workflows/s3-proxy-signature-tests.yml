@@ -3,8 +3,22 @@ name: "S3 Proxy Signature Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/**'
+      - 'test/s3/proxy_signature/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-proxy-signature-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/**'
+      - 'test/s3/proxy_signature/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-proxy-signature-tests.yml'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/s3-proxy-signature-tests
@@ -20,13 +34,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

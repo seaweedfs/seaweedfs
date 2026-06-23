@@ -36,7 +36,7 @@ func TestBucketCreationBehavior(t *testing.T) {
 			expectedError:      "",
 		},
 		{
-			name: "Create existing bucket with same owner - should return BucketAlreadyExists",
+			name: "Create existing bucket with same owner - should return BucketAlreadyOwnedByYou",
 			setupFunc: func(t *testing.T, bucketName string) {
 				// Create bucket first
 				_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{
@@ -46,8 +46,8 @@ func TestBucketCreationBehavior(t *testing.T) {
 			},
 			bucketName:         "test-same-owner-same-settings-" + fmt.Sprintf("%d", time.Now().Unix()),
 			objectLockEnabled:  nil,
-			expectedStatusCode: 409, // SeaweedFS now returns BucketAlreadyExists in all cases
-			expectedError:      "BucketAlreadyExists",
+			expectedStatusCode: 409, // idempotent recreate by the same owner
+			expectedError:      "BucketAlreadyOwnedByYou",
 		},
 		{
 			name: "Create bucket with same owner but different Object Lock settings - should fail",
@@ -71,7 +71,7 @@ func TestBucketCreationBehavior(t *testing.T) {
 			expectedError:      "",
 		},
 		{
-			name: "Create bucket with Object Lock enabled twice - should fail",
+			name: "Create bucket with Object Lock enabled twice - should return BucketAlreadyOwnedByYou",
 			setupFunc: func(t *testing.T, bucketName string) {
 				// Create bucket with Object Lock first
 				_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{
@@ -83,7 +83,7 @@ func TestBucketCreationBehavior(t *testing.T) {
 			bucketName:         "test-object-lock-duplicate-" + fmt.Sprintf("%d", time.Now().Unix()),
 			objectLockEnabled:  aws.Bool(true),
 			expectedStatusCode: 409,
-			expectedError:      "BucketAlreadyExists",
+			expectedError:      "BucketAlreadyOwnedByYou",
 		},
 	}
 
@@ -130,16 +130,27 @@ func TestBucketCreationBehavior(t *testing.T) {
 	}
 }
 
-// TestBucketCreationWithDifferentUsers tests bucket creation with different identity contexts
+// TestBucketCreationWithDifferentUsers tests bucket creation across owners: a
+// name taken by one identity is reported as BucketAlreadyExists to another
+// (versus BucketAlreadyOwnedByYou for the owner re-creating it).
 func TestBucketCreationWithDifferentUsers(t *testing.T) {
-	// This test would require setting up different S3 credentials/identities
-	// For now, we'll skip this as it requires more complex setup
-	t.Skip("Different user testing requires IAM setup - implement when IAM is configured")
+	ctx := context.Background()
+	// Tracked prefix + run id so cleanupAllTestBuckets sweeps it if the test leaks.
+	bucketName := getNewBucketName()
 
-	// TODO: Implement when we have proper IAM/user management in test setup
-	// Should test:
-	// 1. User A creates bucket
-	// 2. User B tries to create same bucket -> should fail with BucketAlreadyExists
+	// User A owns the bucket.
+	clientA := getS3Client(t)
+	_, err := clientA.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucketName)})
+	require.NoError(t, err, "User A should create the bucket")
+	defer cleanupBucketForCreationTest(t, clientA, bucketName)
+
+	// User B is a different identity (s3_tests_alt in the test S3 config).
+	clientB := getS3ClientWithCredentials(t,
+		"NOPQRSTUVWXYZABCDEFG", "nopqrstuvwxyzabcdefghijklmnabcdefghijklm")
+	_, err = clientB.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucketName)})
+	require.Error(t, err, "User B should not be able to create a bucket owned by User A")
+	assert.Contains(t, err.Error(), "BucketAlreadyExists",
+		"Different-owner recreate should return BucketAlreadyExists, got: %v", err)
 }
 
 // TestBucketCreationVersioningInteraction tests interaction between bucket creation and versioning
@@ -171,8 +182,8 @@ func TestBucketCreationVersioningInteraction(t *testing.T) {
 		ObjectLockEnabledForBucket: aws.Bool(true),
 	})
 	assert.Error(t, err, "Expected second bucket creation to fail")
-	assert.Contains(t, err.Error(), "BucketAlreadyExists",
-		"Expected BucketAlreadyExists error, got: %v", err)
+	assert.Contains(t, err.Error(), "BucketAlreadyOwnedByYou",
+		"Expected BucketAlreadyOwnedByYou error, got: %v", err)
 }
 
 // TestBucketCreationErrorMessages tests that proper error messages are returned
@@ -197,8 +208,8 @@ func TestBucketCreationErrorMessages(t *testing.T) {
 	require.Error(t, err, "Expected bucket creation to fail")
 
 	// Check that it's the right type of error
-	assert.Contains(t, err.Error(), "BucketAlreadyExists",
-		"Expected BucketAlreadyExists error, got: %v", err)
+	assert.Contains(t, err.Error(), "BucketAlreadyOwnedByYou",
+		"Expected BucketAlreadyOwnedByYou error, got: %v", err)
 }
 
 // cleanupBucketForCreationTest removes a bucket and all its contents

@@ -49,8 +49,9 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	volScrubCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	nodesStr := volScrubCommand.String("node", "", "comma-separated list of volume server <host>:<port> (optional)")
 	volumeIDsStr := volScrubCommand.String("volumeId", "", "comma-separated EC volume IDs to process (optional)")
-	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/full)")
+	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/full/checksum)")
 	maxParallelization := volScrubCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
+	showDetails := volScrubCommand.Bool("details", false, "display scrub result details, if available")
 
 	if err = volScrubCommand.Parse(args); err != nil {
 		return err
@@ -96,16 +97,18 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 		c.mode = volume_server_pb.VolumeScrubMode_LOCAL
 	case "FULL":
 		c.mode = volume_server_pb.VolumeScrubMode_FULL
+	case "CHECKSUM":
+		c.mode = volume_server_pb.VolumeScrubMode_CHECKSUM
 	default:
 		return fmt.Errorf("unsupported scrubbing mode %q", *mode)
 	}
 	fmt.Fprintf(writer, "using %s mode\n", c.mode.String())
 	c.env = commandEnv
 
-	return c.scrubEcVolumes(writer, *maxParallelization)
+	return c.scrubEcVolumes(writer, *maxParallelization, *showDetails)
 }
 
-func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelization int) error {
+func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelization int, showDetails bool) error {
 	var brokenVolumesStr, brokenShardsStr []string
 	var details []string
 	var totalVolumes, brokenVolumes, brokenShards, totalFiles uint64
@@ -162,7 +165,7 @@ func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelizati
 		if len(brokenShardsStr) != 0 {
 			fmt.Fprintf(writer, "Affected shards:  %s\n", strings.Join(brokenShardsStr, ", "))
 		}
-		if len(details) != 0 {
+		if showDetails && len(details) != 0 {
 			fmt.Fprintf(writer, "Details:\n\t%s\n", strings.Join(details, "\n\t"))
 		}
 	}

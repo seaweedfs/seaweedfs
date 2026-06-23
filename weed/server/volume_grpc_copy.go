@@ -31,20 +31,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		return err
 	}
 
-	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
-	if v != nil {
-
-		glog.V(0).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
-
-		// keep remote data: the inbound copy carries a .vif that may point at
-		// the same cloud-tier object the existing volume references.
-		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true)
-		if err != nil {
-			return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, err)
-		}
-
-		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
-	}
+	// A pre-existing local replica is NOT deleted up front. Deleting before the
+	// source is confirmed reachable destroys a healthy copy on a transient
+	// source outage (and, on retry, can lose the volume entirely). The delete is
+	// deferred until ReadVolumeFileStatus below proves the source holds the
+	// volume; readability alone is the gate (size/count comparisons invert after
+	// divergent vacuum/compaction and would block valid re-replication).
+	hasExistingVolume := vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
 
 	// the master will not start compaction for read-only volumes, so it is safe to just copy files directly
 	// copy .dat and .idx files
@@ -65,6 +58,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("read volume file status failed, %w", err)
 		}
 
+		// Source is reachable and holds the volume: only now is it safe to drop
+		// an existing local replica before overwriting its files.
+		if hasExistingVolume {
+			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
+			// keep remote data: the inbound copy carries a .vif that may point at
+			// the same cloud-tier object the existing volume references.
+			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true); delErr != nil {
+				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+			}
+			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
+		}
+
 		diskType := volFileInfoResp.DiskType
 		if req.DiskType != "" {
 			diskType = req.DiskType
@@ -81,7 +86,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		indexBaseFileName = storage.VolumeFileName(location.IdxDirectory, volFileInfoResp.Collection, int(req.VolumeId))
 		hasRemoteDatFile = volFileInfoResp.VolumeInfo != nil && len(volFileInfoResp.VolumeInfo.Files) > 0
 
-		util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755)
+		// The .note marks the copy as in-progress; a leftover note fails the
+		// volume load on restart, so a write failure must abort the copy.
+		if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
+			err = noteErr
+			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
+		}
 
 		defer func() {
 			if err != nil {
@@ -93,7 +103,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}()
 
 		var preallocateSize int64
-		if grpcErr := pb.WithMasterClient(false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		if grpcErr := pb.WithMasterClient(context.Background(), false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(context.Background()), err)
@@ -163,7 +173,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			os.Chtimes(dataBaseFileName+".vif", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
-		os.Remove(dataBaseFileName + ".note")
+		// A leftover .note fails the load on the next restart, so a removal
+		// failure must fail the copy rather than be silently swallowed.
+		if noteErr := os.Remove(dataBaseFileName + ".note"); noteErr != nil && !os.IsNotExist(noteErr) {
+			err = noteErr
+			return fmt.Errorf("remove .note for volume %d: %w", req.VolumeId, noteErr)
+		}
 
 		return nil
 	})
@@ -233,7 +248,7 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 		return modifiedTsNs, fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
 	}
 
-	modifiedTsNs, err = writeToFile(copyFileClient, baseFileName+ext, throttler, isAppend, progressFn)
+	modifiedTsNs, err = writeToFile(copyFileClient, baseFileName+ext, throttler, isAppend, ignoreSourceFileNotFound, progressFn)
 	if err != nil {
 		return modifiedTsNs, fmt.Errorf("failed to copy %s file: %v", baseFileName+ext, err)
 	}
@@ -332,15 +347,25 @@ func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version 
 	return util.BytesToUint64(tail[needle.NeedleChecksumSize : needle.NeedleChecksumSize+types.TimestampSize]), nil
 }
 
-func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
+func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
 	glog.V(4).Infof("writing to %s", fileName)
+
+	// For an optional copy (ignoreSourceFileNotFound), stage into a temp sibling
+	// and atomically rename on success, so a source that lacks the file cannot
+	// truncate a valid pre-existing destination. Mandatory copies write in place.
+	writePath := fileName
+	stageThenCommit := ignoreSourceFileNotFound && !isAppend
+	if stageThenCommit {
+		writePath = fileName + ".copying"
+	}
+
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if isAppend {
 		flags = os.O_WRONLY | os.O_CREATE
 	}
-	dst, err := os.OpenFile(fileName, flags, 0644)
+	dst, err := os.OpenFile(writePath, flags, 0644)
 	if err != nil {
-		return modifiedTsNs, fmt.Errorf("open file %s: %w", fileName, err)
+		return modifiedTsNs, fmt.Errorf("open file %s: %w", writePath, err)
 	}
 	// Track the destination handle through a closer that runs at most once.
 	// On Windows os.Remove fails while the file is still open, so any path
@@ -367,10 +392,10 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			return
 		}
 		closeDst()
-		if removeErr := os.Remove(fileName); removeErr != nil && !os.IsNotExist(removeErr) {
-			glog.Warningf("failed to remove incomplete file %s after %s: %v", fileName, reason, removeErr)
+		if removeErr := os.Remove(writePath); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.Warningf("failed to remove incomplete file %s after %s: %v", writePath, reason, removeErr)
 		} else if removeErr == nil {
-			glog.V(1).Infof("removed incomplete file %s after %s", fileName, reason)
+			glog.V(1).Infof("removed incomplete file %s after %s", writePath, reason)
 		}
 	}
 
@@ -406,10 +431,20 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	// is valid and should result in an empty destination file.
 	if modifiedTsNs == 0 && !isAppend {
 		closeDst()
-		if removeErr := os.Remove(fileName); removeErr != nil {
-			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
-		} else {
-			glog.V(1).Infof("removed empty file %s (source file not found)", fileName)
+		if removeErr := os.Remove(writePath); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.V(1).Infof("failed to remove empty file %s: %v", writePath, removeErr)
+		} else if removeErr == nil {
+			glog.V(1).Infof("removed empty file %s (source file not found)", writePath)
+		}
+		return modifiedTsNs, nil
+	}
+
+	// Commit the staged temp into place.
+	if stageThenCommit {
+		closeDst()
+		if renameErr := os.Rename(writePath, fileName); renameErr != nil {
+			os.Remove(writePath)
+			return modifiedTsNs, fmt.Errorf("commit copied file %s: %w", fileName, renameErr)
 		}
 	}
 	return modifiedTsNs, nil

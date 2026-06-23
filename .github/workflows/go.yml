@@ -3,8 +3,18 @@ name: "go: build binary"
 on:
   push:
     branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go.yml'
 
 concurrency:
   group: ${{ github.head_ref }}/go
@@ -20,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
@@ -37,12 +47,27 @@ jobs:
         # Fail only if there are actual vet errors (not counting the filtered lock warnings)
         if grep -q "vet:" vet-output.txt; then exit 1; fi
 
+  vet-32bit:
+    name: Go Vet 32-bit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+    - name: Go Vet linux/386 (type-checks code and tests for 32-bit int overflows)
+      run: |
+        GOOS=linux GOARCH=386 go vet ./... 2>&1 | grep -v "MessageState contains sync.Mutex" | grep -v "IdentityAccessManagement contains sync.RWMutex" | tee vet-32bit-output.txt
+        if grep -q "vet:" vet-32bit-output.txt; then exit 1; fi
+
   build:
     name: Build
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
@@ -55,10 +80,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
         go-version-file: 'go.mod'
     - name: Test
       run: cd weed; go test -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v ./...
+
+  test-32bit:
+    name: Test 32-bit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+    # 386 test binaries run natively on the amd64 runner. This catches what vet
+    # can't: unaligned 64-bit atomics and arithmetic that wraps at runtime.
+    # -short skips the e2e suites already covered on amd64.
+    - name: Test linux/386
+      run: cd weed; GOOS=linux GOARCH=386 go test -short ./...

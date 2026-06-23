@@ -3,6 +3,7 @@ package dailyrun
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
@@ -52,7 +53,7 @@ func dispatchWithRetry(ctx context.Context, client LifecycleClient, m router.Mat
 		select {
 		case <-ctx.Done():
 			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, ctx.Err()
-		case <-time.After(backoff):
+		case <-time.After(jitter(backoff)):
 		}
 		backoff *= 2
 		if backoff > transportRetryMax {
@@ -60,6 +61,19 @@ func dispatchWithRetry(ctx context.Context, client LifecycleClient, m router.Mat
 		}
 	}
 	return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, lastErr
+}
+
+// jitter returns a duration in the range [d/2, d) using equal jitter.
+// Prevents thundering herds when many daily-run workers retry simultaneously.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(rand.Int63n(int64(half)))
 }
 
 // buildDeleteRequest constructs the LifecycleDelete RPC payload for a

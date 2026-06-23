@@ -155,7 +155,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 				DataCenter: dn.GetDataCenterId(),
 			},
 			Count:    count,
-			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey(), ms.guard.ExpiresAfterSec(), fid)),
 			Replicas: replicas,
 		}, nil
 	}

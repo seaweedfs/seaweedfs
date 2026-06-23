@@ -33,6 +33,11 @@ func (store *MysqlStore2) GetName() string {
 }
 
 func (store *MysqlStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
+	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
+	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Default on so minimal configs avoid the duplicate-key roundtrip the
+	// inode-index KvPut would otherwise emit on every write.
+	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
 		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"upsertQuery"),
@@ -55,12 +60,15 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	store.SupportBucketTable = true
 	if !enableUpsert {
 		upsertQuery = ""
+	} else if upsertQuery == "" {
+		upsertQuery = mysql.DefaultUpsertQuery
 	}
-	store.SqlGenerator = &mysql.SqlGenMysql{
+	gen := &mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
+	store.SqlGenerator = gen
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
 	adaptedSqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, "<ADAPTED>", hostname, port, database)
@@ -72,9 +80,11 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	var dbErr error
 	store.DB, dbErr = sql.Open("mysql", sqlUrl)
 	if dbErr != nil {
-		store.DB.Close()
+		if store.DB != nil {
+			store.DB.Close()
+		}
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
+		return fmt.Errorf("can not connect to %s error:%w", adaptedSqlUrl, dbErr)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)
@@ -88,6 +98,8 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil && !strings.Contains(err.Error(), "table already exist") {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
+
+	mysql.ConfigureListOrdering(store.DB, gen)
 
 	return nil
 }

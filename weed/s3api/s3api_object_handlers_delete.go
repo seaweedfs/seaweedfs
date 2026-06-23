@@ -34,6 +34,13 @@ func deleteErrorFromCode(code s3err.ErrorCode, key, versionId string) DeleteErro
 	}
 }
 
+func validateDeleteObjectIdentifier(object ObjectIdentifier) s3err.ErrorCode {
+	if !s3_constants.IsValidObjectKey(object.Key) || !isValidVersionID(object.VersionId) {
+		return s3err.ErrInvalidRequest
+	}
+	return s3err.ErrNone
+}
+
 // isMissingDeleteConditionTarget normalizes missing-target detection for conditional deletes.
 // Prefer errors.Is(err, filer_pb.ErrNotFound) and errors.Is(err, ErrDeleteMarker); keep the
 // string-based fallback only as a defensive bridge for filer paths that still return plain text.
@@ -50,6 +57,9 @@ func isMissingDeleteConditionTarget(err error) bool {
 }
 
 func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
+	if !isValidVersionID(versionId) {
+		return nil, errInvalidVersionID
+	}
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 	bucketDir := s3a.bucketDir(bucket)
 
@@ -152,12 +162,13 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
-		deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
-		if err != nil {
-			glog.Errorf("deleteVersionedObject: failed to create delete marker for suspended versioning %s/%s: %v", bucket, object, err)
+		// Suspended versioning overwrites the null version with a single null delete
+		// marker (S3 spec), so the marker replaces any prior one instead of piling up.
+		if err := s3a.createNullDeleteMarker(bucket, object); err != nil {
+			glog.Errorf("deleteVersionedObject: failed to create null delete marker for suspended versioning %s/%s: %v", bucket, object, err)
 			return result, s3err.ErrInternalError
 		}
-		result.versionId = deleteMarkerVersionId
+		result.versionId = "null"
 		result.deleteMarker = true
 		return result, s3err.ErrNone
 	}
@@ -172,6 +183,9 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 // when the entry's Attributes.TtlSec > 0 so the volume is guaranteed to
 // drop the chunks on its own.
 func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
+	if !s3_constants.IsValidBucketName(bucket) || !s3_constants.IsValidObjectKey(object) {
+		return errors.New("invalid bucket or object path")
+	}
 	target := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := target.DirAndName()
 	return deleteObjectEntry(client, dir, name, !metadataOnly, false)
@@ -214,33 +228,96 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	var deleteResult deleteMutationResult
-	deleteCode := s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
-		return s3a.checkDeleteIfMatch(bucket, object, versionId, versioningState, r.Header.Get(s3_constants.IfMatch), s3err.ErrPreconditionFailed)
-	}, func() s3err.ErrorCode {
-		if versioningConfigured {
-			result, errCode := s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
-			if errCode != s3err.ErrNone {
-				return errCode
+	var deleteCode s3err.ErrorCode
+
+	// Fast path: route the delete to the owner filer under its per-path lock;
+	// routedObjectOwner excludes versioned/object-lock buckets.
+	deleteHandled := false
+	if !versioningConfigured {
+		if cond, condOk := buildDeleteCondition(r); condOk {
+			if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
+				resp, err := s3a.routedDelete(owner, bucket, object, cond)
+				switch {
+				case err != nil:
+					glog.Warningf("DeleteObjectHandler: routed delete to %s failed for %s/%s, falling back to lock: %v", owner, bucket, object, err)
+				case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+					deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
+				case resp.Error != "":
+					// Non-precondition error: fall back (the lock path handles cases
+					// the raw delete cannot, e.g. a non-empty directory marker).
+					glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
+				default:
+					deleteCode, deleteHandled = s3err.ErrNone, true
+				}
 			}
-			deleteResult = result
+		}
+	}
+	// Versioned/suspended delete with no specific version: route off the lock when
+	// the bucket has an owner. createDeleteMarker routes its own pointer flip; a
+	// delete marker never removes a locked version, so object-lock buckets route
+	// here too. The If-Match precondition was already checked above.
+	if !deleteHandled && versioningConfigured && versionId == "" {
+		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
+			deleteResult, deleteCode = s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
+			deleteHandled = true
+		}
+	}
+	// Specific-version delete: route off the lock. A real version recomputes the
+	// .versions pointer excluding it and deletes the version file; the null
+	// version is the regular object entry, deleted directly. Object-lock buckets
+	// gate the delete on the version's WORM guards, evaluated on the owner — for
+	// governance bypass the retention guard is scoped to COMPLIANCE so the filer
+	// allows a governance-mode delete while still denying compliance and legal
+	// hold, without the gateway reading the version.
+	if !deleteHandled && versionId != "" {
+		worm, lockErr := s3a.isObjectLockEnabled(bucket)
+		bypass := worm && s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+		if lockErr == nil {
+			if owner := s3a.objectWriteOwner(bucket, object); owner != "" {
+				deleteResult.versionId = versionId
+				if ve, vErr := s3a.getSpecificObjectVersion(bucket, object, versionId); vErr == nil && ve != nil && ve.Extended != nil {
+					if dm, ok := ve.Extended[s3_constants.ExtDeleteMarkerKey]; ok && string(dm) == "true" {
+						deleteResult.deleteMarker = true
+					}
+				}
+				if versionId == "null" {
+					deleteCode = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass)
+				} else {
+					deleteCode = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass)
+				}
+				deleteHandled = true
+			}
+		}
+	}
+	if !deleteHandled {
+		deleteCode = s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
+			return s3a.checkDeleteIfMatch(bucket, object, versionId, versioningState, r.Header.Get(s3_constants.IfMatch), s3err.ErrPreconditionFailed)
+		}, func() s3err.ErrorCode {
+			if versioningConfigured {
+				result, errCode := s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
+				if errCode != s3err.ErrNone {
+					return errCode
+				}
+				deleteResult = result
+				return s3err.ErrNone
+			}
+
+			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+			if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
+				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
+				return s3err.ErrAccessDenied
+			}
+
+			if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+				return s3a.deleteUnversionedObjectWithClient(client, bucket, object, false)
+			}); err != nil {
+				glog.Errorf("DeleteObjectHandler: failed to delete %s/%s: %v", bucket, object, err)
+				return s3err.ErrInternalError
+			}
+
 			return s3err.ErrNone
-		}
-
-		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
-			glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-			return s3err.ErrAccessDenied
-		}
-
-		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return s3a.deleteUnversionedObjectWithClient(client, bucket, object, false)
-		}); err != nil {
-			glog.Errorf("DeleteObjectHandler: failed to delete %s/%s: %v", bucket, object, err)
-			return s3err.ErrInternalError
-		}
-
-		return s3err.ErrNone
-	})
+		})
+	}
 	if deleteCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, deleteCode)
 		return
@@ -346,14 +423,29 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	versioningConfigured := (versioningState != "")
 	deletedCount := 0
 
+	// Per-key authorization: keys arrive in the body, so the route Auth middleware
+	// only authenticated. Authorize each key via AuthorizeBatchDeleteKey below.
+	var identity *Identity
+	if id := s3_constants.GetIdentityFromContext(r); id != nil {
+		identity, _ = id.(*Identity)
+	}
+
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
 			if object.Key == "" {
 				continue
 			}
+			if validationCode := validateDeleteObjectIdentifier(object); validationCode != s3err.ErrNone {
+				deleteErrors = append(deleteErrors, deleteErrorFromCode(validationCode, object.Key, object.VersionId))
+				continue
+			}
 			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
+				continue
+			}
+			if authErr := s3a.iam.AuthorizeBatchDeleteKey(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
+				deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
 				continue
 			}
 

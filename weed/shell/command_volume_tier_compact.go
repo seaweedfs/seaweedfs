@@ -213,9 +213,9 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolu
 	fmt.Fprintf(writer, "volume %d garbage ratio %.4f, starting compaction...\n", rv.vid, garbageRatio)
 
 	// step 2: download .dat from remote to local
-	// this deletes the remote file and reloads the volume as local
+	// this deletes the remote file and reloads the volume as local, then re-uploads below
 	fmt.Fprintf(writer, "  downloading volume %d from %s to local...\n", rv.vid, rv.remoteStorageName)
-	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress)
+	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, false)
 	if err != nil {
 		return fmt.Errorf("download volume %d from remote: %v", rv.vid, err)
 	}

@@ -297,7 +297,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r.ContentLength)
-			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil)
+			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil, false)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -352,6 +352,17 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 	return fn()
 }
 
+// putFinalize folds an object write's finalize into its create. On the routed
+// path its mutations ride in the entry's PUT transaction under lockKey, committing
+// atomically (e.g. the .versions pointer flip); off the ring afterCreate does the
+// equivalent under the object write lock. A finalize with no routed form (suspended
+// IsLatest fixups) carries no mutations and runs only via afterCreate.
+type putFinalize struct {
+	lockKey     string
+	mutations   []*filer_pb.ObjectMutation
+	afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode
+}
+
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
 // single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
 // only for top-level PutObject paths where the lifecycle XML's
@@ -359,7 +370,10 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 // pass 0 because their own keys aren't the user-visible object the rule
 // targets and a part write would otherwise bind a TTL clock starting
 // before CompleteMultipartUpload.
-func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, finalize *putFinalize, uniqueWritePath bool) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+	if !s3_constants.IsValidBucketName(bucket) || (object != "" && !s3_constants.IsValidObjectKey(object)) {
+		return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
+	}
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -802,7 +816,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
-	createCode := s3a.withObjectWriteLock(bucket, object, preconditionFn, func() s3err.ErrorCode {
+	createUnderLock := func() s3err.ErrorCode {
 		createErr = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
@@ -819,8 +833,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			return filerErrorToS3Error(createErr)
 		}
 		entryCreated = true
-		if afterCreate != nil {
-			if afterCreateCode := afterCreate(entry); afterCreateCode != s3err.ErrNone {
+		if finalize != nil && finalize.afterCreate != nil {
+			if afterCreateCode := finalize.afterCreate(entry); afterCreateCode != s3err.ErrNone {
 				rollbackErr = s3a.rmObject(path.Dir(filePath), path.Base(filePath), true, false)
 				if rollbackErr != nil {
 					glog.Errorf("putToFiler: failed to rollback created entry for %s after post-create error: %v", filePath, rollbackErr)
@@ -831,7 +845,42 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 		}
 		return s3err.ErrNone
-	})
+	}
+
+	// Route the create to the object's owner filer (its per-path lock serializes
+	// it); conditional/object-lock/non-reducible cases fall back to the lock.
+	var createCode s3err.ErrorCode
+	routed := false
+	if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
+		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
+			// Routed mutations ride in the PUT's transaction (committing atomically),
+			// so lockKey is the object path they carry, not the version file path.
+			lockKey, finalizeMutations := filePath, []*filer_pb.ObjectMutation(nil)
+			if finalize != nil && len(finalize.mutations) > 0 {
+				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
+			}
+			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, finalizeMutations)
+			switch {
+			case err != nil:
+				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)
+			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+				createCode, routed = s3err.ErrPreconditionFailed, true
+			case resp.Error != "":
+				// Non-precondition mutation error: fall back so the lock path maps it.
+				glog.Warningf("putToFiler: routed PUT to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
+			default:
+				entryCreated, routed, createCode = true, true, s3err.ErrNone
+				// Bundled mutations already finalized in the transaction above;
+				// a finalize with none (suspended versioning) runs off the lock.
+				if len(finalizeMutations) == 0 && finalize != nil && finalize.afterCreate != nil {
+					createCode = finalize.afterCreate(entry)
+				}
+			}
+		}
+	}
+	if !routed {
+		createCode = s3a.withObjectWriteLock(bucket, object, preconditionFn, createUnderLock)
+	}
 	if createCode != s3err.ErrNone {
 		if createErr != nil {
 			glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)
@@ -1271,23 +1320,20 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		}
 	}
 
-	// Upload the file using putToFiler - this will create the file with version metadata.
-	// Versioned/suspended bucket → resolver returns 0 by construction;
-	// pass 0 directly so the path is explicit at the call site.
-	//
-	// Clear the prior latest-version pointer (and stamp the displaced
-	// entry with NoncurrentSinceNs) inside the afterCreate callback so
-	// it runs while withObjectWriteLock is still held in putToFiler.
-	// Doing it after putToFiler returns would race a concurrent PUT
-	// promoting a newer latest, which we'd then incorrectly wipe.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, func(_ *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
-			// Best-effort: a stale IsLatest flag is recoverable on the
-			// next list-versions resync, so don't fail the PUT.
-			glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
-		}
-		return s3err.ErrNone
-	})
+	// Versioned/suspended bucket → resolver returns 0; pass it directly.
+	// afterCreate clears the prior latest pointer and stamps the displaced version
+	// with NoncurrentSinceNs — off-ring under the write lock, routed off-lock after
+	// the PUT. Best-effort either way: a stale flag self-heals on the next list.
+	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, &putFinalize{
+		afterCreate: func(_ *filer_pb.Entry) s3err.ErrorCode {
+			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
+				// Best-effort: a stale IsLatest flag is recoverable on the
+				// next list-versions resync, so don't fail the PUT.
+				glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
+			}
+			return s3err.ErrNone
+		},
+	}, false)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
@@ -1453,13 +1499,8 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Versioned bucket: resolver returns 0 by construction. Pass 0
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
-	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0, func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-		if err := s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName, versionEntry); err != nil {
-			glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
-			return s3err.ErrInternalError
-		}
-		return s3err.ErrNone
-	})
+	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0,
+		s3a.versionedFinalize(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}
@@ -1933,6 +1974,17 @@ type conditionalHeaders struct {
 	isSet             bool // true if any conditional headers are present
 }
 
+// parseHTTPDate parses a conditional date header. It accepts the three HTTP-date
+// formats required by RFC 9110 via http.ParseTime, then falls back to RFC1123 so
+// the non-standard "UTC" zone that Go clients emit with t.UTC().Format(time.RFC1123)
+// keeps working as it did before http.ParseTime was adopted.
+func parseHTTPDate(value string) (time.Time, error) {
+	if t, err := http.ParseTime(value); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC1123, value)
+}
+
 // parseConditionalHeaders extracts and validates conditional headers from the request
 func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCode) {
 	headers := conditionalHeaders{
@@ -1954,7 +2006,7 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 	// Parse date headers with validation
 	var err error
 	if ifModifiedSinceStr != "" {
-		headers.ifModifiedSince, err = time.Parse(time.RFC1123, ifModifiedSinceStr)
+		headers.ifModifiedSince, err = parseHTTPDate(ifModifiedSinceStr)
 		if err != nil {
 			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Modified-Since format: %v", err)
 			return headers, s3err.ErrInvalidRequest
@@ -1962,7 +2014,7 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 	}
 
 	if ifUnmodifiedSinceStr != "" {
-		headers.ifUnmodifiedSince, err = time.Parse(time.RFC1123, ifUnmodifiedSinceStr)
+		headers.ifUnmodifiedSince, err = parseHTTPDate(ifUnmodifiedSinceStr)
 		if err != nil {
 			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Unmodified-Since format: %v", err)
 			return headers, s3err.ErrInvalidRequest

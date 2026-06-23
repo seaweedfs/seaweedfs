@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -20,6 +20,21 @@ type LockClient struct {
 	maxLockDuration time.Duration
 	sleepDuration   time.Duration
 	seedFiler       pb.ServerAddress
+
+	// ring is an optional client-side view of the filer lock hash ring. When
+	// populated, a new lock starts at the key's primary filer instead of the
+	// seed filer, avoiding the seed->primary forward hop. A stale view stays
+	// correct: the filer forwards to the real primary as a fallback.
+	ringMu      sync.RWMutex
+	ring        *lock_manager.HashRing
+	ringVersion int64
+
+	// priorRing is the ring before the most recent change, kept for priorWindow so a
+	// route-by-key caller can consult a just-moved key's previous owner during a
+	// rebalance. Mirrors the master's lock_manager.LockRing.PriorOwner cooling-off.
+	priorRing     *lock_manager.HashRing
+	ringChangedAt time.Time
+	priorWindow   time.Duration
 }
 
 func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *LockClient {
@@ -28,7 +43,77 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 		maxLockDuration: 5 * time.Second,
 		sleepDuration:   2473 * time.Millisecond,
 		seedFiler:       seedFiler,
+		priorWindow:     5 * time.Second,
 	}
+}
+
+// SetRing mirrors the master's LockRingUpdate so the client computes the same
+// primary the filers do. A non-zero version at or below the current one is
+// ignored once a ring exists, dropping reordered and redundant broadcasts;
+// version 0 always applies (bootstrap).
+func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
+	lc.ringMu.Lock()
+	defer lc.ringMu.Unlock()
+	if version != 0 && version <= lc.ringVersion && lc.ring != nil {
+		return
+	}
+	lc.ringVersion = version
+	// Build a fresh ring (not an in-place mutation) so the outgoing ring survives as
+	// priorRing with its own servers for the cooling-off window.
+	newRing := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
+	newRing.SetServers(servers)
+	if lc.ring != nil {
+		lc.priorRing = lc.ring
+		lc.ringChangedAt = time.Now()
+	}
+	lc.ring = newRing
+}
+
+// hostForKey returns the filer that should own key per the current ring view,
+// falling back to the seed filer when no view has been received yet.
+func (lc *LockClient) hostForKey(key string) pb.ServerAddress {
+	lc.ringMu.RLock()
+	defer lc.ringMu.RUnlock()
+	if lc.ring == nil {
+		return lc.seedFiler
+	}
+	if primary := lc.ring.GetPrimary(key); primary != "" {
+		return primary
+	}
+	return lc.seedFiler
+}
+
+// PrimaryForKey returns the ring owner for key, or "" before any ring arrives.
+// Unlike hostForKey it does not fall back to the seed, so a route-by-key caller
+// stays on the distributed lock until the ring is known.
+func (lc *LockClient) PrimaryForKey(key string) pb.ServerAddress {
+	lc.ringMu.RLock()
+	defer lc.ringMu.RUnlock()
+	if lc.ring == nil {
+		return ""
+	}
+	return lc.ring.GetPrimary(key)
+}
+
+// PriorOwnerForKey returns key's owner from the prior ring while a rebalance is
+// within the cooling-off window and ownership actually moved, else "". Lets a
+// route-by-key reader consult a just-moved key's previous owner before the new
+// owner's NotFound is final (the new owner may not have replicated the key yet).
+func (lc *LockClient) PriorOwnerForKey(key string) pb.ServerAddress {
+	lc.ringMu.RLock()
+	defer lc.ringMu.RUnlock()
+	if lc.ring == nil || lc.priorRing == nil {
+		return ""
+	}
+	if time.Since(lc.ringChangedAt) > lc.priorWindow {
+		return ""
+	}
+	current := lc.ring.GetPrimary(key)
+	prior := lc.priorRing.GetPrimary(key)
+	if prior != "" && prior != current {
+		return prior
+	}
+	return ""
 }
 
 type LiveLock struct {
@@ -37,6 +122,7 @@ type LiveLock struct {
 	expireAtNs          int64
 	hostFiler           pb.ServerAddress
 	cancelCh            chan struct{}
+	renewalDone         chan struct{} // closed when the renewal goroutine exits; nil if there is none
 	grpcDialOption      grpc.DialOption
 	isLocked            int32 // 0 = unlocked, 1 = locked; use atomic operations
 	self                string
@@ -51,7 +137,7 @@ type LiveLock struct {
 func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
-		hostFiler:      lc.seedFiler,
+		hostFiler:      lc.hostForKey(key),
 		cancelCh:       make(chan struct{}),
 		expireAtNs:     time.Now().Add(5 * time.Second).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
@@ -72,7 +158,7 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 	}
 	lock := &LiveLock{
 		key:            key,
-		hostFiler:      lc.seedFiler,
+		hostFiler:      lc.hostForKey(key),
 		cancelCh:       make(chan struct{}),
 		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
@@ -83,7 +169,9 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 	// Block until acquired
 	lock.retryUntilLocked(lockTTL)
 	// Start renewal goroutine using a ticker for interruptible sleep
+	lock.renewalDone = make(chan struct{})
 	go func() {
+		defer close(lock.renewalDone)
 		renewInterval := lockTTL / 2
 		ticker := time.NewTicker(renewInterval)
 		defer ticker.Stop()
@@ -108,7 +196,7 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string), lockTTL time.Duration) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
-		hostFiler:      lc.seedFiler,
+		hostFiler:      lc.hostForKey(key),
 		cancelCh:       make(chan struct{}),
 		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
@@ -119,7 +207,9 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 	if lock.lockTTL == 0 {
 		lock.lockTTL = lock_manager.LiveLockTTL
 	}
+	lock.renewalDone = make(chan struct{})
 	go func() {
+		defer close(lock.renewalDone)
 		renewInterval := lock.lockTTL / 2
 		isLocked := false
 		lockOwner := ""
@@ -149,30 +239,39 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				onLockOwnerChange(lock.LockOwner())
 				lockOwner = lock.LockOwner()
 			}
+			// Sleep until the next attempt, but wake immediately on Stop() so
+			// the goroutine exits and closes renewalDone before Stop()'s bounded
+			// wait elapses. An uninterruptible sleep here (up to 5*renewInterval
+			// when unlocked) can outlast that wait and break the shutdown
+			// synchronization.
+			sleepFor := renewInterval
+			if !isLocked {
+				sleepFor = 5 * renewInterval
+			}
+			timer := time.NewTimer(sleepFor)
 			select {
 			case <-lock.cancelCh:
+				timer.Stop()
 				return
-			default:
-				if isLocked {
-					time.Sleep(renewInterval)
-				} else {
-					time.Sleep(5 * renewInterval)
-				}
+			case <-timer.C:
 			}
 		}
 	}()
 	return
 }
 
+// retryUntilLocked blocks until the lock is acquired, polling at the steady
+// short cadence that AttemptToLock already enforces on contention (~1s). It
+// deliberately avoids util.RetryUntil's exponential backoff (which grows to
+// several seconds): when a holder on another mount releases the lock, the
+// waiter must pick it up promptly, otherwise cross-mount write handoff stalls
+// long enough to time out clients.
 func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
-	util.RetryUntil("create lock:"+lock.key, func() error {
-		return lock.AttemptToLock(lockDuration)
-	}, func(err error) (shouldContinue bool) {
-		if err != nil {
-			glog.Warningf("create lock %s: %s", lock.key, err)
+	for lock.renewToken == "" {
+		if err := lock.AttemptToLock(lockDuration); err != nil {
+			glog.V(1).Infof("create lock %s: %v", lock.key, err)
 		}
-		return lock.renewToken == ""
-	})
+	}
 }
 
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
@@ -226,10 +325,27 @@ func (lock *LiveLock) Stop() error {
 		close(lock.cancelCh)
 	}
 
-	// Wait a brief moment for the goroutine to see the closed channel
-	// This reduces the race condition window where the goroutine might
-	// attempt one more lock operation after we've released the lock
-	time.Sleep(10 * time.Millisecond)
+	// Wait for the renewal goroutine to fully exit before unlocking. A renewal
+	// in flight when we close cancelCh rotates renewToken on the server; if we
+	// then unlock with the token we read here, the unlock fails with a token
+	// mismatch and the lock lingers until its TTL expires — blocking other
+	// mounts waiting on the same file. Waiting for the goroutine to return also
+	// makes the renewToken read below race-free (channel close = happens-before).
+	if lock.renewalDone != nil {
+		select {
+		case <-lock.renewalDone:
+		case <-time.After(lock.lockTTL + 2*time.Second):
+			// The renewal goroutine is wedged, almost certainly in a stuck
+			// renewal RPC. Do not unlock here: the renewToken may be rotated
+			// when that RPC finally returns, so an unlock sent now could race
+			// it, be rejected on a stale token, and leave the lock lingering
+			// anyway. cancelCh is closed, so the goroutine stops renewing once
+			// its in-flight call returns and the lock then expires within its
+			// TTL on its own.
+			glog.Warningf("lock %s: renewal goroutine still running at shutdown; letting lock expire via TTL", lock.key)
+			return nil
+		}
+	}
 
 	// Also release the lock if held
 	// Note: We intentionally don't clear renewToken here because

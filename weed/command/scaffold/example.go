@@ -27,8 +27,14 @@ var Security string
 var masterTemplate string
 var Master string
 
+//go:embed volume.toml
+var Volume string
+
 //go:embed shell.toml
 var Shell string
 
 //go:embed credential.toml
 var Credential string
+
+//go:embed admin.toml
+var Admin string

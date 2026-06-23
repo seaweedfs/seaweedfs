@@ -61,6 +61,7 @@ func (localsink *LocalSink) IsIncremental() bool {
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	key = sanitizeFsKey(key)
 	if localsink.isMultiPartEntry(key) {
 		return nil
 	}
@@ -72,6 +73,7 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 }
 
 func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+	key = sanitizeFsKey(key)
 	if entry.IsDirectory || localsink.isMultiPartEntry(key) {
 		return nil
 	}
@@ -151,6 +153,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 }
 
 func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+	key = sanitizeFsKey(key)
 	if localsink.isMultiPartEntry(key) {
 		return true, nil
 	}

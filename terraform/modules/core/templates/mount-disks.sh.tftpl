@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Rendered by the SeaweedFS Terraform core module. Formats (only if blank) and
+# mounts each data disk, persisting by UUID to /etc/fstab. Safe to re-run.
+set -euo pipefail
+
+run_as_user="${run_as_user}"
+
+# Base block device backing "/" so auto-discovery never touches the root disk.
+root_src="$(findmnt -no SOURCE / 2>/dev/null || true)"
+root_base="$(lsblk -no pkname "$root_src" 2>/dev/null || true)"
+[ -n "$root_base" ] && root_base="/dev/$root_base"
+
+is_mounted() { findmnt -rno TARGET "$1" >/dev/null 2>&1; }
+
+# Pick the first unmounted, non-root whole disk (single-data-disk node).
+discover_dev() {
+  local d base
+  for d in /dev/nvme*n1 /dev/xvd[b-z] /dev/sd[b-z] /dev/vd[b-z]; do
+    [ -b "$d" ] || continue
+    [ "$d" = "$root_src" ] && continue
+    [ "$d" = "$root_base" ] && continue
+    base="/dev/$(lsblk -no pkname "$d" 2>/dev/null || true)"
+    [ "$base" = "$root_base" ] && continue
+    is_mounted "$d" && continue
+    echo "$d"; return 0
+  done
+  return 1
+}
+
+# Wait up to ~120s for one of the explicit candidate devices to appear.
+wait_dev() {
+  local i d
+  for i in $(seq 1 60); do
+    for d in "$@"; do [ -b "$d" ] && { echo "$d"; return 0; }; done
+    sleep 2
+  done
+  return 1
+}
+
+mount_one() {
+  local mountpoint="$1" fstype="$2"; shift 2
+  local dev=""
+  if [ "$#" -gt 0 ]; then
+    dev="$(wait_dev "$@" || true)"
+  fi
+  if [ -z "$dev" ]; then
+    dev="$(discover_dev || true)"
+  fi
+  if [ -z "$dev" ]; then
+    echo "mount-disks: no device found for $mountpoint" >&2
+    return 1
+  fi
+  if ! blkid "$dev" >/dev/null 2>&1; then
+    echo "mount-disks: formatting $dev as $fstype"
+    "mkfs.$fstype" -q "$dev"
+  fi
+  mkdir -p "$mountpoint"
+  local uuid; uuid="$(blkid -s UUID -o value "$dev")"
+  if [ -z "$uuid" ]; then
+    echo "mount-disks: failed to read a filesystem UUID for $dev" >&2
+    return 1
+  fi
+  if ! grep -q "$uuid" /etc/fstab; then
+    printf 'UUID=%s %s %s defaults,nofail 0 2\n' "$uuid" "$mountpoint" "$fstype" >> /etc/fstab
+  fi
+  is_mounted "$mountpoint" || mount "$mountpoint"
+  chown -R "$run_as_user:$run_as_user" "$mountpoint"
+  echo "mount-disks: $dev mounted at $mountpoint"
+}
+
+%{ for m in mounts ~}
+mount_one "${m.mountpoint}" "${m.fstype}"${length(m.devices) > 0 ? " ${join(" ", m.devices)}" : ""}
+%{ endfor ~}

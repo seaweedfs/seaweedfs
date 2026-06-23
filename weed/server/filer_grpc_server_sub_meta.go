@@ -22,6 +22,12 @@ import (
 const (
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
 	MaxUnsyncedEvents = 1e3
+
+	// idleHeartbeatInterval bounds how often a caught-up subscriber that asked
+	// for idle heartbeats is reminded that the source is alive and has nothing
+	// newer. It keeps freshness signals such as filer.sync's sync_offset metric
+	// from looking stuck during read-only periods on the source.
+	idleHeartbeatInterval = 5 * time.Second
 )
 
 // metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
@@ -159,7 +165,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	ctx := stream.Context()
 	peerAddress := findClientAddress(ctx, 0)
 
-	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.ClientId, req.ClientEpoch)
+	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
 	if isReplacing {
 		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
@@ -184,9 +190,19 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
+	var unsyncedEvents int64
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
-	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
+	// only emitted once it is caught up to the buffer head. It is read and
+	// written from this single goroutine, so no synchronization is needed.
+	var lastSeenTsNs int64
+	var lastHeartbeatNs int64
+	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		lastSeenTsNs = logEntry.TsNs
+		return baseEachLogEntryFn(logEntry)
+	}
 
 	var processedTsNs int64
 	var readPersistedLogErr error
@@ -200,7 +216,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		if req.ClientSupportsMetadataChunks {
 			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 		} else {
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 		}
 		if readPersistedLogErr != nil {
 			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
@@ -248,7 +264,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				return false
 			default:
 			}
-			return fs.hasClient(req.ClientId, req.ClientEpoch)
+			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+				return false
+			}
+			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
+			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
@@ -294,7 +314,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	// use negative client id to differentiate from addClient()/deleteClient() used in SubscribeMetadata()
 	req.ClientId = -req.ClientId
 
-	isReplacing, alreadyKnown, clientName := fs.addClient("local", req.ClientName, peerAddress, req.ClientId, req.ClientEpoch)
+	isReplacing, alreadyKnown, clientName := fs.addClient("local", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
 	if isReplacing {
 		fs.listenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
@@ -312,9 +332,19 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
+	var unsyncedEvents int64
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
-	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
+	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
+	// only emitted once it is caught up to the buffer head. It is read and
+	// written from this single goroutine, so no synchronization is needed.
+	var lastSeenTsNs int64
+	var lastHeartbeatNs int64
+	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		lastSeenTsNs = logEntry.TsNs
+		return baseEachLogEntryFn(logEntry)
+	}
 
 	var processedTsNs int64
 	var readPersistedLogErr error
@@ -339,7 +369,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			if req.ClientSupportsMetadataChunks {
 				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 			} else {
-				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
@@ -400,7 +430,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				return false
 			default:
 			}
-			return fs.hasClient(req.ClientId, req.ClientEpoch)
+			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+				return false
+			}
+			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.LocalMetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
+			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
@@ -458,8 +492,28 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) log_buffer.EachLogEntryFuncType {
+func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
+	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
+	// this subscriber would filter out anyway; scan surprises fall back to the
+	// full decode. Only a delivery resets the shared unsynced-events counter.
+	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
+		if prefilter {
+			if skeleton, ok := filer_pb.ScanMetadataEventSkeleton(logEntry.Data); ok &&
+				!filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories) {
+				*filtered++
+				if *filtered > MaxUnsyncedEvents {
+					if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
+						EventNotification: &filer_pb.EventNotification{},
+						TsNs:              skeleton.TsNs,
+					}); err != nil {
+						return false, err
+					}
+					*filtered = 0
+				}
+				return false, nil
+			}
+		}
 		event := &filer_pb.SubscribeMetadataResponse{}
 		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
@@ -472,6 +526,53 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 
 		return false, nil
 	}
+}
+
+// maybeSendIdleHeartbeat emits an empty response carrying the current time when
+// the subscriber has consumed everything up to the buffer head. The client uses
+// it to advance freshness signals (e.g. filer.sync's sync_offset) without moving
+// its resume checkpoint, so a restart still re-reads from the last real event.
+//
+// The catch-up floor is the max of two read-progress markers:
+//   - readPositionTsNs: how far the read cursor has advanced. It starts at
+//     SinceNs and also covers metadata-chunks mode, where persisted entries are
+//     replayed as log file refs rather than through eachLogEntryFn.
+//   - lastSeenTsNs: the timestamp of the most recent entry streamed in this
+//     call. It advances live while reading the in-memory backlog, before the
+//     read cursor returned by LoopProcessLogData has been updated.
+//
+// While the buffer head is past that floor the subscriber is still behind (e.g.
+// replaying a backlog) and no heartbeat is sent. Returns the (possibly advanced)
+// lastHeartbeatNs.
+func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, logBuffer *log_buffer.LogBuffer, readPositionTsNs, lastSeenTsNs, lastHeartbeatNs int64) int64 {
+	if !req.ClientSupportsIdleHeartbeat {
+		return lastHeartbeatNs
+	}
+	floorTsNs := lastSeenTsNs
+	if readPositionTsNs > floorTsNs {
+		floorTsNs = readPositionTsNs
+	}
+	if logBuffer.LastTsNs.Load() > floorTsNs {
+		// the buffer holds data the subscriber has not reached yet
+		return lastHeartbeatNs
+	}
+	now := time.Now().UnixNano()
+	if now-lastHeartbeatNs < int64(idleHeartbeatInterval) {
+		return lastHeartbeatNs
+	}
+	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{TsNs: now}); err != nil {
+		glog.V(0).Infof("=> idle heartbeat to %s: %v", req.ClientName, err)
+		return lastHeartbeatNs
+	}
+	// A heartbeat is a send too: advance the freshness gauge so an idle but
+	// healthy subscriber doesn't look stale. The gauge otherwise only moves on
+	// real matching events, which never arrive on a quiet path.
+	var sourceFiler string
+	if fs.option != nil {
+		sourceFiler = fs.option.Host.String()
+	}
+	stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(sourceFiler, req.ClientName, req.PathPrefix).Set(float64(now))
+	return now
 }
 
 // sendLogFileRefs collects persisted log file chunk references and sends them
@@ -503,22 +604,20 @@ func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStrea
 	return lastTsNs, false, nil
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
-	filtered := 0
-
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		defer func() {
-			if filtered > MaxUnsyncedEvents {
+			if *filtered > MaxUnsyncedEvents {
 				if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 					EventNotification: &filer_pb.EventNotification{},
 					TsNs:              tsNs,
 				}); err == nil {
-					filtered = 0
+					*filtered = 0
 				}
 			}
 		}()
 
-		filtered++
+		*filtered++
 		foundSelf := false
 		for _, sig := range eventNotification.Signatures {
 			if sig == req.Signature && req.Signature != 0 {
@@ -565,14 +664,14 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
-		filtered = 0
+		*filtered = 0
 		return nil
 	}
 }
 
-func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress string, clientId int32, clientEpoch int32) (isReplacing, alreadyKnown bool, clientName string) {
+func (fs *FilerServer) addClient(scope string, clientType string, clientAddress string, pathPrefix string, clientId int32, clientEpoch int32) (isReplacing, alreadyKnown bool, clientName string) {
 	clientName = clientType + "@" + clientAddress
-	glog.V(0).Infof("+ %v listener %v clientId %v clientEpoch %v", prefix, clientName, clientId, clientEpoch)
+	glog.V(0).Infof("+ %v listener %v clientId %v clientEpoch %v", scope, clientName, clientId, clientEpoch)
 	if clientId != 0 {
 		fs.knownListenersLock.Lock()
 		defer fs.knownListenersLock.Unlock()
@@ -580,6 +679,18 @@ func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress
 		if !found || epoch < clientEpoch {
 			fs.knownListeners[clientId] = clientEpoch
 			isReplacing = true
+			if fs.subscribers == nil {
+				fs.subscribers = make(map[int32]*metadataSubscriber)
+			}
+			fs.subscribers[clientId] = &metadataSubscriber{
+				clientName:    clientName,
+				clientType:    clientType,
+				address:       clientAddress,
+				pathPrefix:    pathPrefix,
+				clientId:      clientId,
+				clientEpoch:   clientEpoch,
+				connectedAtNs: time.Now().UnixNano(),
+			}
 		} else {
 			alreadyKnown = true
 		}
@@ -587,14 +698,15 @@ func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress
 	return
 }
 
-func (fs *FilerServer) deleteClient(prefix string, clientName string, clientId int32, clientEpoch int32) {
-	glog.V(0).Infof("- %v listener %v clientId %v clientEpoch %v", prefix, clientName, clientId, clientEpoch)
+func (fs *FilerServer) deleteClient(scope string, clientName string, clientId int32, clientEpoch int32) {
+	glog.V(0).Infof("- %v listener %v clientId %v clientEpoch %v", scope, clientName, clientId, clientEpoch)
 	if clientId != 0 {
 		fs.knownListenersLock.Lock()
 		defer fs.knownListenersLock.Unlock()
 		epoch, found := fs.knownListeners[clientId]
 		if found && epoch <= clientEpoch {
 			delete(fs.knownListeners, clientId)
+			delete(fs.subscribers, clientId)
 		}
 	}
 }

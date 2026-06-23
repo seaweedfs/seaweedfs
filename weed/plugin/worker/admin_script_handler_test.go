@@ -10,6 +10,36 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+func TestAdminScriptFilerAddressKeepsGrpcPortOffConvention(t *testing.T) {
+	// FilerAddresses arrive as pb.ServerAddress (host:httpPort.grpcPort). The
+	// shell derives the gRPC port from FilerAddress via ToGrpcAddress(); it must
+	// land on the real gRPC port even when that port is off the httpPort+10000
+	// convention, not double the offset into a non-existent filer:28890.
+	h := NewAdminScriptHandler(nil)
+	options, err := h.buildAdminScriptShellOptions(&plugin_pb.ClusterContext{
+		MasterGrpcAddresses: []string{"master:19333"},
+		FilerAddresses:      []string{"filer:8888.18890"},
+	})
+	if err != nil {
+		t.Fatalf("buildAdminScriptShellOptions returned err = %v", err)
+	}
+	if grpc := options.FilerAddress.ToGrpcAddress(); grpc != "filer:18890" {
+		t.Fatalf("filer gRPC address = %q, want filer:18890 (not filer:28890)", grpc)
+	}
+	if http := options.FilerAddress.ToHttpAddress(); http != "filer:8888" {
+		t.Fatalf("filer HTTP address = %q, want filer:8888", http)
+	}
+}
+
+func TestAdminScriptShellOptionsRequireMasters(t *testing.T) {
+	h := NewAdminScriptHandler(nil)
+	if _, err := h.buildAdminScriptShellOptions(&plugin_pb.ClusterContext{
+		FilerAddresses: []string{"filer:8888.18890"},
+	}); err == nil {
+		t.Fatalf("expected error when master addresses are missing")
+	}
+}
+
 func TestAdminScriptDescriptorDefaults(t *testing.T) {
 	descriptor := NewAdminScriptHandler(nil).Descriptor()
 	if descriptor == nil {

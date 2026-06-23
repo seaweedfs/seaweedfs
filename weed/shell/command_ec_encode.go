@@ -2,11 +2,15 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -16,12 +20,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
 )
 
 func init() {
@@ -38,8 +46,8 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-verbose] [-sourceDiskType=<disk_type>] [-diskType=<disk_type>]
-	ec.encode [-collection=""] [-volumeId=<volume_id>] [-verbose] [-diskType=<disk_type>]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-batchSize=0] [-verbose] [-sourceDiskType=<disk_type>] [-diskType=<disk_type>]
+	ec.encode [-volumeId=<volume_id>|-volumeIds=<volume_id>,...] [-batchSize=0] [-verbose] [-diskType=<disk_type>]
 
 	This command will:
 	1. freeze one volume
@@ -64,6 +72,11 @@ func (c *commandEcEncode) Help() string {
 	  -verbose: show detailed reasons why volumes are not selected for encoding
 	  -sourceDiskType: filter source volumes by disk type (hdd, ssd, or empty for all)
 	  -diskType: target disk type for EC shards (hdd, ssd, or empty for default hdd)
+	  -batchSize: if > 0, encode/rebalance/verify/delete this many volumes at a time
+	  -volumeIds: comma-separated volume IDs to encode
+
+	When -batchSize is set, each batch is committed independently. If a later batch fails,
+	earlier batches may already be encoded and their original volumes deleted.
 
 	Examples:
 	  # Encode SSD volumes to SSD EC shards (same tier)
@@ -74,6 +87,9 @@ func (c *commandEcEncode) Help() string {
 
 	  # Encode all volumes to SSD EC shards
 	  ec.encode -collection=mybucket -diskType=ssd
+
+	  # Encode selected volume IDs and delete originals after each batch
+	  ec.encode -volumeIds=101,102,103 -batchSize=2
 
 	Re-balancing algorithm:
 	` + ecBalanceAlgorithmDescription
@@ -87,10 +103,12 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
-	collection := encodeCommand.String("collection", "", "the collection name")
+	volumeIdsStr := encodeCommand.String("volumeIds", "", "comma-separated volume ids")
+	collection := encodeCommand.String("collection", "", "collection name or regex pattern")
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
+	batchSize := encodeCommand.Int("batchSize", 0, "if > 0, encode/re-balance/verify/delete up to this many volumes at a time")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
@@ -137,14 +155,21 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	var volumeIds []needle.VolumeId
-	var balanceCollections []string
-	if vid := needle.VolumeId(*volumeId); vid != 0 {
-		// volumeId is provided
-		volumeIds = append(volumeIds, vid)
-		balanceCollections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
+	if *volumeId != 0 || strings.TrimSpace(*volumeIdsStr) != "" {
+		if *volumeId != 0 && strings.TrimSpace(*volumeIdsStr) != "" {
+			return fmt.Errorf("-volumeId and -volumeIds are mutually exclusive")
+		}
+		if *volumeId != 0 {
+			volumeIds = append(volumeIds, needle.VolumeId(*volumeId))
+		} else {
+			volumeIds, err = parseEcEncodeVolumeIds(*volumeIdsStr)
+			if err != nil {
+				return err
+			}
+		}
 	} else {
 		// apply to all volumes for the given collection pattern (regex)
-		volumeIds, balanceCollections, err = collectVolumeIdsForEcEncode(commandEnv, *collection, sourceDiskType, *fullPercentage, *quietPeriod, *verbose)
+		volumeIds, _, err = collectVolumeIdsForEcEncode(commandEnv, *collection, sourceDiskType, *fullPercentage, *quietPeriod, *verbose)
 		if err != nil {
 			return err
 		}
@@ -153,63 +178,148 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		fmt.Println("No volumes, nothing to do.")
 		return nil
 	}
+	if *batchSize < 0 {
+		return fmt.Errorf("-batchSize must be >= 0")
+	}
 
-	// Collect volume ID to collection name mapping for the sync operation
+	batches := chunkEcEncodeVolumeIds(volumeIds, *batchSize)
+	if *batchSize > 0 {
+		fmt.Printf("Processing %d volumes in %d batch(es), batchSize=%d\n", len(volumeIds), len(batches), *batchSize)
+	}
+	for i, batchVolumeIds := range batches {
+		if *batchSize > 0 {
+			fmt.Printf("Starting EC encoding batch %d/%d with %d volumes: %v\n", i+1, len(batches), len(batchVolumeIds), batchVolumeIds)
+		}
+		if err := processEcEncodeBatch(commandEnv, writer, batchVolumeIds, rp, diskType, *maxParallelization, *applyBalancing, *collection); err != nil {
+			return fmt.Errorf("ec encode batch %d/%d for volumes %v: %w", i+1, len(batches), batchVolumeIds, err)
+		}
+	}
+	if *batchSize > 0 {
+		fmt.Printf("Successfully completed EC encoding for %d volumes in %d batch(es)\n", len(volumeIds), len(batches))
+	}
+
+	return nil
+}
+
+func parseEcEncodeVolumeIds(volumeIdsStr string) ([]needle.VolumeId, error) {
+	var volumeIds []needle.VolumeId
+	seen := make(map[needle.VolumeId]bool)
+	for _, part := range strings.Split(volumeIdsStr, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		vidValue, err := strconv.ParseUint(part, 10, 32)
+		if err != nil || vidValue == 0 {
+			return nil, fmt.Errorf("invalid volume id %q in -volumeIds", part)
+		}
+		// ParseUint with bitSize 32 bounds the value; convert through uint32
+		// (matching the rest of the codebase) so the narrowing is provably safe.
+		vid := needle.VolumeId(uint32(vidValue))
+		if seen[vid] {
+			continue
+		}
+		seen[vid] = true
+		volumeIds = append(volumeIds, vid)
+	}
+	if len(volumeIds) == 0 {
+		return nil, fmt.Errorf("-volumeIds does not contain any valid volume id")
+	}
+	return volumeIds, nil
+}
+
+func chunkEcEncodeVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.VolumeId {
+	if batchSize <= 0 || len(volumeIds) == 0 {
+		return [][]needle.VolumeId{volumeIds}
+	}
+	var batches [][]needle.VolumeId
+	for start := 0; start < len(volumeIds); start += batchSize {
+		end := start + batchSize
+		if end > len(volumeIds) {
+			end = len(volumeIds)
+		}
+		batches = append(batches, volumeIds[start:end])
+	}
+	return batches
+}
+
+func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []needle.VolumeId, rp *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, collectionForMessage string) error {
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return err
+	}
+
+	// Refuse to encode a volume that is already EC (present only as shards):
+	// an EC volume has no .dat, so re-encoding it would tear down its only
+	// copy before failing. A regular volume (with a .dat) passes. This closes
+	// the operator-rerun / script-retry path; a worker racing the snapshot is
+	// handled by encode fencing, not here.
+	if err := assertEncodableRegularVolumes(topologyInfo, volumeIds); err != nil {
+		return err
+	}
+
 	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
+	balanceCollections := collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 
-	// Collect volume locations BEFORE EC encoding starts to avoid race condition
-	// where the master metadata is updated after EC encoding but before deletion
 	fmt.Printf("Collecting volume locations for %d volumes before EC encoding...\n", len(volumeIds))
 	volumeLocationsMap, err := volumeLocations(commandEnv, volumeIds)
 	if err != nil {
 		return fmt.Errorf("failed to collect volume locations before EC encoding: %w", err)
 	}
 
-	// Pre-flight check: verify the target disk type has capacity for EC shards
-	// This prevents encoding shards only to fail during rebalance
-	_, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, "", diskType)
-	if err != nil {
-		return fmt.Errorf("failed to check EC shard capacity: %w", err)
+	if err := checkEcEncodeCapacity(topologyInfo, len(volumeIds), diskType, collectionForMessage); err != nil {
+		return err
 	}
 
-	// Calculate required slots: each volume needs TotalShardsCount (14) shards distributed
-	requiredSlots := len(volumeIds) * erasure_coding.TotalShardsCount
+	skippedNodes, err := doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, maxParallelization, topologyInfo)
+	if err != nil {
+		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
+	}
+	// EcBalance works at collection scope. In batch mode this intentionally
+	// rebalances each collection after every batch so source volumes can be
+	// safely verified and deleted without waiting for all batches to finish.
+	// skippedNodes are excluded so a recovered node's stale orphan is never
+	// paired with a new-generation shard.
+	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, maxParallelization, applyBalancing, skippedNodes); err != nil {
+		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
+	}
+	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
+		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
+	}
+	fmt.Printf("Deleting original volumes after EC encoding...\n")
+	if err := doDeleteVolumesWithLocations(commandEnv, volumeIds, volumeLocationsMap, maxParallelization); err != nil {
+		return fmt.Errorf("delete original volumes after EC encoding: %w", err)
+	}
+	fmt.Printf("Successfully completed EC encoding for %d volumes\n", len(volumeIds))
+	return nil
+}
+
+func checkEcEncodeCapacity(topologyInfo *master_pb.TopologyInfo, volumeCount int, diskType types.DiskType, collectionForMessage string) error {
+	// Pre-flight check: verify the target disk type has capacity for EC shards.
+	// This prevents encoding shards only to fail during rebalance. Reuse the
+	// caller's topology snapshot instead of issuing another VolumeList to the
+	// master per batch.
+	_, totalFreeEcSlots := collectEcVolumeServersByDc(topologyInfo, "", diskType)
+
+	// Each volume needs TotalShardsCount (14) shards distributed.
+	requiredSlots := volumeCount * erasure_coding.TotalShardsCount
 	if totalFreeEcSlots < 1 {
-		// No capacity at all on the target disk type
 		if diskType != types.HardDriveType {
+			tryDiskTypeMessage := "Try passing -diskType=hdd, or omit -diskType to use the default (hdd)"
+			if collectionForMessage != "" {
+				tryDiskTypeMessage = fmt.Sprintf("Try:\n  ec.encode -collection=%s -diskType=hdd\nOr omit -diskType to use the default (hdd)", collectionForMessage)
+			}
 			return fmt.Errorf("no free ec shard slots on disk type '%s'. The target disk type has no capacity.\n"+
-				"Your volumes are likely on a different disk type. Try:\n"+
-				"  ec.encode -collection=%s -diskType=hdd\n"+
-				"Or omit -diskType to use the default (hdd)", diskType, *collection)
+				"Your volumes are likely on a different disk type. %s", diskType, tryDiskTypeMessage)
 		}
 		return fmt.Errorf("no free ec shard slots. only %d left on disk type '%s'", totalFreeEcSlots, diskType)
 	}
 
 	if totalFreeEcSlots < requiredSlots {
 		fmt.Printf("Warning: limited EC shard capacity. Need %d slots for %d volumes, but only %d slots available on disk type '%s'.\n",
-			requiredSlots, len(volumeIds), totalFreeEcSlots, diskType)
+			requiredSlots, volumeCount, totalFreeEcSlots, diskType)
 		fmt.Printf("Rebalancing may not achieve optimal distribution.\n")
 	}
-
-	// encode all requested volumes...
-	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization, topologyInfo); err != nil {
-		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
-	}
-	// ...re-balance ec shards...
-	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing); err != nil {
-		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
-	}
-	// A partial encode followed by source deletion is unrecoverable.
-	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
-		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
-	}
-	// ...then delete original volumes using pre-collected locations.
-	fmt.Printf("Deleting original volumes after EC encoding...\n")
-	if err := doDeleteVolumesWithLocations(commandEnv, volumeIds, volumeLocationsMap, *maxParallelization); err != nil {
-		return fmt.Errorf("delete original volumes after EC encoding: %w", err)
-	}
-	fmt.Printf("Successfully completed EC encoding for %d volumes\n", len(volumeIds))
-
 	return nil
 }
 
@@ -226,13 +336,23 @@ func volumeLocations(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[n
 	return res, nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int, topologyInfo *master_pb.TopologyInfo) error {
+func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int, topologyInfo *master_pb.TopologyInfo) (skippedNodes map[pb.ServerAddress]struct{}, err error) {
 	if !commandEnv.isLocked() {
-		return fmt.Errorf("lock is lost")
+		return nil, fmt.Errorf("lock is lost")
 	}
 	locations, err := volumeLocations(commandEnv, volumeIds)
 	if err != nil {
-		return fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
+		return nil, fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
+	}
+
+	// Clear EC shards left by a previous failed/partial encode so a retry
+	// starts clean and never mixes two encode runs. A node skipped here as
+	// unreachable is excluded from the later balance: it may still hold a stale
+	// orphan that, paired with a new-generation shard from a balance copy, would
+	// mix generations on that node.
+	skippedNodes, err = clearPreexistingEcShards(commandEnv, topologyInfo, volumeIds, volumeIdToCollection, maxParallelization)
+	if err != nil {
+		return nil, fmt.Errorf("clear pre-existing ec shards before encoding: %w", err)
 	}
 
 	// Build a map of (volumeId, serverAddress) -> freeVolumeCount.
@@ -266,7 +386,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 			}
 		}
 		if len(filteredLocs) == 0 {
-			return fmt.Errorf("no healthy replicas (FreeVolumeCount >= 2) found for volume %d to use as source for EC encoding", vid)
+			return nil, fmt.Errorf("no healthy replicas (FreeVolumeCount >= 2) found for volume %d to use as source for EC encoding", vid)
 		}
 		filteredLocations[vid] = filteredLocs
 	}
@@ -284,7 +404,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		}
 	}
 	if err := ewg.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Sync replicas and select the best one for each volume (with highest file count)
@@ -295,11 +415,36 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		collection := volumeIdToCollection[vid]
 
 		// Sync missing entries between replicas, then select the best one
-		bestLoc, selectErr := syncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
+		bestLoc, selectErr := volume_replica.SyncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
 		if selectErr != nil {
-			return fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
+			return nil, fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
 		}
 		bestReplicas[vid] = bestLoc
+	}
+
+	// Re-attempt the orphan sweep on the nodes skipped as unreachable, now that
+	// any node that recovered during readonly-marking and replica sync answers
+	// again. A node whose teardown now succeeds is clean (and the generation host
+	// re-wipes its own disks regardless), so it leaves the skipped set and can be
+	// a balance source/target — otherwise its shards would never distribute off
+	// it. A node that is still down stays skipped and excluded, preserving the
+	// leniency for a genuinely-down node; such a node also cannot be the
+	// generation host below, since VolumeEcShardsGenerate would fail to read .dat.
+	if err := resweepSkippedNodes(commandEnv, skippedNodes, volumeIds, volumeIdToCollection, maxParallelization); err != nil {
+		return nil, err
+	}
+
+	// A selected generation host still in skippedNodes after the re-sweep was
+	// transport-down when we tried to clean it, so its stale orphans were never
+	// removed and EcBalance excludes it as both source and target. If it recovers
+	// just in time for generation, all shards land on a node we can neither clean
+	// nor balance off — a single point of failure that union-only verification
+	// still accepts, after which the originals are deleted. Abort instead.
+	for _, vid := range volumeIds {
+		genHost := bestReplicas[vid].ServerAddress()
+		if _, stillSkipped := skippedNodes[genHost]; stillSkipped {
+			return nil, fmt.Errorf("generate ec shards for volume %d aborted: selected source %s is still skipped after the orphan re-sweep", vid, genHost)
+		}
 	}
 
 	// generate ec shards using the best replica for each volume
@@ -315,7 +460,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		})
 	}
 	if err := ewg.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// mount all ec shards for the converted volume
@@ -333,42 +478,286 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 		})
 	}
 	if err := ewg.Wait(); err != nil {
+		return nil, err
+	}
+
+	return skippedNodes, nil
+}
+
+// clearPreexistingEcShards removes EC shards and index files left over from a
+// previous (failed or partial) encode of the given volume ids, on every node
+// that still reports them, so a fresh encode regenerates from a clean slate.
+// Scans all disk types. The normal .dat/.idx — the source of truth for this
+// encode — is untouched; only orphaned EC artifacts are deleted.
+//
+// Returns the set of nodes skipped as unreachable. A skipped node may still hold
+// an un-deleted orphan from a prior run; if it recovers it must be kept out of
+// this encode's shard distribution, or the balance could install the new
+// generation alongside the stale orphan and mix generations on one node.
+func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, volumeIdToCollection map[needle.VolumeId]string, maxParallelization int) (skipped map[pb.ServerAddress]struct{}, err error) {
+	wanted := make(map[uint32]bool, len(volumeIds))
+	for _, vid := range volumeIds {
+		wanted[uint32(vid)] = true
+	}
+
+	// Note which (node, vid) pairs the topology already reports EC shards for:
+	// those are mounted leftovers and cleaning them is required (fatal on
+	// error). Every other (node, vid) is swept best-effort to catch UNMOUNTED
+	// orphans left by a failed copy — invisible to the heartbeat, so absent
+	// here. A node that is down or holds nothing is a harmless no-op; a node
+	// unreachable now also cannot receive this encode's new generation, so a
+	// surviving orphan there keeps its old identity and the read guard rejects
+	// it. Always delete the full shard-id range so a wider custom ratio's
+	// leftovers are covered too.
+	reportedKey := func(addr pb.ServerAddress, vid uint32) string {
+		return string(addr) + "\x00" + strconv.Itoa(int(vid))
+	}
+	reported := make(map[string]struct{})
+	var nodes []pb.ServerAddress
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		addr := pb.NewServerAddressFromDataNode(dn)
+		nodes = append(nodes, addr)
+		for _, diskInfo := range dn.DiskInfos {
+			for _, ecInfo := range diskInfo.EcShardInfos {
+				if wanted[ecInfo.Id] {
+					reported[reportedKey(addr, ecInfo.Id)] = struct{}{}
+				}
+			}
+		}
+	})
+
+	allShardIds := make([]erasure_coding.ShardId, erasure_coding.MaxShardCount)
+	for i := range allShardIds {
+		allShardIds[i] = erasure_coding.ShardId(i)
+	}
+
+	if len(reported) > 0 {
+		fmt.Printf("clearing stale EC shards reported for %d (node,volume) pair(s) before regenerating...\n", len(reported))
+	}
+	// Nodes skipped as unreachable, accumulated across the concurrent sweep tasks.
+	skipped = make(map[pb.ServerAddress]struct{})
+	var skippedMu sync.Mutex
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, addr := range nodes {
+		for _, vid := range volumeIds {
+			fatal := false
+			if _, ok := reported[reportedKey(addr, uint32(vid))]; ok {
+				fatal = true
+			}
+			collection := volumeIdToCollection[vid]
+			ewg.Add(func() error {
+				if err := unmountAndDeleteEcShardsQuiet(commandEnv.option.GrpcDialOption, collection, vid, addr, allShardIds); err != nil {
+					// Surface a reachable node whose delete genuinely failed (its orphan would
+					// be re-stamped by a later copy installing the new .vif). A missing
+					// full_teardown ack from a reachable pre-upgrade node is fatal too: it may
+					// still hold an orphan a later copy would re-stamp into the new generation.
+					// Stay best-effort only for a node that is truly unreachable: codes.Unavailable
+					// alone is ambiguous — a genuinely-down node and a reachable Rust volume
+					// server in maintenance mode both return it (a Go server returns Unknown for
+					// maintenance, already fatal above). Confirm with a non-maintenance-gated Ping
+					// before skipping; skip only when the Ping itself transport-failed (nodeDown).
+					// A reachable maintenance node (nodeUp) CAN receive this generation, and an
+					// inconclusive Ping (nodeLivenessUnknown, e.g. a pre-Ping server returning
+					// Unimplemented — which means the node is up) does not prove the node is down,
+					// so both stay fatal rather than silently leaving a stale EC generation.
+					if fatal || errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) ||
+						classifyNodeLiveness(pingVolumeServer(commandEnv.option.GrpcDialOption, addr)) != nodeDown {
+						return fmt.Errorf("clear stale ec shards for volume %d on %s: %w", vid, addr, err)
+					}
+					glog.V(1).Infof("orphan sweep: volume %d on %s skipped (unreachable): %v", vid, addr, err)
+					skippedMu.Lock()
+					skipped[addr] = struct{}{}
+					skippedMu.Unlock()
+				}
+				return nil
+			})
+		}
+	}
+	if err := ewg.Wait(); err != nil {
+		return nil, err
+	}
+	return skipped, nil
+}
+
+// resweepSkippedNodes re-attempts the orphan teardown on the nodes that the
+// initial sweep skipped as unreachable, just before shard generation. A node
+// that recovered in the meantime — and is therefore eligible to host this
+// encode's generation — has its teardown retried; if it now fully succeeds it is
+// removed from skipped so the rebalance can use it as a source and move its
+// shards off, instead of stranding all shards on the single generation host and
+// collapsing fault tolerance. A node still transport-down stays skipped (the
+// same leniency the initial sweep grants), and a node that came back reachable
+// but whose delete genuinely failed is fatal, exactly as in the initial sweep,
+// so a stale generation is never silently left behind. Mutates skipped in place.
+func resweepSkippedNodes(commandEnv *CommandEnv, skipped map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId, volumeIdToCollection map[needle.VolumeId]string, maxParallelization int) error {
+	if len(skipped) == 0 {
+		return nil
+	}
+
+	allShardIds := make([]erasure_coding.ShardId, erasure_coding.MaxShardCount)
+	for i := range allShardIds {
+		allShardIds[i] = erasure_coding.ShardId(i)
+	}
+
+	addrs := make([]pb.ServerAddress, 0, len(skipped))
+	for addr := range skipped {
+		addrs = append(addrs, addr)
+	}
+
+	fmt.Printf("re-checking %d node(s) skipped by the orphan sweep before generating shards...\n", len(addrs))
+
+	// A node still down on every retried vid stays skipped; one that fully
+	// succeeds is un-skipped. Track per-node whether any retry still failed
+	// (down) so a node whose state is mixed across vids never gets un-skipped.
+	stillDown := make(map[pb.ServerAddress]struct{})
+	var mu sync.Mutex
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, addr := range addrs {
+		for _, vid := range volumeIds {
+			collection := volumeIdToCollection[vid]
+			ewg.Add(func() error {
+				if err := unmountAndDeleteEcShardsQuiet(commandEnv.option.GrpcDialOption, collection, vid, addr, allShardIds); err != nil {
+					// Same decision as the initial sweep: a reachable node whose delete
+					// genuinely failed (or did not ack a full teardown, or whose liveness is
+					// inconclusive) is fatal, since it could hold an orphan a later copy
+					// re-stamps into this generation. Only a node still transport-down stays
+					// skipped.
+					if errors.Is(err, errFullTeardownNotAcked) || !isNodeUnreachable(err) ||
+						classifyNodeLiveness(pingVolumeServer(commandEnv.option.GrpcDialOption, addr)) != nodeDown {
+						return fmt.Errorf("re-clear stale ec shards for volume %d on %s: %w", vid, addr, err)
+					}
+					glog.V(1).Infof("orphan re-sweep: volume %d on %s still skipped (unreachable): %v", vid, addr, err)
+					mu.Lock()
+					stillDown[addr] = struct{}{}
+					mu.Unlock()
+				}
+				return nil
+			})
+		}
+	}
+	if err := ewg.Wait(); err != nil {
 		return err
 	}
 
+	for _, addr := range addrs {
+		if _, down := stillDown[addr]; !down {
+			delete(skipped, addr)
+			glog.V(0).Infof("orphan re-sweep: node %s recovered and was cleaned; it will participate in the EC rebalance", addr)
+		}
+	}
 	return nil
 }
 
+// isNodeUnreachable reports whether err means the volume server could not be
+// reached at all, as opposed to an RPC that reached the node and failed. Only an
+// unreachable node is safe to skip in the orphan sweep. A dead peer surfaces as
+// a gRPC codes.Unavailable from the RPC (the dial is lazy, so it never fails at
+// connect time); any non-status error reached node logic and is treated as
+// reachable, so the sweep stays fatal rather than silently leaving stale state.
+func isNodeUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.Unavailable
+}
+
+// nodeLiveness is the tri-state result of a pingVolumeServer probe.
+type nodeLiveness int
+
+const (
+	// nodeUp: Ping succeeded — the node is reachable (e.g. a Rust volume server
+	// in maintenance mode that fails the delete but answers Ping).
+	nodeUp nodeLiveness = iota
+	// nodeDown: Ping itself transport-failed with codes.Unavailable — the node is
+	// confirmed unreachable. The only state the orphan sweep may skip.
+	nodeDown
+	// nodeLivenessUnknown: Ping reached failing logic with any non-Unavailable
+	// code (Internal, ResourceExhausted, Unimplemented from a pre-Ping server, …)
+	// or a non-status error. This does NOT prove the node is down, so it is fatal.
+	nodeLivenessUnknown
+)
+
+// classifyNodeLiveness maps a pingVolumeServer error into the tri-state. A nil
+// error is nodeUp, a transport codes.Unavailable is nodeDown (reusing the same
+// rule as isNodeUnreachable), and every other Ping failure is nodeLivenessUnknown.
+func classifyNodeLiveness(pingErr error) nodeLiveness {
+	if pingErr == nil {
+		return nodeUp
+	}
+	if isNodeUnreachable(pingErr) {
+		return nodeDown
+	}
+	return nodeLivenessUnknown
+}
+
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
-	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
-	if err != nil {
-		return fmt.Errorf("fetch topology for shard verification: %w", err)
-	}
+	// Shard relocations from the preceding EC balance reach the master via
+	// volume-server heartbeats, so freshly distributed shards may not all be
+	// visible in the master topology immediately. Poll a few times before
+	// concluding the shard set is incomplete, so a heartbeat-propagation lag is
+	// not mistaken for missing data. After the retries: a volume below the
+	// recoverable threshold (dataShards) aborts the deletion; a recoverable
+	// but degraded set proceeds with a warning, since the missing shards can
+	// be rebuilt from the survivors while keeping the source next to live
+	// shards is the more dangerous mixed state.
+	const maxAttempts = 10
+	const retryInterval = 2 * time.Second
 
-	for _, vid := range volumeIds {
-		nodeShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
-
-		var union erasure_coding.ShardBits
-		for _, info := range nodeShards {
-			union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
+	var lastErr error
+	var lastDegraded []string
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
+		if err != nil {
+			return fmt.Errorf("fetch topology for shard verification: %w", err)
 		}
 
-		totalShards := erasure_coding.TotalShardsCount
-		if err := erasure_coding.RequireFullShardSet(uint32(vid), union, totalShards); err != nil {
-			summary := make([]string, 0, len(nodeShards))
-			for node, info := range nodeShards {
-				summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
+		lastErr = nil
+		lastDegraded = lastDegraded[:0]
+		for _, vid := range volumeIds {
+			nodeShards, _ := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+
+			var union erasure_coding.ShardBits
+			for _, info := range nodeShards {
+				union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
 			}
-			sort.Strings(summary)
-			glog.Errorf("EC shard verification failed for volume %d on diskType %q: %v; observed: %v",
-				vid, diskType.ReadableString(), err, summary)
-			return fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
+
+			totalShards := erasure_coding.TotalShardsCount
+			degraded, err := erasure_coding.RequireRecoverableShardSet(uint32(vid), union, erasure_coding.DataShardsCount, totalShards)
+			if err != nil {
+				summary := make([]string, 0, len(nodeShards))
+				for node, info := range nodeShards {
+					summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
+				}
+				sort.Strings(summary)
+				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
+				break
+			}
+			if degraded {
+				lastDegraded = append(lastDegraded, fmt.Sprintf("volume %d: %d/%d shards", vid, union.Count(), totalShards))
+				continue
+			}
+
+			glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
+				vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
 		}
 
-		glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
-			vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
+		if lastErr == nil && len(lastDegraded) == 0 {
+			return nil
+		}
+		if attempt < maxAttempts-1 {
+			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v %v",
+				attempt+1, maxAttempts, lastErr, lastDegraded)
+			time.Sleep(retryInterval)
+		}
 	}
 
+	if lastErr != nil {
+		glog.Errorf("EC shard verification failed after %d attempts: %v", maxAttempts, lastErr)
+		return lastErr
+	}
+	glog.Warningf("EC shard set incomplete but recoverable after %d attempts, proceeding with source deletion (rebuild missing shards with ec.rebuild): %v",
+		maxAttempts, lastDegraded)
 	return nil
 }
 

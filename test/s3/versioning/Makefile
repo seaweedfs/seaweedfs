@@ -10,7 +10,11 @@ MASTER_PORT := 9333
 VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
-TEST_PATTERN := TestVersioning
+# Run every test in the suite by default. "TestVersioning" used to leave whole
+# tests (bucket creation, suspended delete, directory/version listing) ungated.
+# Opt-in stress tests are matched by "." but self-skip without ENABLE_STRESS_TESTS
+# (they run with it set in their own targets), so they don't actually execute here.
+TEST_PATTERN := .
 
 .DEFAULT_GOAL := help
 

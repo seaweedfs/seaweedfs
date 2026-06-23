@@ -86,7 +86,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}()
 
 	if err := c.collectVolumeIds(); err != nil {
-		return parseErr
+		return err
 	}
 
 	if *c.concurrency > 0 {
@@ -194,7 +194,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 			return nil
 		}
 		if *c.verbose {
-			fmt.Fprintf(c.writer, "file: %s needles:%d verifed\n", entryPath, chunkCount)
+			fmt.Fprintf(c.writer, "file: %s needles:%d verified\n", entryPath, chunkCount)
 		}
 		fileCount++
 		return nil
@@ -280,7 +280,7 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 
 func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errCount uint64, err error) {
 	timeNowAtSec := time.Now().Unix()
-	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false,
+	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if c.modifyTimeAgoAtSec > 0 {
 				if entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec < timeNowAtSec-entry.Entry.Attributes.Mtime {
@@ -312,7 +312,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 				itemPath := string(i.path)
 				if c.verifyEntry(itemPath, i.chunks, itemErrCount, &wg) {
 					if *c.verbose {
-						fmt.Fprintf(c.writer, "file: %s needles:%d verifed\n", itemPath, len(i.chunks))
+						fmt.Fprintf(c.writer, "file: %s needles:%d verified\n", itemPath, len(i.chunks))
 					}
 					fileCount++
 				}

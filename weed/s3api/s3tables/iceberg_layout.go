@@ -26,7 +26,19 @@ var (
 		"data":     true,
 	}
 
-	// Patterns for valid metadata files
+	// Patterns for valid metadata files.
+	//
+	// Note: Iceberg engines (Flink/Spark/Trino, plus different Iceberg versions)
+	// use a variety of manifest/snapshot naming schemes that the strict patterns
+	// below don't cover - e.g. Flink emits manifests like
+	// "{flink-job-id}-{checkpoint}-{operator-id}-{n}.avro". The Iceberg spec
+	// itself doesn't mandate a specific filename; engines just need a stable
+	// unique name. So in addition to the strict patterns we keep below for
+	// documentation, the catch-all entries at the bottom accept any
+	// *.avro and *.metadata.json filename composed of safe characters
+	// ([A-Za-z0-9._-]). The catch-all deliberately does NOT cover arbitrary
+	// *.json — only the *.metadata.json suffix — to avoid letting random
+	// JSON drop into the metadata/ directory.
 	metadataFilePatterns = []*regexp.Regexp{
 		regexp.MustCompile(`^v\d+\.metadata\.json$`),                   // Table metadata: v1.metadata.json, v2.metadata.json
 		regexp.MustCompile(`^snap-\d+-\d+-` + uuidPattern + `\.avro$`), // Snapshot manifests: snap-123-1-uuid.avro
@@ -35,6 +47,10 @@ var (
 		regexp.MustCompile(`^version-hint\.text$`),                     // Version hint file
 		regexp.MustCompile(`^` + uuidPattern + `\.metadata\.json$`),    // UUID-named metadata
 		regexp.MustCompile(`^[^/]+\.stats$`),                           // Trino/Iceberg stats files
+		// Catch-all for Iceberg writer-generated manifest / metadata files
+		// whose naming we can't anticipate across engines and versions.
+		regexp.MustCompile(`^[A-Za-z0-9._-]+\.avro$`),
+		regexp.MustCompile(`^[A-Za-z0-9._-]+\.metadata\.json$`),
 	}
 
 	// Patterns for valid data files

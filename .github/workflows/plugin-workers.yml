@@ -3,8 +3,20 @@ name: "Plugin Worker Integration Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'test/plugin_workers/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/plugin-workers.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'test/plugin_workers/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/plugin-workers.yml'
 
 permissions:
   contents: read
@@ -33,7 +45,7 @@ jobs:
         id: go
 
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run plugin worker tests
         run: go test -v ./${{ matrix.path }}

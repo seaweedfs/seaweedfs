@@ -32,7 +32,10 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                     <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumes()">
-                    <i class="fas fa-download me-1"></i>Export
+                    <i class="fas fa-download me-1"></i>Export Page
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumeList()" title="Download the full cluster volume list as JSON">
+                    <i class="fas fa-file-export me-1"></i>Export All (JSON)
                 </button>
             </div>
         </div>

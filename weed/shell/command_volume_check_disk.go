@@ -43,6 +43,12 @@ type volumeCheckDisk struct {
 	syncDeletions      bool
 	fixReadOnly        bool
 	nonRepairThreshold float64
+	// resurrectMissingNeedles controls whether a needle present on the source
+	// but entirely absent on the target is pushed back. Default false: an
+	// absent needle is indistinguishable from a vacuumed delete, so the safe
+	// default never raises deleted data. No caller sets this true today; it is
+	// the seam for a future tombstone-aware repair path.
+	resurrectMissingNeedles bool
 
 	ewg *ErrorWaitGroup
 }
@@ -510,9 +516,8 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 	// hash join, can be more efficient
 	var missingNeedles []needle_map.NeedleValue
 	var partiallyDeletedNeedles []needle_map.NeedleValue
+	var skippedAbsentNeedles int
 	var counter int
-	doCutoffOfLastNeedle := true
-	cutoffFromAtNs := uint64(vcd.now.UnixNano())
 
 	minuend.DescendingVisit(func(minuendValue needle_map.NeedleValue) error {
 		counter++
@@ -520,26 +525,33 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 			if minuendValue.Size.IsDeleted() {
 				return nil
 			}
-			if doCutoffOfLastNeedle {
-				if needleMeta, err := readNeedleMeta(vcd.grpcDialOption(), pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, minuendValue); err == nil {
-					// needles older than the cutoff time are not missing yet
-					if needleMeta.AppendAtNs > cutoffFromAtNs {
-						return nil
-					}
-					doCutoffOfLastNeedle = false
-				}
+			// A key present-and-live on the source but entirely absent on the
+			// target is ambiguous: either a genuine missing write, or a needle
+			// that was deleted on the target and then vacuumed away (its index
+			// entry, including any tombstone, is gone after vacuum). An
+			// individual needle's AppendAtNs has no monotonic relation to a
+			// vacuum watermark, so it cannot distinguish the two. Without
+			// positive proof the absence is a missing write (rather than a
+			// vacuumed delete), the safe default is to NOT resurrect: a real
+			// missing write may go unrepaired until a tombstone-aware path
+			// exists, but we never raise back data the operator deleted.
+			if !vcd.resurrectMissingNeedles {
+				skippedAbsentNeedles++
+				return nil
 			}
 			missingNeedles = append(missingNeedles, minuendValue)
 		} else {
 			if minuendValue.Size.IsDeleted() && !subtrahendValue.Size.IsDeleted() {
 				partiallyDeletedNeedles = append(partiallyDeletedNeedles, minuendValue)
 			}
-			if doCutoffOfLastNeedle {
-				doCutoffOfLastNeedle = false
-			}
 		}
 		return nil
 	})
+
+	if skippedAbsentNeedles > 0 {
+		vcd.write("volume %d %s: not resurrecting %d needle(s) absent on %s (cannot prove they are missing writes vs vacuumed deletes)",
+			source.info.Id, source.location.dataNode.Id, skippedAbsentNeedles, target.location.dataNode.Id)
+	}
 
 	vcd.write("volume %d %s has %d entries, %s missed %d and partially deleted %d entries",
 		source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles), len(partiallyDeletedNeedles))

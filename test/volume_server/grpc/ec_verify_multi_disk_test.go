@@ -159,14 +159,21 @@ func TestVolumeEcShardsInfoReturnsAllShardsAcrossDisks(t *testing.T) {
 	// End-to-end assertion via the same helper the worker uses to gate
 	// source-volume deletion (weed/worker/tasks/erasure_coding/ec_task.go
 	// verifyEcShardsBeforeDelete). The union across destinations is what
-	// RequireFullShardSet measures; with one destination that holds every
-	// shard, the union must cover dataShards + parityShards.
+	// RequireRecoverableShardSet measures; with one destination that holds
+	// every shard, the union must cover dataShards + parityShards without
+	// being reported as degraded.
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	servers := []string{clusterHarness.VolumeServerAddress()}
 	union, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, volumeID, servers, dialOption)
-	if err := erasure_coding.RequireFullShardSet(volumeID, union, erasure_coding.TotalShardsCount); err != nil {
+	degraded, err := erasure_coding.RequireRecoverableShardSet(
+		volumeID, union, erasure_coding.DataShardsCount, erasure_coding.TotalShardsCount)
+	if err != nil {
 		t.Fatalf("verifyEcShardsBeforeDelete-equivalent gate failed: %v\nper-server inventory: %s\nper-disk layout: %v",
 			err, erasure_coding.SummarizeShardInventory(perServer), postReconcileLayout)
+	}
+	if degraded {
+		t.Fatalf("verifyEcShardsBeforeDelete-equivalent gate reported a degraded shard set\nper-server inventory: %s\nper-disk layout: %v",
+			erasure_coding.SummarizeShardInventory(perServer), postReconcileLayout)
 	}
 	if got, want := union.Count(), erasure_coding.TotalShardsCount; got != want {
 		t.Fatalf("VerifyShardsAcrossServers union covered %d/%d shards (per-server=%s, layout=%v)",

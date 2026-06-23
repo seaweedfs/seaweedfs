@@ -66,6 +66,101 @@ func TestExtractV4AuthInfoFromHeader_S3Tables(t *testing.T) {
 	}
 }
 
+func TestParseSignedHeaderRejectsEmptyHeaderNames(t *testing.T) {
+	cases := []string{
+		"SignedHeaders=host;",
+		"SignedHeaders=;host",
+		"SignedHeaders=host;;x-amz-date",
+	}
+
+	for _, tc := range cases {
+		if _, errCode := parseSignedHeader(tc); errCode != s3err.ErrMissingFields {
+			t.Fatalf("parseSignedHeader(%q) errCode = %v, want %v", tc, errCode, s3err.ErrMissingFields)
+		}
+	}
+}
+
+func TestExtractV4AuthInfoFromQueryRejectsEmptySignedHeaderNames(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []string{
+		"host;",
+		";host",
+		"host;;x-amz-date",
+	}
+
+	for _, tc := range cases {
+		t.Run(tc, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, "http://localhost/bucket/object", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+
+			query := req.URL.Query()
+			query.Set("X-Amz-Algorithm", signV4Algorithm)
+			query.Set("X-Amz-Credential", fmt.Sprintf("AKIAIOSFODNN7EXAMPLE/%s/us-east-1/s3/aws4_request", now.Format(yyyymmdd)))
+			query.Set("X-Amz-Date", now.Format(iso8601Format))
+			query.Set("X-Amz-Expires", "60")
+			query.Set("X-Amz-Signature", "dummy")
+			query.Set("X-Amz-SignedHeaders", tc)
+			req.URL.RawQuery = query.Encode()
+
+			if _, errCode := extractV4AuthInfoFromQuery(req); errCode != s3err.ErrMissingFields {
+				t.Fatalf("extractV4AuthInfoFromQuery(%q) errCode = %v, want %v", tc, errCode, s3err.ErrMissingFields)
+			}
+		})
+	}
+}
+
+func TestGetCanonicalQueryString(t *testing.T) {
+	tests := []struct {
+		name        string
+		target      string
+		isPresigned bool
+		want        string
+	}{
+		{
+			name:   "sorts repeated values",
+			target: "http://localhost/bucket/key?partNumber=2&partNumber=10&uploadId=z",
+			want:   "partNumber=10&partNumber=2&uploadId=z",
+		},
+		{
+			name:        "removes presigned signature",
+			target:      "http://localhost/bucket/key?X-Amz-Date=20260618T000000Z&X-Amz-Signature=dummy&X-Amz-SignedHeaders=host",
+			isPresigned: true,
+			want:        "X-Amz-Date=20260618T000000Z&X-Amz-SignedHeaders=host",
+		},
+		{
+			name:   "sorts mixed single and repeated parameters",
+			target: "http://localhost/bucket/key?z=last&a=2&bucket=b&a=1",
+			want:   "a=1&a=2&bucket=b&z=last",
+		},
+		{
+			name:   "encodes query parameter values",
+			target: "http://localhost/bucket/key?prefix=photos/2026&marker=a%2Bb",
+			want:   "marker=a%2Bb&prefix=photos%2F2026",
+		},
+		{
+			name:   "empty query string",
+			target: "http://localhost/bucket/key",
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, tt.target, nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+
+			got := getCanonicalQueryString(req, tt.isPresigned)
+			if got != tt.want {
+				t.Fatalf("canonical query = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildPathWithForwardedPrefix(t *testing.T) {
 	tests := []struct {
 		name            string

@@ -29,6 +29,7 @@ type renameTestStore struct {
 	findCalls map[string]int
 	commitErr error
 	deleteErr error
+	findDelay time.Duration // optional: widen check-then-act windows in tests
 }
 
 func newRenameTestStore() *renameTestStore {
@@ -69,6 +70,9 @@ func (s *renameTestStore) UpdateEntry(_ context.Context, entry *filer.Entry) err
 }
 
 func (s *renameTestStore) FindEntry(_ context.Context, p util.FullPath) (*filer.Entry, error) {
+	if s.findDelay > 0 {
+		time.Sleep(s.findDelay)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.findCalls[string(p)]++
