@@ -203,7 +203,12 @@ func applyNamespacePropertyUpdates(current map[string]string, removals []string,
 	}
 
 	summary := UpdateNamespacePropertiesResponse{Removed: []string{}, Updated: []string{}, Missing: []string{}}
+	seen := make(map[string]struct{}, len(removals))
 	for _, key := range removals {
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
 		if _, ok := properties[key]; ok {
 			delete(properties, key)
 			summary.Removed = append(summary.Removed, key)

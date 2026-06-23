@@ -44,3 +44,16 @@ func TestApplyNamespacePropertyUpdatesRemoveExisting(t *testing.T) {
 		t.Errorf("unexpected summary: %+v", summary)
 	}
 }
+
+func TestApplyNamespacePropertyUpdatesDuplicateRemovals(t *testing.T) {
+	// A repeated removal key must not be reported as both removed and missing.
+	_, summary := applyNamespacePropertyUpdates(
+		map[string]string{"a": "1"}, []string{"a", "a"}, nil)
+
+	if !reflect.DeepEqual(summary.Removed, []string{"a"}) {
+		t.Errorf("Removed = %v, want [a]", summary.Removed)
+	}
+	if len(summary.Missing) != 0 {
+		t.Errorf("Missing = %v, want []", summary.Missing)
+	}
+}
