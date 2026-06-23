@@ -125,10 +125,13 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	switch input.Flags {
 	case sys.XATTR_CREATE:
 		if len(oldData) > 0 {
-			break
+			return fuse.Status(syscall.EEXIST)
 		}
 		fallthrough
 	case sys.XATTR_REPLACE:
+		if len(oldData) == 0 {
+			return fuse.ENODATA
+		}
 		fallthrough
 	default:
 		// data aliases the FUSE request's pooled input buffer, which is
