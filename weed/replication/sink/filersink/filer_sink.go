@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 
@@ -244,18 +245,12 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		}
 		// glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(context.Background(), client, lookupRequest); err == nil {
-			if filer.ETag(resp.Entry) == filer.ETag(entry) {
-				glog.V(3).Infof("already replicated %s", key)
+			if destinationSatisfiesSource(resp.Entry, entry) {
+				glog.V(3).Infof("skip overwriting %s", key)
 				return nil
 			}
-			if getEntryMtimeNs(resp.Entry) >= getEntryMtimeNs(entry) {
-				if filer.FileSize(resp.Entry) >= filer.FileSize(entry) {
-					glog.V(3).Infof("skip overwriting %s", key)
-					return nil
-				}
-				glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; overwriting from source",
-					key, filer.FileSize(resp.Entry), filer.FileSize(entry))
-			}
+			glog.Warningf("re-replicating %s: destination not current (dst %d chunks, src %d chunks)",
+				key, len(resp.Entry.GetChunks()), len(entry.GetChunks()))
 		}
 
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
@@ -331,14 +326,14 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	// now, which for a rename is newParentPath/newEntry.Name, not the old key.
 	targetKey := updatedEntryKey(key, newParentPath, newEntry)
 
-	switch chooseUpdateAction(existingEntry, newEntry) {
+	switch chooseUpdateAction(existingEntry, oldEntry, newEntry) {
 	case updateSkip:
 		// a newer, complete version already landed (out-of-order); leave it
 		glog.V(2).Infof("late updates %s", key)
 		return true, nil
 	case updateRepair:
-		glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; re-replicating full source content",
-			key, filer.FileSize(existingEntry), filer.FileSize(newEntry))
+		glog.Warningf("repair %s: destination diverged from source (dst %d chunks, src %d chunks); re-replicating full source content",
+			key, len(existingEntry.GetChunks()), len(newEntry.GetChunks()))
 		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry))
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
@@ -470,12 +465,166 @@ func updatedEntryKey(key, newParentPath string, newEntry *filer_pb.Entry) string
 	return string(util.NewFullPath(targetDir, newEntry.Name))
 }
 
-func chooseUpdateAction(existing, incoming *filer_pb.Entry) updateAction {
-	if getEntryMtimeNs(existing) <= getEntryMtimeNs(incoming) {
-		return updateNormal
+func chooseUpdateAction(existing, oldEntry, incoming *filer_pb.Entry) updateAction {
+	exNs, inNs := getEntryMtimeNs(existing), getEntryMtimeNs(incoming)
+	if exNs > inNs {
+		// Destination is strictly newer: incoming is a stale/out-of-order replay of
+		// an older source version, so never roll the destination back to it — even
+		// when the newer destination is smaller (a legitimate truncate). A newer copy
+		// that is itself incomplete is reconciled by -initialSnapshot, not by an
+		// older event.
+		return updateSkip
 	}
-	if filer.FileSize(existing) < filer.FileSize(incoming) {
-		return updateRepair
+	// Destination at or behind incoming. updateNormal applies the incremental
+	// oldEntry->incoming diff, valid only when the destination already holds
+	// oldEntry's chunks. A cheap, allocation-free positional identity match proves
+	// that for the common (in-sync) path; only when it fails — divergence, chunk
+	// reordering, or an out-of-band destination — do we run the precise O(n log n)
+	// checks.
+	if existing != nil && oldEntry != nil && !destinationMatchesReference(existing, oldEntry) {
+		// Truncated/gapped: the destination does not cover every byte range oldEntry
+		// holds. Range containment (not a scalar byte count, attr FileSize, or ETag)
+		// catches it for any destination, and is safe at equal mtime since a complete
+		// destination always covers oldEntry.
+		if !coversReference(existing, oldEntry) {
+			return updateRepair
+		}
+		// Stale superseded chunk at full coverage: a chunk this backup wrote whose
+		// source oldEntry no longer references. Restricted to backup-written chunks
+		// (out-of-band rsync/direct chunks are ignored) AND to a strictly-older
+		// destination — at equal mtime same-second versions cannot be ordered, so
+		// defer rather than risk a rollback (reliable ordering is a separate fix).
+		if exNs < inNs && hasStaleBackupChunk(existing, oldEntry) {
+			return updateRepair
+		}
 	}
-	return updateSkip
+	return updateNormal
+}
+
+// destinationSatisfiesSource reports whether an existing destination entry already
+// satisfies the incoming source entry, so CreateEntry can skip the write. Coverage
+// is checked first: a chunk-truncated destination (covering fewer bytes than the
+// source) must be re-replicated even when its attr.Md5-backed ETag still matches
+// the source, so ETag equality must never bypass the coverage check. A destination
+// that is at least as complete is skippable when it has identical content (ETag) or
+// is a newer-or-equal version.
+func destinationSatisfiesSource(existing, incoming *filer_pb.Entry) bool {
+	if existing == nil {
+		return false
+	}
+	exNs, inNs := getEntryMtimeNs(existing), getEntryMtimeNs(incoming)
+	if exNs > inNs {
+		return true // destination strictly newer: incoming is older → keep destination
+	}
+	if !destinationMatchesReference(existing, incoming) {
+		if !coversReference(existing, incoming) {
+			return false // missing a byte range the source covers (truncated/gapped)
+		}
+		if exNs < inNs && hasStaleBackupChunk(existing, incoming) {
+			return false // a provably-older destination holds a superseded backup chunk
+		}
+	}
+	if filer.ETag(existing) == filer.ETag(incoming) {
+		return true // identical content
+	}
+	return exNs >= inNs // equal mtime → keep (deferred); strictly older → re-replicate
+}
+
+// destinationMatchesReference is a cheap, allocation-free sufficient check that the
+// destination already holds exactly the reference's chunks: equal count and, in
+// order, each destination chunk was replicated from the corresponding reference
+// chunk (SourceFileId == reference FileId). True ⇒ full coverage and no stale
+// chunk, so updateNormal/skip is safe and the O(n log n) range and identity checks
+// can be skipped — the common in-sync path. False is never a false positive: a
+// reordered, diverged, or out-of-band (rsync/direct) destination just falls back to
+// the precise checks.
+func destinationMatchesReference(existing, reference *filer_pb.Entry) bool {
+	ex, ref := existing.GetChunks(), reference.GetChunks()
+	if len(ex) != len(ref) {
+		return false
+	}
+	for i := range ref {
+		if ex[i].SourceFileId == "" || ex[i].SourceFileId != ref[i].GetFileIdString() {
+			return false
+		}
+	}
+	return true
+}
+
+// hasStaleBackupChunk reports whether existing holds a chunk that this backup
+// wrote (SourceFileId set) whose source chunk `reference` no longer references.
+// That means an overwrite/deletion event was missed: the destination still carries
+// the superseded source chunk's bytes even though total coverage looks full, so the
+// incremental diff cannot fix it. Chunks without SourceFileId (seeded out-of-band,
+// e.g. rsync or a direct write) are ignored, so such destinations keep their normal
+// path and are never re-copied on this signal.
+func hasStaleBackupChunk(existing, reference *filer_pb.Entry) bool {
+	if existing == nil || reference == nil {
+		return false
+	}
+	refFids := make(map[string]bool, len(reference.GetChunks()))
+	for _, c := range reference.GetChunks() {
+		refFids[c.GetFileIdString()] = true
+	}
+	for _, c := range existing.GetChunks() {
+		if c.SourceFileId == "" {
+			continue // not backup-written → do not judge staleness
+		}
+		if !refFids[c.SourceFileId] {
+			return true
+		}
+	}
+	return false
+}
+
+// mergedIntervals returns the entry's chunk byte ranges, sorted and merged
+// (overlapping or touching ranges combined). Chunk manifests are counted by their
+// own offset/size span, which already covers the range they wrap, so no manifest
+// resolution is needed.
+func mergedIntervals(entry *filer_pb.Entry) [][2]int64 {
+	if entry == nil {
+		return nil
+	}
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		return nil
+	}
+	ivs := make([][2]int64, 0, len(chunks))
+	for _, c := range chunks {
+		ivs = append(ivs, [2]int64{int64(c.Offset), int64(c.Offset) + int64(c.Size)})
+	}
+	sort.Slice(ivs, func(i, j int) bool { return ivs[i][0] < ivs[j][0] })
+	merged := make([][2]int64, 0, len(ivs))
+	for _, iv := range ivs {
+		if n := len(merged); n > 0 && iv[0] <= merged[n-1][1] {
+			if iv[1] > merged[n-1][1] {
+				merged[n-1][1] = iv[1]
+			}
+			continue
+		}
+		merged = append(merged, iv)
+	}
+	return merged
+}
+
+// coversReference reports whether existing's chunks cover every byte range that
+// reference's chunks cover. Equal total coverage is not sufficient proof — extra
+// chunks at other offsets can hide a missing range — so containment is verified
+// range by range against the merged interval sets.
+func coversReference(existing, reference *filer_pb.Entry) bool {
+	ex := mergedIntervals(existing)
+	i := 0
+	for _, r := range mergedIntervals(reference) {
+		lo, hi := r[0], r[1]
+		for lo < hi {
+			for i < len(ex) && ex[i][1] <= lo {
+				i++
+			}
+			if i >= len(ex) || ex[i][0] > lo {
+				return false // a byte in reference is not covered by existing
+			}
+			lo = ex[i][1]
+		}
+	}
+	return true
 }
