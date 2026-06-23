@@ -63,7 +63,7 @@ func ParseFilerUrl(entryPath string) (filerServer string, filerPort int64, path 
 func ParseHostPort(hostPort string) (filerServer string, filerPort int64, err error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		err = fmt.Errorf("failed to parse %s\n", hostPort)
+		err = fmt.Errorf("failed to parse %s", hostPort)
 		return
 	}
 
