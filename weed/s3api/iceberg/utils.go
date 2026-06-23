@@ -107,8 +107,20 @@ func nameValidationError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "namespace name") || strings.Contains(msg, "table name")
+	// Match the validator's own phrasings rather than a bare "namespace name"/
+	// "table name" so unrelated faults (e.g. "failed to resolve table name")
+	// aren't misreported as client errors. Lowercased for resilience to
+	// capitalization changes.
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"invalid namespace name", "namespace name must", "namespace name cannot",
+		"invalid table name", "table name must", "table name cannot",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeManagerError maps a residual s3tables manager error to a response:

@@ -18,9 +18,13 @@ func TestNameValidationError(t *testing.T) {
 		{fmt.Errorf("all filers failed, last error: invalid namespace name: only 'a-z', '0-9', and '_' are allowed"), true},
 		{fmt.Errorf("invalid table name: only 'a-z', '0-9', and '_' are allowed"), true},
 		{fmt.Errorf("namespace name must start with a letter or digit"), true},
+		{fmt.Errorf("namespace name cannot start with reserved prefix 'aws'"), true},
 		{fmt.Errorf("table name must be between 1 and 255 characters"), true},
 		{fmt.Errorf("namespace not found"), false},
 		{fmt.Errorf("all filers failed, last error: rpc timeout"), false},
+		// Unrelated faults that merely mention a name must stay 500.
+		{fmt.Errorf("failed to resolve table name from index"), false},
+		{fmt.Errorf("error fetching namespace name mapping"), false},
 	}
 	for _, c := range cases {
 		if got := nameValidationError(c.err); got != c.want {
