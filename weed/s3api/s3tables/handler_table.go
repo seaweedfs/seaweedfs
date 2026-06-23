@@ -938,6 +938,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		if err := h.deleteDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
+		// A renamed table keeps its data at the original location, so the catalog
+		// path no longer holds it; purge the data directory too when it differs.
+		dataPath := tableDataDirFromMetadataLocation(metadata.MetadataLocation)
+		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
+			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 
