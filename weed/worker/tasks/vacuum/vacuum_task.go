@@ -82,7 +82,7 @@ func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) 
 	t.GetLogger().Info("Checking volume status")
 	targets, currentGarbageRatios, err := t.checkVacuumEligibility(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check vacuum eligibility: %v", err)
+		return fmt.Errorf("failed to check vacuum eligibility: %w", err)
 	}
 
 	if len(targets) == 0 {
@@ -105,7 +105,7 @@ func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) 
 	}).Info("Performing vacuum operation")
 
 	if err := t.performVacuum(ctx); err != nil {
-		return fmt.Errorf("failed to perform vacuum: %v", err)
+		return fmt.Errorf("failed to perform vacuum: %w", err)
 	}
 
 	// Step 3: Verify vacuum results on each target replica.
