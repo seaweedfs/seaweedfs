@@ -100,6 +100,18 @@ type GetNamespaceRequest struct {
 	Namespace      []string `json:"namespace"`
 }
 
+type UpdateNamespaceRequest struct {
+	TableBucketARN string            `json:"tableBucketARN"`
+	Namespace      []string          `json:"namespace"`
+	Properties     map[string]string `json:"properties,omitempty"`
+}
+
+type UpdateNamespaceResponse struct {
+	Namespace      []string          `json:"namespace"`
+	TableBucketARN string            `json:"tableBucketARN"`
+	Properties     map[string]string `json:"properties,omitempty"`
+}
+
 type GetNamespaceResponse struct {
 	Namespace      []string          `json:"namespace"`
 	CreatedAt      time.Time         `json:"createdAt"`
