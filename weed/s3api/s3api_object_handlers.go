@@ -1011,6 +1011,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				}
 				return newStreamErrorWithResponse(cacheErr)
 			} else {
+				// Client disconnected during the cache wait: report cancellation, not 503,
+				// so we don't write to a closed connection.
+				if ctxErr := r.Context().Err(); ctxErr != nil {
+					return ctxErr
+				}
 				// Cache not ready yet; return 503 with Retry-After for client backoff
 				glog.V(1).Infof("streamFromVolumeServers: remote object %s/%s not cached yet, returning 503 for retry", bucket, object)
 				w.Header().Set("Retry-After", "2")
