@@ -129,6 +129,9 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		}
 		fallthrough
 	case sys.XATTR_REPLACE:
+		if len(oldData) == 0 {
+    		return fuse.ENODATA
+    	}
 		fallthrough
 	default:
 		// data aliases the FUSE request's pooled input buffer, which is
