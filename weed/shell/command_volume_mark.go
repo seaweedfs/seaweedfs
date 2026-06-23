@@ -26,8 +26,10 @@ func (c *commandVolumeMark) Name() string {
 func (c *commandVolumeMark) Help() string {
 	return `Mark volume writable or readonly from one volume server, or all volume replicas in one collection
 
-		volume.mark -node <volume server host:port> -volumeId <volume id> -writable or -readonly
-		volume.mark -collection <collection> -writable or -readonly
+	volume.mark -node <volume server host:port> -volumeId <volume id> -writable or -readonly
+	volume.mark -collection <collection> -writable or -readonly
+
+	Use -collection ` + CollectionDefault + ` to target volumes that belong to no named collection.
 `
 }
 
@@ -124,6 +126,12 @@ func collectVolumeMarkTargetsByCollection(topoInfo *master_pb.TopologyInfo, coll
 		return nil, fmt.Errorf("collection is required")
 	}
 
+	// _default targets volumes that belong to no named collection.
+	matchCollection := collection
+	if matchCollection == CollectionDefault {
+		matchCollection = ""
+	}
+
 	var targets []volumeMarkTarget
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if dn == nil {
@@ -132,7 +140,7 @@ func collectVolumeMarkTargetsByCollection(topoInfo *master_pb.TopologyInfo, coll
 		sourceVolumeServer := pb.NewServerAddressFromDataNode(dn)
 		for _, diskInfo := range dn.GetDiskInfos() {
 			for _, v := range diskInfo.GetVolumeInfos() {
-				if v.GetCollection() == collection {
+				if v.GetCollection() == matchCollection {
 					targets = append(targets, volumeMarkTarget{
 						volumeId:           needle.VolumeId(v.GetId()),
 						sourceVolumeServer: sourceVolumeServer,

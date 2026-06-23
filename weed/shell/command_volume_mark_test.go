@@ -79,6 +79,40 @@ func TestCollectVolumeMarkTargetsByCollection(t *testing.T) {
 	}
 }
 
+func TestCollectVolumeMarkTargetsByCollectionMatchesDefaultCollection(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "node-a:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										VolumeInfos: []*master_pb.VolumeInformationMessage{
+											{Id: 1, Collection: ""},
+											{Id: 2, Collection: "photos"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	targets, err := collectVolumeMarkTargetsByCollection(topo, CollectionDefault)
+	if err != nil {
+		t.Fatalf("collectVolumeMarkTargetsByCollection: %v", err)
+	}
+	if len(targets) != 1 || targets[0].volumeId != needle.VolumeId(1) {
+		t.Fatalf("expected only volume 1 from the default collection, got %v", targets)
+	}
+}
+
 func TestCollectVolumeMarkTargetsByCollectionRejectsEmptyCollection(t *testing.T) {
 	_, err := collectVolumeMarkTargetsByCollection(&master_pb.TopologyInfo{}, "")
 	if err == nil || !strings.Contains(err.Error(), "collection is required") {
