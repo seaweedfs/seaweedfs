@@ -142,6 +142,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	// Table operations
 	case "CreateTable":
 		err = h.handleCreateTable(w, r, filerClient)
+	case "RegisterTable":
+		err = h.handleRegisterTable(w, r, filerClient)
 	case "GetTable":
 		err = h.handleGetTable(w, r, filerClient)
 	case "ListTables":
