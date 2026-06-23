@@ -205,6 +205,11 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	// Persist the metadata file only after the catalog registers the view, so a
 	// missing namespace or name collision fails before any bytes hit storage.
 	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		// Roll back the registered view so it doesn't linger pointing at metadata
+		// that was never written.
+		if dropErr := s.dropView(r, namespace, req.Name); dropErr != nil {
+			glog.V(1).Infof("Iceberg: failed to roll back view %s.%s after metadata write error: %v", flattenNamespacePath(namespace), req.Name, dropErr)
+		}
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
 		return
 	}
@@ -275,24 +280,12 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bucketName := getBucketFromPrefix(r)
-	bucketARN := buildTableBucketARN(bucketName)
-	identityName := s3_constants.GetIdentityNameFromContext(r)
-
 	var storedMetadataLocation string
 	if getResp, err := s.getView(r, namespace, viewName); err == nil {
 		storedMetadataLocation = getResp.MetadataLocation
 	}
 
-	deleteReq := &s3tables.DeleteViewRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           viewName,
-	}
-	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteView", deleteReq, nil, identityName)
-	})
+	err := s.dropView(r, namespace, viewName)
 	if err != nil {
 		if isViewNotFound(err) {
 			writeError(w, http.StatusNotFound, "NoSuchViewException", fmt.Sprintf("View does not exist: %s", viewName))
@@ -314,6 +307,20 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// dropView removes a view registration from the catalog.
+func (s *Server) dropView(r *http.Request, namespace []string, viewName string) error {
+	deleteReq := &s3tables.DeleteViewRequest{
+		TableBucketARN: buildTableBucketARN(getBucketFromPrefix(r)),
+		Namespace:      namespace,
+		Name:           viewName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteView", deleteReq, nil, identityName)
+	})
 }
 
 // getView fetches a view's stored metadata pointer from the catalog.

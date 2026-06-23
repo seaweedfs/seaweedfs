@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/apache/iceberg-go"
@@ -26,6 +28,9 @@ import (
 type memFiler struct {
 	filer_pb.SeaweedFilerClient
 	entries map[string]*filer_pb.Entry
+	// failFileCreate, when set, makes CreateEntry fail for non-directory entries,
+	// simulating a metadata-file write error.
+	failFileCreate error
 }
 
 func newMemFiler() *memFiler {
@@ -49,8 +54,21 @@ func (m *memFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDi
 }
 
 func (m *memFiler) CreateEntry(_ context.Context, in *filer_pb.CreateEntryRequest, _ ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
+	if m.failFileCreate != nil && !in.Entry.IsDirectory {
+		return nil, m.failFileCreate
+	}
 	m.entries[path.Join(in.Directory, in.Entry.Name)] = in.Entry
 	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func (m *memFiler) DeleteEntry(_ context.Context, in *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
+	prefix := path.Join(in.Directory, in.Name)
+	for p := range m.entries {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			delete(m.entries, p)
+		}
+	}
+	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
 func (m *memFiler) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
@@ -161,5 +179,25 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 	}
 	if got := fc.entries[metadataKey].Content; !bytes.Equal(got, original) {
 		t.Fatalf("duplicate create clobbered stored metadata:\n got %s\nwant %s", got, original)
+	}
+}
+
+func TestCreateViewRollsBackEntryWhenMetadataWriteFails(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "ns")
+	fc.failFileCreate = errors.New("disk full")
+	s := NewServer(fc, nil)
+
+	w := httptest.NewRecorder()
+	s.handleCreateView(w, newCreateViewRequest(t, "ns", "v", "SELECT 1"))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+
+	// The registered view must be rolled back so it doesn't linger pointing at
+	// metadata that was never written.
+	if _, ok := fc.entries[s3tables.GetTablePath(bucket, "ns", "v")]; ok {
+		t.Fatalf("view entry left behind after metadata write failure")
 	}
 }
