@@ -54,25 +54,19 @@ func parseTagsHeader(tags string) (map[string]string, error) {
 	parsedTags := make(map[string]string)
 	for _, v := range util.StringSplit(tags, "&") {
 		key, value, hasValue := strings.Cut(v, "=")
-		if hasValue {
-			// URL decode both key and value
-			decodedKey, err := url.QueryUnescape(key)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode tag key '%s': %w", key, err)
-			}
-			decodedValue, err := url.QueryUnescape(value)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode tag value '%s': %w", value, err)
-			}
-			parsedTags[decodedKey] = decodedValue
-		} else {
-			// URL decode key for empty value tags
-			decodedKey, err := url.QueryUnescape(key)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode tag key '%s': %w", key, err)
-			}
-			parsedTags[decodedKey] = ""
+		decodedKey, err := url.QueryUnescape(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode tag key '%s': %w", key, err)
 		}
+		if !hasValue {
+			parsedTags[decodedKey] = ""
+			continue
+		}
+		decodedValue, err := url.QueryUnescape(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode tag value '%s': %w", value, err)
+		}
+		parsedTags[decodedKey] = decodedValue
 	}
 	return parsedTags, nil
 }
