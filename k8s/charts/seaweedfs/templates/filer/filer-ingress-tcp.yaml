@@ -44,15 +44,15 @@ spec:
       services:
         - name: {{ $serviceName }}
           port: {{ $.Values.filer.grpcPort }}
-          passthrough: true
+      tls:
+        passthrough: true
     {{- end }}
     {{- else }}
     - match: HostSNI(`*`)
       services:
         - name: {{ $serviceName }}
           port: {{ $.Values.filer.grpcPort }}
-          passthrough: true
+      tls:
+        passthrough: true
     {{- end }}
-  tls:
-    passthrough: true
 {{- end }}
