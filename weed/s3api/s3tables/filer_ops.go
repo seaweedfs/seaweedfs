@@ -107,6 +107,19 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	return data, nil
 }
 
+// lookupEntry returns the filer entry at the given path.
+func (h *S3TablesHandler) lookupEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (*filer_pb.Entry, error) {
+	dir, name := splitPath(path)
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Entry, nil
+}
+
 // deleteExtendedAttribute deletes an extended attribute from an entry
 func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) error {
 	dir, name := splitPath(path)

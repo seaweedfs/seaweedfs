@@ -26,6 +26,12 @@ const (
 	ExtendedKeyMetadataVersion = "s3tables.metadataVersion"
 	ExtendedKeyPolicy          = "s3tables.policy"
 	ExtendedKeyTags            = "s3tables.tags"
+	ExtendedKeyEntryType       = "s3tables.entryType"
+
+	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
+	// a table; views are stored like tables but tagged "view".
+	EntryTypeTable = "table"
+	EntryTypeView  = "view"
 
 	// Maximum request body size (10MB)
 	maxRequestBodySize = 10 * 1024 * 1024
