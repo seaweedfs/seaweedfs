@@ -294,3 +294,17 @@ func TestProcessMetadataBytes_CopyAppliesRequestedSSES3Header(t *testing.T) {
 		t.Fatalf("%s = %q, want %q", s3_constants.AmzServerSideEncryption, got, s3_constants.SSEAlgorithmAES256)
 	}
 }
+
+func TestProcessMetadataBytes_CopyPreservesSourceSSEWhenRequestOmitsHeader(t *testing.T) {
+	existing := map[string][]byte{
+		s3_constants.AmzServerSideEncryption: []byte(s3_constants.SSEAlgorithmKMS),
+	}
+
+	out, err := processMetadataBytes(http.Header{}, existing, false, false)
+	if err != nil {
+		t.Fatalf("processMetadataBytes returned error: %v", err)
+	}
+	if got := string(out[s3_constants.AmzServerSideEncryption]); got != s3_constants.SSEAlgorithmKMS {
+		t.Fatalf("%s = %q, want %q", s3_constants.AmzServerSideEncryption, got, s3_constants.SSEAlgorithmKMS)
+	}
+}
