@@ -107,6 +107,13 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
+	// View endpoints - wrapped with Auth middleware
+	router.HandleFunc("/v1/namespaces/{namespace}/views", s.Auth(s.handleListViews)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/views", s.Auth(s.handleCreateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+
 	// With prefix support - wrapped with Auth middleware
 	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
@@ -120,6 +127,11 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views", s.Auth(s.handleListViews)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views", s.Auth(s.handleCreateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
 
 	// Catch-all for debugging
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

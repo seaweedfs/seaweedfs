@@ -7,6 +7,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
+	"github.com/apache/iceberg-go/view"
 )
 
 // CatalogConfig is returned by GET /v1/config.
@@ -207,4 +208,58 @@ func (r *CommitTableResponse) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// ListViewsResponse is returned by GET /v1/namespaces/{namespace}/views.
+type ListViewsResponse struct {
+	NextPageToken string            `json:"next-page-token,omitempty"`
+	Identifiers   []TableIdentifier `json:"identifiers"`
+}
+
+// CreateViewRequest is sent to POST /v1/namespaces/{namespace}/views.
+type CreateViewRequest struct {
+	Name        string             `json:"name"`
+	Schema      *iceberg.Schema    `json:"schema"`
+	Location    string             `json:"location,omitempty"`
+	Properties  iceberg.Properties `json:"properties,omitempty"`
+	ViewVersion *view.Version      `json:"view-version"`
+}
+
+// ViewResponse is returned by view create/update and load operations.
+type ViewResponse struct {
+	MetadataLocation string             `json:"metadata-location"`
+	Metadata         view.Metadata      `json:"metadata"`
+	Config           iceberg.Properties `json:"config"`
+}
+
+// viewResponseAlias is used for custom JSON unmarshaling.
+type viewResponseAlias struct {
+	MetadataLocation string             `json:"metadata-location"`
+	RawMetadata      json.RawMessage    `json:"metadata"`
+	Config           iceberg.Properties `json:"config,omitempty"`
+}
+
+// UnmarshalJSON parses view.Metadata using iceberg-go's view parser.
+func (r *ViewResponse) UnmarshalJSON(data []byte) error {
+	var alias viewResponseAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	r.MetadataLocation = alias.MetadataLocation
+	r.Config = alias.Config
+	if len(alias.RawMetadata) > 0 {
+		metadata, err := view.ParseMetadataBytes(alias.RawMetadata)
+		if err != nil {
+			return err
+		}
+		r.Metadata = metadata
+	}
+	return nil
+}
+
+// UpdateViewRequest is sent to POST /v1/namespaces/{namespace}/views/{view}.
+type UpdateViewRequest struct {
+	Identifier   *TableIdentifier  `json:"identifier,omitempty"`
+	Requirements view.Requirements `json:"requirements"`
+	Updates      view.Updates      `json:"updates"`
 }
