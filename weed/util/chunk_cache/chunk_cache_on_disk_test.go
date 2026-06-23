@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -149,21 +150,52 @@ func TestLoadOrCreateChunkCacheVolumeClosesFilesOnError(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	before := openFDCount()
+
 	_, err := LoadOrCreateChunkCacheVolume(fileName, 1024)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	// On Windows, open files cannot be removed. If the files can be
-	// removed, they were closed by the error path.
-	for _, ext := range []string{".dat", ".idx"} {
-		path := fileName + ext
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-			continue
+	// On POSIX a leaked descriptor keeps the count elevated; the error path
+	// should close both files, returning the count to its baseline.
+	if before >= 0 {
+		if after := openFDCount(); after > before {
+			t.Errorf("descriptors leaked on error: before=%d after=%d", before, after)
 		}
-		if rmErr := os.Remove(path); rmErr != nil {
-			t.Errorf("failed to remove %s: %v", path, rmErr)
+	}
+
+	// On Windows open files cannot be removed, so successful removal also
+	// confirms the descriptors were closed.
+	if runtime.GOOS == "windows" {
+		for _, ext := range []string{".dat", ".idx"} {
+			path := fileName + ext
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				continue
+			}
+			if rmErr := os.Remove(path); rmErr != nil {
+				t.Errorf("failed to remove %s: %v", path, rmErr)
+			}
 		}
 	}
 }
 
+// openFDCount returns the number of open file descriptors for the current
+// process, or -1 where it cannot be determined (e.g. Windows).
+// Readdirnames is used instead of os.ReadDir because the latter stats every
+// entry, which fails on macOS /dev/fd ("bad file descriptor").
+func openFDCount() int {
+	for _, dir := range []string{"/proc/self/fd", "/dev/fd"} {
+		f, err := os.Open(dir)
+		if err != nil {
+			continue
+		}
+		names, err := f.Readdirnames(-1)
+		f.Close()
+		if err != nil {
+			continue
+		}
+		return len(names)
+	}
+	return -1
+}
