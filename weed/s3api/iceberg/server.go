@@ -113,6 +113,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
 
 	// With prefix support - wrapped with Auth middleware
 	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
@@ -132,6 +133,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
 
 	// Catch-all for debugging
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
