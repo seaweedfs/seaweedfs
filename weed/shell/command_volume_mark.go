@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -87,10 +88,21 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 		if err != nil {
 			return err
 		}
+		state := "readonly"
+		if markWritable {
+			state = "writable"
+		}
+		var failures []error
 		for _, target := range targets {
 			if err := markVolumeWritable(commandEnv.option.GrpcDialOption, target.volumeId, target.sourceVolumeServer, markWritable, true); err != nil {
-				return fmt.Errorf("mark volume %d on %s: %w", target.volumeId, target.sourceVolumeServer, err)
+				failures = append(failures, fmt.Errorf("mark volume %d on %s: %w", target.volumeId, target.sourceVolumeServer, err))
+				fmt.Fprintf(writer, "volume %d on %s: %v\n", target.volumeId, target.sourceVolumeServer, err)
+				continue
 			}
+			fmt.Fprintf(writer, "volume %d on %s marked %s\n", target.volumeId, target.sourceVolumeServer, state)
+		}
+		if len(failures) > 0 {
+			return fmt.Errorf("marked %d of %d volumes %s, %d failed: %w", len(targets)-len(failures), len(targets), state, len(failures), errors.Join(failures...))
 		}
 		return nil
 	}
