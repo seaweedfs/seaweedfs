@@ -69,7 +69,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: ListTables error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -212,7 +212,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isNoSuchTableError(existsErr) {
 		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", existsErr.Error())
+		writeManagerError(w, existsErr)
 		return
 	}
 
@@ -302,7 +302,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -359,7 +359,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: LoadTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -509,7 +509,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: DropTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 

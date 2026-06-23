@@ -83,7 +83,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		glog.Infof("Iceberg: ListNamespaces error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -139,7 +139,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.Errorf("Iceberg: CreateNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -183,7 +183,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: GetNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -332,6 +332,10 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		if nameValidationError(err) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		glog.V(1).Infof("Iceberg: NamespaceExists error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -375,7 +379,7 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: DropNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
