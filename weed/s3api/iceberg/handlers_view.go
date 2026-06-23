@@ -192,6 +192,11 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
+		var viewErr *s3tables.S3TablesError
+		if errors.As(err, &viewErr) && viewErr.Type == s3tables.ErrCodeNoSuchNamespace {
+			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
+			return
+		}
 		glog.V(1).Infof("Iceberg: CreateView error: %v", err)
 		writeManagerError(w, err)
 		return
