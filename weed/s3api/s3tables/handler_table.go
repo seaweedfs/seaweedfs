@@ -260,17 +260,25 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	return nil
 }
 
-// metadataVersionFromLocation parses the version N from a metadata location
-// ending in v{N}.metadata.json. Returns 1 when no version can be parsed.
+// metadataVersionFromLocation parses the version N from a metadata location.
+// SeaweedFS writes v{N}.metadata.json; Iceberg engines (Spark/Trino/Flink/Java)
+// write {NNNNN}-{uuid}.metadata.json with a zero-padded leading version. Returns
+// 1 when no version can be parsed.
 func metadataVersionFromLocation(metadataLocation string) int {
 	name := metadataLocation
 	if idx := strings.LastIndex(name, "/"); idx != -1 {
 		name = name[idx+1:]
 	}
 	name = strings.TrimSuffix(name, ".metadata.json")
-	name = strings.TrimPrefix(name, "v")
-	if v, err := strconv.Atoi(name); err == nil && v > 0 {
+	// v{N} form
+	if v, err := strconv.Atoi(strings.TrimPrefix(name, "v")); err == nil && v > 0 {
 		return v
+	}
+	// {NNNNN}-{uuid} form: the leading integer before the first '-'
+	if idx := strings.IndexByte(name, '-'); idx != -1 {
+		if v, err := strconv.Atoi(name[:idx]); err == nil && v > 0 {
+			return v
+		}
 	}
 	return 1
 }
