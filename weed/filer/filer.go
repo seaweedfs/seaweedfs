@@ -616,5 +616,6 @@ func (f *Filer) IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool
 	if entry == nil {
 		return false, nil
 	}
-	return entry.IsDirectory() && entry.Mime != "", nil
+	// Mirror filer_pb.Entry.IsDirectoryKeyObject so the cleaner keeps a promoted file's data.
+	return entry.IsDirectory() && (entry.Mime != "" || len(entry.GetChunks()) > 0 || len(entry.Content) > 0 || entry.IsInRemoteOnly()), nil
 }

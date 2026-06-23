@@ -158,8 +158,8 @@ func (s3a *S3ApiServer) parseAndValidateRange(w http.ResponseWriter, r *http.Req
 		return 0, totalSize, false, nil
 	}
 
-	// S3 semantics: directories (without trailing "/") should return 404
-	if entry.IsDirectory {
+	// Empty directory: 404. A file promoted to a directory keeps its data and stays retrievable.
+	if entry.IsDirectory && totalSize == 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
 	}
@@ -2341,7 +2341,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// PyArrow may create 0-byte files when writing datasets, or the filer may have actual directories
 		if objectEntryForSSE.Attributes != nil {
 			isZeroByteFile := objectEntryForSSE.Attributes.FileSize == 0 && !objectEntryForSSE.IsDirectory
-			if objectEntryForSSE.IsDirectory {
+			// A directory with data (a promoted file) is retrievable; empty directories 404 for LIST fallback.
+			if objectEntryForSSE.IsDirectory && filer.FileSize(objectEntryForSSE) == 0 {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}

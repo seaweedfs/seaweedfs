@@ -93,6 +93,12 @@ type CreateTableRequest struct {
 	Properties    iceberg.Properties     `json:"properties,omitempty"`
 }
 
+// RegisterTableRequest is sent to POST /v1/namespaces/{namespace}/register.
+type RegisterTableRequest struct {
+	Name             string `json:"name"`
+	MetadataLocation string `json:"metadata-location"`
+}
+
 type LoadTableResult struct {
 	MetadataLocation string             `json:"metadata-location,omitempty"`
 	Metadata         table.Metadata     `json:"metadata"`
