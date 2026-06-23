@@ -170,6 +170,48 @@ func TestRollbackRevertsEveryFlippedField(t *testing.T) {
 	}
 }
 
+// TestCleanupSafeMetadataKeepsFailedRollback proves a flip failure at index 2
+// where table 0's rollback also fails leaves table 0's new metadata in place
+// (its pointer still references it), while the rolled-back table 1 and the
+// never-flipped tables 2 and 3 are safe to delete.
+func TestCleanupSafeMetadataKeepsFailedRollback(t *testing.T) {
+	prepared := make([]preparedTableCommit, 4)
+	rolledBack := []bool{false, true} // tables 0 and 1 were flipped; 0's rollback failed
+
+	safe := cleanupSafeMetadata(prepared, 2, rolledBack)
+
+	want := []bool{false, true, true, true}
+	for i := range want {
+		if safe[i] != want[i] {
+			t.Fatalf("safe[%d] = %v, want %v (full %v)", i, safe[i], want[i], safe)
+		}
+	}
+}
+
+// TestCleanupSafeMetadataFirstFlipFails covers a flip failure at the first table:
+// nothing was flipped, so every written file is safe to delete.
+func TestCleanupSafeMetadataFirstFlipFails(t *testing.T) {
+	prepared := make([]preparedTableCommit, 3)
+	safe := cleanupSafeMetadata(prepared, 0, nil)
+	for i, ok := range safe {
+		if !ok {
+			t.Fatalf("safe[%d] = false, want true (full %v)", i, safe)
+		}
+	}
+}
+
+// TestCleanupSafeMetadataAllRolledBack covers the common case where every prior
+// flip rolls back cleanly, so all metadata files are safe to delete.
+func TestCleanupSafeMetadataAllRolledBack(t *testing.T) {
+	prepared := make([]preparedTableCommit, 3)
+	safe := cleanupSafeMetadata(prepared, 2, []bool{true, true})
+	for i, ok := range safe {
+		if !ok {
+			t.Fatalf("safe[%d] = false, want true (full %v)", i, safe)
+		}
+	}
+}
+
 // tableEntry models the persisted table fields and the partial-update rules
 // handleUpdateTable applies, so rollback can be exercised without a live filer.
 type tableEntry struct {

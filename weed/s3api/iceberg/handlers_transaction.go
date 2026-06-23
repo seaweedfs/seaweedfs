@@ -85,7 +85,8 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 	for i := range prepared {
 		pc := &prepared[i]
 		if err := s.saveMetadataFile(r.Context(), pc.metadataBucket, pc.metadataPath, pc.metadataFileName, pc.metadataBytes); err != nil {
-			s.cleanupPreparedMetadata(r.Context(), prepared[:i+1])
+			// No pointer flipped yet, so every written file is safe to delete.
+			s.cleanupPreparedMetadata(r.Context(), prepared[:i+1], nil)
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 			return
 		}
@@ -95,8 +96,8 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 	for i := range prepared {
 		pc := &prepared[i]
 		if err := s.flipTablePointer(r.Context(), bucketARN, identityName, pc); err != nil {
-			s.rollbackTablePointers(r.Context(), bucketARN, identityName, prepared[:i])
-			s.cleanupPreparedMetadata(r.Context(), prepared)
+			rolledBack := s.rollbackTablePointers(r.Context(), bucketARN, identityName, prepared[:i])
+			s.cleanupPreparedMetadata(r.Context(), prepared, cleanupSafeMetadata(prepared, i, rolledBack))
 			if isS3TablesConflict(err) {
 				writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")
 				return
@@ -275,7 +276,10 @@ func (s *Server) flipTablePointer(ctx context.Context, bucketARN, identityName s
 // state. handleUpdateTable applies partial field updates, so the restore must
 // re-send every field the flip changed (location, version, and full metadata),
 // not just the location. Best-effort: a failed rollback is logged, not surfaced.
-func (s *Server) rollbackTablePointers(ctx context.Context, bucketARN, identityName string, flipped []preparedTableCommit) {
+// The returned slice flags, per flipped table, whether the restore succeeded so
+// the caller can avoid deleting metadata a still-flipped pointer references.
+func (s *Server) rollbackTablePointers(ctx context.Context, bucketARN, identityName string, flipped []preparedTableCommit) []bool {
+	restored := make([]bool, len(flipped))
 	for i := range flipped {
 		pc := &flipped[i]
 		updateReq := buildTableRestoreRequest(bucketARN, pc)
@@ -285,8 +289,11 @@ func (s *Server) rollbackTablePointers(ctx context.Context, bucketARN, identityN
 		})
 		if err != nil {
 			glog.Errorf("Iceberg: CommitTransaction rollback of %s failed: %v", pc.tableName, err)
+			continue
 		}
+		restored[i] = true
 	}
+	return restored
 }
 
 // buildTableRestoreRequest reconstructs the UpdateTableRequest that reverts a
@@ -305,9 +312,35 @@ func buildTableRestoreRequest(bucketARN string, pc *preparedTableCommit) *s3tabl
 	}
 }
 
-func (s *Server) cleanupPreparedMetadata(ctx context.Context, prepared []preparedTableCommit) {
+// cleanupSafeMetadata reports, per prepared table, whether deleting its newly
+// written metadata file is safe after a flip failed at failedIndex. A file is
+// safe to delete only when its table's pointer no longer references it: tables
+// at or past failedIndex were never flipped, and earlier tables are safe only
+// if their rollback succeeded. A table whose rollback failed still points at the
+// new metadata, so deleting it would strand the pointer on a missing file.
+func cleanupSafeMetadata(prepared []preparedTableCommit, failedIndex int, rolledBack []bool) []bool {
+	safe := make([]bool, len(prepared))
+	for i := range prepared {
+		switch {
+		case i >= failedIndex:
+			safe[i] = true
+		case i < len(rolledBack):
+			safe[i] = rolledBack[i]
+		}
+	}
+	return safe
+}
+
+// cleanupPreparedMetadata deletes the newly written metadata file for each
+// prepared table flagged safe; unflagged tables are left in place because a
+// still-flipped pointer references them.
+func (s *Server) cleanupPreparedMetadata(ctx context.Context, prepared []preparedTableCommit, safe []bool) {
 	for i := range prepared {
 		pc := &prepared[i]
+		if i < len(safe) && !safe[i] {
+			glog.Errorf("Iceberg: CommitTransaction keeping metadata %s; %s rollback failed and still references it", pc.newMetadataLoc, pc.tableName)
+			continue
+		}
 		if cleanupErr := s.deleteMetadataFile(ctx, pc.metadataBucket, pc.metadataPath, pc.metadataFileName); cleanupErr != nil {
 			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s: %v", pc.newMetadataLoc, cleanupErr)
 		}
