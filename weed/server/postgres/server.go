@@ -390,7 +390,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 
 		msgTotalLen := binary.BigEndian.Uint32(length)
 		// Prevent unsigned underflow and OOM by checking total message length first
-		if msgTotalLen < 4 {
+		if msgTotalLen < 8 {
 			return fmt.Errorf("startup message too short: %d bytes", msgTotalLen)
 		}
 
