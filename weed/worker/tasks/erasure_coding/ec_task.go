@@ -521,7 +521,7 @@ func (t *ErasureCodingTask) copyFileFromSource(ctx context.Context, ext, localPa
 				if len(resp.FileContent) > 0 {
 					written, writeErr := localFile.Write(resp.FileContent)
 					if writeErr != nil {
-						return fmt.Errorf("failed to write to local file: %v", writeErr)
+						return fmt.Errorf("failed to write to local file: %w", writeErr)
 					}
 					totalBytes += int64(written)
 				}

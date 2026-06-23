@@ -83,7 +83,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 	t.ReportProgress(10.0)
 	t.GetLogger().Info("Marking volume readonly for move")
 	if err := t.markVolumeReadonly(ctx, sourceServer, volumeId); err != nil {
-		return fmt.Errorf("failed to mark volume readonly: %v", err)
+		return fmt.Errorf("failed to mark volume readonly: %w", err)
 	}
 	// Restore source writability if any subsequent step fails, so the
 	// source volume is not left permanently readonly on abort.
@@ -102,7 +102,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 	t.ReportProgress(15.0)
 	sourceStatus, err := t.readVolumeFileStatus(ctx, sourceServer, volumeId)
 	if err != nil {
-		return fmt.Errorf("failed to read source volume status: %v", err)
+		return fmt.Errorf("failed to read source volume status: %w", err)
 	}
 
 	// Step 3: Copy volume to destination (VolumeCopy also mounts the volume)
@@ -110,7 +110,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 	t.GetLogger().Info("Copying volume to destination")
 	lastAppendAtNs, err := t.copyVolume(ctx, sourceServer, targetServer, volumeId)
 	if err != nil {
-		return fmt.Errorf("failed to copy volume: %v", err)
+		return fmt.Errorf("failed to copy volume: %w", err)
 	}
 
 	// Step 4: Tail for updates
@@ -147,7 +147,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 	t.ReportProgress(90.0)
 	t.GetLogger().Info("Deleting volume from source server")
 	if err := t.deleteVolume(ctx, sourceServer, volumeId); err != nil {
-		return fmt.Errorf("failed to delete volume from source: %v", err)
+		return fmt.Errorf("failed to delete volume from source: %w", err)
 	}
 	sourceMarkedReadonly = false
 
