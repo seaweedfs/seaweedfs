@@ -157,6 +157,18 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	case "DeleteTable":
 		err = h.handleDeleteTable(w, r, filerClient)
 
+	// View operations
+	case "CreateView":
+		err = h.handleCreateView(w, r, filerClient)
+	case "GetView":
+		err = h.handleGetView(w, r, filerClient)
+	case "ListViews":
+		err = h.handleListViews(w, r, filerClient)
+	case "UpdateView":
+		err = h.handleUpdateView(w, r, filerClient)
+	case "DeleteView":
+		err = h.handleDeleteView(w, r, filerClient)
+
 	// Table Policy operations
 	case "PutTablePolicy":
 		err = h.handlePutTablePolicy(w, r, filerClient)
@@ -365,6 +377,10 @@ func (h *S3TablesHandler) generateTableBucketARN(ownerAccountID, bucketName stri
 
 func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID string) string {
 	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, ownerAccountID, bucketName, tableID)
+}
+
+func (h *S3TablesHandler) generateViewARN(ownerAccountID, bucketName, viewID string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/view/%s", h.region, ownerAccountID, bucketName, viewID)
 }
 
 func isAuthError(err error) bool {
