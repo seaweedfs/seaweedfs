@@ -1035,7 +1035,7 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	if sseAlgorithm := reqHeader.Get(s3_constants.AmzServerSideEncryption); sseAlgorithm != "" {
 		metadata[s3_constants.AmzServerSideEncryption] = []byte(sseAlgorithm)
 
-		if sseAlgorithm == "aws:kms" {
+		if sseAlgorithm == s3_constants.SSEAlgorithmKMS {
 			// KMS Key ID (optional - can use default key)
 			if kmsKeyID := reqHeader.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId); kmsKeyID != "" {
 				metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(kmsKeyID)
