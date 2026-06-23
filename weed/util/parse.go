@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -60,15 +61,15 @@ func ParseFilerUrl(entryPath string) (filerServer string, filerPort int64, path 
 }
 
 func ParseHostPort(hostPort string) (filerServer string, filerPort int64, err error) {
-	parts := strings.Split(hostPort, ":")
-	if len(parts) != 2 {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
 		err = fmt.Errorf("failed to parse %s\n", hostPort)
 		return
 	}
 
-	filerPort, err = strconv.ParseInt(parts[1], 10, 64)
+	filerPort, err = strconv.ParseInt(port, 10, 64)
 	if err == nil {
-		filerServer = parts[0]
+		filerServer = host
 	}
 
 	return
