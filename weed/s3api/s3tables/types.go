@@ -192,6 +192,19 @@ type CreateTableResponse struct {
 	MetadataLocation string `json:"metadataLocation,omitempty"`
 }
 
+type RegisterTableRequest struct {
+	TableBucketARN   string   `json:"tableBucketARN"`
+	Namespace        []string `json:"namespace"`
+	Name             string   `json:"name"`
+	MetadataLocation string   `json:"metadataLocation"`
+}
+
+type RegisterTableResponse struct {
+	TableARN         string `json:"tableARN"`
+	VersionToken     string `json:"versionToken"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+}
+
 type GetTableRequest struct {
 	TableBucketARN string   `json:"tableBucketARN,omitempty"`
 	Namespace      []string `json:"namespace,omitempty"`
