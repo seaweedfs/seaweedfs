@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -131,3 +133,37 @@ func TestOnDisk(t *testing.T) {
 	cache.Shutdown()
 
 }
+
+func TestLoadOrCreateChunkCacheVolumeClosesFilesOnError(t *testing.T) {
+	tmpDir := t.TempDir()
+	fileName := filepath.Join(tmpDir, "cache")
+
+	// Pre-create .dat so LoadOrCreateChunkCacheVolume opens it.
+	if err := os.WriteFile(fileName+".dat", []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .ldb as a regular file so NewLevelDbNeedleMap fails.
+	// leveldb.OpenFile expects a directory.
+	if err := os.WriteFile(fileName+".ldb", []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadOrCreateChunkCacheVolume(fileName, 1024)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// On Windows, open files cannot be removed. If the files can be
+	// removed, they were closed by the error path.
+	for _, ext := range []string{".dat", ".idx"} {
+		path := fileName + ext
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			continue
+		}
+		if rmErr := os.Remove(path); rmErr != nil {
+			t.Errorf("failed to remove %s: %v", path, rmErr)
+		}
+	}
+}
+

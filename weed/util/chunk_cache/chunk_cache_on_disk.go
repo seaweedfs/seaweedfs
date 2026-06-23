@@ -37,6 +37,18 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 	}
 
 	var err error
+	var indexFile *os.File
+
+	defer func() {
+		if err != nil {
+			if v.DataBackend != nil {
+				v.DataBackend.Close()
+			}
+			if indexFile != nil {
+				indexFile.Close()
+			}
+		}
+	}()
 
 	if exists, canRead, canWrite, modTime, fileSize := util.CheckFile(v.fileName + ".dat"); exists {
 		if !canRead {
@@ -59,7 +71,6 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 		v.lastModTime = time.Now()
 	}
 
-	var indexFile *os.File
 	if indexFile, err = os.OpenFile(v.fileName+".idx", os.O_RDWR|os.O_CREATE, 0644); err != nil {
 		return nil, fmt.Errorf("cannot write cache index %s.idx: %v", v.fileName, err)
 	}
