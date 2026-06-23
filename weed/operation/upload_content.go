@@ -3,6 +3,8 @@ package operation
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,13 +35,16 @@ type UploadOption struct {
 	Filename          string
 	Cipher            bool
 	IsInputCompressed bool
+	IsReplication     bool // preserve the source needle's compression state
 	MimeType          string
 	PairMap           map[string]string
 	Jwt               security.EncodedJwt
 	RetryForever      bool
 	Md5               string
+	WantMd5           bool // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
 	BytesBuffer       *bytes.Buffer
 	SourceUrl         string // optional: for logging when reading from a remote source
+	MaxAttempts       int    // <=0 uses the default
 }
 
 type UploadResult struct {
@@ -194,6 +199,14 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 		assignRequest.ExpectedDataSize = uint64(len(data))
 	}
 
+	// Hash the buffer we already hold so the server echoes Content-MD5 back as
+	// the chunk ETag (std-base64 of the raw digest, the form ParseUpload
+	// verifies). Never under cipher: the server sees only ciphertext.
+	if uploadOption.WantMd5 && uploadOption.Md5 == "" && !uploadOption.Cipher {
+		digest := md5.Sum(data)
+		uploadOption.Md5 = base64.StdEncoding.EncodeToString(digest[:])
+	}
+
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
 		// grpc assign volume
 		if grpcAssignErr := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -247,14 +260,25 @@ func (uploader *Uploader) doUpload(ctx context.Context, reader io.Reader, option
 }
 
 func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
-	for i := 0; i < 3; i++ {
+	maxAttempts := option.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	for i := 0; i < maxAttempts; i++ {
 		if i > 0 {
-			time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Millisecond * time.Duration(237*(i+1))):
+			}
 		}
 		uploadResult, err = uploader.doUploadData(ctx, data, option)
 		if err == nil {
 			uploadResult.RetryCount = i
 			return
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		glog.WarningfCtx(ctx, "uploading %d to %s: %v", i, option.UploadUrl, err)
 	}
@@ -264,7 +288,7 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
 	contentIsGzipped := option.IsInputCompressed
 	shouldGzipNow := false
-	if !option.IsInputCompressed {
+	if !option.IsInputCompressed && !option.IsReplication {
 		if option.MimeType == "" {
 			option.MimeType = http.DetectContentType(data)
 			// println("detect1 mimetype to", MimeType)
@@ -299,8 +323,8 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 				contentIsGzipped = true
 			}
 		}
-	} else if option.IsInputCompressed {
-		// just to get the clear data length
+	} else if option.IsInputCompressed && !option.IsReplication {
+		// decompress only to report the clear data length; replication discards the result, so skip it
 		clearData, err = util.DecompressData(data)
 		if err == nil {
 			clearDataLen = len(clearData)

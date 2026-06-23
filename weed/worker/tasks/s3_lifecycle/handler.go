@@ -170,19 +170,22 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 	filerAddresses := []string{}
 	if request.ClusterContext != nil {
-		filerAddresses = append(filerAddresses, request.ClusterContext.FilerGrpcAddresses...)
+		filerAddresses = append(filerAddresses, request.ClusterContext.FilerAddresses...)
 	}
 	if len(filerAddresses) == 0 {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
 		return sender.SendComplete(&plugin_pb.DetectionComplete{JobType: jobType, Success: true})
 	}
 
+	// FilerAddresses are pb.ServerAddress strings (host:httpPort.grpcPort);
+	// Execute dials filer_grpc_address verbatim, so resolve it to a gRPC address.
+	filerGrpcAddress := pb.ServerAddress(filerAddresses[0]).ToGrpcAddress()
 	proposal := &plugin_pb.JobProposal{
 		JobType:    jobType,
 		ProposalId: fmt.Sprintf("s3-lifecycle-%d", time.Now().UnixNano()),
 		Priority:   plugin_pb.JobPriority_JOB_PRIORITY_NORMAL,
 		Parameters: map[string]*plugin_pb.ConfigValue{
-			"filer_grpc_address": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: filerAddresses[0]}},
+			"filer_grpc_address": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: filerGrpcAddress}},
 		},
 	}
 	if err := sender.SendProposals(&plugin_pb.DetectionProposals{
@@ -253,7 +256,27 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
-	return h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
+	if err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender); err != nil {
+		return err
+	}
+
+	return sendSuccessCompletion(request, sender)
+}
+
+const dailyReplaySuccessSummary = "s3 lifecycle daily replay completed"
+
+// JobCompleted must set JobType to the handler's jobType constant;
+// routed requests may leave request.Job.JobType empty, and the admin
+// ignores completions with empty JobType.
+func sendSuccessCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginworker.ExecutionSender) error {
+	return sender.SendCompleted(&plugin_pb.JobCompleted{
+		JobId:   request.Job.JobId,
+		JobType: jobType,
+		Success: true,
+		Result: &plugin_pb.JobResult{
+			Summary: dailyReplaySuccessSummary,
+		},
+	})
 }
 
 // executeDailyReplay runs one bounded daily-replay pass via

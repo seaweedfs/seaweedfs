@@ -2,6 +2,14 @@ name: "S3 Tables Integration Tests"
 
 on:
   pull_request:
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'test/s3tables/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-tables-tests.yml'
 
 permissions:
   contents: read
@@ -15,7 +23,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -75,13 +83,18 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -131,7 +144,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -139,11 +152,15 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Trino image
-        run: docker pull trinodb/trino:479
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull trinodb/trino:479
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -197,7 +214,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -205,14 +222,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Dremio image
-        run: docker pull dremio/dremio-oss:25.2.0
-
-      - name: Pre-pull Python image for PyIceberg writer
-        run: docker pull python:3.11-slim
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull dremio/dremio-oss:25.2.0
+          pull python:3.11-slim
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -268,7 +287,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -276,14 +295,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Doris image
-        run: docker pull apache/doris:doris-all-in-one-2.1.0
-
-      - name: Pre-pull Python image for PyIceberg writer
-        run: docker pull python:3.11-slim
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/doris:doris-all-in-one-2.1.0
+          pull python:3.11-slim
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -339,7 +360,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -354,8 +375,15 @@ jobs:
         run: |
           go install -buildvcs=false ./weed
 
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: Pre-pull Polaris image
-        run: docker pull apache/polaris:latest
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/polaris:latest
 
       - name: Run Polaris Integration Tests
         timeout-minutes: 25
@@ -400,7 +428,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -408,11 +436,15 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Spark image
-        run: docker pull apache/spark:3.5.1
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/spark:3.5.1
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -466,7 +498,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -474,13 +506,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull RisingWave image
         run: |
-          docker pull risingwavelabs/risingwave:v2.5.0
-          docker pull postgres:16-alpine
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull risingwavelabs/risingwave:v2.5.0
+          pull postgres:16-alpine
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -534,7 +569,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -542,11 +577,39 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Python image
-        run: docker pull python:3
+      - name: Week stamp for image cache key
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore python:3 image cache
+        id: python-image
+        uses: actions/cache@v5
+        with:
+          path: /tmp/python3-image.tar
+          key: python3-image-${{ steps.week.outputs.week }}
+          restore-keys: |
+            python3-image-
+
+      - name: Load or pull python:3
+        run: |
+          if [ "${{ steps.python-image.outputs.cache-hit }}" = "true" ]; then
+            docker load -i /tmp/python3-image.tar
+            exit 0
+          fi
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          if pull python:3; then
+            docker save -o /tmp/python3-image.tar python:3
+          elif [ -f /tmp/python3-image.tar ]; then
+            # Docker Hub unreachable; fall back to last week's cached image
+            docker load -i /tmp/python3-image.tar
+          else
+            exit 1
+          fi
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -600,22 +663,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
-
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
-
-      - name: Pre-pull Python image
-        run: docker pull python:3
-        
-      - name: Pre-pull LocalStack image (if needed)
-        run: docker pull localstack/localstack:latest || true
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -669,7 +723,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -677,14 +731,16 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v4
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Unity Catalog image
-        run: docker pull unitycatalog/unitycatalog:v0.4.0
-
-      - name: Pre-pull Python image for delta-rs writer
-        run: docker pull python:3.11-slim
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull unitycatalog/unitycatalog:v0.4.0
+          pull python:3.11-slim
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -740,7 +796,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -805,7 +861,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -856,7 +912,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6

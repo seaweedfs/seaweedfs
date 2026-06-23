@@ -125,7 +125,9 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	// Cluster management routes
 	r.HandleFunc("/cluster/masters", h.clusterHandlers.ShowClusterMasters).Methods(http.MethodGet)
 	r.HandleFunc("/cluster/filers", h.clusterHandlers.ShowClusterFilers).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/s3", h.clusterHandlers.ShowClusterS3Servers).Methods(http.MethodGet)
 	r.HandleFunc("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/mount-clients", h.clusterHandlers.ShowMountClients).Methods(http.MethodGet)
 
 	// Storage management routes
 	r.HandleFunc("/storage/volumes", h.clusterHandlers.ShowClusterVolumes).Methods(http.MethodGet)
@@ -246,8 +248,10 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	filesApi.HandleFunc("/download", h.fileBrowserHandlers.DownloadFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/view", h.fileBrowserHandlers.ViewFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/properties", h.fileBrowserHandlers.GetFileProperties).Methods(http.MethodGet)
+	filesApi.HandleFunc("/metadata", h.fileBrowserHandlers.ExportMetadata).Methods(http.MethodGet)
 
 	volumeApi := api.PathPrefix("/volumes").Subrouter()
+	volumeApi.HandleFunc("/export", h.clusterHandlers.ExportClusterVolumes).Methods(http.MethodGet)
 	volumeApi.Handle("/{id}/{server}/vacuum", wrapWrite(h.clusterHandlers.VacuumVolume)).Methods(http.MethodPost)
 
 	pluginApi := api.PathPrefix("/plugin").Subrouter()

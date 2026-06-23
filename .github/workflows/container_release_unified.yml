@@ -56,7 +56,7 @@ jobs:
             cross: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -118,8 +118,9 @@ jobs:
     needs: [build-rust-binaries]
     runs-on: ubuntu-latest
     strategy:
-      # Build sequentially to avoid rate limits
-      max-parallel: 2
+      # All variants at once: pulls hit mirror.gcr.io and pushes go to GHCR only,
+      # so docker.io limits don't apply. Watch the 10 GB gha cache budget.
+      max-parallel: 5
       matrix:
         include:
           # Normal volume - multi-arch
@@ -165,7 +166,7 @@ jobs:
     steps:
       - name: Checkout
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download pre-built Rust binaries
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -219,7 +220,7 @@ jobs:
             
       - name: Set up QEMU
         if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && contains(matrix.platforms, 'arm')
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@v4.1.0
         
       - name: Create BuildKit config
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -237,14 +238,14 @@ jobs:
           
       - name: Login to Docker Hub
         if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
-        uses: docker/login-action@v4.1.0
+        uses: docker/login-action@v4.2.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
       - name: Login to GHCR
         if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
-        uses: docker/login-action@v4.1.0
+        uses: docker/login-action@v4.2.0
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
@@ -272,93 +273,52 @@ jobs:
             BRANCH=${{ github.sha }}
             ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.10.1') || '' }}
             
-      - name: Clean up build artifacts
-        if: always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant)
-        run: |
-          sudo docker system prune -f
-          sudo rm -rf /tmp/go-build*
-
-  copy-to-dockerhub:
-    runs-on: ubuntu-latest
-    needs: [build]
-    if: github.event_name != 'pull_request'
-    strategy:
-      matrix:
-        variant: [normal, large_disk, full, large_disk_full, rocksdb]
-        include:
-          - variant: normal
-            tag_suffix: ""
-          - variant: large_disk
-            tag_suffix: _large_disk
-          - variant: full
-            tag_suffix: _full
-          - variant: large_disk_full
-            tag_suffix: _large_disk_full
-          - variant: rocksdb
-            tag_suffix: _large_disk_rocksdb
-            
-    steps:
-      - name: Login to Docker Hub
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: docker/login-action@v4.1.0
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-          
-      - name: Login to GHCR
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: docker/login-action@v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_TOKEN }}
-          
+      # Copy GHCR -> Docker Hub here, per variant, so it overlaps with the other
+      # variants still building instead of waiting on the whole matrix.
       - name: Install crane
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
         run: |
           cd $(mktemp -d)
           curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
           sudo mv crane /usr/local/bin/
           crane version
-          
-      - name: Copy ${{ matrix.variant }} from GHCR to Docker Hub
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+
+      - name: Copy ${{ matrix.variant }} to Docker Hub
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
         run: |
-          # Function to retry with exponential backoff
           retry_with_backoff() {
             local max_attempts=5
             local timeout=1
             local attempt=1
             local exit_code=0
-            
             while [ $attempt -le $max_attempts ]; do
               if "$@"; then
                 return 0
               else
                 exit_code=$?
               fi
-              
               if [ $attempt -lt $max_attempts ]; then
                 echo "Attempt $attempt failed. Retrying in ${timeout}s..." >&2
                 sleep $timeout
                 timeout=$((timeout * 2))
               fi
-              
               attempt=$((attempt + 1))
             done
-            
             echo "Command failed after $max_attempts attempts" >&2
             return $exit_code
           }
-          
-          # Copy multi-arch image from GHCR to Docker Hub with retry
-          # This is much more efficient than pulling/pushing individual arch images
+
           echo "Copying ${{ matrix.variant }} from GHCR to Docker Hub..."
           retry_with_backoff crane copy \
             ghcr.io/chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
             chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
-          
-          echo "Successfully copied ${{ matrix.variant }} to Docker Hub"
+          echo "Copied ${{ matrix.variant }} to Docker Hub"
+
+      - name: Clean up build artifacts
+        if: always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant)
+        run: |
+          sudo docker system prune -f
+          sudo rm -rf /tmp/go-build*
 
   # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
   # Security for visibility, but never blocks the release. Releases (including
@@ -380,7 +340,7 @@ jobs:
             variant: large_disk
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@v4.1.0
+        uses: docker/login-action@v4.2.0
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
@@ -418,7 +378,7 @@ jobs:
   # trivy-scan: vuln findings are reported but do not block `latest`.
   tag-latest:
     runs-on: ubuntu-latest
-    needs: [copy-to-dockerhub]
+    needs: [build]
     if: github.event_name == 'push'
     strategy:
       matrix:
@@ -429,13 +389,13 @@ jobs:
             latest_tag: latest_large_disk
     steps:
       - name: Login to Docker Hub
-        uses: docker/login-action@v4.1.0
+        uses: docker/login-action@v4.2.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
-        uses: docker/login-action@v4.1.0
+        uses: docker/login-action@v4.2.0
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
@@ -483,13 +443,13 @@ jobs:
 
   helm-release:
     runs-on: ubuntu-latest
-    needs: [copy-to-dockerhub]
+    needs: [build]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
       pages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Publish Helm charts
         uses: stefanprodan/helm-gh-pages@v1.7.0
         with:          

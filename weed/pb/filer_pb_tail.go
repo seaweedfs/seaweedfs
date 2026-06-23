@@ -38,6 +38,12 @@ type MetadataFollowOption struct {
 	// the server sends log file chunk fids instead of streaming events,
 	// and the client reads directly from volume servers.
 	LogFileReaderFn LogFileReaderFn
+	// OnIdleHeartbeat, when non-nil, opts in to idle heartbeats: while the
+	// subscriber is caught up the server periodically sends an empty response
+	// carrying the current time, and this is called with that timestamp. It is
+	// a freshness signal only and does not advance StartTsNs, so the resume
+	// checkpoint stays on the last real event.
+	OnIdleHeartbeat func(tsNs int64)
 }
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
@@ -77,6 +83,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			UntilNs:                      option.StopTsNs,
 			ClientSupportsBatching:       true,
 			ClientSupportsMetadataChunks: option.LogFileReaderFn != nil,
+			ClientSupportsIdleHeartbeat:  option.OnIdleHeartbeat != nil,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)
@@ -100,6 +107,30 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			default:
 				glog.Errorf("process %v: %v", resp, err)
 			}
+		}
+
+		// handleOneEvent processes a single response, whether it arrived as the
+		// batch envelope or inside resp.Events. Freshness signals carry a timestamp
+		// but no entry: the idle heartbeat (nil EventNotification) and the
+		// MaxUnsyncedEvents marker (empty one). Both route to OnIdleHeartbeat,
+		// else the marker pins sync_offset to the stale processed watermark and a
+		// nil heartbeat folded into a batch nil-derefs in the sync job path.
+		handleOneEvent := func(resp *filer_pb.SubscribeMetadataResponse) {
+			if resp.EventNotification == nil || filer_pb.IsEmpty(resp) {
+				if resp.TsNs > 0 && option.OnIdleHeartbeat != nil {
+					option.OnIdleHeartbeat(resp.TsNs)
+				}
+				// The marker advances the resume cursor past the filtered range; the
+				// heartbeat leaves StartTsNs put so a restart cannot outrun a straggler.
+				if resp.EventNotification != nil && resp.TsNs > 0 {
+					option.StartTsNs = resp.TsNs
+				}
+				return
+			}
+			if err := processEventFn(resp); err != nil {
+				handleErr(resp, err)
+			}
+			option.StartTsNs = resp.TsNs
 		}
 
 		var pendingRefs []*filer_pb.LogFileChunkRef
@@ -138,20 +169,13 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				pendingRefs = nil
 			}
 
-			// Process the first event (always present in top-level fields)
-			if resp.EventNotification != nil {
-				if err := processEventFn(resp); err != nil {
-					handleErr(resp, err)
-				}
-				option.StartTsNs = resp.TsNs
-			}
-
-			// Process any additional batched events
+			// Process the envelope event (top-level fields) and any batched tail.
+			// The server folds a backlog into one response: the first event lives in
+			// the top-level fields, the rest in resp.Events. Either slot can hold a
+			// freshness signal, so both go through the same handler.
+			handleOneEvent(resp)
 			for _, batchedEvent := range resp.Events {
-				if err := processEventFn(batchedEvent); err != nil {
-					handleErr(batchedEvent, err)
-				}
-				option.StartTsNs = batchedEvent.TsNs
+				handleOneEvent(batchedEvent)
 			}
 		}
 	}

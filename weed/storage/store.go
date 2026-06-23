@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -73,10 +74,10 @@ type Store struct {
 	NeedleMapKind       NeedleMapKind
 	State               *State
 	StateUpdateChan     chan *volume_server_pb.VolumeServerState
-	NewVolumesChan      chan master_pb.VolumeShortInformationMessage
-	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
-	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
-	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
+	NewVolumesChan      chan *master_pb.VolumeShortInformationMessage
+	DeletedVolumesChan  chan *master_pb.VolumeShortInformationMessage
+	NewEcShardsChan     chan *master_pb.VolumeEcShardInformationMessage
+	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
 	isStopping          bool
 }
 
@@ -94,6 +95,7 @@ func NewStore(
 	diskTypes []DiskType,
 	diskTags [][]string,
 	ldbTimeout int64,
+	diskProbeConfig stats.DiskIOProbeConfig,
 ) (s *Store) {
 	s = &Store{
 		grpcDialOption: grpcDialOption,
@@ -106,10 +108,10 @@ func NewStore(
 		Locations:      make([]*DiskLocation, 0),
 
 		StateUpdateChan:     make(chan *volume_server_pb.VolumeServerState, HEARTBEAT_CHAN_SIZE),
-		NewVolumesChan:      make(chan master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
-		DeletedVolumesChan:  make(chan master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
-		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
-		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
+		NewVolumesChan:      make(chan *master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
+		DeletedVolumesChan:  make(chan *master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
+		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
+		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
 	}
 
 	var wg sync.WaitGroup
@@ -118,7 +120,7 @@ func NewStore(
 		if i < len(diskTags) {
 			tags = diskTags[i]
 		}
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags)
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags, diskProbeConfig)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
@@ -131,7 +133,7 @@ func NewStore(
 			// Use non-blocking send during startup to avoid deadlock
 			// The channel reader only starts after connecting to master, but we're loading during startup
 			select {
-			case s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+			case s.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(vid),
 				Collection:  collection,
 				EcIndexBits: si.Bitmap(),
@@ -139,6 +141,7 @@ func NewStore(
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      diskId,
+				EncodeTsNs:  ecVolume.EncodeTsNs,
 			}:
 			default:
 				// Channel full during startup - this is OK, heartbeat will report EC shards later
@@ -261,7 +264,7 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (re
 		if filterFn != nil && !filterFn(location) {
 			continue
 		}
-		if location.isDiskSpaceLow {
+		if location.isDiskSpaceLow.Load() {
 			continue
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
@@ -302,7 +305,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
-			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
+			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:               uint32(vid),
 				Collection:       collection,
 				ReplicaPlacement: uint32(replicaPlacement.Byte()),
@@ -322,7 +325,12 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 // hasFreeDiskLocation checks if a disk location has free space
 func (s *Store) hasFreeDiskLocation(location *DiskLocation) bool {
 	// Check if disk space is low first
-	if location.isDiskSpaceLow {
+	if location.isDiskSpaceLow.Load() {
+		return false
+	}
+
+	// Check if disk is available
+	if location.isDiskUnavailable.Load() {
 		return false
 	}
 
@@ -381,7 +389,6 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 	s.DeleteCount = v.nm.DeletedCount()
 	s.DeletedByteCount = v.nm.DeletedSize()
 	s.Size = v.nm.ContentSize()
-
 	return
 }
 
@@ -406,9 +413,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
+		if location.isDiskUnavailable.Load() {
+			continue
+		}
 		var deleteVids []needle.VolumeId
 		effectiveMaxCount := location.MaxVolumeCount
-		if location.isDiskSpaceLow {
+		if location.isDiskSpaceLow.Load() {
 			usedSlots := int32(location.LocalVolumesLen())
 			ecShardCount := location.EcShardCount()
 			usedSlots += int32((ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount)
@@ -496,7 +506,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				if v.noWriteCanDelete {
 					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
 				}
-				if v.location.isDiskSpaceLow {
+				if v.location.isDiskSpaceLow.Load() {
 					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
 				}
 			}
@@ -571,6 +581,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
 	for diskId, location := range s.Locations {
+		if location.isDiskUnavailable.Load() {
+			continue
+		}
+
 		// Collect ecVolume to be deleted
 		var toDeleteEvs []*erasure_coding.EcVolume
 		location.ecVolumesLock.RLock()
@@ -721,7 +735,7 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
-			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
+			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:               uint32(v.Id),
 				Collection:       v.Collection,
 				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
@@ -738,64 +752,87 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 }
 
 func (s *Store) UnmountVolume(i needle.VolumeId) error {
-	v := s.findVolume(i)
-	if v == nil {
-		return nil
-	}
-	message := master_pb.VolumeShortInformationMessage{
-		Id:               uint32(v.Id),
-		Collection:       v.Collection,
-		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-		Version:          uint32(v.Version()),
-		Ttl:              v.Ttl.ToUint32(),
-		DiskType:         string(v.location.DiskType),
-		DiskId:           v.diskId,
-	}
-
+	// A volume id can be mounted on more than one disk of this server (e.g. a stale
+	// twin re-attached after a disk repair, since NewStore has no cross-disk
+	// duplicate guard). Unmount every copy, not just the first match, so a stale
+	// twin cannot survive and re-register as the volume's content. A no-op unmount
+	// (no copy present) is not an error, matching the prior behavior.
+	var errs []error
 	for _, location := range s.Locations {
-		err := location.UnloadVolume(i)
-		if err == nil {
-			glog.V(0).Infof("UnmountVolume %d", i)
-			s.DeletedVolumesChan <- message
-			return nil
-		} else if err == ErrVolumeNotFound {
+		v, found := location.FindVolume(i)
+		if !found {
 			continue
 		}
+		message := master_pb.VolumeShortInformationMessage{
+			Id:               uint32(v.Id),
+			Collection:       v.Collection,
+			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+			Version:          uint32(v.Version()),
+			Ttl:              v.Ttl.ToUint32(),
+			DiskType:         string(location.DiskType),
+			DiskId:           v.diskId,
+		}
+		if err := location.UnloadVolume(i); err != nil {
+			if err == ErrVolumeNotFound {
+				continue
+			}
+			// Keep going so the other copies are still unmounted; surface the
+			// failure so a copy left mounted is not reported as success.
+			glog.Errorf("UnmountVolume %d on %s: %v", i, location.Directory, err)
+			errs = append(errs, err)
+			continue
+		}
+		glog.V(0).Infof("UnmountVolume %d disk_id:%d", i, v.diskId)
+		s.DeletedVolumesChan <- &message
 	}
-
-	return fmt.Errorf("volume %d not found on disk", i)
+	return errors.Join(errs...)
 }
 
 func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
-	v := s.findVolume(i)
-	if v == nil {
-		return fmt.Errorf("delete volume %d not found on disk", i)
-	}
-	message := master_pb.VolumeShortInformationMessage{
-		Id:               uint32(v.Id),
-		Collection:       v.Collection,
-		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-		Version:          uint32(v.Version()),
-		Ttl:              v.Ttl.ToUint32(),
-		DiskType:         string(v.location.DiskType),
-		DiskId:           v.diskId,
-	}
+	// Delete every copy of the volume id across disks, not just the first match, so
+	// a stale twin (e.g. a re-attached disk; NewStore has no cross-disk duplicate
+	// guard) cannot survive a delete and re-register as the volume's content.
+	deletedAny := false
+	var errs []error
 	for _, location := range s.Locations {
+		v, found := location.FindVolume(i)
+		if !found {
+			continue
+		}
+		message := master_pb.VolumeShortInformationMessage{
+			Id:               uint32(v.Id),
+			Collection:       v.Collection,
+			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+			Version:          uint32(v.Version()),
+			Ttl:              v.Ttl.ToUint32(),
+			DiskType:         string(location.DiskType),
+			DiskId:           v.diskId,
+		}
 		err := location.DeleteVolume(i, onlyEmpty, keepRemoteData)
 		if err == nil {
-			glog.V(0).Infof("DeleteVolume %d", i)
-			s.DeletedVolumesChan <- message
-			return nil
+			glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
+			s.DeletedVolumesChan <- &message
+			deletedAny = true
 		} else if err == ErrVolumeNotFound {
 			continue
 		} else if err == ErrVolumeNotEmpty {
+			// onlyEmpty: a non-empty copy aborts the delete rather than leaving a
+			// partial result across disks.
 			return fmt.Errorf("DeleteVolume %d: %v", i, err)
 		} else {
+			// A real failure on one disk must not be masked by another copy's
+			// success: a stale copy left on the failing disk would re-register.
 			glog.Errorf("DeleteVolume %d: %v", i, err)
+			errs = append(errs, err)
 		}
 	}
-
-	return fmt.Errorf("volume %d not found on disk", i)
+	if len(errs) > 0 {
+		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))
+	}
+	if !deletedAny {
+		return fmt.Errorf("delete volume %d not found on disk", i)
+	}
+	return nil
 }
 
 func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
@@ -858,8 +895,16 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount)
-			if unclaimedSpaces > int64(volumeSizeLimit) {
-				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
+			// One slot per full volume that fits in the unclaimed space.
+			// A "- 1" here used to zero the count when the disk had room for
+			// exactly one volume (free between 1x and 2x the limit), stranding
+			// auto-sized disks at maxVolumeCount 0 with no writable volume.
+			if unclaimedSpaces > 0 {
+				maxVolumeCount += int32(uint64(unclaimedSpaces) / volumeSizeLimit)
+			}
+			// An auto-sized disk with free space always hosts at least one volume.
+			if maxVolumeCount < 1 {
+				maxVolumeCount = 1
 			}
 			newMaxVolumeCount = newMaxVolumeCount + maxVolumeCount
 			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)

@@ -64,6 +64,14 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		return nil
 	}
 
+	// Close nils ecjFile under this same lock, so a delete that resolved its
+	// .ecx lookup before an eviction (e.g. the generate-time UnloadEcVolume)
+	// can reach here with no journal fd. Bail with a clear error rather than
+	// operating on the closed/nil handle.
+	if ev.ecjFile == nil {
+		return fmt.Errorf("ec volume %d closed", ev.VolumeId)
+	}
+
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)
 
@@ -115,12 +123,21 @@ func RebuildEcxFile(baseFileName string) error {
 	if err != nil {
 		return fmt.Errorf("rebuild: failed to open ecj file: %w", err)
 	}
+	defer ecjFile.Close()
 
 	buf := make([]byte, types.NeedleIdSize)
 	for {
-		n, _ := ecjFile.Read(buf)
-		if n != types.NeedleIdSize {
+		// io.ReadFull distinguishes a clean end (io.EOF) from a torn tail
+		// (io.ErrUnexpectedEOF) and a transient short read; a bare n!=size
+		// break would silently drop the rest of the journal and then unlink it.
+		_, readErr := io.ReadFull(ecjFile, buf)
+		if readErr == io.EOF {
 			break
+		}
+		if readErr != nil {
+			// Torn or unreadable journal: abort and leave .ecj in place so a
+			// retry can re-apply the deletions rather than resurrect them.
+			return fmt.Errorf("rebuild: read ecj: %w", readErr)
 		}
 
 		needleId := types.BytesToNeedleId(buf)
@@ -128,14 +145,21 @@ func RebuildEcxFile(baseFileName string) error {
 		_, _, err = SearchNeedleFromSortedIndex(ecxFile, ecxFileSize, needleId, MarkNeedleDeleted)
 
 		if err != nil && err != NotFoundError {
-			ecxFile.Close()
 			return err
 		}
 
 	}
 
-	ecxFile.Close()
+	// Flush the in-place tombstones before removing the journal; otherwise a
+	// crash can persist the .ecj unlink ahead of the .ecx writes and resurrect
+	// the deleted needles on the next load.
+	if err = ecxFile.Sync(); err != nil {
+		return fmt.Errorf("rebuild: sync ecx: %w", err)
+	}
 
+	// Close the journal before unlinking it (Windows cannot delete an open
+	// file); the deferred Close becomes a harmless no-op.
+	ecjFile.Close()
 	os.Remove(baseFileName + ".ecj")
 
 	return nil

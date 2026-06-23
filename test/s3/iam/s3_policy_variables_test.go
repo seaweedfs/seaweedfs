@@ -210,10 +210,21 @@ func TestS3PolicyVariablesUsernameIsolation(t *testing.T) {
 			"Sid": "DenyOtherFolders",
 			"Effect": "Deny",
 			"Principal": "*",
-			"Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+			"Action": ["s3:GetObject", "s3:PutObject"],
 			"NotResource": "arn:aws:s3:::%s/${aws:username}/*"
+		}, {
+			"Sid": "DenyListOtherPrefixes",
+			"Effect": "Deny",
+			"Principal": "*",
+			"Action": "s3:ListBucket",
+			"Resource": "arn:aws:s3:::%s",
+			"Condition": {
+				"StringNotLike": {
+					"s3:prefix": ["${aws:username}/*", "${aws:username}"]
+				}
+			}
 		}]
-	}`, bucketName, bucketName, bucketName)
+	}`, bucketName, bucketName, bucketName, bucketName)
 
 	_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
 		Bucket: aws.String(bucketName),

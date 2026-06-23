@@ -138,20 +138,31 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
+						{
+							Name:        "replica_placement",
+							Label:       "Replica Placement",
+							Description: "EC shard placement (e.g. 020): 2nd/3rd digits cap shards per rack/node (best-effort during encode, enforced by rebalancing); the data-center digit is ignored. Empty uses the master default.",
+							Placeholder: "020",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"quiet_for_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 300},
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3600},
 				},
 				"fullness_ratio": {
-					Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.8},
+					Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.95},
 				},
 				"min_size_mb": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
 				},
 				"preferred_tags": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"replica_placement": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 			},
@@ -170,10 +181,10 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"quiet_for_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 300},
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3600},
 			},
 			"fullness_ratio": {
-				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.8},
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.95},
 			},
 			"min_size_mb": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
@@ -217,7 +228,11 @@ func (h *ErasureCodingHandler) Detect(
 		return err
 	}
 
-	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology, GrpcDialOption: h.grpcDialOption}
+	clusterInfo := &workertypes.ClusterInfo{
+		ActiveTopology:          activeTopology,
+		GrpcDialOption:          h.grpcDialOption,
+		DefaultReplicaPlacement: pluginworker.FetchDefaultReplicaPlacement(ctx, masters, h.grpcDialOption),
+	}
 	maxResults := int(request.MaxResults)
 	if maxResults < 0 {
 		maxResults = 0
@@ -225,6 +240,18 @@ func (h *ErasureCodingHandler) Detect(
 	results, hasMore, err := Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
+	}
+	// Stamp the admin-issued encode generation onto every EC proposal. DetectionSequence
+	// is minted once per cycle on the single admin clock, so generations are globally
+	// ordered even though detection runs on a rotating worker; this lets a stale worker's
+	// shard cleanup fence against a newer run instead of wiping it.
+	for _, result := range results {
+		if result == nil || result.TypedParams == nil {
+			continue
+		}
+		if ecp := result.TypedParams.GetErasureCodingParams(); ecp != nil {
+			ecp.EncodeTsNs = request.DetectionSequence
+		}
 	}
 	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results, maxResults, hasMore); traceErr != nil {
 		glog.Warningf("Plugin worker failed to emit erasure_coding detection trace: %v", traceErr)
@@ -591,6 +618,8 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	taskConfig.MinSizeMB = minSizeMB
 
 	taskConfig.PreferredTags = util.NormalizeTagList(pluginworker.ReadStringListConfig(values, "preferred_tags"))
+
+	taskConfig.ReplicaPlacement = strings.TrimSpace(pluginworker.ReadStringConfig(values, "replica_placement", taskConfig.ReplicaPlacement))
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig: taskConfig,

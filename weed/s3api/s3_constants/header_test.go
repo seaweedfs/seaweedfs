@@ -89,6 +89,88 @@ func TestNormalizeObjectKey(t *testing.T) {
 	}
 }
 
+func TestIsValidObjectKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"empty", "", true},
+		{"plain", "folder/file.txt", true},
+		{"leading slash", "/folder/file.txt", true},
+		{"trailing slash", "folder/", true},
+		{"hidden file ok", ".hidden", true},
+		{"dotdot in name ok", "..hidden", true},
+		{"double dots inside name", "foo..bar/baz", true},
+
+		{"bare dotdot", "..", false},
+		{"bare dot", ".", false},
+		{"leading dotdot segment", "../evil-bucket/test.txt", false},
+		{"leading dot-slash", "./evil/test.txt", false},
+		{"nested dotdot segment", "good/../evil/test.txt", false},
+		{"trailing dotdot segment", "good/..", false},
+		{"backslash dotdot", "..\\evil\\test.txt", false},
+		{"mixed-slash dotdot", "good\\..\\evil/test.txt", false},
+		{"dotdot after duplicate slash", "good//../evil", false},
+		{"nul byte", "foo\x00bar", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidObjectKey(tt.input); got != tt.want {
+				t.Errorf("IsValidObjectKey(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidBucketName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"empty ok", "", true},
+		{"plain", "my-bucket", true},
+		{"name containing dots", "my.bucket.name", true},
+
+		{"bare dot", ".", false},
+		{"bare dotdot", "..", false},
+		{"with slash", "evil/bucket", false},
+		{"with backslash", "evil\\bucket", false},
+		{"with nul", "evil\x00bucket", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidBucketName(tt.input); got != tt.want {
+				t.Errorf("IsValidBucketName(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidPathSegment(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"opaque-id_123", true},
+		{"..hidden", true},
+		{"", false},
+		{".", false},
+		{"..", false},
+		{"dir/value", false},
+		{"dir\\value", false},
+		{"nul\x00value", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := IsValidPathSegment(tt.input); got != tt.want {
+				t.Errorf("IsValidPathSegment(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRemoveDuplicateSlashes(t *testing.T) {
 	tests := []struct {
 		name     string

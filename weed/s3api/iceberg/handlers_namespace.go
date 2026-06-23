@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -82,7 +83,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		glog.Infof("Iceberg: ListNamespaces error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -138,7 +139,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.Errorf("Iceberg: CreateNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -182,7 +183,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: GetNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -191,6 +192,113 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 		Properties: withDefaultNamespaceLocation(getResp.Properties, bucketName, getResp.Namespace),
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// applyNamespacePropertyUpdates applies removals and updates to a copy of
+// current and returns the merged property map alongside the Iceberg REST
+// summary of which keys were removed, updated, or were missing.
+func applyNamespacePropertyUpdates(current map[string]string, removals []string, updates map[string]string) (map[string]string, UpdateNamespacePropertiesResponse) {
+	properties := make(map[string]string, len(current))
+	for k, v := range current {
+		properties[k] = v
+	}
+
+	summary := UpdateNamespacePropertiesResponse{Removed: []string{}, Updated: []string{}, Missing: []string{}}
+	seen := make(map[string]struct{}, len(removals))
+	for _, key := range removals {
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := properties[key]; ok {
+			delete(properties, key)
+			summary.Removed = append(summary.Removed, key)
+		} else {
+			summary.Missing = append(summary.Missing, key)
+		}
+	}
+	for key, value := range updates {
+		properties[key] = value
+		summary.Updated = append(summary.Updated, key)
+	}
+	return properties, summary
+}
+
+// handleUpdateNamespaceProperties applies a set of removals and updates to a
+// namespace's properties and returns which keys were removed, updated, or
+// missing, per the Iceberg REST spec.
+func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	namespace := parseNamespace(vars["namespace"])
+	if len(namespace) == 0 {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
+		return
+	}
+
+	var req UpdateNamespacePropertiesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	// A key cannot be both removed and updated in the same request.
+	for _, key := range req.Removals {
+		if _, ok := req.Updates[key]; ok {
+			writeError(w, http.StatusUnprocessableEntity, "UnprocessableEntityException",
+				fmt.Sprintf("Cannot remove and update the same key: %s", key))
+			return
+		}
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	// Load the current properties so we can compute the summary and the merged map.
+	getReq := &s3tables.GetNamespaceRequest{TableBucketARN: bucketARN, Namespace: namespace}
+	var getResp s3tables.GetNamespaceResponse
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, identityName)
+	})
+	if err != nil {
+		writeNamespaceManagerError(w, err, namespace)
+		return
+	}
+
+	properties, summary := applyNamespacePropertyUpdates(getResp.Properties, req.Removals, req.Updates)
+
+	updReq := &s3tables.UpdateNamespaceRequest{TableBucketARN: bucketARN, Namespace: namespace, Properties: properties}
+	var updResp s3tables.UpdateNamespaceResponse
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateNamespace", updReq, &updResp, identityName)
+	})
+	if err != nil {
+		writeNamespaceManagerError(w, err, namespace)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// writeNamespaceManagerError maps an s3tables manager error to the matching
+// Iceberg REST response. A namespace dropped between read and write surfaces
+// as 404 and a denied caller as 403; anything else is a 500.
+func writeNamespaceManagerError(w http.ResponseWriter, err error, namespace Namespace) {
+	var s3Err *s3tables.S3TablesError
+	if errors.As(err, &s3Err) {
+		switch s3Err.Type {
+		case s3tables.ErrCodeNoSuchNamespace:
+			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
+			return
+		case s3tables.ErrCodeAccessDenied:
+			writeError(w, http.StatusForbidden, "ForbiddenException", "Not authorized to update namespace properties")
+			return
+		}
+	}
+	glog.V(1).Infof("Iceberg: UpdateNamespaceProperties error: %v", err)
+	writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 }
 
 // handleNamespaceExists checks if a namespace exists.
@@ -222,6 +330,10 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if nameValidationError(err) {
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		glog.V(1).Infof("Iceberg: NamespaceExists error: %v", err)
@@ -267,7 +379,7 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: DropNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 

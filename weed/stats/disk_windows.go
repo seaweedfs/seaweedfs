@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"fmt"
 	"syscall"
 	"unsafe"
 
@@ -13,12 +14,12 @@ var (
 	getDiskFreeSpaceEx = kernel32.NewProc("GetDiskFreeSpaceExW")
 )
 
-func fillInDiskStatus(disk *volume_server_pb.DiskStatus) {
+func fillInDiskStatus(disk *volume_server_pb.DiskStatus) error {
 
 	ptr, err := syscall.UTF16PtrFromString(disk.Dir)
 
 	if err != nil {
-		return
+		return err
 	}
 	var _temp uint64
 	/* #nosec */
@@ -35,14 +36,13 @@ func fillInDiskStatus(disk *volume_server_pb.DiskStatus) {
 
 	if r == 0 {
 		if e != 0 {
-			return
+			return e
 		}
-
-		return
+		return fmt.Errorf("GetDiskFreeSpaceExW failed for %s", disk.Dir)
 	}
 	disk.Used = disk.All - disk.Free
 	disk.PercentFree = float32((float64(disk.Free) / float64(disk.All)) * 100)
 	disk.PercentUsed = float32((float64(disk.Used) / float64(disk.All)) * 100)
 
-	return
+	return nil
 }

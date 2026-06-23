@@ -172,6 +172,26 @@ impl Guard {
         self.is_write_active = !is_empty_whitelist || !self.signing_key.is_empty();
     }
 
+    /// Refresh the JWT signing keys and their expirations in place so operators
+    /// can rotate keys via SIGHUP without restarting the process. Mirrors Go's
+    /// `Guard::UpdateSigningKeys`: it swaps the fields and recomputes
+    /// `is_write_active`.
+    pub fn update_signing_keys(
+        &mut self,
+        signing_key: SigningKey,
+        expires_after_sec: i64,
+        read_signing_key: SigningKey,
+        read_expires_after_sec: i64,
+    ) {
+        self.signing_key = signing_key;
+        self.expires_after_sec = expires_after_sec;
+        self.read_signing_key = read_signing_key;
+        self.read_expires_after_sec = read_expires_after_sec;
+
+        let is_empty_whitelist = self.whitelist_ips.is_empty() && self.whitelist_cidrs.is_empty();
+        self.is_write_active = !is_empty_whitelist || !self.signing_key.is_empty();
+    }
+
     /// Check if a remote IP is in the whitelist.
     /// Returns true if write security is inactive (no whitelist and no signing key),
     /// if the whitelist is empty, or if the IP matches.
@@ -461,6 +481,43 @@ mod tests {
         // Wrong file ID
         let err = guard.check_jwt_for_file(Some(&token), "4,deadbeef", true);
         assert!(matches!(err, Err(JwtError::FileIdMismatch { .. })));
+    }
+
+    #[test]
+    fn test_update_signing_keys_rotates() {
+        let mut guard = Guard::new(
+            &[],
+            SigningKey::from_string("old-write"),
+            10,
+            SigningKey::from_string("old-read"),
+            60,
+        );
+
+        guard.update_signing_keys(
+            SigningKey::from_string("new-write"),
+            11,
+            SigningKey::from_string("new-read"),
+            61,
+        );
+
+        let token = gen_jwt(&guard.signing_key, 60, "3,01637037d6").unwrap();
+        // Validates with the rotated key, not the old one.
+        assert!(decode_jwt(&guard.signing_key, &token).is_ok());
+        assert!(decode_jwt(&SigningKey::from_string("old-write"), &token).is_err());
+        assert_eq!(guard.expires_after_sec, 11);
+        assert_eq!(guard.read_expires_after_sec, 61);
+    }
+
+    #[test]
+    fn test_update_signing_keys_toggles_write_active() {
+        let mut guard = Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0);
+        assert!(guard.check_jwt(None, true).is_ok());
+
+        guard.update_signing_keys(SigningKey::from_string("write"), 10, SigningKey(vec![]), 0);
+        assert!(guard.is_write_active);
+
+        guard.update_signing_keys(SigningKey(vec![]), 0, SigningKey(vec![]), 0);
+        assert!(!guard.is_write_active);
     }
 
     #[test]

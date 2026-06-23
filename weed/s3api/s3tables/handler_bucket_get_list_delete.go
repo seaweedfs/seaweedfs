@@ -72,7 +72,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllow,
+		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
 		return ErrAccessDenied
@@ -97,16 +97,9 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 		return err
 	}
 
-	principal := h.getAccountID(r)
+	// No account-level gate: visibility is enforced per bucket below, so an
+	// owner can always list its own buckets and others are filtered out.
 	accountID := h.getAccountID(r)
-	identityActions := getIdentityActions(r)
-	if !CheckPermissionWithContext("ListTableBuckets", principal, accountID, "", "", &PolicyContext{
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllow,
-	}) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list table buckets")
-		return NewAuthError("ListTableBuckets", principal, "not authorized to list table buckets")
-	}
 
 	maxBuckets := req.MaxBuckets
 	if maxBuckets <= 0 {
@@ -200,7 +193,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 					TableBucketName: entry.Entry.Name,
 					IdentityActions: identityActions,
-					DefaultAllow:    h.defaultAllow,
+					DefaultAllow:    h.defaultAllowFor(r),
 				}) {
 					continue
 				}
@@ -303,7 +296,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 			TableBucketName: bucketName,
 			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllow,
+			DefaultAllow:    h.defaultAllowFor(r),
 		}) {
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}

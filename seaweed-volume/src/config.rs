@@ -188,6 +188,12 @@ pub struct Cli {
     #[arg(long = "securityFile", default_value = "")]
     pub security_file: String,
 
+    /// If true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints
+    /// including loopback / link-local hosts. Default rejects internal /
+    /// metadata endpoints.
+    #[arg(long = "volume.allowUntrustedRemoteEndpoints", default_value_t = false)]
+    pub allow_untrusted_remote_endpoints: bool,
+
     /// A file of command line options, each line in optionName=optionValue format.
     #[arg(long = "options", default_value = "")]
     pub options: String,
@@ -258,6 +264,9 @@ pub struct VolumeServerConfig {
     pub enable_write_queue: bool,
     /// Path to security.toml — stored for SIGHUP reload.
     pub security_file: String,
+    /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation
+    /// (allows loopback / link-local / metadata hosts).
+    pub allow_untrusted_remote_endpoints: bool,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -804,6 +813,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
         security_file: cli.security_file,
+        allow_untrusted_remote_endpoints: cli.allow_untrusted_remote_endpoints,
     }
 }
 

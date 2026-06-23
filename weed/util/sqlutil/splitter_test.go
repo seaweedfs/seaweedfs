@@ -96,6 +96,16 @@ func TestSplitStatements(t *testing.T) {
 			input:    "   \n\t   ",
 			expected: []string{},
 		},
+		{
+			name:     "Only single line comment",
+			input:    "-- just a comment",
+			expected: []string{},
+		},
+		{
+			name:     "Only multi-line comment",
+			input:    "/* just a comment; with separator */",
+			expected: []string{},
+		},
 	}
 
 	for _, tt := range tests {

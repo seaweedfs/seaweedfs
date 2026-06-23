@@ -69,7 +69,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: ListTables error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -161,6 +161,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
 		return
 	}
+	// Backfill Iceberg spec-required fields that iceberg-go v0.5.0 omits when
+	// empty (e.g. current-snapshot-id), so the persisted v*.metadata.json is
+	// readable by strict clients (Java/Spark/Trino) that go directly to S3.
+	metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 
 	tableName := req.Name
 	metadataFileName := "v1.metadata.json" // Initial version is always 1
@@ -168,6 +172,18 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	metadataBucket, metadataPath, err := parseS3Location(location)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+		return
+	}
+
+	// location/name are client-supplied; confine the metadata write to the
+	// authorized catalog bucket and reject traversal segments so path.Join in
+	// saveMetadataFile cannot escape into another bucket.
+	if metadataBucket != bucketName {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "table location must be within bucket "+bucketName)
+		return
+	}
+	if !isValidTablePath(metadataPath) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid table location path")
 		return
 	}
 
@@ -196,7 +212,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isNoSuchTableError(existsErr) {
 		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", existsErr.Error())
+		writeManagerError(w, existsErr)
 		return
 	}
 
@@ -286,7 +302,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -343,7 +359,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: LoadTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -493,7 +509,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: DropTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 

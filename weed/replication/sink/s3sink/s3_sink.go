@@ -209,6 +209,9 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	if tags != "" {
 		uploadInput.Tagging = aws.String(tags)
 	}
+	if entry.Attributes.Mime != "" {
+		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
+	}
 	if len(entry.Attributes.Md5) > 0 {
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
 	}

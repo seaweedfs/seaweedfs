@@ -19,7 +19,7 @@ func TestCommandEcBalanceSmall(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceNothingToMove(t *testing.T) {
@@ -36,7 +36,7 @@ func TestCommandEcBalanceNothingToMove(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceAddNewServers(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCommandEcBalanceAddNewServers(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceAddNewRacks(t *testing.T) {
@@ -74,7 +74,7 @@ func TestCommandEcBalanceAddNewRacks(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 }
 
 func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
@@ -118,8 +118,7 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
-	ecb.balanceEcRacks()
+	ecb.balance([]string{"c1"})
 }
 
 func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNode {
@@ -158,7 +157,7 @@ func TestCommandEcBalanceEvenDataAndParityDistribution(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 
 	// After balancing (dry-run), verify the PLANNED distribution by checking what moves were proposed
 	// The ecb.ecNodes state is updated during dry-run to track planned moves
@@ -262,7 +261,7 @@ func TestCommandEcBalanceMultipleVolumesEvenDistribution(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
+	ecb.balance([]string{"c1"})
 
 	// Check both volumes
 	for _, vid := range []needle.VolumeId{1, 2} {
@@ -316,8 +315,7 @@ func TestCommandEcBalanceAllNodesShareAllVolumes(t *testing.T) {
 		diskType:       types.HardDriveType,
 	}
 
-	ecb.balanceEcVolumes("c1")
-	ecb.balanceEcRacks()
+	ecb.balance([]string{"c1"})
 
 	// Count total shards per node after balancing
 	for _, node := range ecb.ecNodes {
@@ -342,7 +340,11 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 	// Simulate 22 EC volumes across 14 nodes (each volume has 14 shards, 1 per node).
 	// Give nodes 0-3 an extra volume each (vol 23-26, all 14 shards) to create imbalance.
 	// Before balancing: nodes 0-3 have 22+14=36 shards each, nodes 4-13 have 22 shards each.
-	// Total = 4*36 + 10*22 = 144+220 = 364. Average = ceil(364/14) = 26.
+	// Total = 4*36 + 10*22 = 144+220 = 364. Capacities are heterogeneous (max 80 vs
+	// 33), so the utilization-based global phase balances by fullness, not count:
+	// 364 shards over 9*80+5*33=885 slots is ~41% full, so large nodes settle near
+	// 33 shards and small nodes near 14 (all ~41% full) rather than ~26 each, which
+	// would drive the small nodes to ~79%.
 
 	type nodeSpec struct {
 		id      string
@@ -396,11 +398,19 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 		t.Logf("BEFORE node %s (max %d): %d shards", node.info.Id, node.freeEcSlot+count, count)
 	}
 
-	ecb.balanceEcVolumes("cldata")
-	ecb.balanceEcRacks()
+	ecb.balance([]string{"cldata"})
 
-	// Verify: no node should exceed the average
+	// Verify even FULLNESS (shards/capacity), not even count: with heterogeneous
+	// capacities the utilization-based global phase fills nodes proportionally, so
+	// large nodes hold more shards than small ones while every node ends near the
+	// overall fullness. (An even-count result would over-fill the small nodes.)
+	capacityByID := make(map[string]int, len(nodes))
+	for _, ns := range nodes {
+		capacityByID[ns.id] = ns.maxSlot
+	}
+
 	totalShards := 0
+	totalCapacity := 0
 	shardCounts := make(map[string]int)
 	for _, node := range ecb.ecNodes {
 		count := 0
@@ -411,14 +421,22 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 		}
 		shardCounts[node.info.Id] = count
 		totalShards += count
+		totalCapacity += capacityByID[node.info.Id]
 	}
-	avg := ceilDivide(totalShards, len(ecNodes))
+	overallFullness := float64(totalShards) / float64(totalCapacity)
 
+	// Tolerance well below the gap a count-even result would show (small nodes
+	// would sit ~38 points above overall), but above integer-rounding skew.
+	const tolerance = 0.05
 	for _, node := range ecb.ecNodes {
 		count := shardCounts[node.info.Id]
-		t.Logf("AFTER  node %s: %d shards (avg %d)", node.info.Id, count, avg)
-		if count > avg {
-			t.Errorf("node %s has %d shards, expected at most %d (avg)", node.info.Id, count, avg)
+		capacity := capacityByID[node.info.Id]
+		fullness := float64(count) / float64(capacity)
+		t.Logf("AFTER  node %s: %d/%d shards (%.0f%% full, overall %.0f%%)",
+			node.info.Id, count, capacity, fullness*100, overallFullness*100)
+		if diff := fullness - overallFullness; diff > tolerance || diff < -tolerance {
+			t.Errorf("node %s fullness %.1f%% deviates from overall %.1f%% by more than %.0f points",
+				node.info.Id, fullness*100, overallFullness*100, tolerance*100)
 		}
 	}
 }

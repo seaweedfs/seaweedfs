@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -485,6 +486,7 @@ func initMiniVolumeFlags() {
 	miniOptions.v.readBufferSizeMB = cmdMini.Flag.Int("volume.readBufferSizeMB", 4, "read buffer size in MB")
 	miniOptions.v.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
 	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
+	miniOptions.v.setDiskIOProbeDefaults()
 }
 
 // initMiniS3Flags initializes S3 server flag options
@@ -546,6 +548,7 @@ func initMiniAdminFlags() {
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
 	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
+	miniAdminOptions.urlPrefix = cmdMini.Flag.String("admin.urlPrefix", "", "URL path prefix when running the admin UI behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 }
 
 func init() {
@@ -716,6 +719,31 @@ func loadOrCreateMiniHexSecret(path string, nBytes int) string {
 		return ""
 	}
 	return s
+}
+
+// ensureMiniVolumeGrowthDefaults keeps a small mini cluster usable with many
+// S3 buckets. Mini auto-sizes its data disk into a handful of large (up to
+// 1 GiB) volume slots, but the master pre-grows copy_1 (default 7) volumes for
+// every new collection. Under a filer group each bucket is its own collection,
+// so the first couple of buckets' writes claim every slot and later buckets
+// can no longer grow a volume — their PutObjects fail with
+// "assign volume: ... no free volumes". Grow one volume at a time so the slots
+// stretch across many collections. Anything the operator already set via
+// master.toml or a WEED_ env var wins.
+func ensureMiniVolumeGrowthDefaults() {
+	v := util.GetViper()
+	for _, key := range []string{
+		"master.volume_growth.copy_1",
+		"master.volume_growth.copy_2",
+		"master.volume_growth.copy_3",
+		"master.volume_growth.copy_other",
+	} {
+		envKey := "WEED_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		if v.IsSet(key) || os.Getenv(envKey) != "" {
+			continue
+		}
+		v.Set(key, 1)
+	}
 }
 
 // isPortOpenOnIP checks if a port is available for binding on a specific IP address
@@ -1136,6 +1164,11 @@ func runMini(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+	util.LoadConfiguration("volume", false)
+	util.LoadConfiguration("admin", false)
+	miniOptions.v.applyDiskIOProbeConfig()
+
+	ensureMiniVolumeGrowthDefaults()
 
 	// applyConfigFileOptions above may have overwritten -dir from the
 	// mini.options file, so re-resolve it here alongside the other paths.
@@ -1456,6 +1489,18 @@ func startS3Service() {
 	miniS3Options.startS3Server()
 }
 
+// applyMiniAdminCredentialFallback fills the admin credential flags from
+// security.toml [admin] / WEED_ADMIN_* env vars when they were not set on the
+// command line, mirroring the standalone `weed admin` command. CLI flags take
+// precedence. Note the read-only viper keys (admin.readonly.*) differ from the
+// mini flag names (admin.readOnly*).
+func applyMiniAdminCredentialFallback(options *AdminOptions) {
+	applyViperFallback(cmdMini, options.adminUser, "admin.user", "admin.user")
+	applyViperFallback(cmdMini, options.adminPassword, "admin.password", "admin.password")
+	applyViperFallback(cmdMini, options.readOnlyUser, "admin.readOnlyUser", "admin.readonly.user")
+	applyViperFallback(cmdMini, options.readOnlyPassword, "admin.readOnlyPassword", "admin.readonly.password")
+}
+
 // startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
@@ -1471,6 +1516,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
+
+	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
+	// vars, matching the standalone `weed admin` command.
+	applyMiniAdminCredentialFallback(&miniAdminOptions)
 
 	// Security validation: prevent empty username when password is set
 	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
@@ -1501,6 +1550,12 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		*miniAdminOptions.dataDir = filepath.Join(*miniDataFolders, "admin")
 	}
 
+	// Normalize URL prefix the same way `weed admin` does.
+	urlPrefix := strings.TrimRight(*miniAdminOptions.urlPrefix, "/")
+	if urlPrefix != "" && !strings.HasPrefix(urlPrefix, "/") {
+		urlPrefix = "/" + urlPrefix
+	}
+
 	// Start admin server in background. trackMiniClient lets the Ctrl+C
 	// handler wait for startAdminServer's graceful shutdown before filer/
 	// volume/master tear down.
@@ -1515,7 +1570,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, ""); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
@@ -1787,8 +1842,19 @@ func printWelcomeMessage() {
 		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
 	}
 
-	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
-	sb.WriteString("  Press Ctrl+C to stop all components")
+	fmt.Fprintf(&sb, "\n  Data Directory:   %s\n", *miniDataFolders)
+	firstDir := util.StringSplit(*miniDataFolders, ",")[0]
+	if ds := stats_collect.NewDiskStatus(firstDir); ds != nil && ds.All > 0 {
+		fmt.Fprintf(&sb, "  Free Space:       %s\n", util.BytesToHumanReadable(ds.Free))
+	}
+	if miniMasterOptions.volumeSizeLimitMB != nil {
+		fmt.Fprintf(&sb, "  Volume Size:      %s\n", util.BytesToHumanReadable(uint64(*miniMasterOptions.volumeSizeLimitMB)*bytesPerMB))
+	}
+	if max, free, ok := miniVolumeCounts(); ok {
+		fmt.Fprintf(&sb, "  Volume Count:     %d\n", max)
+		fmt.Fprintf(&sb, "  Free Volumes:     %d\n", free)
+	}
+	sb.WriteString("\n  Press Ctrl+C to stop all components")
 
 	switch {
 	case s3api.HasAnyIdentity():
@@ -1808,6 +1874,33 @@ func printWelcomeMessage() {
 
 	fmt.Print(sb.String())
 	fmt.Println("")
+}
+
+// miniVolumeCounts asks the local master for the total volume slots the data
+// directory supports (Topology.Max) and how many are still free (Topology.Free).
+// Best-effort: any error returns ok=false so the welcome banner simply omits
+// the lines.
+func miniVolumeCounts() (max, free int64, ok bool) {
+	url := getHealthCheckAddr(fmt.Sprintf("http://%s:%d/dir/status", *miniIp, *miniMasterOptions.port))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, false
+	}
+	var status struct {
+		Topology struct {
+			Max  int64
+			Free int64
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return 0, 0, false
+	}
+	return status.Topology.Max, status.Topology.Free, true
 }
 
 // ensureMiniBuckets creates each named bucket on the embedded filer if it does

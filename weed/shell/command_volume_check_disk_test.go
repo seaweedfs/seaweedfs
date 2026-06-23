@@ -6,7 +6,65 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
+
+// TestDoVolumeCheckDiskDoesNotResurrectAbsentNeedle verifies that a needle
+// present-and-live on the source but entirely absent on the target is NOT
+// pushed back by default. Such an absence is indistinguishable from a needle
+// that was deleted on the target and then vacuumed away, so resurrecting it
+// would raise back data the operator deleted.
+func TestDoVolumeCheckDiskDoesNotResurrectAbsentNeedle(t *testing.T) {
+	sourceDB, targetDB := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer sourceDB.Close()
+	defer targetDB.Close()
+
+	// Source has a live needle; target lacks it (e.g. deleted+vacuumed there).
+	if err := sourceDB.Set(types.NeedleId(1001), types.ToOffset(8), types.Size(123)); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	var buf bytes.Buffer
+	vcd := &volumeCheckDisk{
+		commandEnv: &CommandEnv{
+			option: &ShellOptions{
+				GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+			},
+		},
+		writer:             &buf,
+		now:                time.Now(),
+		applyChanges:       false, // simulation: should not even read the source blob
+		nonRepairThreshold: 1,
+		// resurrectMissingNeedles left false: the safe default.
+	}
+
+	// Source points at an unreachable address: with the fix no blob read is
+	// attempted, so this is never contacted. The pre-fix code queues the
+	// absent needle and tries to read it from here, surfacing as an error.
+	source := &VolumeReplica{
+		location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "127.0.0.1:1"}},
+		info:     &master_pb.VolumeInformationMessage{Id: 7},
+	}
+	target := &VolumeReplica{
+		location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "127.0.0.1:2"}},
+		info:     &master_pb.VolumeInformationMessage{Id: 7},
+	}
+
+	// With the safe default, the absent needle is skipped before any network
+	// read, so this returns cleanly with no changes. On the pre-fix code the
+	// needle is queued and a source blob read is attempted, which has no server
+	// to reach and surfaces as an error (or a resurrection) instead.
+	hasChanges, err := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target)
+	if err != nil {
+		t.Fatalf("doVolumeCheckDisk returned error: %v", err)
+	}
+	if hasChanges {
+		t.Fatalf("absent-on-target needle was resurrected; expected no changes")
+	}
+}
 
 type testCommandVolumeCheckDisk struct {
 	commandVolumeCheckDisk

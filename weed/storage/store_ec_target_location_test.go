@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -168,8 +169,9 @@ func newEcTargetTestStore(t *testing.T, numDirs int) *Store {
 		minFreeSpaces = append(minFreeSpaces, util.MinFreeSpace{})
 		diskTypes = append(diskTypes, types.HardDriveType)
 	}
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
-		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, nil, 3,
+		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, nil, 3, diskIOProbeConfig,
 	)
 	done := make(chan struct{})
 	go func() {

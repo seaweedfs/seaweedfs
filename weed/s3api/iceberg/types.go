@@ -62,6 +62,19 @@ type GetNamespaceResponse struct {
 	Properties map[string]string `json:"properties"`
 }
 
+// UpdateNamespacePropertiesRequest is sent to POST /v1/namespaces/{namespace}/properties.
+type UpdateNamespacePropertiesRequest struct {
+	Removals []string          `json:"removals,omitempty"`
+	Updates  map[string]string `json:"updates,omitempty"`
+}
+
+// UpdateNamespacePropertiesResponse is returned by POST /v1/namespaces/{namespace}/properties.
+type UpdateNamespacePropertiesResponse struct {
+	Removed []string `json:"removed"`
+	Updated []string `json:"updated"`
+	Missing []string `json:"missing"`
+}
+
 // ListTablesResponse is returned by GET /v1/namespaces/{namespace}/tables.
 type ListTablesResponse struct {
 	NextPageToken string            `json:"next-page-token,omitempty"`
@@ -91,6 +104,29 @@ type loadTableResultAlias struct {
 	MetadataLocation string             `json:"metadata-location,omitempty"`
 	RawMetadata      json.RawMessage    `json:"metadata"`
 	Config           iceberg.Properties `json:"config,omitempty"`
+}
+
+// MarshalJSON serializes LoadTableResult while backfilling spec-required
+// metadata fields that iceberg-go v0.5.0 drops via `omitempty`. Without this,
+// strict Iceberg REST clients (Java/Spark/Trino) reject otherwise valid
+// responses for empty tables with errors like
+// "Cannot parse missing long current-snapshot-id".
+func (r LoadTableResult) MarshalJSON() ([]byte, error) {
+	metaBytes, err := json.Marshal(r.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	metaBytes = ensureMetadataSpecCompliance(metaBytes)
+
+	return json.Marshal(struct {
+		MetadataLocation string             `json:"metadata-location,omitempty"`
+		Metadata         json.RawMessage    `json:"metadata"`
+		Config           iceberg.Properties `json:"config"`
+	}{
+		MetadataLocation: r.MetadataLocation,
+		Metadata:         metaBytes,
+		Config:           r.Config,
+	})
 }
 
 // UnmarshalJSON implements custom unmarshaling for LoadTableResult
@@ -132,6 +168,25 @@ type CommitTableResponse struct {
 type commitTableResponseAlias struct {
 	MetadataLocation string          `json:"metadata-location"`
 	RawMetadata      json.RawMessage `json:"metadata"`
+}
+
+// MarshalJSON mirrors LoadTableResult.MarshalJSON: it backfills spec-required
+// fields that iceberg-go v0.5.0 omits, so commit responses also parse cleanly
+// on strict Iceberg clients.
+func (r CommitTableResponse) MarshalJSON() ([]byte, error) {
+	metaBytes, err := json.Marshal(r.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	metaBytes = ensureMetadataSpecCompliance(metaBytes)
+
+	return json.Marshal(struct {
+		MetadataLocation string          `json:"metadata-location"`
+		Metadata         json.RawMessage `json:"metadata"`
+	}{
+		MetadataLocation: r.MetadataLocation,
+		Metadata:         metaBytes,
+	})
 }
 
 // UnmarshalJSON implements custom unmarshaling for CommitTableResponse.

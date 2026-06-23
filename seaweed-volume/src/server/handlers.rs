@@ -23,6 +23,27 @@ use crate::pb::volume_server_pb;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
 
+/// Slack added over the configured file-size limit when bounding the raw
+/// request body, to allow for multipart/form-data framing overhead. The exact
+/// per-file limit is still enforced on the parsed data after multipart parsing.
+const UPLOAD_BODY_OVERHEAD: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Upper bound on bytes we will materialize in memory for a single request when
+/// expanding stored content (gzip decompression or chunk-manifest assembly).
+/// Guards against gzip bombs and crafted/oversized manifest sizes OOM-killing
+/// the server; legitimate large objects are read via client-side chunk fetches.
+const MAX_EXPANSION_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
+
+/// Why `maybe_decompress_gzip` failed, so callers can distinguish a recoverable
+/// "not valid gzip, use the raw bytes" from "the bomb cap was hit, reject it".
+#[derive(Debug)]
+enum GunzipError {
+    /// Input was not valid gzip / decode failed — callers may fall back to raw.
+    Decode,
+    /// Decompressed output would exceed `MAX_EXPANSION_BYTES` — must be rejected.
+    TooLarge,
+}
+
 // ============================================================================
 // Inflight Throttle Guard
 // ============================================================================
@@ -838,8 +859,6 @@ pub struct ReadQueryParams {
     pub response_content_disposition: Option<String>,
     /// Pretty print JSON response
     pub pretty: Option<String>,
-    /// JSONP callback function name
-    pub callback: Option<String>,
 }
 
 // ============================================================================
@@ -1454,12 +1473,16 @@ async fn get_or_head_handler_inner(
     if is_compressed {
         if needs_image_ops {
             // Always decompress for image operations (Go decompresses before resize/crop)
-            use flate2::read::GzDecoder;
-            use std::io::Read as _;
-            let mut decoder = GzDecoder::new(&data[..]);
-            let mut decompressed = Vec::new();
-            if decoder.read_to_end(&mut decompressed).is_ok() {
-                data = decompressed;
+            match maybe_decompress_gzip(&data) {
+                Ok(decompressed) => data = decompressed,
+                Err(GunzipError::TooLarge) => {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed object exceeds decompression limit",
+                    )
+                        .into_response()
+                }
+                Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
             }
         } else {
             let accept_encoding = headers
@@ -1476,12 +1499,16 @@ async fn get_or_head_handler_inner(
                 response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
             } else {
                 // Decompress for client
-                use flate2::read::GzDecoder;
-                use std::io::Read as _;
-                let mut decoder = GzDecoder::new(&data[..]);
-                let mut decompressed = Vec::new();
-                if decoder.read_to_end(&mut decompressed).is_ok() {
-                    data = decompressed;
+                match maybe_decompress_gzip(&data) {
+                    Ok(decompressed) => data = decompressed,
+                    Err(GunzipError::TooLarge) => {
+                        return (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "compressed object exceeds decompression limit",
+                        )
+                            .into_response()
+                    }
+                    Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
                 }
             }
         }
@@ -2136,15 +2163,30 @@ pub async fn post_handler(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Read body
-    let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
+    // Read body, bounded by the configured file-size limit so a single upload
+    // cannot buffer unbounded memory and OOM-kill the server (mirrors Go's
+    // io.LimitReader(r.Body, sizeLimit+1)). A margin covers multipart framing;
+    // the exact per-file limit is still enforced on the parsed data below.
+    let body_limit = if state.file_size_limit_bytes > 0 {
+        // try_from (not `as usize`) so a >usize::MAX limit on 32-bit caps at
+        // usize::MAX instead of silently truncating/wrapping to a tiny value.
+        usize::try_from(state.file_size_limit_bytes)
+            .unwrap_or(usize::MAX)
+            .saturating_add(UPLOAD_BODY_OVERHEAD)
+    } else {
+        usize::MAX
+    };
+    let body = match axum::body::to_bytes(request.into_body(), body_limit).await {
         Ok(b) => b,
         Err(e) => {
-            return json_error_with_query(
-                StatusCode::BAD_REQUEST,
-                format!("read body: {}", e),
-                Some(&query),
-            )
+            // With a limit configured, an error here means the body exceeded it
+            // before we buffered the whole thing; report it like the size check.
+            let msg = if state.file_size_limit_bytes > 0 {
+                format!("file over the limited {} bytes", state.file_size_limit_bytes)
+            } else {
+                format!("read body: {}", e)
+            };
+            return json_error_with_query(StatusCode::BAD_REQUEST, msg, Some(&query));
         }
     };
 
@@ -2284,7 +2326,17 @@ pub async fn post_handler(
     };
 
     let uncompressed_data = if is_gzipped {
-        maybe_decompress_gzip(&body_data_raw).unwrap_or_else(|| body_data_raw.clone())
+        match maybe_decompress_gzip(&body_data_raw) {
+            Ok(d) => d,
+            Err(GunzipError::TooLarge) => {
+                return json_error_with_query(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "compressed object exceeds decompression limit",
+                    Some(&query),
+                );
+            }
+            Err(GunzipError::Decode) => body_data_raw.clone(),
+        }
     } else {
         body_data_raw.clone()
     };
@@ -2763,14 +2815,16 @@ pub async fn delete_handler(
     // If this is a chunk manifest, delete child chunks first
     if n.is_chunk_manifest() {
         let manifest_data = if n.is_compressed() {
-            use flate2::read::GzDecoder;
-            use std::io::Read as _;
-            let mut decoder = GzDecoder::new(&n.data[..]);
-            let mut decompressed = Vec::new();
-            if decoder.read_to_end(&mut decompressed).is_ok() {
-                decompressed
-            } else {
-                n.data.clone()
+            match maybe_decompress_gzip(&n.data) {
+                Ok(d) => d,
+                Err(GunzipError::TooLarge) => {
+                    return json_error_with_query(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed manifest exceeds decompression limit",
+                        Some(&del_query),
+                    );
+                }
+                Err(GunzipError::Decode) => n.data.clone(),
             }
         } else {
             n.data.clone()
@@ -3126,14 +3180,19 @@ fn try_expand_chunk_manifest(
     last_modified_str: &Option<String>,
 ) -> Option<Response> {
     let data = if n.is_compressed() {
-        use flate2::read::GzDecoder;
-        use std::io::Read as _;
-        let mut decoder = GzDecoder::new(&n.data[..]);
-        let mut decompressed = Vec::new();
-        if decoder.read_to_end(&mut decompressed).is_err() {
-            return None;
+        match maybe_decompress_gzip(&n.data) {
+            Ok(d) => d,
+            Err(GunzipError::TooLarge) => {
+                return Some(
+                    (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed manifest exceeds decompression limit",
+                    )
+                        .into_response(),
+                )
+            }
+            Err(GunzipError::Decode) => return None,
         }
-        decompressed
     } else {
         n.data.clone()
     };
@@ -3142,6 +3201,13 @@ fn try_expand_chunk_manifest(
         Ok(m) => m,
         Err(_) => return None,
     };
+
+    // Guard the attacker-controlled manifest size before allocating: a negative
+    // value would wrap to a huge usize (capacity-overflow panic) and an oversized
+    // one would OOM-kill the server.
+    if manifest.size < 0 || manifest.size as u64 > MAX_EXPANSION_BYTES {
+        return None;
+    }
 
     // Read and concatenate all chunks
     let mut result = vec![0u8; manifest.size as usize];
@@ -3176,24 +3242,54 @@ fn try_expand_chunk_manifest(
                 )
             }
         }
-        let chunk_data = if chunk_needle.is_compressed() {
+        // Validate the attacker-controlled chunk offset before indexing: a
+        // negative value would wrap to a huge usize, and an out-of-range one has
+        // nowhere to land.
+        if chunk.offset < 0 {
+            return Some(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("invalid negative chunk offset in {}", chunk.fid),
+                )
+                    .into_response(),
+            );
+        }
+        let offset = chunk.offset as usize;
+        if offset >= result.len() {
+            continue;
+        }
+        // Write the chunk into its window in `result`. Compressed chunks inflate
+        // directly into the destination slice (bounded by the remaining window),
+        // so a chunk never allocates a second large buffer — peak memory stays at
+        // ~manifest.size instead of doubling. Bytes past the window are dropped,
+        // matching the prior truncation behavior.
+        if chunk_needle.is_compressed() {
             use flate2::read::GzDecoder;
             use std::io::Read as _;
             let mut decoder = GzDecoder::new(&chunk_needle.data[..]);
-            let mut decompressed = Vec::new();
-            if decoder.read_to_end(&mut decompressed).is_ok() {
-                decompressed
-            } else {
-                chunk_needle.data.clone()
+            let window = &mut result[offset..];
+            let mut written = 0usize;
+            let mut decode_failed = false;
+            while written < window.len() {
+                match decoder.read(&mut window[written..]) {
+                    Ok(0) => break,
+                    Ok(n) => written += n,
+                    Err(_) => {
+                        decode_failed = true;
+                        break;
+                    }
+                }
+            }
+            // On any decode failure, drop the partial output and fall back to the
+            // chunk's raw bytes (truncated to the window), preserving prior behavior.
+            if decode_failed {
+                window[..written].fill(0);
+                let copy_len = chunk_needle.data.len().min(window.len());
+                window[..copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
             }
         } else {
-            chunk_needle.data.clone()
-        };
-        let offset = chunk.offset as usize;
-        let end = std::cmp::min(offset + chunk_data.len(), result.len());
-        let copy_len = end - offset;
-        if copy_len > 0 {
-            result[offset..offset + copy_len].copy_from_slice(&chunk_data[..copy_len]);
+            let copy_len = chunk_needle.data.len().min(result.len() - offset);
+            result[offset..offset + copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
         }
     }
 
@@ -3402,10 +3498,6 @@ fn json_response_with_params<T: Serialize>(
     let is_pretty = params
         .and_then(|params| params.pretty.as_ref())
         .is_some_and(|value| !value.is_empty());
-    let callback = params
-        .and_then(|params| params.callback.as_ref())
-        .filter(|value| !value.is_empty())
-        .cloned();
 
     let json_body = if is_pretty {
         to_pretty_json(body)
@@ -3413,24 +3505,15 @@ fn json_response_with_params<T: Serialize>(
         serde_json::to_string(body).unwrap()
     };
 
-    if let Some(callback) = callback {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(format!("{}({})", callback, json_body)))
-            .unwrap()
-    } else {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
 }
 
-/// Return a JSON error response with optional query string for pretty/JSONP support.
-/// Supports `?pretty=<any non-empty value>` for pretty-printed JSON and `?callback=fn` for JSONP,
-/// matching Go's writeJsonError behavior.
+/// Return a JSON error response, honoring `?pretty=<any non-empty value>` for pretty-printed JSON.
 pub(super) fn json_error_with_query(
     status: StatusCode,
     msg: impl Into<String>,
@@ -3438,18 +3521,10 @@ pub(super) fn json_error_with_query(
 ) -> Response {
     let body = serde_json::json!({"error": msg.into()});
 
-    let (is_pretty, callback) = if let Some(q) = query {
-        let pretty = q
-            .split('&')
-            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
-        let cb = q
-            .split('&')
-            .find_map(|p| p.strip_prefix("callback="))
-            .map(|s| s.to_string());
-        (pretty, cb)
-    } else {
-        (false, None)
-    };
+    let is_pretty = query.is_some_and(|q| {
+        q.split('&')
+            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len())
+    });
 
     let json_body = if is_pretty {
         to_pretty_json(&body)
@@ -3457,35 +3532,19 @@ pub(super) fn json_error_with_query(
         serde_json::to_string(&body).unwrap()
     };
 
-    if let Some(cb) = callback {
-        let jsonp = format!("{}({})", cb, json_body);
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(jsonp))
-            .unwrap()
-    } else {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
 }
 
-/// Return a JSON response with optional pretty/JSONP support from raw query string.
-/// Matches Go's writeJsonQuiet behavior for write success responses.
+/// Return a JSON response honoring `?pretty=<any non-empty value>` from a raw query string.
 fn json_result_with_query<T: Serialize>(status: StatusCode, body: &T, query: &str) -> Response {
-    let (is_pretty, callback) = {
-        let pretty = query
-            .split('&')
-            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
-        let cb = query
-            .split('&')
-            .find_map(|p| p.strip_prefix("callback="))
-            .map(|s| s.to_string());
-        (pretty, cb)
-    };
+    let is_pretty = query
+        .split('&')
+        .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
 
     let json_body = if is_pretty {
         to_pretty_json(body)
@@ -3493,20 +3552,12 @@ fn json_result_with_query<T: Serialize>(status: StatusCode, body: &T, query: &st
         serde_json::to_string(body).unwrap()
     };
 
-    if let Some(cb) = callback {
-        let jsonp = format!("{}({})", cb, json_body);
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(jsonp))
-            .unwrap()
-    } else {
-        Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
 }
 
 /// Extract JWT token from query param, Authorization header, or Cookie.
@@ -3611,13 +3662,22 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
     encoder.finish().ok()
 }
 
-fn maybe_decompress_gzip(data: &[u8]) -> Option<Vec<u8>> {
+fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
     use flate2::read::GzDecoder;
     use std::io::Read;
-    let mut decoder = GzDecoder::new(data);
+    // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
+    // OOM the server when decompressed on read or upload. take(limit+1) lets us
+    // tell "exactly at the limit" apart from "over it", which we reject as
+    // TooLarge so callers fail the request instead of silently using raw bytes.
+    let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
     let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).ok()?;
-    Some(decompressed)
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(|_| GunzipError::Decode)?;
+    if decompressed.len() as u64 > MAX_EXPANSION_BYTES {
+        return Err(GunzipError::TooLarge);
+    }
+    Ok(decompressed)
 }
 
 fn compute_md5_base64(data: &[u8]) -> String {
@@ -3859,7 +3919,11 @@ mod tests {
         let compressed = try_gzip_data(data).unwrap();
         let decompressed = maybe_decompress_gzip(&compressed).unwrap();
         assert_eq!(decompressed, data);
-        assert!(maybe_decompress_gzip(data).is_none());
+        // Non-gzip input is reported as a decode error (callers fall back to raw).
+        assert!(matches!(
+            maybe_decompress_gzip(data),
+            Err(GunzipError::Decode)
+        ));
     }
 
     #[test]

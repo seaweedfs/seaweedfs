@@ -199,7 +199,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
 		if err != nil {
-			return batchResult, fmt.Errorf("provider lookup failed: %v", err)
+			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
 		// Update cache with results

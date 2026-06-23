@@ -53,7 +53,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		}
 		if !CheckPermissionWithContext("CreateTableBucket", principal, owner, "", "", &PolicyContext{
 			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllow,
+			DefaultAllow:    h.defaultAllowFor(r),
 		}) {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
 			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")

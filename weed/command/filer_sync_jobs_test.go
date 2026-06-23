@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -581,4 +582,31 @@ func BenchmarkConflictCheck(b *testing.B) {
 			benchResult = r
 		})
 	}
+}
+
+// TestMetadataProcessorEmptyMarkerKeepsWatermarkStale: the MaxUnsyncedEvents
+// marker (empty EventNotification, fresh timestamp) is dropped by AddSyncJob and
+// does NOT advance processedTsWatermark, so offsetFunc keeps publishing the stale
+// offset. This is why the client must not drive sync_offset off the watermark
+// for these markers.
+func TestMetadataProcessorEmptyMarkerKeepsWatermarkStale(t *testing.T) {
+	const staleOffset = int64(1_000_000_000)
+	freshTs := staleOffset + int64(time.Hour) // a "now"-ish source timestamp
+
+	p := NewMetadataProcessor(func(*filer_pb.SubscribeMetadataResponse) error { return nil }, 4, staleOffset)
+
+	marker := &filer_pb.SubscribeMetadataResponse{
+		TsNs:              freshTs,
+		EventNotification: &filer_pb.EventNotification{},
+	}
+	if !filer_pb.IsEmpty(marker) {
+		t.Fatal("marker should be IsEmpty")
+	}
+
+	p.AddSyncJob(marker)
+
+	if got := p.processedTsWatermark.Load(); got != staleOffset {
+		t.Fatalf("empty marker advanced watermark to %d; want it to stay stale at %d", got, staleOffset)
+	}
+	t.Logf("marker carried fresh ts %d but watermark stayed stale at %d", freshTs, staleOffset)
 }

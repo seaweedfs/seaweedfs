@@ -28,6 +28,7 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 			ExpireAtSec: shardInfo.ExpireAtSec,
 			FileCount:   shardInfo.FileCount,
 			DeleteCount: shardInfo.DeleteCount,
+			EncodeTsNs:  shardInfo.EncodeTsNs,
 		}
 
 		shards = append(shards, ecVolumeInfo)
@@ -57,6 +58,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 			ExpireAtSec: shardInfo.ExpireAtSec,
 			FileCount:   shardInfo.FileCount,
 			DeleteCount: shardInfo.DeleteCount,
+			EncodeTsNs:  shardInfo.EncodeTsNs,
 		}
 
 		newShards = append(newShards, ecVolumeInfo)
@@ -72,6 +74,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 			ExpireAtSec: shardInfo.ExpireAtSec,
 			FileCount:   shardInfo.FileCount,
 			DeleteCount: shardInfo.DeleteCount,
+			EncodeTsNs:  shardInfo.EncodeTsNs,
 		}
 
 		deletedShards = append(deletedShards, ecVolumeInfo)
@@ -128,6 +131,10 @@ func (loc *EcShardLocations) DeleteShard(shardId erasure_coding.ShardId, dn *Dat
 }
 
 func (t *Topology) RegisterEcShards(ecvi *erasure_coding.EcVolumeInfo, dn *DataNode) {
+
+	// EC-only volumes (source volume deleted after encoding) must bump
+	// maxVolumeId too, or a heartbeat-rebuilt master could re-issue their id.
+	t.UpAdjustMaxVolumeId(ecvi.VolumeId)
 
 	t.ecShardMapLock.Lock()
 	defer t.ecShardMapLock.Unlock()

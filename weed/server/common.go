@@ -110,32 +110,10 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 			r.Method, r.URL.String(), httpStatus, string(bytes))
 	}
 
-	callback := r.FormValue("callback")
-	if callback == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(httpStatus)
-		if httpStatus == http.StatusNotModified {
-			return
-		}
-		_, err = w.Write(bytes)
-	} else {
-		w.Header().Set("Content-Type", "application/javascript")
-		w.WriteHeader(httpStatus)
-		if httpStatus == http.StatusNotModified {
-			return
-		}
-		if _, err = w.Write([]uint8(callback)); err != nil {
-			return
-		}
-		if _, err = w.Write([]uint8("(")); err != nil {
-			return
-		}
-		fmt.Fprint(w, string(bytes))
-		if _, err = w.Write([]uint8(")")); err != nil {
-			return
-		}
-	}
-
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(httpStatus)
+	_, err = w.Write(bytes)
 	return
 }
 

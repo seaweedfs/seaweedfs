@@ -185,6 +185,38 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			isWrite:          false,
 			expectAuthorized: false,
 		},
+		{
+			name:             "copy source within subtree allowed",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/loot?cp.from=/tenant1/src",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
+		{
+			name:             "copy source outside subtree denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/loot?cp.from=/tenant2/secret",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "copy source dot-dot escape denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/loot?cp.from=/tenant1/../tenant2/secret",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "move source outside subtree denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/dst?mv.from=/tenant2/secret",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
 	}
 
 	for _, tt := range tests {

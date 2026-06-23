@@ -17,6 +17,7 @@ type Config struct {
 	CollectionFilter string   `json:"collection_filter"`
 	MinSizeMB        int      `json:"min_size_mb"`
 	PreferredTags    []string `json:"preferred_tags"`
+	ReplicaPlacement string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -27,8 +28,8 @@ func NewDefaultConfig() *Config {
 			ScanIntervalSeconds: 60 * 60, // 1 hour
 			MaxConcurrent:       1,
 		},
-		QuietForSeconds:  300, // 5 minutes
-		FullnessRatio:    0.8, // 80%
+		QuietForSeconds:  3600, // 1 hour, matching the shell ec.encode -quietFor default
+		FullnessRatio:    0.95, // 95%, matching the shell ec.encode -fullPercent default
 		CollectionFilter: "",
 		MinSizeMB:        30, // 30MB (more reasonable than 100MB)
 		PreferredTags:    nil,
@@ -87,14 +88,14 @@ func GetConfigSpec() base.ConfigSpec {
 				Name:         "quiet_for_seconds",
 				JSONName:     "quiet_for_seconds",
 				Type:         config.FieldTypeInterval,
-				DefaultValue: 300,
+				DefaultValue: 3600,
 				MinValue:     1,
 				MaxValue:     3600,
 				Required:     true,
 				DisplayName:  "Quiet Period",
 				Description:  "Minimum time volume must be quiet before erasure coding",
 				HelpText:     "Volume must not be modified for this duration before erasure coding",
-				Placeholder:  "5",
+				Placeholder:  "60",
 				Unit:         config.UnitMinutes,
 				InputType:    "interval",
 				CSSClasses:   "form-control",
@@ -103,7 +104,7 @@ func GetConfigSpec() base.ConfigSpec {
 				Name:         "fullness_ratio",
 				JSONName:     "fullness_ratio",
 				Type:         config.FieldTypeFloat,
-				DefaultValue: 0.8,
+				DefaultValue: 0.95,
 				MinValue:     0.0001,
 				MaxValue:     1.0,
 				Required:     true,
@@ -157,6 +158,19 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "replica_placement",
+				JSONName:     "replica_placement",
+				Type:         config.FieldTypeString,
+				DefaultValue: "",
+				Required:     false,
+				DisplayName:  "Replica Placement",
+				Description:  "EC shard replica placement constraint (e.g. 020)",
+				HelpText:     "Leave empty to use the master default replication. When set, the 2nd/3rd digits cap EC shards per rack and per node (best-effort during encode: relaxed rather than failing if the cluster can't satisfy them, then enforced by rebalancing). The 1st (data-center) digit is ignored for EC placement",
+				Placeholder:  "020",
+				InputType:    "text",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -177,6 +191,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				MinVolumeSizeMb:  int32(c.MinSizeMB),
 				CollectionFilter: c.CollectionFilter,
 				PreferredTags:    preferredTagsCopy,
+				ReplicaPlacement: c.ReplicaPlacement,
 			},
 		},
 	}
@@ -200,6 +215,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.MinSizeMB = int(ecConfig.MinVolumeSizeMb)
 		c.CollectionFilter = ecConfig.CollectionFilter
 		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
+		c.ReplicaPlacement = ecConfig.ReplicaPlacement
 	}
 
 	return nil

@@ -29,9 +29,11 @@ func TestErasureCodingDetectionLargeTopology(t *testing.T) {
 	}
 
 	nodesPerRack := serverCount / rackCount
-	eligibleSize := uint64(90) * 1024 * 1024
+	// Eligible volumes must exceed the default fullness (0.95) and quiet (1h)
+	// thresholds; ineligible ones fall below the fullness threshold.
+	eligibleSize := uint64(96) * 1024 * 1024
 	ineligibleSize := uint64(10) * 1024 * 1024
-	modifiedAt := time.Now().Add(-10 * time.Minute).Unix()
+	modifiedAt := time.Now().Add(-2 * time.Hour).Unix()
 
 	volumeID := uint32(1)
 	dataCenters := make([]*master_pb.DataCenterInfo, 0, 1)

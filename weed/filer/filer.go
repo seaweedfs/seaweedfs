@@ -13,7 +13,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
-	"github.com/seaweedfs/seaweedfs/weed/sequence"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -64,7 +64,7 @@ type Filer struct {
 	DeletionRetryQueue      *DeletionRetryQueue
 	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
-	inodeSequencer          sequence.Sequencer
+	persistedLogCache       *persistedLogCache
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -79,7 +79,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
-		inodeSequencer:      newInodeSequencer(filerHost),
+		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -209,7 +209,11 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool, maxFilenameLength uint32) error {
+// CreateEntry creates or replaces an entry. When existing is non-nil the caller
+// has already fetched the current entry at this path under a path lock, and it
+// is reused instead of looking the store up again; pass nil to have CreateEntry
+// look it up itself.
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool, maxFilenameLength uint32) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -227,7 +231,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		entry.Attr.Atime = entryInitialAtime(entry.Attr)
 	}
 
-	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
+	oldEntry := existing
+	if oldEntry == nil {
+		oldEntry, _ = f.FindEntry(ctx, entry.FullPath)
+	}
 
 	/*
 		if !hasWritePermission(lastDirectoryEntry, entry) {
@@ -251,6 +258,9 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		if err := f.Store.InsertEntry(ctx, entry); err != nil {
 			glog.ErrorfCtx(ctx, "insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
+		}
+		if !entry.IsDirectory() {
+			stats.FilerObjectSizeBytesHistogram.Observe(float64(entry.Size()))
 		}
 	} else {
 		if o_excl {

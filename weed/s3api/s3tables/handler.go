@@ -48,6 +48,7 @@ type S3TablesHandler struct {
 	region        string
 	accountID     string
 	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
+	trusted       bool // Trusted local tooling (shell/admin) bypasses authorization
 	iamAuthorizer IAMAuthorizer
 }
 
@@ -77,6 +78,12 @@ func (h *S3TablesHandler) SetAccountID(accountID string) {
 // SetDefaultAllow sets whether to allow access by default
 func (h *S3TablesHandler) SetDefaultAllow(allow bool) {
 	h.defaultAllow = allow
+}
+
+// SetTrusted lets local tooling that talks to the filer directly (shell, admin
+// console) bypass authorization. HTTP-facing callers must not set it.
+func (h *S3TablesHandler) SetTrusted(trusted bool) {
+	h.trusted = trusted
 }
 
 // FilerClient interface for filer operations
@@ -125,6 +132,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleCreateNamespace(w, r, filerClient)
 	case "GetNamespace":
 		err = h.handleGetNamespace(w, r, filerClient)
+	case "UpdateNamespace":
+		err = h.handleUpdateNamespace(w, r, filerClient)
 	case "ListNamespaces":
 		err = h.handleListNamespaces(w, r, filerClient)
 	case "DeleteNamespace":
@@ -212,7 +221,11 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 					idField := accountVal.FieldByName("Id")
 					if idField.IsValid() && idField.Kind() == reflect.String {
 						if principal := normalizePrincipalID(idField.String()); principal != "" {
-							return principal
+							// Account-less identities default to the admin account; only
+							// keep it for real admins, else use the unique identity name.
+							if principal != s3_constants.AccountAdminId || hasAdminAction(getIdentityActions(r)) {
+								return principal
+							}
 						}
 					}
 				}

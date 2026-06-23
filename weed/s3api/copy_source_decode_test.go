@@ -137,6 +137,48 @@ func TestCopySourceDecodingPlusSign(t *testing.T) {
 	}
 }
 
+// TestCopySourceRejectsTraversal verifies `.`/`..` segments in a copy source
+// are rejected so the source stays within the parsed bucket.
+func TestCopySourceRejectsTraversal(t *testing.T) {
+	tests := []struct {
+		name          string
+		rawCopySource string
+		wantErr       bool
+	}{
+		{"clean source passes", "bucket-a/dir/key", false},
+		{"leading slash source passes", "/bucket-a/dir/key", false},
+		{"source with versionId passes", "bucket-a/dir/key?versionId=v1", false},
+
+		{"dotdot escapes bucket", "bucket-a/../bucket-secret/flag", true},
+		{"leading slash dotdot escapes bucket", "/bucket-a/../bucket-secret/flag", true},
+		{"percent-encoded dotdot escapes bucket", "bucket-a/%2e%2e/bucket-secret/flag", true},
+		{"encoded slash dotdot escapes bucket", "bucket-a/..%2fbucket-secret/flag", true},
+		{"backslash dotdot escapes bucket", "bucket-a/..\\bucket-secret/flag", true},
+		{"nested dotdot escapes bucket", "bucket-a/dir/../../bucket-secret/flag", true},
+		{"bare dot segment rejected", "bucket-a/./key", true},
+		{"dotdot bucket rejected", "../bucket-secret/flag", true},
+		{"dotdot with versionId escapes bucket", "bucket-a/../bucket-secret/flag?versionId=v1", true},
+		{"versionId encoded slash rejected", "bucket-a/dir/key?versionId=v1%2F..%2Fsecret", true},
+		{"versionId backslash rejected", "bucket-a/dir/key?versionId=v1%5C..%5Csecret", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cpSrcPath, err := url.PathUnescape(tc.rawCopySource)
+			if err != nil {
+				cpSrcPath = tc.rawCopySource
+			}
+			srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(tc.rawCopySource, cpSrcPath)
+
+			gotErr := validateCopySource(cpSrcPath, srcBucket, srcObject, srcVersionId) != nil
+			if gotErr != tc.wantErr {
+				t.Errorf("ValidateCopySource(%q) error = %v, want %v (parsed bucket=%q object=%q)",
+					tc.rawCopySource, gotErr, tc.wantErr, srcBucket, srcObject)
+			}
+		})
+	}
+}
+
 // TestCopySourceRoutingWithSpecialChars tests that mux variable extraction
 // correctly handles special characters like ! (%21) in both the URL path
 // and the X-Amz-Copy-Source header.

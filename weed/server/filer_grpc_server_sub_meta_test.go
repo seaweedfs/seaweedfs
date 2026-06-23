@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
 // slowStream simulates a gRPC stream with configurable per-Send latency.
@@ -32,9 +33,13 @@ func (s *slowStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 
 type collectingStream struct {
 	messages []*filer_pb.SubscribeMetadataResponse
+	err      error
 }
 
 func (s *collectingStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	if s.err != nil {
+		return s.err
+	}
 	s.messages = append(s.messages, msg)
 	return nil
 }
@@ -183,7 +188,8 @@ func TestEachEventNotificationFnMatchesRenameTargetsForAllWatchTypes(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stream := &collectingStream{}
-			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client")
+			var unsyncedEvents int64
+			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client", &unsyncedEvents)
 
 			newDir := "/etc/remote"
 			if len(tt.req.Directories) > 0 {
@@ -408,4 +414,131 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 	if singleRate > 0 && parallelRate > 0 {
 		t.Logf("Speedup: %.1fx (%d parallel pipelined streams vs 1)", parallelRate/singleRate, numDirs)
 	}
+}
+
+func TestMaybeSendIdleHeartbeat(t *testing.T) {
+	lb := log_buffer.NewLogBuffer("test", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	fs := &FilerServer{}
+	const recentEvent = int64(1_000_000)
+
+	t.Run("not opted in", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: false}
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, recentEvent, recentEvent, 0)
+		if got != 0 || len(s.messages) != 0 {
+			t.Fatalf("expected no heartbeat, got lastHeartbeat=%d msgs=%d", got, len(s.messages))
+		}
+	})
+
+	t.Run("behind buffer head", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		// startTs and lastSeen both below the buffer head: still replaying.
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent-1, 0)
+		if got != 0 || len(s.messages) != 0 {
+			t.Fatalf("expected no heartbeat while behind, got lastHeartbeat=%d msgs=%d", got, len(s.messages))
+		}
+	})
+
+	t.Run("caught up via lastSeen", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent, 0)
+		if len(s.messages) != 1 {
+			t.Fatalf("expected one heartbeat, got %d", len(s.messages))
+		}
+		hb := s.messages[0]
+		if hb.EventNotification != nil || len(hb.Events) != 0 || hb.TsNs <= 0 {
+			t.Fatalf("heartbeat should be an empty timestamped response, got %+v", hb)
+		}
+		if got != hb.TsNs {
+			t.Fatalf("expected returned lastHeartbeat %d to equal sent ts %d", got, hb.TsNs)
+		}
+	})
+
+	t.Run("caught up via read position floor", func(t *testing.T) {
+		// The read cursor has advanced past the buffer head while lastSeen stayed
+		// 0. This is the idle-source case (subscribed from "now", read nothing) and
+		// also metadata-chunks mode, where persisted entries replay as log file
+		// refs and never reach eachLogEntryFn.
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		readPosition := time.Now().UnixNano()
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, readPosition, 0, 0)
+		if len(s.messages) != 1 || got <= 0 {
+			t.Fatalf("expected heartbeat for caught-up subscriber, got msgs=%d lastHeartbeat=%d", len(s.messages), got)
+		}
+	})
+
+	t.Run("throttled within interval", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		justSent := time.Now().UnixNano()
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent, justSent)
+		if got != justSent || len(s.messages) != 0 {
+			t.Fatalf("expected throttled (no send), got lastHeartbeat=%d msgs=%d", got, len(s.messages))
+		}
+	})
+
+	t.Run("send error keeps prior heartbeat time", func(t *testing.T) {
+		lb.LastTsNs.Store(recentEvent)
+		s := &collectingStream{err: fmt.Errorf("broken stream")}
+		req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+		got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, recentEvent, 0)
+		if got != 0 {
+			t.Fatalf("expected lastHeartbeat unchanged on send error, got %d", got)
+		}
+	})
+}
+
+// TestFilteredEventsEmitMaxUnsyncedMarker pins the source-side shape the client
+// keys off: after MaxUnsyncedEvents filtered events, eachEventNotificationFn
+// emits a marker with a fresh timestamp and a non-nil but empty EventNotification.
+// Consumed by TestFilerSyncOffsetStaysFreshOnFilteredMarker.
+func TestFilteredEventsEmitMaxUnsyncedMarker(t *testing.T) {
+	fs := &FilerServer{
+		option: &FilerOption{Host: pb.ServerAddress("127.0.0.1:8888")},
+		filer:  &filer.Filer{Signature: 123},
+	}
+	req := &filer_pb.SubscribeMetadataRequest{ClientName: "syncFrom_A_To_B", PathPrefix: "/watched/"}
+
+	stream := &collectingStream{}
+	var unsyncedEvents int64
+	eachEventFn := fs.eachEventNotificationFn(req, stream, "client", &unsyncedEvents)
+
+	base := time.Now().UnixNano()
+	var lastTsNs int64
+	// Feed MaxUnsyncedEvents+1 events on a NON-watched path so every one is filtered.
+	total := int(MaxUnsyncedEvents) + 1
+	for i := 0; i < total; i++ {
+		lastTsNs = base + int64(i)
+		err := eachEventFn("/other/dir", &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: fmt.Sprintf("file%d", i)},
+		}, lastTsNs)
+		if err != nil {
+			t.Fatalf("eachEventFn: %v", err)
+		}
+	}
+
+	if len(stream.messages) != 1 {
+		t.Fatalf("expected exactly 1 MaxUnsyncedEvents marker, got %d", len(stream.messages))
+	}
+	marker := stream.messages[0]
+	if !filer_pb.IsEmpty(marker) {
+		t.Errorf("marker should have empty EventNotification (IsEmpty), got %+v", marker.EventNotification)
+	}
+	if marker.EventNotification == nil {
+		t.Error("marker EventNotification should be non-nil but empty (the shape the client keys off)")
+	}
+	if marker.TsNs != lastTsNs {
+		t.Errorf("marker TsNs = %d, want fresh source ts %d", marker.TsNs, lastTsNs)
+	}
+	t.Logf("source emits marker{EventNotification:&{}, TsNs:%d} after %d filtered events", marker.TsNs, total)
 }

@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // In-process integration tests for cloud-tiered ("remote") volumes.
@@ -223,6 +225,40 @@ func reloadVolume(t *testing.T, dir string, vid needle.VolumeId) *Volume {
 	return v
 }
 
+// TestRemoteTier_DiskScanLoadsRemoteOnlyVolume locks in that the disk scan
+// (loadExistingVolume) loads a remote-only volume — a .vif pointing at remote
+// files with no local .dat — instead of skipping it as a lone sidecar. The
+// phantom-.dat guard must let remote volumes through.
+func TestRemoteTier_DiskScanLoadsRemoteOnlyVolume(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(44)
+	tierUpVolume(t, dir, vid, b) // leaves .vif (remote) + .idx, no .dat
+
+	require.False(t, util.FileExists(filepath.Join(dir, "44.dat")), "tier-up should have removed the local .dat")
+
+	loc := &DiskLocation{
+		Directory:              dir,
+		DirectoryUuid:          "test-uuid",
+		IdxDirectory:           dir,
+		DiskType:               types.HddType,
+		MaxVolumeCount:         100,
+		OriginalMaxVolumeCount: 100,
+		MinFreeSpace:           util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"},
+	}
+	loc.volumes = make(map[needle.VolumeId]*Volume)
+	loc.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+
+	loc.loadExistingVolumes(NeedleMapInMemory, 0)
+
+	v, ok := loc.volumes[vid]
+	require.True(t, ok, "remote-only volume must be loaded by the disk scan, not skipped by the phantom-.dat guard")
+	require.True(t, v.HasRemoteFile(), "loaded volume should be in remote mode")
+	v.Close()
+}
+
 // TestRemoteTier_Move_KeepsRemoteObject simulates the move-on-source-after-copy
 // step of a balance: Destroy(onlyEmpty=false, keepRemoteData=true). The remote
 // object must survive — the destination's freshly-copied .vif points at it.
@@ -299,7 +335,7 @@ func TestRemoteTier_ECEncode_RequiresLocalDat(t *testing.T) {
 	tierUpVolume(t, dir, vid, b)
 
 	baseFileName := filepath.Join(dir, fmt.Sprintf("%d", uint32(vid)))
-	err := erasure_coding.WriteEcFiles(baseFileName)
+	_, err := erasure_coding.WriteEcFiles(baseFileName, erasure_coding.BackgroundECContext())
 	require.Error(t, err, "EC encoder must not run with .dat missing — caller is expected to download first")
 	require.Contains(t, err.Error(), ".dat")
 }
@@ -321,7 +357,8 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"))
-	require.NoError(t, erasure_coding.WriteEcFiles(baseFileName))
+	_, ecErr := erasure_coding.WriteEcFiles(baseFileName, erasure_coding.BackgroundECContext())
+	require.NoError(t, ecErr)
 
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		shardPath := fmt.Sprintf("%s.ec%02d", baseFileName, i)
@@ -335,7 +372,7 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 		shardPath := fmt.Sprintf("%s.ec%02d", baseFileName, i)
 		require.NoError(t, os.Remove(shardPath))
 	}
-	rebuilt, err := erasure_coding.RebuildEcFiles(baseFileName)
+	rebuilt, err := erasure_coding.RebuildEcFiles(baseFileName, erasure_coding.BackgroundECContext(), false)
 	require.NoError(t, err)
 	require.NotEmpty(t, rebuilt, "rebuild should report which parity shards were regenerated")
 	for i := erasure_coding.DataShardsCount; i < erasure_coding.TotalShardsCount; i++ {

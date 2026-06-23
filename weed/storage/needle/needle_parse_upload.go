@@ -94,7 +94,8 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		} else if n, err := util.GunzipStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
 			pu.OriginalDataSize = int(n)
 		}
-	} else {
+	} else if r.URL.Query().Get("type") != "replicate" {
+		// replica writes must keep the source needle's compression state, not re-derive it
 		ext := filepath.Base(pu.FileName)
 		mimeType := pu.MimeType
 		if mimeType == "" {
@@ -208,7 +209,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 				// update
 				pu.Data = pu.bytesBuffer.Bytes()
 				pu.FileName = util.CleanWindowsPathBase(fName)
-				contentType = part.Header.Get("Content-Type")
+				contentType = part2.Header.Get("Content-Type")
 				pu.ContentMd5 = part2.Header.Get("Content-MD5")
 				part = part2
 				break

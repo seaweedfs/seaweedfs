@@ -22,34 +22,63 @@ func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequ
 
 	ctx := stream.Context()
 
-	queue := util.NewQueue[*filer.Entry]()
+	isExcluded := func(path util.FullPath) bool {
+		excluded := false
+		excludedTrie.MatchPrefix([]byte(path), func(key []byte, value bool) bool {
+			// Only exclude when the prefix ends on a path-component boundary,
+			// so /a/b does not also exclude a sibling like /a/bc.
+			if len(path) == len(key) || path[len(key)] == '/' {
+				excluded = true
+				return false
+			}
+			return true
+		})
+		return excluded
+	}
+
+	// Send each entry as it is visited and queue only directory paths to
+	// descend into. Queuing the entries themselves would hold the whole
+	// subtree in memory, including every file's chunk list, and can exhaust
+	// the filer on large trees (e.g. during a peer's first-time bootstrap).
+	sendEntry := func(entry *filer.Entry) error {
+		parent, _ := entry.FullPath.DirAndName()
+		if err := stream.Send(&filer_pb.TraverseBfsMetadataResponse{
+			Directory: parent,
+			Entry:     entry.ToProtoEntry(),
+		}); err != nil {
+			return fmt.Errorf("send traverse bfs metadata response: %w", err)
+		}
+		return nil
+	}
+
 	dirEntry, err := fs.filer.FindEntry(ctx, util.FullPath(req.Directory))
 	if err != nil {
 		return fmt.Errorf("find dir %s: %v", req.Directory, err)
 	}
-	queue.Enqueue(dirEntry)
+	if isExcluded(dirEntry.FullPath) {
+		return nil
+	}
+	if err := sendEntry(dirEntry); err != nil {
+		return err
+	}
 
-	for item := queue.Dequeue(); item != nil; item = queue.Dequeue() {
-		if excludedTrie.MatchPrefix([]byte(item.FullPath), func(key []byte, value bool) bool {
-			return true
-		}) {
-			// println("excluded", item.FullPath)
-			continue
-		}
-		parent, _ := item.FullPath.DirAndName()
-		if err := stream.Send(&filer_pb.TraverseBfsMetadataResponse{
-			Directory: parent,
-			Entry:     item.ToProtoEntry(),
-		}); err != nil {
-			return fmt.Errorf("send traverse bfs metadata response: %w", err)
-		}
+	queue := util.NewQueue[util.FullPath]()
+	if dirEntry.IsDirectory() {
+		queue.Enqueue(dirEntry.FullPath)
+	}
 
-		if !item.IsDirectory() {
-			continue
-		}
-
-		if err := fs.iterateDirectory(ctx, item.FullPath, func(entry *filer.Entry) error {
-			queue.Enqueue(entry)
+	for queue.Len() > 0 {
+		dirPath := queue.Dequeue()
+		if err := fs.iterateDirectory(ctx, dirPath, func(entry *filer.Entry) error {
+			if isExcluded(entry.FullPath) {
+				return nil
+			}
+			if err := sendEntry(entry); err != nil {
+				return err
+			}
+			if entry.IsDirectory() {
+				queue.Enqueue(entry.FullPath)
+			}
 			return nil
 		}); err != nil {
 			return err

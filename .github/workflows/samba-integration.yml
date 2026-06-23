@@ -1,0 +1,120 @@
+name: "Samba on FUSE Integration"
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/filer/**'
+      - 'weed/cluster/**'
+      - 'test/samba/**'
+      - '.github/workflows/samba-integration.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/filer/**'
+      - 'weed/cluster/**'
+      - 'test/samba/**'
+      - '.github/workflows/samba-integration.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: samba-integration/${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  samba-integration:
+    name: samba-integration
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Start local Docker registry
+      run: docker run -d --restart=always -p 5000:5000 --name registry registry:2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+      with:
+        driver-opts: network=host
+
+    - name: Build weed race binary
+      run: |
+        cd docker
+        make binary_race
+
+    - name: Build SeaweedFS e2e image
+      uses: docker/build-push-action@v7
+      with:
+        context: docker
+        file: docker/Dockerfile.e2e
+        tags: localhost:5000/chrislusf/seaweedfs:e2e
+        push: true
+        cache-from: type=gha,scope=samba-e2e
+        cache-to: type=gha,mode=max,scope=samba-e2e
+
+    - name: Tag e2e image for docker compose
+      run: |
+        docker pull localhost:5000/chrislusf/seaweedfs:e2e
+        docker tag localhost:5000/chrislusf/seaweedfs:e2e chrislusf/seaweedfs:e2e
+
+    - name: Build samba image
+      uses: docker/build-push-action@v7
+      with:
+        context: test/samba
+        build-contexts: |
+          chrislusf/seaweedfs:e2e=docker-image://localhost:5000/chrislusf/seaweedfs:e2e
+        tags: localhost:5000/chrislusf/seaweedfs:samba
+        push: true
+        cache-from: type=gha,scope=samba-harness
+        cache-to: type=gha,mode=max,scope=samba-harness
+
+    - name: Tag samba image for docker compose
+      run: |
+        docker pull localhost:5000/chrislusf/seaweedfs:samba
+        docker tag localhost:5000/chrislusf/seaweedfs:samba chrislusf/seaweedfs:samba
+
+    - name: Start SeaweedFS cluster and Samba
+      run: |
+        docker compose -f test/samba/docker-compose.yml up --wait
+
+    - name: Run Samba test battery
+      run: |
+        set -o pipefail
+        docker compose -f test/samba/docker-compose.yml exec -T samba \
+          /run_inside_container.sh 2>&1 | tee /tmp/samba-output.log
+
+    - name: Collect logs
+      if: always()
+      run: |
+        mkdir -p /tmp/samba-docker-logs
+        for svc in master volume filer samba; do
+          docker compose -f test/samba/docker-compose.yml logs "$svc" \
+            > "/tmp/samba-docker-logs/${svc}.log" 2>&1 || true
+        done
+
+    - name: Tear down
+      if: always()
+      run: |
+        docker compose -f test/samba/docker-compose.yml down -v
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: samba-integration-results
+        path: |
+          /tmp/samba-output.log
+          /tmp/samba-docker-logs/
+        retention-days: 7

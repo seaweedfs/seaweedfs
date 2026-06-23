@@ -124,9 +124,21 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 
 	// apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_ADMIN), "LIST"))
 	apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(iama.iam.Auth(iama.DoActions, ACTION_ADMIN))
-	//
+
+	// Health probes
+	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/healthz").HandlerFunc(iama.healthzHandler)
+	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/readyz").HandlerFunc(iama.readyzHandler)
+
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
+}
+
+func (iama *IamApiServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
+func (iama *IamApiServer) readyzHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 // Shutdown gracefully stops the IAM API server and releases resources.

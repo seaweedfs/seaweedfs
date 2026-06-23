@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -105,4 +106,100 @@ func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request, 
 		}
 	}
 	return successCounter
+}
+
+// TestLimitInterceptor verifies the optional request interceptor: it is a no-op
+// when nil, runs ahead of the (disabled) breaker logic, and can either reject a
+// request or pass it through to the wrapped handler.
+func TestLimitInterceptor(t *testing.T) {
+	readAction := s3_constants.ACTION_READ
+	newCB := func() *CircuitBreaker {
+		// Enabled defaults to false and s3a is nil, so without an interceptor
+		// Limit's handler falls straight through to the wrapped handler.
+		return &CircuitBreaker{counters: make(map[string]*int64), limitations: make(map[string]int64)}
+	}
+
+	// 1. nil interceptor must not change behavior: the handler still runs.
+	t.Run("nil interceptor is a no-op", func(t *testing.T) {
+		cb := newCB()
+		called := false
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { called = true }, readAction)
+		h(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+		if !called {
+			t.Fatal("handler should run when no interceptor is set")
+		}
+	})
+
+	// 2. a rejecting interceptor runs first and prevents the handler, even
+	//    though the breaker itself is disabled.
+	t.Run("interceptor can reject", func(t *testing.T) {
+		cb := newCB()
+		var order []string
+		cb.Interceptor = func(next http.HandlerFunc, action string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				order = append(order, "interceptor")
+				s3err.WriteErrorResponse(w, r, s3err.ErrTooManyRequest) // reject; do not call next
+			}
+		}
+		handlerRan := false
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+			handlerRan = true
+			order = append(order, "handler")
+		}, readAction)
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+		if handlerRan {
+			t.Fatal("a rejecting interceptor must prevent the handler from running")
+		}
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 from ErrTooManyRequest, got %d", rec.Code)
+		}
+		if len(order) != 1 || order[0] != "interceptor" {
+			t.Fatalf("interceptor should run alone, got %v", order)
+		}
+	})
+
+	// 3. a pass-through interceptor runs before the handler and sees the action.
+	t.Run("interceptor can pass through", func(t *testing.T) {
+		cb := newCB()
+		var order []string
+		var seenAction string
+		cb.Interceptor = func(next http.HandlerFunc, action string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				seenAction = action
+				order = append(order, "interceptor")
+				next(w, r)
+			}
+		}
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+			order = append(order, "handler")
+		}, readAction)
+		h(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+		if seenAction != readAction {
+			t.Fatalf("interceptor should receive the route action, got %q", seenAction)
+		}
+		if len(order) != 2 || order[0] != "interceptor" || order[1] != "handler" {
+			t.Fatalf("interceptor must run before the handler, got %v", order)
+		}
+	})
+
+	// 4. installed AFTER Limit() returns: still takes effect, because the
+	//    interceptor is consulted per request rather than captured at
+	//    registration time (the handlers are built during router registration,
+	//    before dependencies that need the running server exist).
+	t.Run("interceptor installed after registration takes effect", func(t *testing.T) {
+		cb := newCB()
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {}, readAction) // built while nil
+		ran := false
+		cb.Interceptor = func(next http.HandlerFunc, action string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				ran = true
+				next(w, r)
+			}
+		}
+		h(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+		if !ran {
+			t.Fatal("interceptor set after Limit() must still run (request-time evaluation)")
+		}
+	})
 }

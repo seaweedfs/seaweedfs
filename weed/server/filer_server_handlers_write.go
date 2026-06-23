@@ -81,8 +81,18 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	ctx := r.Context()
 
 	destination := r.RequestURI
-	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
-		destination = finalDestination
+	headerDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader)
+	if headerDestination != "" {
+		destination = headerDestination
+	}
+
+	// The destination header picks storage rules for a logical destination, but
+	// the entry is written at r.URL.Path. Enforce the read-only/quota rule on the
+	// actual write path too, so the header cannot route a write into a read-only
+	// location.
+	if headerDestination != "" && fs.filer.FilerConf.MatchStorageRule(r.URL.Path).ReadOnly {
+		writeJsonError(w, r, http.StatusInsufficientStorage, ErrReadOnly)
+		return
 	}
 
 	query := r.URL.Query()
@@ -98,8 +108,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("saveInside"),
 	)
 	if err != nil {
-		if err == ErrReadOnly {
-			w.WriteHeader(http.StatusInsufficientStorage)
+		if errors.Is(err, ErrReadOnly) {
+			writeJsonError(w, r, http.StatusInsufficientStorage, err)
 		} else {
 			glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ":", err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
@@ -255,7 +265,14 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
 
 	if rule.ReadOnly {
-		return nil, ErrReadOnly
+		// Name the read-only prefix so the caller knows which path is locked and why.
+		// MatchStorageRule leaves LocationPrefix empty when several rules merge; fall back to the request path.
+		prefix := rule.LocationPrefix
+		if prefix == "" {
+			// requestURI may carry a query string on the HTTP path; keep only the path.
+			prefix, _, _ = strings.Cut(requestURI, "?")
+		}
+		return nil, fmt.Errorf("%w: %s (e.g. bucket over quota)", ErrReadOnly, prefix)
 	}
 
 	// Use local variable instead of mutating shared rule

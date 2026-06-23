@@ -46,6 +46,13 @@ type Server struct {
 // NewServer creates a new Iceberg REST Catalog server.
 func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	manager := s3tables.NewManager()
+	// Mirror the S3 port: fall open by default only when the gateway itself is
+	// open. With auth configured, an authenticated catalog caller must pass the
+	// normal permission check instead of being allowed because no policy denied
+	// it — even if the full identity struct ever fails to reach the handler.
+	if authenticator != nil {
+		manager.SetDefaultAllow(authenticator.DefaultAllow())
+	}
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
@@ -71,6 +78,13 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Add middleware to log all requests/responses
 	router.Use(loggingMiddleware)
 
+	// Reject `..`/`.`/NUL in {prefix}/{namespace}/{table} vars before any
+	// handler runs. The router uses SkipClean(true), so traversal segments
+	// would otherwise reach path.Join in stage-marker / location builders.
+	// Registered after loggingMiddleware so rejected requests still get
+	// audit-logged.
+	router.Use(validateRequestPath)
+
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
 
@@ -83,6 +97,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/properties", s.Auth(s.handleUpdateNamespaceProperties)).Methods(http.MethodPost)
 
 	// Table endpoints - wrapped with Auth middleware
 	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
@@ -98,6 +113,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/properties", s.Auth(s.handleUpdateNamespaceProperties)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)

@@ -39,7 +39,7 @@ jobs:
             asset_suffix: linux-amd64
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -108,7 +108,7 @@ jobs:
             asset_suffix: darwin-amd64
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install protobuf compiler
         run: brew install protobuf

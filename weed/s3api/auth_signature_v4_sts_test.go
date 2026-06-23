@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
@@ -14,10 +15,59 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// An STS session owns resources as its own principal (OIDC subject, or the
+// assumed-role user when absent), not the shared admin account.
+func TestValidateSTSSessionTokenAssignsDistinctAccount(t *testing.T) {
+	cases := []struct {
+		name            string
+		subject         string
+		assumedRoleUser string
+		wantPrincipal   string
+	}{
+		{"prefers the subject", "alice", "ReadOnlyRole/alice", "alice"},
+		{"falls back to the assumed-role user", "", "ReadOnlyRole/bob", "ReadOnlyRole/bob"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			iam := &IdentityAccessManagement{
+				iamIntegration: &MockIAMIntegration{
+					validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
+						return &sts.SessionInfo{
+							AssumedRoleUser: tc.assumedRoleUser,
+							Principal:       "arn:aws:sts:::assumed-role/" + tc.assumedRoleUser,
+							Subject:         tc.subject,
+							SessionName:     "sess",
+							Credentials: &sts.Credentials{
+								AccessKeyId:     "AKIATEST",
+								SecretAccessKey: "secret",
+							},
+							ExpiresAt: time.Now().Add(time.Hour),
+							Policies:  []string{"ReadOnly"},
+						}, nil
+					},
+				},
+			}
+
+			req, err := http.NewRequest(http.MethodGet, "http://s3/test", nil)
+			require.NoError(t, err)
+
+			identity, _, errCode := iam.validateSTSSessionToken(req, "session-token", "AKIATEST")
+			require.Equal(t, s3err.ErrNone, errCode)
+			require.NotNil(t, identity.Account)
+			assert.Equal(t, tc.wantPrincipal, identity.Account.Id, "STS session owns resources as its principal")
+			assert.Equal(t, tc.wantPrincipal, identity.Name)
+			assert.NotEqual(t, AccountAdmin.Id, identity.Account.Id, "STS session must not share the admin account")
+			assert.False(t, identity.isAdmin(), "an STS session has no admin action")
+		})
+	}
+}
+
 // MockIAMIntegration is a mock implementation of IAM integration for testing
 type MockIAMIntegration struct {
+	authenticateJWTFunc     func(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
 	authorizeFunc           func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
 	validateTrustPolicyFunc func(ctx context.Context, roleArn, principalArn string) error
+	validateSessionFunc     func(ctx context.Context, token string) (*sts.SessionInfo, error)
 	authCalled              bool
 }
 
@@ -30,10 +80,16 @@ func (m *MockIAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMI
 }
 
 func (m *MockIAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
+	if m.authenticateJWTFunc != nil {
+		return m.authenticateJWTFunc(ctx, r)
+	}
 	return nil, s3err.ErrNotImplemented
 }
 
 func (m *MockIAMIntegration) ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error) {
+	if m.validateSessionFunc != nil {
+		return m.validateSessionFunc(ctx, token)
+	}
 	return nil, nil // Not needed for these tests
 }
 

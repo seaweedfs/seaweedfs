@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -78,24 +77,7 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 		offset += 4
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
-		topicExists := h.seaweedMQHandler.TopicExists(topicName)
-
-		_ = h.seaweedMQHandler.ListTopics() // existingTopics
-		if !topicExists {
-			// Use schema-aware topic creation for auto-created topics with configurable default partitions
-			defaultPartitions := h.GetDefaultPartitions()
-			glog.V(1).Infof("[PRODUCE] Topic %s does not exist, auto-creating with %d partitions", topicName, defaultPartitions)
-			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
-				glog.V(0).Infof("[PRODUCE] ERROR: Failed to auto-create topic %s: %v", topicName, err)
-			} else {
-				glog.V(1).Infof("[PRODUCE] Successfully auto-created topic %s", topicName)
-				// Invalidate cache immediately after creation so consumers can find it
-				h.seaweedMQHandler.InvalidateTopicExistsCache(topicName)
-				topicExists = true
-			}
-		} else {
-			glog.V(2).Infof("[PRODUCE] Topic %s already exists", topicName)
-		}
+		topicExists := h.ensureTopicExists(topicName, h.GetDefaultPartitions())
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -701,8 +683,11 @@ func (h *Handler) handleProduceV2Plus(ctx context.Context, correlationID uint32,
 			var baseOffset int64 = 0
 			currentTime := time.Now().UnixNano()
 
-			// Check if topic exists; for v2+ do NOT auto-create
-			topicExists := h.seaweedMQHandler.TopicExists(topicName)
+			// Check if topic exists, auto-creating if needed. ensureTopicExists
+			// tolerates a transient TopicExists false-negative for a topic that
+			// already exists, which otherwise surfaces as a spurious
+			// UNKNOWN_TOPIC_OR_PARTITION right after the topic was created.
+			topicExists := h.ensureTopicExists(topicName, h.GetDefaultPartitions())
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION

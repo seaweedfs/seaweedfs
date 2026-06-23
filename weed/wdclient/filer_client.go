@@ -342,25 +342,37 @@ func (fc *FilerClient) refreshFilerList() {
 		return
 	}
 
-	// Build new filer address list
-	discoveredFilers := make(map[pb.ServerAddress]bool)
+	// Build new filer address set
+	discoveredFilers := make(map[pb.ServerAddress]struct{}, len(updates))
 	for _, update := range updates {
 		if update.Address != "" {
-			discoveredFilers[pb.ServerAddress(update.Address)] = true
+			discoveredFilers[pb.ServerAddress(update.Address)] = struct{}{}
 		}
 	}
 
-	// Thread-safe update of filer list
+	// Ignore snapshots whose addresses are all empty; reconciling against an
+	// empty set would wipe the in-memory list.
+	if len(discoveredFilers) == 0 {
+		glog.V(1).Infof("FilerClient: discovery snapshot for group '%s' had no usable addresses, keeping existing list", fc.filerGroup)
+		return
+	}
+
+	fc.applyDiscoveredFilers(discoveredFilers)
+}
+
+// applyDiscoveredFilers treats the master snapshot as authoritative: survivors
+// keep their health counters, new addresses get fresh health, addresses missing
+// from the snapshot are pruned so replaced pods (e.g. rolled K8s filer pods
+// with new IPs) don't linger and get retried after the circuit-breaker reset.
+func (fc *FilerClient) applyDiscoveredFilers(discoveredFilers map[pb.ServerAddress]struct{}) {
 	fc.filerAddressesMu.Lock()
 	defer fc.filerAddressesMu.Unlock()
 
-	// Build a map of existing filers for efficient O(1) lookup
 	existingFilers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses))
 	for _, f := range fc.filerAddresses {
 		existingFilers[f] = struct{}{}
 	}
 
-	// Find new filers - O(N+M) instead of O(N*M)
 	var newFilers []pb.ServerAddress
 	for addr := range discoveredFilers {
 		if _, found := existingFilers[addr]; !found {
@@ -368,20 +380,57 @@ func (fc *FilerClient) refreshFilerList() {
 		}
 	}
 
-	// Add new filers
-	if len(newFilers) > 0 {
-		glog.V(0).Infof("FilerClient: discovered %d new filer(s) in group '%s': %v", len(newFilers), fc.filerGroup, newFilers)
-		fc.filerAddresses = append(fc.filerAddresses, newFilers...)
-
-		// Initialize health tracking for new filers
-		for range newFilers {
-			fc.filerHealth = append(fc.filerHealth, &filerHealth{})
+	var removedFilers []pb.ServerAddress
+	for _, f := range fc.filerAddresses {
+		if _, found := discoveredFilers[f]; !found {
+			removedFilers = append(removedFilers, f)
 		}
 	}
 
-	// Optionally, remove filers that are no longer in the cluster
-	// For now, we keep all filers and rely on health checks to avoid dead ones
-	// This prevents removing filers that might be temporarily unavailable
+	if len(newFilers) == 0 && len(removedFilers) == 0 {
+		return
+	}
+
+	// Remember the active filer so the round-robin pointer can follow it across the rebuild.
+	currentIndex := atomic.LoadInt32(&fc.filerIndex)
+	var currentFiler pb.ServerAddress
+	if currentIndex >= 0 && currentIndex < int32(len(fc.filerAddresses)) {
+		currentFiler = fc.filerAddresses[currentIndex]
+	}
+
+	newAddresses := make([]pb.ServerAddress, 0, len(fc.filerAddresses)-len(removedFilers)+len(newFilers))
+	newHealth := make([]*filerHealth, 0, cap(newAddresses))
+	for i, f := range fc.filerAddresses {
+		if _, found := discoveredFilers[f]; found {
+			newAddresses = append(newAddresses, f)
+			newHealth = append(newHealth, fc.filerHealth[i])
+		}
+	}
+	for _, f := range newFilers {
+		newAddresses = append(newAddresses, f)
+		newHealth = append(newHealth, &filerHealth{})
+	}
+
+	fc.filerAddresses = newAddresses
+	fc.filerHealth = newHealth
+
+	var newIndex int32
+	if currentFiler != "" {
+		for i, f := range newAddresses {
+			if f == currentFiler {
+				newIndex = int32(i)
+				break
+			}
+		}
+	}
+	atomic.StoreInt32(&fc.filerIndex, newIndex)
+
+	if len(removedFilers) > 0 {
+		glog.V(0).Infof("FilerClient: removed %d filer(s) no longer in group '%s': %v", len(removedFilers), fc.filerGroup, removedFilers)
+	}
+	if len(newFilers) > 0 {
+		glog.V(0).Infof("FilerClient: discovered %d new filer(s) in group '%s': %v", len(newFilers), fc.filerGroup, newFilers)
+	}
 }
 
 // GetLookupFileIdFunction returns a lookup function with URL preference handling
@@ -476,6 +525,20 @@ func isRetryableGrpcError(err error) bool {
 		strings.Contains(errStr, "connection") ||
 		strings.Contains(errStr, "timeout") ||
 		strings.Contains(errStr, "unavailable")
+}
+
+// jitter returns a duration in the range [d/2, d) using equal jitter.
+// This prevents thundering herds when many clients retry simultaneously
+// after a transient failure (e.g., network partition healing).
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(rand.Int63n(int64(half)))
 }
 
 // shouldSkipUnhealthyFiler checks if we should skip a filer based on recent failures
@@ -645,9 +708,16 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 		// Transient error - retry if we have attempts left
 		if retry < maxRetries-1 {
+			jitteredWait := jitter(waitTime)
 			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v",
-				n, retry+1, maxRetries, waitTime, lastErr)
-			time.Sleep(waitTime)
+				n, retry+1, maxRetries, jitteredWait, lastErr)
+			timer := time.NewTimer(jitteredWait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 			waitTime = time.Duration(float64(waitTime) * fc.retryBackoffFactor)
 		}
 	}

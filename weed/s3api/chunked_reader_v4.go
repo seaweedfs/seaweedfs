@@ -31,6 +31,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -79,7 +80,6 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	glog.V(3).Infof("creating a new newSignV4ChunkedReader")
 
 	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
-	authorizationHeader := req.Header.Get("Authorization")
 
 	var credential *Credential
 	var seedSignature, region, service string
@@ -96,7 +96,10 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 		}
 	case streamingUnsignedPayload:
 		glog.V(3).Infof("streaming unsigned payload")
-		if authorizationHeader != "" {
+		// The seed signature is a SigV4 concept; recompute it only for SigV4-signed
+		// requests. JWT-bearer, presigned, and anonymous unsigned-streaming uploads
+		// carry no header seed, and verifyV4Signature would fail parsing them.
+		if isRequestSignatureV4(req) {
 			// We do not need to pass the seed signature to the Reader as each chunk is not signed,
 			// but we do compute it to verify the caller has the correct permissions.
 			_, _, _, _, _, errCode = iam.calculateSeedSignature(req)
@@ -136,6 +139,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 
 func extractChecksumAlgorithm(amzTrailerHeader string) (ChecksumAlgorithm, error) {
 	// Extract checksum algorithm from the x-amz-trailer header.
+	amzTrailerHeader = strings.ToLower(strings.TrimSpace(amzTrailerHeader))
 	switch amzTrailerHeader {
 	case "x-amz-checksum-crc32":
 		return ChecksumAlgorithmCRC32, nil

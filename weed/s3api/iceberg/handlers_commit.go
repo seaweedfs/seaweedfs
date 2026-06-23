@@ -189,7 +189,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			glog.V(1).Infof("Iceberg: CommitTable GetTable error: %v", err)
-			writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+			writeManagerError(w, err)
 			return
 		}
 
@@ -264,6 +264,11 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "BadRequestException", "Failed to apply statistics updates: "+err.Error())
 			return
 		}
+		// Same spec-compliance fixup we apply on create-table; ensures
+		// v{N}.metadata.json files written during commit are also readable by
+		// strict Iceberg clients reading directly from S3, and that the
+		// FullMetadata persisted in S3Tables stays consistent.
+		metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 		newMetadata, err = table.ParseMetadataBytes(metadataBytes)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse committed metadata: "+err.Error())

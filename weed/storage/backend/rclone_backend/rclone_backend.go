@@ -129,16 +129,10 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 	ctx := context.TODO()
 
 	file, err := os.Open(filename)
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			return
-		}
-	}(file)
-
 	if err != nil {
 		return 0, err
 	}
+	defer file.Close()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -171,6 +165,10 @@ func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func
 	return
 }
 
+var createRcloneDownloadFile = func(filename string) (io.WriteCloser, error) {
+	return os.Create(filename)
+}
+
 func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
 	ctx := context.TODO()
 
@@ -180,27 +178,30 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 	}
 
 	rc, err := obj.Open(ctx)
-	defer func(rc io.ReadCloser) {
-		err := rc.Close()
-		if err != nil {
-			return
-		}
-	}(rc)
+	if err != nil {
+		return 0, err
+	}
+	defer rc.Close()
 
+	file, err := createRcloneDownloadFile(filename)
 	if err != nil {
 		return 0, err
 	}
 
-	file, err := os.Create(filename)
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			return
-		}
-	}(file)
-
 	tr := accounting.NewStats(ctx).NewTransfer(obj, fs)
-	defer tr.Done(ctx, err)
+	defer func() {
+		// fsync the .dat before closing so its content is durable before the caller
+		// trims the remote reference and deletes the shared remote object.
+		if syncer, ok := file.(interface{ Sync() error }); ok {
+			if syncErr := syncer.Sync(); err == nil && syncErr != nil {
+				err = syncErr
+			}
+		}
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		tr.Done(ctx, err)
+	}()
 	acc := tr.Account(ctx, rc)
 	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
 
@@ -251,16 +252,10 @@ func (rcloneBackendStorageFile RcloneBackendStorageFile) ReadAt(p []byte, off in
 	opt := fs.RangeOption{Start: off, End: off + int64(len(p)) - 1}
 
 	rc, err := obj.Open(ctx, &opt)
-	defer func(rc io.ReadCloser) {
-		err := rc.Close()
-		if err != nil {
-			return
-		}
-	}(rc)
-
 	if err != nil {
 		return 0, err
 	}
+	defer rc.Close()
 
 	return io.ReadFull(rc, p)
 }

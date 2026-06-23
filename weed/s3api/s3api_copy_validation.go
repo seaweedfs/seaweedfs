@@ -115,9 +115,19 @@ func validateSSEKMSCopyRequirements(srcMetadata map[string][]byte, headers http.
 
 // validateEncryptionCompatibility validates that encryption methods are not conflicting
 func validateEncryptionCompatibility(headers http.Header) error {
+	sseAlgorithm := headers.Get(s3_constants.AmzServerSideEncryption)
 	hasSSEC := hasSSECHeaders(headers)
-	hasSSEKMS := headers.Get(s3_constants.AmzServerSideEncryption) == "aws:kms"
-	hasSSES3 := headers.Get(s3_constants.AmzServerSideEncryption) == "AES256"
+	hasSSEKMS := sseAlgorithm == s3_constants.SSEAlgorithmKMS
+	hasSSES3 := sseAlgorithm == s3_constants.SSEAlgorithmAES256
+
+	// Reject unsupported algorithms so they are never persisted as a bogus
+	// destination header advertising encryption that was never applied.
+	if sseAlgorithm != "" && !hasSSEKMS && !hasSSES3 {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidEncryptionAlgorithm,
+			Message: fmt.Sprintf("Unsupported server-side encryption algorithm: %s", sseAlgorithm),
+		}
+	}
 
 	// Count how many encryption methods are specified
 	encryptionCount := 0
@@ -242,8 +252,12 @@ func validateEncryptionContext(contextHeader string) error {
 	return nil
 }
 
-// ValidateCopySource validates the copy source path and permissions
+// ValidateCopySource validates the copy source path.
 func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
+	return validateCopySource(copySource, srcBucket, srcObject, "")
+}
+
+func validateCopySource(copySource string, srcBucket, srcObject, srcVersionId string) error {
 	if copySource == "" {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidCopySource,
@@ -262,6 +276,21 @@ func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidCopySource,
 			Message: "Source object cannot be empty",
+		}
+	}
+
+	// `.`/`..` segments are collapsed by the filer's path join; reject them as
+	// IsValidObjectKey does for the request URL so the source stays in-bucket.
+	if !s3_constants.IsValidBucketName(srcBucket) || !s3_constants.IsValidObjectKey(srcObject) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidCopySource,
+			Message: "Copy source contains invalid path segments",
+		}
+	}
+	if !isValidVersionID(srcVersionId) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidCopySource,
+			Message: "Copy source contains an invalid version ID",
 		}
 	}
 

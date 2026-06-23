@@ -395,9 +395,15 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		}
 	}
 
+	servers := make([]string, 0, len(params.Sources))
+	for _, src := range params.Sources {
+		if src != nil && src.Node != "" {
+			servers = append(servers, src.Node)
+		}
+	}
 	task := NewVacuumTask(
 		request.Job.JobId,
-		params.Sources[0].Node,
+		servers,
 		params.VolumeId,
 		params.Collection,
 		h.grpcDialOption,
@@ -487,7 +493,9 @@ func (h *VacuumHandler) collectVolumeMetrics(
 func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *Config {
 	config := NewDefaultConfig()
 	config.GarbageThreshold = pluginworker.ReadDoubleConfig(values, "garbage_threshold", config.GarbageThreshold)
-	config.MinVolumeAgeSeconds = 0 // plugin worker does not filter by volume age
+	// Match the shell/master vacuum, which applies no volume-age gate (default 0),
+	// but honor an explicit override instead of silently dropping it.
+	config.MinVolumeAgeSeconds = pluginworker.ReadIntConfig(values, "min_volume_age_seconds", 0)
 	return config
 }
 

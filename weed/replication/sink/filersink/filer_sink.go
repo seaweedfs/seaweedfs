@@ -2,8 +2,10 @@ package filersink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -22,17 +24,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// ChunkTransferStatus tracks the progress of a single chunk being replicated.
-// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
-// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
-// read by ActiveTransfers.
-type ChunkTransferStatus struct {
-	mu            sync.RWMutex
+// ChunkTransferSnapshot is a lock-free, copyable view of a chunk transfer's
+// progress, returned by ActiveTransfers.
+type ChunkTransferSnapshot struct {
 	ChunkFileId   string
 	Path          string
 	BytesReceived int64
 	Status        string // "downloading", "uploading", or "waiting 10s" etc.
 	LastErr       string
+}
+
+// ChunkTransferStatus tracks the progress of a single chunk being replicated.
+// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
+// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
+// read by ActiveTransfers.
+type ChunkTransferStatus struct {
+	mu sync.RWMutex
+	ChunkTransferSnapshot
 }
 
 type FilerSink struct {
@@ -134,18 +142,12 @@ func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
 }
 
 // ActiveTransfers returns an immutable snapshot of all in-progress chunk transfers.
-func (fs *FilerSink) ActiveTransfers() []ChunkTransferStatus {
-	var transfers []ChunkTransferStatus
+func (fs *FilerSink) ActiveTransfers() []ChunkTransferSnapshot {
+	var transfers []ChunkTransferSnapshot
 	fs.activeTransfers.Range(func(key, value any) bool {
 		t := value.(*ChunkTransferStatus)
 		t.mu.RLock()
-		transfers = append(transfers, ChunkTransferStatus{
-			ChunkFileId:   t.ChunkFileId,
-			Path:          t.Path,
-			BytesReceived: t.BytesReceived,
-			Status:        t.Status,
-			LastErr:       t.LastErr,
-		})
+		transfers = append(transfers, t.ChunkTransferSnapshot)
 		t.mu.RUnlock()
 		return true
 	})
@@ -165,6 +167,70 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	return nil
 }
 
+var _ sink.EntryMover = (*FilerSink)(nil)
+
+// MoveEntry relocates oldKey to newKey on the target filer via AtomicRenameEntry:
+// a metadata-only move that relocates a whole subtree in one transaction, so a
+// directory rename never leaves descendants missing and chunks are neither
+// re-copied nor leaked.
+//
+// When the move fails because the old path is genuinely gone on the sink — a
+// descendant the parent rename already relocated, or one never replicated —
+// there is nothing to move, so it creates the new path instead (CreateEntry
+// short-circuits when the entry is already there, and never deletes). Existence
+// is re-checked with a direct lookup rather than inferred from the rename error,
+// so a rolled-back move that left the old entry intact propagates for retry
+// instead of being mistaken for "gone".
+func (fs *FilerSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+	oldDir, oldName := util.FullPath(oldKey).DirAndName()
+	newDir, newName := util.FullPath(newKey).DirAndName()
+
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: oldDir,
+			OldName:      oldName,
+			NewDirectory: newDir,
+			NewName:      newName,
+			Signatures:   signatures,
+		})
+		return err
+	})
+	if err == nil {
+		return nil
+	}
+	if missing, lookupErr := fs.entryMissing(oldKey); lookupErr == nil && missing {
+		glog.V(2).Infof("move %s => %s: old path gone, creating %s", oldKey, newKey, newKey)
+		return fs.CreateEntry(newKey, newEntry, signatures)
+	}
+	return fmt.Errorf("move %s => %s: %w", oldKey, newKey, err)
+}
+
+// entryMissing reports whether key has no entry on the target filer. A lookup
+// not-found (sentinel or the gRPC string form) means missing; any other lookup
+// error is returned so the caller does not treat an unknown state as missing.
+func (fs *FilerSink) entryMissing(key string) (bool, error) {
+	dir, name := util.FullPath(key).DirAndName()
+	missing := false
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if lookupErr == nil {
+			return nil
+		}
+		// The string check is a deliberate compatibility fallback: a cross-cluster
+		// gRPC error often arrives as a plain status string that no longer wraps the
+		// filer_pb.ErrNotFound sentinel, so errors.Is alone would miss it.
+		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+			missing = true
+			return nil
+		}
+		return lookupErr
+	})
+	return missing, err
+}
+
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -182,16 +248,23 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				glog.V(3).Infof("already replicated %s", key)
 				return nil
 			}
-			if resp.Entry.Attributes != nil && resp.Entry.Attributes.Mtime >= entry.Attributes.Mtime {
-				glog.V(3).Infof("skip overwriting %s", key)
-				return nil
+			if getEntryMtimeNs(resp.Entry) >= getEntryMtimeNs(entry) {
+				if filer.FileSize(resp.Entry) >= filer.FileSize(entry) {
+					glog.V(3).Infof("skip overwriting %s", key)
+					return nil
+				}
+				glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; overwriting from source",
+					key, filer.FileSize(resp.Entry), filer.FileSize(entry))
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtime(entry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
 
 		if err != nil {
-			// only warning here since the source chunk may have been deleted already
+			// don't swallow: committing mismatched bytes would propagate corruption
+			if errors.Is(err, errChunkSizeMismatch) {
+				return fs.onCorruptChunk(key, entry, err)
+			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return nil
 		}
@@ -254,13 +327,36 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
-	if existingEntry.Attributes.Mtime > newEntry.Attributes.Mtime {
-		// skip if already changed
-		// this usually happens when the messages are not ordered
+	// the supersession checks below must look up where the incoming entry lives
+	// now, which for a rename is newParentPath/newEntry.Name, not the old key.
+	targetKey := updatedEntryKey(key, newParentPath, newEntry)
+
+	switch chooseUpdateAction(existingEntry, newEntry) {
+	case updateSkip:
+		// a newer, complete version already landed (out-of-order); leave it
 		glog.V(2).Infof("late updates %s", key)
-	} else {
-		// find out what changed
-		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs), oldEntry, newEntry)
+		return true, nil
+	case updateRepair:
+		glog.Warningf("repair truncated %s: destination %d bytes < source %d bytes but has a newer mtime; re-replicating full source content",
+			key, filer.FileSize(existingEntry), filer.FileSize(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry))
+		if err != nil {
+			if errors.Is(err, errChunkSizeMismatch) {
+				return true, fs.onCorruptChunk(targetKey, newEntry, err)
+			}
+			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			return true, nil
+		}
+		existingEntry.Chunks = replicatedChunks
+		existingEntry.Attributes = newEntry.Attributes
+		existingEntry.Extended = newEntry.Extended
+		existingEntry.HardLinkId = newEntry.HardLinkId
+		existingEntry.HardLinkCounter = newEntry.HardLinkCounter
+		existingEntry.Content = newEntry.Content
+		existingEntry.RemoteEntry = newEntry.RemoteEntry
+	default:
+		// source-side chunks resolve via source filer; sink volume IDs may collide.
+		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
 		if err != nil {
 			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
 		}
@@ -272,8 +368,11 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, key, getEntryMtime(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry))
 		if err != nil {
+			if errors.Is(err, errChunkSizeMismatch) {
+				return true, fs.onCorruptChunk(targetKey, newEntry, err)
+			}
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
 		}
@@ -323,9 +422,60 @@ func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunc
 	return
 }
 
-func getEntryMtime(entry *filer_pb.Entry) int64 {
+// getEntryMtimeNs returns the mtime at full nanosecond precision so versions
+// rewritten within the same second can be ordered. int64 ns is safe until ~2262.
+func getEntryMtimeNs(entry *filer_pb.Entry) int64 {
 	if entry == nil || entry.Attributes == nil {
 		return 0
 	}
-	return entry.Attributes.Mtime
+	return entry.Attributes.Mtime*int64(1e9) + int64(entry.Attributes.MtimeNs)
+}
+
+// onCorruptChunk handles a permanent chunk size-mismatch (fetched source bytes
+// disagree with source metadata). If the source already holds a newer version the
+// event is a stale replay whose chunk was overwritten and GC'd — skip it (lossless:
+// meta events are full snapshots, so a later event re-carries the current chunks).
+// Otherwise the live version is corrupt, so return the error and halt loudly.
+func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error) error {
+	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+		glog.Warningf("skip stale entry %s with superseded corrupt chunk: %v", key, err)
+		return nil
+	}
+	glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
+	return err
+}
+
+// updateAction decides how UpdateEntry reconciles an incoming source version with
+// the destination's current entry.
+type updateAction int
+
+const (
+	// updateNormal applies the source diff: destination at or behind the source.
+	updateNormal updateAction = iota
+	// updateSkip leaves the destination untouched: a newer complete version already landed.
+	updateSkip
+	// updateRepair re-replicates full source over a destination strictly shorter than
+	// the source despite a newer mtime — a truncated copy from a failed replication.
+	updateRepair
+)
+
+// updatedEntryKey returns the sink path the incoming entry lands at: for a rename
+// newParentPath/newEntry.Name, else key's parent + name. Supersession must use this,
+// not the pre-rename key, which would look deleted on the source and skip a live event.
+func updatedEntryKey(key, newParentPath string, newEntry *filer_pb.Entry) string {
+	targetDir := newParentPath
+	if targetDir == "" {
+		targetDir, _ = util.FullPath(key).DirAndName()
+	}
+	return string(util.NewFullPath(targetDir, newEntry.Name))
+}
+
+func chooseUpdateAction(existing, incoming *filer_pb.Entry) updateAction {
+	if getEntryMtimeNs(existing) <= getEntryMtimeNs(incoming) {
+		return updateNormal
+	}
+	if filer.FileSize(existing) < filer.FileSize(incoming) {
+		return updateRepair
+	}
+	return updateSkip
 }

@@ -59,6 +59,38 @@ func CollectVolumeMetricsFromMasters(
 // FetchVolumeList dials the given master address (trying both the address as
 // given and the gRPC port variant) and returns the master's volume list. Used
 // by detection helpers that already know which master address to talk to.
+// FetchDefaultReplicaPlacement returns the master's configured default replication
+// (GetMasterConfiguration), used by detectors as the replica-placement fallback so
+// the plugin path matches the shell. Returns "" if it cannot be fetched, so callers
+// fall back to even spread rather than failing detection.
+func FetchDefaultReplicaPlacement(ctx context.Context, masterAddresses []string, grpcDialOption grpc.DialOption) string {
+	if grpcDialOption == nil {
+		return ""
+	}
+	for _, address := range masterAddresses {
+		for _, candidate := range MasterAddressCandidates(address) {
+			if ctx.Err() != nil {
+				return ""
+			}
+			dialCtx, cancelDial := context.WithTimeout(ctx, 5*time.Second)
+			conn, err := pb.GrpcDial(dialCtx, candidate, false, grpcDialOption)
+			cancelDial()
+			if err != nil {
+				continue
+			}
+			client := master_pb.NewSeaweedClient(conn)
+			callCtx, cancelCall := context.WithTimeout(ctx, 10*time.Second)
+			resp, callErr := client.GetMasterConfiguration(callCtx, &master_pb.GetMasterConfigurationRequest{})
+			cancelCall()
+			_ = conn.Close()
+			if callErr == nil {
+				return resp.DefaultReplication
+			}
+		}
+	}
+	return ""
+}
+
 func FetchVolumeList(ctx context.Context, address string, grpcDialOption grpc.DialOption) (*master_pb.VolumeListResponse, error) {
 	var lastErr error
 	for _, candidate := range MasterAddressCandidates(address) {
@@ -132,6 +164,7 @@ func buildVolumeMetrics(
 							DataCenter: dc.Id,
 							Rack:       rack.Id,
 							NodeID:     node.Id,
+							Host:       pb.NewServerAddressFromDataNode(node).ToHost(),
 						})
 
 						if collectionRegex != nil && !collectionRegex.MatchString(volume.Collection) {

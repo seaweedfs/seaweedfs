@@ -26,6 +26,13 @@ const (
 	// the entry's own mtime so legacy data still expires.
 	ExtNoncurrentSinceNsKey = "Seaweed-X-Amz-Noncurrent-Since-Ns"
 
+	// Per-bucket opt-in for the PutObject lifecycle TTL fast path ("true"
+	// to enable). When on, an Expiration.Days rule is stamped as a volume
+	// TTL at write time instead of being expired by the worker. Off by
+	// default: a baked-in TTL can't honor a later policy change (rule
+	// removed or lengthened) the way worker-driven expiration does.
+	ExtLifecycleTtlFastPathKey = "Seaweed-X-Amz-Lifecycle-Ttl-Fast-Path"
+
 	// S3 checksum storage keys (use x-seaweedfs- prefix to avoid leaking in generic header loop)
 	ExtChecksumAlgorithm = "x-seaweedfs-checksum-algorithm"
 	ExtChecksumValue     = "x-seaweedfs-checksum-value"

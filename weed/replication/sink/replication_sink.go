@@ -17,6 +17,15 @@ type ReplicationSink interface {
 	IsIncremental() bool
 }
 
+// EntryMover is an optional capability for sinks that can relocate an entry
+// natively, in one atomic step, instead of create-then-delete. Drivers prefer
+// it for a rename so a failed copy can never leave the source deleted with no
+// committed destination, a directory move never deletes descendants before they
+// are recreated, and the entry's chunks are neither re-copied nor leaked.
+type EntryMover interface {
+	MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error
+}
+
 var (
 	Sinks []ReplicationSink
 )
