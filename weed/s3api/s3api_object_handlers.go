@@ -2341,7 +2341,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// PyArrow may create 0-byte files when writing datasets, or the filer may have actual directories
 		if objectEntryForSSE.Attributes != nil {
 			isZeroByteFile := objectEntryForSSE.Attributes.FileSize == 0 && !objectEntryForSSE.IsDirectory
-			if objectEntryForSSE.IsDirectory {
+			// A directory with data (a promoted file) is retrievable; empty directories 404 for LIST fallback.
+			if objectEntryForSSE.IsDirectory && filer.FileSize(objectEntryForSSE) == 0 {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
