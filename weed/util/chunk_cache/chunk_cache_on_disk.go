@@ -57,13 +57,13 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 		if !canWrite {
 			return nil, fmt.Errorf("cannot write cache file %s.dat", v.fileName)
 		}
-		if dataFile, err := os.OpenFile(v.fileName+".dat", os.O_RDWR|os.O_CREATE, 0644); err != nil {
+		var dataFile *os.File
+		if dataFile, err = os.OpenFile(v.fileName+".dat", os.O_RDWR|os.O_CREATE, 0644); err != nil {
 			return nil, fmt.Errorf("cannot create cache file %s.dat: %v", v.fileName, err)
-		} else {
-			v.DataBackend = backend.NewDiskFile(dataFile)
-			v.lastModTime = modTime
-			v.fileSize = fileSize
 		}
+		v.DataBackend = backend.NewDiskFile(dataFile)
+		v.lastModTime = modTime
+		v.fileSize = fileSize
 	} else {
 		if v.DataBackend, err = backend.CreateVolumeFile(v.fileName+".dat", preallocate, 0); err != nil {
 			return nil, fmt.Errorf("cannot create cache file %s.dat: %v", v.fileName, err)
