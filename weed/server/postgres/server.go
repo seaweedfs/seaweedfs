@@ -434,7 +434,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 			continue
 
 		case PG_PROTOCOL_VERSION_3:
-			// This is the actual startup message, break out of loop
+			// This is the actual startup message
 			break
 
 		default:
