@@ -132,6 +132,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleCreateNamespace(w, r, filerClient)
 	case "GetNamespace":
 		err = h.handleGetNamespace(w, r, filerClient)
+	case "UpdateNamespace":
+		err = h.handleUpdateNamespace(w, r, filerClient)
 	case "ListNamespaces":
 		err = h.handleListNamespaces(w, r, filerClient)
 	case "DeleteNamespace":

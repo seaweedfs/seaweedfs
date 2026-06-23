@@ -99,6 +99,41 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 	writeJSON(w, status, resp)
 }
 
+// nameValidationError reports whether err is an S3 Tables namespace or table
+// name validation failure. Such names are client input (the S3 Tables charset
+// is stricter than the Iceberg REST spec), so the catalog answers 400 rather
+// than treating it as a server fault.
+func nameValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Match the validator's own phrasings rather than a bare "namespace name"/
+	// "table name" so unrelated faults (e.g. "failed to resolve table name")
+	// aren't misreported as client errors. Lowercased for resilience to
+	// capitalization changes.
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"invalid namespace name", "namespace name must", "namespace name cannot",
+		"invalid table name", "table name must", "table name cannot",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// writeManagerError maps a residual s3tables manager error to a response:
+// name validation failures are client errors (400); anything else is a server
+// fault (500).
+func writeManagerError(w http.ResponseWriter, err error) {
+	if nameValidationError(err) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+}
+
 // getBucketFromPrefix extracts table bucket name from prefix parameter.
 // For now, we use the prefix as the table bucket name.
 //
