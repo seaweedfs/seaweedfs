@@ -377,7 +377,8 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		return s.tablesManager.Execute(r.Context(), mgrClient, "RegisterTable", registerReq, &registerResp, identityName)
 	})
 	if err != nil {
-		if tableErr, ok := err.(*s3tables.S3TablesError); ok {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
 			switch tableErr.Type {
 			case s3tables.ErrCodeNoSuchNamespace:
 				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
