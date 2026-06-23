@@ -113,26 +113,22 @@ func collectVolumeMarkTargetsByCollection(topoInfo *master_pb.TopologyInfo, coll
 	}
 
 	var targets []volumeMarkTarget
-	for _, dc := range topoInfo.GetDataCenterInfos() {
-		for _, rack := range dc.GetRackInfos() {
-			for _, dn := range rack.GetDataNodeInfos() {
-				if dn == nil {
-					continue
-				}
-				sourceVolumeServer := pb.NewServerAddressFromDataNode(dn)
-				for _, diskInfo := range dn.GetDiskInfos() {
-					for _, v := range diskInfo.GetVolumeInfos() {
-						if v.GetCollection() == collection {
-							targets = append(targets, volumeMarkTarget{
-								volumeId:           needle.VolumeId(v.GetId()),
-								sourceVolumeServer: sourceVolumeServer,
-							})
-						}
-					}
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if dn == nil {
+			return
+		}
+		sourceVolumeServer := pb.NewServerAddressFromDataNode(dn)
+		for _, diskInfo := range dn.GetDiskInfos() {
+			for _, v := range diskInfo.GetVolumeInfos() {
+				if v.GetCollection() == collection {
+					targets = append(targets, volumeMarkTarget{
+						volumeId:           needle.VolumeId(v.GetId()),
+						sourceVolumeServer: sourceVolumeServer,
+					})
 				}
 			}
 		}
-	}
+	})
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("collection %s has no volumes", collection)
 	}
