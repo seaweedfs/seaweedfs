@@ -109,6 +109,30 @@ func TestCreateViewMissingNamespaceReturns404(t *testing.T) {
 	}
 }
 
+func TestCreateViewTagsEntryAsView(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "ns")
+	s := NewServer(fc, nil)
+
+	w := httptest.NewRecorder()
+	s.handleCreateView(w, newCreateViewRequest(t, "ns", "v", "SELECT 1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	entry, ok := fc.entries[s3tables.GetTablePath(bucket, "ns", "v")]
+	if !ok {
+		t.Fatalf("view entry not created")
+	}
+	if got := string(entry.Extended[s3tables.ExtendedKeyEntryType]); got != s3tables.EntryTypeView {
+		t.Fatalf("entryType = %q, want %q", got, s3tables.EntryTypeView)
+	}
+	if _, ok := entry.Extended[s3tables.ExtendedKeyMetadata]; !ok {
+		t.Fatalf("view entry missing metadata attribute")
+	}
+}
+
 func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()

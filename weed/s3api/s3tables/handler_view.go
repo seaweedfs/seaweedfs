@@ -145,10 +145,10 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err := h.ensureDirectory(r.Context(), client, viewPath); err != nil {
 			return err
 		}
-		if err := h.setExtendedAttribute(r.Context(), client, viewPath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
-		}
-		return h.setExtendedAttribute(r.Context(), client, viewPath, ExtendedKeyEntryType, []byte(EntryTypeView))
+		return h.setExtendedAttributes(r.Context(), client, viewPath, map[string][]byte{
+			ExtendedKeyMetadata:  metadataBytes,
+			ExtendedKeyEntryType: []byte(EntryTypeView),
+		})
 	})
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create view")
