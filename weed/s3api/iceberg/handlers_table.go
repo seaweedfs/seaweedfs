@@ -358,6 +358,17 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid metadata-location: "+err.Error())
 		return
 	}
+	// metadata-location is client-supplied; confine the read to the authorized
+	// catalog bucket and reject traversal segments so path.Join in
+	// loadMetadataFile cannot escape into another bucket.
+	if metadataBucket != bucketName {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "metadata-location must be within bucket "+bucketName)
+		return
+	}
+	if !isValidTablePath(tablePath) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid metadata-location path")
+		return
+	}
 	metadataFileName := path.Base(req.MetadataLocation)
 	metadataBytes, err := s.loadMetadataFile(r.Context(), metadataBucket, tablePath, metadataFileName)
 	if err != nil {
