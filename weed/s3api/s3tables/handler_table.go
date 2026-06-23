@@ -1090,9 +1090,21 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 
 	// Require the destination namespace to exist and the destination table to be free.
 	destNamespacePath := GetNamespacePath(bucketName, destNamespace)
+	var destNamespaceMetadata namespaceMetadata
+	var destNamespacePolicy string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if _, err := h.getExtendedAttribute(r.Context(), client, destNamespacePath, ExtendedKeyMetadata); err != nil {
+		data, err := h.getExtendedAttribute(r.Context(), client, destNamespacePath, ExtendedKeyMetadata)
+		if err != nil {
 			return err
+		}
+		if err := json.Unmarshal(data, &destNamespaceMetadata); err != nil {
+			return fmt.Errorf("failed to unmarshal destination namespace metadata: %w", err)
+		}
+		policyData, err := h.getExtendedAttribute(r.Context(), client, destNamespacePath, ExtendedKeyPolicy)
+		if err == nil {
+			destNamespacePolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch destination namespace policy: %w", err)
 		}
 		if _, err := h.getExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadata); err == nil {
 			return ErrTableAlreadyExists
@@ -1111,6 +1123,30 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check destination: %v", err))
 		}
 		return err
+	}
+
+	// Renaming places the table into the destination namespace, so the principal
+	// must also be allowed to create a table there (the source check alone lets a
+	// caller move tables into namespaces they don't control).
+	destNamespaceAllowed := CheckPermissionWithContext("CreateTable", principal, destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       destNamespace,
+		TableName:       destName,
+		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllowFor(r),
+	})
+	destBucketAllowed := CheckPermissionWithContext("CreateTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       destNamespace,
+		TableName:       destName,
+		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllowFor(r),
+	})
+	if !destNamespaceAllowed && !destBucketAllowed {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in the destination namespace")
+		return NewAuthError("RenameTable", principal, "not authorized to create table in the destination namespace")
 	}
 
 	metadata.Name = destName

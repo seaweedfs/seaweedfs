@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -293,6 +294,48 @@ func TestRenameTableDestNamespaceMissing(t *testing.T) {
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeNoSuchNamespace, s3Err.Type)
 	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
+}
+
+// A principal allowed to rename the source must still be denied when it cannot
+// create a table in the destination namespace.
+func TestRenameTableDestNamespaceUnauthorized(t *testing.T) {
+	fs, m := startRenameManager(t)
+	m.SetTrusted(false)
+	m.SetDefaultAllow(false)
+
+	// "mover" may rename the source table but holds no rights on "dest".
+	srcPolicy, _ := json.Marshal(map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{{
+			"Effect":    "Allow",
+			"Principal": "mover",
+			"Action":    "s3tables:RenameTable",
+			"Resource":  "*",
+		}},
+	})
+	srcEntry := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, srcEntry)
+	srcEntry.Extended[ExtendedKeyPolicy] = srcPolicy
+
+	destNsMeta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"dest"}, OwnerAccountID: DefaultAccountID})
+	fs.putEntry(GetTableBucketPath(renameTestBucket), "dest", map[string][]byte{ExtendedKeyMetadata: destNsMeta})
+
+	mover := &testIdentity{Name: "mover", Account: &testIdentityAccount{Id: "mover"}}
+	ctx := s3_constants.SetIdentityInContext(context.Background(), mover)
+	err := m.Execute(ctx, NewManagerClient(fs.client), "RenameTable", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"dest"},
+		DestName:        "t2",
+	}, nil, "mover")
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeAccessDenied, s3Err.Type)
+
+	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
+	assert.Nil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "dest"), "t2"), "destination must not be written")
 }
 
 func TestRenameTableInvalidName(t *testing.T) {
