@@ -314,7 +314,8 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	})
 
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		// A directory without the table-metadata xattr is not a table (e.g. a renamed-away source).
+		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table: %v", err))
@@ -950,8 +951,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 }
 
 // handleRenameTable moves a table's catalog entry to a new namespace/name within
-// the same bucket. It is a pointer-only move: the metadata.json and data files
-// stay put and the destination keeps the source's MetadataLocation.
+// the same bucket. It is catalog-only: the metadata.json and data files stay put,
+// the destination keeps the source's MetadataLocation, and the source name is
+// soft-deleted in place (its catalog xattrs are dropped, its data is left intact).
 func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 	var req RenameTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -1149,7 +1151,11 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 				return err
 			}
 		}
-		return h.deleteDirectory(r.Context(), client, srcPath)
+		// Soft-delete the source catalog identity in place: drop its catalog xattrs
+		// so the name stops resolving while the metadata/ and data/ children stay put
+		// (manifests embed absolute paths, so the data must not move).
+		return h.removeExtendedAttributes(r.Context(), client, srcPath,
+			ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags)
 	})
 
 	if err != nil {

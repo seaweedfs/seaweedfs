@@ -84,6 +84,32 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 	})
 }
 
+// removeExtendedAttributes deletes the given extended attributes from an entry,
+// leaving the directory and its children intact.
+func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, keys ...string) error {
+	dir, name := splitPath(path)
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+	if err != nil {
+		return err
+	}
+
+	entry := resp.Entry
+	if entry.Extended != nil {
+		for _, key := range keys {
+			delete(entry.Extended, key)
+		}
+	}
+
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: dir,
+		Entry:     entry,
+	})
+}
+
 // getExtendedAttribute gets an extended attribute from an entry
 func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) ([]byte, error) {
 	dir, name := splitPath(path)
