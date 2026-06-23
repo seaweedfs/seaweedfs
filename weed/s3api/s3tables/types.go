@@ -271,6 +271,91 @@ type UpdateTableResponse struct {
 	MetadataLocation string `json:"metadataLocation,omitempty"`
 }
 
+// View types
+//
+// Views are stored exactly like tables (a filer directory carrying a metadata
+// pointer xattr) but tagged with ExtendedKeyEntryType="view". They reuse
+// TableMetadata for the metadata pointer.
+
+type CreateViewRequest struct {
+	TableBucketARN   string         `json:"tableBucketARN"`
+	Namespace        []string       `json:"namespace"`
+	Name             string         `json:"name"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	MetadataVersion  int            `json:"metadataVersion,omitempty"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+}
+
+type CreateViewResponse struct {
+	ViewARN          string `json:"viewARN"`
+	VersionToken     string `json:"versionToken"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+}
+
+type GetViewRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetViewResponse struct {
+	Name             string         `json:"name"`
+	ViewARN          string         `json:"viewARN"`
+	Namespace        []string       `json:"namespace"`
+	CreatedAt        time.Time      `json:"createdAt"`
+	ModifiedAt       time.Time      `json:"modifiedAt"`
+	OwnerAccountID   string         `json:"ownerAccountId"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+	VersionToken     string         `json:"versionToken"`
+	MetadataVersion  int            `json:"metadataVersion"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
+}
+
+type ListViewsRequest struct {
+	TableBucketARN    string   `json:"tableBucketARN"`
+	Namespace         []string `json:"namespace,omitempty"`
+	Prefix            string   `json:"prefix,omitempty"`
+	ContinuationToken string   `json:"continuationToken,omitempty"`
+	MaxViews          int      `json:"maxViews,omitempty"`
+}
+
+type ViewSummary struct {
+	Name             string    `json:"name"`
+	ViewARN          string    `json:"viewARN"`
+	Namespace        []string  `json:"namespace"`
+	CreatedAt        time.Time `json:"createdAt"`
+	ModifiedAt       time.Time `json:"modifiedAt"`
+	MetadataLocation string    `json:"metadataLocation,omitempty"`
+}
+
+type ListViewsResponse struct {
+	Views             []ViewSummary `json:"views"`
+	ContinuationToken string        `json:"continuationToken,omitempty"`
+}
+
+type UpdateViewRequest struct {
+	TableBucketARN   string         `json:"tableBucketARN"`
+	Namespace        []string       `json:"namespace"`
+	Name             string         `json:"name"`
+	VersionToken     string         `json:"versionToken,omitempty"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	MetadataVersion  int            `json:"metadataVersion,omitempty"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+}
+
+type UpdateViewResponse struct {
+	ViewARN          string `json:"viewARN"`
+	VersionToken     string `json:"versionToken"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+}
+
+type DeleteViewRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+	VersionToken   string   `json:"versionToken,omitempty"`
+}
+
 // Table policy types
 
 type PutTablePolicyRequest struct {
@@ -337,6 +422,8 @@ const (
 	ErrCodeNamespaceAlreadyExists = "NamespaceAlreadyExists"
 	ErrCodeNamespaceNotEmpty      = "NamespaceNotEmpty"
 	ErrCodeTableAlreadyExists     = "TableAlreadyExists"
+	ErrCodeNoSuchView             = "NoSuchView"
+	ErrCodeViewAlreadyExists      = "ViewAlreadyExists"
 	ErrCodeAccessDenied           = "AccessDenied"
 	ErrCodeInvalidRequest         = "InvalidRequest"
 	ErrCodeInternalError          = "InternalError"
