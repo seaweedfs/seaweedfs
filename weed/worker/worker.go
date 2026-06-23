@@ -321,10 +321,8 @@ func (w *Worker) getTaskLoad() int {
 
 func (w *Worker) setTask(task *types.TaskInput) error {
 	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionSetTask,
-		data:   task,
-		resp:   resp,
+	if !w.dispatch(workerCommand{action: ActionSetTask, data: task, resp: resp}) {
+		return fmt.Errorf("worker is stopping")
 	}
 	if err := <-resp; err != nil {
 		glog.Errorf("TASK REJECTED: Worker %s at capacity (%d/%d) - rejecting task %s",
@@ -498,14 +496,16 @@ out:
 		}
 	}
 
-	// Terminate the manager loop.
+	// Terminate the manager loop. A second Stop (e.g. an admin-shutdown timer
+	// racing an explicit Stop) finds the loop already gone, so abort on w.done
+	// instead of blocking on a send no one will receive.
 	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionStop,
-		resp:   resp,
-	}
-	if err := <-resp; err != nil {
-		return err
+	select {
+	case w.cmds <- workerCommand{action: ActionStop, resp: resp}:
+		if err := <-resp; err != nil {
+			return err
+		}
+	case <-w.done:
 	}
 
 	// Disconnect from admin server.
@@ -937,11 +937,7 @@ func (w *Worker) handleTaskLogRequest(request *worker_pb.TaskLogRequest) {
 func (w *Worker) handleTaskCancellation(cancellation *worker_pb.TaskCancellation) {
 	glog.Infof("Worker %s received task cancellation for task %s", w.id, cancellation.TaskId)
 
-	w.cmds <- workerCommand{
-		action: ActionCancelTask,
-		data:   cancellation.TaskId,
-		resp:   nil,
-	}
+	w.dispatch(workerCommand{action: ActionCancelTask, data: cancellation.TaskId})
 }
 
 // handleAdminShutdown processes admin shutdown notifications

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -29,13 +30,17 @@ func TestManagerLoopSendersAbortAfterStop(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// Every interaction a lingering executeTask goroutine has with the manager
-	// loop must return promptly now that the loop no longer receives.
+	// Every interaction with the manager loop - whether from a lingering
+	// executeTask goroutine, the task-assignment path, or a second Stop - must
+	// return promptly now that the loop no longer receives.
 	mustNotBlock(t, "getAdmin", func() { w.getAdmin() })
 	mustNotBlock(t, "getTaskLoad", func() { w.getTaskLoad() })
 	mustNotBlock(t, "removeTask", func() { w.removeTask(&types.TaskInput{ID: "t1"}) })
 	mustNotBlock(t, "completeTask", func() { w.completeTask("t1", true, "") })
 	mustNotBlock(t, "dispatch", func() { w.dispatch(workerCommand{action: ActionIncTaskComplete}) })
+	mustNotBlock(t, "setTask", func() { w.setTask(&types.TaskInput{ID: "t1"}) })
+	mustNotBlock(t, "handleTaskCancellation", func() { w.handleTaskCancellation(&worker_pb.TaskCancellation{TaskId: "t1"}) })
+	mustNotBlock(t, "Stop again", func() { w.Stop() })
 
 	// The abort path returns zero values rather than blocking on real state.
 	if got := w.getAdmin(); got != nil {
@@ -44,11 +49,18 @@ func TestManagerLoopSendersAbortAfterStop(t *testing.T) {
 	if got := w.getTaskLoad(); got != 0 {
 		t.Errorf("getTaskLoad after stop = %d, want 0", got)
 	}
+	if got := w.removeTask(&types.TaskInput{ID: "t1"}); got != 0 {
+		t.Errorf("removeTask after stop = %d, want 0", got)
+	}
+	if err := w.setTask(&types.TaskInput{ID: "t1"}); err == nil {
+		t.Errorf("setTask after stop = nil error, want error")
+	}
 	if w.dispatch(workerCommand{action: ActionIncTaskComplete}) {
 		t.Errorf("dispatch after stop = true, want false")
 	}
 }
 
+// mustNotBlock fails the test if fn does not return within the timeout.
 func mustNotBlock(t *testing.T, name string, fn func()) {
 	t.Helper()
 	done := make(chan struct{})
