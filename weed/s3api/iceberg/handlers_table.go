@@ -372,6 +372,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 	metadataFileName := path.Base(req.MetadataLocation)
 	metadataBytes, err := s.loadMetadataFile(r.Context(), metadataBucket, tablePath, metadataFileName)
 	if err != nil {
+		glog.V(1).Infof("Iceberg: RegisterTable load metadata at %s: %v", req.MetadataLocation, err)
 		writeError(w, http.StatusBadRequest, "BadRequestException", "Cannot read metadata at "+req.MetadataLocation)
 		return
 	}
