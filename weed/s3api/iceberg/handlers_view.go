@@ -153,8 +153,21 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize view metadata: "+err.Error())
 		return
 	}
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
+
+	// Authoritative existence check before touching storage: a registered view
+	// short-circuits with its stored definition (idempotent CreateView) so we
+	// never overwrite the persisted metadata of an existing view.
+	if existsResp, existsErr := s.getView(r, namespace, req.Name); existsErr == nil {
+		result, buildErr := s.buildViewResponse(existsResp, bucketName, namespace, req.Name)
+		if buildErr != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", buildErr.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	} else if !isViewNotFound(existsErr) {
+		glog.V(1).Infof("Iceberg: CreateView existence check failed for %s.%s: %v", flattenNamespacePath(namespace), req.Name, existsErr)
+		writeManagerError(w, existsErr)
 		return
 	}
 
@@ -181,6 +194,13 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		}
 		glog.V(1).Infof("Iceberg: CreateView error: %v", err)
 		writeManagerError(w, err)
+		return
+	}
+
+	// Persist the metadata file only after the catalog registers the view, so a
+	// missing namespace or name collision fails before any bytes hit storage.
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
 		return
 	}
 
