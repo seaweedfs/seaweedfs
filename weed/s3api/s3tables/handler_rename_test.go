@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"path"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +91,16 @@ func (f *memFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntr
 	if d, ok := f.entries[req.Directory]; ok {
 		delete(d, req.Name)
 	}
+	// Honor recursive data deletion so a regression that wipes the table directory
+	// also drops its metadata/ and data/ children (the data-loss this guards against).
+	if req.IsRecursive && req.IsDeleteData {
+		child := path.Join(req.Directory, req.Name)
+		for dir := range f.entries {
+			if dir == child || strings.HasPrefix(dir, child+"/") {
+				delete(f.entries, dir)
+			}
+		}
+	}
 	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
@@ -164,6 +176,12 @@ func startRenameManager(t *testing.T) (*memFilerServer, *Manager) {
 		ExtendedKeyMetadataVersion: []byte("3"),
 	})
 
+	// Physical metadata.json and data files live under the table directory.
+	tablePath := GetTablePath(renameTestBucket, "ns", "t")
+	fs.putEntry(tablePath, "metadata", nil)
+	fs.putEntry(tablePath, "data", nil)
+	fs.putEntry(path.Join(tablePath, "metadata"), "v3.metadata.json", nil)
+
 	m := NewManager()
 	m.SetTrusted(true)
 	return fs, m
@@ -174,7 +192,18 @@ func runRename(t *testing.T, m *Manager, fs *memFilerServer, req *RenameTableReq
 	return m.Execute(context.Background(), NewManagerClient(fs.client), "RenameTable", req, nil, "")
 }
 
-func TestRenameTableMovesPointer(t *testing.T) {
+func runGetTable(t *testing.T, m *Manager, fs *memFilerServer, namespace, name string) (*GetTableResponse, error) {
+	t.Helper()
+	resp := &GetTableResponse{}
+	err := m.Execute(context.Background(), NewManagerClient(fs.client), "GetTable", &GetTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{namespace},
+		Name:           name,
+	}, resp, "")
+	return resp, err
+}
+
+func TestRenameTablePreservesData(t *testing.T) {
 	fs, m := startRenameManager(t)
 
 	req := &RenameTableRequest{
@@ -186,15 +215,33 @@ func TestRenameTableMovesPointer(t *testing.T) {
 	}
 	require.NoError(t, runRename(t, m, fs, req))
 
-	assert.Nil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "source entry should be removed")
+	// The source directory and its metadata.json/data children must survive: rename
+	// is catalog-only and the destination still points at the original location.
+	srcPath := GetTablePath(renameTestBucket, "ns", "t")
+	assert.NotNil(t, fs.getEntry(srcPath, "metadata"), "source metadata dir must survive")
+	assert.NotNil(t, fs.getEntry(srcPath, "data"), "source data dir must survive")
+	assert.NotNil(t, fs.getEntry(path.Join(srcPath, "metadata"), "v3.metadata.json"), "metadata.json must survive")
+
+	// Source catalog xattrs are dropped so the name stops resolving.
+	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src, "source directory must remain to hold the data children")
+	_, hasMeta := src.Extended[ExtendedKeyMetadata]
+	assert.False(t, hasMeta, "source table-metadata xattr must be removed")
+
+	_, err := runGetTable(t, m, fs, "ns", "t")
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeNoSuchTable, s3Err.Type)
+
+	// The destination resolves to the preserved (original) MetadataLocation.
+	got, err := runGetTable(t, m, fs, "ns", "t2")
+	require.NoError(t, err)
+	assert.Equal(t, "t2", got.Name)
+	assert.Equal(t, "s3://"+renameTestBucket+"/ns/t/metadata/v3.metadata.json", got.MetadataLocation)
 
 	dest := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t2")
 	require.NotNil(t, dest)
-	var meta tableMetadataInternal
-	require.NoError(t, json.Unmarshal(dest.Extended[ExtendedKeyMetadata], &meta))
-	assert.Equal(t, "t2", meta.Name)
-	assert.Equal(t, "ns", meta.Namespace)
-	assert.Equal(t, "s3://"+renameTestBucket+"/ns/t/metadata/v3.metadata.json", meta.MetadataLocation)
 	assert.Equal(t, []byte("3"), dest.Extended[ExtendedKeyMetadataVersion])
 }
 
