@@ -23,7 +23,10 @@ func (entry *Entry) IsInRemoteOnly() bool {
 }
 
 func (entry *Entry) IsDirectoryKeyObject() bool {
-	return entry.IsDirectory && entry.Attributes != nil && entry.Attributes.Mime != ""
+	// Also true for a file promoted to a directory by a child write, which keeps its
+	// chunks/content, or its remote entry when the file was tiered to remote storage.
+	return entry.IsDirectory &&
+		((entry.Attributes != nil && entry.Attributes.Mime != "") || len(entry.GetChunks()) > 0 || len(entry.GetContent()) > 0 || entry.IsInRemoteOnly())
 }
 
 func (entry *Entry) GetExpiryTime() (expiryTime int64) {
