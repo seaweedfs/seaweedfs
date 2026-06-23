@@ -34,6 +34,7 @@ const (
 var (
 	ErrVersionTokenMismatch = errors.New("version token mismatch")
 	ErrAccessDenied         = errors.New("access denied")
+	ErrTableAlreadyExists   = errors.New("table already exists")
 )
 
 type ResourceType string
@@ -150,6 +151,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleUpdateTable(w, r, filerClient)
 	case "DeleteTable":
 		err = h.handleDeleteTable(w, r, filerClient)
+	case "RenameTable":
+		err = h.handleRenameTable(w, r, filerClient)
 
 	// Table Policy operations
 	case "PutTablePolicy":

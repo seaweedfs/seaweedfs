@@ -258,6 +258,19 @@ type UpdateTableResponse struct {
 	MetadataLocation string `json:"metadataLocation,omitempty"`
 }
 
+type RenameTableRequest struct {
+	TableBucketARN  string   `json:"tableBucketARN"`
+	SourceNamespace []string `json:"sourceNamespace"`
+	SourceName      string   `json:"sourceName"`
+	DestNamespace   []string `json:"destNamespace"`
+	DestName        string   `json:"destName"`
+}
+
+type RenameTableResponse struct {
+	TableARN         string `json:"tableARN"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+}
+
 // Table policy types
 
 type PutTablePolicyRequest struct {
