@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -261,12 +262,7 @@ func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.
 		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, identityName)
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
-			return
-		}
-		glog.V(1).Infof("Iceberg: UpdateNamespaceProperties GetNamespace error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeNamespaceManagerError(w, err, namespace)
 		return
 	}
 
@@ -279,12 +275,30 @@ func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.
 		return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateNamespace", updReq, &updResp, identityName)
 	})
 	if err != nil {
-		glog.V(1).Infof("Iceberg: UpdateNamespaceProperties error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeNamespaceManagerError(w, err, namespace)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// writeNamespaceManagerError maps an s3tables manager error to the matching
+// Iceberg REST response. A namespace dropped between read and write surfaces
+// as 404 and a denied caller as 403; anything else is a 500.
+func writeNamespaceManagerError(w http.ResponseWriter, err error, namespace Namespace) {
+	var s3Err *s3tables.S3TablesError
+	if errors.As(err, &s3Err) {
+		switch s3Err.Type {
+		case s3tables.ErrCodeNoSuchNamespace:
+			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
+			return
+		case s3tables.ErrCodeAccessDenied:
+			writeError(w, http.StatusForbidden, "ForbiddenException", "Not authorized to update namespace properties")
+			return
+		}
+	}
+	glog.V(1).Infof("Iceberg: UpdateNamespaceProperties error: %v", err)
+	writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 }
 
 // handleNamespaceExists checks if a namespace exists.
