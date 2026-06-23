@@ -189,7 +189,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			glog.V(1).Infof("Iceberg: CommitTable GetTable error: %v", err)
-			writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+			writeManagerError(w, err)
 			return
 		}
 
