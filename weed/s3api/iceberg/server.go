@@ -109,6 +109,14 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/tables/rename", s.Auth(s.handleRenameTable)).Methods(http.MethodPost)
 
+	// View endpoints - wrapped with Auth middleware
+	router.HandleFunc("/v1/namespaces/{namespace}/views", s.Auth(s.handleListViews)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/views", s.Auth(s.handleCreateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+
 	// Multi-table transaction commit - wrapped with Auth middleware
 	router.HandleFunc("/v1/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
 
@@ -127,6 +135,12 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/tables/rename", s.Auth(s.handleRenameTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views", s.Auth(s.handleListViews)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views", s.Auth(s.handleCreateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
 
 	// Catch-all for debugging

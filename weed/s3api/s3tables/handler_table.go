@@ -164,12 +164,22 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
-	// Check if table already exists
+	// Check if a table or view already exists at this name. Names are unique
+	// across tables and views in a namespace.
 	var existingMetadata tableMetadataInternal
+	var existingIsView bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		entry, err := h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
 			return err
+		}
+		if entryType(entry.Extended) == EntryTypeView {
+			existingIsView = true
+			return nil
+		}
+		data, ok := entry.Extended[ExtendedKeyMetadata]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		if unmarshalErr := json.Unmarshal(data, &existingMetadata); unmarshalErr != nil {
 			return fmt.Errorf("failed to parse existing table metadata: %w", unmarshalErr)
@@ -178,6 +188,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	})
 
 	if err == nil {
+		if existingIsView {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("a view named %s already exists", tableName))
+			return fmt.Errorf("view name conflict: %s", tableName)
+		}
 		tableARN := h.generateTableARN(existingMetadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 		h.writeJSON(w, http.StatusOK, &CreateTableResponse{
 			TableARN:         tableARN,
@@ -227,6 +241,11 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 		// Set metadata as extended attribute
 		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
+			return err
+		}
+
+		// Tag the entry as a table so view listings can exclude it.
+		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyEntryType, []byte(EntryTypeTable)); err != nil {
 			return err
 		}
 
@@ -519,9 +538,16 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 
 	var metadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		entry, err := h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
 			return err
+		}
+		if entryType(entry.Extended) == EntryTypeView {
+			return filer_pb.ErrNotFound
+		}
+		data, ok := entry.Extended[ExtendedKeyMetadata]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
@@ -884,6 +910,11 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 
 			// Apply prefix filter
 			if prefix != "" && !strings.HasPrefix(entry.Entry.Name, prefix) {
+				continue
+			}
+
+			// Views share the table layout; exclude them from table listings.
+			if entryType(entry.Entry.Extended) == EntryTypeView {
 				continue
 			}
 

@@ -26,6 +26,12 @@ const (
 	ExtendedKeyMetadataVersion = "s3tables.metadataVersion"
 	ExtendedKeyPolicy          = "s3tables.policy"
 	ExtendedKeyTags            = "s3tables.tags"
+	ExtendedKeyEntryType       = "s3tables.entryType"
+
+	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
+	// a table; views are stored like tables but tagged "view".
+	EntryTypeTable = "table"
+	EntryTypeView  = "view"
 
 	// Maximum request body size (10MB)
 	maxRequestBodySize = 10 * 1024 * 1024
@@ -155,6 +161,18 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleDeleteTable(w, r, filerClient)
 	case "RenameTable":
 		err = h.handleRenameTable(w, r, filerClient)
+
+	// View operations
+	case "CreateView":
+		err = h.handleCreateView(w, r, filerClient)
+	case "GetView":
+		err = h.handleGetView(w, r, filerClient)
+	case "ListViews":
+		err = h.handleListViews(w, r, filerClient)
+	case "UpdateView":
+		err = h.handleUpdateView(w, r, filerClient)
+	case "DeleteView":
+		err = h.handleDeleteView(w, r, filerClient)
 
 	// Table Policy operations
 	case "PutTablePolicy":
@@ -364,6 +382,10 @@ func (h *S3TablesHandler) generateTableBucketARN(ownerAccountID, bucketName stri
 
 func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID string) string {
 	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, ownerAccountID, bucketName, tableID)
+}
+
+func (h *S3TablesHandler) generateViewARN(ownerAccountID, bucketName, viewID string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/view/%s", h.region, ownerAccountID, bucketName, viewID)
 }
 
 func isAuthError(err error) bool {
