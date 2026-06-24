@@ -353,6 +353,16 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 	if sourceHttpClient != nil {
 		filerSource.SetHttpClient(sourceHttpClient)
 	}
+	// Configure JWT signing key for authenticated chunk reads via filer proxy.
+	// When the source filer has jwt.filer_signing.read.key configured, the sync
+	// process must include a valid Bearer token in its HTTP GET requests.
+	// Falls back to jwt.filer_signing.key if read.key is not set.
+	util.GetViper().SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
+	filerSource.SetJwtSigningKeys(
+		util.GetViper().GetString("jwt.filer_signing.read.key"),
+		util.GetViper().GetString("jwt.filer_signing.key"),
+		util.GetViper().GetInt("jwt.filer_signing.read.expires_after_seconds"),
+	)
 	filerSink := &filersink.FilerSink{}
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, targetGrpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetChunkConcurrency(chunkConcurrency)

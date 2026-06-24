@@ -167,6 +167,14 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		*backupOption.proxyByFiler); err != nil {
 		return fmt.Errorf("filersource initialization failed: %v", err)
 	}
+	// Configure JWT signing key for authenticated chunk reads via filer proxy.
+	// Falls back to jwt.filer_signing.key if read.key is not set.
+	util.GetViper().SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
+	filerSource.SetJwtSigningKeys(
+		util.GetViper().GetString("jwt.filer_signing.read.key"),
+		util.GetViper().GetString("jwt.filer_signing.key"),
+		util.GetViper().GetInt("jwt.filer_signing.read.expires_after_seconds"),
+	)
 
 	if err := repl_util.InitializeSSEForReplication(filerSource); err != nil {
 		return fmt.Errorf("SSE initialization failed: %v", err)
