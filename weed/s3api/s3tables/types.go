@@ -271,6 +271,19 @@ type UpdateTableResponse struct {
 	MetadataLocation string `json:"metadataLocation,omitempty"`
 }
 
+type RenameTableRequest struct {
+	TableBucketARN  string   `json:"tableBucketARN"`
+	SourceNamespace []string `json:"sourceNamespace"`
+	SourceName      string   `json:"sourceName"`
+	DestNamespace   []string `json:"destNamespace"`
+	DestName        string   `json:"destName"`
+}
+
+type RenameTableResponse struct {
+	TableARN         string `json:"tableARN"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+}
+
 // View types
 //
 // Views are stored exactly like tables (a filer directory carrying a metadata

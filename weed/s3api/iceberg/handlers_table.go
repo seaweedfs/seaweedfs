@@ -621,6 +621,64 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleRenameTable moves a table's catalog pointer to a new namespace/name.
+func (s *Server) handleRenameTable(w http.ResponseWriter, r *http.Request) {
+	var req RenameTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	source := parseNamespace(encodeNamespace(req.Source.Namespace))
+	dest := parseNamespace(encodeNamespace(req.Destination.Namespace))
+	if len(source) == 0 || req.Source.Name == "" || len(dest) == 0 || req.Destination.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "source and destination namespace and name are required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	renameReq := &s3tables.RenameTableRequest{
+		TableBucketARN:  bucketARN,
+		SourceNamespace: source,
+		SourceName:      req.Source.Name,
+		DestNamespace:   dest,
+		DestName:        req.Destination.Name,
+	}
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RenameTable", renameReq, nil, identityName)
+	})
+
+	if err != nil {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
+			switch tableErr.Type {
+			case s3tables.ErrCodeNoSuchTable:
+				writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", req.Source.Name))
+				return
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", dest))
+				return
+			case s3tables.ErrCodeTableAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("Table already exists: %s", req.Destination.Name))
+				return
+			case s3tables.ErrCodeInvalidRequest:
+				writeError(w, http.StatusBadRequest, "BadRequestException", tableErr.Message)
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RenameTable error: %v", err)
+		writeManagerError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // isNoSuchTableError reports whether an error from the S3 Tables manager
 // indicates the target table is not registered in the catalog.
 func isNoSuchTableError(err error) bool {

@@ -158,6 +158,12 @@ func (r *LoadTableResult) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// RenameTableRequest is sent to POST /v1/tables/rename.
+type RenameTableRequest struct {
+	Source      TableIdentifier `json:"source"`
+	Destination TableIdentifier `json:"destination"`
+}
+
 // CommitTableRequest is sent to POST /v1/namespaces/{namespace}/tables/{table}.
 type CommitTableRequest struct {
 	Identifier   *TableIdentifier   `json:"identifier,omitempty"`
