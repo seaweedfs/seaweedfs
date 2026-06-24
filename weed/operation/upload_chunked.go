@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // ChunkedUploadResult contains the result of a chunked upload
@@ -292,9 +293,10 @@ func chunkHolders(assignResult *AssignResult) []string {
 	return hosts
 }
 
-// uploadChunkToHolders uploads the chunk to every holder concurrently (each with
-// type=replicate). It returns the first successful result and fails if any
-// holder fails, cancelling the remaining uploads on the first error.
+// uploadChunkToHolders writes the chunk to every holder concurrently (each with
+// type=replicate). On the first failure it cancels the remaining uploads and
+// deletes any copies that already landed, so a partial fan-out leaves no
+// orphaned needle the caller cannot see.
 func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
 	uploader, err := NewUploader()
 	if err != nil {
@@ -304,6 +306,7 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type outcome struct {
+		host   string
 		result *UploadResult
 		err    error
 	}
@@ -320,11 +323,12 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 				Md5:               md5b64,
 			}
 			r, e := uploader.UploadData(ctx, data, uploadOption)
-			outcomes <- outcome{r, e}
+			outcomes <- outcome{host, r, e}
 		}(host)
 	}
 	var first *UploadResult
 	var firstErr error
+	var succeeded []string
 	for range hosts {
 		o := <-outcomes
 		if o.err != nil {
@@ -332,12 +336,29 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 				firstErr = o.err
 				cancel()
 			}
-		} else if first == nil {
-			first = o.result
+		} else {
+			succeeded = append(succeeded, o.host)
+			if first == nil {
+				first = o.result
+			}
 		}
 	}
 	if firstErr != nil {
+		// A failed fan-out records no chunk, so roll back the copies that landed
+		// before the cancel rather than leaking them as orphans.
+		deleteChunkFromHolders(succeeded, fid, jwt)
 		return nil, firstErr
 	}
 	return first, nil
+}
+
+// deleteChunkFromHolders best-effort removes a needle from each holder it landed
+// on, using type=replicate so the volume drops only its local copy. A failed
+// delete falls back to vacuum reclaiming the orphan.
+func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt) {
+	for _, host := range hosts {
+		if err := util_http.Delete(fmt.Sprintf("http://%s/%s?type=replicate", host, fid), string(jwt)); err != nil {
+			glog.Warningf("replica fan-out cleanup: delete %s from %s: %v", fid, host, err)
+		}
+	}
 }
