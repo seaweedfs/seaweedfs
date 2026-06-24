@@ -104,6 +104,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 	// max(local, replicas) instead of their sum. The client ack waits for both.
 	var wg sync.WaitGroup
 	var localErr, remoteErr error
+	var localIsUnchanged bool
 
 	if vol != nil {
 		wg.Add(1)
@@ -114,7 +115,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 			inFlightGauge.Inc()
 			defer inFlightGauge.Dec()
 
-			isUnchanged, localErr = s.WriteVolumeNeedle(volumeId, n, true, fsync)
+			localIsUnchanged, localErr = s.WriteVolumeNeedle(volumeId, n, true, fsync)
 			stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
 			if localErr != nil {
 				stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
@@ -205,7 +206,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 	if remoteErr != nil {
 		return false, remoteErr
 	}
-	return isUnchanged, nil
+	return localIsUnchanged, nil
 }
 
 // ReplicatedDelete deletes a needle from the local volume and sends delete
