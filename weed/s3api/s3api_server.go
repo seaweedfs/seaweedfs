@@ -216,6 +216,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Update credential store to use FilerClient's current filer for HA
 	iam.SetFilerClient(filerClient)
 
+	// Fan IAM mutations out to peer S3 servers, mirroring the filer-embedded path.
+	iamPropagationEnabled := masterClient != nil && iam.credentialManager != nil
+	if iamPropagationEnabled {
+		iam.credentialManager.SetMasterClient(masterClient, option.GrpcDialOption)
+	}
+
 	// Keep attempting to load configuration from filer now that we have a client
 	// The initial load in NewIdentityAccessManagementWithStore might have failed if client was nil
 	go func() {
@@ -381,8 +387,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam, option.IamReadOnly)
 		if option.IamReadOnly {
 			glog.V(1).Infof("Embedded IAM API initialized in read-only mode (use -s3.iam.readOnly=false to enable write operations)")
+		} else if iamPropagationEnabled {
+			glog.V(1).Infof("Embedded IAM API initialized in writable mode (updates propagate to other S3 servers)")
 		} else {
-			glog.V(1).Infof("Embedded IAM API initialized in writable mode (WARNING: updates will not be propagated to other S3 servers)")
+			glog.Warningf("Embedded IAM API initialized in writable mode but no master is configured; updates will not be propagated to other S3 servers")
 		}
 	}
 
