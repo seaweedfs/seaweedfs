@@ -1184,6 +1184,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		dataPath := tableDataDirFromMetadataLocation(metadata.MetadataLocation)
 		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
+			// Refuse to purge a data path that is an ancestor of the table's own
+			// name path (e.g. corrupt metadata resolving to the bucket or
+			// namespace root): the bucket-scope check above still admits the
+			// bucket root, and a recursive delete there would take out unrelated
+			// tables.
+			if strings.HasPrefix(tablePath+"/", dataPath+"/") {
+				return fmt.Errorf("refusing to delete table %s: data path %q is an ancestor of catalog path %q", tableName, dataPath, tablePath)
+			}
 			// Decoupled table (renamed, or created over a leftover): its data
 			// lives elsewhere. Purge the data, then clear the catalog marker
 			// without deleting the name path -- it may still hold another

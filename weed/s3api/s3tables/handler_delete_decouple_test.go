@@ -58,6 +58,31 @@ func TestDeleteTableDecoupledKeepsReusedNamePath(t *testing.T) {
 	}
 }
 
+// A table whose MetadataLocation resolves to an ancestor of its own name path
+// (here the namespace root, e.g. from corrupt metadata) must not be deleted: a
+// recursive purge of that data path would wipe sibling tables. The delete is
+// refused and the namespace's other tables survive.
+func TestDeleteTableRefusesAncestorDataPath(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	badMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "badt",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/metadata/v1.metadata.json",
+	})
+	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "badt", map[string][]byte{ExtendedKeyMetadata: badMeta})
+
+	require.Error(t, runDeleteTable(t, m, fs, "ns", "badt"))
+
+	// The sibling table seeded by startRenameManager and its data must survive.
+	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"),
+		"sibling table marker must survive a refused delete")
+	assert.NotNil(t, fs.getEntry(GetTablePath(renameTestBucket, "ns", "t"), "data"),
+		"sibling table data must survive a refused delete")
+}
+
 // A normal colocated table (data under its own name path) is removed wholesale.
 func TestDeleteTableColocatedRemovesData(t *testing.T) {
 	fs, m := startRenameManager(t)
