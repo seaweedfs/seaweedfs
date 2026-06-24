@@ -320,7 +320,10 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		return 0, nil, fuse.Status(syscall.ENOSPC)
 	}
 
-	// Verify write+search permission on the parent directory.
+	// Load the parent directory to validate it exists (the create RPC sets
+	// SkipCheckParentDirectory, so this is the only parent check). With
+	// default_permissions the kernel already verified write+search on it before
+	// Create/Mknod, so skip only the mode-bit check and its group lookup.
 	parentEntry, parentStatus := wfs.maybeLoadEntry(dirFullPath)
 	if parentStatus != fuse.OK {
 		return 0, nil, parentStatus
@@ -328,14 +331,16 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	if parentEntry == nil || parentEntry.Attributes == nil {
 		return 0, nil, fuse.EIO
 	}
-	// Map parent dir uid/gid from filer-space to local-space so the
-	// permission check compares like with like (caller uid/gid are local).
-	parentUid, parentGid := parentEntry.Attributes.Uid, parentEntry.Attributes.Gid
-	if wfs.option.UidGidMapper != nil {
-		parentUid, parentGid = wfs.option.UidGidMapper.FilerToLocal(parentUid, parentGid)
-	}
-	if !hasAccess(uid, gid, parentUid, parentGid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
-		return 0, nil, fuse.Status(syscall.EACCES)
+	if !wfs.option.DefaultPermissions {
+		// Map parent dir uid/gid from filer-space to local-space so the
+		// permission check compares like with like (caller uid/gid are local).
+		parentUid, parentGid := parentEntry.Attributes.Uid, parentEntry.Attributes.Gid
+		if wfs.option.UidGidMapper != nil {
+			parentUid, parentGid = wfs.option.UidGidMapper.FilerToLocal(parentUid, parentGid)
+		}
+		if !hasAccess(uid, gid, parentUid, parentGid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
+			return 0, nil, fuse.Status(syscall.EACCES)
+		}
 	}
 
 	entryFullPath := dirFullPath.Child(name)

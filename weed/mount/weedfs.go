@@ -71,6 +71,13 @@ type Option struct {
 	UidGidMapper         *meta_cache.UidGidMapper
 	IncludeSystemEntries bool
 
+	// DefaultPermissions mirrors the FUSE default_permissions mount option.
+	// When set, the kernel enforces unix permission bits from the getattr/
+	// lookup attributes before it ever calls Open/Create/Mknod, so the mount
+	// skips its own redundant permission checks (and the group lookups behind
+	// them) on those hot paths.
+	DefaultPermissions bool
+
 	// Periodic metadata flush interval in seconds (0 to disable)
 	// This protects chunks from being purged by volume.fsck for long-running writes
 	MetadataFlushSeconds int

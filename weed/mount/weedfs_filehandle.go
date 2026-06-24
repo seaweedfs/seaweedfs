@@ -24,8 +24,10 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM
 		}
-		// Check unix permission bits for the requested access mode.
-		if entry != nil && entry.Attributes != nil {
+		// Check unix permission bits for the requested access mode. With
+		// default_permissions the kernel already enforced them before this
+		// open, so the check (and its supplementary-group lookup) is redundant.
+		if !wfs.option.DefaultPermissions && entry != nil && entry.Attributes != nil {
 			fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
 			if wfs.option.UidGidMapper != nil {
 				fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
