@@ -174,7 +174,11 @@ type hangingAssignSeaweedClient struct {
 
 func (c *hangingAssignSeaweedClient) AssignVolume(ctx context.Context, in *filer_pb.AssignVolumeRequest, opts ...grpc.CallOption) (*filer_pb.AssignVolumeResponse, error) {
 	_, ok := ctx.Deadline()
-	c.sawDeadline <- ok
+	// Non-blocking so a retry that calls this more than once can't wedge here.
+	select {
+	case c.sawDeadline <- ok:
+	default:
+	}
 	<-ctx.Done() // simulate an overwhelmed filer that never answers
 	return nil, ctx.Err()
 }
@@ -212,8 +216,13 @@ func TestUploadWithRetryBoundsAssignVolume(t *testing.T) {
 		done <- err
 	}()
 
-	if sawDeadline := <-client.inner.sawDeadline; !sawDeadline {
-		t.Fatal("AssignVolume received a context with no deadline")
+	select {
+	case sawDeadline := <-client.inner.sawDeadline:
+		if !sawDeadline {
+			t.Fatal("AssignVolume received a context with no deadline")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("AssignVolume was never called")
 	}
 
 	select {
