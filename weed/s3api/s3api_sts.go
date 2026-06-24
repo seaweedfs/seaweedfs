@@ -378,35 +378,19 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
 
-	// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
-	// This validates that the caller has a policy allowing sts:AssumeRole on the target role
-	// Check authorizations
+	// A named role is authorized by its trust policy alone — it declares which
+	// principals may assume it, so no separate identity-side sts:AssumeRole grant
+	// is required. Without a RoleArn the caller assumes a session for itself.
 	if roleArn != "" {
-		// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
-		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", roleArn); authErr != s3err.ErrNone {
-			glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
+		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
+			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
 			return
 		}
-
-		// Validate that the target role trusts the caller (Trust Policy)
-		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
-			glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
-			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
-			return
-		}
 	} else {
-		// If RoleArn is missing, default to the caller's identity (User Context)
-		// This allows the user to "assume" a session for themselves, inheriting their own permissions.
 		roleArn = identity.PrincipalArn
 		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
-
-		// We still enforce a global "sts:AssumeRole" check, similar to how we'd check if they can assume *any* role.
-		// However, for self-assumption, this might be implicit.
-		// For safety/consistency with previous logic, we keep the check but strictly it might not be required by AWS for GetSessionToken.
-		// But since this IS AssumeRole, let's keep it.
-		// Admin/Global check when no specific role is requested
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
