@@ -1,21 +1,30 @@
 package mount
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const metadataFlushRetries = 3
 
-var metadataFlushSleep = time.Sleep
-
-func retryMetadataFlush(flush func() error, onRetry func(nextAttempt, totalAttempts int, backoff time.Duration, err error)) error {
-	return retryMetadataFlushIf(flush, nil, onRetry)
+// metadataFlushSleep waits for d or until ctx is cancelled. Overridable in tests.
+var metadataFlushSleep = func(ctx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
-// retryMetadataFlushIf is retryMetadataFlush with an optional shouldRetry
-// predicate. If shouldRetry is nil or returns true, the flush is retried with
-// exponential backoff; if it returns false, the error is returned immediately
-// so callers don't pay retry latency on clearly permanent errors (e.g.
-// ENOENT/EACCES/EINVAL from a synchronous setattr).
-func retryMetadataFlushIf(flush func() error, shouldRetry func(error) bool, onRetry func(nextAttempt, totalAttempts int, backoff time.Duration, err error)) error {
+func retryMetadataFlush(ctx context.Context, flush func() error, onRetry func(nextAttempt, totalAttempts int, backoff time.Duration, err error)) error {
+	return retryMetadataFlushIf(ctx, flush, nil, onRetry)
+}
+
+// retryMetadataFlushIf retries flush with exponential backoff, stopping early
+// when shouldRetry returns false (clearly permanent errors) or when ctx is
+// cancelled (the FUSE request was interrupted, e.g. the process was killed).
+func retryMetadataFlushIf(ctx context.Context, flush func() error, shouldRetry func(error) bool, onRetry func(nextAttempt, totalAttempts int, backoff time.Duration, err error)) error {
 	totalAttempts := metadataFlushRetries + 1
 	var err error
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
@@ -29,12 +38,18 @@ func retryMetadataFlushIf(flush func() error, shouldRetry func(error) bool, onRe
 		if shouldRetry != nil && !shouldRetry(err) {
 			break
 		}
+		if ctx.Err() != nil {
+			break
+		}
 
 		backoff := time.Duration(1<<uint(attempt-1)) * time.Second
 		if onRetry != nil {
 			onRetry(attempt+1, totalAttempts, backoff, err)
 		}
-		metadataFlushSleep(backoff)
+		metadataFlushSleep(ctx, backoff)
+		if ctx.Err() != nil {
+			break
+		}
 	}
 	return err
 }

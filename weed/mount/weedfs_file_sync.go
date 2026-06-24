@@ -71,11 +71,34 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	// would silently degrade to a blocking flush for ordinary close().
 	hasPosixLocks := wfs.hasPosixOwner(in.NodeId, in.LockOwner)
 	allowAsync := !hasPosixLocks
-	status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync)
+
+	// Abort the flush when the kernel interrupts the request (the calling
+	// process was killed); otherwise close() hangs in uninterruptible sleep
+	// while the metadata flush retries against an overwhelmed filer.
+	ctx, cancelFunc := fuseInterruptContext(cancel)
+	defer cancelFunc()
+
+	status := wfs.doFlush(ctx, fh, in.Uid, in.Gid, allowAsync)
 	if in.LockOwner != 0 {
 		wfs.releasePosixOwner(in.NodeId, in.LockOwner)
 	}
 	return status
+}
+
+// fuseInterruptContext returns a context cancelled when the FUSE cancel channel
+// fires (request interrupted). The caller must call the returned func.
+func fuseInterruptContext(cancel <-chan struct{}) (context.Context, context.CancelFunc) {
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	if cancel != nil {
+		go func() {
+			select {
+			case <-cancel:
+				cancelFunc()
+			case <-ctx.Done():
+			}
+		}()
+	}
+	return ctx, cancelFunc
 }
 
 /**
@@ -104,12 +127,15 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
+	ctx, cancelFunc := fuseInterruptContext(cancel)
+	defer cancelFunc()
+
 	// Fsync is an explicit sync request — always flush synchronously
-	return wfs.doFlush(fh, in.Uid, in.Gid, false)
+	return wfs.doFlush(ctx, fh, in.Uid, in.Gid, false)
 
 }
 
-func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.Status {
+func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.Status {
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
@@ -160,8 +186,8 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if err := retryMetadataFlush(func() error {
-		return wfs.flushMetadataToFiler(fh, dir, name, uid, gid)
+	if err := retryMetadataFlush(ctx, func() error {
+		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid)
 	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
@@ -183,7 +209,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 // When -dlm is enabled, the distributed lock is already held by the FileHandle
 // from open-for-write through close, so no additional distributed lock is
 // needed here. The local fhLockTable lock below serializes within this mount.
-func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid uint32) error {
+func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
 	fileFullPath := fh.FullPath()
 	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)
 
@@ -240,7 +266,7 @@ func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid 
 
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	resp, err := wfs.streamCreateEntry(ctx, request)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)

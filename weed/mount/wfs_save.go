@@ -28,7 +28,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 	glog.V(1).Infof("save entry: %v", request)
 
 	var resp *filer_pb.UpdateEntryResponse
-	err := retryMetadataFlushIf(func() error {
+	err := retryMetadataFlushIf(context.Background(), func() error {
 		var callErr error
 		resp, callErr = wfs.streamUpdateEntry(context.Background(), request)
 		return callErr
