@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -60,106 +61,142 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}(time.Now())
 	}
 
-	if s.GetVolume(volumeId) != nil {
-		start := time.Now()
+	vol := s.GetVolume(volumeId)
 
-		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToLocalDisk)
-		inFlightGauge.Inc()
-		defer inFlightGauge.Dec()
-
-		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
-		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
-		if err != nil {
-			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
-			err = fmt.Errorf("failed to write to local disk: %w", err)
-			glog.V(0).Infoln(err)
-			return
+	// Capture every needle field the replica fan-out reads before the concurrent
+	// local write can mutate the shared needle: WriteVolumeNeedle stamps the
+	// volume TTL and updates needle flags. After this point the fan-out touches
+	// only these locals plus n.Data (read-only on both sides), so the two writes
+	// can run concurrently without racing.
+	replicaTtl := n.Ttl
+	if vol != nil && replicaTtl == needle.EMPTY_TTL && vol.Ttl != needle.EMPTY_TTL {
+		replicaTtl = vol.Ttl
+	}
+	replicaLastModified := n.LastModified
+	replicaIsChunked := n.IsChunkedManifest()
+	replicaIsCompressed := n.IsCompressed()
+	replicaName := string(n.Name)
+	replicaMime := string(n.Mime)
+	replicaData := n.Data
+	replicaPairMap := make(map[string]string)
+	if n.HasPairs() {
+		tmpMap := make(map[string]string)
+		if pe := json.Unmarshal(n.Pairs, &tmpMap); pe != nil {
+			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
+			glog.V(0).Infoln("Unmarshal pairs error:", pe)
+		}
+		for k, v := range tmpMap {
+			replicaPairMap[needle.PairNamePrefix+k] = v
 		}
 	}
 
 	// Observe replication targets histogram for all operations (including zero)
 	stats.VolumeServerReplicationTargets.Observe(float64(replicaCount))
 
-	if replicaCount > 0 { //send to other replica locations
-		start := time.Now()
+	// "buffered streaming": the local disk write and the replica fan-out run
+	// concurrently against the already-buffered needle, so write latency is
+	// max(local, replicas) instead of their sum. The client ack waits for both.
+	var wg sync.WaitGroup
+	var localErr, remoteErr error
 
-		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToReplicas)
-		inFlightGauge.Inc()
-		defer inFlightGauge.Dec()
+	if vol != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToLocalDisk)
+			inFlightGauge.Inc()
+			defer inFlightGauge.Dec()
 
-		err = DistributedOperation(ctx, remoteLocations, func(ctx context.Context, location operation.Location) error {
-			u := url.URL{
-				Scheme: "http",
-				Host:   location.Url,
-				Path:   r.URL.Path,
+			isUnchanged, localErr = s.WriteVolumeNeedle(volumeId, n, true, fsync)
+			stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
+			if localErr != nil {
+				stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
+				localErr = fmt.Errorf("failed to write to local disk: %w", localErr)
+				glog.V(0).Infoln(localErr)
 			}
-			q := url.Values{
-				"type": {"replicate"},
-				"ttl":  {n.Ttl.String()},
-			}
-			if n.LastModified > 0 {
-				q.Set("ts", strconv.FormatUint(n.LastModified, 10))
-			}
-			if n.IsChunkedManifest() {
-				q.Set("cm", "true")
-			}
-			u.RawQuery = q.Encode()
-
-			pairMap := make(map[string]string)
-			if n.HasPairs() {
-				tmpMap := make(map[string]string)
-				err := json.Unmarshal(n.Pairs, &tmpMap)
-				if err != nil {
-					stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
-					glog.V(0).Infoln("Unmarshal pairs error:", err)
-				}
-				for k, v := range tmpMap {
-					pairMap[needle.PairNamePrefix+k] = v
-				}
-			}
-			bytesBuffer := buffer_pool.SyncPoolGetBuffer()
-			defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
-
-			// volume server do not know about encryption
-			// TODO optimize here to compress data only once
-			uploadOption := &operation.UploadOption{
-				UploadUrl:         u.String(),
-				Filename:          string(n.Name),
-				Cipher:            false,
-				IsInputCompressed: n.IsCompressed(),
-				IsReplication:     true,
-				MimeType:          string(n.Mime),
-				PairMap:           pairMap,
-				Jwt:               jwt,
-				Md5:               contentMd5,
-				BytesBuffer:       bytesBuffer,
-				MaxAttempts:       1, // fail fast on a dead replica; the client write retries
-			}
-
-			uploader, err := operation.NewUploader()
-			if err != nil {
-				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
-				return err
-			}
-			_, err = uploader.UploadData(ctx, n.Data, uploadOption)
-			if err != nil {
-				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
-			}
-			return err
-		})
-		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
-		if err != nil {
-			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
-			stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
-			reason := classifyReplicationError(err)
-			stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, reason).Inc()
-			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
-			glog.V(0).Infoln(err)
-			return false, err
-		}
-		stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationSuccess).Inc()
+		}()
 	}
-	return
+
+	if replicaCount > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToReplicas)
+			inFlightGauge.Inc()
+			defer inFlightGauge.Dec()
+
+			remoteErr = DistributedOperation(ctx, remoteLocations, func(ctx context.Context, location operation.Location) error {
+				u := url.URL{
+					Scheme: "http",
+					Host:   location.Url,
+					Path:   r.URL.Path,
+				}
+				q := url.Values{
+					"type": {"replicate"},
+					"ttl":  {replicaTtl.String()},
+				}
+				if replicaLastModified > 0 {
+					q.Set("ts", strconv.FormatUint(replicaLastModified, 10))
+				}
+				if replicaIsChunked {
+					q.Set("cm", "true")
+				}
+				u.RawQuery = q.Encode()
+
+				bytesBuffer := buffer_pool.SyncPoolGetBuffer()
+				defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
+
+				// volume server do not know about encryption
+				uploadOption := &operation.UploadOption{
+					UploadUrl:         u.String(),
+					Filename:          replicaName,
+					Cipher:            false,
+					IsInputCompressed: replicaIsCompressed,
+					IsReplication:     true,
+					MimeType:          replicaMime,
+					PairMap:           replicaPairMap,
+					Jwt:               jwt,
+					Md5:               contentMd5,
+					BytesBuffer:       bytesBuffer,
+					MaxAttempts:       1, // fail fast on a dead replica; the client write retries
+				}
+
+				uploader, uploaderErr := operation.NewUploader()
+				if uploaderErr != nil {
+					glog.Errorf("replication-UploadData, err:%v, url:%s", uploaderErr, u.String())
+					return uploaderErr
+				}
+				_, uploadErr := uploader.UploadData(ctx, replicaData, uploadOption)
+				if uploadErr != nil {
+					glog.Errorf("replication-UploadData, err:%v, url:%s", uploadErr, u.String())
+				}
+				return uploadErr
+			})
+			stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
+			if remoteErr != nil {
+				stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
+				stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationFailure).Inc()
+				reason := classifyReplicationError(remoteErr)
+				stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, reason).Inc()
+				remoteErr = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, remoteErr)
+				glog.V(0).Infoln(remoteErr)
+			} else {
+				stats.VolumeServerReplicationCounter.WithLabelValues(stats.ReplicationOpWrite, stats.ReplicationSuccess).Inc()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if localErr != nil {
+		return false, localErr
+	}
+	if remoteErr != nil {
+		return false, remoteErr
+	}
+	return isUnchanged, nil
 }
 
 // ReplicatedDelete deletes a needle from the local volume and sends delete
