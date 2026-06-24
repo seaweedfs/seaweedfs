@@ -4951,6 +4951,141 @@ mod tests {
             .remove("s3.incr_copy_test");
     }
 
+    /// Build a local service whose volume has a `.dat` large enough to span
+    /// several 2MB copy chunks, so the streaming copy paths are exercised
+    /// across multiple messages rather than a single buffer.
+    fn make_local_service_with_large_volume() -> (VolumeGrpcService, TempDir, Vec<u8>) {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let payload = vec![0xABu8; 5 * 1024 * 1024];
+            let mut needle = Needle {
+                id: NeedleId(99),
+                cookie: Cookie(0x1122),
+                data_size: payload.len() as u32,
+                data: payload,
+                ..Needle::default()
+            };
+            v.write_needle(&mut needle, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+        let dat_path = {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            v.file_name(".dat")
+        };
+        let dat_bytes = std::fs::read(&dat_path).unwrap();
+        (service, tmp, dat_bytes)
+    }
+
+    // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and
+    // reassemble byte-for-byte, with the mtime carried only on the first message.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_copy_file_streams_full_dat_in_chunks() {
+        let (service, _tmp, dat_bytes) = make_local_service_with_large_volume();
+        let stop_offset = dat_bytes.len() as u64;
+        assert!(
+            stop_offset > 2 * 1024 * 1024u64,
+            "fixture must exceed one 2MB chunk"
+        );
+
+        let response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await
+            .unwrap();
+
+        let mut stream = response.into_inner();
+        let mut messages = Vec::new();
+        while let Some(m) = stream.next().await {
+            messages.push(m.unwrap());
+        }
+
+        assert!(
+            messages.len() >= 2,
+            "expected multiple streamed chunks, got {}",
+            messages.len()
+        );
+        assert_ne!(messages[0].modified_ts_ns, 0);
+        assert!(messages[1..].iter().all(|m| m.modified_ts_ns == 0));
+
+        let copied: Vec<u8> = messages.iter().flat_map(|m| m.file_content.clone()).collect();
+        assert_eq!(copied, dat_bytes);
+    }
+
+    // copy_file must stop exactly at stop_offset, never streaming past it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_copy_file_respects_stop_offset() {
+        let (service, _tmp, dat_bytes) = make_local_service_with_large_volume();
+        let stop_offset = dat_bytes.len() as u64 - 100;
+
+        let response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await
+            .unwrap();
+
+        let mut stream = response.into_inner();
+        let mut copied = Vec::new();
+        while let Some(m) = stream.next().await {
+            copied.extend_from_slice(&m.unwrap().file_content);
+        }
+
+        assert_eq!(copied.len() as u64, stop_offset);
+        assert_eq!(copied, dat_bytes[..stop_offset as usize]);
+    }
+
+    // volume_incremental_copy must stream a local volume from the super block
+    // to EOF in chunks, reassembling byte-for-byte.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_incremental_copy_streams_local_volume_in_chunks() {
+        let (service, _tmp, dat_bytes) = make_local_service_with_large_volume();
+        let super_block_size = {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            v.super_block.block_size() as u64
+        };
+
+        let response = service
+            .volume_incremental_copy(Request::new(
+                volume_server_pb::VolumeIncrementalCopyRequest {
+                    volume_id: 1,
+                    since_ns: 0,
+                },
+            ))
+            .await
+            .unwrap();
+
+        let mut stream = response.into_inner();
+        let mut messages = Vec::new();
+        while let Some(m) = stream.next().await {
+            messages.push(m.unwrap());
+        }
+
+        assert!(
+            messages.len() >= 2,
+            "expected multiple streamed chunks, got {}",
+            messages.len()
+        );
+        let copied: Vec<u8> = messages.iter().flat_map(|m| m.file_content.clone()).collect();
+        assert_eq!(copied, dat_bytes[super_block_size as usize..]);
+    }
+
     /// Build a bare-bones service with no on-disk store but a configurable
     /// seed master set, for Ping admission tests. Matches the structure of
     /// `make_local_service_with_volume` minus the volume bits.
