@@ -183,10 +183,8 @@ uploadLoop:
 			var uploadResultErr error
 
 			holders := chunkHolders(assignResult)
-			// Replicate by uploading the chunk to every holder in parallel instead
-			// of uploading to one volume and letting it relay the copies.
-			// Cipher uploads encrypt per-call with a fresh key, so replicas would
-			// diverge; fall back to the server-driven path there.
+			// Fan out to every holder, except for cipher: per-call encryption
+			// would give each replica different bytes, so keep its relay path.
 			if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
 				uploadResult, uploadResultErr = uploadChunkToHolders(ctx, holders, assignResult.Fid, buf.Bytes(), jwt, chunkMd5B64, opt)
 			} else {
@@ -283,8 +281,7 @@ uploadLoop:
 	}, nil
 }
 
-// chunkHolders returns every volume server that should hold a copy of the chunk:
-// the assigned volume plus any replica holders reported by the master.
+// chunkHolders returns the assigned volume plus its replica holders.
 func chunkHolders(assignResult *AssignResult) []string {
 	hosts := []string{assignResult.Url}
 	for _, replica := range assignResult.Replicas {
