@@ -344,12 +344,12 @@ func validateNamespacePart(name string) error {
 		return fmt.Errorf("namespace name must end with a letter or digit")
 	}
 
-	// Allowed characters: a-z, 0-9, _
+	// Allowed characters: a-z, 0-9, _, - (hyphen interior; start/end checked above)
 	for _, ch := range name {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
 			continue
 		}
-		return fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
+		return fmt.Errorf("invalid namespace name: only 'a-z', '0-9', '_', and '-' are allowed")
 	}
 
 	// Reserved prefix
@@ -411,12 +411,12 @@ func validateTableName(name string) (string, error) {
 		return "", fmt.Errorf("table name must start with a letter or digit")
 	}
 
-	// Allowed characters: a-z, 0-9, _
+	// Allowed characters: a-z, 0-9, _, - (start checked above)
 	for _, ch := range name {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
 			continue
 		}
-		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', and '_' are allowed")
+		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', '_', and '-' are allowed")
 	}
 	return name, nil
 }
