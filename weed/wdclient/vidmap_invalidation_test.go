@@ -205,3 +205,74 @@ func TestDeleteVidRecursion(t *testing.T) {
 		t.Error("Expected vid to be removed from vm1 (cascaded)")
 	}
 }
+
+// TestGetLocationsEmptyArrayNoFallback tests that empty location arrays don't fall back to cache
+// This tests the fix for the bug where volume pods restart and vidMap has empty array [],
+// but GetLocations would fall back to stale cached locations from before restart.
+func TestGetLocationsEmptyArrayNoFallback(t *testing.T) {
+	// Setup: Create vidMap with cache
+	currentMap := newVidMap("")
+	vid := uint32(10)
+	oldLocation := Location{Url: "10.131.1.28:8081"}
+	newLocation := Location{Url: "10.131.1.65:8081"}
+
+	// Scenario: Volume initially has old location
+	currentMap.addLocation(vid, oldLocation)
+	locs, found := currentMap.GetLocations(vid)
+	if !found || len(locs) != 1 || locs[0].Url != oldLocation.Url {
+		t.Fatalf("Expected to find old location, got found=%v locs=%v", found, locs)
+	}
+
+	// Create cache chain with old location
+	cachedMap := newVidMap("")
+	cachedMap.addLocation(vid, oldLocation)
+	currentMap.cache.Store(cachedMap)
+
+	// Simulate: Volume server restarts, old location is deleted
+	currentMap.deleteLocation(vid, oldLocation)
+
+	// BUG: At this point vid2Locations[vid] = [] (empty array, key exists)
+	// OLD BEHAVIOR: GetLocations would see found=true, len=0 and fall back to cache
+	// returning stale oldLocation
+	// NEW BEHAVIOR: GetLocations should return nil, false (no locations available)
+
+	locs, found = currentMap.GetLocations(vid)
+	if found {
+		t.Errorf("Expected found=false for empty location array, got found=true with locs=%v", locs)
+	}
+	if locs != nil {
+		t.Errorf("Expected nil locations for empty array, got %v (should not fall back to stale cache!)", locs)
+	}
+
+	// Verify: When new location is added, it should be returned (not stale cache)
+	currentMap.addLocation(vid, newLocation)
+	locs, found = currentMap.GetLocations(vid)
+	if !found || len(locs) != 1 {
+		t.Fatalf("Expected to find new location, got found=%v locs=%v", found, locs)
+	}
+	if locs[0].Url != newLocation.Url {
+		t.Errorf("Expected new location %s, got %s (got stale cache!)", newLocation.Url, locs[0].Url)
+	}
+}
+
+// TestGetLocationsUnknownVolumeUsesCache tests that truly unknown volumes still use cache
+func TestGetLocationsUnknownVolumeUsesCache(t *testing.T) {
+	// Setup: Current map doesn't know about volume, but cache does
+	currentMap := newVidMap("")
+	cachedMap := newVidMap("")
+	vid := uint32(99)
+	cachedLocation := Location{Url: "cache-server:8081"}
+
+	cachedMap.addLocation(vid, cachedLocation)
+	currentMap.cache.Store(cachedMap)
+
+	// Volume 99 is completely unknown to currentMap (not in vid2Locations)
+	// This should fall back to cache
+	locs, found := currentMap.GetLocations(vid)
+	if !found || len(locs) != 1 {
+		t.Fatalf("Expected to find cached location for unknown volume, got found=%v locs=%v", found, locs)
+	}
+	if locs[0].Url != cachedLocation.Url {
+		t.Errorf("Expected cached location %s, got %s", cachedLocation.Url, locs[0].Url)
+	}
+}
