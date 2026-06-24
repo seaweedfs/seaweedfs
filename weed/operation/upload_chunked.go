@@ -168,9 +168,6 @@ uploadLoop:
 				return
 			}
 
-			// Upload chunk data
-			uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
-
 			// Use per-assignment JWT if present, otherwise fall back to the original JWT
 			// This is critical for secured clusters where each volume assignment has its own JWT
 			jwt := opt.Jwt
@@ -182,33 +179,41 @@ uploadLoop:
 			chunkMd5 := md5.Sum(buf.Bytes())
 			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 
-			uploadOption := &UploadOption{
-				UploadUrl:         uploadUrl,
-				Cipher:            opt.Cipher,
-				IsInputCompressed: false,
-				MimeType:          opt.MimeType,
-				PairMap:           nil,
-				Jwt:               jwt,
-				Md5:               chunkMd5B64,
-			}
-
 			var uploadResult *UploadResult
 			var uploadResultErr error
 
-			// Use mock upload function if provided (for testing), otherwise use real uploader
-			if opt.UploadFunc != nil {
-				uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
+			holders := chunkHolders(assignResult)
+			// Replicate by uploading the chunk to every holder in parallel instead
+			// of uploading to one volume and letting it relay the copies.
+			// Cipher uploads encrypt per-call with a fresh key, so replicas would
+			// diverge; fall back to the server-driven path there.
+			if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
+				uploadResult, uploadResultErr = uploadChunkToHolders(ctx, holders, assignResult.Fid, buf.Bytes(), jwt, chunkMd5B64, opt)
 			} else {
-				uploader, uploaderErr := NewUploader()
-				if uploaderErr != nil {
-					uploadErrLock.Lock()
-					if uploadErr == nil {
-						uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
-					}
-					uploadErrLock.Unlock()
-					return
+				uploadOption := &UploadOption{
+					UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
+					Cipher:            opt.Cipher,
+					IsInputCompressed: false,
+					MimeType:          opt.MimeType,
+					PairMap:           nil,
+					Jwt:               jwt,
+					Md5:               chunkMd5B64,
 				}
-				uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
+				// Use mock upload function if provided (for testing), otherwise use real uploader
+				if opt.UploadFunc != nil {
+					uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
+				} else {
+					uploader, uploaderErr := NewUploader()
+					if uploaderErr != nil {
+						uploadErrLock.Lock()
+						if uploadErr == nil {
+							uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
+						}
+						uploadErrLock.Unlock()
+						return
+					}
+					uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
+				}
 			}
 
 			if uploadResultErr != nil {
@@ -276,4 +281,64 @@ uploadLoop:
 		TotalSize:    chunkOffset,
 		SmallContent: nil,
 	}, nil
+}
+
+// chunkHolders returns every volume server that should hold a copy of the chunk:
+// the assigned volume plus any replica holders reported by the master.
+func chunkHolders(assignResult *AssignResult) []string {
+	hosts := []string{assignResult.Url}
+	for _, replica := range assignResult.Replicas {
+		if replica.Url != "" && replica.Url != assignResult.Url {
+			hosts = append(hosts, replica.Url)
+		}
+	}
+	return hosts
+}
+
+// uploadChunkToHolders uploads the chunk to every holder concurrently, each with
+// type=replicate so the receiving volume writes locally and does not relay. It
+// returns the first successful result and fails if any holder fails (all-or-
+// nothing, matching server-driven replication).
+func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
+	uploader, err := NewUploader()
+	if err != nil {
+		return nil, fmt.Errorf("create uploader: %w", err)
+	}
+	glog.V(4).Infof("replica fan-out: writing chunk %s to %d holders %v", fid, len(hosts), hosts)
+	type outcome struct {
+		result *UploadResult
+		err    error
+	}
+	outcomes := make(chan outcome, len(hosts))
+	for _, host := range hosts {
+		go func(host string) {
+			uploadOption := &UploadOption{
+				UploadUrl:         fmt.Sprintf("http://%s/%s?type=replicate", host, fid),
+				Cipher:            false,
+				IsInputCompressed: false,
+				MimeType:          opt.MimeType,
+				PairMap:           nil,
+				Jwt:               jwt,
+				Md5:               md5b64,
+			}
+			r, e := uploader.UploadData(ctx, data, uploadOption)
+			outcomes <- outcome{r, e}
+		}(host)
+	}
+	var first *UploadResult
+	var firstErr error
+	for range hosts {
+		o := <-outcomes
+		if o.err != nil {
+			if firstErr == nil {
+				firstErr = o.err
+			}
+		} else if first == nil {
+			first = o.result
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return first, nil
 }
