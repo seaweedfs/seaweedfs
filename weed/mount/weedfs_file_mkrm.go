@@ -447,7 +447,7 @@ func (wfs *WFS) asyncCreateEntry(dirFullPath util.FullPath, entry *filer_pb.Entr
 			Signatures:               []int32{wfs.signature},
 			SkipCheckParentDirectory: true,
 		}
-		err := retryMetadataFlush(func() error {
+		err := retryMetadataFlush(context.Background(), func() error {
 			resp, createErr := wfs.streamCreateEntry(context.Background(), request)
 			if createErr != nil {
 				return createErr
