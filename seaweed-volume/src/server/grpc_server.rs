@@ -1509,43 +1509,59 @@ impl VolumeServer for VolumeGrpcService {
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
-        let mut results: Vec<Result<volume_server_pb::CopyFileResponse, Status>> = Vec::new();
-        let mut bytes_to_read = req.stop_offset as i64;
-        let mut reader = std::io::BufReader::new(file);
-        let buffer_size = 2 * 1024 * 1024; // 2MB chunks
-        let mut first = true;
+        // Stream the file in 2MB chunks from a blocking reader task instead of
+        // materializing the whole file into a Vec first. The previous code
+        // pushed every chunk into `results` and only then returned
+        // `tokio_stream::iter(results)`, so serving a large volume as a copy
+        // source (e.g. during `volume.fix.replication`) held the entire .dat
+        // (up to the volume size limit) resident at once and could OOM the
+        // process. A bounded channel caps memory at channel_capacity * 2MB and
+        // applies backpressure to the reader.
+        let stop_offset = req.stop_offset as i64;
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<Result<volume_server_pb::CopyFileResponse, Status>>(8);
 
-        use std::io::Read;
-        while bytes_to_read > 0 {
-            let chunk_size = std::cmp::min(bytes_to_read as usize, buffer_size);
-            let mut buf = vec![0u8; chunk_size];
-            match reader.read(&mut buf) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    buf.truncate(n);
-                    if n as i64 > bytes_to_read {
-                        buf.truncate(bytes_to_read as usize);
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let buffer_size = 2 * 1024 * 1024; // 2MB chunks
+            let mut reader = std::io::BufReader::new(file);
+            let mut bytes_to_read = stop_offset;
+            let mut first = true;
+
+            while bytes_to_read > 0 {
+                let chunk_size = std::cmp::min(bytes_to_read as usize, buffer_size);
+                let mut buf = vec![0u8; chunk_size];
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        buf.truncate(std::cmp::min(n, bytes_to_read as usize));
+                        let msg = volume_server_pb::CopyFileResponse {
+                            file_content: buf,
+                            modified_ts_ns: if first { mod_ts_ns } else { 0 },
+                        };
+                        if tx.blocking_send(Ok(msg)).is_err() {
+                            return; // receiver dropped, stop reading
+                        }
+                        first = false;
+                        bytes_to_read -= n as i64;
                     }
-                    results.push(Ok(volume_server_pb::CopyFileResponse {
-                        file_content: buf,
-                        modified_ts_ns: if first { mod_ts_ns } else { 0 },
-                    }));
-                    first = false;
-                    bytes_to_read -= n as i64;
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                        return;
+                    }
                 }
-                Err(e) => return Err(Status::internal(e.to_string())),
             }
-        }
 
-        // If no data was sent, still send ModifiedTsNs
-        if first && mod_ts_ns != 0 {
-            results.push(Ok(volume_server_pb::CopyFileResponse {
-                file_content: vec![],
-                modified_ts_ns: mod_ts_ns,
-            }));
-        }
+            // If no data was sent, still send ModifiedTsNs
+            if first && mod_ts_ns != 0 {
+                let _ = tx.blocking_send(Ok(volume_server_pb::CopyFileResponse {
+                    file_content: vec![],
+                    modified_ts_ns: mod_ts_ns,
+                }));
+            }
+        });
 
-        let stream = tokio_stream::iter(results);
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(stream)))
     }
 
