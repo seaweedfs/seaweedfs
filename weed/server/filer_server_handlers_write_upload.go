@@ -9,6 +9,7 @@ import (
 	"hash"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -27,6 +28,49 @@ var bufPool = sync.Pool{
 	New: func() interface{} {
 		return new(bytes.Buffer)
 	},
+}
+
+// clientSideReplication reports whether the filer should replicate a chunk by
+// uploading it to every replica holder in parallel (type=replicate), instead of
+// uploading to one volume and letting that volume relay to the others. Opt-in
+// via WEED_FILER_CLIENT_SIDE_REPLICATION=true.
+func clientSideReplication() bool {
+	return os.Getenv("WEED_FILER_CLIENT_SIDE_REPLICATION") == "true"
+}
+
+// doUploadToReplicas uploads the same chunk bytes to every replica holder
+// concurrently. It returns the first successful result; the chunk is acked only
+// if every holder succeeds (matching the all-or-nothing semantics of the
+// server-driven replication path).
+func (fs *FilerServer) doUploadToReplicas(ctx context.Context, urls []string, data []byte, fileName, contentType string, auth security.EncodedJwt, contentMd5 string) (*operation.UploadResult, error) {
+	type uploadOutcome struct {
+		result *operation.UploadResult
+		err    error
+	}
+	outcomes := make(chan uploadOutcome, len(urls))
+	for _, u := range urls {
+		go func(uploadUrl string) {
+			result, err, _ := fs.doUpload(ctx, uploadUrl, util.NewBytesReader(data), fileName, contentType, nil, auth, contentMd5)
+			outcomes <- uploadOutcome{result, err}
+		}(u)
+	}
+
+	var firstResult *operation.UploadResult
+	var firstErr error
+	for range urls {
+		o := <-outcomes
+		if o.err != nil {
+			if firstErr == nil {
+				firstErr = o.err
+			}
+		} else if firstResult == nil {
+			firstResult = o.result
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return firstResult, nil
 }
 
 func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
@@ -206,9 +250,16 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var uploadResult *operation.UploadResult
 	var failedFileChunks []*filer_pb.FileChunk
 
+	useClientReplication := clientSideReplication()
+
 	err := util.Retry("filerDataToChunk", func() error {
 		// assign one file id for one chunk
-		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
+		var replicaUrls []string
+		if useClientReplication {
+			fileId, replicaUrls, auth, uploadErr = fs.assignNewFileInfoReplicas(ctx, so, uint64(len(data)))
+		} else {
+			fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
+		}
 		if uploadErr != nil {
 			glog.V(4).InfofCtx(ctx, "retry later due to assign error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
@@ -217,7 +268,15 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 		chunkMd5 := md5.Sum(data)
 		chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 		// upload the chunk to the volume server
-		uploadResult, uploadErr, _ = fs.doUpload(ctx, urlLocation, dataReader, fileName, contentType, nil, auth, chunkMd5B64)
+		if useClientReplication && len(replicaUrls) > 1 {
+			// filer replicates by uploading to every holder in parallel
+			uploadResult, uploadErr = fs.doUploadToReplicas(ctx, replicaUrls, data, fileName, contentType, auth, chunkMd5B64)
+		} else if useClientReplication {
+			// single holder (no replication): upload directly
+			uploadResult, uploadErr, _ = fs.doUpload(ctx, replicaUrls[0], util.NewBytesReader(data), fileName, contentType, nil, auth, chunkMd5B64)
+		} else {
+			uploadResult, uploadErr, _ = fs.doUpload(ctx, urlLocation, dataReader, fileName, contentType, nil, auth, chunkMd5B64)
+		}
 		if uploadErr != nil {
 			glog.V(4).InfofCtx(ctx, "retry later due to upload error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()

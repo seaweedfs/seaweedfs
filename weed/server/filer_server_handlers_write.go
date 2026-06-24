@@ -77,6 +77,53 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 	return
 }
 
+// assignNewFileInfoReplicas assigns a file id and returns one upload URL per
+// replica holder (the assigned volume plus assignResult.Replicas). Each URL
+// carries type=replicate so the receiving volume writes locally and does not
+// fan out again — the filer performs the replication itself by uploading to
+// every holder. Used by the client-side replication write path.
+func (fs *FilerServer) assignNewFileInfoReplicas(ctx context.Context, so *operation.StorageOption, expectedDataSize uint64) (fileId string, urls []string, auth security.EncodedJwt, err error) {
+
+	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssign).Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkAssign).Observe(time.Since(start).Seconds())
+	}()
+
+	ar, altRequest := so.ToAssignRequests(1)
+	ar.ExpectedDataSize = expectedDataSize
+	if altRequest != nil {
+		altRequest.ExpectedDataSize = expectedDataSize
+	}
+
+	assignResult, ae := operation.Assign(context.WithoutCancel(ctx), fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
+	if ae != nil {
+		glog.ErrorfCtx(ctx, "failing to assign a file id: %v", ae)
+		err = ae
+		return
+	}
+	fileId = assignResult.Fid
+	auth = assignResult.Auth
+
+	seen := make(map[string]bool)
+	addHost := func(host string) {
+		if host == "" || seen[host] {
+			return
+		}
+		seen[host] = true
+		u := "http://" + host + "/" + assignResult.Fid + "?type=replicate"
+		if so.Fsync {
+			u += "&fsync=true"
+		}
+		urls = append(urls, u)
+	}
+	addHost(assignResult.Url)
+	for _, repl := range assignResult.Replicas {
+		addHost(repl.Url)
+	}
+	return
+}
+
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
 	ctx := r.Context()
 
