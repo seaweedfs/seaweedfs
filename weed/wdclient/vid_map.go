@@ -130,10 +130,19 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	// glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
 	locations, found = vc.getLocations(vid)
-	if found && len(locations) > 0 {
-		return locations, found
+	if found {
+		// If volume is explicitly tracked (found=true), return its locations even if empty.
+		// An empty array means "volume has no locations" (e.g., during pod restart),
+		// which is different from "volume never existed" (found=false).
+		// Don't fall back to stale cache for explicitly empty volumes.
+		if len(locations) > 0 {
+			return locations, found
+		}
+		// Volume exists but has no locations - return empty, don't check cache
+		return nil, false
 	}
 
+	// Volume not found in current map - check cache for unknown volumes
 	if cachedMap := vc.cache.Load(); cachedMap != nil {
 		return cachedMap.GetLocations(vid)
 	}
