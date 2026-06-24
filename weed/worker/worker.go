@@ -192,7 +192,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 		config:         config,
 		registry:       registry,
 		taskLogHandler: taskLogHandler,
-		cmds:           make(chan workerCommand),
+		cmds:           make(chan workerCommand, 16),
 	}
 
 	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetAll()))
