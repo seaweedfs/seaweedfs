@@ -32,7 +32,14 @@ func TestDeleteTableDecoupledKeepsReusedNamePath(t *testing.T) {
 		OwnerAccountID:   DefaultAccountID,
 		MetadataLocation: "s3://" + renameTestBucket + "/ns/newt-x/metadata/v1.metadata.json",
 	})
-	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "newt", map[string][]byte{ExtendedKeyMetadata: newtMeta})
+	markerKeys := []string{ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType}
+	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "newt", map[string][]byte{
+		ExtendedKeyMetadata:        newtMeta,
+		ExtendedKeyMetadataVersion: []byte("v1"),
+		ExtendedKeyPolicy:          []byte(`{"Version":"2012-10-17"}`),
+		ExtendedKeyTags:            []byte(`{"k":"v"}`),
+		ExtendedKeyEntryType:       []byte(EntryTypeTable),
+	})
 	fs.putEntry(GetTablePath(renameTestBucket, "ns", "newt"), "leftover", nil) // another table's data under the name path
 	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "newt-x", nil)       // this table's own (decoupled) data
 	fs.putEntry(GetTablePath(renameTestBucket, "ns", "newt-x"), "metadata", nil)
@@ -45,8 +52,10 @@ func TestDeleteTableDecoupledKeepsReusedNamePath(t *testing.T) {
 		"data under the reused name path must survive")
 	marker := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "newt")
 	require.NotNil(t, marker)
-	_, stillTable := marker.Extended[ExtendedKeyMetadata]
-	assert.False(t, stillTable, "the catalog metadata attribute must be cleared")
+	for _, key := range markerKeys {
+		_, present := marker.Extended[key]
+		assert.Falsef(t, present, "catalog attribute %s must be cleared", key)
+	}
 }
 
 // A normal colocated table (data under its own name path) is removed wholesale.
