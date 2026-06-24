@@ -95,7 +95,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 
 	var bytes []byte
 	if obj != nil {
-		if r.FormValue("pretty") != "" {
+		if r.URL.Query().Get("pretty") != "" {
 			bytes, err = json.MarshalIndent(obj, "", "  ")
 		} else {
 			bytes, err = json.Marshal(obj)

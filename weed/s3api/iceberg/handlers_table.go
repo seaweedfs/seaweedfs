@@ -69,7 +69,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: ListTables error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -212,7 +212,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isNoSuchTableError(existsErr) {
 		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", existsErr.Error())
+		writeManagerError(w, existsErr)
 		return
 	}
 
@@ -302,7 +302,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -320,6 +320,96 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		Metadata:         metadata,
 		Config:           s.buildFileIOConfig(),
 	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleRegisterTable registers an existing metadata.json under a new catalog
+// entry without generating new metadata.
+func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	namespace := parseNamespace(vars["namespace"])
+	if len(namespace) == 0 {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
+		return
+	}
+
+	var req RegisterTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", errTableNameRequired.Error())
+		return
+	}
+	if req.MetadataLocation == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "metadata-location is required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	// Read the existing metadata object before registering, so a bad location
+	// is rejected (400) without leaving a dangling catalog entry.
+	metadataBucket, tablePath, err := parseS3Location(tableLocationFromMetadataLocation(req.MetadataLocation))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid metadata-location: "+err.Error())
+		return
+	}
+	// metadata-location is client-supplied; confine the read to the authorized
+	// catalog bucket and reject traversal segments so path.Join in
+	// loadMetadataFile cannot escape into another bucket.
+	if metadataBucket != bucketName {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "metadata-location must be within bucket "+bucketName)
+		return
+	}
+	if !isValidTablePath(tablePath) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid metadata-location path")
+		return
+	}
+	metadataFileName := path.Base(req.MetadataLocation)
+	metadataBytes, err := s.loadMetadataFile(r.Context(), metadataBucket, tablePath, metadataFileName)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: RegisterTable load metadata at %s: %v", req.MetadataLocation, err)
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Cannot read metadata at "+req.MetadataLocation)
+		return
+	}
+
+	registerReq := &s3tables.RegisterTableRequest{
+		TableBucketARN:   bucketARN,
+		Namespace:        namespace,
+		Name:             req.Name,
+		MetadataLocation: req.MetadataLocation,
+	}
+	var registerResp s3tables.RegisterTableResponse
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RegisterTable", registerReq, &registerResp, identityName)
+	})
+	if err != nil {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
+			switch tableErr.Type {
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
+				return
+			case s3tables.ErrCodeTableAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("Table already exists: %s", req.Name))
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RegisterTable error: %v", err)
+		writeManagerError(w, err)
+		return
+	}
+
+	getResp := s3tables.GetTableResponse{
+		MetadataLocation: req.MetadataLocation,
+		Metadata:         &s3tables.TableMetadata{FullMetadata: json.RawMessage(metadataBytes)},
+	}
+	result := s.buildLoadTableResult(getResp, bucketName, namespace, req.Name)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -359,7 +449,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: LoadTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -509,7 +599,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: DropTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -526,6 +616,64 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRenameTable moves a table's catalog pointer to a new namespace/name.
+func (s *Server) handleRenameTable(w http.ResponseWriter, r *http.Request) {
+	var req RenameTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	source := parseNamespace(encodeNamespace(req.Source.Namespace))
+	dest := parseNamespace(encodeNamespace(req.Destination.Namespace))
+	if len(source) == 0 || req.Source.Name == "" || len(dest) == 0 || req.Destination.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "source and destination namespace and name are required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	renameReq := &s3tables.RenameTableRequest{
+		TableBucketARN:  bucketARN,
+		SourceNamespace: source,
+		SourceName:      req.Source.Name,
+		DestNamespace:   dest,
+		DestName:        req.Destination.Name,
+	}
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RenameTable", renameReq, nil, identityName)
+	})
+
+	if err != nil {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
+			switch tableErr.Type {
+			case s3tables.ErrCodeNoSuchTable:
+				writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", req.Source.Name))
+				return
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", dest))
+				return
+			case s3tables.ErrCodeTableAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("Table already exists: %s", req.Destination.Name))
+				return
+			case s3tables.ErrCodeInvalidRequest:
+				writeError(w, http.StatusBadRequest, "BadRequestException", tableErr.Message)
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RenameTable error: %v", err)
+		writeManagerError(w, err)
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

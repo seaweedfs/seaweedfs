@@ -97,6 +97,22 @@ func GetTablePath(bucketName, namespace, tableName string) string {
 	return path.Join(TablesPath, bucketName, namespace, tableName)
 }
 
+// tableDataDirFromMetadataLocation maps a table's s3:// metadata location to the
+// filer directory holding its data. A renamed table is catalog-only, so its data
+// stays at the original location while its catalog entry moves; this lets a drop
+// purge the real data instead of the now-empty catalog path.
+func tableDataDirFromMetadataLocation(metadataLocation string) string {
+	loc := strings.TrimSuffix(metadataLocation, "/")
+	if idx := strings.LastIndex(loc, "/metadata/"); idx != -1 {
+		loc = loc[:idx]
+	}
+	loc = strings.TrimPrefix(loc, "s3://")
+	if loc == "" {
+		return ""
+	}
+	return path.Join(TablesPath, loc)
+}
+
 // GetTableObjectRootDir returns the root path for table bucket object storage
 func GetTableObjectRootDir() string {
 	return path.Join(TablesPath, tableObjectRootDirName)
@@ -144,6 +160,19 @@ func IsTableBucketEntry(entry *filer_pb.Entry) bool {
 	}
 	_, ok := entry.Extended[ExtendedKeyTableBucket]
 	return ok
+}
+
+// entryType returns the entry-type marker for a catalog entry. Tables and views
+// share the same on-disk layout; the marker distinguishes them. An absent marker
+// means table for back-compat.
+func entryType(extended map[string][]byte) string {
+	if extended == nil {
+		return EntryTypeTable
+	}
+	if v, ok := extended[ExtendedKeyEntryType]; ok && len(v) > 0 {
+		return string(v)
+	}
+	return EntryTypeTable
 }
 
 // Utility functions
