@@ -63,11 +63,9 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 
 	vol := s.GetVolume(volumeId)
 
-	// Capture every needle field the replica fan-out reads before the concurrent
-	// local write can mutate the shared needle: WriteVolumeNeedle stamps the
-	// volume TTL and updates needle flags. After this point the fan-out touches
-	// only these locals plus n.Data (read-only on both sides), so the two writes
-	// can run concurrently without racing.
+	// Snapshot the fields the fan-out reads before the concurrent local write
+	// mutates the needle (it stamps the volume TTL and flags), so the two cannot
+	// race; the fan-out then touches only these locals plus read-only n.Data.
 	replicaTtl := n.Ttl
 	if vol != nil && replicaTtl == needle.EMPTY_TTL && vol.Ttl != needle.EMPTY_TTL {
 		replicaTtl = vol.Ttl
@@ -93,9 +91,8 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 	// Observe replication targets histogram for all operations (including zero)
 	stats.VolumeServerReplicationTargets.Observe(float64(replicaCount))
 
-	// "buffered streaming": the local disk write and the replica fan-out run
-	// concurrently against the already-buffered needle, so write latency is
-	// max(local, replicas) instead of their sum. The client ack waits for both.
+	// Run the local disk write and the replica fan-out concurrently against the
+	// buffered needle (latency max(local, replicas), not the sum); ack after both.
 	var wg sync.WaitGroup
 	var localErr, remoteErr error
 	var localIsUnchanged bool
