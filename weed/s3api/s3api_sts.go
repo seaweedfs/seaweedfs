@@ -161,6 +161,16 @@ func (h *STSHandlers) getAccountID() string {
 	return defaultAccountID
 }
 
+// callerPrincipalArn resolves the identity's principal ARN, synthesizing the
+// canonical user ARN when one was not set (e.g. legacy static identities) so
+// trust policies that name a concrete principal still match.
+func (h *STSHandlers) callerPrincipalArn(identity *Identity) string {
+	if identity.PrincipalArn != "" {
+		return identity.PrincipalArn
+	}
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", h.getAccountID(), identity.Name)
+}
+
 // assumeRoleWithWebIdentity dispatches the request through the IAMManager
 // wrapper when one is wired so its cross-account provider scope check and
 // per-role MaxSessionDuration clamp run for the public AWS-SDK path. Without
@@ -382,7 +392,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// principals may assume it, so no separate identity-side sts:AssumeRole grant
 	// is required. Without a RoleArn the caller assumes a session for itself.
 	if roleArn != "" {
-		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
+		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, h.callerPrincipalArn(identity)); err != nil {
 			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
@@ -922,12 +932,7 @@ func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Req
 	}
 
 	accountID := h.getAccountID()
-
-	arn := identity.PrincipalArn
-	if arn == "" {
-		arn = fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, identity.Name)
-	}
-
+	arn := h.callerPrincipalArn(identity)
 	userId := identity.Name
 
 	glog.V(2).Infof("GetCallerIdentity: identity=%s, arn=%s, account=%s", identity.Name, arn, accountID)

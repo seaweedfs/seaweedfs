@@ -83,6 +83,24 @@ func TestAssumeRole_NonAdminCallerAuthorizedByTrustPolicy(t *testing.T) {
 		assert.Equal(t, []string{"WarehouseAccess"}, session.Policies, "session is scoped to the role, not the caller")
 	})
 
+	t.Run("trust policy admits a specific principal", func(t *testing.T) {
+		require.NoError(t, manager.CreateRole(ctx, "", "NamedWarehouse", &integration.RoleDefinition{
+			RoleName: "NamedWarehouse",
+			TrustPolicy: &policy.PolicyDocument{
+				Version: "2012-10-17",
+				Statement: []policy.Statement{{
+					Effect:    "Allow",
+					Principal: map[string]interface{}{"AWS": "arn:aws:iam::" + defaultAccountID + ":user/lakekeeper"},
+					Action:    []string{"sts:AssumeRole"},
+				}},
+			},
+			AttachedPolicies: []string{"WarehouseAccess"},
+		}))
+
+		rec := assume(t, "NamedWarehouse")
+		require.Equal(t, http.StatusOK, rec.Code, "caller named by the trust policy should be admitted: %s", rec.Body.String())
+	})
+
 	t.Run("trust policy rejects the caller", func(t *testing.T) {
 		require.NoError(t, manager.CreateRole(ctx, "", "PrivateWarehouse", &integration.RoleDefinition{
 			RoleName: "PrivateWarehouse",
@@ -100,4 +118,14 @@ func TestAssumeRole_NonAdminCallerAuthorizedByTrustPolicy(t *testing.T) {
 		rec := assume(t, "PrivateWarehouse")
 		assert.Equal(t, http.StatusForbidden, rec.Code, "caller not named by the trust policy must be denied")
 	})
+}
+
+func TestCallerPrincipalArn(t *testing.T) {
+	h := &STSHandlers{}
+	assert.Equal(t, "arn:aws:iam::"+defaultAccountID+":user/lakekeeper",
+		h.callerPrincipalArn(&Identity{Name: "lakekeeper"}),
+		"synthesizes the canonical user ARN when one is not set")
+	assert.Equal(t, "arn:aws:sts::111122223333:assumed-role/Warehouse/sess",
+		h.callerPrincipalArn(&Identity{Name: "lakekeeper", PrincipalArn: "arn:aws:sts::111122223333:assumed-role/Warehouse/sess"}),
+		"keeps an explicit principal ARN")
 }
