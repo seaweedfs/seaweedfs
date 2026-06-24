@@ -503,13 +503,21 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 
 		// Convert filer_pb.AssignVolumeResponse to operation.AssignResult
-		return nil, &operation.AssignResult{
+		result := &operation.AssignResult{
 			Fid:       assignResult.FileId,
 			Url:       assignResult.Location.Url,
 			PublicUrl: assignResult.Location.PublicUrl,
 			Count:     uint64(count),
 			Auth:      security.EncodedJwt(assignResult.Auth),
-		}, nil
+		}
+		for _, replica := range assignResult.Replicas {
+			result.Replicas = append(result.Replicas, operation.Location{
+				Url:        replica.Url,
+				PublicUrl:  replica.PublicUrl,
+				DataCenter: replica.DataCenter,
+			})
+		}
+		return nil, result, nil
 	}
 
 	// Upload with auto-chunking
