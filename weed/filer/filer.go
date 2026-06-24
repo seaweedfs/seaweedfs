@@ -52,6 +52,7 @@ type Filer struct {
 	LocalMetaLogBuffer      *log_buffer.LogBuffer
 	metaLogCollection       string
 	metaLogReplication      string
+	DefaultDiskType         string
 	MetaAggregator          *MetaAggregator
 	Signature               int32
 	FilerConf               *FilerConf
