@@ -263,7 +263,8 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		if tableErr, ok := err.(*s3tables.S3TablesError); ok && tableErr.Type == s3tables.ErrCodeTableAlreadyExists {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) && tableErr.Type == s3tables.ErrCodeTableAlreadyExists {
 			getReq := &s3tables.GetTableRequest{
 				TableBucketARN: bucketARN,
 				Namespace:      namespace,
