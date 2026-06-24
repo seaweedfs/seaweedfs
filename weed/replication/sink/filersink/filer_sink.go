@@ -533,11 +533,11 @@ func destinationSatisfiesSource(existing, incoming *filer_pb.Entry) bool {
 // destinationMatchesReference is a cheap, allocation-free sufficient check that the
 // destination already holds exactly the reference's chunks: equal count and, in
 // order, each destination chunk was replicated from the corresponding reference
-// chunk (SourceFileId == reference FileId). True ⇒ full coverage and no stale
-// chunk, so updateNormal/skip is safe and the O(n log n) range and identity checks
-// can be skipped — the common in-sync path. False is never a false positive: a
-// reordered, diverged, or out-of-band (rsync/direct) destination just falls back to
-// the precise checks.
+// chunk (SourceFileId == reference FileId) at the same byte range (Offset/Size).
+// True ⇒ full coverage and no stale chunk, so updateNormal/skip is safe and the
+// O(n log n) range and identity checks can be skipped — the common in-sync path.
+// False is never a false positive: a reordered, diverged, or out-of-band
+// (rsync/direct) destination just falls back to the precise checks.
 func destinationMatchesReference(existing, reference *filer_pb.Entry) bool {
 	ex, ref := existing.GetChunks(), reference.GetChunks()
 	if len(ex) != len(ref) {
@@ -545,6 +545,14 @@ func destinationMatchesReference(existing, reference *filer_pb.Entry) bool {
 	}
 	for i := range ref {
 		if ex[i].SourceFileId == "" || ex[i].SourceFileId != ref[i].GetFileIdString() {
+			return false
+		}
+		// Require the same byte range too. replicateOneChunk copies the source
+		// chunk's Offset/Size verbatim, so SourceFileId identity already implies an
+		// identical range today; verifying it here keeps this fast path sound even
+		// if replication ever re-chunks (split/coalesce), instead of silently
+		// depending on that invariant from another file.
+		if ex[i].Offset != ref[i].Offset || ex[i].Size != ref[i].Size {
 			return false
 		}
 	}

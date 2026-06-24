@@ -247,6 +247,17 @@ func TestDestinationMatchesReference(t *testing.T) {
 		{"reordered", dstEntry(0, "B", "A"), srcEntry(0, "A", "B"), false},
 		{"stale identity", dstEntry(0, "A", "X"), srcEntry(0, "A", "B"), false},
 		{"out-of-band chunk", dstEntry(0, "A", ""), srcEntry(0, "A", "B"), false},
+		// Same identity but a different byte range must not fast-path as a match,
+		// so the precise checks still run if replication ever re-chunks.
+		{"shifted offset, same identity",
+			&filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 0}, Chunks: []*filer_pb.FileChunk{
+				{FileId: "dst", SourceFileId: "A", Offset: 0, Size: 1},
+				{FileId: "dst", SourceFileId: "B", Offset: 5, Size: 1},
+			}}, srcEntry(0, "A", "B"), false},
+		{"larger size, same identity",
+			&filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 0}, Chunks: []*filer_pb.FileChunk{
+				{FileId: "dst", SourceFileId: "A", Offset: 0, Size: 2},
+			}}, srcEntry(0, "A"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
