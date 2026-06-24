@@ -557,3 +557,79 @@ func TestEnsureVisitedDropsUnpinnedStaleEntry(t *testing.T) {
 		t.Fatalf("unpinned stale entry survived rebuild = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
 	}
 }
+
+// sequencedListClient returns a different ListEntries result per call (repeating
+// the last), modelling a filer that lists empty transiently then the real entries.
+type sequencedListClient struct {
+	filer_pb.SeaweedFilerClient
+	mu      sync.Mutex
+	perCall [][]*filer_pb.ListEntriesResponse
+	calls   int
+}
+
+func (c *sequencedListClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	c.mu.Lock()
+	idx := c.calls
+	if idx >= len(c.perCall) {
+		idx = len(c.perCall) - 1
+	}
+	c.calls++
+	resp := c.perCall[idx]
+	c.mu.Unlock()
+	return &buildListStream{responses: resp}, nil
+}
+
+// TestEnsureVisitedConfirmsTransientEmptyListing: a rebuild whose first filer
+// listing comes back empty must re-read and cache the real entries, not strand
+// the directory cached over an empty store (the ConcurrentReadWrite ENOENT flake).
+func TestEnsureVisitedConfirmsTransientEmptyListing(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+
+	entry := &filer_pb.Entry{
+		Name:       "keep.txt",
+		Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 7},
+	}
+	accessor := &buildFilerAccessor{client: &sequencedListClient{
+		perCall: [][]*filer_pb.ListEntriesResponse{
+			{},                                  // first read: transient empty
+			{{Entry: entry, SnapshotTsNs: 100}}, // confirm read: the real entry
+		},
+	}}
+
+	if err := EnsureVisited(mc, accessor, util.FullPath("/dir")); err != nil {
+		t.Fatalf("ensure visited: %v", err)
+	}
+	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
+		t.Fatal("/dir should be cached after build completes")
+	}
+	if _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/keep.txt")); err != nil {
+		t.Fatalf("/dir/keep.txt stranded after transient empty listing: %v", err)
+	}
+}
+
+// TestEnsureVisitedCachesGenuinelyEmptyDirectory: a really-empty directory lists
+// empty on every confirm and must still end up cached.
+func TestEnsureVisitedCachesGenuinelyEmptyDirectory(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+
+	client := &sequencedListClient{
+		perCall: [][]*filer_pb.ListEntriesResponse{{}}, // always empty
+	}
+	accessor := &buildFilerAccessor{client: client}
+
+	if err := EnsureVisited(mc, accessor, util.FullPath("/empty")); err != nil {
+		t.Fatalf("ensure visited: %v", err)
+	}
+	if !mc.IsDirectoryCached(util.FullPath("/empty")) {
+		t.Fatal("/empty should be cached even though it has no entries")
+	}
+	// The empty result must have been confirmed, not trusted on the first read.
+	client.mu.Lock()
+	calls := client.calls
+	client.mu.Unlock()
+	if calls != emptyRebuildConfirmations+1 {
+		t.Fatalf("list calls = %d, want %d (initial + confirmations)", calls, emptyRebuildConfirmations+1)
+	}
+}
