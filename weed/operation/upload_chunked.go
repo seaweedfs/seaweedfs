@@ -295,16 +295,17 @@ func chunkHolders(assignResult *AssignResult) []string {
 	return hosts
 }
 
-// uploadChunkToHolders uploads the chunk to every holder concurrently, each with
-// type=replicate so the receiving volume writes locally and does not relay. It
-// returns the first successful result and fails if any holder fails (all-or-
-// nothing, matching server-driven replication).
+// uploadChunkToHolders uploads the chunk to every holder concurrently (each with
+// type=replicate). It returns the first successful result and fails if any
+// holder fails, cancelling the remaining uploads on the first error.
 func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
 	uploader, err := NewUploader()
 	if err != nil {
 		return nil, fmt.Errorf("create uploader: %w", err)
 	}
 	glog.V(4).Infof("replica fan-out: writing chunk %s to %d holders %v", fid, len(hosts), hosts)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	type outcome struct {
 		result *UploadResult
 		err    error
@@ -332,6 +333,7 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 		if o.err != nil {
 			if firstErr == nil {
 				firstErr = o.err
+				cancel()
 			}
 		} else if first == nil {
 			first = o.result
