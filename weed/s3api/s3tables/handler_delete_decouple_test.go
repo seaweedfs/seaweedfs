@@ -1,0 +1,60 @@
+package s3tables
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func runDeleteTable(t *testing.T, m *Manager, fs *memFilerServer, namespace, name string) error {
+	t.Helper()
+	return m.Execute(context.Background(), NewManagerClient(fs.client), "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{namespace},
+		Name:           name,
+	}, nil, "")
+}
+
+// A table whose data was decoupled from its name (created over a leftover from a
+// rename): catalog marker at ns/newt, data at ns/newt-x, and ns/newt still holds
+// another table's leftover data. Dropping it must purge only its own data and
+// clear the marker, never the data under the reused name path.
+func TestDeleteTableDecoupledKeepsReusedNamePath(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	newtMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "newt",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/newt-x/metadata/v1.metadata.json",
+	})
+	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "newt", map[string][]byte{ExtendedKeyMetadata: newtMeta})
+	fs.putEntry(GetTablePath(renameTestBucket, "ns", "newt"), "leftover", nil) // another table's data under the name path
+	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "newt-x", nil)       // this table's own (decoupled) data
+	fs.putEntry(GetTablePath(renameTestBucket, "ns", "newt-x"), "metadata", nil)
+
+	require.NoError(t, runDeleteTable(t, m, fs, "ns", "newt"))
+
+	assert.Nil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "newt-x"),
+		"the table's own data location must be purged")
+	assert.NotNil(t, fs.getEntry(GetTablePath(renameTestBucket, "ns", "newt"), "leftover"),
+		"data under the reused name path must survive")
+	marker := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "newt")
+	require.NotNil(t, marker)
+	_, stillTable := marker.Extended[ExtendedKeyMetadata]
+	assert.False(t, stillTable, "the catalog metadata attribute must be cleared")
+}
+
+// A normal colocated table (data under its own name path) is removed wholesale.
+func TestDeleteTableColocatedRemovesData(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	require.NoError(t, runDeleteTable(t, m, fs, "ns", "t"))
+
+	assert.Nil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "colocated table entry must be deleted")
+	assert.Nil(t, fs.getEntry(GetTablePath(renameTestBucket, "ns", "t"), "metadata"), "colocated table data must be deleted")
+}

@@ -1182,18 +1182,20 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.deleteDirectory(r.Context(), client, tablePath); err != nil {
-			return err
-		}
-		// A renamed table keeps its data at the original location, so the catalog
-		// path no longer holds it; purge the data directory too when it differs.
 		dataPath := tableDataDirFromMetadataLocation(metadata.MetadataLocation)
 		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
+			// Decoupled table (renamed, or created over a leftover): its data
+			// lives elsewhere. Purge the data, then clear the catalog marker
+			// without deleting the name path -- it may still hold another
+			// table's data that was left when this name was reused.
 			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
 				return err
 			}
+			return h.removeExtendedAttributes(r.Context(), client, tablePath,
+				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType)
 		}
-		return nil
+		// Colocated table: the name path holds the data.
+		return h.deleteDirectory(r.Context(), client, tablePath)
 	})
 
 	if err != nil {
