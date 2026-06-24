@@ -15,8 +15,8 @@ import (
 
 const (
 	bucketNamePatternStr     = `[a-z0-9-]+`
-	tableNamespacePatternStr = `[a-z0-9_.]+`
-	tableNamePatternStr      = `[a-z0-9_]+`
+	tableNamespacePatternStr = `[a-z0-9_.-]+`
+	tableNamePatternStr      = `[a-z0-9_-]+`
 )
 
 const (

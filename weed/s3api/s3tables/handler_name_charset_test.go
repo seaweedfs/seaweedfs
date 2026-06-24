@@ -27,3 +27,11 @@ func TestNameValidationAllowsHyphens(t *testing.T) {
 		t.Fatal("uppercase table name should be rejected")
 	}
 }
+
+func TestParseTableFromARNAllowsHyphens(t *testing.T) {
+	bucket, ns, table, err := parseTableFromARN("arn:aws:s3tables:us-east-1:123456789012:bucket/my-bucket/table/rest-integration-test/test-create-table")
+	require.NoError(t, err)
+	require.Equal(t, "my-bucket", bucket)
+	require.Equal(t, "rest-integration-test", ns)
+	require.Equal(t, "test-create-table", table)
+}
