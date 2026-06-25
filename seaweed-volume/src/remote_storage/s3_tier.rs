@@ -364,6 +364,18 @@ impl S3TierBackend {
                 .map_err(|e| format!("download task panicked: {}", e))??;
         }
 
+        // fsync the file so its content is durable before the caller trims the .vif
+        // and deletes the remote object (matches Go's DownloadFile f.Sync()).
+        let synced = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(dest_path)
+            .await
+            .map_err(|e| format!("failed to open {} for fsync: {}", dest_path, e))?;
+        synced
+            .sync_all()
+            .await
+            .map_err(|e| format!("failed to fsync {}: {}", dest_path, e))?;
+
         Ok(file_size)
     }
 

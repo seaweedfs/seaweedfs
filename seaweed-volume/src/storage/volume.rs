@@ -2366,7 +2366,15 @@ impl Volume {
         let vif = VifVolumeInfo::from_pb(&self.volume_info);
         let content = serde_json::to_string_pretty(&vif)
             .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
-        fs::write(&self.vif_path(), content)?;
+        // fsync the .vif so a tiered volume's remote reference is durable before the
+        // caller acts on it, e.g. deletes the remote object (matches Go util.WriteFile).
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(self.vif_path())?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()?;
         Ok(())
     }
 
