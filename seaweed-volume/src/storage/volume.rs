@@ -455,6 +455,19 @@ pub(crate) struct RemoteDatFile {
 }
 
 impl RemoteDatFile {
+    /// Read up to `size` bytes at `offset`, bounded by the remote file size.
+    /// Mirrors `Volume::read_dat_slice` for a remote-only backend, but holds no
+    /// volume/store lock so callers can stream off the store lock entirely.
+    pub(crate) fn read_slice(&self, offset: u64, size: usize) -> io::Result<Vec<u8>> {
+        if size == 0 || offset >= self.file_size {
+            return Ok(Vec::new());
+        }
+        let read_len = std::cmp::min(size as u64, self.file_size - offset) as usize;
+        let mut buf = vec![0u8; read_len];
+        self.read_exact_at(&mut buf, offset)?;
+        Ok(buf)
+    }
+
     pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
         let data = self
             .backend
@@ -1035,6 +1048,14 @@ impl Volume {
         let mut buf = vec![0u8; read_len];
         self.read_exact_at_backend(&mut buf, offset)?;
         Ok(buf)
+    }
+
+    /// Clone the remote backend handle (cheap: an `Arc` plus key/size) so a
+    /// caller can stream a tiered `.dat` from S3 after dropping the store lock.
+    /// Returns `None` for local volumes. `has_remote_file` implies `dat_file`
+    /// is `None`, so this selects the same backend `read_dat_slice` would.
+    pub(crate) fn remote_dat_file(&self) -> Option<RemoteDatFile> {
+        self.remote_dat_file.clone()
     }
 
     // ---- SuperBlock I/O ----

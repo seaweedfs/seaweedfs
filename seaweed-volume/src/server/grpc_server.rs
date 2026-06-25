@@ -777,22 +777,36 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         };
-        // Release the store lock and stream the delta through a bounded channel
-        // fed by a blocking reader task, instead of buffering the whole delta
-        // into a Vec and returning tokio_stream::iter. For local volumes we open
-        // the .dat directly and stream it without holding any lock (the common
-        // case). For remote/tiered volumes the .dat may not be on local disk, so
-        // we re-acquire the store lock per chunk and go through read_dat_slice,
-        // dropping the lock before each send.
-        let is_remote = v.has_remote_file;
-        let file_name = if is_remote {
-            None
+        // Capture a reader for the `.dat` while the volume lookup is still
+        // protected by the store lock, then drop the lock and stream the delta
+        // through a bounded channel fed by a blocking reader task (instead of
+        // buffering the whole delta into a Vec). Opening the local file -- or
+        // cloning the remote backend handle -- under the lock pins it to the
+        // volume that exists now, so a concurrent delete/recreate can't make us
+        // stream from the wrong file, and no store lock is held while a slow
+        // disk or S3 read runs.
+        enum DatReader {
+            Local(std::fs::File),
+            Remote(crate::storage::volume::RemoteDatFile),
+        }
+        let reader = if v.has_remote_file {
+            match v.remote_dat_file() {
+                Some(r) => DatReader::Remote(r),
+                None => {
+                    return Err(Status::not_found(format!(
+                        "remote dat not loaded for volume id {}",
+                        vid
+                    )))
+                }
+            }
         } else {
-            Some(v.file_name(".dat"))
+            let path = v.file_name(".dat");
+            let file = std::fs::File::open(&path)
+                .map_err(|e| Status::internal(format!("open {}: {}", path, e)))?;
+            DatReader::Local(file)
         };
         drop(store);
 
-        let state = self.state.clone();
         let total = dat_size - start_offset;
         let (tx, rx) = tokio::sync::mpsc::channel::<
             Result<volume_server_pb::VolumeIncrementalCopyResponse, Status>,
@@ -803,76 +817,60 @@ impl VolumeServer for VolumeGrpcService {
             let mut bytes_to_read = total;
             let mut offset = start_offset;
 
-            if let Some(path) = file_name {
-                // Local volume: stream directly from the .dat, no lock held.
-                use std::io::{Read, Seek, SeekFrom};
-                let file = match std::fs::File::open(&path) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        let _ = tx
-                            .blocking_send(Err(Status::internal(format!("open {}: {}", path, e))));
+            match reader {
+                DatReader::Local(file) => {
+                    // Local volume: stream directly from the .dat, no lock held.
+                    use std::io::{Read, Seek, SeekFrom};
+                    let mut reader = std::io::BufReader::new(file);
+                    if let Err(e) = reader.seek(SeekFrom::Start(offset)) {
+                        let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
                         return;
                     }
-                };
-                let mut reader = std::io::BufReader::new(file);
-                if let Err(e) = reader.seek(SeekFrom::Start(offset)) {
-                    let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
-                    return;
-                }
-                while bytes_to_read > 0 {
-                    let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
-                    let mut buf = vec![0u8; chunk];
-                    match reader.read(&mut buf) {
-                        Ok(0) => break, // EOF
-                        Ok(n) => {
-                            buf.truncate(n);
-                            let msg = volume_server_pb::VolumeIncrementalCopyResponse {
-                                file_content: buf,
-                            };
-                            if tx.blocking_send(Ok(msg)).is_err() {
-                                return; // receiver dropped
+                    while bytes_to_read > 0 {
+                        let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
+                        let mut buf = vec![0u8; chunk];
+                        match reader.read(&mut buf) {
+                            Ok(0) => break, // EOF
+                            Ok(n) => {
+                                buf.truncate(n);
+                                let msg = volume_server_pb::VolumeIncrementalCopyResponse {
+                                    file_content: buf,
+                                };
+                                if tx.blocking_send(Ok(msg)).is_err() {
+                                    return; // receiver dropped
+                                }
+                                bytes_to_read -= n as u64;
                             }
-                            bytes_to_read -= n as u64;
-                        }
-                        Err(e) => {
-                            let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
-                            return;
+                            Err(e) => {
+                                let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                                return;
+                            }
                         }
                     }
                 }
-            } else {
-                // Remote/tiered volume: read through the volume backend,
-                // re-acquiring the store lock per chunk and dropping it before
-                // each send so it is never held while blocked on a consumer.
-                while bytes_to_read > 0 {
-                    let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
-                    let read = {
-                        let store = state.store.read().unwrap();
-                        match store.find_volume(vid) {
-                            Some((_, v)) => v
-                                .read_dat_slice(offset, chunk)
-                                .map_err(|e| Status::internal(e.to_string())),
-                            None => {
-                                Err(Status::not_found(format!("not found volume id {}", vid)))
+                DatReader::Remote(remote) => {
+                    // Remote/tiered volume: read through the cloned backend
+                    // handle. No store lock is held while the (potentially slow)
+                    // S3 fetch runs, so it never blocks store writers.
+                    while bytes_to_read > 0 {
+                        let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
+                        match remote.read_slice(offset, chunk) {
+                            Ok(buf) if buf.is_empty() => break,
+                            Ok(buf) => {
+                                let read_len = buf.len() as u64;
+                                let msg = volume_server_pb::VolumeIncrementalCopyResponse {
+                                    file_content: buf,
+                                };
+                                if tx.blocking_send(Ok(msg)).is_err() {
+                                    return; // receiver dropped
+                                }
+                                bytes_to_read -= read_len;
+                                offset += read_len;
                             }
-                        }
-                    };
-                    match read {
-                        Ok(buf) if buf.is_empty() => break,
-                        Ok(buf) => {
-                            let read_len = buf.len() as u64;
-                            let msg = volume_server_pb::VolumeIncrementalCopyResponse {
-                                file_content: buf,
-                            };
-                            if tx.blocking_send(Ok(msg)).is_err() {
-                                return; // receiver dropped
+                            Err(e) => {
+                                let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                                return;
                             }
-                            bytes_to_read -= read_len;
-                            offset += read_len;
-                        }
-                        Err(e) => {
-                            let _ = tx.blocking_send(Err(e));
-                            return;
                         }
                     }
                 }
@@ -5010,7 +5008,11 @@ mod tests {
         {
             let mut store = service.state.store.write().unwrap();
             let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
-            let payload = vec![0xABu8; 5 * 1024 * 1024];
+            // Non-uniform payload so reassembly catches duplicated or reordered
+            // chunks that a repeated byte would hide.
+            let payload: Vec<u8> = (0..5 * 1024 * 1024usize)
+                .map(|i| (i as u8).wrapping_mul(31).wrapping_add(7))
+                .collect();
             let mut needle = Needle {
                 id: NeedleId(99),
                 cookie: Cookie(0x1122),
