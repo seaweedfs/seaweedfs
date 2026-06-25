@@ -151,6 +151,55 @@ func TestAssumeRole_NonAdminCallerAuthorizedByTrustPolicy(t *testing.T) {
 		rec := assume(t, denyAccessKey, denySecretKey, "DenyTestWarehouse")
 		assert.Equal(t, http.StatusForbidden, rec.Code, "explicit identity-side deny must block AssumeRole even when the trust policy admits the caller")
 	})
+
+	t.Run("session policy explicit deny blocks role chaining", func(t *testing.T) {
+		require.NoError(t, manager.CreateRole(ctx, "", "ChainWarehouse", &integration.RoleDefinition{
+			RoleName: "ChainWarehouse",
+			TrustPolicy: &policy.PolicyDocument{
+				Version:   "2012-10-17",
+				Statement: []policy.Statement{{Effect: "Allow", Principal: "*", Action: []string{"sts:AssumeRole"}}},
+			},
+			AttachedPolicies: []string{"WarehouseAccess"},
+		}))
+		chainArn := "arn:aws:iam::" + defaultAccountID + ":role/ChainWarehouse"
+
+		// First hop succeeds, with a session policy that denies sts:AssumeRole.
+		denySession := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"sts:AssumeRole","Resource":"*"}]}`
+		body := url.Values{
+			"Action":          {"AssumeRole"},
+			"Version":         {"2011-06-15"},
+			"RoleArn":         {chainArn},
+			"RoleSessionName": {"hop1"},
+			"Policy":          {denySession},
+		}.Encode()
+		req, err := newTestRequest(http.MethodPost, "http://sts.seaweedfs.test/", int64(len(body)), strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		require.NoError(t, signRequestV4(req, accessKey, secretKey))
+		rec := httptest.NewRecorder()
+		stsHandlers.handleAssumeRole(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "first hop should succeed: %s", rec.Body.String())
+		var hop1 AssumeRoleResponse
+		require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &hop1))
+		require.NotEmpty(t, hop1.Result.Credentials.SessionToken)
+
+		// Second hop reuses the session credentials to chain-assume; the session
+		// policy's explicit deny must block it even though the trust policy admits.
+		body2 := url.Values{
+			"Action":          {"AssumeRole"},
+			"Version":         {"2011-06-15"},
+			"RoleArn":         {chainArn},
+			"RoleSessionName": {"hop2"},
+		}.Encode()
+		req2, err := newTestRequest(http.MethodPost, "http://sts.seaweedfs.test/", int64(len(body2)), strings.NewReader(body2))
+		require.NoError(t, err)
+		req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req2.Header.Set("X-Amz-Security-Token", hop1.Result.Credentials.SessionToken)
+		require.NoError(t, signRequestV4(req2, hop1.Result.Credentials.AccessKeyId, hop1.Result.Credentials.SecretAccessKey))
+		rec2 := httptest.NewRecorder()
+		stsHandlers.handleAssumeRole(rec2, req2)
+		assert.Equal(t, http.StatusForbidden, rec2.Code, "session policy explicit deny must block role chaining: %s", rec2.Body.String())
+	})
 }
 
 func TestCallerPrincipalArn(t *testing.T) {
