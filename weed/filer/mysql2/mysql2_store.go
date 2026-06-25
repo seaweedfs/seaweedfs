@@ -80,9 +80,11 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	var dbErr error
 	store.DB, dbErr = sql.Open("mysql", sqlUrl)
 	if dbErr != nil {
-		store.DB.Close()
+		if store.DB != nil {
+			store.DB.Close()
+		}
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
+		return fmt.Errorf("can not connect to %s error:%w", adaptedSqlUrl, dbErr)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)

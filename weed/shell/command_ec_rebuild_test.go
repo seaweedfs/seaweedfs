@@ -307,3 +307,29 @@ func TestPrepareDataToRecoverTargetShardCount(t *testing.T) {
 		}
 	}
 }
+
+func TestRebuilderVolumeIdMatches(t *testing.T) {
+	testCases := []struct {
+		name               string
+		rebuilderVolumeIds []needle.VolumeId
+		volumeId           needle.VolumeId
+		want               bool
+	}{
+		{"no target volume IDs (nil)", nil, needle.VolumeId(1234), true},
+		{"no target volume IDs", []needle.VolumeId{}, needle.VolumeId(5678), true},
+		{"volume ID matches", []needle.VolumeId{needle.VolumeId(123), needle.VolumeId(456), needle.VolumeId(789)}, needle.VolumeId(456), true},
+		{"volume ID mismatch", []needle.VolumeId{needle.VolumeId(123), needle.VolumeId(456), needle.VolumeId(789)}, needle.VolumeId(321), false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ecb := &ecRebuilder{
+				volumeIds: tc.rebuilderVolumeIds,
+			}
+
+			if got, want := ecb.matchesVolumeId(tc.volumeId), tc.want; got != want {
+				t.Errorf("Expected %v, got %v", want, got)
+			}
+		})
+	}
+}

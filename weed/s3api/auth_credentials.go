@@ -503,7 +503,9 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		glog.Warningf("KMS initialization failed: %v", err)
 	}
 
-	config, err := iam.loadS3ApiConfigurationFromBytes(content)
+	// fromStaticFile=true: this file is the source of truth for its static
+	// identities, so a reload overwrites them (e.g. a rotated secretKey).
+	config, err := iam.loadS3ApiConfigurationFromBytes(content, true)
 	if err != nil {
 		return err
 	}
@@ -518,11 +520,11 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 }
 
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
-	_, err := iam.loadS3ApiConfigurationFromBytes(content)
+	_, err := iam.loadS3ApiConfigurationFromBytes(content, false)
 	return err
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte) (*iam_pb.S3ApiConfiguration, error) {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte, fromStaticFile bool) (*iam_pb.S3ApiConfiguration, error) {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
@@ -533,13 +535,19 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []b
 		return nil, err
 	}
 
-	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+	if err := iam.loadS3ApiConfigurationWithSource(s3ApiConfiguration, fromStaticFile); err != nil {
 		return nil, err
 	}
 	return s3ApiConfiguration, nil
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	return iam.loadS3ApiConfigurationWithSource(config, false)
+}
+
+// fromStaticFile lets a config-file reload overwrite its static identities;
+// dynamic updates keep them immutable.
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationWithSource(config *iam_pb.S3ApiConfiguration, fromStaticFile bool) error {
 	// Check if we need to merge with existing static configuration
 	iam.m.RLock()
 	hasStaticConfig := iam.useStaticConfig && len(iam.staticIdentityNames) > 0
@@ -547,7 +555,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 
 	if hasStaticConfig {
 		// Merge mode: preserve static identities, add/update dynamic ones
-		return iam.MergeS3ApiConfiguration(config)
+		return iam.MergeS3ApiConfiguration(config, fromStaticFile)
 	}
 
 	// Normal mode: completely replace configuration
@@ -766,10 +774,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	return nil
 }
 
-// MergeS3ApiConfiguration merges dynamic configuration with existing static configuration
-// Static identities (from file) are preserved and cannot be updated
-// Dynamic identities (from filer/admin) can be added or updated
-func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+// MergeS3ApiConfiguration adds/updates dynamic identities while preserving static
+// ones. A config-file reload (fromStaticFile) may also overwrite its static identities.
+func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration, fromStaticFile bool) error {
 	// Start with current configuration (which includes static identities)
 	iam.m.RLock()
 	identities := make([]*Identity, len(iam.identities))
@@ -834,15 +841,14 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}
 
-	// Process identities from dynamic config
 	for _, ident := range config.Identities {
-		// Skip static identities - they cannot be updated
-		if staticNames[ident.Name] {
+		// Static identities are immutable to dynamic updates, but the config file can update them.
+		if !fromStaticFile && staticNames[ident.Name] {
 			glog.V(3).Infof("skipping static identity %s (immutable)", ident.Name)
 			continue
 		}
 
-		glog.V(3).Infof("loading/updating dynamic identity %s (disabled=%v)", ident.Name, ident.Disabled)
+		glog.V(3).Infof("loading/updating identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
 			Name:         ident.Name,
 			Credentials:  nil,
@@ -850,6 +856,9 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			PrincipalArn: generatePrincipalArn(ident.Name),
 			Disabled:     ident.Disabled,
 			PolicyNames:  ident.PolicyNames,
+			// File identities are static; set it here so the published identity is
+			// never briefly observable as non-static (RemoveIdentity guards on it).
+			IsStatic: fromStaticFile,
 		}
 
 		switch {
@@ -936,8 +945,8 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			continue
 		}
 
-		// Skip if parent is a static identity (we don't modify static identities)
-		if staticNames[sa.ParentUser] {
+		// Same static-parent rule as identities above.
+		if !fromStaticFile && staticNames[sa.ParentUser] {
 			glog.V(3).Infof("Skipping service account %s for static parent %s", sa.Id, sa.ParentUser)
 			continue
 		}
@@ -1106,7 +1115,7 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
 	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
-	})
+	}, false)
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.

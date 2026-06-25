@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"syscall"
@@ -82,13 +83,13 @@ func TestRetryMetadataFlushIfShortCircuitsOnPermanentError(t *testing.T) {
 	t.Cleanup(func() {
 		metadataFlushSleep = originalSleep
 	})
-	metadataFlushSleep = func(_ time.Duration) {
+	metadataFlushSleep = func(_ context.Context, _ time.Duration) {
 		t.Fatal("sleep should not be called when shouldRetry returns false")
 	}
 
 	attempts := 0
 	permanent := status.Error(codes.NotFound, "entry missing")
-	err := retryMetadataFlushIf(func() error {
+	err := retryMetadataFlushIf(context.Background(), func() error {
 		attempts++
 		return permanent
 	}, isRetryableFilerError, nil)
@@ -108,11 +109,11 @@ func TestRetryMetadataFlushIfRetriesTransientErrors(t *testing.T) {
 	t.Cleanup(func() {
 		metadataFlushSleep = originalSleep
 	})
-	metadataFlushSleep = func(_ time.Duration) {}
+	metadataFlushSleep = func(_ context.Context, _ time.Duration) {}
 
 	attempts := 0
 	transient := status.Error(codes.Canceled, "grpc: the client connection is closing")
-	err := retryMetadataFlushIf(func() error {
+	err := retryMetadataFlushIf(context.Background(), func() error {
 		attempts++
 		return transient
 	}, isRetryableFilerError, nil)

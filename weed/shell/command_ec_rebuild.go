@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -25,6 +28,7 @@ type ecRebuilder struct {
 	writer       io.Writer
 	applyChanges bool
 	collections  []string
+	volumeIds    []needle.VolumeId
 	diskType     types.DiskType
 
 	ewg       *ErrorWaitGroup
@@ -84,6 +88,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := fixCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
+	volumeIdsStr := fixCommand.String("volumeIds", "", "optional comma-separated list of volume ID to process; defaults to all volumes in the collection")
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
 	diskTypeStr := fixCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
@@ -117,12 +122,28 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		collections = []string{*collection}
 	}
 
+	var volumeIds []needle.VolumeId
+	if *volumeIdsStr != "" {
+		for _, vidStr := range strings.Split(*volumeIdsStr, ",") {
+			vidStr = strings.TrimSpace(vidStr)
+			if len(vidStr) == 0 {
+				continue
+			}
+			if vid, err := strconv.ParseUint(vidStr, 10, 32); err == nil {
+				volumeIds = append(volumeIds, needle.VolumeId(vid))
+			} else {
+				return fmt.Errorf("invalid volume ID %q", vidStr)
+			}
+		}
+	}
+
 	erb := &ecRebuilder{
 		commandEnv:   commandEnv,
 		ecNodes:      allEcNodes,
 		writer:       writer,
 		applyChanges: *applyChanges,
 		collections:  collections,
+		volumeIds:    volumeIds,
 		diskType:     diskType,
 
 		ewg: NewErrorWaitGroup(*maxParallelization),
@@ -142,6 +163,15 @@ func (erb *ecRebuilder) write(format string, a ...any) {
 
 func (erb *ecRebuilder) isLocked() bool {
 	return erb.commandEnv.isLocked()
+}
+
+// matchesVolumeId verifies whether the rebuilder is targeted at a given volume ID.
+func (erb *ecRebuilder) matchesVolumeId(vid needle.VolumeId) bool {
+	if len(erb.volumeIds) == 0 {
+		return true
+	}
+
+	return slices.Contains(erb.volumeIds, vid)
 }
 
 // countLocalShards returns the number of shards already present locally on the node for the given volume.
@@ -229,6 +259,9 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
 	erb.ecNodesMu.Unlock()
 
 	for vid, locations := range ecShardMap {
+		if !erb.matchesVolumeId(vid) {
+			continue
+		}
 		shardCount := locations.shardCount()
 		if shardCount == erasure_coding.TotalShardsCount {
 			continue

@@ -87,6 +87,7 @@ var ErrMinFreeSpaceBadValue = errors.New("minFreeSpace is invalid")
 
 // ParseMinFreeSpace parses min free space expression s as percentage like 1,10 or human readable size like 10G
 func ParseMinFreeSpace(s string) (*MinFreeSpace, error) {
+	s = strings.TrimSpace(s)
 	if percent, e := strconv.ParseFloat(s, 32); e == nil {
 		if percent < 0 || percent > 100 {
 			return nil, ErrMinFreeSpaceBadValue

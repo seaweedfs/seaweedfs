@@ -759,7 +759,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume result: %v", assignResult.Error)}, nil
 	}
 
-	return &filer_pb.AssignVolumeResponse{
+	resp = &filer_pb.AssignVolumeResponse{
 		FileId: assignResult.Fid,
 		Count:  int32(assignResult.Count),
 		Location: &filer_pb.Location{
@@ -770,7 +770,16 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Auth:        string(assignResult.Auth),
 		Collection:  so.Collection,
 		Replication: so.Replication,
-	}, nil
+	}
+	// Forward the replica holders so a client can write all copies directly.
+	for _, replica := range assignResult.Replicas {
+		resp.Replicas = append(resp.Replicas, &filer_pb.Location{
+			Url:        replica.Url,
+			PublicUrl:  replica.PublicUrl,
+			DataCenter: replica.DataCenter,
+		})
+	}
+	return resp, nil
 }
 
 func (fs *FilerServer) resolveAssignStorageOption(ctx context.Context, req *filer_pb.AssignVolumeRequest) (*operation.StorageOption, error) {

@@ -21,7 +21,7 @@ func TestBuildListTablesRequestRejectsInvalidNamespaceQuery(t *testing.T) {
 		namespace string
 	}{
 		{name: "uppercase", namespace: "InvalidNamespace"},
-		{name: "hyphen", namespace: "invalid-ns"},
+		{name: "leading hyphen", namespace: "-invalid"},
 		{name: "slash", namespace: "a/b"},
 	}
 
@@ -47,7 +47,7 @@ func TestBuildGetTableRequestRejectsInvalidNamespaceQuery(t *testing.T) {
 		namespace string
 	}{
 		{name: "uppercase", namespace: "InvalidNamespace"},
-		{name: "hyphen", namespace: "invalid-ns"},
+		{name: "leading hyphen", namespace: "-invalid"},
 		{name: "slash", namespace: "a/b"},
 	}
 
@@ -72,7 +72,7 @@ func TestHandleRestOperationReturnsBadRequestForInvalidNamespaceQuery(t *testing
 		namespace string
 	}{
 		{name: "uppercase", namespace: "InvalidNamespace"},
-		{name: "hyphen", namespace: "invalid-ns"},
+		{name: "leading hyphen", namespace: "-invalid"},
 		{name: "slash", namespace: "a/b"},
 	}
 

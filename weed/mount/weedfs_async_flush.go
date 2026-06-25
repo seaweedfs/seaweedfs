@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
@@ -114,8 +115,8 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 // with exponential backoff on transient errors. The chunk data is already on the
 // volume servers at this point; only the filer metadata reference needs persisting.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
-	err := retryMetadataFlush(func() error {
-		return wfs.flushMetadataToFiler(fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid)
+	err := retryMetadataFlush(context.Background(), func() error {
+		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid)
 	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("completeAsyncFlush %s: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, nextAttempt, totalAttempts, backoff, err)

@@ -392,11 +392,14 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 			return fmt.Errorf("failed to read message length during startup: %v", err)
 		}
 
-		if binary.BigEndian.Uint32(length) < 4 {
-			return fmt.Errorf("startup message too short: %d bytes", binary.BigEndian.Uint32(length))
+		msgTotalLen := binary.BigEndian.Uint32(length)
+		// Prevent unsigned underflow and OOM by checking total message length first
+		if msgTotalLen < 8 {
+			return fmt.Errorf("startup message too short: %d bytes", msgTotalLen)
 		}
-		msgLength := binary.BigEndian.Uint32(length) - 4
-		if msgLength > maxStartupMessageSize {
+
+		msgLength := msgTotalLen - 4
+		if msgLength > 10000 { // Reasonable limit for startup messages
 			return fmt.Errorf("startup message too large: %d bytes", msgLength)
 		}
 

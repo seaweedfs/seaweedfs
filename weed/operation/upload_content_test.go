@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc"
 )
 
 type scriptedHTTPResponse struct {
@@ -161,6 +163,76 @@ func (c *bodyCapturingHTTPClient) Do(req *http.Request) (*http.Response, error) 
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(c.successJSON)),
 	}, nil
+}
+
+// hangingAssignSeaweedClient is a SeaweedFilerClient whose AssignVolume blocks
+// until its context is done, so a test can prove UploadWithRetry bounds the RPC.
+type hangingAssignSeaweedClient struct {
+	filer_pb.SeaweedFilerClient
+	sawDeadline chan bool
+}
+
+func (c *hangingAssignSeaweedClient) AssignVolume(ctx context.Context, in *filer_pb.AssignVolumeRequest, opts ...grpc.CallOption) (*filer_pb.AssignVolumeResponse, error) {
+	_, ok := ctx.Deadline()
+	// Non-blocking so a retry that calls this more than once can't wedge here.
+	select {
+	case c.sawDeadline <- ok:
+	default:
+	}
+	<-ctx.Done() // simulate an overwhelmed filer that never answers
+	return nil, ctx.Err()
+}
+
+type hangingAssignFilerClient struct {
+	inner *hangingAssignSeaweedClient
+}
+
+func (c *hangingAssignFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c.inner)
+}
+func (c *hangingAssignFilerClient) AdjustedUrl(loc *filer_pb.Location) string { return loc.GetUrl() }
+func (c *hangingAssignFilerClient) GetDataCenter() string                     { return "" }
+
+// TestUploadWithRetryBoundsAssignVolume covers the case where an AssignVolume
+// against an overwhelmed filer carried no deadline, so the upload (and the FUSE
+// flush driving it) blocked forever. UploadWithRetry must give the RPC a
+// deadline and return once it expires instead of hanging.
+func TestUploadWithRetryBoundsAssignVolume(t *testing.T) {
+	original := assignVolumeTimeout
+	assignVolumeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { assignVolumeTimeout = original })
+
+	client := &hangingAssignFilerClient{inner: &hangingAssignSeaweedClient{sawDeadline: make(chan bool, 1)}}
+	uploader := newUploader(&scriptedHTTPClient{responses: map[string][]scriptedHTTPResponse{}})
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err, _ := uploader.UploadWithRetry(client,
+			&filer_pb.AssignVolumeRequest{Count: 1},
+			&UploadOption{Filename: "test.bin"},
+			func(host, fileId string) string { return "http://" + host + "/" + fileId },
+			bytes.NewReader([]byte("abc")),
+		)
+		done <- err
+	}()
+
+	select {
+	case sawDeadline := <-client.inner.sawDeadline:
+		if !sawDeadline {
+			t.Fatal("AssignVolume received a context with no deadline")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("AssignVolume was never called")
+	}
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected UploadWithRetry to fail once the assign deadline expired")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("UploadWithRetry hung well past the assign timeout")
+	}
 }
 
 // TestUploadRewindsBodyOnConnectionReset reproduces issue #9139 follow-up:

@@ -3,6 +3,7 @@ package meta_cache
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -54,6 +55,11 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 // (fewer disk syncs). Larger values reduce I/O overhead but increase memory and latency.
 const batchInsertSize = 100
 
+const (
+	emptyRebuildConfirmations = 2
+	emptyRebuildConfirmDelay  = 50 * time.Millisecond
+)
+
 func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
 	// Use singleflight to deduplicate concurrent requests for the same path
 	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
@@ -95,51 +101,76 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			}
 		}()
 
-		// Collect entries in batches for efficient LevelDB writes
-		var batch []*filer.Entry
-		var snapshotTsNs int64
-
-		fetchErr := util.Retry("ReadDirAllEntries", func() error {
-			batch = nil // Reset batch on retry, allow GC of previous entries
-			if err := mc.deleteFolderChildrenForRebuild(ctx, path); err != nil {
-				return fmt.Errorf("clear existing entries for %s: %w", path, err)
-			}
-			var err error
-			snapshotTsNs, err = filer_pb.ReadDirAllEntriesWithSnapshot(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
-				entry := filer.FromPbEntry(string(path), pbEntry)
-				if !mc.includeSystemEntries && IsHiddenSystemEntry(string(path), entry.Name()) {
-					return nil
+		// reloadFromFiler wipes the cached children and reloads them from the filer.
+		reloadFromFiler := func() (entryCount int, snapshotTsNs int64, err error) {
+			err = util.Retry("ReadDirAllEntries", func() error {
+				entryCount = 0
+				var batch []*filer.Entry // reset on retry, allow GC of previous entries
+				if err := mc.deleteFolderChildrenForRebuild(ctx, path); err != nil {
+					return fmt.Errorf("clear existing entries for %s: %w", path, err)
 				}
-
-				batch = append(batch, entry)
-
-				// Flush batch when it reaches the threshold
-				// Don't rely on isLast here - hidden entries may cause early return
-				if len(batch) >= batchInsertSize {
-					// No lock needed - LevelDB Write() is thread-safe
-					if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
-						return fmt.Errorf("batch insert for %s: %w", path, err)
+				var listErr error
+				snapshotTsNs, listErr = filer_pb.ReadDirAllEntriesWithSnapshot(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
+					entry := filer.FromPbEntry(string(path), pbEntry)
+					if !mc.includeSystemEntries && IsHiddenSystemEntry(string(path), entry.Name()) {
+						return nil
 					}
-					// Create new slice to allow GC of flushed entries
-					batch = make([]*filer.Entry, 0, batchInsertSize)
+
+					batch = append(batch, entry)
+					entryCount++
+
+					// flush by size, not isLast: hidden entries can return early
+					if len(batch) >= batchInsertSize {
+						if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
+							return fmt.Errorf("batch insert for %s: %w", path, err)
+						}
+						batch = make([]*filer.Entry, 0, batchInsertSize)
+					}
+					return nil
+				})
+				if listErr != nil {
+					return listErr
+				}
+				if len(batch) > 0 {
+					if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
+						return fmt.Errorf("batch insert remaining for %s: %w", path, err)
+					}
 				}
 				return nil
 			})
-			return err
-		})
+			return entryCount, snapshotTsNs, err
+		}
 
+		entryCount, snapshotTsNs, fetchErr := reloadFromFiler()
 		if fetchErr != nil {
 			cleanupBuild("failed")
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
-		// Flush any remaining entries in the batch
-		if len(batch) > 0 {
-			if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
-				cleanupBuild("incomplete")
-				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
+		// A transient empty listing would strand a populated directory cached over
+		// an empty store; re-read to confirm before trusting it. First re-read is
+		// immediate (a clean-EOF stream glitch clears at once), later ones space out.
+		// On cancellation the deferred cleanup aborts the build.
+		for attempt := 0; entryCount == 0 && attempt < emptyRebuildConfirmations; attempt++ {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if attempt > 0 {
+				select {
+				case <-time.After(emptyRebuildConfirmDelay):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			if entryCount, snapshotTsNs, fetchErr = reloadFromFiler(); fetchErr != nil {
+				cleanupBuild("failed")
+				return nil, fmt.Errorf("confirm empty list %s: %w", path, fetchErr)
+			}
+			if entryCount > 0 {
+				glog.Warningf("rebuild of %s saw a transient empty listing, recovered %d entries on confirmation", path, entryCount)
 			}
 		}
+
 		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs); err != nil {
 			cleanupBuild("unreplayed")
 			return nil, fmt.Errorf("complete build for %s: %w", path, err)

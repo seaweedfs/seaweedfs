@@ -1305,6 +1305,12 @@ func runMini(cmd *Command, args []string) bool {
 	// on the default 10s waiting for background subscription streams.
 	miniFilerOptions.gracefulStopTimeout = 1 * time.Second
 
+	// Mirror weed server: fall back to -volume.disk so the filer's default
+	// disk type still tags metadata-log assigns when only -volume.disk is set.
+	if *miniFilerOptions.diskType == "" && *miniOptions.v.diskType != "" {
+		miniFilerOptions.diskType = miniOptions.v.diskType
+	}
+
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready
 	fmt.Println("\n  Starting SeaweedFS Mini ...")

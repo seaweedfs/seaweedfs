@@ -527,6 +527,7 @@ message AssignVolumeResponse {
     string replication = 7;
     string error = 8;
     Location location = 9;
+    repeated Location replicas = 10;
 }
 
 message LookupVolumeRequest {
