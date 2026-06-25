@@ -399,7 +399,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 		}
 
 		msgLength := msgTotalLen - 4
-		if msgLength > 10000 { // Reasonable limit for startup messages
+		if msgLength > maxStartupMessageSize {
 			return fmt.Errorf("startup message too large: %d bytes", msgLength)
 		}
 
@@ -416,10 +416,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 			return fmt.Errorf("failed to read startup message: %v", err)
 		}
 
-		// Parse protocol version
-		if msgLength < 4 {
-			return fmt.Errorf("startup message too short for protocol version: %d bytes", msgLength)
-		}
+		// Parse protocol version (msgTotalLen >= 8 above guarantees msgLength >= 4)
 		protocolVersion := binary.BigEndian.Uint32(msg[0:4])
 
 		switch protocolVersion {
