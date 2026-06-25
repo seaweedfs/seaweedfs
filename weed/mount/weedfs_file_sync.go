@@ -16,6 +16,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// metadataFlushTimeout bounds a close()/fsync metadata flush so an overwhelmed
+// filer cannot wedge the calling process forever. It is deliberately generous:
+// a healthy CreateEntry completes in well under a second, so this only fires on
+// a genuinely stuck filer, never on a normal flush.
+const metadataFlushTimeout = 30 * time.Second
+
 /**
  * Flush method
  *
@@ -72,10 +78,14 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	hasPosixLocks := wfs.hasPosixOwner(in.NodeId, in.LockOwner)
 	allowAsync := !hasPosixLocks
 
-	// Abort the flush when the kernel interrupts the request (the calling
-	// process was killed); otherwise close() hangs in uninterruptible sleep
-	// while the metadata flush retries against an overwhelmed filer.
-	ctx, cancelFunc := fuseInterruptContext(cancel)
+	// Bound the flush with a deadline instead of tying it to the FUSE cancel
+	// channel. A FUSE interrupt is not a process kill: Go's async preemption
+	// (SIGURG) makes a close() under load emit an interrupt on nearly every
+	// flush (see go-fuse RawFileSystem docs), so cancelling the in-flight
+	// metadata CreateEntry on that interrupt turned healthy concurrent close()s
+	// into EIO. The deadline still keeps close() from hanging forever against an
+	// overwhelmed filer without failing benign flushes.
+	ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
 	defer cancelFunc()
 
 	status := wfs.doFlush(ctx, fh, in.Uid, in.Gid, allowAsync)
@@ -83,22 +93,6 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		wfs.releasePosixOwner(in.NodeId, in.LockOwner)
 	}
 	return status
-}
-
-// fuseInterruptContext returns a context cancelled when the FUSE cancel channel
-// fires (request interrupted). The caller must call the returned func.
-func fuseInterruptContext(cancel <-chan struct{}) (context.Context, context.CancelFunc) {
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	if cancel != nil {
-		go func() {
-			select {
-			case <-cancel:
-				cancelFunc()
-			case <-ctx.Done():
-			}
-		}()
-	}
-	return ctx, cancelFunc
 }
 
 /**
@@ -127,7 +121,7 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	ctx, cancelFunc := fuseInterruptContext(cancel)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
 	defer cancelFunc()
 
 	// Fsync is an explicit sync request — always flush synchronously

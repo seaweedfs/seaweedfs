@@ -81,10 +81,10 @@ func TestRetryMetadataFlushReturnsLastError(t *testing.T) {
 	}
 }
 
-// TestRetryMetadataFlushStopsOnCancel verifies that an interrupted flush (the
-// calling process was killed, so the FUSE cancel channel fired) abandons its
-// retries immediately instead of sleeping out the backoff, so the killed
-// process is not held in close() while the filer is overwhelmed.
+// TestRetryMetadataFlushStopsOnCancel verifies that once the flush context is
+// done (the flush deadline elapsed against an overwhelmed filer) the retry loop
+// abandons its retries immediately instead of sleeping out the backoff, so
+// close() is not held longer than the deadline.
 func TestRetryMetadataFlushStopsOnCancel(t *testing.T) {
 	originalSleep := metadataFlushSleep
 	t.Cleanup(func() {
@@ -97,7 +97,7 @@ func TestRetryMetadataFlushStopsOnCancel(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // process already killed before the first attempt completes
+	cancel() // flush deadline already elapsed before the first attempt completes
 
 	attempts := 0
 	flushErr := errors.New("filer overwhelmed")
