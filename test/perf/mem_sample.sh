@@ -3,17 +3,23 @@
 # Usage: mem_sample.sh <out.csv> <label=pid> [label=pid ...]
 #
 # Writes a per-second time series to <out.csv> and, on stop, the peak
-# resident set (VmHWM) per process to <out.csv>.peak. Stop with SIGTERM/SIGINT
-# while the sampled processes are still alive so VmHWM is readable.
+# resident set (VmHWM) per process to <out.csv>.peak. Stop with SIGTERM/SIGINT;
+# if a process already exited, its peak falls back to the max RSS sampled.
 # Linux only (reads /proc/<pid>/status).
 set -u
 
+if [ "$#" -lt 2 ]; then
+  echo "Usage: $0 <out.csv> <label=pid> [label=pid ...]" >&2
+  exit 1
+fi
+
 out="$1"; shift
 
-labels=(); pids=()
+labels=(); pids=(); peaks=()
 for arg in "$@"; do
   labels+=("${arg%%=*}")
   pids+=("${arg#*=}")
+  peaks+=(0)
 done
 
 record_peaks() {
@@ -21,7 +27,9 @@ record_peaks() {
   : > "${out}.peak"
   for i in "${!pids[@]}"; do
     hwm="$(awk '/^VmHWM:/{print $2}' "/proc/${pids[$i]}/status" 2>/dev/null)"
-    hwm="${hwm:-0}"
+    if [ -z "$hwm" ] || [ "$hwm" -eq 0 ]; then
+      hwm="${peaks[$i]}"
+    fi
     printf '%s\t%s\n' "${labels[$i]}" "$hwm" >> "${out}.peak"
     total=$((total + hwm))
   done
@@ -37,9 +45,13 @@ echo "$header" > "$out"
 
 while true; do
   line="$(date +%s)"; total=0
-  for p in "${pids[@]}"; do
+  for i in "${!pids[@]}"; do
+    p="${pids[$i]}"
     rss="$(awk '/^VmRSS:/{print $2}' "/proc/$p/status" 2>/dev/null)"
     rss="${rss:-0}"
+    if [ "$rss" -gt "${peaks[$i]}" ]; then
+      peaks[$i]="$rss"
+    fi
     line+=",${rss}"
     total=$((total + rss))
   done
