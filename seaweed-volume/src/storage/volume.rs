@@ -2225,10 +2225,16 @@ impl Volume {
         }
     }
 
-    /// Close the remote dat file backend (matches Go's v.DataBackend.Close(); v.DataBackend = nil).
-    /// Called after tier-download when the remote backend is being replaced by local storage.
-    pub fn close_remote_dat_backend(&mut self) {
+    /// Open the local .dat as the data backend, dropping any remote backend, so reads
+    /// are served from local disk. Mirrors Go's swapToLocalDatBackend after a tier-down.
+    pub(crate) fn open_local_dat_backend(&mut self) -> Result<(), VolumeError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(self.dat_path())?;
         self.remote_dat_file = None;
+        self.dat_file = Some(file);
+        Ok(())
     }
 
     /// Path to .vif file.
