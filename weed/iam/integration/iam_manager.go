@@ -1212,6 +1212,10 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 // IsActionAllowed it does not require an allow — the absence of a matching
 // statement is not a denial. Used to enforce AWS deny-always-wins when the allow
 // is granted elsewhere (e.g. a role trust policy for sts:AssumeRole).
+//
+// A chained session that fails validation or has been revoked yields an error so
+// callers fail closed. Raw OIDC tokens are skipped here — they are validated on
+// the JWT path, not by the STS service.
 func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, principal, action, resource string, policyNames []string, sessionToken string, requestContext map[string]interface{}) (bool, error) {
 	if !m.initialized {
 		return false, fmt.Errorf("IAM manager not initialized")
@@ -1242,12 +1246,22 @@ func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, prin
 		}
 	}
 
-	// Inline session policy of a chained STS caller restricts what the session
-	// may do, so an explicit Deny it carries must win here too.
-	if sessionToken != "" && m.stsService != nil {
+	// A chained STS caller's session restricts what it may do. Skip raw OIDC
+	// tokens (validated on the JWT path); for our own session tokens, reject a
+	// revoked session and honor an explicit Deny in the inline session policy.
+	if sessionToken != "" && m.stsService != nil && !isOIDCToken(sessionToken) {
 		sessionInfo, err := m.stsService.ValidateSessionToken(ctx, sessionToken)
 		if err != nil {
 			return false, fmt.Errorf("session validation failed: %w", err)
+		}
+		if sessionInfo != nil && sessionInfo.SessionId != "" {
+			revoked, rerr := m.IsSessionRevoked(ctx, sessionInfo.SessionId)
+			if rerr != nil {
+				return false, fmt.Errorf("revocation check failed: %w", rerr)
+			}
+			if revoked {
+				return false, fmt.Errorf("session has been revoked")
+			}
 		}
 		if sessionInfo != nil && sessionInfo.SessionPolicy != "" {
 			var sessionPolicy policy.PolicyDocument
