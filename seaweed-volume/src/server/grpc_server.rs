@@ -3471,40 +3471,87 @@ impl VolumeServer for VolumeGrpcService {
                     let modified_ts_ns = (remote_modified_secs as i64).saturating_mul(1_000_000_000);
                     if let Err(e) = set_file_mtime(&dat_path, modified_ts_ns) {
                         tracing::warn!("volume {} restore data file {} modified time: {}", vid, dat_path, e);
-                    }
-                }
-
-                if !keep_remote {
-                    // Delete remote file
-                    backend.delete_file(&storage_key).await.map_err(|e| {
-                        Status::internal(format!(
-                            "volume {} failed to delete remote file {}: {}",
-                            vid, storage_key, e
-                        ))
-                    })?;
-
-                    // Update volume info: remove remote file reference
-                    {
-                        let mut store = state.store.write().unwrap();
-                        if let Some((_, vol)) = store.find_volume_mut(vid) {
-                            if !vol.volume_info.files.is_empty() {
-                                vol.volume_info.files.remove(0);
-                            }
-                            vol.refresh_remote_write_mode();
-
-                            if let Err(e) = vol.save_volume_info() {
-                                return Err(Status::internal(format!(
-                                    "volume {} failed to save remote file info: {}",
-                                    vid, e
-                                )));
-                            }
-
-                            // Close old remote backend (matches Go: v.DataBackend.Close(); v.DataBackend = nil)
-                            // This forces the next read to discover and open the local .dat file.
-                            vol.close_remote_dat_backend();
+                    } else if let Ok(dat_file) = tokio::fs::File::open(&dat_path).await {
+                        // Persist the restored mtime past the download's content fsync;
+                        // best-effort, only TTL accuracy depends on it surviving a crash.
+                        if let Err(e) = dat_file.sync_all().await {
+                            tracing::warn!("volume {} fsync data file {} after mtime restore: {}", vid, dat_path, e);
                         }
                     }
                 }
+
+                // fsync the directory so the freshly downloaded .dat is durably linked
+                // before we rewrite the .vif and (later) delete the shared remote object.
+                if let Err(e) = crate::storage::volume::fsync_dir(&dat_path) {
+                    return Err(Status::internal(format!(
+                        "volume {} fsync dir for {}: {}",
+                        vid, dat_path, e
+                    )));
+                }
+
+                // Trim the remote reference, persist the .vif, and swap to the local
+                // .dat on BOTH paths BEFORE deleting the remote object. After this the
+                // volume serves from local disk (has_remote_file = false), so a crash
+                // before the delete only leaks the remote object; the .vif must never
+                // reference an object that has already been deleted.
+                {
+                    let mut store = state.store.write().unwrap();
+                    let (_, vol) = store.find_volume_mut(vid).ok_or_else(|| {
+                        Status::not_found(format!("volume {} disappeared during tier-down", vid))
+                    })?;
+
+                    // The volume could have been deleted/recreated or re-tiered while the
+                    // download ran. Abort rather than trim the .vif or delete a remote
+                    // object this volume no longer points at.
+                    let (current_name, current_key) = vol.remote_storage_name_key();
+                    if current_name != storage_name || current_key != storage_key {
+                        return Err(Status::failed_precondition(format!(
+                            "volume {} remote reference changed during tier-down",
+                            vid
+                        )));
+                    }
+
+                    if !vol.volume_info.files.is_empty() {
+                        vol.volume_info.files.remove(0);
+                    }
+                    vol.refresh_remote_write_mode();
+
+                    if let Err(e) = vol.save_volume_info() {
+                        return Err(Status::internal(format!(
+                            "volume {} failed to save remote file info: {}",
+                            vid, e
+                        )));
+                    }
+
+                    if let Err(e) = vol.open_local_dat_backend() {
+                        return Err(Status::internal(format!(
+                            "volume {} failed to open local dat file {}: {}",
+                            vid, dat_path, e
+                        )));
+                    }
+                }
+
+                // fsync the directory again so the rewritten .vif is durable before the
+                // remote object is removed.
+                if let Err(e) = crate::storage::volume::fsync_dir(&dat_path) {
+                    return Err(Status::internal(format!(
+                        "volume {} fsync dir for {} after saving volume info: {}",
+                        vid, dat_path, e
+                    )));
+                }
+
+                if keep_remote {
+                    // Surviving replicas still reference this object; keep it intact.
+                    return Ok(());
+                }
+
+                // Only the last replica to download deletes the shared remote object.
+                backend.delete_file(&storage_key).await.map_err(|e| {
+                    Status::internal(format!(
+                        "volume {} failed to delete remote file {}: {}",
+                        vid, storage_key, e
+                    ))
+                })?;
 
                 // Go does NOT send a final 100% progress message after download completion
                 Ok(())
@@ -4648,12 +4695,21 @@ mod tests {
         assert!(!volume_is_remote_only(dat_path.to_str().unwrap(), false));
     }
 
-    fn spawn_fake_s3_server(body: Vec<u8>) -> (String, tokio::sync::oneshot::Sender<()>) {
-        use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+    fn spawn_fake_s3_server(
+        body: Vec<u8>,
+    ) -> (
+        String,
+        tokio::sync::oneshot::Sender<()>,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
         use axum::routing::any;
         use axum::Router;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let body = Arc::new(body);
+        let delete_count = Arc::new(AtomicUsize::new(0));
+        let delete_count_handler = delete_count.clone();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -4666,9 +4722,13 @@ mod tests {
                 .build()
                 .unwrap();
             runtime.block_on(async move {
-                let app = Router::new().fallback(any(move |headers: HeaderMap| {
+                let app = Router::new().fallback(any(move |method: Method, headers: HeaderMap| {
                     let body = body.clone();
+                    let delete_count = delete_count_handler.clone();
                     async move {
+                        if method == Method::DELETE {
+                            delete_count.fetch_add(1, Ordering::SeqCst);
+                        }
                         let bytes = body.as_ref();
                         if let Some(range) = headers
                             .get(header::RANGE)
@@ -4732,15 +4792,16 @@ mod tests {
 
         // Wait for the server thread to be ready before returning.
         ready_rx.recv().unwrap();
-        (format!("http://{}", addr), shutdown_tx)
+        (format!("http://{}", addr), shutdown_tx, delete_count)
     }
 
-    fn make_remote_only_service() -> (
+    fn make_remote_only_service(backend_id: &str) -> (
         VolumeGrpcService,
         TempDir,
         tokio::sync::oneshot::Sender<()>,
         Vec<u8>,
         u64,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ) {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
@@ -4776,7 +4837,7 @@ mod tests {
         let dat_path = format!("{}/1.dat", dir);
         std::fs::remove_file(&dat_path).unwrap();
 
-        let (endpoint, shutdown_tx) = spawn_fake_s3_server(dat_bytes.clone());
+        let (endpoint, shutdown_tx, delete_count) = spawn_fake_s3_server(dat_bytes.clone());
         // Use a test-specific backend_id to avoid racing with other tests
         // that share the global registry.  Never call clear() — only
         // register/remove our own entries.
@@ -4791,16 +4852,13 @@ mod tests {
         };
         {
             let mut registry = global_s3_tier_registry().write().unwrap();
-            registry.register(
-                "s3.incr_copy_test".to_string(),
-                S3TierBackend::new(&tier_config),
-            );
+            registry.register(format!("s3.{}", backend_id), S3TierBackend::new(&tier_config));
         }
 
         let vif = crate::storage::volume::VifVolumeInfo {
             files: vec![crate::storage::volume::VifRemoteFile {
                 backend_type: "s3".to_string(),
-                backend_id: "incr_copy_test".to_string(),
+                backend_id: backend_id.to_string(),
                 key: "remote-key".to_string(),
                 offset: 0,
                 file_size: dat_bytes.len() as u64,
@@ -4859,9 +4917,13 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new(
-                crate::remote_storage::s3_tier::S3TierRegistry::new(),
-            ),
+            s3_tier_registry: std::sync::RwLock::new({
+                // The tier-down handler resolves the backend from the per-server
+                // registry, so register it here too (reads use the global one).
+                let mut reg = crate::remote_storage::s3_tier::S3TierRegistry::new();
+                reg.register(format!("s3.{}", backend_id), S3TierBackend::new(&tier_config));
+                reg
+            }),
             read_mode: crate::config::ReadMode::Local,
             allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
@@ -4890,6 +4952,7 @@ mod tests {
             shutdown_tx,
             dat_bytes,
             super_block_size,
+            delete_count,
         )
     }
 
@@ -4994,7 +5057,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_incremental_copy_streams_remote_only_volume_data() {
-        let (service, _tmp, shutdown_tx, dat_bytes, super_block_size) = make_remote_only_service();
+        let (service, _tmp, shutdown_tx, dat_bytes, super_block_size, _delete_count) =
+            make_remote_only_service("incr_copy_test");
 
         let response = service
             .volume_incremental_copy(Request::new(
@@ -5019,6 +5083,95 @@ mod tests {
             .write()
             .unwrap()
             .remove("s3.incr_copy_test");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tier_move_from_remote_swaps_to_local_and_deletes_object() {
+        let (service, tmp, shutdown_tx, dat_bytes, _super_block_size, delete_count) =
+            make_remote_only_service("tier_down_delete");
+        let dat_path = format!("{}/1.dat", tmp.path().to_str().unwrap());
+        assert!(!std::path::Path::new(&dat_path).exists());
+
+        let mut stream = service
+            .volume_tier_move_dat_from_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatFromRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    keep_remote_dat_file: false,
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        while let Some(message) = stream.next().await {
+            message.unwrap();
+        }
+
+        // The downloaded .dat is on local disk and matches the remote bytes.
+        assert!(std::path::Path::new(&dat_path).exists());
+        assert_eq!(std::fs::read(&dat_path).unwrap(), dat_bytes);
+
+        // The volume now serves from local disk with no remote reference.
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(!vol.has_remote_file);
+            assert!(vol.volume_info.files.is_empty());
+            assert!(vol.has_data_backend());
+        }
+
+        // The shared remote object was deleted exactly once.
+        assert_eq!(delete_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_down_delete");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tier_move_from_remote_keep_remote_still_swaps_to_local() {
+        let (service, tmp, shutdown_tx, dat_bytes, _super_block_size, delete_count) =
+            make_remote_only_service("tier_down_keep");
+        let dat_path = format!("{}/1.dat", tmp.path().to_str().unwrap());
+
+        let mut stream = service
+            .volume_tier_move_dat_from_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatFromRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    keep_remote_dat_file: true,
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        while let Some(message) = stream.next().await {
+            message.unwrap();
+        }
+
+        // Even when the shared remote object is kept for other replicas, this
+        // replica swaps to its freshly downloaded local .dat and drops its
+        // remote reference.
+        assert!(std::path::Path::new(&dat_path).exists());
+        assert_eq!(std::fs::read(&dat_path).unwrap(), dat_bytes);
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(!vol.has_remote_file);
+            assert!(vol.volume_info.files.is_empty());
+            assert!(vol.has_data_backend());
+        }
+
+        // The shared remote object is kept for the surviving replicas.
+        assert_eq!(delete_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_down_keep");
     }
 
     /// Build a local service whose volume has a `.dat` large enough to span
