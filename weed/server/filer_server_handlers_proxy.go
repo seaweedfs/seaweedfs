@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -99,7 +100,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 
 	// volume server may require a read JWT even though the proxy endpoint doesn't
 	if jwt := fs.maybeGetVolumeReadJwtAuthorizationToken(fileId); jwt != "" {
-		proxyReq.Header.Set("Authorization", "BEARER "+jwt)
+		proxyReq.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	proxyResponse, postErr := util_http.GetGlobalHttpClient().Do(proxyReq)

@@ -152,7 +152,7 @@ func Head(url string) (http.Header, error) {
 
 func maybeAddAuth(req *http.Request, jwt string) {
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(jwt))
+		req.Header.Set("Authorization", security.BearerPrefix+string(jwt))
 	}
 }
 

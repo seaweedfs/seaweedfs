@@ -21,6 +21,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -1830,7 +1831,7 @@ func (s3a *S3ApiServer) fetchFullChunk(ctx context.Context, fileId string) (io.R
 
 	// Set JWT for authentication
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	// Use shared HTTP client
@@ -1877,7 +1878,7 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 
 	// Set JWT for authentication
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	// Use shared HTTP client with connection pooling
@@ -2940,7 +2941,7 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(ctx context.Context, chunk *f
 	// Attach volume server JWT for authentication (uses config loaded once at startup)
 	jwt := filer.JwtForVolumeServer(chunk.GetFileIdString())
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	// Use shared HTTP client with connection pooling
