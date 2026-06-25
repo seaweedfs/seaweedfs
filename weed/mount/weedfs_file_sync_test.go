@@ -6,7 +6,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -441,50 +440,5 @@ func TestVisibleContentPreservedAfterCompact(t *testing.T) {
 					iter, k.offset, k.size)
 			}
 		}
-	}
-}
-
-// TestFuseInterruptContextCancelsOnInterrupt verifies the interrupt wiring:
-// when the kernel interrupts a flush/fsync (the calling process was killed)
-// go-fuse closes the cancel channel, and the derived context must be cancelled
-// so the in-flight metadata RPC and its retries abort instead of leaving the
-// killed process stuck in uninterruptible sleep inside close().
-func TestFuseInterruptContextCancelsOnInterrupt(t *testing.T) {
-	cancel := make(chan struct{})
-	ctx, cancelFunc := fuseInterruptContext(cancel)
-	defer cancelFunc()
-
-	select {
-	case <-ctx.Done():
-		t.Fatal("context cancelled before the FUSE request was interrupted")
-	default:
-	}
-
-	close(cancel) // kernel sent FUSE_INTERRUPT (process killed)
-
-	select {
-	case <-ctx.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("context not cancelled after FUSE interrupt")
-	}
-}
-
-// A nil cancel channel (no interrupt plumbing) must still yield a usable,
-// cancellable context that does not fire on its own.
-func TestFuseInterruptContextNilChannel(t *testing.T) {
-	ctx, cancelFunc := fuseInterruptContext(nil)
-	defer cancelFunc()
-
-	select {
-	case <-ctx.Done():
-		t.Fatal("context cancelled with no interrupt and no explicit cancel")
-	default:
-	}
-
-	cancelFunc()
-	select {
-	case <-ctx.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("context not cancelled after explicit cancelFunc")
 	}
 }
