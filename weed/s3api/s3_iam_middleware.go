@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // privateNetworks contains pre-parsed private IP ranges for efficient lookups
@@ -87,11 +88,11 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 
 	// Extract bearer token from Authorization header
 	authHeader := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
+	if !strings.HasPrefix(authHeader, security.BearerPrefix) {
 		return nil, s3err.ErrAccessDenied
 	}
 
-	sessionToken := strings.TrimPrefix(authHeader, "Bearer ")
+	sessionToken := strings.TrimPrefix(authHeader, security.BearerPrefix)
 	if sessionToken == "" {
 		return nil, s3err.ErrAccessDenied
 	}

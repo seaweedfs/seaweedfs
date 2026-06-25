@@ -1635,7 +1635,7 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 		req, err := http.NewRequest(http.MethodHead, srcUrl, nil)
 		if err == nil {
 			if jwt != "" {
-				req.Header.Set("Authorization", "BEARER "+string(jwt))
+				req.Header.Set("Authorization", security.BearerPrefix+string(jwt))
 			}
 			resp, err := util_http.GetGlobalHttpClient().Do(req)
 			if err == nil {

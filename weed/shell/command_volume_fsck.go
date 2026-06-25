@@ -671,7 +671,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 
 	if c.filerSigningKey != "" {
 		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(c.filerSigningKey), jwtFilerTokenExpirationSeconds)
-		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+		req.Header.Set("Authorization", security.BearerPrefix+string(encodedJwt))
 	}
 
 	if *c.verbose {

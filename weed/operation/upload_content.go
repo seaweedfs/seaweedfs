@@ -458,7 +458,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		req.Header.Set(k, v)
 	}
 	if option.Jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(option.Jwt))
+		req.Header.Set("Authorization", security.BearerPrefix+string(option.Jwt))
 	}
 
 	request_id.InjectToRequest(ctx, req)
