@@ -777,6 +777,13 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         };
+        // A corrupt index could place the located offset past the captured
+        // `.dat` size; nothing to send, and it would underflow `total` below.
+        if start_offset >= dat_size {
+            drop(store);
+            let stream = tokio_stream::iter(Vec::new());
+            return Ok(Response::new(Box::pin(stream)));
+        }
         // Capture a reader for the `.dat` while the volume lookup is still
         // protected by the store lock, then drop the lock and stream the delta
         // through a bounded channel fed by a blocking reader task (instead of
