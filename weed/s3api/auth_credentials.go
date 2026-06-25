@@ -2296,6 +2296,46 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	return explicitAllow
 }
 
+// isActionExplicitlyDeniedByIAM reports whether the identity's attached IAM
+// policies (or its groups') explicitly deny action on resource, evaluated by the
+// advanced IAM manager — the same engine authorizeWithIAM uses, and where both
+// static-config and runtime policies are kept in sync. Unlike VerifyActionPermission
+// it does not require an allow, so it enforces AWS deny-always-wins where the allow
+// comes from elsewhere (e.g. a role trust policy). Fails closed on evaluation error.
+func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Request, identity *Identity, principal, action, resource string) bool {
+	if identity == nil || iam.iamIntegration == nil {
+		return false
+	}
+	provider, ok := iam.iamIntegration.(IAMManagerProvider)
+	if !ok {
+		return false
+	}
+
+	policyNames := make([]string, len(identity.PolicyNames))
+	copy(policyNames, identity.PolicyNames)
+	iam.m.RLock()
+	for _, gn := range iam.userGroups[identity.Name] {
+		if g, exists := iam.groups[gn]; exists && !g.Disabled {
+			policyNames = append(policyNames, g.PolicyNames...)
+		}
+	}
+	iam.m.RUnlock()
+	if len(policyNames) == 0 {
+		return false
+	}
+
+	manager := provider.GetIAMManager()
+	if manager == nil {
+		return false
+	}
+	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, extractRequestContext(r))
+	if err != nil {
+		glog.Warningf("AssumeRole explicit-deny check failed for %s, denying: %v", identity.Name, err)
+		return true
+	}
+	return denied
+}
+
 // VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
 // It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
 func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {

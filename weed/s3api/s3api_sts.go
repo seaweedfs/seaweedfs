@@ -388,12 +388,20 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
 
-	// A named role is authorized by its trust policy alone — it declares which
-	// principals may assume it, so no separate identity-side sts:AssumeRole grant
-	// is required. Without a RoleArn the caller assumes a session for itself.
+	// A named role is authorized by its trust policy, which declares which
+	// principals may assume it, so no separate identity-side sts:AssumeRole allow
+	// is required. An explicit identity-side deny still wins (deny-always-wins).
+	// Without a RoleArn the caller assumes a session for itself.
 	if roleArn != "" {
-		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, h.callerPrincipalArn(identity)); err != nil {
+		callerArn := h.callerPrincipalArn(identity)
+		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, callerArn); err != nil {
 			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
+			return
+		}
+		if h.iam.isActionExplicitlyDeniedByIAM(r, identity, callerArn, sts.ActionAssumeRole, roleArn) {
+			glog.V(2).Infof("AssumeRole: identity policy explicitly denies %s assuming %s", identity.Name, roleArn)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
 			return
