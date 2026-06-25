@@ -23,6 +23,7 @@ import (
 func TestAssumeRole_NonAdminCallerAuthorizedByTrustPolicy(t *testing.T) {
 	ctx := context.Background()
 	manager := newTestSTSIntegrationManager(t)
+	manager.SetSessionRevocationStore(integration.NewMemorySessionRevocationStore())
 
 	require.NoError(t, manager.CreatePolicy(ctx, "", "WarehouseAccess", &policy.PolicyDocument{
 		Version: "2012-10-17",
@@ -73,6 +74,26 @@ func TestAssumeRole_NonAdminCallerAuthorizedByTrustPolicy(t *testing.T) {
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		require.NoError(t, signRequestV4(req, ak, sk))
+		rec := httptest.NewRecorder()
+		stsHandlers.handleAssumeRole(rec, req)
+		return rec
+	}
+
+	// assumeWithSessionCreds chains: it signs an AssumeRole request with temporary
+	// session credentials and forwards the session token (role chaining).
+	assumeWithSessionCreds := func(t *testing.T, creds STSCredentials, roleName string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := url.Values{
+			"Action":          {"AssumeRole"},
+			"Version":         {"2011-06-15"},
+			"RoleArn":         {"arn:aws:iam::" + defaultAccountID + ":role/" + roleName},
+			"RoleSessionName": {"chained"},
+		}.Encode()
+		req, err := newTestRequest(http.MethodPost, "http://sts.seaweedfs.test/", int64(len(body)), strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Amz-Security-Token", creds.SessionToken)
+		require.NoError(t, signRequestV4(req, creds.AccessKeyId, creds.SecretAccessKey))
 		rec := httptest.NewRecorder()
 		stsHandlers.handleAssumeRole(rec, req)
 		return rec
@@ -150,6 +171,68 @@ func TestAssumeRole_NonAdminCallerAuthorizedByTrustPolicy(t *testing.T) {
 		// policy that explicitly denies sts:AssumeRole; the deny must win.
 		rec := assume(t, denyAccessKey, denySecretKey, "DenyTestWarehouse")
 		assert.Equal(t, http.StatusForbidden, rec.Code, "explicit identity-side deny must block AssumeRole even when the trust policy admits the caller")
+	})
+
+	t.Run("session policy explicit deny blocks role chaining", func(t *testing.T) {
+		require.NoError(t, manager.CreateRole(ctx, "", "ChainWarehouse", &integration.RoleDefinition{
+			RoleName: "ChainWarehouse",
+			TrustPolicy: &policy.PolicyDocument{
+				Version:   "2012-10-17",
+				Statement: []policy.Statement{{Effect: "Allow", Principal: "*", Action: []string{"sts:AssumeRole"}}},
+			},
+			AttachedPolicies: []string{"WarehouseAccess"},
+		}))
+		chainArn := "arn:aws:iam::" + defaultAccountID + ":role/ChainWarehouse"
+
+		// First hop succeeds, with a session policy that denies sts:AssumeRole.
+		denySession := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"sts:AssumeRole","Resource":"*"}]}`
+		body := url.Values{
+			"Action":          {"AssumeRole"},
+			"Version":         {"2011-06-15"},
+			"RoleArn":         {chainArn},
+			"RoleSessionName": {"hop1"},
+			"Policy":          {denySession},
+		}.Encode()
+		req, err := newTestRequest(http.MethodPost, "http://sts.seaweedfs.test/", int64(len(body)), strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		require.NoError(t, signRequestV4(req, accessKey, secretKey))
+		rec := httptest.NewRecorder()
+		stsHandlers.handleAssumeRole(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "first hop should succeed: %s", rec.Body.String())
+		var hop1 AssumeRoleResponse
+		require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &hop1))
+		require.NotEmpty(t, hop1.Result.Credentials.SessionToken)
+
+		// Second hop reuses the session credentials to chain-assume; the session
+		// policy's explicit deny must block it even though the trust policy admits.
+		rec2 := assumeWithSessionCreds(t, hop1.Result.Credentials, "ChainWarehouse")
+		assert.Equal(t, http.StatusForbidden, rec2.Code, "session policy explicit deny must block role chaining: %s", rec2.Body.String())
+	})
+
+	t.Run("revoked chained session cannot assume", func(t *testing.T) {
+		require.NoError(t, manager.CreateRole(ctx, "", "RevokeWarehouse", &integration.RoleDefinition{
+			RoleName: "RevokeWarehouse",
+			TrustPolicy: &policy.PolicyDocument{
+				Version:   "2012-10-17",
+				Statement: []policy.Statement{{Effect: "Allow", Principal: "*", Action: []string{"sts:AssumeRole"}}},
+			},
+			AttachedPolicies: []string{"WarehouseAccess"},
+		}))
+
+		rec := assume(t, accessKey, secretKey, "RevokeWarehouse")
+		require.Equal(t, http.StatusOK, rec.Code, "first hop should succeed: %s", rec.Body.String())
+		var hop1 AssumeRoleResponse
+		require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &hop1))
+
+		// Revoke the session, then chaining with it must be blocked.
+		session, err := manager.GetSTSService().ValidateSessionToken(ctx, hop1.Result.Credentials.SessionToken)
+		require.NoError(t, err)
+		require.NotEmpty(t, session.SessionId)
+		require.NoError(t, manager.RevokeSession(ctx, session.SessionId, session.ExpiresAt, "test"))
+
+		rec2 := assumeWithSessionCreds(t, hop1.Result.Credentials, "RevokeWarehouse")
+		assert.Equal(t, http.StatusForbidden, rec2.Code, "a revoked session must not be able to chain-assume")
 	})
 }
 

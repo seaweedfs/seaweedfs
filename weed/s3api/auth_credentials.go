@@ -2329,7 +2329,18 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 		}
 	}
 	iam.m.RUnlock()
-	if len(policyNames) == 0 {
+
+	// A chained caller authenticates with an STS session token whose inline
+	// session policy can also carry an explicit deny.
+	sessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
+	if sessionToken == "" {
+		sessionToken = r.Header.Get("X-Amz-Security-Token")
+		if sessionToken == "" {
+			sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
+		}
+	}
+
+	if len(policyNames) == 0 && sessionToken == "" {
 		return false
 	}
 
@@ -2337,7 +2348,7 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 	if manager == nil {
 		return false
 	}
-	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, extractRequestContext(r))
+	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, sessionToken, extractRequestContext(r))
 	if err != nil {
 		glog.Warningf("AssumeRole explicit-deny check failed for %s, denying: %v", identity.Name, err)
 		return true

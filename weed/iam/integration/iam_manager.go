@@ -1206,17 +1206,19 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	return true, nil
 }
 
-// IsPrincipalActionExplicitlyDenied reports whether any of the named policies
-// contains a statement that explicitly denies the action on the resource. Unlike
+// IsPrincipalActionExplicitlyDenied reports whether the action on the resource is
+// explicitly denied for the principal by either the named policies or, for a
+// chained STS caller, the inline session policy carried by sessionToken. Unlike
 // IsActionAllowed it does not require an allow — the absence of a matching
 // statement is not a denial. Used to enforce AWS deny-always-wins when the allow
 // is granted elsewhere (e.g. a role trust policy for sts:AssumeRole).
-func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, principal, action, resource string, policyNames []string, requestContext map[string]interface{}) (bool, error) {
+//
+// A chained session that fails validation or has been revoked yields an error so
+// callers fail closed. Raw OIDC tokens are skipped here — they are validated on
+// the JWT path, not by the STS service.
+func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, principal, action, resource string, policyNames []string, sessionToken string, requestContext map[string]interface{}) (bool, error) {
 	if !m.initialized {
 		return false, fmt.Errorf("IAM manager not initialized")
-	}
-	if len(policyNames) == 0 {
-		return false, nil
 	}
 
 	if requestContext == nil {
@@ -1232,16 +1234,60 @@ func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, prin
 		RequestContext: requestContext,
 	}
 
-	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policyNames)
-	if err != nil {
-		return false, fmt.Errorf("policy evaluation failed: %w", err)
-	}
-	for _, stmt := range result.MatchingStatements {
-		if stmt.Effect == policy.EffectDeny {
+	// Base policies: the caller's attached identity policies, or for a chained
+	// caller the assumed role's attached policies.
+	if len(policyNames) > 0 {
+		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policyNames)
+		if err != nil {
+			return false, fmt.Errorf("policy evaluation failed: %w", err)
+		}
+		if hasExplicitDeny(result.MatchingStatements) {
 			return true, nil
 		}
 	}
+
+	// A chained STS caller's session restricts what it may do. Skip raw OIDC
+	// tokens (validated on the JWT path); for our own session tokens, reject a
+	// revoked session and honor an explicit Deny in the inline session policy.
+	if sessionToken != "" && m.stsService != nil && !isOIDCToken(sessionToken) {
+		sessionInfo, err := m.stsService.ValidateSessionToken(ctx, sessionToken)
+		if err != nil {
+			return false, fmt.Errorf("session validation failed: %w", err)
+		}
+		if sessionInfo != nil && sessionInfo.SessionId != "" {
+			revoked, rerr := m.IsSessionRevoked(ctx, sessionInfo.SessionId)
+			if rerr != nil {
+				return false, fmt.Errorf("revocation check failed: %w", rerr)
+			}
+			if revoked {
+				return false, fmt.Errorf("session has been revoked")
+			}
+		}
+		if sessionInfo != nil && sessionInfo.SessionPolicy != "" {
+			var sessionPolicy policy.PolicyDocument
+			if err := json.Unmarshal([]byte(sessionInfo.SessionPolicy), &sessionPolicy); err != nil {
+				return false, fmt.Errorf("invalid session policy JSON: %w", err)
+			}
+			result, err := m.policyEngine.EvaluatePolicyDocument(ctx, evalCtx, "session-policy", &sessionPolicy, policy.EffectDeny)
+			if err != nil {
+				return false, fmt.Errorf("session policy evaluation failed: %w", err)
+			}
+			if hasExplicitDeny(result.MatchingStatements) {
+				return true, nil
+			}
+		}
+	}
 	return false, nil
+}
+
+// hasExplicitDeny reports whether any matched statement is a Deny.
+func hasExplicitDeny(matches []policy.StatementMatch) bool {
+	for _, stmt := range matches {
+		if stmt.Effect == policy.EffectDeny {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
