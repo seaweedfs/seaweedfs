@@ -55,6 +55,29 @@ func TestSTSIntegration(t *testing.T) {
 	runPythonSTSClient(t, env)
 }
 
+// TestSTSAssumeRoleAuthorization covers the AssumeRole authorization model:
+// a non-admin caller may assume a role its trust policy admits, an explicit
+// identity-side deny blocks it, and a session policy's explicit deny blocks
+// role chaining.
+func TestSTSAssumeRoleAuthorization(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env := NewTestEnvironment(t)
+	defer env.Cleanup(t)
+
+	if !env.dockerAvailable {
+		t.Skip("Docker not available, skipping STS integration test")
+	}
+
+	fmt.Printf(">>> Starting SeaweedFS...\n")
+	env.StartSeaweedFS(t)
+	fmt.Printf(">>> SeaweedFS started.\n")
+
+	runPythonAuthzClient(t, env)
+}
+
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	t.Helper()
 
@@ -133,6 +156,21 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
         { "accessKey": "%s", "secretKey": "%s" }
       ],
       "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "nonadmin",
+      "credentials": [
+        { "accessKey": "nonadmin_key", "secretKey": "nonadmin_secret" }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "denied",
+      "credentials": [
+        { "accessKey": "denied_key", "secretKey": "denied_secret" }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging"],
+      "policyNames": ["DenyAssumeRole"]
     }
   ],
   "sts": {
@@ -154,6 +192,19 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
           {
             "Effect": "Allow",
             "Action": ["s3:*"],
+            "Resource": ["*"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "DenyAssumeRole",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Deny",
+            "Action": ["sts:AssumeRole"],
             "Resource": ["*"]
           }
         ]
@@ -407,6 +458,130 @@ except Exception as e:
 		t.Fatalf("Python STS client failed: %v\nOutput:\n%s", err, string(output))
 	}
 	t.Logf("Python STS client output:\n%s", string(output))
+}
+
+func runPythonAuthzClient(t *testing.T, env *TestEnvironment) {
+	t.Helper()
+
+	scriptContent := fmt.Sprintf(`
+import boto3
+import botocore.config
+from botocore.exceptions import ClientError
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+print("Starting STS AssumeRole authorization test...")
+
+primary_endpoint = "http://host.docker.internal:%d"
+fallback_endpoint = "http://%s:%d"
+region = "us-east-1"
+role_arn = "arn:aws:iam::role/TestRole"
+
+def wait_for_endpoint(url, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2):
+                return True
+        except urllib.error.HTTPError:
+            return True
+        except Exception:
+            time.sleep(1)
+    return False
+
+def select_endpoint(urls):
+    for url in urls:
+        if wait_for_endpoint(url):
+            return url
+    raise Exception("No reachable S3 endpoint from container")
+
+def fail(msg):
+    print("FAILED: " + msg)
+    sys.exit(1)
+
+try:
+    endpoint_url = select_endpoint([primary_endpoint, fallback_endpoint])
+    print("Using endpoint " + endpoint_url)
+    config = botocore.config.Config(retries={'max_attempts': 0}, s3={'addressing_style': 'path'})
+
+    def sts_client(ak, sk, token=None):
+        return boto3.client('sts', endpoint_url=endpoint_url, aws_access_key_id=ak,
+                            aws_secret_access_key=sk, aws_session_token=token,
+                            region_name=region, config=config)
+
+    # 1) Non-admin caller may assume a role its trust policy admits, without the
+    #    Admin action or an identity-side sts:AssumeRole grant.
+    print("1) non-admin AssumeRole (expect success)")
+    resp = sts_client("nonadmin_key", "nonadmin_secret").assume_role(
+        RoleArn=role_arn, RoleSessionName="nonadmin")
+    if not resp.get("Credentials", {}).get("AccessKeyId"):
+        fail("non-admin AssumeRole did not return credentials")
+    print("   ok")
+
+    # 2) A caller whose attached policy explicitly denies sts:AssumeRole is blocked,
+    #    even though the trust policy admits it.
+    print("2) explicit identity deny (expect AccessDenied)")
+    try:
+        sts_client("denied_key", "denied_secret").assume_role(
+            RoleArn=role_arn, RoleSessionName="denied")
+        fail("explicit-deny caller unexpectedly assumed the role")
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code != "AccessDenied":
+            fail("expected AccessDenied for identity deny, got " + code)
+    print("   ok")
+
+    # 3) A session whose inline policy denies sts:AssumeRole cannot chain into
+    #    another role, even though the trust policy admits the session.
+    print("3) session-policy deny blocks role chaining (expect AccessDenied)")
+    deny_session = json.dumps({"Version": "2012-10-17", "Statement": [
+        {"Effect": "Deny", "Action": "sts:AssumeRole", "Resource": "*"}]})
+    hop1 = sts_client("nonadmin_key", "nonadmin_secret").assume_role(
+        RoleArn=role_arn, RoleSessionName="hop1", Policy=deny_session)["Credentials"]
+    chained = sts_client(hop1["AccessKeyId"], hop1["SecretAccessKey"], hop1["SessionToken"])
+    try:
+        chained.assume_role(RoleArn=role_arn, RoleSessionName="hop2")
+        fail("chained session unexpectedly assumed the role despite session-policy deny")
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code != "AccessDenied":
+            fail("expected AccessDenied for session-policy deny, got " + code)
+    print("   ok")
+
+    print("SUCCESS: AssumeRole authorization scenarios verified")
+    sys.exit(0)
+except Exception as e:
+    print("FAILED: " + str(e))
+    if hasattr(e, "response"):
+        print("Response: " + str(e.response))
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+`, env.s3Port, env.bindIP, env.s3Port)
+
+	scriptPath := filepath.Join(env.dataDir, "sts_authz_test.py")
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
+		t.Fatalf("Failed to write python script: %v", err)
+	}
+
+	containerName := "seaweed-sts-authz-" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	cmd := exec.Command("docker", "run", "--rm",
+		"--name", containerName,
+		"--add-host", "host.docker.internal:host-gateway",
+		"-v", fmt.Sprintf("%s:/work", env.dataDir),
+		"python:3",
+		"/bin/bash", "-c", "pip install boto3 && python /work/sts_authz_test.py",
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Python STS authz client failed: %v\nOutput:\n%s", err, string(output))
+	}
+	t.Logf("Python STS authz client output:\n%s", string(output))
 }
 
 // Helpers copied from trino_catalog_test.go
