@@ -114,22 +114,13 @@ jobs:
             weed-volume-large-disk-${{ matrix.arch }}
             weed-volume-normal-${{ matrix.arch }}
 
-  # ── Build per-platform images on native runners ─────────────────────
-  # Each (variant, platform) builds on a single runner whose CPU matches
-  # the target arch, then pushes by digest (no tag). The merge job below
-  # assembles the per-platform digests into one multi-arch tag. Splitting
-  # by platform parallelises the Go cross-compiles across machines instead
-  # of contending for one 2-vCPU runner, and lets amd64/arm64 build native.
-  #
-  # cache-to is mode=min (not max): BRANCH=github.sha cache-busts the heavy
-  # go-build layer on every release, so caching intermediate stages just
-  # paid minutes to write a cache that the next release's SHA can't hit.
+  # One job per (variant, platform) on a native runner, pushed by digest;
+  # the merge job stitches the digests into one multi-arch tag.
   build:
     needs: [build-rust-binaries]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      max-parallel: 8
       matrix:
         include:
           # Normal volume - multi-arch
@@ -245,12 +236,13 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-          # Single manifest per platform so imagetools create builds a flat index.
+          # Flat single-platform manifest so imagetools create assembles cleanly.
           provenance: false
-          # Push by digest (no tag); the merge job assembles the multi-arch tag.
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=min,scope=${{ matrix.variant }}-${{ matrix.arch }}
+          # max only for rocksdb: its RocksDB compile is sha-independent and worth
+          # keeping; go-build layers are sha-busted every release, so min elsewhere.
+          cache-to: type=gha,mode=${{ matrix.variant == 'rocksdb' && 'max' || 'min' }},scope=${{ matrix.variant }}-${{ matrix.arch }}
           build-args: |
             ${{ matrix.build_args }}
             BUILDKIT_INLINE_CACHE=1
@@ -273,9 +265,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # ── Assemble per-variant multi-arch tag, then mirror to Docker Hub ───
-  # imagetools create stitches the per-platform digests into one tag — no
-  # rebuild. crane copy then mirrors the whole index GHCR -> Docker Hub.
+  # Assemble each variant's per-platform digests into one tag, then mirror to Docker Hub.
   merge:
     needs: [build]
     runs-on: ubuntu-latest
