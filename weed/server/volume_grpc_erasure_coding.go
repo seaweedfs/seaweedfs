@@ -717,6 +717,14 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 
 	glog.V(0).Infof("VolumeEcShardsMount: %v", req)
 
+	// Fetch a missing .ecx from a peer first so on-disk shards that never had a
+	// local index can be mounted (issue #10104). Driven on demand by ec.rebuild.
+	// volume_id 0 recovers every orphan on this server, including volumes the
+	// master never learned about.
+	if req.RecoverMissingIndex {
+		vs.recoverMissingEcIndexes(req.VolumeId)
+	}
+
 	for _, shardId := range req.ShardIds {
 		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.SourceDiskType)
 

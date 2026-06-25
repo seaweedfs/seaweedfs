@@ -2840,6 +2840,14 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        // Fetch a missing .ecx from a peer first so on-disk shards that never had
+        // a local index can be mounted (issue #10104). Driven on demand by
+        // ec.rebuild. volume_id 0 recovers every orphan on this server, including
+        // volumes the master never learned about.
+        if req.recover_missing_index {
+            crate::server::store_ec::recover_missing_ec_indexes(&self.state, req.volume_id).await;
+        }
+
         // Mount one shard at a time, returning error on first failure.
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.MountEcShards(...) }
         let mut store = self.state.store.write().unwrap();
