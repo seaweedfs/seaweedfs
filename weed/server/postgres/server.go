@@ -572,7 +572,7 @@ func (s *PostgreSQLServer) handlePasswordAuth(session *PostgreSQLSession) error 
 		return fmt.Errorf("password message too short: %d bytes", rawLength)
 	}
 	msgLength := rawLength - 4
-	if msgLength > maxMessageSize {
+	if msgLength > maxAuthMessageSize {
 		return fmt.Errorf("password message too large: %d bytes", msgLength)
 	}
 	password := make([]byte, msgLength)
@@ -638,7 +638,7 @@ func (s *PostgreSQLServer) handleMD5Auth(session *PostgreSQLSession) error {
 		return fmt.Errorf("MD5 response too short: %d bytes", rawLength)
 	}
 	msgLength := rawLength - 4
-	if msgLength > maxMessageSize {
+	if msgLength > maxAuthMessageSize {
 		return fmt.Errorf("MD5 response too large: %d bytes", msgLength)
 	}
 	response := make([]byte, msgLength)

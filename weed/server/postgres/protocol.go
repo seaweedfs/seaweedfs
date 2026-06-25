@@ -25,6 +25,11 @@ const (
 	// PostgreSQL protocol allows up to 1 GiB per message in theory, but real
 	// queries are rarely larger than a few megabytes.
 	maxMessageSize = 100 * 1024 * 1024 // 100 MiB
+
+	// maxAuthMessageSize caps password/MD5 payloads, which arrive before the
+	// client is authenticated. Credentials are tiny, so the pre-auth allocation
+	// stays far below maxMessageSize.
+	maxAuthMessageSize = 10 * 1024 // 10 KiB
 )
 
 // mapErrorToPostgreSQLCode maps SeaweedFS SQL engine errors to appropriate PostgreSQL error codes
@@ -132,10 +137,7 @@ func (s *PostgreSQLServer) handleMessage(session *PostgreSQLSession) error {
 	// Process message based on type
 	switch msgType[0] {
 	case PG_MSG_QUERY:
-		query := ""
-		if len(msgBody) > 0 {
-			query = string(msgBody[:len(msgBody)-1]) // Remove null terminator
-		}
+		query := strings.TrimSuffix(string(msgBody), "\x00") // Remove null terminator if present
 		return s.handleSimpleQuery(session, query)
 	case PG_MSG_PARSE:
 		return s.handleParse(session, msgBody)
