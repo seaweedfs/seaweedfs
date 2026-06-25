@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"context"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -143,7 +145,9 @@ func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
 	// the clean case, so the duplicate call after a normal Flush is cheap.
 	if fh := wfs.GetHandle(FileHandleId(in.Fh)); fh != nil {
 		allowAsync := in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK == 0
-		if status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync); status != fuse.OK {
+		// Release is the last chance to persist the handle, so it must finish
+		// even if the triggering syscall was interrupted: non-cancellable context.
+		if status := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, allowAsync); status != fuse.OK {
 			glog.Warningf("release fh %d inode %d: fallback flush failed: %v", in.Fh, in.NodeId, status)
 		}
 	}

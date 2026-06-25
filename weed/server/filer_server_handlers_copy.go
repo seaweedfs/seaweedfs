@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -669,7 +670,7 @@ func (fs *FilerServer) uploadData(ctx context.Context, reader io.Reader, urlLoca
 	}
 
 	if auth != "" {
-		req.Header.Set("Authorization", "Bearer "+auth)
+		req.Header.Set("Authorization", security.BearerPrefix+auth)
 	}
 
 	resp, err := client.Do(req)
@@ -795,7 +796,7 @@ func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, au
 
 	// Set authorization header if provided
 	if auth != "" {
-		dstReq.Header.Set("Authorization", "Bearer "+auth)
+		dstReq.Header.Set("Authorization", security.BearerPrefix+auth)
 	}
 	dstReq.Header.Set("Content-Type", "application/octet-stream")
 

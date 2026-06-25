@@ -131,7 +131,10 @@ func runBenchmark(cmd *Command, args []string) bool {
 			glog.Fatal(err)
 		}
 		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
+		defer func() {
+			pprof.StopCPUProfile()
+			f.Close()
+		}()
 	}
 
 	// Determine what operations to perform

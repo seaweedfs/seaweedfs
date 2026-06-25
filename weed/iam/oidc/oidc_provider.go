@@ -24,6 +24,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // OIDCProvider implements OpenID Connect authentication
@@ -595,7 +596,7 @@ func (p *OIDCProvider) getUserInfoWithToken(ctx context.Context, userID, accessT
 
 	// Set authorization header if access token is provided
 	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Authorization", security.BearerPrefix+accessToken)
 	}
 	req.Header.Set("Accept", "application/json")
 

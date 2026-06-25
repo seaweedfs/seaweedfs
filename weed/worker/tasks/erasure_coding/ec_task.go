@@ -126,7 +126,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	}
 	taskWorkDir := filepath.Join(baseWorkDir, fmt.Sprintf("vol_%d_%d", t.volumeID, time.Now().Unix()))
 	if err := os.MkdirAll(taskWorkDir, 0755); err != nil {
-		return fmt.Errorf("failed to create task working directory %s: %v", taskWorkDir, err)
+		return fmt.Errorf("failed to create task working directory %s: %w", taskWorkDir, err)
 	}
 	glog.V(1).Infof("Created working directory: %s", taskWorkDir)
 
@@ -167,11 +167,11 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	if err := t.markReplicasReadonly(ctx); err != nil {
 		// Marking can fail partway; restore the replicas already marked readonly.
 		t.rollbackReadonly(ctx)
-		return fmt.Errorf("failed to mark volume readonly: %v", err)
+		return fmt.Errorf("failed to mark volume readonly: %w", err)
 	}
 	if err := t.syncAndSelectSourceReplica(); err != nil {
 		t.rollbackReadonly(ctx)
-		return fmt.Errorf("failed to sync and select source replica: %v", err)
+		return fmt.Errorf("failed to sync and select source replica: %w", err)
 	}
 
 	// Step 2: Copy volume files to worker
@@ -185,7 +185,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	localFiles, err := t.copyVolumeFilesToWorker(ctx, taskWorkDir)
 	if err != nil {
 		t.rollbackReadonly(ctx)
-		return fmt.Errorf("failed to copy volume files: %v", err)
+		return fmt.Errorf("failed to copy volume files: %w", err)
 	}
 
 	// Step 3: Generate EC shards locally
@@ -194,7 +194,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	shardFiles, err := t.generateEcShardsLocally(localFiles, taskWorkDir)
 	if err != nil {
 		t.rollbackReadonly(ctx)
-		return fmt.Errorf("failed to generate EC shards: %v", err)
+		return fmt.Errorf("failed to generate EC shards: %w", err)
 	}
 
 	// Clear partial EC shards left over on destinations from a prior failed
@@ -204,7 +204,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.GetLogger().Info("Clearing stale EC shards on destinations")
 	if err := t.cleanupStaleEcShards(ctx); err != nil {
 		t.rollbackReadonly(ctx)
-		return fmt.Errorf("failed to clear stale EC shards on destinations: %v", err)
+		return fmt.Errorf("failed to clear stale EC shards on destinations: %w", err)
 	}
 
 	// Delete 0-byte stub replicas left by an interrupted encode before the new
@@ -223,14 +223,14 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
 	t.GetLogger().Info("Distributing EC shards to destinations")
 	if err := t.distributeEcShards(shardFiles); err != nil {
-		return fmt.Errorf("failed to distribute EC shards: %v", err)
+		return fmt.Errorf("failed to distribute EC shards: %w", err)
 	}
 
 	// Step 5: Mount EC shards
 	t.ReportProgressWithStage(80.0, "Mounting EC shards")
 	t.GetLogger().Info("Mounting EC shards")
 	if err := t.mountEcShards(); err != nil {
-		return fmt.Errorf("failed to mount EC shards: %v", err)
+		return fmt.Errorf("failed to mount EC shards: %w", err)
 	}
 
 	// Without this gate, a partial distribute/mount lets the next step
@@ -245,7 +245,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.ReportProgressWithStage(90.0, "Deleting original volume")
 	t.GetLogger().Info("Deleting original volume")
 	if err := t.deleteOriginalVolume(ctx); err != nil {
-		return fmt.Errorf("failed to delete original volume: %v", err)
+		return fmt.Errorf("failed to delete original volume: %w", err)
 	}
 
 	t.ReportProgressWithStage(100.0, "EC processing complete")
@@ -415,7 +415,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 
 	fileStatus, err := t.readSourceVolumeFileStatus(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read source volume file status: %v", err)
+		return nil, fmt.Errorf("failed to read source volume file status: %w", err)
 	}
 
 	t.GetLogger().WithFields(map[string]interface{}{
@@ -431,7 +431,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 	// the .dat copy will include the new data but .idx won't reference it.
 	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
 	if err := t.copyFileFromSource(ctx, ".idx", idxFile, fileStatus.GetCompactionRevision(), fileStatus.GetIdxFileSize()); err != nil {
-		return nil, fmt.Errorf("failed to copy .idx file: %v", err)
+		return nil, fmt.Errorf("failed to copy .idx file: %w", err)
 	}
 	localFiles["idx"] = idxFile
 
@@ -447,7 +447,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 	// Copy .dat file SECOND — guaranteed to have at least as much data as .idx references.
 	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
 	if err := t.copyFileFromSource(ctx, ".dat", datFile, fileStatus.GetCompactionRevision(), fileStatus.GetDatFileSize()); err != nil {
-		return nil, fmt.Errorf("failed to copy .dat file: %v", err)
+		return nil, fmt.Errorf("failed to copy .dat file: %w", err)
 	}
 	localFiles["dat"] = datFile
 
@@ -497,13 +497,13 @@ func (t *ErasureCodingTask) copyFileFromSource(ctx context.Context, ext, localPa
 				StopOffset:         stopOffset,
 			})
 			if err != nil {
-				return fmt.Errorf("failed to initiate file copy: %v", err)
+				return fmt.Errorf("failed to initiate file copy: %w", err)
 			}
 
 			// Create local file
 			localFile, err := os.Create(localPath)
 			if err != nil {
-				return fmt.Errorf("failed to create local file %s: %v", localPath, err)
+				return fmt.Errorf("failed to create local file %s: %w", localPath, err)
 			}
 			defer localFile.Close()
 
@@ -515,13 +515,13 @@ func (t *ErasureCodingTask) copyFileFromSource(ctx context.Context, ext, localPa
 					break
 				}
 				if err != nil {
-					return fmt.Errorf("failed to receive file data: %v", err)
+					return fmt.Errorf("failed to receive file data: %w", err)
 				}
 
 				if len(resp.FileContent) > 0 {
 					written, writeErr := localFile.Write(resp.FileContent)
 					if writeErr != nil {
-						return fmt.Errorf("failed to write to local file: %v", writeErr)
+						return fmt.Errorf("failed to write to local file: %w", writeErr)
 					}
 					totalBytes += int64(written)
 				}
@@ -554,18 +554,18 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	// Since they were copied as separate network transfers, the .idx may have
 	// entries pointing past the end of .dat if a write landed between the copies.
 	if err := verifyDatIdxConsistency(datFile, idxFile); err != nil {
-		return nil, fmt.Errorf("dat/idx consistency check failed: %v", err)
+		return nil, fmt.Errorf("dat/idx consistency check failed: %w", err)
 	}
 
 	// Generate .ecx file from .idx BEFORE EC shards to prevent inconsistency.
 	if err := erasure_coding.WriteSortedFileFromIdx(baseName, ".ecx"); err != nil {
-		return nil, fmt.Errorf("failed to generate .ecx file: %v", err)
+		return nil, fmt.Errorf("failed to generate .ecx file: %w", err)
 	}
 
 	// Generate EC shard files (.ec00 ~ .ec13)
 	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, erasure_coding.BackgroundECContext())
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate EC shard files: %v", err)
+		return nil, fmt.Errorf("failed to generate EC shard files: %w", err)
 	}
 	// Persist the bitrot checksum sidecar (generation 0) alongside the shards so
 	// it travels with them during distribution. Best-effort: a failed sidecar
@@ -1029,26 +1029,26 @@ func unmountAndDeleteEcShards(
 func verifyDatIdxConsistency(datFile, idxFile string) error {
 	datInfo, err := os.Stat(datFile)
 	if err != nil {
-		return fmt.Errorf("stat dat file: %v", err)
+		return fmt.Errorf("stat dat file: %w", err)
 	}
 	datSize := datInfo.Size()
 
 	// Read volume version from superblock to compute actual needle sizes
 	df, err := os.Open(datFile)
 	if err != nil {
-		return fmt.Errorf("open dat file: %v", err)
+		return fmt.Errorf("open dat file: %w", err)
 	}
 	defer df.Close()
 
 	versionBytes := make([]byte, 1)
 	if _, err := df.ReadAt(versionBytes, 0); err != nil {
-		return fmt.Errorf("read version byte: %v", err)
+		return fmt.Errorf("read version byte: %w", err)
 	}
 	version := needle.Version(versionBytes[0])
 
 	idxF, err := os.Open(idxFile)
 	if err != nil {
-		return fmt.Errorf("open idx file: %v", err)
+		return fmt.Errorf("open idx file: %w", err)
 	}
 	defer idxF.Close()
 
@@ -1068,7 +1068,7 @@ func verifyDatIdxConsistency(datFile, idxFile string) error {
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("walk idx file: %v", err)
+		return fmt.Errorf("walk idx file: %w", err)
 	}
 
 	if maxEnd > datSize {

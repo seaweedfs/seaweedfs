@@ -13,6 +13,11 @@ import (
 type EncodedJwt string
 type SigningKey []byte
 
+// BearerPrefix is the RFC 6750 Authorization header scheme prefix for bearer
+// tokens. Used when constructing "Authorization: Bearer <token>" headers; the
+// scheme name itself is matched case-insensitively when parsing (see GetJwt).
+const BearerPrefix = "Bearer "
+
 // SeaweedFileIdClaims is created by Master server(s) and consumed by Volume server(s),
 // restricting the access this JWT allows to only a single file.
 type SeaweedFileIdClaims struct {

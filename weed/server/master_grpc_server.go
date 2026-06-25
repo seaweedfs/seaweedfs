@@ -120,9 +120,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		if !ms.Topo.IsLeader() {
 			// tell the volume servers about the leader
-			newLeader, err := ms.Topo.MaybeLeader()
-			if err != nil || newLeader == "" {
-				glog.Warningf("SendHeartbeat find leader: %v, %v", newLeader, err)
+			newLeader, err := ms.Topo.Leader()
+			if err != nil {
+				glog.Warningf("SendHeartbeat find leader: %v", err)
 				return raft.NotLeaderError
 			}
 			if err := stream.Send(&master_pb.HeartbeatResponse{

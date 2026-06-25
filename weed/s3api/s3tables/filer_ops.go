@@ -84,6 +84,59 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 	})
 }
 
+// removeExtendedAttributes deletes the given extended attributes from an entry,
+// leaving the directory and its children intact.
+func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, keys ...string) error {
+	dir, name := splitPath(path)
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+	if err != nil {
+		return err
+	}
+
+	entry := resp.Entry
+	if entry.Extended != nil {
+		for _, key := range keys {
+			delete(entry.Extended, key)
+		}
+	}
+
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: dir,
+		Entry:     entry,
+	})
+}
+
+// setExtendedAttributes sets multiple extended attributes on an existing entry
+// in a single UpdateEntry, so callers don't leave the entry partially tagged.
+func (h *S3TablesHandler) setExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
+	dir, name := splitPath(path)
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+	if err != nil {
+		return err
+	}
+
+	entry := resp.Entry
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	for key, data := range attrs {
+		entry.Extended[key] = data
+	}
+
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: dir,
+		Entry:     entry,
+	})
+}
+
 // getExtendedAttribute gets an extended attribute from an entry
 func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) ([]byte, error) {
 	dir, name := splitPath(path)
@@ -105,6 +158,19 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	}
 
 	return data, nil
+}
+
+// lookupEntry returns the filer entry at the given path.
+func (h *S3TablesHandler) lookupEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (*filer_pb.Entry, error) {
+	dir, name := splitPath(path)
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Entry, nil
 }
 
 // deleteExtendedAttribute deletes an extended attribute from an entry

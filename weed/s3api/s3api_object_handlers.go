@@ -21,6 +21,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -158,8 +159,8 @@ func (s3a *S3ApiServer) parseAndValidateRange(w http.ResponseWriter, r *http.Req
 		return 0, totalSize, false, nil
 	}
 
-	// S3 semantics: directories (without trailing "/") should return 404
-	if entry.IsDirectory {
+	// Empty directory: 404. A file promoted to a directory keeps its data and stays retrievable.
+	if entry.IsDirectory && totalSize == 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
 	}
@@ -190,14 +191,22 @@ func (s3a *S3ApiServer) parseAndValidateRange(w http.ResponseWriter, r *http.Req
 		endOffset = totalSize - 1
 
 		if parts[0] != "" {
-			if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-				startOffset = parsed
+			parsed, parseErr := strconv.ParseInt(parts[0], 10, 64)
+			if parseErr != nil {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+				return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range start: %w", parseErr))
 			}
+			startOffset = parsed
 		}
 		if parts[1] != "" {
-			if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-				endOffset = parsed
+			parsed, parseErr := strconv.ParseInt(parts[1], 10, 64)
+			if parseErr != nil {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+				return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range end: %w", parseErr))
 			}
+			endOffset = parsed
 		}
 
 		// Special case: range requests on empty files should return 416
@@ -1003,6 +1012,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				}
 				return newStreamErrorWithResponse(cacheErr)
 			} else {
+				// Client disconnected during the cache wait: report cancellation, not 503,
+				// so we don't write to a closed connection.
+				if ctxErr := r.Context().Err(); ctxErr != nil {
+					return ctxErr
+				}
 				// Cache not ready yet; return 503 with Retry-After for client backoff
 				glog.V(1).Infof("streamFromVolumeServers: remote object %s/%s not cached yet, returning 503 for retry", bucket, object)
 				w.Header().Set("Retry-After", "2")
@@ -1817,7 +1831,7 @@ func (s3a *S3ApiServer) fetchFullChunk(ctx context.Context, fileId string) (io.R
 
 	// Set JWT for authentication
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	// Use shared HTTP client
@@ -1864,7 +1878,7 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 
 	// Set JWT for authentication
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	// Use shared HTTP client with connection pooling
@@ -2333,7 +2347,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// PyArrow may create 0-byte files when writing datasets, or the filer may have actual directories
 		if objectEntryForSSE.Attributes != nil {
 			isZeroByteFile := objectEntryForSSE.Attributes.FileSize == 0 && !objectEntryForSSE.IsDirectory
-			if objectEntryForSSE.IsDirectory {
+			// A directory with data (a promoted file) is retrievable; empty directories 404 for LIST fallback.
+			if objectEntryForSSE.IsDirectory && filer.FileSize(objectEntryForSSE) == 0 {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -2926,7 +2941,7 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(ctx context.Context, chunk *f
 	// Attach volume server JWT for authentication (uses config loaded once at startup)
 	jwt := filer.JwtForVolumeServer(chunk.GetFileIdString())
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	// Use shared HTTP client with connection pooling

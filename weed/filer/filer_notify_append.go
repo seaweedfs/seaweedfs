@@ -48,14 +48,25 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	return err
 }
 
+// resolveMetadataLogAssignDiskType returns the disk type and matched path rule for
+// metadata log volume assigns. Disk type uses the rule when set, otherwise
+// Filer.DefaultDiskType (from -filer.disk), mirroring resolveAssignStorageOption.
+func (f *Filer) resolveMetadataLogAssignDiskType(targetFile string) (string, *filer_pb.FilerConf_PathConf) {
+	if f.FilerConf == nil {
+		return f.DefaultDiskType, &filer_pb.FilerConf_PathConf{}
+	}
+	rule := f.FilerConf.MatchStorageRule(targetFile)
+	return util.Nvl(rule.DiskType, f.DefaultDiskType), rule
+}
+
 func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 	// assign a volume location
-	rule := f.FilerConf.MatchStorageRule(targetFile)
+	diskType, rule := f.resolveMetadataLogAssignDiskType(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:               1,
 		Collection:          util.Nvl(f.metaLogCollection, rule.Collection),
 		Replication:         util.Nvl(f.metaLogReplication, rule.Replication),
-		DiskType:            rule.DiskType,
+		DiskType:            diskType,
 		WritableVolumeCount: rule.VolumeGrowthCount,
 		ExpectedDataSize:    uint64(len(data)),
 	}

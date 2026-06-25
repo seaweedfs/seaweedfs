@@ -134,7 +134,7 @@ func (h *Handler) expireSnapshots(
 		if (cs == nil) != (currentSnapID == 0) || (cs != nil && cs.SnapshotID != currentSnapID) {
 			return errStalePlan
 		}
-		return builder.RemoveSnapshots(toExpire)
+		return builder.RemoveSnapshots(toExpire, false)
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("commit snapshot expiration: %w", err)

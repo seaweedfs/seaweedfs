@@ -345,7 +345,7 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 	if len(fs.filerSigningKey) > 0 {
 		jwt := security.GenJwtForFilerServer(security.SigningKey(fs.filerSigningKey), fs.filerSigningExpiresAfter)
 		if jwt != "" {
-			req.Header.Set("Authorization", "Bearer "+string(jwt))
+			req.Header.Set("Authorization", security.BearerPrefix+string(jwt))
 		}
 	}
 

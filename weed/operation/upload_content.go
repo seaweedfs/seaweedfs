@@ -109,6 +109,10 @@ var uploadRetryableAssignErrList = []string{
 	"Volume Size ",
 }
 
+// assignVolumeTimeout bounds a single AssignVolume RPC so an overwhelmed filer
+// can't block the caller forever. Overridable in tests.
+var assignVolumeTimeout = 30 * time.Second
+
 // HTTPClient interface for testing
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -210,7 +214,9 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
 		// grpc assign volume
 		if grpcAssignErr := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, assignErr := client.AssignVolume(context.Background(), assignRequest)
+			assignCtx, assignCancel := context.WithTimeout(context.Background(), assignVolumeTimeout)
+			defer assignCancel()
+			resp, assignErr := client.AssignVolume(assignCtx, assignRequest)
 			if assignErr != nil {
 				glog.V(0).Infof("assign volume failure %v: %v", assignRequest, assignErr)
 				return assignErr
@@ -452,7 +458,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		req.Header.Set(k, v)
 	}
 	if option.Jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(option.Jwt))
+		req.Header.Set("Authorization", security.BearerPrefix+string(option.Jwt))
 	}
 
 	request_id.InjectToRequest(ctx, req)

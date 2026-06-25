@@ -1,6 +1,9 @@
 package weed_server
 
 import (
+	"bytes"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,4 +63,52 @@ func TestWriteJsonNoJSONP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWriteJsonPrettyDoesNotReadMultipartBody(t *testing.T) {
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	if err := mw.WriteField("pretty", "1"); err != nil {
+		t.Fatalf("write pretty field: %v", err)
+	}
+	part, err := mw.CreateFormFile("file", "test.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("hello")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	body := &countingReadCloser{Reader: bytes.NewReader(form.Bytes())}
+	r := httptest.NewRequest(http.MethodPost, "/x", body)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	if err := writeJson(w, r, http.StatusTooManyRequests, map[string]string{"error": "busy"}); err != nil {
+		t.Fatalf("writeJson: %v", err)
+	}
+
+	if body.reads != 0 {
+		t.Fatalf("writeJson read multipart body %d times", body.reads)
+	}
+	if got, want := w.Body.String(), `{"error":"busy"}`; got != want {
+		t.Fatalf("body: got %q want %q", got, want)
+	}
+}
+
+type countingReadCloser struct {
+	io.Reader
+	reads int
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	c.reads++
+	return c.Reader.Read(p)
+}
+
+func (c *countingReadCloser) Close() error {
+	return nil
 }

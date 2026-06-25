@@ -350,8 +350,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0 {
 		dstEntry.Chunks = nil
 
-		// Handle inline encrypted content - fixes GitHub #7562
-		if len(entry.Content) > 0 {
+		// Handle inline encrypted content - fixes GitHub #7562.
+		// Also run when the destination requests encryption with no content so
+		// empty objects get real key metadata, not just a bare algorithm header.
+		if len(entry.Content) > 0 || dstWantsSSEC || dstWantsSSEKMS || dstWantsSSES3 {
 			inlineContent, inlineMetadata, inlineErr := s3a.processInlineContentForCopy(
 				entry, r, dstBucket, dstObject,
 				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
@@ -1029,26 +1031,28 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 		metadata[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 
-	// Handle SSE-KMS headers - these are always processed from request headers if present
-	if sseAlgorithm := reqHeader.Get(s3_constants.AmzServerSideEncryption); sseAlgorithm == "aws:kms" {
+	// Handle destination SSE headers from the request when present.
+	if sseAlgorithm := reqHeader.Get(s3_constants.AmzServerSideEncryption); sseAlgorithm != "" {
 		metadata[s3_constants.AmzServerSideEncryption] = []byte(sseAlgorithm)
 
-		// KMS Key ID (optional - can use default key)
-		if kmsKeyID := reqHeader.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId); kmsKeyID != "" {
-			metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(kmsKeyID)
-		}
+		if sseAlgorithm == s3_constants.SSEAlgorithmKMS {
+			// KMS Key ID (optional - can use default key)
+			if kmsKeyID := reqHeader.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId); kmsKeyID != "" {
+				metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(kmsKeyID)
+			}
 
-		// Encryption Context (optional)
-		if encryptionContext := reqHeader.Get(s3_constants.AmzServerSideEncryptionContext); encryptionContext != "" {
-			metadata[s3_constants.AmzServerSideEncryptionContext] = []byte(encryptionContext)
-		}
+			// Encryption Context (optional)
+			if encryptionContext := reqHeader.Get(s3_constants.AmzServerSideEncryptionContext); encryptionContext != "" {
+				metadata[s3_constants.AmzServerSideEncryptionContext] = []byte(encryptionContext)
+			}
 
-		// Bucket Key Enabled (optional)
-		if bucketKeyEnabled := reqHeader.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled != "" {
-			metadata[s3_constants.AmzServerSideEncryptionBucketKeyEnabled] = []byte(bucketKeyEnabled)
+			// Bucket Key Enabled (optional)
+			if bucketKeyEnabled := reqHeader.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled != "" {
+				metadata[s3_constants.AmzServerSideEncryptionBucketKeyEnabled] = []byte(bucketKeyEnabled)
+			}
 		}
 	} else {
-		// If not explicitly setting SSE-KMS, preserve existing SSE headers from source
+		// If not explicitly setting SSE, preserve existing SSE headers from source
 		for _, sseHeader := range []string{
 			s3_constants.AmzServerSideEncryption,
 			s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
@@ -1631,7 +1635,7 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 		req, err := http.NewRequest(http.MethodHead, srcUrl, nil)
 		if err == nil {
 			if jwt != "" {
-				req.Header.Set("Authorization", "BEARER "+string(jwt))
+				req.Header.Set("Authorization", security.BearerPrefix+string(jwt))
 			}
 			resp, err := util_http.GetGlobalHttpClient().Do(req)
 			if err == nil {

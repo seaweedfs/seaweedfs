@@ -109,6 +109,64 @@ func TestReloadStaticConfigMarksNewIdentitiesWithoutFreezingDynamic(t *testing.T
 	}
 }
 
+// A config-file reload must apply an edited secretKey to its static identity.
+func TestReloadStaticConfigUpdatesExistingSecretKey(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"b2xkc2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKADMIN0")
+	if !found || cred.SecretKey != "b2xkc2VjcmV0" {
+		t.Fatalf("expected initial secretKey to load, got found=%v cred=%+v", found, cred)
+	}
+
+	// Rotate the secretKey in the file and reload.
+	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"bmV3c2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	_, cred, found = s3a.iam.lookupByAccessKey("AKADMIN0")
+	if !found {
+		t.Fatalf("static-admin access key disappeared after reload")
+	}
+	if cred.SecretKey != "bmV3c2VjcmV0" {
+		t.Fatalf("expected reloaded secretKey bmV3c2VjcmV0, got %q", cred.SecretKey)
+	}
+	if !isStaticName(s3a.iam, "static-admin") {
+		t.Fatalf("static-admin must stay marked static after reload")
+	}
+}
+
+// A reload must also reapply a service-account credential under a static parent.
+func TestReloadStaticConfigUpdatesServiceAccountSecret(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"YWRtaW4="}],"actions":["Admin"]}],"serviceAccounts":[{"id":"sa-1","parentUser":"static-admin","credential":{"accessKey":"AKSA0001","secretKey":"b2xkc2E="}}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+	if _, cred, found := s3a.iam.lookupByAccessKey("AKSA0001"); !found || cred.SecretKey != "b2xkc2E=" {
+		t.Fatalf("expected service account secret to load, got found=%v cred=%+v", found, cred)
+	}
+
+	// Rotate the service account secret in the file and reload.
+	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"YWRtaW4="}],"actions":["Admin"]}],"serviceAccounts":[{"id":"sa-1","parentUser":"static-admin","credential":{"accessKey":"AKSA0001","secretKey":"bmV3c2E="}}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	_, cred, found := s3a.iam.lookupByAccessKey("AKSA0001")
+	if !found {
+		t.Fatalf("service account access key disappeared after reload")
+	}
+	if cred.SecretKey != "bmV3c2E=" {
+		t.Fatalf("expected reloaded service account secret bmV3c2E=, got %q", cred.SecretKey)
+	}
+}
+
 func isStaticName(iam *IdentityAccessManagement, name string) bool {
 	iam.m.RLock()
 	defer iam.m.RUnlock()

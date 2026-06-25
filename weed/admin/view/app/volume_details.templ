@@ -4,6 +4,7 @@ import (
     "fmt"
     "time"
     "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 templ VolumeDetails(data dash.VolumeDetailsData) {
@@ -467,31 +468,7 @@ func formatTimestamp(unixTimestamp int64) string {
     return t.Format("2006-01-02 15:04:05")
 }
 
-func formatTTL(ttlSeconds uint32) string {
-    if ttlSeconds == 0 {
-        return "No TTL"
-    }
-    
-    duration := time.Duration(ttlSeconds) * time.Second
-    
-    // Convert to human readable format
-    days := int(duration.Hours()) / 24
-    hours := int(duration.Hours()) % 24
-    minutes := int(duration.Minutes()) % 60
-    
-    if days > 0 {
-        if hours > 0 {
-            return fmt.Sprintf("%dd %dh", days, hours)
-        }
-        return fmt.Sprintf("%d days", days)
-    } else if hours > 0 {
-        if minutes > 0 {
-            return fmt.Sprintf("%dh %dm", hours, minutes)
-        }
-        return fmt.Sprintf("%d hours", hours)
-    } else if minutes > 0 {
-        return fmt.Sprintf("%d minutes", minutes)
-    } else {
-        return fmt.Sprintf("%d seconds", int(duration.Seconds()))
-    }
-} 
+func formatTTL(ttlEncoded uint32) string {
+    ttl := needle.LoadTTLFromUint32(ttlEncoded)
+    return ttl.String()
+}

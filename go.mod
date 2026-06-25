@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.25.0
+go 1.25.5
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -46,7 +46,7 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/klauspost/compress v1.18.6
-	github.com/klauspost/reedsolomon v1.14.0
+	github.com/klauspost/reedsolomon v1.14.1
 	github.com/kurin/blazer v0.5.3
 	github.com/linxGnu/grocksdb v1.10.8
 	github.com/mailru/easyjson v0.9.1 // indirect
@@ -98,7 +98,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/text v0.37.0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.278.0
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
@@ -108,7 +108,7 @@ require (
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.49.1
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -118,8 +118,8 @@ require (
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/a-h/templ v0.3.1020
-	github.com/apache/cassandra-gocql-driver/v2 v2.1.1
-	github.com/apache/iceberg-go v0.5.0
+	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
+	github.com/apache/iceberg-go v0.6.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
 	github.com/arangodb/go-driver v1.6.9
 	github.com/armon/go-metrics v0.4.1
@@ -148,13 +148,13 @@ require (
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/seaweedfs/go-fuse/v2 v2.9.3
-	github.com/shirou/gopsutil/v4 v4.26.3
+	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/tarantool/go-tarantool/v2 v2.4.2
-	github.com/testcontainers/testcontainers-go v0.40.0
+	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.139.5
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.141.0
 	go.etcd.io/etcd/client/pkg/v3 v3.6.12
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.21.0
@@ -178,7 +178,7 @@ require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/anchore/go-lzo v0.1.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/apache/arrow-go/v18 v18.5.2-0.20260220015023-a886a5722b87 // indirect
+	github.com/apache/arrow-go/v18 v18.6.0 // indirect
 	github.com/apache/thrift v0.23.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -198,12 +198,11 @@ require (
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
-	github.com/containerd/platforms v1.0.0-rc.1 // indirect
+	github.com/containerd/platforms v1.0.0-rc.4 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/dave/dst v0.27.2 // indirect
 	github.com/diskfs/go-diskfs v1.7.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dromara/dongle v1.0.1 // indirect
@@ -213,14 +212,14 @@ require (
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/gookit/color v1.5.4 // indirect
+	github.com/gookit/color v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
-	github.com/hamba/avro/v2 v2.31.0 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.2.0 // indirect
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/internxt/rclone-adapter v0.0.0-20260331173834-036f908d0160 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -229,23 +228,21 @@ require (
 	github.com/jaegertracing/jaeger v1.47.0 // indirect
 	github.com/jhump/protoreflect/v2 v2.0.0-beta.1 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
-	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lib/pq v1.12.0 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
-	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
-	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.1.0 // indirect
-	github.com/moby/patternmatcher v0.6.0 // indirect
+	github.com/moby/go-archive v0.2.0 // indirect
+	github.com/moby/moby/api v1.54.2 // indirect
+	github.com/moby/moby/client v0.4.0 // indirect
+	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
 	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
-	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/openzipkin/zipkin-go v0.4.3 // indirect
@@ -254,7 +251,7 @@ require (
 	github.com/petermattis/goid v0.0.0-20260113132338-7c7de50cc741 // indirect
 	github.com/pierrre/geohash v1.0.0 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
-	github.com/pterm/pterm v0.12.82 // indirect
+	github.com/pterm/pterm v0.12.83 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rclone/Proton-API-Bridge v1.0.3 // indirect
 	github.com/rclone/go-proton-api v1.0.2 // indirect
@@ -262,10 +259,11 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
-	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/substrait-io/substrait v0.81.0 // indirect
-	github.com/substrait-io/substrait-go/v7 v7.4.0 // indirect
-	github.com/substrait-io/substrait-protobuf/go v0.81.0 // indirect
+	github.com/stretchr/objx v0.5.3 // indirect
+	github.com/substrait-io/substrait v0.87.0 // indirect
+	github.com/substrait-io/substrait-go/v8 v8.1.0 // indirect
+	github.com/substrait-io/substrait-protobuf/go v0.85.0 // indirect
+	github.com/twmb/avro v1.7.2 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/twpayne/go-kml/v3 v3.2.1 // indirect
 	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
@@ -275,15 +273,14 @@ require (
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.42.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.42.0 // indirect
 	go.opentelemetry.io/otel/exporters/zipkin v1.36.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.uber.org/mock v0.5.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
+	golang.org/x/mod v0.36.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 )
 
@@ -317,7 +314,7 @@ require (
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0 // indirect
 	github.com/PuerkitoBio/goquery v1.11.0 // indirect
 	github.com/abbot/go-http-auth v0.4.0 // indirect
-	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
@@ -379,7 +376,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
 	github.com/go-resty/resty/v2 v2.17.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
@@ -503,7 +500,7 @@ require (
 	gopkg.in/validator.v2 v2.0.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.72.0 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	moul.io/http2curl/v2 v2.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 	storj.io/common v0.0.0-20260225132117-99155641c30a // indirect
@@ -520,3 +517,9 @@ require (
 // lib/go/thrift/framed_transport.go, which overflows int on 32-bit GOARCHes
 // (e.g. openbsd/arm, linux/arm). Pin to v0.22.0 until upstream fixes it.
 replace github.com/apache/thrift => github.com/apache/thrift v0.22.0
+
+// tyler-smith/go-bip39 was deleted from GitHub, so `go mod download` fails for
+// anyone resolving it directly (GOPROXY=direct). It only reaches us transitively
+// through rclone's internxt backend, which calls IsMnemonicValid and NewSeed.
+// cosmos/go-bip39 is a maintained, API-compatible fork.
+replace github.com/tyler-smith/go-bip39 => github.com/cosmos/go-bip39 v1.0.0
