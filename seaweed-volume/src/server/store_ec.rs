@@ -27,6 +27,7 @@
 //! `RwLock` so we do not contend with the Store-level lock at all.
 
 use std::collections::HashMap;
+use std::fs;
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -37,14 +38,16 @@ use tonic::Request;
 
 use crate::pb::master_pb::{self, seaweed_client::SeaweedClient, LookupEcVolumeRequest};
 use crate::pb::volume_server_pb::{
-    volume_server_client::VolumeServerClient, VolumeEcShardReadRequest,
+    volume_server_client::VolumeServerClient, CopyFileRequest, VolumeEcShardReadRequest,
 };
 use crate::server::grpc_client::{build_grpc_endpoint, parse_grpc_address, GRPC_MAX_MESSAGE_SIZE};
 use crate::server::request_id::outgoing_request_id_interceptor;
-use crate::server::volume_server::VolumeServerState;
+use crate::server::volume_server::{to_http_address, VolumeServerState};
 use crate::storage::erasure_coding::ec_shard::ShardId;
 use crate::storage::needle::needle::{get_actual_size, Needle};
+use crate::storage::store_ec_reconcile::EcVolumeMissingIndex;
 use crate::storage::types::*;
+use crate::storage::volume::volume_file_name;
 
 /// One interval's data after Phase A.
 enum IntervalResult {
@@ -703,3 +706,227 @@ async fn recover_one_remote_ec_shard_interval(
 // parse_grpc_address lives in `grpc_client.rs` and is re-exported
 // here via the use above so this module shares a single
 // HTTP↔gRPC port-translation routine with grpc_server.rs.
+
+// ---------------------------------------------------------------------------
+// Missing-index recovery (issue #10104).
+//
+// Mirrors weed/server/volume_grpc_erasure_coding_recover.go. EC shards whose
+// .ecx index lives only on a peer server cannot be mounted locally, so the
+// master never learns about them. recover_missing_ec_indexes fetches the index
+// from a peer and mounts the on-disk shards. Driven on demand by
+// VolumeEcShardsMount(recover_missing_index), so an operator triggers it through
+// ec.rebuild rather than a background loop.
+// ---------------------------------------------------------------------------
+
+/// Recover EC volumes whose shards sit on this server while the index lives only
+/// on a peer. `filter_vid` 0 recovers every orphan on this server (including
+/// volumes the master never registered); otherwise just that volume. Returns the
+/// number of volumes whose index was recovered.
+pub(crate) async fn recover_missing_ec_indexes(
+    state: &Arc<VolumeServerState>,
+    filter_vid: u32,
+) -> usize {
+    let missing: Vec<EcVolumeMissingIndex> = {
+        let store = state.store.read().unwrap();
+        store
+            .collect_ec_volumes_missing_index()
+            .into_iter()
+            .filter(|m| filter_vid == 0 || m.vid.0 == filter_vid)
+            .collect()
+    };
+    if missing.is_empty() {
+        return 0;
+    }
+
+    let self_http = to_http_address(&state.self_url).into_owned();
+    let mut recovered = 0usize;
+    for m in &missing {
+        let peers = match cached_lookup_ec_shard_locations(state, m.vid).await {
+            Ok(map) => {
+                let mut peers: Vec<String> = Vec::new();
+                for addrs in map.values() {
+                    for a in addrs {
+                        if to_http_address(a).as_ref() == self_http.as_str() {
+                            continue;
+                        }
+                        if !peers.contains(a) {
+                            peers.push(a.clone());
+                        }
+                    }
+                }
+                peers
+            }
+            Err(e) => {
+                tracing::warn!(
+                    volume_id = m.vid.0,
+                    "cannot look up peers to recover missing .ecx: {}",
+                    e
+                );
+                continue;
+            }
+        };
+        if peers.is_empty() {
+            tracing::warn!(
+                volume_id = m.vid.0,
+                "shards present locally but .ecx missing and no peer holds it; leaving shards unloaded"
+            );
+            continue;
+        }
+        if fetch_ec_index_from_peers(state, m, &peers).await {
+            recovered += 1;
+        }
+    }
+
+    if recovered > 0 {
+        state.store.write().unwrap().mount_recovered_ec_shards();
+        tracing::info!(
+            "recovered missing EC index for {} volume(s) from peers and mounted their shards",
+            recovered
+        );
+    }
+    recovered
+}
+
+/// Try each peer in turn, copying the `.ecx` (required) and `.ecj` / `.vif`
+/// (best-effort) into m's local dirs. The `.ecx` is an immutable encode-time
+/// index, identical on every holder, so any peer's copy serves. The `.ecj` is a
+/// per-holder deletion journal that differs across holders; the recovered node
+/// adopts the source peer's deletion view, like a balanced or rebuilt shard. The
+/// first peer with a non-empty `.ecx` wins.
+async fn fetch_ec_index_from_peers(
+    state: &Arc<VolumeServerState>,
+    m: &EcVolumeMissingIndex,
+    peers: &[String],
+) -> bool {
+    let idx_base = volume_file_name(&m.idx_dir, &m.collection, m.vid);
+    let data_base = volume_file_name(&m.data_dir, &m.collection, m.vid);
+    let ecx_path = format!("{}.ecx", idx_base);
+    let ecj_path = format!("{}.ecj", idx_base);
+    let vif_path = format!("{}.vif", data_base);
+
+    for peer in peers {
+        match fetch_ec_index_from_one_peer(state, m, peer, &ecx_path, &ecj_path, &vif_path).await {
+            Ok(()) => {
+                tracing::info!(
+                    volume_id = m.vid.0,
+                    peer = %peer,
+                    "fetched missing .ecx into {}",
+                    m.idx_dir
+                );
+                return true;
+            }
+            Err(e) => {
+                // Remove any partial .ecx so a later attempt is not blocked by a stub.
+                let _ = fs::remove_file(&ecx_path);
+                tracing::debug!(
+                    volume_id = m.vid.0,
+                    peer = %peer,
+                    "fetch missing .ecx failed: {}",
+                    e
+                );
+            }
+        }
+    }
+    false
+}
+
+async fn fetch_ec_index_from_one_peer(
+    state: &Arc<VolumeServerState>,
+    m: &EcVolumeMissingIndex,
+    peer: &str,
+    ecx_path: &str,
+    ecj_path: &str,
+    vif_path: &str,
+) -> io::Result<()> {
+    let grpc_addr =
+        parse_grpc_address(peer).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let channel = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
+        .connect()
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("connect {}: {}", peer, e)))?;
+    let mut client = VolumeServerClient::with_interceptor(channel, outgoing_request_id_interceptor)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+
+    let copy_req = |ext: &str, ignore_not_found: bool| CopyFileRequest {
+        volume_id: m.vid.0,
+        collection: m.collection.clone(),
+        is_ec_volume: true,
+        ext: ext.to_string(),
+        compaction_revision: u32::MAX,
+        stop_offset: i64::MAX as u64,
+        ignore_source_file_not_found: ignore_not_found,
+        ..Default::default()
+    };
+
+    // .ecx is mandatory and written in place (create/truncate); a peer without it
+    // errors and the caller moves on.
+    let stream = client
+        .copy_file(copy_req(".ecx", false))
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("copy .ecx: {}", e)))?
+        .into_inner();
+    drain_copy_stream(stream, ecx_path, false).await?;
+
+    let meta = fs::metadata(ecx_path)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("stat copied .ecx: {}", e)))?;
+    if meta.is_dir() || meta.len() == 0 {
+        let _ = fs::remove_file(ecx_path);
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("peer {} served an unusable .ecx (size {})", peer, meta.len()),
+        ));
+    }
+
+    // .ecj is the source peer's deletion journal (appended); .vif carries EC
+    // params. Both are best-effort: a missing .ecj is recreated at mount and a
+    // missing .vif falls back to default EC parameters. A failed .ecj append
+    // leaves a partial file, so drop it.
+    match client.copy_file(copy_req(".ecj", true)).await {
+        Ok(resp) => {
+            if let Err(e) = drain_copy_stream(resp.into_inner(), ecj_path, true).await {
+                tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e);
+                let _ = fs::remove_file(ecj_path);
+            }
+        }
+        Err(e) => tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e),
+    }
+
+    match client.copy_file(copy_req(".vif", true)).await {
+        Ok(resp) => {
+            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path, false).await {
+                tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .vif: {}", e);
+            }
+        }
+        Err(e) => tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .vif: {}", e),
+    }
+
+    Ok(())
+}
+
+/// Drain a CopyFile stream into a local file, appending or truncating.
+async fn drain_copy_stream(
+    mut stream: tonic::Streaming<crate::pb::volume_server_pb::CopyFileResponse>,
+    dest_path: &str,
+    append: bool,
+) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = if append {
+        fs::OpenOptions::new().create(true).append(true).open(dest_path)
+    } else {
+        fs::File::create(dest_path)
+    }
+    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("create {}: {}", dest_path, e)))?;
+    while let Some(chunk) = stream
+        .message()
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("recv {}: {}", dest_path, e)))?
+    {
+        file.write_all(&chunk.file_content)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("write {}: {}", dest_path, e)))?;
+    }
+    Ok(())
+}
