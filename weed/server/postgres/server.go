@@ -294,7 +294,11 @@ func (s *PostgreSQLServer) handleConnection(conn net.Conn) {
 
 	// Generate unique connection ID
 	connID := s.generateConnectionID()
-	secretKey := s.generateSecretKey()
+	secretKey, err := s.generateSecretKey()
+	if err != nil {
+		glog.Errorf("handleConnection: %v", err)
+		return
+	}
 
 	// Create session
 	session := &PostgreSQLSession{
@@ -328,7 +332,7 @@ func (s *PostgreSQLServer) handleConnection(conn net.Conn) {
 	glog.V(2).Infof("New PostgreSQL connection from %s (ID: %d)", conn.RemoteAddr(), connID)
 
 	// Handle startup
-	err := s.handleStartup(session)
+	err = s.handleStartup(session)
 	if err != nil {
 		// Handle common disconnection scenarios more gracefully
 		if strings.Contains(err.Error(), "client disconnected") {
@@ -395,7 +399,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 		}
 
 		msgLength := msgTotalLen - 4
-		if msgLength > 10000 { // Reasonable limit for startup messages
+		if msgLength > maxStartupMessageSize {
 			return fmt.Errorf("startup message too large: %d bytes", msgLength)
 		}
 
@@ -412,7 +416,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 			return fmt.Errorf("failed to read startup message: %v", err)
 		}
 
-		// Parse protocol version
+		// Parse protocol version (msgTotalLen >= 8 above guarantees msgLength >= 4)
 		protocolVersion := binary.BigEndian.Uint32(msg[0:4])
 
 		switch protocolVersion {
@@ -563,16 +567,24 @@ func (s *PostgreSQLServer) handlePasswordAuth(session *PostgreSQLSession) error 
 		return err
 	}
 
-	msgLength := binary.BigEndian.Uint32(length) - 4
+	rawLength := binary.BigEndian.Uint32(length)
+	if rawLength < 4 {
+		return fmt.Errorf("password message too short: %d bytes", rawLength)
+	}
+	msgLength := rawLength - 4
+	if msgLength > maxAuthMessageSize {
+		return fmt.Errorf("password message too large: %d bytes", msgLength)
+	}
 	password := make([]byte, msgLength)
 	_, err = io.ReadFull(session.reader, password)
 	if err != nil {
 		return err
 	}
 
-	// Verify password
+	// Verify password (safe null-terminator removal)
 	expectedPassword, exists := s.config.Users[session.username]
-	if !exists || string(password[:len(password)-1]) != expectedPassword { // Remove null terminator
+	passwordStr := strings.TrimSuffix(string(password), "\x00")
+	if !exists || passwordStr != expectedPassword {
 		return s.sendError(session, "28P01", "authentication failed for user \""+session.username+"\"")
 	}
 
@@ -621,7 +633,14 @@ func (s *PostgreSQLServer) handleMD5Auth(session *PostgreSQLSession) error {
 		return err
 	}
 
-	msgLength := binary.BigEndian.Uint32(length) - 4
+	rawLength := binary.BigEndian.Uint32(length)
+	if rawLength < 4 {
+		return fmt.Errorf("MD5 response too short: %d bytes", rawLength)
+	}
+	msgLength := rawLength - 4
+	if msgLength > maxAuthMessageSize {
+		return fmt.Errorf("MD5 response too large: %d bytes", msgLength)
+	}
 	response := make([]byte, msgLength)
 	_, err = io.ReadFull(session.reader, response)
 	if err != nil {
@@ -638,7 +657,7 @@ func (s *PostgreSQLServer) handleMD5Auth(session *PostgreSQLSession) error {
 	inner := md5.Sum([]byte(expectedPassword + session.username))
 	expected := fmt.Sprintf("md5%x", md5.Sum(append([]byte(fmt.Sprintf("%x", inner)), salt...)))
 
-	if string(response[:len(response)-1]) != expected { // Remove null terminator
+	if strings.TrimSuffix(string(response), "\x00") != expected {
 		return s.sendError(session, "28P01", "authentication failed for user \""+session.username+"\"")
 	}
 
@@ -655,10 +674,12 @@ func (s *PostgreSQLServer) generateConnectionID() uint32 {
 }
 
 // generateSecretKey generates a secret key for the connection
-func (s *PostgreSQLServer) generateSecretKey() uint32 {
+func (s *PostgreSQLServer) generateSecretKey() (uint32, error) {
 	key := make([]byte, 4)
-	rand.Read(key)
-	return binary.BigEndian.Uint32(key)
+	if _, err := rand.Read(key); err != nil {
+		return 0, fmt.Errorf("generate secret key: %w", err)
+	}
+	return binary.BigEndian.Uint32(key), nil
 }
 
 // close marks the session as closed

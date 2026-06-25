@@ -359,6 +359,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Cipher:                      cipher,
 		UidGidMapper:                uidGidMapper,
 		IncludeSystemEntries:        *option.includeSystemEntries,
+		DefaultPermissions:          *option.defaultPermissions,
 		DisableXAttr:                *option.disableXAttr,
 		IsMacOs:                     runtime.GOOS == "darwin",
 		MetadataFlushSeconds:        *option.metadataFlushSeconds,

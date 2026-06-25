@@ -517,3 +517,9 @@ require (
 // lib/go/thrift/framed_transport.go, which overflows int on 32-bit GOARCHes
 // (e.g. openbsd/arm, linux/arm). Pin to v0.22.0 until upstream fixes it.
 replace github.com/apache/thrift => github.com/apache/thrift v0.22.0
+
+// tyler-smith/go-bip39 was deleted from GitHub, so `go mod download` fails for
+// anyone resolving it directly (GOPROXY=direct). It only reaches us transitively
+// through rclone's internxt backend, which calls IsMnemonicValid and NewSeed.
+// cosmos/go-bip39 is a maintained, API-compatible fork.
+replace github.com/tyler-smith/go-bip39 => github.com/cosmos/go-bip39 v1.0.0

@@ -1,0 +1,115 @@
+name: "release: bump version"
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which part to increment (ignored when 'version' is set)"
+        type: choice
+        options:
+          - minor
+          - major
+        default: minor
+      version:
+        description: "Explicit MAJOR.MINOR to set, e.g. 4.36 (overrides 'bump')"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute new version
+        id: compute
+        env:
+          BUMP: ${{ inputs.bump }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          CONST=weed/util/version/constants.go
+
+          MAJOR=$(grep -oP 'MAJOR_VERSION\s*=\s*int32\(\K[0-9]+' "$CONST")
+          MINOR=$(grep -oP 'MINOR_VERSION\s*=\s*int32\(\K[0-9]+' "$CONST")
+          echo "current: ${MAJOR}.${MINOR}"
+
+          if [ -n "$INPUT_VERSION" ]; then
+            if ! [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version must be MAJOR.MINOR, e.g. 5.01 (got '$INPUT_VERSION')"
+              exit 1
+            fi
+            # 10# forces base 10 so 08/09 are not parsed as octal.
+            MAJOR=$((10#${INPUT_VERSION%%.*}))
+            MINOR=$((10#${INPUT_VERSION##*.}))
+            if [ "$MINOR" -gt 99 ]; then
+              echo "::error::minor must be 0-99 (got $MINOR); it rolls into the next major at 99"
+              exit 1
+            fi
+          else
+            case "$BUMP" in
+              # Minor is a 2-digit field: 4.99 -> 5.00 -> 5.01.
+              major) MAJOR=$((MAJOR + 1)); MINOR=0 ;;
+              minor)
+                if [ "$MINOR" -ge 99 ]; then
+                  MAJOR=$((MAJOR + 1)); MINOR=0
+                else
+                  MINOR=$((MINOR + 1))
+                fi
+                ;;
+              *) echo "::error::unknown bump '$BUMP'"; exit 1 ;;
+            esac
+          fi
+
+          # appVersion mirrors the Go VERSION_NUMBER (zero-padded minor);
+          # chart version is plain SemVer (no leading zeros).
+          APP_VERSION=$(printf '%d.%02d' "$MAJOR" "$MINOR")
+          CHART_VERSION="${MAJOR}.${MINOR}.0"
+          echo "new: app=${APP_VERSION} chart=${CHART_VERSION}"
+
+          {
+            echo "major=${MAJOR}"
+            echo "minor=${MINOR}"
+            echo "app_version=${APP_VERSION}"
+            echo "chart_version=${CHART_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply version to constants.go
+        env:
+          MAJOR: ${{ steps.compute.outputs.major }}
+          MINOR: ${{ steps.compute.outputs.minor }}
+        run: |
+          set -euo pipefail
+          CONST=weed/util/version/constants.go
+          sed -i -E "s/(MAJOR_VERSION[[:space:]]*=[[:space:]]*int32\()[0-9]+(\))/\1${MAJOR}\2/" "$CONST"
+          sed -i -E "s/(MINOR_VERSION[[:space:]]*=[[:space:]]*int32\()[0-9]+(\))/\1${MINOR}\2/" "$CONST"
+          grep -E 'MAJOR_VERSION|MINOR_VERSION' "$CONST"
+
+      - name: Apply version to Chart.yaml
+        env:
+          APP_VERSION: ${{ steps.compute.outputs.app_version }}
+          CHART_VERSION: ${{ steps.compute.outputs.chart_version }}
+        run: |
+          set -euo pipefail
+          CHART=k8s/charts/seaweedfs/Chart.yaml
+          sed -i -E "s/^appVersion:.*/appVersion: \"${APP_VERSION}\"/" "$CHART"
+          sed -i -E "s/^version:.*/version: ${CHART_VERSION}/" "$CHART"
+          cat "$CHART"
+
+      - name: Commit and push
+        env:
+          APP_VERSION: ${{ steps.compute.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No version change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add weed/util/version/constants.go k8s/charts/seaweedfs/Chart.yaml
+          git commit -m "${APP_VERSION}"
+          git push

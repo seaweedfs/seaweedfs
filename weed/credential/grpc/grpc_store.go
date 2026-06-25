@@ -94,7 +94,7 @@ func (store *IamGrpcStore) withIamClient(ctx context.Context, fn func(ctx contex
 	if len(signingKey) > 0 {
 		token := security.GenJwtForFilerAdmin(signingKey, expiresAfterSec)
 		if token != "" {
-			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+string(token))
+			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token))
 		}
 	}
 

@@ -487,3 +487,69 @@ func TestCreateExistingFileIgnoresQuotaPreflight(t *testing.T) {
 		t.Fatalf("Create status = %v, want EEXIST", status)
 	}
 }
+
+// With default_permissions the kernel enforces unix bits before it calls
+// Open, so AcquireHandle must skip its own check (and the group lookup behind
+// it). Without it, AcquireHandle stays the enforcer.
+func TestAcquireHandleHonorsDefaultPermissions(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		defaultPermissions bool
+		want               fuse.Status
+	}{
+		{"kernel enforces", true, fuse.OK},
+		{"mount enforces", false, fuse.EACCES},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wfs, _ := newCreateTestWFS(t)
+			wfs.option.DefaultPermissions = tc.defaultPermissions
+
+			oldLookup := lookupSupplementaryGroupIDs
+			lookupSupplementaryGroupIDs = func(uint32) ([]string, error) { return nil, nil }
+			clearSupplementaryGroupCache()
+			t.Cleanup(func() {
+				lookupSupplementaryGroupIDs = oldLookup
+				clearSupplementaryGroupCache()
+			})
+
+			entry := &filer_pb.Entry{
+				Name: "secret.txt",
+				Attributes: &filer_pb.FuseAttributes{
+					FileMode: 0o600, // owner-only: an "other" uid has no read
+					Inode:    202,
+					Crtime:   1,
+					Mtime:    1,
+					Uid:      123,
+					Gid:      456,
+				},
+			}
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/", entry)); err != nil {
+				t.Fatalf("InsertEntry: %v", err)
+			}
+			inode := wfs.inodeToPath.Lookup(util.FullPath("/secret.txt"), entry.Attributes.Crtime, false, false, entry.Attributes.Inode, true)
+
+			fh, status := wfs.AcquireHandle(inode, syscall.O_RDONLY, 999, 999)
+			if status != tc.want {
+				t.Fatalf("AcquireHandle status = %v, want %v", status, tc.want)
+			}
+			if status == fuse.OK {
+				if fh == nil {
+					t.Fatal("AcquireHandle returned nil handle on OK")
+				}
+				wfs.ReleaseHandle(fh.fh)
+			}
+		})
+	}
+}
+
+// default_permissions skips only the mode-bit check, not parent-existence
+// validation: the create RPC sets SkipCheckParentDirectory, so the mount's
+// own parent lookup is the only thing guarding against an orphaned entry.
+func TestCreateRegularFileValidatesParentUnderDefaultPermissions(t *testing.T) {
+	wfs, _ := newCreateTestWFS(t)
+	wfs.option.DefaultPermissions = true
+
+	if _, _, code := wfs.createRegularFile(util.FullPath("/ghost"), "f.txt", 0o644, 99, 100, 0, false, false); code == fuse.OK {
+		t.Fatal("createRegularFile returned OK for a missing parent directory")
+	}
+}

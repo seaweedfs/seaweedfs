@@ -89,6 +89,34 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// tablePathOccupied reports whether a filer entry already exists at the catalog
+// name path. A leftover directory there (e.g. data kept when another table was
+// renamed to this name) means a table created at the default location would
+// overwrite it, so the caller routes the new table to a unique location. A
+// lookup failure other than not-found is returned so the caller can fail the
+// create rather than fall back to the default path on a transient filer error.
+func (s *Server) tablePathOccupied(ctx context.Context, bucketName, tablePath string) (bool, error) {
+	full := path.Join(s3tables.TablesPath, bucketName, tablePath)
+	dir, name := path.Split(full)
+	dir = strings.TrimSuffix(dir, "/")
+	occupied := false
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		occupied = true
+		return nil
+	})
+	return occupied, err
+}
+
 // handleCreateTable creates a new table.
 func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -124,6 +152,17 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	tablePath := path.Join(flattenNamespacePath(namespace), req.Name)
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
+		// If a leftover directory already occupies the default location (data
+		// kept when another table was renamed to this name), route this table
+		// to a unique location so it cannot overwrite that table's files.
+		occupied, err := s.tablePathOccupied(r.Context(), bucketName, tablePath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to check table location: "+err.Error())
+			return
+		}
+		if occupied {
+			tablePath = path.Join(flattenNamespacePath(namespace), req.Name+"-"+tableUUID.String())
+		}
 		if req.Properties != nil {
 			if warehouse := strings.TrimSuffix(req.Properties["warehouse"], "/"); warehouse != "" {
 				location = fmt.Sprintf("%s/%s", warehouse, tablePath)

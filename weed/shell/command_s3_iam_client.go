@@ -41,5 +41,5 @@ func iamAdminAuthContext(ctx context.Context) context.Context {
 	if token == "" {
 		return ctx
 	}
-	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+string(token))
+	return metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token))
 }

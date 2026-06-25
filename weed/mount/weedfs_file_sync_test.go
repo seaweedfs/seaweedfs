@@ -327,9 +327,9 @@ func TestFlushCycleManifestAccumulation(t *testing.T) {
 		for slot := 0; slot < numSlots; slot++ {
 			entryChunks = append(entryChunks, &filer_pb.FileChunk{
 				Offset: int64(slot) * int64(chunkSize), Size: chunkSize,
-				FileId: fmt.Sprintf("%d,%x00000000", cycle+1, nextKey),
+				FileId:       fmt.Sprintf("%d,%x00000000", cycle+1, nextKey),
 				ModifiedTsNs: nextTs,
-				Fid: &filer_pb.FileId{VolumeId: uint32(cycle + 1), FileKey: nextKey, Cookie: 0},
+				Fid:          &filer_pb.FileId{VolumeId: uint32(cycle + 1), FileKey: nextKey, Cookie: 0},
 			})
 			nextTs++
 			nextKey++

@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // ChunkedUploadResult contains the result of a chunked upload
@@ -168,9 +169,6 @@ uploadLoop:
 				return
 			}
 
-			// Upload chunk data
-			uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
-
 			// Use per-assignment JWT if present, otherwise fall back to the original JWT
 			// This is critical for secured clusters where each volume assignment has its own JWT
 			jwt := opt.Jwt
@@ -182,33 +180,39 @@ uploadLoop:
 			chunkMd5 := md5.Sum(buf.Bytes())
 			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 
-			uploadOption := &UploadOption{
-				UploadUrl:         uploadUrl,
-				Cipher:            opt.Cipher,
-				IsInputCompressed: false,
-				MimeType:          opt.MimeType,
-				PairMap:           nil,
-				Jwt:               jwt,
-				Md5:               chunkMd5B64,
-			}
-
 			var uploadResult *UploadResult
 			var uploadResultErr error
 
-			// Use mock upload function if provided (for testing), otherwise use real uploader
-			if opt.UploadFunc != nil {
-				uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
+			holders := chunkHolders(assignResult)
+			// Fan out to every holder, except for cipher: per-call encryption
+			// would give each replica different bytes, so keep its relay path.
+			if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
+				uploadResult, uploadResultErr = uploadChunkToHolders(ctx, holders, assignResult.Fid, buf.Bytes(), jwt, chunkMd5B64, opt)
 			} else {
-				uploader, uploaderErr := NewUploader()
-				if uploaderErr != nil {
-					uploadErrLock.Lock()
-					if uploadErr == nil {
-						uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
-					}
-					uploadErrLock.Unlock()
-					return
+				uploadOption := &UploadOption{
+					UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
+					Cipher:            opt.Cipher,
+					IsInputCompressed: false,
+					MimeType:          opt.MimeType,
+					PairMap:           nil,
+					Jwt:               jwt,
+					Md5:               chunkMd5B64,
 				}
-				uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
+				// Use mock upload function if provided (for testing), otherwise use real uploader
+				if opt.UploadFunc != nil {
+					uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
+				} else {
+					uploader, uploaderErr := NewUploader()
+					if uploaderErr != nil {
+						uploadErrLock.Lock()
+						if uploadErr == nil {
+							uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
+						}
+						uploadErrLock.Unlock()
+						return
+					}
+					uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
+				}
 			}
 
 			if uploadResultErr != nil {
@@ -276,4 +280,85 @@ uploadLoop:
 		TotalSize:    chunkOffset,
 		SmallContent: nil,
 	}, nil
+}
+
+// chunkHolders returns the assigned volume plus its replica holders.
+func chunkHolders(assignResult *AssignResult) []string {
+	hosts := []string{assignResult.Url}
+	for _, replica := range assignResult.Replicas {
+		if replica.Url != "" && replica.Url != assignResult.Url {
+			hosts = append(hosts, replica.Url)
+		}
+	}
+	return hosts
+}
+
+// uploadChunkToHolders writes the chunk to every holder concurrently (each with
+// type=replicate). On the first failure it cancels the remaining uploads and
+// deletes any copies that already landed, so a partial fan-out leaves no
+// orphaned needle the caller cannot see.
+func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
+	uploader, err := NewUploader()
+	if err != nil {
+		return nil, fmt.Errorf("create uploader: %w", err)
+	}
+	glog.V(4).Infof("replica fan-out: writing chunk %s to %d holders %v", fid, len(hosts), hosts)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type outcome struct {
+		host   string
+		result *UploadResult
+		err    error
+	}
+	outcomes := make(chan outcome, len(hosts))
+	for _, host := range hosts {
+		go func(host string) {
+			uploadOption := &UploadOption{
+				UploadUrl:         fmt.Sprintf("http://%s/%s?type=replicate", host, fid),
+				Cipher:            false,
+				IsInputCompressed: false,
+				MimeType:          opt.MimeType,
+				PairMap:           nil,
+				Jwt:               jwt,
+				Md5:               md5b64,
+			}
+			r, e := uploader.UploadData(ctx, data, uploadOption)
+			outcomes <- outcome{host, r, e}
+		}(host)
+	}
+	var first *UploadResult
+	var firstErr error
+	var succeeded []string
+	for range hosts {
+		o := <-outcomes
+		if o.err != nil {
+			if firstErr == nil {
+				firstErr = o.err
+				cancel()
+			}
+		} else {
+			succeeded = append(succeeded, o.host)
+			if first == nil {
+				first = o.result
+			}
+		}
+	}
+	if firstErr != nil {
+		// A failed fan-out records no chunk, so roll back the copies that landed
+		// before the cancel rather than leaking them as orphans.
+		deleteChunkFromHolders(succeeded, fid, jwt)
+		return nil, firstErr
+	}
+	return first, nil
+}
+
+// deleteChunkFromHolders best-effort removes a needle from each holder it landed
+// on, using type=replicate so the volume drops only its local copy. A failed
+// delete falls back to vacuum reclaiming the orphan.
+func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt) {
+	for _, host := range hosts {
+		if err := util_http.Delete(fmt.Sprintf("http://%s/%s?type=replicate", host, fid), string(jwt)); err != nil {
+			glog.Warningf("replica fan-out cleanup: delete %s from %s: %v", fid, host, err)
+		}
+	}
 }

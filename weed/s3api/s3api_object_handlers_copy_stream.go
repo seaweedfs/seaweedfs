@@ -106,7 +106,7 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 		return fmt.Errorf("create source GET: %w", err)
 	}
 	if srcJwt != "" {
-		srcReq.Header.Set("Authorization", "BEARER "+srcJwt)
+		srcReq.Header.Set("Authorization", security.BearerPrefix+srcJwt)
 	}
 	if isFullChunk {
 		// Manually setting Accept-Encoding tells Go's http.Transport that
@@ -188,7 +188,7 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 	}
 	req.Header.Set("Content-Type", contentType)
 	if dstJwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(dstJwt))
+		req.Header.Set("Authorization", security.BearerPrefix+string(dstJwt))
 	}
 
 	resp, err := util_http.GetGlobalHttpClient().Do(req)

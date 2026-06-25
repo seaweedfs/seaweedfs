@@ -1,0 +1,286 @@
+name: "Performance"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/performance.yml'
+  workflow_dispatch:
+    inputs:
+      profile_duration:
+        description: "CPU profiling duration in seconds"
+        required: false
+        default: "30"
+        type: string
+      benchmark_files:
+        description: "Number of files for the throughput benchmark"
+        required: false
+        default: "100000"
+        type: string
+      benchmark_concurrency:
+        description: "Concurrent read/write workers"
+        required: false
+        default: "16"
+        type: string
+      benchmark_size:
+        description: "Simulated file size in bytes"
+        required: false
+        default: "1024"
+        type: string
+      s3_objects:
+        description: "Number of objects for the S3 benchmark"
+        required: false
+        default: "20000"
+        type: string
+      s3_size:
+        description: "S3 object size in bytes"
+        required: false
+        default: "4096"
+        type: string
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/performance
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  performance-profile:
+    name: CPU and Heap Profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build weed
+        run: go build -o weed_bin ./weed
+
+      - name: Start server with profiling enabled
+        run: |
+          mkdir -p ./perfdata
+          ./weed_bin -v=1 server -debug -debug.port=6060 -dir=./perfdata \
+            -s3 -filer -volume.max=0 -master.volumeSizeLimitMB=100 \
+            -s3.port=8000 -s3.config=./docker/compose/s3.json \
+            > weed.log 2>&1 &
+          echo "WEED_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:9333/dir/status >/dev/null 2>&1; then
+              echo "master is ready"
+              break
+            fi
+            sleep 1
+          done
+          # give the volume server a moment to register with the master
+          sleep 3
+
+      - name: Capture profiles under load
+        run: |
+          DURATION="${{ github.event.inputs.profile_duration || '30' }}"
+          # drive write load so the sampled profile reflects real work
+          ./weed_bin benchmark -master=localhost:9333 -writeOnly \
+            -c=16 -n=5000000 -size=1024 > benchmark-load.log 2>&1 &
+          echo "Sampling CPU profile for ${DURATION}s..."
+          curl -s "http://localhost:6060/debug/pprof/profile?seconds=${DURATION}" -o cpu.pprof
+          curl -s "http://localhost:6060/debug/pprof/heap" -o heap.pprof
+          curl -s "http://localhost:6060/debug/pprof/goroutine?debug=1" -o goroutine.txt
+          go tool pprof -top -nodecount=50 cpu.pprof > cpu-top.txt 2>/dev/null || true
+          go tool pprof -top -nodecount=50 -sample_index=inuse_space heap.pprof > heap-top.txt 2>/dev/null || true
+
+      - name: Profile summary
+        if: always()
+        run: |
+          {
+            echo "## CPU profile (top functions)"
+            echo '```'
+            head -45 cpu-top.txt 2>/dev/null || echo "no cpu profile captured"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop server
+        if: always()
+        run: kill "${WEED_PID}" 2>/dev/null || true
+
+      - name: Show server log on failure
+        if: failure()
+        run: tail -200 weed.log || true
+
+      - name: Upload profiles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-profile-${{ github.run_number }}
+          path: |
+            cpu.pprof
+            heap.pprof
+            cpu-top.txt
+            heap-top.txt
+            goroutine.txt
+            weed.log
+          retention-days: 30
+
+  benchmark:
+    name: Throughput Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build weed
+        run: go build -o weed_bin ./weed
+
+      - name: Start server
+        run: |
+          mkdir -p ./perfdata
+          ./weed_bin -v=1 server -dir=./perfdata -volume.max=0 \
+            -master.volumeSizeLimitMB=1024 > weed.log 2>&1 &
+          echo "WEED_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:9333/dir/status >/dev/null 2>&1; then
+              echo "master is ready"
+              break
+            fi
+            sleep 1
+          done
+          sleep 3
+
+      - name: Run throughput benchmark
+        run: |
+          N="${{ github.event.inputs.benchmark_files || '100000' }}"
+          C="${{ github.event.inputs.benchmark_concurrency || '16' }}"
+          SIZE="${{ github.event.inputs.benchmark_size || '1024' }}"
+          ./weed_bin benchmark -master=localhost:9333 \
+            -c="${C}" -n="${N}" -size="${SIZE}" 2>&1 | tee benchmark-results.txt
+
+      - name: Run Go micro-benchmarks
+        continue-on-error: true
+        run: |
+          go test -run='^$' -bench=. -benchmem -benchtime=10x \
+            ./weed/topology/... ./weed/util/log_buffer/... ./weed/util/buffered_queue/... \
+            2>&1 | tee go-benchmarks.txt
+
+      - name: Benchmark summary
+        if: always()
+        run: |
+          {
+            echo "## Throughput benchmark"
+            echo '```'
+            grep -E "Concurrency Level|Time taken|Completed requests|Failed requests|Requests per second|Transfer rate" \
+              benchmark-results.txt 2>/dev/null || echo "no benchmark results captured"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop server
+        if: always()
+        run: kill "${WEED_PID}" 2>/dev/null || true
+
+      - name: Show server log on failure
+        if: failure()
+        run: tail -200 weed.log || true
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results-${{ github.run_number }}
+          path: |
+            benchmark-results.txt
+            go-benchmarks.txt
+            weed.log
+          retention-days: 7
+
+  s3-benchmark:
+    name: S3 Read/Write Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build weed and S3 load tool
+        run: |
+          go build -o weed_bin ./weed
+          go build -o s3bench ./test/s3/benchmark
+
+      - name: Start server with S3 gateway
+        run: |
+          mkdir -p ./perfdata
+          ./weed_bin -v=1 server -dir=./perfdata -s3 -filer \
+            -volume.max=0 -master.volumeSizeLimitMB=1024 \
+            -s3.port=8000 -s3.config=./docker/compose/s3.json \
+            > weed.log 2>&1 &
+          echo "WEED_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:9333/dir/status >/dev/null 2>&1; then
+              echo "master is ready"
+              break
+            fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if nc -z localhost 8000 2>/dev/null; then
+              echo "s3 gateway is ready"
+              break
+            fi
+            sleep 1
+          done
+          sleep 2
+
+      - name: Run S3 read/write benchmark
+        run: |
+          OBJECTS="${{ github.event.inputs.s3_objects || '20000' }}"
+          C="${{ github.event.inputs.benchmark_concurrency || '16' }}"
+          SIZE="${{ github.event.inputs.s3_size || '4096' }}"
+          ./s3bench -endpoint=http://localhost:8000 \
+            -access-key=some_access_key1 -secret-key=some_secret_key1 \
+            -objects="${OBJECTS}" -size="${SIZE}" -concurrency="${C}" -mode=both \
+            2>&1 | tee s3-benchmark-results.txt
+
+      - name: S3 benchmark summary
+        if: always()
+        run: |
+          {
+            echo "## S3 read/write benchmark"
+            echo '```'
+            grep -E "results:|Concurrency Level|Time taken|Completed requests|Failed requests|Requests per second|Transfer rate|Latency" \
+              s3-benchmark-results.txt 2>/dev/null || echo "no S3 benchmark results captured"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop server
+        if: always()
+        run: kill "${WEED_PID}" 2>/dev/null || true
+
+      - name: Show server log on failure
+        if: failure()
+        run: tail -200 weed.log || true
+
+      - name: Upload S3 benchmark results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-benchmark-results-${{ github.run_number }}
+          path: |
+            s3-benchmark-results.txt
+            weed.log
+          retention-days: 7

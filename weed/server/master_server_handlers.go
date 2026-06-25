@@ -221,5 +221,5 @@ func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId s
 		return
 	}
 
-	w.Header().Set("Authorization", "BEARER "+string(encodedJwt))
+	w.Header().Set("Authorization", security.BearerPrefix+string(encodedJwt))
 }
