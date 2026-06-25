@@ -777,53 +777,103 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         };
-        // Release the store lock and stream the delta through a bounded
-        // channel fed by a blocking reader task. The previous code read the
-        // whole delta into `results` before returning tokio_stream::iter,
-        // holding it all in memory at once. We re-acquire the store lock and
-        // read one 2MB chunk at a time via read_dat_slice (rather than opening
-        // the file directly) so remote/tiered volumes whose .dat is not on
-        // local disk still work; the lock is dropped before each send so it is
-        // never held while blocked on a slow consumer.
+        // Release the store lock and stream the delta through a bounded channel
+        // fed by a blocking reader task, instead of buffering the whole delta
+        // into a Vec and returning tokio_stream::iter. For local volumes we open
+        // the .dat directly and stream it without holding any lock (the common
+        // case). For remote/tiered volumes the .dat may not be on local disk, so
+        // we re-acquire the store lock per chunk and go through read_dat_slice,
+        // dropping the lock before each send.
+        let is_remote = v.has_remote_file;
+        let file_name = if is_remote {
+            None
+        } else {
+            Some(v.file_name(".dat"))
+        };
         drop(store);
 
         let state = self.state.clone();
-        let total = (dat_size - start_offset) as i64;
+        let total = dat_size - start_offset;
         let (tx, rx) = tokio::sync::mpsc::channel::<
             Result<volume_server_pb::VolumeIncrementalCopyResponse, Status>,
         >(8);
 
         tokio::task::spawn_blocking(move || {
-            let buffer_size = 2 * 1024 * 1024usize; // 2MB chunks
+            let buffer_size = 2 * 1024 * 1024u64; // 2MB chunks
             let mut bytes_to_read = total;
             let mut offset = start_offset;
-            while bytes_to_read > 0 {
-                let chunk = std::cmp::min(bytes_to_read as usize, buffer_size);
-                let read = {
-                    let store = state.store.read().unwrap();
-                    match store.find_volume(vid) {
-                        Some((_, v)) => v
-                            .read_dat_slice(offset, chunk)
-                            .map_err(|e| Status::internal(e.to_string())),
-                        None => Err(Status::not_found(format!("not found volume id {}", vid))),
+
+            if let Some(path) = file_name {
+                // Local volume: stream directly from the .dat, no lock held.
+                use std::io::{Read, Seek, SeekFrom};
+                let file = match std::fs::File::open(&path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let _ = tx
+                            .blocking_send(Err(Status::internal(format!("open {}: {}", path, e))));
+                        return;
                     }
                 };
-                match read {
-                    Ok(buf) if buf.is_empty() => break,
-                    Ok(buf) => {
-                        let read_len = buf.len() as i64;
-                        let msg = volume_server_pb::VolumeIncrementalCopyResponse {
-                            file_content: buf,
-                        };
-                        if tx.blocking_send(Ok(msg)).is_err() {
-                            return; // receiver dropped
+                let mut reader = std::io::BufReader::new(file);
+                if let Err(e) = reader.seek(SeekFrom::Start(offset)) {
+                    let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                    return;
+                }
+                while bytes_to_read > 0 {
+                    let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
+                    let mut buf = vec![0u8; chunk];
+                    match reader.read(&mut buf) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => {
+                            buf.truncate(n);
+                            let msg = volume_server_pb::VolumeIncrementalCopyResponse {
+                                file_content: buf,
+                            };
+                            if tx.blocking_send(Ok(msg)).is_err() {
+                                return; // receiver dropped
+                            }
+                            bytes_to_read -= n as u64;
                         }
-                        bytes_to_read -= read_len;
-                        offset += read_len as u64;
+                        Err(e) => {
+                            let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                            return;
+                        }
                     }
-                    Err(e) => {
-                        let _ = tx.blocking_send(Err(e));
-                        return;
+                }
+            } else {
+                // Remote/tiered volume: read through the volume backend,
+                // re-acquiring the store lock per chunk and dropping it before
+                // each send so it is never held while blocked on a consumer.
+                while bytes_to_read > 0 {
+                    let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
+                    let read = {
+                        let store = state.store.read().unwrap();
+                        match store.find_volume(vid) {
+                            Some((_, v)) => v
+                                .read_dat_slice(offset, chunk)
+                                .map_err(|e| Status::internal(e.to_string())),
+                            None => {
+                                Err(Status::not_found(format!("not found volume id {}", vid)))
+                            }
+                        }
+                    };
+                    match read {
+                        Ok(buf) if buf.is_empty() => break,
+                        Ok(buf) => {
+                            let read_len = buf.len() as u64;
+                            let msg = volume_server_pb::VolumeIncrementalCopyResponse {
+                                file_content: buf,
+                            };
+                            if tx.blocking_send(Ok(msg)).is_err() {
+                                return; // receiver dropped
+                            }
+                            bytes_to_read -= read_len;
+                            offset += read_len;
+                        }
+                        Err(e) => {
+                            let _ = tx.blocking_send(Err(e));
+                            return;
+                        }
                     }
                 }
             }
@@ -1547,24 +1597,25 @@ impl VolumeServer for VolumeGrpcService {
         // (up to the volume size limit) resident at once and could OOM the
         // process. A bounded channel caps memory at channel_capacity * 2MB and
         // applies backpressure to the reader.
-        let stop_offset = req.stop_offset as i64;
+        let stop_offset = req.stop_offset;
         let (tx, rx) =
             tokio::sync::mpsc::channel::<Result<volume_server_pb::CopyFileResponse, Status>>(8);
 
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
-            let buffer_size = 2 * 1024 * 1024; // 2MB chunks
+            let buffer_size = 2 * 1024 * 1024u64; // 2MB chunks
             let mut reader = std::io::BufReader::new(file);
             let mut bytes_to_read = stop_offset;
             let mut first = true;
 
             while bytes_to_read > 0 {
-                let chunk_size = std::cmp::min(bytes_to_read as usize, buffer_size);
+                let chunk_size = std::cmp::min(bytes_to_read, buffer_size) as usize;
                 let mut buf = vec![0u8; chunk_size];
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF
                     Ok(n) => {
-                        buf.truncate(std::cmp::min(n, bytes_to_read as usize));
+                        let n = std::cmp::min(n, bytes_to_read as usize);
+                        buf.truncate(n);
                         let msg = volume_server_pb::CopyFileResponse {
                             file_content: buf,
                             modified_ts_ns: if first { mod_ts_ns } else { 0 },
@@ -1573,7 +1624,7 @@ impl VolumeServer for VolumeGrpcService {
                             return; // receiver dropped, stop reading
                         }
                         first = false;
-                        bytes_to_read -= n as i64;
+                        bytes_to_read -= n as u64;
                     }
                     Err(e) => {
                         let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
