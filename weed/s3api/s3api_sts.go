@@ -161,6 +161,16 @@ func (h *STSHandlers) getAccountID() string {
 	return defaultAccountID
 }
 
+// callerPrincipalArn resolves the identity's principal ARN, synthesizing the
+// canonical user ARN when one was not set (e.g. legacy static identities) so
+// trust policies that name a concrete principal still match.
+func (h *STSHandlers) callerPrincipalArn(identity *Identity) string {
+	if identity.PrincipalArn != "" {
+		return identity.PrincipalArn
+	}
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", h.getAccountID(), identity.Name)
+}
+
 // assumeRoleWithWebIdentity dispatches the request through the IAMManager
 // wrapper when one is wired so its cross-account provider scope check and
 // per-role MaxSessionDuration clamp run for the public AWS-SDK path. Without
@@ -378,35 +388,27 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
 
-	// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
-	// This validates that the caller has a policy allowing sts:AssumeRole on the target role
-	// Check authorizations
+	// A named role is authorized by its trust policy, which declares which
+	// principals may assume it, so no separate identity-side sts:AssumeRole allow
+	// is required. An explicit identity-side deny still wins (deny-always-wins).
+	// Without a RoleArn the caller assumes a session for itself.
 	if roleArn != "" {
-		// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
-		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", roleArn); authErr != s3err.ErrNone {
-			glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
+		callerArn := h.callerPrincipalArn(identity)
+		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, callerArn); err != nil {
+			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
 			return
 		}
-
-		// Validate that the target role trusts the caller (Trust Policy)
-		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
-			glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
-			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+		if h.iam.isActionExplicitlyDeniedByIAM(r, identity, callerArn, sts.ActionAssumeRole, roleArn) {
+			glog.V(2).Infof("AssumeRole: identity policy explicitly denies %s assuming %s", identity.Name, roleArn)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
 			return
 		}
 	} else {
-		// If RoleArn is missing, default to the caller's identity (User Context)
-		// This allows the user to "assume" a session for themselves, inheriting their own permissions.
 		roleArn = identity.PrincipalArn
 		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
-
-		// We still enforce a global "sts:AssumeRole" check, similar to how we'd check if they can assume *any* role.
-		// However, for self-assumption, this might be implicit.
-		// For safety/consistency with previous logic, we keep the check but strictly it might not be required by AWS for GetSessionToken.
-		// But since this IS AssumeRole, let's keep it.
-		// Admin/Global check when no specific role is requested
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
@@ -938,12 +940,7 @@ func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Req
 	}
 
 	accountID := h.getAccountID()
-
-	arn := identity.PrincipalArn
-	if arn == "" {
-		arn = fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, identity.Name)
-	}
-
+	arn := h.callerPrincipalArn(identity)
 	userId := identity.Name
 
 	glog.V(2).Infof("GetCallerIdentity: identity=%s, arn=%s, account=%s", identity.Name, arn, accountID)

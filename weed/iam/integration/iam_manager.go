@@ -27,17 +27,17 @@ const maxPoliciesForEvaluation = 1024
 
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
-	stsService             *sts.STSService
-	policyEngine           *policy.PolicyEngine
-	roleStore              RoleStore
-	userStore              UserStore
-	oidcProviderStore      OIDCProviderStore
-	oidcAuditSink          OIDCProviderAuditSink
-	revocationStore        SessionRevocationStore
-	filerAddressProvider   func() string // Function to get current filer address
-	initialized            bool
-	runtimePolicyMu        sync.Mutex
-	runtimePolicyNames     map[string]struct{}
+	stsService           *sts.STSService
+	policyEngine         *policy.PolicyEngine
+	roleStore            RoleStore
+	userStore            UserStore
+	oidcProviderStore    OIDCProviderStore
+	oidcAuditSink        OIDCProviderAuditSink
+	revocationStore      SessionRevocationStore
+	filerAddressProvider func() string // Function to get current filer address
+	initialized          bool
+	runtimePolicyMu      sync.Mutex
+	runtimePolicyNames   map[string]struct{}
 }
 
 // SetOIDCProviderAuditSink configures the lifecycle event sink. When nil
@@ -1204,6 +1204,44 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	return true, nil
+}
+
+// IsPrincipalActionExplicitlyDenied reports whether any of the named policies
+// contains a statement that explicitly denies the action on the resource. Unlike
+// IsActionAllowed it does not require an allow — the absence of a matching
+// statement is not a denial. Used to enforce AWS deny-always-wins when the allow
+// is granted elsewhere (e.g. a role trust policy for sts:AssumeRole).
+func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, principal, action, resource string, policyNames []string, requestContext map[string]interface{}) (bool, error) {
+	if !m.initialized {
+		return false, fmt.Errorf("IAM manager not initialized")
+	}
+	if len(policyNames) == 0 {
+		return false, nil
+	}
+
+	if requestContext == nil {
+		requestContext = make(map[string]interface{})
+	}
+	requestContext["principal"] = principal
+	requestContext["aws:PrincipalArn"] = principal
+
+	evalCtx := &policy.EvaluationContext{
+		Principal:      principal,
+		Action:         action,
+		Resource:       resource,
+		RequestContext: requestContext,
+	}
+
+	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policyNames)
+	if err != nil {
+		return false, fmt.Errorf("policy evaluation failed: %w", err)
+	}
+	for _, stmt := range result.MatchingStatements {
+		if stmt.Effect == policy.EffectDeny {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
