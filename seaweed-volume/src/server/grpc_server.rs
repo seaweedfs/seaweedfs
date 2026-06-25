@@ -3335,9 +3335,15 @@ impl VolumeServer for VolumeGrpcService {
                             )));
                         }
 
-                        // Close local dat file handle (matches Go's v.LoadRemoteFile
-                        // which closes DataBackend before switching to remote)
-                        vol.close_local_dat_backend();
+                        // Switch the data backend from the local .dat to the remote
+                        // object so reads keep working after upload (matches Go's
+                        // LoadRemoteFile).
+                        if let Err(e) = vol.load_remote_dat_file() {
+                            return Err(Status::internal(format!(
+                                "volume {} failed to load remote file: {}",
+                                vid, e
+                            )));
+                        }
 
                         // Optionally remove local .dat file from disk
                         if !keep_local {

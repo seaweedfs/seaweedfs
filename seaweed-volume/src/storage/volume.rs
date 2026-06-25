@@ -949,7 +949,7 @@ impl Volume {
         Ok(())
     }
 
-    fn load_remote_dat_file(&mut self) -> Result<(), VolumeError> {
+    pub(crate) fn load_remote_dat_file(&mut self) -> Result<(), VolumeError> {
         let (storage_name, storage_key) = self.remote_storage_name_key();
         let backend = crate::remote_storage::s3_tier::global_s3_tier_registry()
             .read()
@@ -2223,12 +2223,6 @@ impl Volume {
         } else {
             self.no_write_can_delete = false;
         }
-    }
-
-    /// Close the local .dat file handle (matches Go's v.DataBackend.Close() in LoadRemoteFile).
-    /// Called after tier-upload when the local file is being replaced by remote storage.
-    pub fn close_local_dat_backend(&mut self) {
-        self.dat_file = None;
     }
 
     /// Close the remote dat file backend (matches Go's v.DataBackend.Close(); v.DataBackend = nil).
