@@ -47,6 +47,11 @@ func (c *commandEcRebuild) Help() string {
 
 	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>]
 
+	Before rebuilding, asks volume servers to recover any shards left unmounted by
+	a missing .ecx index (the index resides only on a peer server). Such shards are
+	invisible to the master, so recovering them first avoids regenerating data that
+	is actually present (issue #10104).
+
 	Options:
 	  -collection: specify a collection name, or "EACH_COLLECTION" to process all collections
 	  -apply: actually perform the rebuild operations (default is dry-run mode)
@@ -148,6 +153,11 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 		ewg: NewErrorWaitGroup(*maxParallelization),
 	}
+
+	// Recover shards left unmounted by a missing .ecx index before planning: such
+	// shards never register with the master, so the rebuild below would treat the
+	// volume as short or unrepairable even though its data is intact (issue #10104).
+	erb.recoverMissingIndexes()
 
 	fmt.Printf("rebuildEcVolumes for %d collection(s)\n", len(collections))
 	for _, c := range collections {
@@ -286,6 +296,61 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
 			return erb.rebuildOneEcVolume(collection, vid, locations, rebuilder)
 		})
 	}
+}
+
+// recoverMissingIndexes asks every ec node to fetch a missing .ecx index from a
+// peer and mount the on-disk shards it could not load on its own. Shards
+// orphaned this way (index only on another server) are absent from the master
+// topology, so without this pass ec.rebuild would regenerate or give up on
+// shards whose data is actually present — and a volume whose every holder lacks
+// the index would not appear in the topology at all. Each node therefore
+// recovers all of its on-disk orphans (volume_id 0); an explicit -volumeIds
+// list narrows that to the requested volumes. On apply it refreshes the topology
+// so the rebuild planning sees the recovered shards (issue #10104).
+func (erb *ecRebuilder) recoverMissingIndexes() {
+	erb.ecNodesMu.Lock()
+	nodes := append([]*EcNode(nil), erb.ecNodes...)
+	erb.ecNodesMu.Unlock()
+	if len(nodes) == 0 {
+		return
+	}
+
+	// volume_id 0 means "recover every orphan on the node"; a -volumeIds list
+	// narrows recovery to those ids (each scanned across collections server-side).
+	vids := erb.volumeIds
+	if len(vids) == 0 {
+		vids = []needle.VolumeId{0}
+	}
+
+	if !erb.applyChanges {
+		erb.write("would ask %d ec node(s) to recover EC shards left unmounted by a missing .ecx index\n", len(nodes))
+		return
+	}
+
+	for _, node := range nodes {
+		for _, vid := range vids {
+			err := operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(node.info), erb.commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+				_, mountErr := client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+					VolumeId:            uint32(vid),
+					RecoverMissingIndex: true,
+				})
+				return mountErr
+			})
+			if err != nil {
+				erb.write("%s recover missing index (volume %d): %v\n", node.info.Id, vid, err)
+			}
+		}
+	}
+
+	// Refresh topology so the rebuild planning sees shards the recovery registered.
+	refreshed, _, err := collectEcNodes(erb.commandEnv, erb.diskType)
+	if err != nil {
+		erb.write("failed to refresh ec nodes after index recovery: %v\n", err)
+		return
+	}
+	erb.ecNodesMu.Lock()
+	erb.ecNodes = refreshed
+	erb.ecNodesMu.Unlock()
 }
 
 func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) error {
