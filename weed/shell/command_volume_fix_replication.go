@@ -115,11 +115,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
 
-			// Skip volumes outside the requested collection up front, so detection,
-			// logging, the underReplicatedVolumeIdsCount termination counter and the
-			// fixing/deleting actions all operate on the same set. Without this, the
-			// counter reflects the whole cluster while only matching collections ever
-			// get fixed, leaving the -apply loop spinning forever.
+			// Filter here so the termination counter matches what gets fixed; else -apply loops forever.
 			if !c.matchCollectionPattern(replica.info.Collection) {
 				continue
 			}
@@ -265,9 +261,8 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	return
 }
 
-// matchCollectionPattern reports whether the given collection matches the
-// -collectionPattern flag. An empty pattern matches everything; CollectionDefault
-// matches the empty (unnamed) collection.
+// matchCollectionPattern reports whether collection matches -collectionPattern:
+// empty matches everything, CollectionDefault matches the unnamed collection.
 func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) bool {
 	if *c.collectionPattern == "" {
 		return true
@@ -294,8 +289,7 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			continue
 		}
 
-		// check collection name pattern (redundant after detection-time filtering,
-		// kept as a defensive guard)
+		// defensive: detection already filters by collection
 		if !c.matchCollectionPattern(replica.info.Collection) {
 			continue
 		}
@@ -383,8 +377,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	for _, dst := range allLocations {
 		// check whether data nodes satisfy the constraints
 		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
-			// check collection name pattern (redundant after detection-time
-			// filtering, kept as a defensive guard)
+			// defensive: detection already filters by collection
 			if !c.matchCollectionPattern(replica.info.Collection) {
 				hasSkippedCollection = true
 				break
