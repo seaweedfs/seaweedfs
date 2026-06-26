@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -261,59 +262,68 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	return nil
 }
 
-// entryStream is a sorted, streaming view of a single directory's entries.
-// A background goroutine pages through the directory via ReadDirAllEntries
-// and forwards each entry to a buffered channel; the caller consumes entries
-// one at a time through peek/advance. Memory usage is O(channel buffer) —
-// independent of directory size — rather than O(total entries).
-type entryStream struct {
-	ch   <-chan *filer_pb.Entry
-	head *filer_pb.Entry
-	done bool
-	err  error // written before ch is closed; safe to read once done==true
+// dirEntries holds one directory's entries buffered and sorted in Go byte
+// order, which the merge in compareDirectory requires (it pairs equal names and
+// uses eA.Name < eB.Name as the tie-break). The filer's own list order is not
+// trusted: since PR #9824 (4.32) a filer forces byte-lexicographic listing
+// regardless of SQL collation, while an older filer whose name column uses a
+// locale collation lists case-insensitively. Comparing two such clusters yields
+// the same name set in a different order, desyncing the merge into spurious
+// MISSING / ONLY_IN_B. Sorting both sides client-side makes the order identical
+// regardless of filer version or store backend.
+//
+// The load runs in a background goroutine so both sides of a compareDirectory
+// list concurrently; peek/advance block on `ready` until it completes. Memory
+// is O(directory size) per side — acceptable for a one-shot verify CLI.
+type dirEntries struct {
+	ready   chan struct{} // closed once entries and err are set
+	entries []*filer_pb.Entry
+	idx     int
+	err     error
 }
 
-// newEntryStream starts the background goroutine. It exits when listing
-// completes, an error occurs, or ctx is cancelled; the channel is always
-// closed before exit so consumers do not block indefinitely.
-func newEntryStream(ctx context.Context, client filer_pb.FilerClient, dir string) *entryStream {
-	ch := make(chan *filer_pb.Entry, 64)
-	s := &entryStream{ch: ch}
+// newDirEntries starts loading the whole directory and sorting it by Name, then
+// returns immediately. The goroutine exits when listing completes, errors, or
+// ctx is cancelled; it always closes `ready` so consumers never block forever.
+func newDirEntries(ctx context.Context, client filer_pb.FilerClient, dir string) *dirEntries {
+	s := &dirEntries{ready: make(chan struct{})}
 	go func() {
-		defer close(ch)
+		defer close(s.ready)
 		s.err = filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "",
 			func(entry *filer_pb.Entry, isLast bool) error {
 				select {
-				case ch <- entry:
-					return nil
 				case <-ctx.Done():
 					return ctx.Err()
+				default:
 				}
+				s.entries = append(s.entries, entry)
+				return nil
 			})
+		if s.err == nil {
+			sort.Slice(s.entries, func(i, j int) bool {
+				return s.entries[i].Name < s.entries[j].Name
+			})
+		}
 	}()
 	return s
 }
 
 // peek returns the next entry without consuming it, or nil at end-of-stream.
-func (s *entryStream) peek() *filer_pb.Entry {
-	if s.done {
+// It blocks until the directory has finished loading and sorting.
+func (s *dirEntries) peek() *filer_pb.Entry {
+	<-s.ready
+	if s.idx >= len(s.entries) {
 		return nil
 	}
-	if s.head == nil {
-		e, ok := <-s.ch
-		if !ok {
-			s.done = true
-			return nil
-		}
-		s.head = e
-	}
-	return s.head
+	return s.entries[s.idx]
 }
 
 // advance consumes and returns the next entry.
-func (s *entryStream) advance() *filer_pb.Entry {
+func (s *dirEntries) advance() *filer_pb.Entry {
 	e := s.peek()
-	s.head = nil
+	if e != nil {
+		s.idx++
+	}
 	return e
 }
 
@@ -340,26 +350,26 @@ func compareDirectory(ctx context.Context,
 
 	result.dirCount.Add(1)
 
-	// A child context ensures that stream goroutines are cancelled and their
-	// channels are closed if compareDirectory returns early (e.g. on error).
+	// A child context cancels the load goroutines (and their listing RPCs) if
+	// compareDirectory returns early, e.g. on error. Both sides load concurrently.
 	mergeCtx, cancelMerge := context.WithCancel(ctx)
 	defer cancelMerge()
 
-	streamA := newEntryStream(mergeCtx, clientA, dirA)
-	streamB := newEntryStream(mergeCtx, clientB, dirB)
+	entriesA := newDirEntries(mergeCtx, clientA, dirA)
+	entriesB := newDirEntries(mergeCtx, clientB, dirB)
 
 	// collect subdirectories for recursive comparison
 	type dirPair struct{ a, b string }
 	var subDirs []dirPair
 
-	for streamA.peek() != nil || streamB.peek() != nil {
-		eA := streamA.peek()
-		eB := streamB.peek()
+	for entriesA.peek() != nil || entriesB.peek() != nil {
+		eA := entriesA.peek()
+		eB := entriesB.peek()
 
 		switch {
 		case eA != nil && (eB == nil || eA.Name < eB.Name):
 			// entry only in A
-			entryA := streamA.advance()
+			entryA := entriesA.advance()
 			if entryA.IsDirectory {
 				// Always recurse for missing-in-B directories: a recent
 				// child write can bump the parent's mtime even though
@@ -375,7 +385,7 @@ func compareDirectory(ctx context.Context,
 
 		case eB != nil && (eA == nil || eB.Name < eA.Name):
 			// entry only in B
-			entryB := streamB.advance()
+			entryB := entriesB.advance()
 			if !isActivePassive {
 				if isTooRecent(entryB, cutoffTime) {
 					result.skippedRecent.Add(1)
@@ -386,8 +396,8 @@ func compareDirectory(ctx context.Context,
 
 		default:
 			// same name in both
-			entryA := streamA.advance()
-			entryB := streamB.advance()
+			entryA := entriesA.advance()
+			entryB := entriesB.advance()
 
 			if entryA.IsDirectory && entryB.IsDirectory {
 				subDirs = append(subDirs, dirPair{
@@ -411,12 +421,13 @@ func compareDirectory(ctx context.Context,
 		}
 	}
 
-	// Both channels are closed: close happens-before the receive of the zero
-	// value, so stream.err is visible here without additional synchronisation.
-	if err := streamA.err; err != nil && err != context.Canceled {
+	// The merge loop drained both sources, so each peek() already received from
+	// `ready`; that close happens-before this read, making err visible without
+	// additional synchronisation.
+	if err := entriesA.err; err != nil && err != context.Canceled {
 		return fmt.Errorf("list %s on filer A: %v", dirA, err)
 	}
-	if err := streamB.err; err != nil && err != context.Canceled {
+	if err := entriesB.err; err != nil && err != context.Canceled {
 		return fmt.Errorf("list %s on filer B: %v", dirB, err)
 	}
 
@@ -464,7 +475,6 @@ func compareDirectory(ctx context.Context,
 
 	return nil
 }
-
 
 func compareEntries(dir string, entryA, entryB *filer_pb.Entry, result *VerifyResult) {
 	result.fileCount.Add(1)
