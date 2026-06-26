@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -16,8 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 
-	"context"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -25,6 +24,25 @@ import (
 
 func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return vs.getCurrentMaster()
+}
+
+// lookupRaftLeaderMaster resolves the raft leader for topology mutations. The
+// heartbeat peer from GetMaster may still be a follower after an election.
+func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) pb.ServerAddress {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	leader, err := operation.LookupRaftLeaderMaster(ctx, vs.SeedMasterNodes, vs.grpcDialOption)
+	if err != nil {
+		glog.V(0).Infof("volume server %s:%d: %v; using heartbeat master", vs.store.Ip, vs.store.Port, err)
+		return vs.GetMaster(ctx)
+	}
+	current := vs.getCurrentMaster()
+	if !leader.Equals(current) {
+		glog.V(0).Infof("volume server %s:%d raft leader is %v (heartbeat master %v)", vs.store.Ip, vs.store.Port, leader, current)
+		vs.setCurrentMaster(leader)
+	}
+	return leader
 }
 
 // getCurrentMaster returns vs.currentMaster under a read lock so callers
@@ -262,10 +280,10 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 		case first := <-vs.store.NewEcShardsChan:
 			shards := util.DrainChannel(vs.store.NewEcShardsChan, first)
 			deltaBeat := &master_pb.Heartbeat{
-				Ip:           ip,
-				Port:         port,
-				DataCenter:   dataCenter,
-				Rack:         rack,
+				Ip:          ip,
+				Port:        port,
+				DataCenter:  dataCenter,
+				Rack:        rack,
 				NewEcShards: shards,
 			}
 			for _, s := range shards {
@@ -295,10 +313,10 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 		case first := <-vs.store.DeletedEcShardsChan:
 			shards := util.DrainChannel(vs.store.DeletedEcShardsChan, first)
 			deltaBeat := &master_pb.Heartbeat{
-				Ip:               ip,
-				Port:             port,
-				DataCenter:       dataCenter,
-				Rack:             rack,
+				Ip:              ip,
+				Port:            port,
+				DataCenter:      dataCenter,
+				Rack:            rack,
 				DeletedEcShards: shards,
 			}
 			for _, s := range shards {
