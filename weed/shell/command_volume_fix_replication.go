@@ -76,6 +76,15 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		return nil
 	}
 
+	// Validate the collection pattern once up front: filepath.Match only ever
+	// fails for a malformed pattern, which is independent of the collection
+	// being matched. Validating here lets matchCollectionPattern ignore the error.
+	if *c.collectionPattern != "" && *c.collectionPattern != CollectionDefault {
+		if _, err = filepath.Match(*c.collectionPattern, ""); err != nil {
+			return fmt.Errorf("invalid collectionPattern %q: %v", *c.collectionPattern, err)
+		}
+	}
+
 	handleDeprecatedForceFlag(writer, volFixReplicationCommand, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 	commandEnv.noLock = !*applyChanges
@@ -114,6 +123,16 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		var underReplicatedVolumeIds, overReplicatedVolumeIds, misplacedVolumeIds []uint32
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
+
+			// Skip volumes outside the requested collection up front, so detection,
+			// logging, the underReplicatedVolumeIdsCount termination counter and the
+			// fixing/deleting actions all operate on the same set. Without this, the
+			// counter reflects the whole cluster while only matching collections ever
+			// get fixed, leaving the -apply loop spinning forever.
+			if !c.matchCollectionPattern(replica.info.Collection) {
+				continue
+			}
+
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 
 			// build locations list for optional verbose output
@@ -255,6 +274,20 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	return
 }
 
+// matchCollectionPattern reports whether the given collection matches the
+// -collectionPattern flag. An empty pattern matches everything. The pattern's
+// validity is checked once in Do(), so any filepath.Match error here is ignored.
+func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) bool {
+	if *c.collectionPattern == "" {
+		return true
+	}
+	if *c.collectionPattern == CollectionDefault {
+		return collection == ""
+	}
+	matched, _ := filepath.Match(*c.collectionPattern, collection)
+	return matched
+}
+
 func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, selectOneVolumeFn SelectOneVolumeFunc) error {
 	if len(volumeIds) == 0 {
 		// nothing to do
@@ -271,21 +304,10 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			continue
 		}
 
-		// check collection name pattern
-		if *c.collectionPattern != "" {
-			var matched bool
-			if *c.collectionPattern == CollectionDefault {
-				matched = replica.info.Collection == ""
-			} else {
-				var err error
-				matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
-				if err != nil {
-					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-				}
-			}
-			if !matched {
-				continue
-			}
+		// check collection name pattern (redundant after detection-time filtering,
+		// kept as a defensive guard)
+		if !c.matchCollectionPattern(replica.info.Collection) {
+			continue
 		}
 
 		collectionIsMismatch := false
@@ -371,22 +393,11 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	for _, dst := range allLocations {
 		// check whether data nodes satisfy the constraints
 		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
-			// check collection name pattern
-			if *c.collectionPattern != "" {
-				var matched bool
-				if *c.collectionPattern == CollectionDefault {
-					matched = replica.info.Collection == ""
-				} else {
-					var err error
-					matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
-					if err != nil {
-						return false, fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-					}
-				}
-				if !matched {
-					hasSkippedCollection = true
-					break
-				}
+			// check collection name pattern (redundant after detection-time
+			// filtering, kept as a defensive guard)
+			if !c.matchCollectionPattern(replica.info.Collection) {
+				hasSkippedCollection = true
+				break
 			}
 
 			// ask the volume server to replicate the volume
