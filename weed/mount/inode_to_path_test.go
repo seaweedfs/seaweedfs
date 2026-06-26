@@ -94,6 +94,38 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 	}
 }
 
+// Only directory inodes carry dirState; files never do. This keeps the file
+// InodeEntry in the smaller size class, which is the memory win on large mounts.
+func TestOnlyDirectoriesGetDirState(t *testing.T) {
+	itp := NewInodeToPath(util.FullPath("/"), 60)
+
+	file := util.FullPath("/data/file.txt")
+	fileInode := itp.Lookup(file, time.Now().Unix(), false, false, 0, true)
+	if _, ok := itp.dirStates[fileInode]; ok {
+		t.Fatal("file inode must not have a dirState")
+	}
+	// dir queries against a file are no-ops and must not register one
+	itp.GetSubdirCount(file)
+	itp.IsChildrenCached(file)
+	itp.ShouldReadDirectoryDirect(file)
+	itp.MarkChildrenCached(file)
+	if _, ok := itp.dirStates[fileInode]; ok {
+		t.Fatal("dir queries on a file inode must not create a dirState")
+	}
+
+	dir := util.FullPath("/data")
+	dirInode := itp.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+	if _, ok := itp.dirStates[dirInode]; !ok {
+		t.Fatal("directory inode should be registered in dirStates at creation")
+	}
+
+	// forgetting the directory drops its dirState
+	itp.Forget(dirInode, 1, nil)
+	if _, ok := itp.dirStates[dirInode]; ok {
+		t.Fatal("forgotten directory must be removed from dirStates")
+	}
+}
+
 func TestRecordDirectoryUpdateSwitchesDirectoryToReadThrough(t *testing.T) {
 	root := util.FullPath("/")
 	dir := util.FullPath("/data")
