@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -139,7 +140,26 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 }
 
 func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
-	resolvedChunks, err := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
+	// LookupFileId can transiently fail during a write burst (volume not yet
+	// registered). Retry like the data-chunk path does; stop once the source
+	// has moved past this version, in which case the caller skips it as lossless.
+	var resolvedChunks []*filer_pb.FileChunk
+	resolveName := fmt.Sprintf("resolve manifest %s", sourceChunk.GetFileIdString())
+	err := util.RetryUntil(resolveName, func() error {
+		rc, e := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
+		if e != nil {
+			return e
+		}
+		resolvedChunks = rc
+		return nil
+	}, func(resolveErr error) (shouldContinue bool) {
+		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
+			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceChunk.GetFileIdString(), path, resolveErr)
+			return false
+		}
+		glog.V(0).Infof("resolve manifest %s for %s: %v", sourceChunk.GetFileIdString(), path, resolveErr)
+		return true
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -440,17 +460,22 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 // version being replayed is stale. The lookup runs regardless of sourceMtimeNs so
 // a deleted source is detected even when the replayed mtime is epoch/unset.
 func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int64) bool {
-	if fs.filerSource == nil {
-		return false
-	}
-
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
 		return false
 	}
+	return SourceSupersedes(context.Background(), fs.filerSource, sourcePath, sourceMtimeNs)
+}
 
-	sourceEntry, err := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
-	return sourceSupersedes(sourcePath, sourceEntry, err, sourceMtimeNs)
+// SourceSupersedes reports whether the live source's entry at sourcePath has
+// moved past the replayed version (mtimeNs) — deleted or strictly newer — so
+// skipping it is lossless. Exported for filer.backup's non-filer-sink decision.
+func SourceSupersedes(ctx context.Context, filerSource *source.FilerSource, sourcePath util.FullPath, mtimeNs int64) bool {
+	if filerSource == nil {
+		return false
+	}
+	sourceEntry, err := filer_pb.GetEntry(ctx, filerSource, sourcePath)
+	return sourceSupersedes(sourcePath, sourceEntry, err, mtimeNs)
 }
 
 // sourceSupersedes reports whether the replayed version (sourceMtimeNs) is stale:

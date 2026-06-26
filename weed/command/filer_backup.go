@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink/filersink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -207,6 +208,10 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), err.Error())
 				return nil
 			}
+			if isSourceLookupError(err) && eventSourceSuperseded(filerSource, resp) {
+				glog.V(0).Infof("source superseded %s during lookup failure, skip it: %s", getSourceKey(resp), err.Error())
+				return nil
+			}
 			return err
 		}
 	} else {
@@ -271,20 +276,38 @@ func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {
 	return ""
 }
 
-// isIgnorable404 returns true if the error represents a 404/not-found condition
-// that should be silently ignored during backup. This covers:
-//   - errors wrapping http.ErrNotFound (direct volume server 404 via non-S3 sinks)
-//   - errors containing the "404 Not Found: not found" status string (S3 sink path
-//     where AWS SDK breaks the errors.Is unwrap chain)
-//   - LookupFileId or volume-id-not-found errors from the volume id map
+// isIgnorable404 returns true only for a genuine source-side 404, where skipping
+// the event is lossless: errors wrapping http.ErrNotFound, or carrying the S3
+// "404 Not Found: not found" status string (the AWS SDK breaks the unwrap chain).
+// It deliberately does not match "LookupFileId" / "volume id ... not found" —
+// usually transient lookup races whose skip drops live files; those are resolved
+// against the live source instead (isSourceLookupError + eventSourceSuperseded).
 func isIgnorable404(err error) bool {
 	if errors.Is(err, http.ErrNotFound) {
 		return true
 	}
+	return strings.Contains(err.Error(), ignorable404ErrString)
+}
+
+// isSourceLookupError reports whether err is a source volume-lookup failure.
+// The same strings cover a transient race and a permanently gone volume, so
+// the caller must consult the live source to pick skip or retry.
+func isSourceLookupError(err error) bool {
 	errStr := err.Error()
-	return strings.Contains(errStr, ignorable404ErrString) ||
-		strings.Contains(errStr, "LookupFileId") ||
+	return strings.Contains(errStr, "LookupFileId") ||
 		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
+}
+
+// eventSourceSuperseded reports whether the live source has moved past the
+// version carried by this event (entry gone or strictly newer), making a skip
+// lossless. Without a NewEntry it reports false so the error propagates.
+func eventSourceSuperseded(filerSource *source.FilerSource, resp *filer_pb.SubscribeMetadataResponse) bool {
+	if resp == nil || resp.EventNotification == nil || resp.EventNotification.NewEntry == nil {
+		return false
+	}
+	message := resp.EventNotification
+	sourcePath := util.FullPath(message.NewParentPath).Child(message.NewEntry.Name)
+	return filersink.SourceSupersedes(context.Background(), filerSource, sourcePath, filersink.EntryMtimeNs(message.NewEntry))
 }
 
 // persistSnapshotOffset writes the snapshot high-water mark to the source
@@ -386,9 +409,17 @@ func runInitialSnapshot(
 			// -ignore404Error is set; apply the same policy here so the walk
 			// doesn't abort (and trigger a full re-walk on retry) just because
 			// a single entry disappeared mid-snapshot.
-			if ignore404Error && isIgnorable404(err) {
-				glog.V(0).Infof("initialSnapshot: source entry %s disappeared, ignore it: %s", sourceKey, err.Error())
-				return nil
+			if ignore404Error {
+				if isIgnorable404(err) {
+					glog.V(0).Infof("initialSnapshot: source entry %s disappeared, ignore it: %s", sourceKey, err.Error())
+					return nil
+				}
+				// Same decision as the follow phase; lossless because the
+				// post-walk subscription replays the newer change.
+				if isSourceLookupError(err) && filersink.SourceSupersedes(ctx, filerSource, sourceKey, filersink.EntryMtimeNs(entry)) {
+					glog.V(0).Infof("initialSnapshot: source superseded %s mid-walk, skip it: %s", sourceKey, err.Error())
+					return nil
+				}
 			}
 			return fmt.Errorf("seed %s: %w", targetKey, err)
 		}
