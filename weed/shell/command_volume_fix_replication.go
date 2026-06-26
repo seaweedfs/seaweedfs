@@ -289,11 +289,6 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			continue
 		}
 
-		// defensive: detection already filters by collection
-		if !c.matchCollectionPattern(replica.info.Collection) {
-			continue
-		}
-
 		collectionIsMismatch := false
 		for _, volumeReplica := range replicas {
 			if volumeReplica.info.Collection != replica.info.Collection {
@@ -371,18 +366,11 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	replica := pickOneReplicaToCopyFrom(replicas)
 	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 	foundNewLocation := false
-	hasSkippedCollection := false
 	keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
 	fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
 	for _, dst := range allLocations {
 		// check whether data nodes satisfy the constraints
 		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
-			// defensive: detection already filters by collection
-			if !c.matchCollectionPattern(replica.info.Collection) {
-				hasSkippedCollection = true
-				break
-			}
-
 			// ask the volume server to replicate the volume
 			foundNewLocation = true
 			fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
@@ -408,7 +396,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 		}
 	}
 
-	if !foundNewLocation && !hasSkippedCollection {
+	if !foundNewLocation {
 		fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 	}
 	return false, nil
