@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -26,23 +29,38 @@ func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return vs.getCurrentMaster()
 }
 
-// lookupRaftLeaderMaster resolves the raft leader for topology mutations. The
-// heartbeat peer from GetMaster may still be a follower after an election.
-func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) pb.ServerAddress {
+// lookupRaftLeaderMaster resolves the raft leader for topology mutations via
+// GetMasterConfiguration on configured peers. It does not update currentMaster;
+// the heartbeat loop owns that field and reconnects when the stream reports a
+// different leader than the connected peer.
+func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) (pb.ServerAddress, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	leader, err := operation.LookupRaftLeaderMaster(ctx, vs.SeedMasterNodes, vs.grpcDialOption)
 	if err != nil {
-		glog.V(0).Infof("volume server %s:%d: %v; using heartbeat master", vs.store.Ip, vs.store.Port, err)
-		return vs.GetMaster(ctx)
+		if isContextDoneErr(err) {
+			glog.V(1).Infof("volume server %s:%d: raft leader lookup: %v", vs.store.Ip, vs.store.Port, err)
+		} else {
+			glog.V(0).Infof("volume server %s:%d: raft leader lookup: %v", vs.store.Ip, vs.store.Port, err)
+		}
+		return "", err
 	}
 	current := vs.getCurrentMaster()
 	if !leader.Equals(current) {
-		glog.V(0).Infof("volume server %s:%d raft leader is %v (heartbeat master %v)", vs.store.Ip, vs.store.Port, leader, current)
-		vs.setCurrentMaster(leader)
+		glog.V(1).Infof("volume server %s:%d: raft leader %v (heartbeat peer %v)", vs.store.Ip, vs.store.Port, leader, current)
 	}
-	return leader
+	return leader, nil
+}
+
+func isContextDoneErr(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if st, ok := status.FromError(err); ok {
+		return st.Code() == codes.Canceled || st.Code() == codes.DeadlineExceeded
+	}
+	return false
 }
 
 // getCurrentMaster returns vs.currentMaster under a read lock so callers

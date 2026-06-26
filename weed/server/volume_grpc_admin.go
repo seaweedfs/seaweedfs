@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -279,8 +280,25 @@ func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volum
 	return nil
 }
 
+func isNotLeaderErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Not current leader")
+}
+
 func (vs *VolumeServer) notifyMasterVolumeReadonly(ctx context.Context, v *storage.Volume, isReadOnly bool) error {
-	master := vs.lookupRaftLeaderMaster(ctx)
+	master := vs.GetMaster(ctx)
+	err := vs.volumeMarkReadonlyOnMaster(ctx, master, v, isReadOnly)
+	if err != nil && isNotLeaderErr(err) {
+		leader, lookupErr := vs.lookupRaftLeaderMaster(ctx)
+		if lookupErr != nil {
+			return fmt.Errorf("heartbeat master %s rejected mark-readonly and leader lookup failed: %w", master, lookupErr)
+		}
+		master = leader
+		err = vs.volumeMarkReadonlyOnMaster(ctx, master, v, isReadOnly)
+	}
+	return err
+}
+
+func (vs *VolumeServer) volumeMarkReadonlyOnMaster(ctx context.Context, master pb.ServerAddress, v *storage.Volume, isReadOnly bool) error {
 	if grpcErr := pb.WithMasterClient(ctx, false, master, vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		_, err := client.VolumeMarkReadonly(ctx, &master_pb.VolumeMarkReadonlyRequest{
 			Ip:               vs.store.Ip,

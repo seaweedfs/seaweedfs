@@ -22,6 +22,9 @@ func LookupRaftLeaderMaster(ctx context.Context, masters []pb.ServerAddress, grp
 	}
 	var lastErr error
 	for _, peer := range masters {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		var leader pb.ServerAddress
 		err := WithMasterServerClient(ctx, false, peer, grpcDialOption, func(client master_pb.SeaweedClient) error {
 			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

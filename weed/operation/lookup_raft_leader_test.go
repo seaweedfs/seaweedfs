@@ -2,6 +2,7 @@ package operation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"testing"
@@ -77,5 +78,22 @@ func TestLookupRaftLeaderMasterNoPeers(t *testing.T) {
 	_, err := LookupRaftLeaderMaster(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for empty peers")
+	}
+}
+
+func TestLookupRaftLeaderMasterCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := LookupRaftLeaderMaster(
+		ctx,
+		[]pb.ServerAddress{"127.0.0.1:1"},
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
