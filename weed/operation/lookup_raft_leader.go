@@ -25,10 +25,12 @@ func LookupRaftLeaderMaster(ctx context.Context, masters []pb.ServerAddress, grp
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		// The same timeout ctx drives both the RPC and WithMasterServerClient's
+		// connection-invalidation decision, so a self-inflicted 5s timeout leaves
+		// callCtx.Err() != nil and does not poison the shared master connection.
+		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		var leader pb.ServerAddress
-		err := WithMasterServerClient(ctx, false, peer, grpcDialOption, func(client master_pb.SeaweedClient) error {
-			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
+		err := WithMasterServerClient(callCtx, false, peer, grpcDialOption, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(callCtx, &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
 				return err
@@ -39,6 +41,7 @@ func LookupRaftLeaderMaster(ctx context.Context, masters []pb.ServerAddress, grp
 			leader = pb.ServerAddress(resp.Leader)
 			return nil
 		})
+		cancel()
 		if err == nil && leader != "" {
 			return leader, nil
 		}
