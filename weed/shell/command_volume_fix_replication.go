@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -114,6 +114,12 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		var underReplicatedVolumeIds, overReplicatedVolumeIds, misplacedVolumeIds []uint32
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
+
+			// Filter here so the termination counter matches what gets fixed; else -apply loops forever.
+			if !c.matchCollectionPattern(replica.info.Collection) {
+				continue
+			}
+
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 
 			// build locations list for optional verbose output
@@ -255,6 +261,18 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	return
 }
 
+// matchCollectionPattern reports whether collection matches -collectionPattern:
+// empty matches everything, CollectionDefault matches the unnamed collection.
+func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) bool {
+	if *c.collectionPattern == "" {
+		return true
+	}
+	if *c.collectionPattern == CollectionDefault {
+		return collection == ""
+	}
+	return wildcard.MatchesWildcard(*c.collectionPattern, collection)
+}
+
 func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, selectOneVolumeFn SelectOneVolumeFunc) error {
 	if len(volumeIds) == 0 {
 		// nothing to do
@@ -269,23 +287,6 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 		if replica == nil {
 			fmt.Fprintf(writer, "skip trimming volume %d: no safe replica to delete (would leave only read-only survivors)\n", vid)
 			continue
-		}
-
-		// check collection name pattern
-		if *c.collectionPattern != "" {
-			var matched bool
-			if *c.collectionPattern == CollectionDefault {
-				matched = replica.info.Collection == ""
-			} else {
-				var err error
-				matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
-				if err != nil {
-					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-				}
-			}
-			if !matched {
-				continue
-			}
 		}
 
 		collectionIsMismatch := false
@@ -365,30 +366,11 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	replica := pickOneReplicaToCopyFrom(replicas)
 	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 	foundNewLocation := false
-	hasSkippedCollection := false
 	keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
 	fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
 	for _, dst := range allLocations {
 		// check whether data nodes satisfy the constraints
 		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
-			// check collection name pattern
-			if *c.collectionPattern != "" {
-				var matched bool
-				if *c.collectionPattern == CollectionDefault {
-					matched = replica.info.Collection == ""
-				} else {
-					var err error
-					matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
-					if err != nil {
-						return false, fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-					}
-				}
-				if !matched {
-					hasSkippedCollection = true
-					break
-				}
-			}
-
 			// ask the volume server to replicate the volume
 			foundNewLocation = true
 			fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
@@ -414,7 +396,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 		}
 	}
 
-	if !foundNewLocation && !hasSkippedCollection {
+	if !foundNewLocation {
 		fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 	}
 	return false, nil
