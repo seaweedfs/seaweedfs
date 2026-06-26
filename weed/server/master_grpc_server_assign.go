@@ -30,9 +30,10 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 		}
 		resp, err := ms.Assign(context.Background(), req)
 		if err != nil {
-			// Return transient errors (e.g. warmup) as in-band error responses
-			// instead of killing the stream, so pooled connections survive.
-			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+			// Return transient errors (warmup, growth-in-progress shed) as in-band
+			// error responses instead of killing the stream, so pooled connections
+			// survive.
+			if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.ResourceExhausted) {
 				glog.V(1).Infof("StreamAssign transient error: %v", err)
 				resp = &master_pb.AssignResponse{Error: st.Message()}
 			} else {
@@ -129,6 +130,17 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			lastErr = err
 			if (req.DataCenter != "" || req.Rack != "") && strings.Contains(err.Error(), topology.NoWritableVolumes) {
 				break
+			}
+			// Growth is the remedy and already in flight; don't pin a goroutine
+			// spinning out the timeout under an assign herd.
+			if shouldGrow && vl.HasGrowRequest() {
+				if ms.Topo.AvailableSpaceFor(option) <= 0 {
+					break // out of space: surface the real error, not a retryable shed
+				}
+				// ResourceExhausted, not Unavailable: clients retry it (assign_file_id.go)
+				// but the gRPC layer doesn't treat it as a dead channel, so the shed
+				// doesn't tear down the shared master connection mid-herd.
+				return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
 			}
 			time.Sleep(200 * time.Millisecond)
 			continue
