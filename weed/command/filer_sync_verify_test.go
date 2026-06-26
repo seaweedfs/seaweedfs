@@ -39,7 +39,7 @@ func (s *verifyTestStream) RecvMsg(_ any) error          { return nil }
 // verifyTestInnerClient is the SeaweedFilerClient passed to fn inside WithFilerClient.
 type verifyTestInnerClient struct {
 	filer_pb.SeaweedFilerClient // embed for unimplemented RPCs
-	entriesByDir map[string][]*filer_pb.Entry
+	entriesByDir                map[string][]*filer_pb.Entry
 }
 
 func (c *verifyTestInnerClient) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
@@ -57,6 +57,7 @@ type verifyTestFilerClient struct {
 	inFlight     atomic.Int64
 	peakFlight   atomic.Int64
 	delay        time.Duration
+	onList       func() // called at the start of each listing, if set
 }
 
 func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -68,6 +69,9 @@ func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.Seaweed
 		if n <= peak || c.peakFlight.CompareAndSwap(peak, n) {
 			break
 		}
+	}
+	if c.onList != nil {
+		c.onList()
 	}
 	if c.delay > 0 {
 		time.Sleep(c.delay)
@@ -110,7 +114,7 @@ func TestVerifySyncMissingFile(t *testing.T) {
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	err := compareDirectory(context.Background(), clientA, clientB,
-		"/root", "/root", false, time.Time{}, sem, result)
+		"/root", "/root", false, time.Time{}, false, false, sem, result)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -139,7 +143,7 @@ func TestVerifySyncOnlyInB(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		if err := compareDirectory(context.Background(), clientA, clientB,
-			"/root", "/root", false, time.Time{}, sem, result); err != nil {
+			"/root", "/root", false, time.Time{}, false, false, sem, result); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got := result.onlyInB.Load(); got != 1 {
@@ -151,7 +155,7 @@ func TestVerifySyncOnlyInB(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		if err := compareDirectory(context.Background(), clientA, clientB,
-			"/root", "/root", true, time.Time{}, sem, result); err != nil {
+			"/root", "/root", true, time.Time{}, false, false, sem, result); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got := result.onlyInB.Load(); got != 0 {
@@ -177,7 +181,7 @@ func TestVerifySyncSizeMismatch(t *testing.T) {
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	err := compareDirectory(context.Background(), clientA, clientB,
-		"/root", "/root", false, time.Time{}, sem, result)
+		"/root", "/root", false, time.Time{}, false, false, sem, result)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -215,7 +219,7 @@ func TestVerifySyncConcurrencyBound(t *testing.T) {
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	if err := compareDirectory(context.Background(), clientA, clientB,
-		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		"/root", "/root", false, time.Time{}, false, false, sem, result); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -259,7 +263,7 @@ func TestVerifySyncETagMismatch(t *testing.T) {
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	if err := compareDirectory(context.Background(), clientA, clientB,
-		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		"/root", "/root", false, time.Time{}, false, false, sem, result); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := result.etagMismatch.Load(); got != 1 {
@@ -298,7 +302,7 @@ func TestVerifySyncCutoffTime(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		if err := compareDirectory(context.Background(), clientA, clientB,
-			"/", "/", false, cutoff, sem, result); err != nil {
+			"/", "/", false, cutoff, false, false, sem, result); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got := result.skippedRecent.Load(); got != 1 {
@@ -319,7 +323,7 @@ func TestVerifySyncCutoffTime(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		if err := compareDirectory(context.Background(), clientA, clientB,
-			"/", "/", false, cutoff, sem, result); err != nil {
+			"/", "/", false, cutoff, false, false, sem, result); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got := result.missingCount.Load(); got != 1 {
@@ -337,7 +341,7 @@ func TestVerifySyncCutoffTime(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		if err := compareDirectory(context.Background(), clientA, clientB,
-			"/", "/", false, cutoff, sem, result); err != nil {
+			"/", "/", false, cutoff, false, false, sem, result); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got := result.skippedRecent.Load(); got != 1 {
@@ -358,7 +362,7 @@ func TestVerifySyncCutoffTime(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		if err := compareDirectory(context.Background(), clientA, clientB,
-			"/", "/", false, cutoff, sem, result); err != nil {
+			"/", "/", false, cutoff, false, false, sem, result); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got := result.onlyInB.Load(); got != 1 {
@@ -392,7 +396,7 @@ func TestVerifySyncCutoffMatchedFileBSideRecent(t *testing.T) {
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	if err := compareDirectory(context.Background(), clientA, clientB,
-		"/", "/", false, cutoff, sem, result); err != nil {
+		"/", "/", false, cutoff, false, false, sem, result); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := result.skippedRecent.Load(); got != 1 {
@@ -422,8 +426,8 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 
 	clientA := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":        {recentDir},
-			"/subdir":  {oldChild},
+			"/":       {recentDir},
+			"/subdir": {oldChild},
 		},
 	}
 	clientB := &verifyTestFilerClient{
@@ -435,7 +439,7 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	if err := compareDirectory(context.Background(), clientA, clientB,
-		"/", "/", false, cutoff, sem, result); err != nil {
+		"/", "/", false, cutoff, false, false, sem, result); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expect: directory MISSING + recursed-old-file MISSING = 2 missing.
@@ -454,21 +458,21 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 func TestVerifySyncRootPath(t *testing.T) {
 	clientA := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":      {verifyDirEntry("data")},
-			"/data":  {verifyFileEntry("file.txt", 42)},
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
 		},
 	}
 	clientB := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":      {verifyDirEntry("data")},
-			"/data":  {verifyFileEntry("file.txt", 42)},
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
 		},
 	}
 
 	result := &VerifyResult{}
 	sem := make(chan struct{}, verifySyncConcurrency)
 	if err := compareDirectory(context.Background(), clientA, clientB,
-		"/", "/", false, time.Time{}, sem, result); err != nil {
+		"/", "/", false, time.Time{}, false, false, sem, result); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.missingCount.Load() != 0 || result.sizeMismatch.Load() != 0 {
@@ -519,7 +523,7 @@ func TestVerifySyncNoDeadlockDeepTree(t *testing.T) {
 		result := &VerifyResult{}
 		sem := make(chan struct{}, verifySyncConcurrency)
 		done <- compareDirectory(context.Background(), clientA, clientB,
-			"/root", "/root", false, time.Time{}, sem, result)
+			"/root", "/root", false, time.Time{}, false, false, sem, result)
 	}()
 
 	select {
@@ -529,5 +533,162 @@ func TestVerifySyncNoDeadlockDeepTree(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("compareDirectory did not complete within 10s — possible deadlock")
+	}
+}
+
+// TestVerifySyncByteOrderSkew reproduces the maas-dfs #165 collation skew: two
+// filers return the SAME name set in DIFFERENT order. Filer A (old, e.g. 4.25)
+// lists in locale collation (case-insensitive); filer B (new, e.g. 4.34, with
+// upstream PR #9824) lists in byte order (uppercase before lowercase). The mock
+// returns each side's slice order verbatim.
+//
+// Without client-side re-sort (sortA=sortB=false) the streaming merge desyncs
+// and reports spurious MISSING + ONLY_IN_B. Re-sorting the old side (or both)
+// brings both to byte order and yields zero diffs.
+func TestVerifySyncByteOrderSkew(t *testing.T) {
+	// locale order (case-insensitive): lowercase mixes in among uppercase.
+	localeOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+	}
+	// byte order: uppercase (R,X,Z) sort before lowercase (m,n).
+	byteOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+	}
+
+	newClients := func() (*verifyTestFilerClient, *verifyTestFilerClient) {
+		a := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/root": localeOrder},
+		}
+		b := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/root": byteOrder},
+		}
+		return a, b
+	}
+
+	t.Run("no sort reproduces false diffs", func(t *testing.T) {
+		clientA, clientB := newClients()
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/root", "/root", false, time.Time{}, false, false, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// sk-RH0Z, sk-Xp, sk-Z06 fall on the wrong side of the merge cursor.
+		if got := result.missingCount.Load(); got != 3 {
+			t.Errorf("missingCount = %d, want 3 (skew false positives)", got)
+		}
+		if got := result.onlyInB.Load(); got != 3 {
+			t.Errorf("onlyInB = %d, want 3 (skew false positives)", got)
+		}
+	})
+
+	t.Run("sort both yields zero diffs", func(t *testing.T) {
+		clientA, clientB := newClients()
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/root", "/root", false, time.Time{}, true, true, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.missingCount.Load(); got != 0 {
+			t.Errorf("missingCount = %d, want 0", got)
+		}
+		if got := result.onlyInB.Load(); got != 0 {
+			t.Errorf("onlyInB = %d, want 0", got)
+		}
+	})
+
+	t.Run("sort only the old (A) side yields zero diffs", func(t *testing.T) {
+		// Real green->blue case: A is pre-4.32 (re-sorted), B is 4.32+ (already
+		// byte ordered, streamed as-is). Re-sorting A alone converges both.
+		clientA, clientB := newClients()
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/root", "/root", false, time.Time{}, true, false, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.missingCount.Load(); got != 0 {
+			t.Errorf("missingCount = %d, want 0", got)
+		}
+		if got := result.onlyInB.Load(); got != 0 {
+			t.Errorf("onlyInB = %d, want 0", got)
+		}
+	})
+}
+
+// TestVersionListsByteOrdered checks the boundary around the 4.32 threshold,
+// where upstream PR #9824 began forcing byte-lexicographic list order.
+func TestVersionListsByteOrdered(t *testing.T) {
+	cases := []struct {
+		major, minor int32
+		want         bool
+	}{
+		{4, 31, false}, // pre-#9824: locale order possible
+		{4, 32, true},  // first release with #9824
+		{4, 34, true},
+		{5, 0, true},   // newer major
+		{3, 99, false}, // older major
+		{0, 0, false},  // field absent / unparseable → treat as old
+	}
+	for _, c := range cases {
+		if got := versionListsByteOrdered(c.major, c.minor); got != c.want {
+			t.Errorf("versionListsByteOrdered(%d, %d) = %v, want %v",
+				c.major, c.minor, got, c.want)
+		}
+	}
+}
+
+// TestVerifySyncSortedSourcesListConcurrently guards against re-serializing the
+// two directory listings. When both sides need a client-side re-sort
+// (sortedEntrySource), their loads must run concurrently — not A fully then B.
+// A shared gate releases only once both listings are in-flight at the same time;
+// if they were sequential the first would block on the gate and time out.
+func TestVerifySyncSortedSourcesListConcurrently(t *testing.T) {
+	var started atomic.Int32
+	var timedOut atomic.Bool
+	release := make(chan struct{})
+	gate := func() {
+		if started.Add(1) == 2 {
+			close(release) // both listings reached the gate → proceed
+		}
+		select {
+		case <-release:
+		case <-time.After(3 * time.Second):
+			timedOut.Store(true) // only one listing ever in-flight → serialized
+		}
+	}
+
+	entries := []*filer_pb.Entry{verifyFileEntry("a", 1), verifyFileEntry("b", 1)}
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	// sortA=sortB=true → both sides use sortedEntrySource.
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, true, true, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if timedOut.Load() {
+		t.Fatal("sorted sources listed sequentially: both listings were not in-flight at once")
 	}
 }

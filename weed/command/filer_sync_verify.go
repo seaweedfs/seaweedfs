@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -191,6 +192,44 @@ func (c *simpleFilerClient) GetDataCenter() string {
 	return ""
 }
 
+// byteOrderForced{Major,Minor}: first version forcing byte-lexicographic
+// listing regardless of SQL collation (PR #9824, tag 4.32). Older filers may
+// list in locale order and need client-side re-sorting.
+const (
+	byteOrderForcedMajor = 4
+	byteOrderForcedMinor = 32
+)
+
+// versionListsByteOrdered reports whether (major, minor) guarantees byte-ordered
+// listings. Zero major (field absent) is treated as old.
+func versionListsByteOrdered(major, minor int32) bool {
+	if major == 0 {
+		return false
+	}
+	if major != byteOrderForcedMajor {
+		return major > byteOrderForcedMajor
+	}
+	return minor >= byteOrderForcedMinor
+}
+
+// filerNeedsByteOrderSort returns whether a filer's listings must be re-sorted
+// client-side, plus its detected version (for logging). On query error it
+// returns true — sort defensively so version skew can't cause a spurious diff.
+func filerNeedsByteOrderSort(client *simpleFilerClient) (needSort bool, major, minor int32, err error) {
+	err = client.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
+		resp, e := c.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if e != nil {
+			return e
+		}
+		major, minor = resp.MajorVersion, resp.MinorVersion
+		return nil
+	})
+	if err != nil {
+		return true, 0, 0, err
+	}
+	return !versionListsByteOrdered(major, minor), major, minor, nil
+}
+
 func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	isActivePassive bool, modifiedTimeAgo time.Duration,
 	jsonOutput bool,
@@ -198,6 +237,17 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 
 	clientA := &simpleFilerClient{grpcAddress: filerA, grpcDialOption: grpcDialOptionA}
 	clientB := &simpleFilerClient{grpcAddress: filerB, grpcDialOption: grpcDialOptionB}
+
+	// Re-sort only the side(s) older than 4.32; a mixed pair buffers just the
+	// older one, the newer side keeps streaming.
+	sortA, majA, minA, errA := filerNeedsByteOrderSort(clientA)
+	if errA != nil {
+		glog.Warningf("detect filer A version (%s): %v; re-sorting its listings defensively", filerA, errA)
+	}
+	sortB, majB, minB, errB := filerNeedsByteOrderSort(clientB)
+	if errB != nil {
+		glog.Warningf("detect filer B version (%s): %v; re-sorting its listings defensively", filerB, errB)
+	}
 
 	var cutoffTime time.Time
 	if modifiedTimeAgo > 0 {
@@ -209,15 +259,17 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 			fmt.Fprintf(os.Stdout, "Verifying files modified before %v (modifiedTimeAgo=%v)\n",
 				cutoffTime.Format(time.RFC3339), modifiedTimeAgo)
 		}
-		fmt.Fprintf(os.Stdout, "Comparing %s%s => %s%s (isActivePassive=%v)\n\n",
+		fmt.Fprintf(os.Stdout, "Comparing %s%s => %s%s (isActivePassive=%v)\n",
 			filerA, aPath, filerB, bPath, isActivePassive)
+		fmt.Fprintf(os.Stdout, "Client-side byte-order re-sort: A=%v (filer %d.%02d) B=%v (filer %d.%02d) (pre-%d.%d filers re-sorted)\n\n",
+			sortA, majA, minA, sortB, majB, minB, byteOrderForcedMajor, byteOrderForcedMinor)
 	}
 
 	result := &VerifyResult{jsonOutput: jsonOutput}
 	ctx := context.Background()
 	sem := make(chan struct{}, verifySyncConcurrency)
 
-	if err := compareDirectory(ctx, clientA, clientB, aPath, bPath, isActivePassive, cutoffTime, sem, result); err != nil {
+	if err := compareDirectory(ctx, clientA, clientB, aPath, bPath, isActivePassive, cutoffTime, sortA, sortB, sem, result); err != nil {
 		return err
 	}
 
@@ -261,33 +313,50 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	return nil
 }
 
+// entrySource is a forward cursor over one directory's entries in Go byte
+// order, which the merge in compareDirectory requires. entryStream trusts the
+// filer's order (4.32+); sortedEntrySource re-sorts client-side for older ones.
+// Both load in a background goroutine; close() cancels that goroutine and waits
+// for it, so callers can clean up deterministically (e.g. on early return).
+type entrySource interface {
+	peek() *filer_pb.Entry
+	advance() *filer_pb.Entry
+	err() error
+	close()
+}
+
 // entryStream is a sorted, streaming view of a single directory's entries.
 // A background goroutine pages through the directory via ReadDirAllEntries
 // and forwards each entry to a buffered channel; the caller consumes entries
 // one at a time through peek/advance. Memory usage is O(channel buffer) —
 // independent of directory size — rather than O(total entries).
 type entryStream struct {
-	ch   <-chan *filer_pb.Entry
-	head *filer_pb.Entry
-	done bool
-	err  error // written before ch is closed; safe to read once done==true
+	ch      <-chan *filer_pb.Entry
+	head    *filer_pb.Entry
+	done    bool
+	readErr error // written before ch is closed; safe to read once done==true
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 // newEntryStream starts the background goroutine. It exits when listing
-// completes, an error occurs, or ctx is cancelled; the channel is always
+// completes, an error occurs, or the context is cancelled; the channel is always
 // closed before exit so consumers do not block indefinitely.
 func newEntryStream(ctx context.Context, client filer_pb.FilerClient, dir string) *entryStream {
+	childCtx, cancel := context.WithCancel(ctx)
 	ch := make(chan *filer_pb.Entry, 64)
-	s := &entryStream{ch: ch}
+	s := &entryStream{ch: ch, cancel: cancel}
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		defer close(ch)
-		s.err = filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "",
+		s.readErr = filer_pb.ReadDirAllEntries(childCtx, client, util.FullPath(dir), "",
 			func(entry *filer_pb.Entry, isLast bool) error {
 				select {
 				case ch <- entry:
 					return nil
-				case <-ctx.Done():
-					return ctx.Err()
+				case <-childCtx.Done():
+					return childCtx.Err()
 				}
 			})
 	}()
@@ -317,11 +386,96 @@ func (s *entryStream) advance() *filer_pb.Entry {
 	return e
 }
 
+// err returns the listing error, if any. Valid once the stream is drained.
+func (s *entryStream) err() error { return s.readErr }
+
+// close cancels the listing goroutine and waits for it to exit. Draining the
+// channel unblocks the producer if it is parked on a send. Idempotent.
+func (s *entryStream) close() {
+	s.cancel()
+	for range s.ch {
+	}
+	s.wg.Wait()
+}
+
+// sortedEntrySource buffers a whole directory and re-sorts it in Go byte order,
+// for pre-4.32 filers that may list in locale collation. The load runs in a
+// goroutine (like entryStream) so both sides of a compareDirectory list
+// concurrently; peek/advance/err block on `ready` until it finishes. Trade-off
+// vs entryStream: O(directory size) memory; used only on the side(s) that need it.
+type sortedEntrySource struct {
+	ready   chan struct{} // closed once entries and readErr are set
+	entries []*filer_pb.Entry
+	idx     int
+	readErr error
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+// newSortedEntrySource starts loading the whole directory and sorting it by Name
+// (the exact same `<` comparator the merge uses, so both sides agree on order),
+// then returns immediately. Consumers block via `ready`.
+func newSortedEntrySource(ctx context.Context, client filer_pb.FilerClient, dir string) *sortedEntrySource {
+	childCtx, cancel := context.WithCancel(ctx)
+	s := &sortedEntrySource{ready: make(chan struct{}), cancel: cancel}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer close(s.ready)
+		s.readErr = filer_pb.ReadDirAllEntries(childCtx, client, util.FullPath(dir), "",
+			func(entry *filer_pb.Entry, isLast bool) error {
+				select {
+				case <-childCtx.Done():
+					return childCtx.Err()
+				default:
+				}
+				s.entries = append(s.entries, entry)
+				return nil
+			})
+		if s.readErr == nil {
+			sort.Slice(s.entries, func(i, j int) bool {
+				return s.entries[i].Name < s.entries[j].Name
+			})
+		}
+	}()
+	return s
+}
+
+func (s *sortedEntrySource) peek() *filer_pb.Entry {
+	<-s.ready
+	if s.idx >= len(s.entries) {
+		return nil
+	}
+	return s.entries[s.idx]
+}
+
+func (s *sortedEntrySource) advance() *filer_pb.Entry {
+	e := s.peek()
+	if e != nil {
+		s.idx++
+	}
+	return e
+}
+
+// err returns the listing error. The close of `ready` happens-before this read,
+// so entries/readErr are visible without extra synchronisation.
+func (s *sortedEntrySource) err() error {
+	<-s.ready
+	return s.readErr
+}
+
+// close cancels the load goroutine and waits for it to exit. Idempotent.
+func (s *sortedEntrySource) close() {
+	s.cancel()
+	s.wg.Wait()
+}
+
 func compareDirectory(ctx context.Context,
 	clientA, clientB filer_pb.FilerClient,
 	dirA, dirB string,
 	isActivePassive bool,
 	cutoffTime time.Time,
+	sortA, sortB bool,
 	sem chan struct{},
 	result *VerifyResult) error {
 
@@ -340,13 +494,19 @@ func compareDirectory(ctx context.Context,
 
 	result.dirCount.Add(1)
 
-	// A child context ensures that stream goroutines are cancelled and their
-	// channels are closed if compareDirectory returns early (e.g. on error).
-	mergeCtx, cancelMerge := context.WithCancel(ctx)
-	defer cancelMerge()
-
-	streamA := newEntryStream(mergeCtx, clientA, dirA)
-	streamB := newEntryStream(mergeCtx, clientB, dirB)
+	// Both sources load in their own goroutine and list concurrently. close()
+	// cancels and waits for that goroutine, so on early return (e.g. an error)
+	// no listing goroutine is left running.
+	newSource := func(client filer_pb.FilerClient, dir string, doSort bool) entrySource {
+		if doSort {
+			return newSortedEntrySource(ctx, client, dir)
+		}
+		return newEntryStream(ctx, client, dir)
+	}
+	streamA := newSource(clientA, dirA, sortA)
+	defer streamA.close()
+	streamB := newSource(clientB, dirB, sortB)
+	defer streamB.close()
 
 	// collect subdirectories for recursive comparison
 	type dirPair struct{ a, b string }
@@ -411,12 +571,13 @@ func compareDirectory(ctx context.Context,
 		}
 	}
 
-	// Both channels are closed: close happens-before the receive of the zero
-	// value, so stream.err is visible here without additional synchronisation.
-	if err := streamA.err; err != nil && err != context.Canceled {
+	// Both sources are fully drained here. err() blocks on the load goroutine's
+	// completion signal (channel close), so readErr is visible without extra
+	// synchronisation.
+	if err := streamA.err(); err != nil && err != context.Canceled {
 		return fmt.Errorf("list %s on filer A: %v", dirA, err)
 	}
-	if err := streamB.err; err != nil && err != context.Canceled {
+	if err := streamB.err(); err != nil && err != context.Canceled {
 		return fmt.Errorf("list %s on filer B: %v", dirB, err)
 	}
 
@@ -442,7 +603,7 @@ func compareDirectory(ctx context.Context,
 			go func() {
 				defer wg.Done()
 				for pair := range jobs {
-					if err := compareDirectory(ctx, clientA, clientB, pair.a, pair.b, isActivePassive, cutoffTime, sem, result); err != nil {
+					if err := compareDirectory(ctx, clientA, clientB, pair.a, pair.b, isActivePassive, cutoffTime, sortA, sortB, sem, result); err != nil {
 						select {
 						case errCh <- err:
 						default:
@@ -464,7 +625,6 @@ func compareDirectory(ctx context.Context,
 
 	return nil
 }
-
 
 func compareEntries(dir string, entryA, entryB *filer_pb.Entry, result *VerifyResult) {
 	result.fileCount.Add(1)
