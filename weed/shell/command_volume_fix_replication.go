@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -74,15 +74,6 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
-	}
-
-	// Validate the collection pattern once up front: filepath.Match only ever
-	// fails for a malformed pattern, which is independent of the collection
-	// being matched. Validating here lets matchCollectionPattern ignore the error.
-	if *c.collectionPattern != "" && *c.collectionPattern != CollectionDefault {
-		if _, err = filepath.Match(*c.collectionPattern, ""); err != nil {
-			return fmt.Errorf("invalid collectionPattern %q: %v", *c.collectionPattern, err)
-		}
 	}
 
 	handleDeprecatedForceFlag(writer, volFixReplicationCommand, applyChangesAlias, applyChanges)
@@ -275,8 +266,8 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 }
 
 // matchCollectionPattern reports whether the given collection matches the
-// -collectionPattern flag. An empty pattern matches everything. The pattern's
-// validity is checked once in Do(), so any filepath.Match error here is ignored.
+// -collectionPattern flag. An empty pattern matches everything; CollectionDefault
+// matches the empty (unnamed) collection.
 func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) bool {
 	if *c.collectionPattern == "" {
 		return true
@@ -284,8 +275,7 @@ func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) 
 	if *c.collectionPattern == CollectionDefault {
 		return collection == ""
 	}
-	matched, _ := filepath.Match(*c.collectionPattern, collection)
-	return matched
+	return wildcard.MatchesWildcard(*c.collectionPattern, collection)
 }
 
 func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, selectOneVolumeFn SelectOneVolumeFunc) error {
