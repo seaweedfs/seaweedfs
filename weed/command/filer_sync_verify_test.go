@@ -18,10 +18,14 @@ import (
 type verifyTestStream struct {
 	entries []*filer_pb.Entry
 	idx     int
+	recvErr error // returned after all entries instead of io.EOF, if set
 }
 
 func (s *verifyTestStream) Recv() (*filer_pb.ListEntriesResponse, error) {
 	if s.idx >= len(s.entries) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
 		return nil, io.EOF
 	}
 	resp := &filer_pb.ListEntriesResponse{Entry: s.entries[s.idx]}
@@ -40,10 +44,11 @@ func (s *verifyTestStream) RecvMsg(_ any) error          { return nil }
 type verifyTestInnerClient struct {
 	filer_pb.SeaweedFilerClient // embed for unimplemented RPCs
 	entriesByDir                map[string][]*filer_pb.Entry
+	recvErr                     error // injected listing error, if set
 }
 
 func (c *verifyTestInnerClient) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
-	return &verifyTestStream{entries: c.entriesByDir[in.Directory]}, nil
+	return &verifyTestStream{entries: c.entriesByDir[in.Directory], recvErr: c.recvErr}, nil
 }
 
 // verifyTestFilerClient implements filer_pb.FilerClient and tracks concurrent
@@ -58,6 +63,7 @@ type verifyTestFilerClient struct {
 	peakFlight   atomic.Int64
 	delay        time.Duration
 	onList       func() // called at the start of each listing, if set
+	recvErr      error  // injected listing error, surfaced after entries
 }
 
 func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -76,7 +82,7 @@ func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.Seaweed
 	if c.delay > 0 {
 		time.Sleep(c.delay)
 	}
-	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir})
+	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir, recvErr: c.recvErr})
 }
 
 func (c *verifyTestFilerClient) AdjustedUrl(_ *filer_pb.Location) string { return "" }
@@ -626,5 +632,42 @@ func TestVerifySyncSourcesListConcurrently(t *testing.T) {
 	}
 	if timedOut.Load() {
 		t.Fatal("sources listed sequentially: both listings were not in-flight at once")
+	}
+}
+
+// TestVerifySyncListErrorNoBogusDiffs verifies that a listing failure aborts
+// with the error and reports no differences. A side whose listing errors keeps
+// only a partial, unsorted buffer; the error must be surfaced before the merge
+// so those partial entries never produce spurious MISSING / ONLY_IN_B.
+func TestVerifySyncListErrorNoBogusDiffs(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		verifyFileEntry("a", 1),
+		verifyFileEntry("b", 1),
+		verifyFileEntry("c", 1),
+	}
+	// A errors mid-listing (partial buffer); B lists cleanly.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		recvErr:      fmt.Errorf("injected list failure"),
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result)
+	if err == nil {
+		t.Fatal("expected a listing error, got nil")
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.fileCount.Load(); got != 0 {
+		t.Errorf("fileCount = %d, want 0 (merge must not run on failed listing)", got)
 	}
 }

@@ -308,10 +308,15 @@ func newDirEntries(ctx context.Context, client filer_pb.FilerClient, dir string)
 	return s
 }
 
+// wait blocks until the directory has finished loading and sorting. Its close
+// of `ready` happens-before the return, so entries and err are then safe to read
+// without additional synchronisation.
+func (s *dirEntries) wait() { <-s.ready }
+
 // peek returns the next entry without consuming it, or nil at end-of-stream.
 // It blocks until the directory has finished loading and sorting.
 func (s *dirEntries) peek() *filer_pb.Entry {
-	<-s.ready
+	s.wait()
 	if s.idx >= len(s.entries) {
 		return nil
 	}
@@ -357,6 +362,18 @@ func compareDirectory(ctx context.Context,
 
 	entriesA := newDirEntries(mergeCtx, clientA, dirA)
 	entriesB := newDirEntries(mergeCtx, clientB, dirB)
+
+	// Both sides are fully buffered before merging; surface any listing error
+	// here so a failed or cancelled listing can't emit bogus diffs from partial
+	// data. wait() makes entries/err visible without extra synchronisation.
+	entriesA.wait()
+	entriesB.wait()
+	if err := entriesA.err; err != nil && err != context.Canceled {
+		return fmt.Errorf("list %s on filer A: %v", dirA, err)
+	}
+	if err := entriesB.err; err != nil && err != context.Canceled {
+		return fmt.Errorf("list %s on filer B: %v", dirB, err)
+	}
 
 	// collect subdirectories for recursive comparison
 	type dirPair struct{ a, b string }
@@ -419,16 +436,6 @@ func compareDirectory(ctx context.Context,
 				}
 			}
 		}
-	}
-
-	// The merge loop drained both sources, so each peek() already received from
-	// `ready`; that close happens-before this read, making err visible without
-	// additional synchronisation.
-	if err := entriesA.err; err != nil && err != context.Canceled {
-		return fmt.Errorf("list %s on filer A: %v", dirA, err)
-	}
-	if err := entriesB.err; err != nil && err != context.Canceled {
-		return fmt.Errorf("list %s on filer B: %v", dirB, err)
 	}
 
 	// Release our slot before recursing so children can acquire it. Holding
