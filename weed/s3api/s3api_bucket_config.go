@@ -695,12 +695,13 @@ func cloneBucketPolicy(policyDoc *policy_engine.PolicyDocument) *policy_engine.P
 
 func clonePolicyStatement(statement policy_engine.PolicyStatement) policy_engine.PolicyStatement {
 	cloned := policy_engine.PolicyStatement{
-		Sid:         statement.Sid,
-		Effect:      statement.Effect,
-		Action:      cloneStringOrStringSlice(statement.Action),
-		NotResource: cloneStringOrStringSlicePtr(statement.NotResource),
-		Principal:   cloneStringOrStringSlicePtr(statement.Principal),
-		Resource:    cloneStringOrStringSlicePtr(statement.Resource),
+		Sid:          statement.Sid,
+		Effect:       statement.Effect,
+		Action:       cloneStringOrStringSlice(statement.Action),
+		NotResource:  cloneStringOrStringSlicePtr(statement.NotResource),
+		Principal:    policy_engine.ClonePolicyPrincipal(statement.Principal),
+		NotPrincipal: policy_engine.ClonePolicyPrincipal(statement.NotPrincipal),
+		Resource:     cloneStringOrStringSlicePtr(statement.Resource),
 	}
 	if statement.Condition != nil {
 		cloned.Condition = make(policy_engine.PolicyConditions, len(statement.Condition))

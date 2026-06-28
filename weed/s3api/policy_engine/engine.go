@@ -218,6 +218,17 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 		}
 	}
 
+	// Check NotPrincipal (statement applies to everyone EXCEPT these principals)
+	if len(stmt.NotPrincipalPatterns) > 0 || len(stmt.DynamicNotPrincipalPatterns) > 0 {
+		matchedNotPrincipal := engine.matchesPatterns(stmt.NotPrincipalPatterns, args.Principal)
+		if !matchedNotPrincipal {
+			matchedNotPrincipal = engine.matchesDynamicPatterns(stmt.DynamicNotPrincipalPatterns, args.Principal, args)
+		}
+		if matchedNotPrincipal {
+			return false
+		}
+	}
+
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
 		condCtx := args.Conditions
