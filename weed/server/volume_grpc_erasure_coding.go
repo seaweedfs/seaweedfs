@@ -259,6 +259,9 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
 
+	stats.VolumeServerECRebuildHistogram.Observe(time.Since(start).Seconds())
+	stats.VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
+
 	// Opportunistic bitrot backfill: if protection is enabled, no sidecar exists
 	// yet (a volume encoded before this feature), and this rebuilder can reach
 	// every shard, compute and write a generation-0 sidecar. The TOFU baseline
@@ -282,9 +285,6 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			}
 		}
 	}
-
-	stats.VolumeServerECRebuildHistogram.Observe(time.Since(start).Seconds())
-	stats.VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
 
 	return &volume_server_pb.VolumeEcShardsRebuildResponse{
 		RebuiltShardIds: rebuiltShardIds,
