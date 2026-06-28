@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -174,6 +175,11 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
 
+func recordEcRebuildFailure(d time.Duration) {
+	stats.VolumeServerECRebuildHistogram.Observe(d.Seconds())
+	stats.VolumeServerECRebuildCounter.WithLabelValues("failure").Inc()
+}
+
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
 	if err := vs.CheckMaintenanceMode(); err != nil {
@@ -194,6 +200,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	for _, location := range vs.store.Locations {
 		_, _, existingShardCount, err := checkEcVolumeStatus(baseFileName, location)
 		if err != nil {
+			stats.VolumeServerECRebuildCounter.WithLabelValues("failure").Inc()
 			return nil, err
 		}
 
@@ -235,18 +242,21 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// Rebuild missing EC files, searching all disk locations for input shards.
 	// Present input shards are verified against the bitrot sidecar (when present)
 	// and corrupt ones are regenerated; unsafe_ignore_sidecar bypasses the guard.
+	start := time.Now()
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
-	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, erasure_coding.BackgroundECContext(), req.UnsafeIgnoreSidecar, additionalDirs...); err != nil {
+	generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, erasure_coding.BackgroundECContext(), req.UnsafeIgnoreSidecar, additionalDirs...)
+	if err != nil {
+		recordEcRebuildFailure(time.Since(start))
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
-	} else {
-		rebuiltShardIds = generatedShardIds
 	}
+	rebuiltShardIds = generatedShardIds
 
 	indexBaseFileName := path.Join(rebuildLocation.IdxDirectory, baseFileName)
 	if !util.FileExists(indexBaseFileName+".ecx") && rebuildLocation.IdxDirectory != rebuildLocation.Directory {
 		indexBaseFileName = path.Join(rebuildLocation.Directory, baseFileName)
 	}
 	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		recordEcRebuildFailure(time.Since(start))
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
 
@@ -273,6 +283,9 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			}
 		}
 	}
+
+	stats.VolumeServerECRebuildHistogram.Observe(time.Since(start).Seconds())
+	stats.VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
 
 	return &volume_server_pb.VolumeEcShardsRebuildResponse{
 		RebuiltShardIds: rebuiltShardIds,
