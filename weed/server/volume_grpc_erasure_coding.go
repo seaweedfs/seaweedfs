@@ -200,7 +200,6 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	for _, location := range vs.store.Locations {
 		_, _, existingShardCount, err := checkEcVolumeStatus(baseFileName, location)
 		if err != nil {
-			stats.VolumeServerECRebuildCounter.WithLabelValues("failure").Inc()
 			return nil, err
 		}
 
