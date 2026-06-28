@@ -7,6 +7,10 @@ import (
 )
 
 func TestECRebuildMetricsRegistered(t *testing.T) {
+	t.Cleanup(VolumeServerECRebuildCounter.Reset)
+	t.Cleanup(VolumeServerECRebuildHistogram.Reset)
+
+	// A HistogramVec emits no metric family until it has a child, so observe once.
 	VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
 	VolumeServerECRebuildHistogram.WithLabelValues("success").Observe(0.1)
 	metrics, err := Gather.Gather()
