@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -106,6 +107,129 @@ func CloneStringOrStringSlice(value StringOrStringSlice) StringOrStringSlice {
 	return StringOrStringSlice{values: append([]string(nil), value.values...)}
 }
 
+// allowedPrincipalKeys is the set of principal-type keys AWS allows inside the
+// Principal/NotPrincipal object form.
+var allowedPrincipalKeys = map[string]struct{}{
+	"AWS":           {},
+	"Service":       {},
+	"Federated":     {},
+	"CanonicalUser": {},
+}
+
+// PolicyPrincipal represents the Principal element of a policy statement.
+//
+// AWS accepts three shapes (see the IAM "Principal" element reference):
+//
+//	"Principal": "*"                                    // all principals (anonymous)
+//	"Principal": { "AWS": "arn:aws:iam::123:user/x" }   // single, keyed by type
+//	"Principal": { "AWS": ["arn:...", "999999999999"] } // array of values
+//
+// The object may key on "AWS", "Service", "Federated" or "CanonicalUser", and
+// each value is itself a string or an array of strings. For backward
+// compatibility SeaweedFS also accepts a bare string or array of strings.
+//
+// Authorization matches the request principal ARN against the flat set of
+// principal values, so every keyed value is flattened into one list. The
+// original JSON is preserved so GetBucketPolicy returns the exact shape the
+// caller submitted; this keeps PutBucketPolicy/GetBucketPolicy idempotent for
+// infrastructure-as-code tools (Terraform, Ansible) that diff the returned
+// policy against the submitted one.
+type PolicyPrincipal struct {
+	values []string
+	raw    json.RawMessage
+}
+
+// UnmarshalJSON implements json.Unmarshaler for PolicyPrincipal.
+func (p *PolicyPrincipal) UnmarshalJSON(data []byte) error {
+	// Preserve the original encoding for a faithful round-trip on marshal.
+	p.raw = append(json.RawMessage(nil), data...)
+
+	// Bare string, e.g. "*"
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		p.values = []string{str}
+		return nil
+	}
+
+	// Bare array of strings (SeaweedFS extension; not standard AWS).
+	var strs []string
+	if err := json.Unmarshal(data, &strs); err == nil {
+		p.values = strs
+		return nil
+	}
+
+	// AWS object form: {"AWS": <string|[]string>, "Service": ..., "Federated": ...,
+	// "CanonicalUser": ...}. Each value reuses StringOrStringSlice so it accepts a
+	// single string or an array. All keyed values are flattened for matching.
+	var obj map[string]StringOrStringSlice
+	if err := json.Unmarshal(data, &obj); err == nil && len(obj) > 0 {
+		// Sort keys so the flattened order is deterministic.
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			if _, ok := allowedPrincipalKeys[k]; !ok {
+				return fmt.Errorf("unsupported Principal type %q (expected AWS, Service, Federated or CanonicalUser)", k)
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		values := make([]string, 0, len(obj))
+		for _, k := range keys {
+			v := obj[k]
+			items := v.Strings()
+			if len(items) == 0 {
+				return fmt.Errorf("Principal %q must list at least one value", k)
+			}
+			for _, item := range items {
+				if item == "" {
+					return fmt.Errorf("Principal %q must not contain empty values", k)
+				}
+			}
+			values = append(values, items...)
+		}
+		p.values = values
+		return nil
+	}
+
+	return fmt.Errorf(`Principal must be a string, an array of strings, or an object such as {"AWS": ["arn:..."]}`)
+}
+
+// MarshalJSON implements json.Marshaler for PolicyPrincipal.
+func (p PolicyPrincipal) MarshalJSON() ([]byte, error) {
+	// Echo the original JSON when we parsed it, so the shape is preserved.
+	if len(p.raw) > 0 {
+		return p.raw, nil
+	}
+	// Programmatically-constructed principals marshal as a bare string/array.
+	if len(p.values) == 1 {
+		return json.Marshal(p.values[0])
+	}
+	return json.Marshal(p.values)
+}
+
+// Strings returns the flattened principal values. Nil-safe for pointer receivers.
+func (p *PolicyPrincipal) Strings() []string {
+	if p == nil {
+		return nil
+	}
+	return p.values
+}
+
+// NewPolicyPrincipalPtr builds a *PolicyPrincipal from flat values (no object wrapping).
+func NewPolicyPrincipalPtr(values ...string) *PolicyPrincipal {
+	return &PolicyPrincipal{values: values}
+}
+
+// ClonePolicyPrincipal deep-copies a *PolicyPrincipal (nil-safe).
+func ClonePolicyPrincipal(p *PolicyPrincipal) *PolicyPrincipal {
+	if p == nil {
+		return nil
+	}
+	return &PolicyPrincipal{
+		values: append([]string(nil), p.values...),
+		raw:    append(json.RawMessage(nil), p.raw...),
+	}
+}
+
 // PolicyConditions represents policy conditions with proper typing
 type PolicyConditions map[string]map[string]StringOrStringSlice
 
@@ -148,13 +272,14 @@ func (p *PolicyDocument) UnmarshalJSON(data []byte) error {
 
 // PolicyStatement represents a single policy statement
 type PolicyStatement struct {
-	Sid         string               `json:"Sid,omitempty"`
-	Effect      PolicyEffect         `json:"Effect"`
-	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
-	Action      StringOrStringSlice  `json:"Action"`
-	Resource    *StringOrStringSlice `json:"Resource,omitempty"`
-	NotResource *StringOrStringSlice `json:"NotResource,omitempty"`
-	Condition   PolicyConditions     `json:"Condition,omitempty"`
+	Sid          string               `json:"Sid,omitempty"`
+	Effect       PolicyEffect         `json:"Effect"`
+	Principal    *PolicyPrincipal     `json:"Principal,omitempty"`
+	NotPrincipal *PolicyPrincipal     `json:"NotPrincipal,omitempty"`
+	Action       StringOrStringSlice  `json:"Action"`
+	Resource     *StringOrStringSlice `json:"Resource,omitempty"`
+	NotResource  *StringOrStringSlice `json:"NotResource,omitempty"`
+	Condition    PolicyConditions     `json:"Condition,omitempty"`
 }
 
 // PolicyEffect represents Allow or Deny
@@ -212,6 +337,11 @@ type CompiledStatement struct {
 	DynamicResourcePatterns  []string
 	DynamicPrincipalPatterns []string
 
+	// NotPrincipal patterns (principal should NOT match these)
+	NotPrincipalMatchers        []*wildcard.WildcardMatcher
+	NotPrincipalPatterns        []*regexp.Regexp
+	DynamicNotPrincipalPatterns []string
+
 	// NotResource patterns (resource should NOT match these)
 	NotResourcePatterns        []*regexp.Regexp
 	NotResourceMatchers        []*wildcard.WildcardMatcher
@@ -256,6 +386,11 @@ func validateStatement(stmt *PolicyStatement) error {
 
 	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
 		return fmt.Errorf("statement must specify Resource or NotResource")
+	}
+
+	// AWS does not allow both Principal and NotPrincipal in the same statement.
+	if stmt.Principal != nil && stmt.NotPrincipal != nil {
+		return fmt.Errorf("statement cannot specify both Principal and NotPrincipal")
 	}
 
 	return nil
@@ -306,11 +441,12 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		},
 	}
 
-	// Deep clone Principal if present
+	// Deep clone Principal / NotPrincipal if present
 	if stmt.Principal != nil {
-		principalClone := *stmt.Principal
-		principalClone.values = slices.Clone(stmt.Principal.values)
-		compiled.Statement.Principal = &principalClone
+		compiled.Statement.Principal = ClonePolicyPrincipal(stmt.Principal)
+	}
+	if stmt.NotPrincipal != nil {
+		compiled.Statement.NotPrincipal = ClonePolicyPrincipal(stmt.NotPrincipal)
 	}
 
 	// Deep clone Resource/NotResource into the internal statement as well for completeness
@@ -409,6 +545,32 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
 			compiled.PrincipalMatchers = append(compiled.PrincipalMatchers, matcher)
+		}
+	}
+
+	// Compile NotPrincipal patterns and matchers (principal should NOT match these)
+	if stmt.NotPrincipal != nil && len(stmt.NotPrincipal.Strings()) > 0 {
+		for _, notPrincipal := range stmt.NotPrincipal.Strings() {
+			if notPrincipal == "" {
+				continue
+			}
+			// Check for dynamic variables
+			if PolicyVariableRegex.MatchString(notPrincipal) {
+				compiled.DynamicNotPrincipalPatterns = append(compiled.DynamicNotPrincipalPatterns, notPrincipal)
+				continue
+			}
+
+			pattern, err := compilePattern(notPrincipal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile NotPrincipal pattern %s: %v", notPrincipal, err)
+			}
+			compiled.NotPrincipalPatterns = append(compiled.NotPrincipalPatterns, pattern)
+
+			matcher, err := wildcard.NewWildcardMatcher(notPrincipal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create NotPrincipal matcher %s: %v", notPrincipal, err)
+			}
+			compiled.NotPrincipalMatchers = append(compiled.NotPrincipalMatchers, matcher)
 		}
 	}
 
@@ -546,6 +708,23 @@ func (cs *CompiledStatement) MatchesPrincipal(principal string) bool {
 	return false
 }
 
+// matchesPrincipalSet reports whether the request principal matches any static
+// matcher or dynamic (policy-variable) pattern in the given set.
+func (cs *CompiledStatement) matchesPrincipalSet(args *PolicyEvaluationArgs, matchers []*wildcard.WildcardMatcher, dynamic []string) bool {
+	for _, matcher := range matchers {
+		if matcher.Match(args.Principal) {
+			return true
+		}
+	}
+	for _, pattern := range dynamic {
+		substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+		if FastMatchesWildcard(substituted, args.Principal) {
+			return true
+		}
+	}
+	return false
+}
+
 // EvaluateStatement evaluates a compiled statement against the given arguments
 func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool {
 	// Check if action matches
@@ -558,9 +737,18 @@ func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool 
 		return false
 	}
 
-	// Check if principal matches
-	if !cs.MatchesPrincipal(args.Principal) {
-		return false
+	// Principal / NotPrincipal (mutually exclusive per AWS): NotPrincipal makes
+	// the statement apply to everyone EXCEPT the named principals; a plain
+	// Principal requires a match. Both static matchers and dynamic
+	// (policy-variable) patterns are honored.
+	if len(cs.NotPrincipalMatchers) > 0 || len(cs.DynamicNotPrincipalPatterns) > 0 {
+		if cs.matchesPrincipalSet(args, cs.NotPrincipalMatchers, cs.DynamicNotPrincipalPatterns) {
+			return false
+		}
+	} else if len(cs.PrincipalMatchers) > 0 || len(cs.DynamicPrincipalPatterns) > 0 {
+		if !cs.matchesPrincipalSet(args, cs.PrincipalMatchers, cs.DynamicPrincipalPatterns) {
+			return false
+		}
 	}
 
 	return true
