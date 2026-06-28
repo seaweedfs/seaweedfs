@@ -107,6 +107,15 @@ func CloneStringOrStringSlice(value StringOrStringSlice) StringOrStringSlice {
 	return StringOrStringSlice{values: append([]string(nil), value.values...)}
 }
 
+// allowedPrincipalKeys is the set of principal-type keys AWS allows inside the
+// Principal/NotPrincipal object form.
+var allowedPrincipalKeys = map[string]struct{}{
+	"AWS":           {},
+	"Service":       {},
+	"Federated":     {},
+	"CanonicalUser": {},
+}
+
 // PolicyPrincipal represents the Principal element of a policy statement.
 //
 // AWS accepts three shapes (see the IAM "Principal" element reference):
@@ -157,13 +166,27 @@ func (p *PolicyPrincipal) UnmarshalJSON(data []byte) error {
 		// Sort keys so the flattened order is deterministic.
 		keys := make([]string, 0, len(obj))
 		for k := range obj {
+			if _, ok := allowedPrincipalKeys[k]; !ok {
+				return fmt.Errorf("unsupported Principal type %q (expected AWS, Service, Federated or CanonicalUser)", k)
+			}
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
+		values := make([]string, 0, len(obj))
 		for _, k := range keys {
 			v := obj[k]
-			p.values = append(p.values, v.Strings()...)
+			items := v.Strings()
+			if len(items) == 0 {
+				return fmt.Errorf("Principal %q must list at least one value", k)
+			}
+			for _, item := range items {
+				if item == "" {
+					return fmt.Errorf("Principal %q must not contain empty values", k)
+				}
+			}
+			values = append(values, items...)
 		}
+		p.values = values
 		return nil
 	}
 
@@ -366,7 +389,7 @@ func validateStatement(stmt *PolicyStatement) error {
 	}
 
 	// AWS does not allow both Principal and NotPrincipal in the same statement.
-	if len(stmt.Principal.Strings()) > 0 && len(stmt.NotPrincipal.Strings()) > 0 {
+	if stmt.Principal != nil && stmt.NotPrincipal != nil {
 		return fmt.Errorf("statement cannot specify both Principal and NotPrincipal")
 	}
 
@@ -685,12 +708,17 @@ func (cs *CompiledStatement) MatchesPrincipal(principal string) bool {
 	return false
 }
 
-// MatchesNotPrincipal reports whether the principal is named in NotPrincipal,
-// i.e. the statement should NOT apply to this principal. Returns false when no
-// NotPrincipal is specified.
-func (cs *CompiledStatement) MatchesNotPrincipal(principal string) bool {
-	for _, matcher := range cs.NotPrincipalMatchers {
-		if matcher.Match(principal) {
+// matchesPrincipalSet reports whether the request principal matches any static
+// matcher or dynamic (policy-variable) pattern in the given set.
+func (cs *CompiledStatement) matchesPrincipalSet(args *PolicyEvaluationArgs, matchers []*wildcard.WildcardMatcher, dynamic []string) bool {
+	for _, matcher := range matchers {
+		if matcher.Match(args.Principal) {
+			return true
+		}
+	}
+	for _, pattern := range dynamic {
+		substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+		if FastMatchesWildcard(substituted, args.Principal) {
 			return true
 		}
 	}
@@ -709,15 +737,18 @@ func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool 
 		return false
 	}
 
-	// Principal / NotPrincipal: NotPrincipal excludes the named principals (the
-	// statement applies to everyone else); otherwise the principal must match
-	// Principal. The two are mutually exclusive per AWS.
-	if len(cs.NotPrincipalMatchers) > 0 {
-		if cs.MatchesNotPrincipal(args.Principal) {
+	// Principal / NotPrincipal (mutually exclusive per AWS): NotPrincipal makes
+	// the statement apply to everyone EXCEPT the named principals; a plain
+	// Principal requires a match. Both static matchers and dynamic
+	// (policy-variable) patterns are honored.
+	if len(cs.NotPrincipalMatchers) > 0 || len(cs.DynamicNotPrincipalPatterns) > 0 {
+		if cs.matchesPrincipalSet(args, cs.NotPrincipalMatchers, cs.DynamicNotPrincipalPatterns) {
 			return false
 		}
-	} else if !cs.MatchesPrincipal(args.Principal) {
-		return false
+	} else if len(cs.PrincipalMatchers) > 0 || len(cs.DynamicPrincipalPatterns) > 0 {
+		if !cs.matchesPrincipalSet(args, cs.PrincipalMatchers, cs.DynamicPrincipalPatterns) {
+			return false
+		}
 	}
 
 	return true

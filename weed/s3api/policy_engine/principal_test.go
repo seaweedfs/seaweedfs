@@ -41,11 +41,48 @@ func TestPolicyPrincipalUnmarshal(t *testing.T) {
 }
 
 func TestPolicyPrincipalUnmarshalInvalid(t *testing.T) {
-	for _, in := range []string{`123`, `{}`, `{"AWS":123}`} {
+	// Includes object-form abuses: unknown key, empty array, empty string -- all
+	// of which must error rather than compile to zero matchers (which would let
+	// the match-all fallback silently make an Allow statement public).
+	for _, in := range []string{`123`, `{}`, `{"AWS":123}`, `{"Foo":"bar"}`, `{"AWS":[]}`, `{"AWS":""}`} {
 		var p PolicyPrincipal
 		if err := json.Unmarshal([]byte(in), &p); err == nil {
 			t.Errorf("expected error unmarshaling %s, got values %v", in, p.Strings())
 		}
+	}
+}
+
+// TestNotPrincipalDynamicCompiledPath guards the bug where a NotPrincipal made
+// only of policy variables (no static matchers) was treated as absent in the
+// compiled evaluator, bypassing the exclusion. aws:username is pinned via the
+// condition context so the substituted value is independent of the principal.
+func TestNotPrincipalDynamicCompiledPath(t *testing.T) {
+	policyJSON := `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Principal":"*","Action":"s3:*","Resource":"arn:aws:s3:::b/*"},
+		{"Effect":"Deny","NotPrincipal":{"AWS":"${aws:username}"},"Action":"s3:*","Resource":"arn:aws:s3:::b/*"}
+	]}`
+	doc, err := ParsePolicy(policyJSON)
+	if err != nil {
+		t.Fatalf("ParsePolicy: %v", err)
+	}
+	compiled, err := CompilePolicy(doc)
+	if err != nil {
+		t.Fatalf("CompilePolicy: %v", err)
+	}
+	conds := map[string][]string{"aws:username": {"arn:aws:iam::111:user/alice"}}
+	allowed := func(p string) bool {
+		allow, _ := compiled.EvaluatePolicy(&PolicyEvaluationArgs{
+			Action: "s3:GetObject", Resource: "arn:aws:s3:::b/x", Principal: p, Conditions: conds,
+		})
+		return allow
+	}
+	// alice matches the substituted NotPrincipal -> deny excluded -> allowed.
+	if !allowed("arn:aws:iam::111:user/alice") {
+		t.Errorf("alice should be allowed (matched dynamic NotPrincipal)")
+	}
+	// bob does not match -> deny applies.
+	if allowed("arn:aws:iam::111:user/bob") {
+		t.Errorf("bob should be denied (dynamic NotPrincipal did not match)")
 	}
 }
 
