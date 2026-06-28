@@ -512,6 +512,25 @@ var (
 			Help:      "Counter of replication failures by operation and reason (timeout, connection_refused, context_cancelled, server_error).",
 		}, []string{"operation", "reason"})
 
+	// VolumeServerECRebuildHistogram records the duration of EC shard rebuild operations by result (success, failure).
+	VolumeServerECRebuildHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "ec_rebuild_seconds",
+			Help:      "Bucketed histogram of EC shard rebuild/reconstruct duration by result.",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+		}, []string{"result"})
+
+	// VolumeServerECRebuildCounter counts EC shard rebuild operations by result (success, failure).
+	VolumeServerECRebuildCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "ec_rebuild_total",
+			Help:      "Counter of EC shard rebuild operations by result.",
+		}, []string{"result"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -886,6 +905,8 @@ func init() {
 	Gather.MustRegister(VolumeServerReplicationHistogram)
 	Gather.MustRegister(VolumeServerReplicationTargets)
 	Gather.MustRegister(VolumeServerReplicationFailures)
+	Gather.MustRegister(VolumeServerECRebuildHistogram)
+	Gather.MustRegister(VolumeServerECRebuildCounter)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
 	Gather.MustRegister(MasterVolumeCreationCounter)
 
