@@ -8,6 +8,7 @@ import (
 
 func TestECRebuildMetricsRegistered(t *testing.T) {
 	VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
+	VolumeServerECRebuildHistogram.WithLabelValues("success").Observe(0.1)
 	metrics, err := Gather.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)

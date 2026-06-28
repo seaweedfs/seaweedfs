@@ -4451,10 +4451,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_ec_rebuild_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_ec_rebuild_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le, result))",
               "range": true,
               "refId": "A",
-              "legendFormat": "p99"
+              "legendFormat": "p99 {{result}}"
             },
             {
               "datasource": {
@@ -4462,10 +4462,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_volumeServer_ec_rebuild_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_volumeServer_ec_rebuild_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le, result))",
               "range": true,
               "refId": "B",
-              "legendFormat": "p95"
+              "legendFormat": "p95 {{result}}"
             },
             {
               "datasource": {
@@ -4473,10 +4473,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.50, sum(rate(SeaweedFS_volumeServer_ec_rebuild_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(SeaweedFS_volumeServer_ec_rebuild_seconds_bucket{cluster=~\"$cluster\"}[$__rate_interval])) by (le, result))",
               "range": true,
               "refId": "C",
-              "legendFormat": "p50"
+              "legendFormat": "p50 {{result}}"
             }
           ],
           "pluginVersion": "10.3.1"

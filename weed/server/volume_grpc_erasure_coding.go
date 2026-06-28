@@ -175,9 +175,9 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
 
-func recordEcRebuildFailure(d time.Duration) {
-	stats.VolumeServerECRebuildHistogram.Observe(d.Seconds())
-	stats.VolumeServerECRebuildCounter.WithLabelValues("failure").Inc()
+func recordEcRebuild(result string, d time.Duration) {
+	stats.VolumeServerECRebuildHistogram.WithLabelValues(result).Observe(d.Seconds())
+	stats.VolumeServerECRebuildCounter.WithLabelValues(result).Inc()
 }
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
@@ -245,7 +245,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
 	generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, erasure_coding.BackgroundECContext(), req.UnsafeIgnoreSidecar, additionalDirs...)
 	if err != nil {
-		recordEcRebuildFailure(time.Since(start))
+		recordEcRebuild("failure", time.Since(start))
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
 	}
 	rebuiltShardIds = generatedShardIds
@@ -255,12 +255,11 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		indexBaseFileName = path.Join(rebuildLocation.Directory, baseFileName)
 	}
 	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
-		recordEcRebuildFailure(time.Since(start))
+		recordEcRebuild("failure", time.Since(start))
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
 
-	stats.VolumeServerECRebuildHistogram.Observe(time.Since(start).Seconds())
-	stats.VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
+	recordEcRebuild("success", time.Since(start))
 
 	// Opportunistic bitrot backfill: if protection is enabled, no sidecar exists
 	// yet (a volume encoded before this feature), and this rebuilder can reach
