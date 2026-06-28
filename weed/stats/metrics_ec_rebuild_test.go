@@ -7,23 +7,31 @@ import (
 )
 
 func TestECRebuildMetricsRegistered(t *testing.T) {
-	VolumeServerECRebuildCounter.Reset()
-	t.Cleanup(func() {
-		VolumeServerECRebuildCounter.Reset()
-	})
-
-	// Seed the CounterVec with a value so collection returns it
 	VolumeServerECRebuildCounter.WithLabelValues("success").Inc()
+	VolumeServerECRebuildHistogram.Observe(0.1)
 
-	count := testutil.CollectAndCount(VolumeServerECRebuildCounter)
-	if count < 1 {
-		t.Errorf("VolumeServerECRebuildCounter: expected at least 1 collection, got %d", count)
+	metrics, err := Gather.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
 	}
 
-	VolumeServerECRebuildHistogram.Observe(0.1)
-	count = testutil.CollectAndCount(VolumeServerECRebuildHistogram)
-	if count < 1 {
-		t.Errorf("VolumeServerECRebuildHistogram: expected at least 1 collection, got %d", count)
+	counterFound := false
+	histogramFound := false
+
+	for _, mf := range metrics {
+		if mf.GetName() == "SeaweedFS_volumeServer_ec_rebuild_total" {
+			counterFound = true
+		}
+		if mf.GetName() == "SeaweedFS_volumeServer_ec_rebuild_seconds" {
+			histogramFound = true
+		}
+	}
+
+	if !counterFound {
+		t.Errorf("VolumeServerECRebuildCounter: metric not registered with Gather")
+	}
+	if !histogramFound {
+		t.Errorf("VolumeServerECRebuildHistogram: metric not registered with Gather")
 	}
 }
 
