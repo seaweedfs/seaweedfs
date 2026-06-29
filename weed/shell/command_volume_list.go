@@ -309,21 +309,24 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 	if *c.writable && (readOnly || volumeSize == -1 || (c.volumeSizeLimitMb > 0 && uint64(volumeSize) >= c.volumeSizeLimitMb*util.MiByte)) {
 		return true
 	}
-	if *c.collectionPattern != "" {
-		var matched bool
-		if *c.collectionPattern == CollectionDefault {
-			matched = (collection == "")
-		} else {
-			matched, _ = filepath.Match(*c.collectionPattern, collection)
-		}
-		if !matched {
-			return true
-		}
+	if !matchesVolumeCollectionPattern(*c.collectionPattern, collection) {
+		return true
 	}
 	if *c.volumeId > 0 && *c.volumeId != uint64(volumeId) {
 		return true
 	}
 	return false
+}
+
+func matchesVolumeCollectionPattern(pattern, collection string) bool {
+	if pattern == "" {
+		return true
+	}
+	if pattern == CollectionDefault {
+		return collection == ""
+	}
+	matched, _ := filepath.Match(pattern, collection)
+	return matched
 }
 
 func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo, verbosityLevel int, outNodeInfo func()) statistics {
