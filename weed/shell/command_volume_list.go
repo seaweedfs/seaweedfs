@@ -224,12 +224,17 @@ func (c *commandVolumeList) writeDataCenterInfo(writer io.Writer, t *master_pb.D
 		return strings.Compare(a.Id, b.Id)
 	})
 	dataCenterInfoFound := false
+	dataCenterHeaderPrinted := false
 	for _, r := range t.RackInfos {
 		if *c.rack != "" && *c.rack != r.Id {
 			continue
 		}
 		s.add(c.writeRackInfo(writer, r, verbosityLevel, func() {
+			if dataCenterHeaderPrinted {
+				return
+			}
 			output(verbosityLevel >= 1, writer, "  DataCenter %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
+			dataCenterHeaderPrinted = true
 		}))
 		if !dataCenterInfoFound && !s.isEmpty() {
 			dataCenterInfoFound = true
@@ -245,13 +250,18 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 		return strings.Compare(a.Id, b.Id)
 	})
 	rackInfoFound := false
+	rackHeaderPrinted := false
 	for _, dn := range t.DataNodeInfos {
 		if *c.dataNode != "" && *c.dataNode != dn.Id {
 			continue
 		}
 		s.add(c.writeDataNodeInfo(writer, dn, verbosityLevel, func() {
 			outCenterInfo()
+			if rackHeaderPrinted {
+				return
+			}
 			output(verbosityLevel >= 2, writer, "    Rack %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
+			rackHeaderPrinted = true
 		}))
 		if !rackInfoFound && !s.isEmpty() {
 			rackInfoFound = true
