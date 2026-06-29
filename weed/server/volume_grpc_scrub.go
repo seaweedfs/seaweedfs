@@ -124,7 +124,8 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		case volume_server_pb.VolumeScrubMode_LOCAL:
 			files, shardInfos, serrs = v.ScrubLocal()
 		case volume_server_pb.VolumeScrubMode_FULL:
-			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId)
+			// TODO: expose force_deleted_needles_check in the RPC and weed shell.
+			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, false)
 		case volume_server_pb.VolumeScrubMode_CHECKSUM:
 			// Verify each local shard's raw bytes against the bitrot sidecar,
 			// exercising cold parity shards. Read-only. ChecksumScrub's first
