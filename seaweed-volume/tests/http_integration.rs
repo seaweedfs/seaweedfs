@@ -39,8 +39,25 @@ fn test_state_with_guard(
     whitelist: Vec<String>,
     signing_key: Vec<u8>,
 ) -> (Arc<VolumeServerState>, TempDir) {
+    build_test_state(whitelist, signing_key, None, String::new())
+}
+
+/// Build a test state with volume 1 created using the given replica placement
+/// (e.g. "001" for a two-copy volume) and master URL. An empty master URL plus
+/// a None placement is the single-copy default used by most tests.
+fn build_test_state(
+    whitelist: Vec<String>,
+    signing_key: Vec<u8>,
+    replication: Option<&str>,
+    master_url: String,
+) -> (Arc<VolumeServerState>, TempDir) {
     let tmp = TempDir::new().expect("failed to create temp dir");
     let dir = tmp.path().to_str().unwrap();
+
+    let replica_placement = replication.map(|s| {
+        seaweed_volume::storage::super_block::ReplicaPlacement::from_string(s)
+            .expect("invalid replica placement")
+    });
 
     let mut store = Store::new(NeedleMapKind::InMemory);
     store
@@ -57,7 +74,7 @@ fn test_state_with_guard(
         .add_volume(
             VolumeId(1),
             "",
-            None,
+            replica_placement,
             None,
             0,
             DiskType::HardDrive,
@@ -100,7 +117,7 @@ fn test_state_with_guard(
         ),
         read_mode: seaweed_volume::config::ReadMode::Local,
         allow_untrusted_remote_endpoints: false,
-        master_url: String::new(),
+        master_url,
         master_urls: Vec::new(),
         seed_master_set: std::collections::HashSet::new(),
         current_master_url: tokio::sync::RwLock::new(String::new()),
@@ -677,4 +694,142 @@ async fn admin_router_serves_volume_ui_static_assets() {
     );
     let body = body_bytes(response).await;
     assert!(body.len() > 1000);
+}
+
+// ============================================================================
+// Replicated (fan-out) writes
+//
+// A chunked S3 upload has the gateway write every replica holder directly with
+// `type=replicate` instead of relaying through the primary volume. Each holder
+// must accept the copy and store it locally without re-replicating. These tests
+// pin that contract on the Rust volume server.
+// ============================================================================
+
+/// Raw-body `type=replicate` write is stored and reads back.
+#[tokio::test]
+async fn replicate_write_raw_body_is_stored() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6?type=replicate";
+    let payload = b"fan-out replica bytes";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
+/// Multipart `type=replicate` write (the shape the Go gateway uploader sends)
+/// is stored and reads back.
+#[tokio::test]
+async fn replicate_write_multipart_body_is_stored() {
+    let (state, _tmp) = test_state();
+    let boundary = "----replicateboundary";
+    let payload = b"fan-out replica bytes";
+    let mut body = Vec::new();
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"file\"; filename=\"chunk\"\r\n",
+    );
+    body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+    body.extend_from_slice(payload);
+    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,01637037d6?type=replicate")
+                .header(
+                    "Content-Type",
+                    format!("multipart/form-data; boundary={}", boundary),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
+/// On a multi-copy volume, a `type=replicate` write must store locally without
+/// re-replicating: it must not contact the master, even an unreachable one.
+/// A plain write to the same volume does attempt replication and fails against
+/// the dead master, which proves the `type=replicate` flag is what suppresses
+/// the fan-out (not a disabled replication path).
+#[tokio::test]
+async fn replicate_write_does_not_re_replicate() {
+    // master_url points at a closed port; any lookup attempt fails fast.
+    let dead_master = "127.0.0.1:1".to_string();
+    let (state, _tmp) = build_test_state(Vec::new(), Vec::new(), Some("001"), dead_master);
+
+    // type=replicate: stored locally, no master lookup -> 201.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,01637037d6?type=replicate")
+                .body(Body::from(b"replicated copy".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "replicate write must not depend on the master"
+    );
+
+    // plain write: tries to fan out to the dead master and fails.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,02637037d7")
+                .body(Body::from(b"primary copy".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "plain write to a multi-copy volume must attempt replication"
+    );
 }
