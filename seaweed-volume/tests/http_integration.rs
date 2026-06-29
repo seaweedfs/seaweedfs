@@ -793,8 +793,9 @@ async fn replicate_write_multipart_body_is_stored() {
 /// the fan-out (not a disabled replication path).
 #[tokio::test]
 async fn replicate_write_does_not_re_replicate() {
-    // master_url points at a closed port; any lookup attempt fails fast.
-    let dead_master = "127.0.0.1:1".to_string();
+    // Port 0 is rejected by the socket layer immediately, so a stray lookup
+    // fails fast instead of hanging on a connect timeout in firewalled CI.
+    let dead_master = "127.0.0.1:0".to_string();
     let (state, _tmp) = build_test_state(Vec::new(), Vec::new(), Some("001"), dead_master);
 
     // type=replicate: stored locally, no master lookup -> 201.
