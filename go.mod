@@ -89,7 +89,7 @@ require (
 	go.mongodb.org/mongo-driver v1.17.9
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.46.0
-	gocloud.dev/pubsub/natspubsub v0.45.0
+	gocloud.dev/pubsub/natspubsub v0.46.0
 	gocloud.dev/pubsub/rabbitpubsub v0.46.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
@@ -420,8 +420,8 @@ require (
 	github.com/mitchellh/mapstructure v1.5.1-0.20220423185008-bf980b35cac4
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/nats-io/nats.go v1.48.0 // indirect
-	github.com/nats-io/nkeys v0.4.12 // indirect
+	github.com/nats-io/nats.go v1.49.0 // indirect
+	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/ncw/swift/v2 v2.0.5 // indirect
