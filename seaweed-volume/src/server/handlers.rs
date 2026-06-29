@@ -356,10 +356,21 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
 #[derive(Clone, Debug, Deserialize)]
 struct VolumeLocation {
     url: String,
-    #[serde(rename = "publicUrl")]
+    // Master often omits publicUrl when it matches url (Go json omitempty).
+    #[serde(rename = "publicUrl", default)]
     public_url: String,
     #[serde(rename = "grpcPort", default)]
     grpc_port: u32,
+}
+
+impl VolumeLocation {
+    fn public_or_url(&self) -> &str {
+        if self.public_url.is_empty() {
+            &self.url
+        } else {
+            &self.public_url
+        }
+    }
 }
 
 /// Master /dir/lookup response.
@@ -535,9 +546,13 @@ async fn do_replicated_request(
     .await
     .map_err(|e| format!("lookup volume failed: {}", e))?;
 
+    let self_http = to_http_address(&state.self_url);
     let remote_locations: Vec<_> = locations
         .into_iter()
-        .filter(|loc| loc.url != state.self_url && loc.public_url != state.self_url)
+        .filter(|loc| {
+            to_http_address(&loc.url) != self_http
+                && to_http_address(loc.public_or_url()) != self_http
+        })
         .collect();
 
     if remote_locations.is_empty() {
@@ -4020,6 +4035,26 @@ mod tests {
             response.headers().get(header::LOCATION).unwrap(),
             "http://volume.internal:8080/3,01637037d6?proxied=true"
         );
+    }
+
+    /// Master /dir/lookup often omits publicUrl when empty (Go `json:"publicUrl,omitempty"`).
+    /// Replication must still parse locations or every cross-DC write fails.
+    #[test]
+    fn test_lookup_result_deserializes_without_public_url() {
+        let body = r#"{
+            "volumeOrFileId": "9",
+            "locations": [
+                {"url": "volume-a.example:8080", "dataCenter": "dc-a", "grpcPort": 18080},
+                {"url": "volume-b.example:8080", "dataCenter": "dc-b", "grpcPort": 18080}
+            ]
+        }"#;
+        let result: LookupResult = serde_json::from_str(body).expect("parse lookup JSON");
+        let locations = result.locations.expect("locations");
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0].url, "volume-a.example:8080");
+        assert!(locations[0].public_url.is_empty());
+        assert_eq!(locations[0].public_or_url(), "volume-a.example:8080");
+        assert_eq!(locations[0].grpc_port, 18080);
     }
 
     /// Regression test for issue #9274.
