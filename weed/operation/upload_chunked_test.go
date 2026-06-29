@@ -393,17 +393,18 @@ func TestUploadReaderInChunksPrimaryWriteWhenMixedVolumeServers(t *testing.T) {
 	defer primary.Close()
 	primaryHost := strings.TrimPrefix(primary.URL, "http://")
 
-	oldProbe := volumeServerImplementationProbe
+	oldProbe := getVolumeServerImplementationProbe()
+	volumeServerKindCache = sync.Map{}
 	defer func() {
-		volumeServerImplementationProbe = oldProbe
+		setVolumeServerImplementationProbe(oldProbe)
 		volumeServerKindCache = sync.Map{}
 	}()
-	volumeServerImplementationProbe = func(host string) string {
+	setVolumeServerImplementationProbe(func(host string) string {
 		if host == primaryHost {
 			return volumeServerImplementationGo
 		}
 		return volumeServerImplementationRust
-	}
+	})
 
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
 		return nil, &AssignResult{
@@ -438,9 +439,9 @@ func TestUploadReaderInChunksPrimaryWriteWhenMixedVolumeServers(t *testing.T) {
 }
 
 func TestChunkUploadReplicaFanoutEnabled(t *testing.T) {
-	oldProbe := volumeServerImplementationProbe
-	defer func() { volumeServerImplementationProbe = oldProbe }()
-	volumeServerImplementationProbe = func(host string) string {
+	oldProbe := getVolumeServerImplementationProbe()
+	defer func() { setVolumeServerImplementationProbe(oldProbe) }()
+	setVolumeServerImplementationProbe(func(host string) string {
 		switch host {
 		case "go-a", "go-b":
 			return volumeServerImplementationGo
@@ -449,7 +450,7 @@ func TestChunkUploadReplicaFanoutEnabled(t *testing.T) {
 		default:
 			return ""
 		}
-	}
+	})
 
 	tests := []struct {
 		name    string
