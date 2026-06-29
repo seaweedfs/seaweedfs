@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"io"
 )
@@ -325,8 +325,7 @@ func matchesVolumeCollectionPattern(pattern, collection string) bool {
 	if pattern == CollectionDefault {
 		return collection == ""
 	}
-	matched, _ := filepath.Match(pattern, collection)
-	return matched
+	return wildcard.MatchesWildcard(pattern, collection)
 }
 
 func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo, verbosityLevel int, outNodeInfo func()) statistics {
