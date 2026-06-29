@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"io"
 )
@@ -319,21 +319,23 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 	if *c.writable && (readOnly || volumeSize == -1 || (c.volumeSizeLimitMb > 0 && uint64(volumeSize) >= c.volumeSizeLimitMb*util.MiByte)) {
 		return true
 	}
-	if *c.collectionPattern != "" {
-		var matched bool
-		if *c.collectionPattern == CollectionDefault {
-			matched = (collection == "")
-		} else {
-			matched, _ = filepath.Match(*c.collectionPattern, collection)
-		}
-		if !matched {
-			return true
-		}
+	if !matchesVolumeCollectionPattern(*c.collectionPattern, collection) {
+		return true
 	}
 	if *c.volumeId > 0 && *c.volumeId != uint64(volumeId) {
 		return true
 	}
 	return false
+}
+
+func matchesVolumeCollectionPattern(pattern, collection string) bool {
+	if pattern == "" {
+		return true
+	}
+	if pattern == CollectionDefault {
+		return collection == ""
+	}
+	return wildcard.MatchesWildcard(pattern, collection)
 }
 
 func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo, verbosityLevel int, outNodeInfo func()) statistics {
