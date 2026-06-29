@@ -83,7 +83,13 @@ func probeVolumeServerImplementation(host string) (string, error) {
 	if probe := getVolumeServerImplementationProbe(); probe != nil {
 		return probe(host), nil
 	}
-	body, _, err := util_http.Get(fmt.Sprintf("http://%s/status", host))
+	// Match upload/read paths: URLs are built with http:// but the process-wide
+	// HTTP client rewrites the scheme from security.toml [https.client].
+	statusURL, err := util_http.NormalizeUrl(fmt.Sprintf("http://%s/status", host))
+	if err != nil {
+		return "", err
+	}
+	body, _, err := util_http.Get(statusURL)
 	if err != nil {
 		glog.V(4).Infof("volume server %s status probe: %v", host, err)
 		return "", err
