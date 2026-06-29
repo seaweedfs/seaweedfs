@@ -3024,6 +3024,10 @@ pub async fn status_handler(
         "Version".to_string(),
         serde_json::Value::from(crate::version::version()),
     );
+    m.insert(
+        "Implementation".to_string(),
+        serde_json::Value::from("rust"),
+    );
     m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
     m.insert(
         "DiskStatuses".to_string(),

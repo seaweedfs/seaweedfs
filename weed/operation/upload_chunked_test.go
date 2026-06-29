@@ -372,3 +372,101 @@ func TestUploadReaderInChunksReaderFailure(t *testing.T) {
 	t.Logf("✓ Got partial result on read failure: chunks=%d, totalSize=%d",
 		len(result.FileChunks), result.TotalSize)
 }
+
+// TestUploadReaderInChunksPrimaryWriteWhenMixedVolumeServers verifies that
+// replicated assigns use a single primary upload when any holder is not a Go
+// volume server (Rust servers replicate on the primary write).
+func TestUploadReaderInChunksPrimaryWriteWhenMixedVolumeServers(t *testing.T) {
+	var uploadPaths []string
+	var uploadMu sync.Mutex
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			uploadMu.Lock()
+			uploadPaths = append(uploadPaths, r.URL.String())
+			uploadMu.Unlock()
+			fmt.Fprintf(w, `{"name":"f","size":7}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer primary.Close()
+	primaryHost := strings.TrimPrefix(primary.URL, "http://")
+
+	oldProbe := volumeServerImplementationProbe
+	defer func() {
+		volumeServerImplementationProbe = oldProbe
+		volumeServerKindCache = sync.Map{}
+	}()
+	volumeServerImplementationProbe = func(host string) string {
+		if host == primaryHost {
+			return volumeServerImplementationGo
+		}
+		return volumeServerImplementationRust
+	}
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{
+			Fid: "3,01637037d6",
+			Url: primaryHost,
+			Replicas: []Location{
+				{Url: primaryHost},
+				{Url: "rust-volume:8080"},
+			},
+			Count: 1,
+		}, nil
+	}
+
+	_, err := UploadReaderInChunks(context.Background(), bytes.NewReader([]byte("payload")), &ChunkedUploadOption{
+		ChunkSize:       1024,
+		SmallFileLimit:  256,
+		SaveSmallInline: false,
+		AssignFunc:      assignFunc,
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if len(uploadPaths) != 1 {
+		t.Fatalf("expected 1 primary upload, got %d: %v", len(uploadPaths), uploadPaths)
+	}
+	if !strings.HasPrefix(uploadPaths[0], "/3,01637037d6") {
+		t.Fatalf("expected primary fid path, got %q", uploadPaths[0])
+	}
+	if strings.Contains(uploadPaths[0], "type=replicate") {
+		t.Fatalf("primary upload must not use type=replicate: %q", uploadPaths[0])
+	}
+}
+
+func TestChunkUploadReplicaFanoutEnabled(t *testing.T) {
+	oldProbe := volumeServerImplementationProbe
+	defer func() { volumeServerImplementationProbe = oldProbe }()
+	volumeServerImplementationProbe = func(host string) string {
+		switch host {
+		case "go-a", "go-b":
+			return volumeServerImplementationGo
+		case "rust-a":
+			return volumeServerImplementationRust
+		default:
+			return ""
+		}
+	}
+
+	tests := []struct {
+		name    string
+		holders []string
+		want    bool
+	}{
+		{"single holder", []string{"go-a"}, false},
+		{"all go", []string{"go-a", "go-b"}, true},
+		{"mixed go and rust", []string{"go-a", "rust-a"}, false},
+		{"unknown implementation", []string{"go-a", "unknown:8080"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			volumeServerKindCache = sync.Map{}
+			if got := chunkUploadReplicaFanoutEnabled(tc.holders); got != tc.want {
+				t.Fatalf("chunkUploadReplicaFanoutEnabled(%v) = %v, want %v", tc.holders, got, tc.want)
+			}
+		})
+	}
+}

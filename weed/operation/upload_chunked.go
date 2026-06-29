@@ -184,9 +184,10 @@ uploadLoop:
 			var uploadResultErr error
 
 			holders := chunkHolders(assignResult)
-			// Fan out to every holder, except for cipher: per-call encryption
-			// would give each replica different bytes, so keep its relay path.
-			if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
+			// Gateway fan-out (PR #10078) writes every holder with type=replicate.
+			// Rust volume servers replicate on a normal primary write instead; fan-out
+			// causes cookie mismatch / invalid fid paths under cross-DC replication.
+			if opt.UploadFunc == nil && !opt.Cipher && chunkUploadReplicaFanoutEnabled(holders) {
 				uploadResult, uploadResultErr = uploadChunkToHolders(ctx, holders, assignResult.Fid, buf.Bytes(), jwt, chunkMd5B64, opt)
 			} else {
 				uploadOption := &UploadOption{
@@ -294,7 +295,8 @@ func chunkHolders(assignResult *AssignResult) []string {
 }
 
 // uploadChunkToHolders writes the chunk to every holder concurrently (each with
-// type=replicate). On the first failure it cancels the remaining uploads and
+// type=replicate). Used only when every holder is a Go volume server (PR #10078).
+// On the first failure it cancels the remaining uploads and
 // deletes any copies that already landed, so a partial fan-out leaves no
 // orphaned needle the caller cannot see.
 func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
