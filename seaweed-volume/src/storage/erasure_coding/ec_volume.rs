@@ -1,4 +1,4 @@
-//! EcVolume: an erasure-coded volume with up to 14 shards.
+//! EcVolume: an erasure-coded volume with up to MAX_SHARD_COUNT shards.
 //!
 //! Each EcVolume has a sorted index (.ecx) and a deletion journal (.ecj).
 //! Shards (.ec00-.ec13) may be distributed across multiple servers.
@@ -22,7 +22,7 @@ pub struct EcVolume {
     pub dir: String,
     pub dir_idx: String,
     pub version: Version,
-    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..14)
+    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..MAX_SHARD_COUNT)
     pub dat_file_size: i64,
     pub data_shards: u32,
     pub parity_shards: u32,
@@ -106,7 +106,7 @@ pub fn read_ec_shard_config(
             if let Some(ec) = vif_info.ec_shard_config {
                 if ec.data_shards > 0
                     && ec.parity_shards > 0
-                    && (ec.data_shards + ec.parity_shards) <= TOTAL_SHARDS_COUNT as u32
+                    && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
                 {
                     data_shards = ec.data_shards;
                     parity_shards = ec.parity_shards;
@@ -708,97 +708,30 @@ impl EcVolume {
     /// Matches Go's `(ev *EcVolume) ScrubIndex()` → `idx.CheckIndexFile()`.
     /// Returns (entry_count, errors).
     pub fn scrub_index(&self) -> (u64, Vec<String>) {
-        let ecx_file = match self.ecx_file.as_ref() {
-            Some(f) => f,
-            None => {
-                return (
-                    0,
-                    vec![format!(
-                        "no ECX file associated with EC volume {}",
-                        self.volume_id.0
-                    )],
-                )
-            }
-        };
-
-        if self.ecx_file_size == 0 {
+        if self.ecx_file.is_none() {
             return (
                 0,
                 vec![format!(
-                    "zero-size ECX file for EC volume {}",
+                    "no ECX file associated with EC volume {}",
                     self.volume_id.0
                 )],
             );
         }
-
-        let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
-        let mut entries: Vec<(usize, NeedleId, i64, Size)> = Vec::with_capacity(entry_count);
-        let mut errs: Vec<String> = Vec::new();
-        let mut entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
-
-        // Walk all entries
-        for i in 0..entry_count {
-            let file_offset = (i * NEEDLE_MAP_ENTRY_SIZE) as u64;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt;
-                if let Err(e) = ecx_file.read_exact_at(&mut entry_buf, file_offset) {
-                    errs.push(format!("read ecx entry {}: {}", i, e));
-                    continue;
-                }
-            }
-            let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
-            entries.push((i, key, offset.to_actual_offset(), size));
+        if self.ecx_file_size == 0 {
+            return (
+                0,
+                vec![format!("zero-size ECX file for EC volume {}", self.volume_id.0)],
+            );
         }
 
-        // Sort by offset, then size
-        entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3 .0.cmp(&b.3 .0)));
-
-        // Check for overlapping needles
-        for i in 1..entries.len() {
-            let (idx, id, offset, size) = entries[i];
-            let (_, last_id, last_offset, last_size) = entries[i - 1];
-
-            let actual_size =
-                crate::storage::needle::needle::get_actual_size(size, self.version);
-            let end = if actual_size != 0 {
-                offset + actual_size - 1
-            } else {
-                offset
-            };
-
-            let last_actual_size =
-                crate::storage::needle::needle::get_actual_size(last_size, self.version);
-            let last_end = if last_actual_size != 0 {
-                last_offset + last_actual_size - 1
-            } else {
-                last_offset
-            };
-
-            if offset <= last_end {
-                errs.push(format!(
-                    "needle {} (#{}) at [{}-{}] overlaps needle {} at [{}-{}]",
-                    id.0,
-                    idx + 1,
-                    offset,
-                    end,
-                    last_id.0,
-                    last_offset,
-                    last_end
-                ));
-            }
-        }
-
-        // Verify file size matches entry count
-        let expected_size = entry_count as i64 * NEEDLE_MAP_ENTRY_SIZE as i64;
-        if expected_size != self.ecx_file_size {
-            errs.push(format!(
-                "expected an index file of size {}, got {}",
-                expected_size, self.ecx_file_size
-            ));
-        }
-
-        (entries.len() as u64, errs)
+        // Walk a private fd so the structural scan never moves the shared
+        // ecx_file cursor (the cached handle is read positionally elsewhere).
+        let ecx_path = self.ecx_file_name();
+        let mut ecx_file = match File::open(&ecx_path) {
+            Ok(f) => f,
+            Err(e) => return (0, vec![format!("open ECX file {}: {}", ecx_path, e)]),
+        };
+        crate::storage::idx::check_index_file(&mut ecx_file, self.ecx_file_size, self.version)
     }
 
     // ---- Deletion ----
@@ -1292,10 +1225,11 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         write_ecx_file(dir, "pics", VolumeId(1), &[]);
 
+        // data + parity exceeds MAX_SHARD_COUNT, so the config is rejected.
         let vif = crate::storage::volume::VifVolumeInfo {
             ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
-                data_shards: 10,
-                parity_shards: 10,
+                data_shards: 20,
+                parity_shards: 20,
                 ..Default::default()
             }),
             ..Default::default()
@@ -1310,5 +1244,32 @@ mod tests {
         let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
         assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
+    }
+
+    #[test]
+    fn test_ec_volume_wide_ratio_vif_config() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+
+        // A wider-than-default ratio within MAX_SHARD_COUNT must load as-is.
+        let vif = crate::storage::volume::VifVolumeInfo {
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 16,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.data_shards, 16);
+        assert_eq!(vol.parity_shards, 4);
     }
 }

@@ -80,7 +80,7 @@ jobs:
           echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry and target
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry

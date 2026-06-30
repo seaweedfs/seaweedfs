@@ -2464,7 +2464,10 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
-        // Rebuild missing shards, searching all locations for input shards
+        // Rebuild missing shards, searching all locations for input shards.
+        // Pass other_dirs so shards on sibling disks are found even when the
+        // primary rebuild dir doesn't hold them.
+        let other_dir_refs: Vec<&str> = other_dirs.iter().map(|s| s.as_str()).collect();
         crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
             &rebuild_dir,
             collection,
@@ -2472,6 +2475,7 @@ impl VolumeServer for VolumeGrpcService {
             &missing,
             data_shards as usize,
             parity_shards as usize,
+            &other_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcFiles: {}", e)))?;
 
@@ -2485,11 +2489,23 @@ impl VolumeServer for VolumeGrpcService {
             rebuild_idx_dir
         };
 
+        // .ecx may live in a different directory than the data shards (split
+        // data/idx layout). Ensure rebuild_dir is searchable for data shards
+        // even when it isn't the chosen .ecx rebuild directory and isn't
+        // already covered by other_dir_refs.
+        let mut ecx_dir_refs: Vec<&str> =
+            Vec::with_capacity(other_dir_refs.len() + usize::from(ecx_rebuild_dir != rebuild_dir));
+        if ecx_rebuild_dir != rebuild_dir {
+            ecx_dir_refs.push(rebuild_dir.as_str());
+        }
+        ecx_dir_refs.extend(other_dir_refs.iter().copied());
+
         crate::storage::erasure_coding::ec_encoder::rebuild_ecx_file(
             &ecx_rebuild_dir,
             collection,
             vid,
             data_shards as usize,
+            &ecx_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
 
@@ -3826,7 +3842,7 @@ impl VolumeServer for VolumeGrpcService {
                     .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
                 total_volumes += 1;
 
-                // INDEX mode (1) calls scrub_index; LOCAL (2) and FULL (3) call scrub
+                // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
                 let scrub_result = if mode == 1 {
                     v.scrub_index()
                 } else {
@@ -3942,7 +3958,7 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
                 2 | 3 => {
-                    // LOCAL (2) / FULL (3): verify EC shard data
+                    // FULL (2) / LOCAL (3): verify EC shard data
                     let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
 
                     // After cross-disk reconciliation, an EcVolume can

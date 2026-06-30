@@ -194,6 +194,34 @@ func TestWriteDataNodeInfo_SplitsCollapsedDisksByPhysicalDiskId(t *testing.T) {
 	}
 }
 
+func TestWriteTopologyInfo_PrintsParentHeadersOnce(t *testing.T) {
+	topo := topoFromNodes(
+		volNode("node1:8081", &master_pb.VolumeInformationMessage{Id: 1, Collection: "c"}),
+		volNode("node2:8081", &master_pb.VolumeInformationMessage{Id: 2, Collection: "c"}),
+	)
+	topo.DiskInfos = map[string]*master_pb.DiskInfo{"hdd": {Type: "hdd"}}
+	topo.DataCenterInfos[0].DiskInfos = map[string]*master_pb.DiskInfo{"hdd": {Type: "hdd"}}
+	topo.DataCenterInfos[0].RackInfos[0].DiskInfos = map[string]*master_pb.DiskInfo{"hdd": {Type: "hdd"}}
+
+	c := &commandVolumeList{}
+	fs := flag.NewFlagSet("volume.list", flag.ContinueOnError)
+	c.collectionPattern = fs.String("collection", "", "")
+	c.dataCenter = fs.String("dataCenter", "", "")
+	c.rack = fs.String("rack", "", "")
+	c.dataNode = fs.String("dataNode", "", "")
+	c.readonly = fs.Bool("readonly", false, "")
+	c.writable = fs.Bool("writable", false, "")
+	c.volumeId = fs.Uint64("volumeId", 0, "")
+
+	var dcBuf bytes.Buffer
+	c.writeTopologyInfo(&dcBuf, topo, 30000, 1)
+	assert.Equal(t, 1, strings.Count(dcBuf.String(), "  DataCenter dc1 hdd("))
+
+	var rackBuf bytes.Buffer
+	c.writeTopologyInfo(&rackBuf, topo, 30000, 2)
+	assert.Equal(t, 1, strings.Count(rackBuf.String(), "    Rack rack1 hdd("))
+}
+
 // volNode builds a single-node topology from (volumeId, collection) pairs so the
 // duplicate-detection tests can describe a cluster compactly.
 func volNode(nodeId string, volumes ...*master_pb.VolumeInformationMessage) *master_pb.DataNodeInfo {
