@@ -588,11 +588,6 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
             window.location.href = url.toString();
         }
         
-        function exportVolumes() {
-            // TODO: Implement volume export functionality
-            alert('Export functionality to be implemented');
-        }
-        
         function viewVolumeDetails(volumeId) {
             // Get the server from the current row - works for both buttons and volume ID links
             const clickedElement = event.target;
@@ -724,4 +719,4 @@ func maxInt(a, b int) int {
         return a
     }
     return b
-} 
+}
