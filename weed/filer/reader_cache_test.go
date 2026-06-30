@@ -87,11 +87,6 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	freshUrl := "http://fast-volume-9/" + fileId
 	testData := []byte("fresh chunk data after cache invalidation")
 
-	originalFetch := readerCacheFetchChunkData
-	defer func() {
-		readerCacheFetchChunkData = originalFetch
-	}()
-
 	var lookupCount int32
 	lookupFn := func(ctx context.Context, requestedFileId string) ([]string, error) {
 		if requestedFileId != fileId {
@@ -105,7 +100,7 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	}
 
 	var fetchCount int32
-	readerCacheFetchChunkData = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
 		if requestedFileId != fileId {
 			return 0, fmt.Errorf("unexpected fetch file id %s", requestedFileId)
 		}
@@ -126,6 +121,7 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	}
 
 	rc := NewReaderCache(10, cache, lookupFn, invalidator)
+	rc.fetchChunkDataFn = fetchFn
 	defer rc.destroy()
 
 	buffer := make([]byte, len(testData))
@@ -155,11 +151,6 @@ func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
 	fileId := "425141,failed"
 	url := "http://fast-volume-1/" + fileId
 
-	originalFetch := readerCacheFetchChunkData
-	defer func() {
-		readerCacheFetchChunkData = originalFetch
-	}()
-
 	var lookupCount int32
 	lookupFn := func(ctx context.Context, requestedFileId string) ([]string, error) {
 		if requestedFileId != fileId {
@@ -170,12 +161,13 @@ func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
 	}
 
 	var fetchCount int32
-	readerCacheFetchChunkData = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
 		atomic.AddInt32(&fetchCount, 1)
 		return 0, fmt.Errorf("fetch failed")
 	}
 
 	rc := NewReaderCache(10, cache, lookupFn, nil)
+	rc.fetchChunkDataFn = fetchFn
 	defer rc.destroy()
 
 	for i := 0; i < 2; i++ {
@@ -572,10 +564,6 @@ func TestSingleChunkCacherMultipleReadersWaitForDownload(t *testing.T) {
 // the downloaders map deduplicates in-flight downloads.
 func TestReaderCacheDownloaderDedup(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
-	originalFetch := readerCacheFetchChunkData
-	defer func() {
-		readerCacheFetchChunkData = originalFetch
-	}()
 
 	var lookupCount int32
 	var fetchCount int32
@@ -587,13 +575,14 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 		return []string{"http://volume/" + fileId}, nil
 	}
 
-	readerCacheFetchChunkData = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (int, error) {
 		atomic.AddInt32(&fetchCount, 1)
 		<-fetchGate
 		return copy(buffer, testData), nil
 	}
 
 	rc := NewReaderCache(10, cache, lookupFn, nil)
+	rc.fetchChunkDataFn = fetchFn
 	defer rc.destroy()
 
 	const numReaders = 10

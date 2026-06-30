@@ -20,12 +20,11 @@ type CacheInvalidator interface {
 
 type fetchChunkDataFnType func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (n int, err error)
 
-var readerCacheFetchChunkData fetchChunkDataFnType = util_http.RetriedFetchChunkData
-
 type ReaderCache struct {
 	chunkCache       chunk_cache.ChunkCache
 	lookupFileIdFn   wdclient.LookupFileIdFunctionType
 	cacheInvalidator CacheInvalidator
+	fetchChunkDataFn fetchChunkDataFnType
 	sync.Mutex
 	downloaders map[string]*SingleChunkCacher
 	limit       int
@@ -53,6 +52,7 @@ func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 		chunkCache:       chunkCache,
 		lookupFileIdFn:   lookupFileIdFn,
 		cacheInvalidator: cacheInvalidator,
+		fetchChunkDataFn: util_http.RetriedFetchChunkData,
 		downloaders:      make(map[string]*SingleChunkCacher),
 	}
 }
@@ -265,7 +265,7 @@ func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []str
 	// Allocate buffer and download without holding the lock.
 	// This allows multiple downloads to proceed in parallel.
 	data := mem.Allocate(s.chunkSize)
-	_, fetchErr := readerCacheFetchChunkData(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
+	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
 	if fetchErr != nil {
 		mem.Free(data)
 		return nil, fetchErr
