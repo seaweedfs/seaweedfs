@@ -175,7 +175,7 @@ func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
 		return 0, fmt.Errorf("fetch failed")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	for i := 0; i < 2; i++ {
@@ -201,7 +201,7 @@ func TestReaderCacheContextCancellation(t *testing.T) {
 
 	// Create a ReaderCache - we can't easily test the full flow without mocking HTTP,
 	// but we can test the context cancellation in readChunkAt
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Pre-populate cache to avoid HTTP calls
@@ -240,7 +240,7 @@ func TestReaderCacheFallbackToChunkCache(t *testing.T) {
 	testData := []byte("fallback test data that should be found in chunk cache")
 	cache.SetChunk("fallback-file", testData)
 
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Read should hit the chunk cache
@@ -272,7 +272,7 @@ func TestReaderCacheMultipleReadersWaitForSameChunk(t *testing.T) {
 	}
 	cache.SetChunk("shared-chunk", testData)
 
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Launch multiple concurrent readers for the same chunk
@@ -318,7 +318,7 @@ func TestReaderCachePartialRead(t *testing.T) {
 	testData := []byte("0123456789ABCDEFGHIJ")
 	cache.SetChunk("partial-read-file", testData)
 
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	tests := []struct {
@@ -356,7 +356,7 @@ func TestReaderCacheCleanup(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
 
 	// Create cache with limit of 3
-	rc := NewReaderCache(3, cache, nil)
+	rc := NewReaderCache(3, cache, nil, nil)
 	defer rc.destroy()
 
 	// Add data for multiple files
@@ -393,7 +393,7 @@ func TestReaderCacheCleanup(t *testing.T) {
 // TestSingleChunkCacherDoneSignal tests that done channel is always closed
 func TestSingleChunkCacherDoneSignal(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Test that we can read even when data is in cache (done channel should work)
@@ -451,7 +451,7 @@ func TestSingleChunkCacherLookupError(t *testing.T) {
 		return nil, fmt.Errorf("lookup failed for %s", fileId)
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	buffer := make([]byte, 100)
@@ -477,7 +477,7 @@ func TestSingleChunkCacherContextCancellationDuringLookup(t *testing.T) {
 		return nil, fmt.Errorf("lookup completed but reader should have cancelled")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 	defer close(lookupCanFinish) // Ensure cleanup
 
@@ -525,7 +525,7 @@ func TestSingleChunkCacherMultipleReadersWaitForDownload(t *testing.T) {
 		return nil, fmt.Errorf("simulated lookup error")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	numReaders := 5
@@ -593,7 +593,7 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 		return copy(buffer, testData), nil
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	const numReaders = 10
@@ -634,7 +634,7 @@ func TestSingleChunkCacherOneReaderCancelsOthersContinue(t *testing.T) {
 		return nil, fmt.Errorf("simulated error after delay")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	cancelledReaderDone := make(chan error, 1)

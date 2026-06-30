@@ -137,7 +137,7 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 		chunkCache: chunkCache,
 		signature:  util.RandomInt32(),
 	}
-	t.readerCache = filer.NewReaderCache(32, chunkCache, filer.LookupFn(t))
+	t.readerCache = filer.NewReaderCache(32, chunkCache, filer.LookupFn(t), nil)
 	return t, nil
 }
 

@@ -47,11 +47,7 @@ type SingleChunkCacher struct {
 	done           chan struct{} // signals when download is complete
 }
 
-func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidators ...CacheInvalidator) *ReaderCache {
-	var cacheInvalidator CacheInvalidator
-	if len(cacheInvalidators) > 0 {
-		cacheInvalidator = cacheInvalidators[0]
-	}
+func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator) *ReaderCache {
 	return &ReaderCache{
 		limit:            limit,
 		chunkCache:       chunkCache,
