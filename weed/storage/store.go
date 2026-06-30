@@ -408,11 +408,14 @@ func (s *Store) GetRack() string {
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCounts := make(map[string]uint32)
+	// Per-physical-disk effective max, captured alongside the per-type sum so
+	// DiskTag can report each disk's exact capacity (including empty disks).
+	diskMaxByID := make(map[int]int32)
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
-	for _, location := range s.Locations {
+	for diskID, location := range s.Locations {
 		if location.isDiskUnavailable.Load() {
 			continue
 		}
@@ -428,6 +431,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			effectiveMaxCount = 0
 		}
 		maxVolumeCounts[string(location.DiskType)] += uint32(effectiveMaxCount)
+		diskMaxByID[diskID] = effectiveMaxCount
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
@@ -540,8 +544,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var diskTags []*master_pb.DiskTag
 	for diskID, loc := range s.Locations {
 		diskTags = append(diskTags, &master_pb.DiskTag{
-			DiskId: uint32(diskID),
-			Tags:   append([]string(nil), loc.Tags...),
+			DiskId:         uint32(diskID),
+			Tags:           append([]string(nil), loc.Tags...),
+			Type:           string(loc.DiskType),
+			MaxVolumeCount: int64(diskMaxByID[diskID]),
 		})
 	}
 

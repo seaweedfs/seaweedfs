@@ -625,7 +625,9 @@ async fn send_deregister_heartbeat(
 ) {
     let empty = {
         let store = state.store.read().unwrap();
-        let (location_uuids, disk_tags) = collect_location_metadata(&store);
+        // Deregister announces shutdown; per-disk effective max is not computed
+        // here, so fall back to each location's configured max.
+        let (location_uuids, disk_tags) = collect_location_metadata(&store, &[]);
         master_pb::Heartbeat {
             id: store.id.clone(),
             ip: config.ip.clone(),
@@ -747,7 +749,10 @@ fn collect_heartbeat(
     )
 }
 
-fn collect_location_metadata(store: &Store) -> (Vec<String>, Vec<master_pb::DiskTag>) {
+fn collect_location_metadata(
+    store: &Store,
+    disk_max_by_id: &[i32],
+) -> (Vec<String>, Vec<master_pb::DiskTag>) {
     let location_uuids = store
         .locations
         .iter()
@@ -757,9 +762,17 @@ fn collect_location_metadata(store: &Store) -> (Vec<String>, Vec<master_pb::Disk
         .locations
         .iter()
         .enumerate()
-        .map(|(disk_id, loc)| master_pb::DiskTag {
-            disk_id: disk_id as u32,
-            tags: loc.tags.clone(),
+        .map(|(disk_id, loc)| {
+            let max_volume_count = disk_max_by_id
+                .get(disk_id)
+                .copied()
+                .unwrap_or_else(|| loc.max_volume_count.load(Ordering::Relaxed));
+            master_pb::DiskTag {
+                disk_id: disk_id as u32,
+                tags: loc.tags.clone(),
+                r#type: loc.disk_type.to_string(),
+                max_volume_count: max_volume_count as i64,
+            }
         })
         .collect();
     (location_uuids, disk_tags)
@@ -797,6 +810,10 @@ fn build_heartbeat_with_ec_status(
 
     let volume_size_limit = store.volume_size_limit.load(Ordering::Relaxed);
 
+    // Per-physical-disk effective max, captured alongside the per-type sum so
+    // DiskTag can report each disk's exact capacity (including empty disks).
+    let mut disk_max_by_id = vec![0i32; store.locations.len()];
+
     for (disk_id, loc) in store.locations.iter_mut().enumerate() {
         let disk_type_str = loc.disk_type.to_string();
         let mut effective_max_count = loc.max_volume_count.load(Ordering::Relaxed);
@@ -813,6 +830,7 @@ fn build_heartbeat_with_ec_status(
             effective_max_count = 0;
         }
         *max_volume_counts.entry(disk_type_str).or_insert(0) += effective_max_count as u32;
+        disk_max_by_id[disk_id] = effective_max_count;
 
         let mut delete_vids = Vec::new();
         for (_, vol) in loc.iter_volumes() {
@@ -930,7 +948,7 @@ fn build_heartbeat_with_ec_status(
     crate::metrics::MAX_VOLUMES.set(total_max);
 
     let has_no_volumes = volumes.is_empty();
-    let (location_uuids, disk_tags) = collect_location_metadata(store);
+    let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
 
     master_pb::Heartbeat {
         id: store.id.clone(),
@@ -1153,6 +1171,10 @@ mod tests {
             heartbeat.disk_tags[0].tags,
             vec!["fast".to_string(), "ssd".to_string()]
         );
+        // Per-disk type and capacity are reported so the master can account for
+        // empty disks.
+        assert_eq!(heartbeat.disk_tags[0].r#type, DiskType::HardDrive.to_string());
+        assert_eq!(heartbeat.disk_tags[0].max_volume_count, 3);
     }
 
     #[test]
