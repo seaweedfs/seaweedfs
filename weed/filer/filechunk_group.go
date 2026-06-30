@@ -41,7 +41,7 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 	group := &ChunkGroup{
 		lookupFn:          lookupFn,
 		sections:          make(map[SectionIndex]*FileChunkSection),
-		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn),
+		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, nil),
 		concurrentReaders: concurrentReaders,
 	}
 

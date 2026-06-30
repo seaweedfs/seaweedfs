@@ -277,7 +277,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	} else {
 		chunkCache = (*chunk_cache.TieredChunkCache)(nil)
 	}
-	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, chunkCache, filerClient.GetLookupFileIdFunction())
+	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, chunkCache, filerClient.GetLookupFileIdFunction(), filerClient)
 
 	s3ApiServer = &S3ApiServer{
 		option:                option,
