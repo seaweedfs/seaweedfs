@@ -3920,15 +3920,19 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        let store = self.state.store.read().unwrap();
-        let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-            store
-                .locations
-                .iter()
-                .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
-                .collect()
-        } else {
-            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+        // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
+        // reads remote shards and must not hold the !Send store guard across .await.
+        let vids: Vec<VolumeId> = {
+            let store = self.state.store.read().unwrap();
+            if req.volume_ids.is_empty() {
+                store
+                    .locations
+                    .iter()
+                    .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                    .collect()
+            } else {
+                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+            }
         };
 
         let mut total_volumes: u64 = 0;
@@ -3937,17 +3941,17 @@ impl VolumeServer for VolumeGrpcService {
         let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
         let mut details: Vec<String> = Vec::new();
 
-        for vid in &vids {
-            let ecv = store
-                .find_ec_volume(*vid)
-                .ok_or_else(|| Status::not_found(format!("EC volume id {} not found", vid.0)))?;
-            let collection = ecv.collection.clone();
-
+        for vid in vids {
             match mode {
                 1 => {
-                    // INDEX mode: check ecx index integrity only, no shard verification
-                    // Matches Go's v.ScrubIndex() → idx.CheckIndexFile()
-                    let (count, errs) = ecv.scrub_index();
+                    // INDEX mode: check ecx index integrity only, no shard verification.
+                    let (count, errs) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        ecv.scrub_index()
+                    };
                     total_volumes += 1;
                     total_files += count;
                     if !errs.is_empty() {
@@ -3958,66 +3962,40 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
                 2 => {
-                    // FULL: Reed-Solomon parity verification over the local shards.
-                    // (Cross-server needle verification arrives in a follow-up.)
-                    let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
-
-                    // After cross-disk reconciliation, an EcVolume can
-                    // legitimately have ecv.dir != ecv.dir_idx (shards
-                    // on one disk, .ecx / .ecj / .vif on a sibling).
-                    // Use the EcVolume's own dirs rather than collapsing
-                    // both args to find_ec_dir's single answer, otherwise
-                    // read_ec_shard_config falls back to the wrong .vif
-                    // location for split-disk volumes (#9252).
-                    let dir = ecv.dir.clone();
-                    let idx_dir = ecv.dir_idx.clone();
-                    if dir.is_empty() {
-                        continue;
-                    }
-
-                    total_volumes += 1;
-                    total_files += files;
-                    let (data_shards, parity_shards) =
-                        crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
-                            &dir,
-                            &idx_dir,
-                            &collection,
-                            *vid,
-                        );
-
-                    match crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                        &dir,
-                        &collection,
-                        *vid,
-                        data_shards as usize,
-                        parity_shards as usize,
-                    ) {
-                        Ok((broken, msgs)) => {
-                            if !broken.is_empty() {
-                                broken_volume_ids.push(vid.0);
-                                for b in broken {
-                                    broken_shard_infos.push(volume_server_pb::EcShardInfo {
-                                        volume_id: vid.0,
-                                        collection: collection.clone(),
-                                        shard_id: b,
-                                        ..Default::default()
-                                    });
-                                }
-                            }
-                            for msg in msgs {
-                                details.push(format!("ecvol {}: {}", vid.0, msg));
-                            }
+                    // FULL: verify every needle across local AND remote shards.
+                    {
+                        // Match Go: a missing requested volume is a hard error.
+                        let store = self.state.store.read().unwrap();
+                        if store.find_ec_volume(vid).is_none() {
+                            return Err(Status::not_found(format!(
+                                "EC volume id {} not found",
+                                vid.0
+                            )));
                         }
-                        Err(e) => {
-                            broken_volume_ids.push(vid.0);
-                            details.push(format!("ecvol {}: scrub error: {}", vid.0, e));
+                    }
+                    total_volumes += 1;
+                    let (files, shard_infos, errs) =
+                        crate::server::store_ec::scrub_ec_volume_distributed(&self.state, vid, false)
+                            .await;
+                    total_files += files as u64;
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
                         }
                     }
                 }
                 3 => {
                     // LOCAL: verify each needle against the locally-held shards.
+                    let (files, shard_infos, errs) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        ecv.scrub_local()
+                    };
                     total_volumes += 1;
-                    let (files, shard_infos, errs) = ecv.scrub_local();
                     total_files += files;
                     if !errs.is_empty() || !shard_infos.is_empty() {
                         broken_volume_ids.push(vid.0);
