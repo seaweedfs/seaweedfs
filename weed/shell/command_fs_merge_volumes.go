@@ -443,7 +443,9 @@ func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from,
 		if collection != "*" && collection != volume.GetCollection() {
 			return nil, fmt.Errorf("volume %d is not in collection %q", vid, collection)
 		}
-		if c.getVolumeSize(volume) == 0 {
+		// Merging into an empty target is valid (e.g. a freshly vacuumed
+		// volume); only an empty source has nothing to move.
+		if vid == from && c.getVolumeSize(volume) == 0 {
 			return nil, fmt.Errorf("volume %d is empty", vid)
 		}
 	}

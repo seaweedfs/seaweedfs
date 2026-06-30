@@ -46,6 +46,22 @@ func TestCreateMergePlan_HonorsExplicitDirection(t *testing.T) {
 	}
 }
 
+// Merging into an empty target is valid (e.g. consolidating into a freshly
+// vacuumed volume); only an empty source should be rejected.
+func TestCreateMergePlan_DirectedAllowsEmptyTarget(t *testing.T) {
+	from := &master_pb.VolumeInformationMessage{Id: 87, Size: 100}
+	emptyTo := &master_pb.VolumeInformationMessage{Id: 83, Size: 0}
+	c := newMergeCmd(250000, from, emptyTo)
+
+	plan, err := c.createMergePlan("*", needle.VolumeId(83), needle.VolumeId(87))
+	if err != nil {
+		t.Fatalf("unexpected error merging into empty target: %v", err)
+	}
+	if got := plan[needle.VolumeId(87)]; got != needle.VolumeId(83) {
+		t.Fatalf("expected 87->83, got plan=%v", plan)
+	}
+}
+
 func TestCreateMergePlan_DirectedRejectsIneligible(t *testing.T) {
 	cases := []struct {
 		name     string
