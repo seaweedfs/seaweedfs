@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -480,7 +479,7 @@ func (h *ClusterHandlers) RepairEcVolume(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	req.Collection = strings.TrimSpace(req.Collection)
+	req.Collection = dash.NormalizeEcRepairCollection(req.Collection)
 	if err := dash.ValidateEcRepairCollection(req.Collection); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid collection: "+err.Error())
 		return

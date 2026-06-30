@@ -23,6 +23,14 @@ func TestBuildEcVolumeRepairScriptWithoutCollection(t *testing.T) {
 	}
 }
 
+func TestBuildEcVolumeRepairScriptWithDefaultCollection(t *testing.T) {
+	got := buildEcVolumeRepairScript(123, "default")
+	want := "ec.rebuild -volumeIds=123 -apply"
+	if got != want {
+		t.Fatalf("repair script = %q, want %q", got, want)
+	}
+}
+
 func TestBuildEcVolumeRepairJobUsesAdminScript(t *testing.T) {
 	job := buildEcVolumeRepairJob(123, "photos")
 	if job.JobType != "admin_script" {
@@ -60,5 +68,11 @@ func TestValidateEcRepairCollectionAcceptsSafeCharacters(t *testing.T) {
 		if err := ValidateEcRepairCollection(collection); err != nil {
 			t.Fatalf("expected collection %q to be valid: %v", collection, err)
 		}
+	}
+}
+
+func TestNormalizeEcRepairCollectionTreatsDefaultAsEmpty(t *testing.T) {
+	if got := NormalizeEcRepairCollection(" default "); got != "" {
+		t.Fatalf("normalized collection = %q, want empty", got)
 	}
 }

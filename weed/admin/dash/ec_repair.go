@@ -29,7 +29,7 @@ func (s *AdminServer) StartEcVolumeRepair(volumeID uint32, collection string) (s
 	if s.plugin == nil {
 		return "", fmt.Errorf("plugin is not enabled")
 	}
-	collection = strings.TrimSpace(collection)
+	collection = NormalizeEcRepairCollection(collection)
 	if err := ValidateEcRepairCollection(collection); err != nil {
 		return "", err
 	}
@@ -53,7 +53,7 @@ func (s *AdminServer) StartEcVolumeRepair(volumeID uint32, collection string) (s
 
 func buildEcVolumeRepairJob(volumeID uint32, collection string) *plugin_pb.JobSpec {
 	now := timestamppb.Now()
-	collection = strings.TrimSpace(collection)
+	collection = NormalizeEcRepairCollection(collection)
 	script := buildEcVolumeRepairScript(volumeID, collection)
 	scriptHash := hashEcRepairScript(script)
 	jobID := fmt.Sprintf("ec-repair-%d-%d", volumeID, now.AsTime().UnixNano())
@@ -101,13 +101,21 @@ func buildEcVolumeRepairJob(volumeID uint32, collection string) *plugin_pb.JobSp
 }
 
 func buildEcVolumeRepairScript(volumeID uint32, collection string) string {
-	collection = strings.TrimSpace(collection)
+	collection = NormalizeEcRepairCollection(collection)
 	args := []string{"ec.rebuild"}
 	if collection != "" {
 		args = append(args, "-collection="+collection)
 	}
 	args = append(args, "-volumeIds="+strconv.FormatUint(uint64(volumeID), 10), "-apply")
 	return strings.Join(args, " ")
+}
+
+func NormalizeEcRepairCollection(collection string) string {
+	collection = strings.TrimSpace(collection)
+	if collection == "default" {
+		return ""
+	}
+	return collection
 }
 
 func ValidateEcRepairCollection(collection string) error {
