@@ -546,6 +546,26 @@ impl EcVolume {
     }
 
     /// Locate the EC shard intervals needed to read a needle.
+    /// Locate the EC shard intervals covering a needle at `actual_offset` whose
+    /// index size is `size`. Mirrors Go's EcVolume.LocateEcShardNeedleInterval.
+    pub fn locate_ec_shard_needle_interval(
+        &self,
+        actual_offset: i64,
+        size: Size,
+    ) -> Vec<ec_locate::Interval> {
+        // shardSize = datFileSize / DataShards when known, else ecdFileSize - 1
+        // (shards are padded to the small block size; the -1 avoids an
+        // off-by-one in the large-block row count).
+        let shard_size = if self.dat_file_size > 0 {
+            self.dat_file_size / self.data_shards as i64
+        } else {
+            self.shard_file_size() - 1
+        };
+        // locate_data wants the on-disk size (header+body+checksum+timestamp+padding).
+        let actual = get_actual_size(size, self.version);
+        ec_locate::locate_data(actual_offset, Size(actual as i32), shard_size, self.data_shards)
+    }
+
     pub fn locate_needle(
         &self,
         needle_id: NeedleId,
@@ -559,25 +579,7 @@ impl EcVolume {
             return Ok(None);
         }
 
-        // Match Go's LocateEcShardNeedleInterval: shardSize = shard.ecdFileSize - 1
-        // Shards are usually padded to ErasureCodingSmallBlockSize, so subtract 1
-        // to avoid off-by-one in large block row count calculation.
-        // If datFileSize is known, use datFileSize / DataShards instead.
-        let shard_size = if self.dat_file_size > 0 {
-            self.dat_file_size / self.data_shards as i64
-        } else {
-            self.shard_file_size() - 1
-        };
-        // Pass the actual on-disk size (header+body+checksum+timestamp+padding)
-        // to locate_data, matching Go: types.Size(needle.GetActualSize(size, version))
-        let actual = get_actual_size(size, self.version);
-        let intervals = ec_locate::locate_data(
-            offset.to_actual_offset(),
-            Size(actual as i32),
-            shard_size,
-            self.data_shards,
-        );
-
+        let intervals = self.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
         Ok(Some((offset, size, intervals)))
     }
 
@@ -732,6 +734,154 @@ impl EcVolume {
             Err(e) => return (0, vec![format!("open ECX file {}: {}", ecx_path, e)]),
         };
         crate::storage::idx::check_index_file(&mut ecx_file, self.ecx_file_size, self.version)
+    }
+
+    /// ScrubLocal verifies each needle against the LOCAL shards only; it cannot
+    /// CRC-check a needle whose intervals span shards held on other servers.
+    /// Mirrors Go's EcVolume.ScrubLocal. Returns (rows walked, broken shards, errors).
+    pub fn scrub_local(
+        &self,
+    ) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
+        // Local scan also verifies the index.
+        let (_, mut errs) = self.scrub_index();
+
+        let mut broken_shards: HashSet<ShardId> = HashSet::new();
+        let mut count: u64 = 0;
+
+        let ecx_path = self.ecx_file_name();
+        let mut ecx_file = match File::open(&ecx_path) {
+            Ok(f) => f,
+            Err(e) => {
+                errs.push(format!("open ECX file {}: {}", ecx_path, e));
+                return (count, Vec::new(), errs);
+            }
+        };
+
+        // Reused across every needle/chunk to avoid a per-chunk allocation.
+        let mut chunk_buf: Vec<u8> = Vec::new();
+        let walk = crate::storage::idx::walk_index_file(&mut ecx_file, 0, |id, offset, size| {
+            count += 1;
+            if size.is_tombstone() {
+                return Ok(());
+            }
+
+            let locations = self.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
+            // A needle is verifiable locally only if every shard it spans is local;
+            // when any is remote, skip the reassembly buffer entirely.
+            let has_remote_chunks = locations.iter().any(|iv| {
+                let (sid, _) = iv.to_shard_id_and_offset(self.data_shards);
+                self.shards.get(sid as usize).and_then(|s| s.as_ref()).is_none()
+            });
+            let mut read: i64 = 0;
+            let mut data: Vec<u8> = if has_remote_chunks {
+                Vec::new()
+            } else {
+                Vec::with_capacity(get_actual_size(size, self.version) as usize)
+            };
+            let mut local_shard_ids: Vec<ShardId> = Vec::new();
+
+            for (i, iv) in locations.iter().enumerate() {
+                let (sid, soffset) = iv.to_shard_id_and_offset(self.data_shards);
+                let ssize = iv.size;
+                let shard = match self.shards.get(sid as usize).and_then(|s| s.as_ref()) {
+                    Some(s) => s,
+                    None => {
+                        // Shard is not local; we can't verify it without decoding.
+                        read += ssize;
+                        continue;
+                    }
+                };
+                local_shard_ids.push(sid);
+
+                if soffset + ssize > shard.file_size() {
+                    broken_shards.insert(sid);
+                    errs.push(format!(
+                        "local shard {} for needle {} is too short ({}), cannot read chunk {}/{}",
+                        sid,
+                        id.0,
+                        shard.file_size(),
+                        i + 1,
+                        locations.len()
+                    ));
+                    continue;
+                }
+
+                chunk_buf.resize(ssize as usize, 0);
+                match shard.read_at(&mut chunk_buf, soffset as u64) {
+                    Err(e) => {
+                        broken_shards.insert(sid);
+                        errs.push(format!(
+                            "failed to read chunk {}/{} for needle {} from local shard {} at offset {}: {}",
+                            i + 1,
+                            locations.len(),
+                            id.0,
+                            sid,
+                            soffset,
+                            e
+                        ));
+                        continue;
+                    }
+                    Ok(got) if got as i64 != ssize => {
+                        broken_shards.insert(sid);
+                        errs.push(format!(
+                            "expected {} bytes for chunk {}/{} for needle {} from local shard {}, got {}",
+                            ssize,
+                            i + 1,
+                            locations.len(),
+                            id.0,
+                            sid,
+                            got
+                        ));
+                        continue;
+                    }
+                    Ok(_) => {}
+                }
+
+                if !has_remote_chunks {
+                    data.extend_from_slice(&chunk_buf);
+                }
+                read += ssize;
+            }
+
+            local_shard_ids.sort_unstable();
+
+            let want = get_actual_size(size, self.version);
+            if read != want {
+                // Like Go, returning from the walk callback aborts the scan.
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "expected {} bytes for needle {} on volume {}, got {}",
+                        want, id.0, self.volume_id.0, read
+                    ),
+                ));
+            }
+
+            // Only a fully-local needle can be reassembled and CRC-checked.
+            if !has_remote_chunks {
+                let mut n = Needle::default();
+                if let Err(e) = n.read_bytes(&data, 0, size, self.version) {
+                    errs.push(format!(
+                        "needle {} on volume {}, shards {:?}: {}",
+                        id.0, self.volume_id.0, local_shard_ids, e
+                    ));
+                }
+            }
+            Ok(())
+        });
+        if let Err(e) = walk {
+            // Go appends the walk/callback error verbatim.
+            errs.push(e.to_string());
+        }
+
+        let mut broken: Vec<crate::pb::volume_server_pb::EcShardInfo> = broken_shards
+            .iter()
+            .filter_map(|sid| self.shards.get(*sid as usize).and_then(|s| s.as_ref()))
+            .map(|s| s.to_ec_shard_info())
+            .collect();
+        broken.sort_by(|a, b| a.shard_id.cmp(&b.shard_id));
+
+        (count, broken, errs)
     }
 
     // ---- Deletion ----
@@ -1271,5 +1421,46 @@ mod tests {
         let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.data_shards, 16);
         assert_eq!(vol.parity_shards, 4);
+    }
+
+    #[test]
+    fn test_scrub_local_skips_tombstones() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(-1))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (count, broken, errs) = vol.scrub_local();
+        assert_eq!(count, 1);
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(errs.is_empty(), "{:?}", errs);
+    }
+
+    #[test]
+    fn test_scrub_local_clean_when_no_local_shards() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        // dat_file_size makes the shard-size math well-defined.
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // No shard files present: nothing to verify locally, so no errors.
+        let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (count, broken, errs) = vol.scrub_local();
+        assert_eq!(count, 1);
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(errs.is_empty(), "{:?}", errs);
     }
 }

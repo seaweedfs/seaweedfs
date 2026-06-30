@@ -3957,8 +3957,9 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                 }
-                2 | 3 => {
-                    // FULL (2) / LOCAL (3): verify EC shard data
+                2 => {
+                    // FULL: Reed-Solomon parity verification over the local shards.
+                    // (Cross-server needle verification arrives in a follow-up.)
                     let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
 
                     // After cross-disk reconciliation, an EcVolume can
@@ -4010,6 +4011,19 @@ impl VolumeServer for VolumeGrpcService {
                         Err(e) => {
                             broken_volume_ids.push(vid.0);
                             details.push(format!("ecvol {}: scrub error: {}", vid.0, e));
+                        }
+                    }
+                }
+                3 => {
+                    // LOCAL: verify each needle against the locally-held shards.
+                    total_volumes += 1;
+                    let (files, shard_infos, errs) = ecv.scrub_local();
+                    total_files += files;
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
                         }
                     }
                 }
