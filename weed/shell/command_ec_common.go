@@ -820,8 +820,10 @@ func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.Disk
 		}
 	}
 
-	// Return matching disk type if found, otherwise fallback
-	if bestDiskId != 0 {
+	// Return matching disk type if found, otherwise fallback. Gate on bestScore,
+	// not bestDiskId: physical disk 0 is a valid target and 0 is also the "no
+	// match" zero value, so testing bestDiskId would never select disk 0.
+	if bestScore != -1 {
 		return bestDiskId
 	}
 	return fallbackDiskId
