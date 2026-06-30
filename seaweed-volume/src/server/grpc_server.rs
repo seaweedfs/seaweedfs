@@ -2489,12 +2489,23 @@ impl VolumeServer for VolumeGrpcService {
             rebuild_idx_dir
         };
 
+        // .ecx may live in a different directory than the data shards (split
+        // data/idx layout). Ensure rebuild_dir is searchable for data shards
+        // even when it isn't the chosen .ecx rebuild directory and isn't
+        // already covered by other_dir_refs.
+        let mut ecx_dir_refs: Vec<&str> =
+            Vec::with_capacity(other_dir_refs.len() + usize::from(ecx_rebuild_dir != rebuild_dir));
+        if ecx_rebuild_dir != rebuild_dir {
+            ecx_dir_refs.push(rebuild_dir.as_str());
+        }
+        ecx_dir_refs.extend(other_dir_refs.iter().copied());
+
         crate::storage::erasure_coding::ec_encoder::rebuild_ecx_file(
             &ecx_rebuild_dir,
             collection,
             vid,
             data_shards as usize,
-            &other_dir_refs,
+            &ecx_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
 
