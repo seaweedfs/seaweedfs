@@ -130,6 +130,55 @@ func TestScrubVolumeData(t *testing.T) {
 	}
 }
 
+// TestScrubVolumeData_IgnoresOffset0Tombstone: a remote-tier delete appends an
+// offset-0 tombstone to the .idx with no physical .dat bytes; a full scrub must
+// not flag the volume — neither via the structural overlap check nor the size
+// reconcile.
+func TestScrubVolumeData_IgnoresOffset0Tombstone(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+
+	// Append an offset-0 logical tombstone, as a remote-tier delete would.
+	entry := needle_map.NeedleValue{Key: types.NeedleId(99), Offset: types.ToOffset(0), Size: types.TombstoneFileSize}.ToBytes()
+	f, err := os.OpenFile(v.FileName(".idx"), os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	if _, err := f.Write(entry); err != nil {
+		f.Close()
+		t.Fatalf("append tombstone: %v", err)
+	}
+	f.Close()
+
+	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("reopen .idx: %v", err)
+	}
+	defer idxFile.Close()
+	idxStat, err := idxFile.Stat()
+	if err != nil {
+		t.Fatalf("stat .idx: %v", err)
+	}
+
+	if _, errs := v.scrubVolumeData(idxFile, idxStat.Size()); len(errs) != 0 {
+		t.Fatalf("offset-0 tombstone must not flag the volume, got %v", errs)
+	}
+}
+
 // TestCheckVolumeDataIntegrityWithDeletionTombstone guards the size argument
 // passed to ReadData when verifying a trailing deletion tombstone. The .idx
 // entry carries TombstoneFileSize (-1) but the appended tombstone needle in

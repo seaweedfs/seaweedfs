@@ -1,4 +1,4 @@
-//! EcVolume: an erasure-coded volume with up to 14 shards.
+//! EcVolume: an erasure-coded volume with up to MAX_SHARD_COUNT shards.
 //!
 //! Each EcVolume has a sorted index (.ecx) and a deletion journal (.ecj).
 //! Shards (.ec00-.ec13) may be distributed across multiple servers.
@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
-use crate::storage::needle::needle::{get_actual_size, Needle};
+use crate::storage::needle::needle::{get_actual_size, Needle, NeedleError};
 use crate::storage::types::*;
 
 /// An erasure-coded volume managing its local shards and index.
@@ -22,7 +22,7 @@ pub struct EcVolume {
     pub dir: String,
     pub dir_idx: String,
     pub version: Version,
-    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..14)
+    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..MAX_SHARD_COUNT)
     pub dat_file_size: i64,
     pub data_shards: u32,
     pub parity_shards: u32,
@@ -106,7 +106,7 @@ pub fn read_ec_shard_config(
             if let Some(ec) = vif_info.ec_shard_config {
                 if ec.data_shards > 0
                     && ec.parity_shards > 0
-                    && (ec.data_shards + ec.parity_shards) <= TOTAL_SHARDS_COUNT as u32
+                    && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
                 {
                     data_shards = ec.data_shards;
                     parity_shards = ec.parity_shards;
@@ -464,10 +464,10 @@ impl EcVolume {
     /// against a half-populated cache and return NotFound for the
     /// not-yet-inserted shards.
     ///
-    /// Callers populating the whole cache atomically should use
-    /// [`Self::replace_shard_locations`] instead — it swaps the
-    /// entire map under the write lock and advances the refresh
-    /// timestamp in one step.
+    /// Callers writing back a whole `LookupEcVolume` reply should use
+    /// [`Self::merge_shard_locations`] instead — it upserts the reply's
+    /// shards under the write lock and advances the refresh timestamp in
+    /// one step, retaining cached shards the reply omits.
     pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
         self.shard_locations
             .write()
@@ -484,6 +484,29 @@ impl EcVolume {
     pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
         *self.shard_locations.write().unwrap() = locations;
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+    }
+
+    /// Merge a fresh `LookupEcVolume` reply into the shard-locations cache and
+    /// stamp the refresh time, returning a clone of the resulting map.
+    ///
+    /// Per-shard upsert (mirrors Go's `cachedLookupEcShardLocations`): each shard
+    /// id present in the reply overwrites its cached entry, while shard ids absent
+    /// from the reply keep their previously-cached locations — so a reply that
+    /// passes the data-shard completeness guard but omits a shard already in cache
+    /// does not drop that shard's known location (unlike a full replace).
+    pub fn merge_shard_locations(
+        &self,
+        locations: HashMap<ShardId, Vec<String>>,
+    ) -> HashMap<ShardId, Vec<String>> {
+        let merged = {
+            let mut guard = self.shard_locations.write().unwrap();
+            for (shard_id, addrs) in locations {
+                guard.insert(shard_id, addrs);
+            }
+            guard.clone()
+        };
+        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+        merged
     }
 
     /// Get a cloned list of server addresses for a given shard ID.
@@ -546,6 +569,26 @@ impl EcVolume {
     }
 
     /// Locate the EC shard intervals needed to read a needle.
+    /// Locate the EC shard intervals covering a needle at `actual_offset` whose
+    /// index size is `size`. Mirrors Go's EcVolume.LocateEcShardNeedleInterval.
+    pub fn locate_ec_shard_needle_interval(
+        &self,
+        actual_offset: i64,
+        size: Size,
+    ) -> Vec<ec_locate::Interval> {
+        // shardSize = datFileSize / DataShards when known, else ecdFileSize - 1
+        // (shards are padded to the small block size; the -1 avoids an
+        // off-by-one in the large-block row count).
+        let shard_size = if self.dat_file_size > 0 {
+            self.dat_file_size / self.data_shards as i64
+        } else {
+            self.shard_file_size() - 1
+        };
+        // locate_data wants the on-disk size (header+body+checksum+timestamp+padding).
+        let actual = get_actual_size(size, self.version);
+        ec_locate::locate_data(actual_offset, Size(actual as i32), shard_size, self.data_shards)
+    }
+
     pub fn locate_needle(
         &self,
         needle_id: NeedleId,
@@ -559,25 +602,7 @@ impl EcVolume {
             return Ok(None);
         }
 
-        // Match Go's LocateEcShardNeedleInterval: shardSize = shard.ecdFileSize - 1
-        // Shards are usually padded to ErasureCodingSmallBlockSize, so subtract 1
-        // to avoid off-by-one in large block row count calculation.
-        // If datFileSize is known, use datFileSize / DataShards instead.
-        let shard_size = if self.dat_file_size > 0 {
-            self.dat_file_size / self.data_shards as i64
-        } else {
-            self.shard_file_size() - 1
-        };
-        // Pass the actual on-disk size (header+body+checksum+timestamp+padding)
-        // to locate_data, matching Go: types.Size(needle.GetActualSize(size, version))
-        let actual = get_actual_size(size, self.version);
-        let intervals = ec_locate::locate_data(
-            offset.to_actual_offset(),
-            Size(actual as i32),
-            shard_size,
-            self.data_shards,
-        );
-
+        let intervals = self.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
         Ok(Some((offset, size, intervals)))
     }
 
@@ -708,97 +733,186 @@ impl EcVolume {
     /// Matches Go's `(ev *EcVolume) ScrubIndex()` → `idx.CheckIndexFile()`.
     /// Returns (entry_count, errors).
     pub fn scrub_index(&self) -> (u64, Vec<String>) {
-        let ecx_file = match self.ecx_file.as_ref() {
-            Some(f) => f,
-            None => {
-                return (
-                    0,
-                    vec![format!(
-                        "no ECX file associated with EC volume {}",
-                        self.volume_id.0
-                    )],
-                )
-            }
-        };
-
-        if self.ecx_file_size == 0 {
+        if self.ecx_file.is_none() {
             return (
                 0,
                 vec![format!(
-                    "zero-size ECX file for EC volume {}",
+                    "no ECX file associated with EC volume {}",
                     self.volume_id.0
                 )],
             );
         }
+        if self.ecx_file_size == 0 {
+            return (
+                0,
+                vec![format!("zero-size ECX file for EC volume {}", self.volume_id.0)],
+            );
+        }
 
-        let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
-        let mut entries: Vec<(usize, NeedleId, i64, Size)> = Vec::with_capacity(entry_count);
-        let mut errs: Vec<String> = Vec::new();
-        let mut entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        // Walk a private fd so the structural scan never moves the shared
+        // ecx_file cursor (the cached handle is read positionally elsewhere).
+        let ecx_path = self.ecx_file_name();
+        let mut ecx_file = match File::open(&ecx_path) {
+            Ok(f) => f,
+            Err(e) => return (0, vec![format!("open ECX file {}: {}", ecx_path, e)]),
+        };
+        crate::storage::idx::check_index_file(&mut ecx_file, self.ecx_file_size, self.version)
+    }
 
-        // Walk all entries
-        for i in 0..entry_count {
-            let file_offset = (i * NEEDLE_MAP_ENTRY_SIZE) as u64;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt;
-                if let Err(e) = ecx_file.read_exact_at(&mut entry_buf, file_offset) {
-                    errs.push(format!("read ecx entry {}: {}", i, e));
+    /// ScrubLocal verifies each needle against the LOCAL shards only; it cannot
+    /// CRC-check a needle whose intervals span shards held on other servers.
+    /// Mirrors Go's EcVolume.ScrubLocal. Returns (rows walked, broken shards, errors).
+    pub fn scrub_local(
+        &self,
+    ) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
+        // Local scan also verifies the index.
+        let (_, mut errs) = self.scrub_index();
+
+        let mut broken_shards: HashSet<ShardId> = HashSet::new();
+        let mut count: u64 = 0;
+
+        let ecx_path = self.ecx_file_name();
+        let mut ecx_file = match File::open(&ecx_path) {
+            Ok(f) => f,
+            Err(e) => {
+                errs.push(format!("open ECX file {}: {}", ecx_path, e));
+                return (count, Vec::new(), errs);
+            }
+        };
+
+        // Reused across every needle/chunk to avoid a per-chunk allocation.
+        let mut chunk_buf: Vec<u8> = Vec::new();
+        let walk = crate::storage::idx::walk_index_file(&mut ecx_file, 0, |id, offset, size| {
+            count += 1;
+            if size.is_tombstone() {
+                return Ok(());
+            }
+
+            let locations = self.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
+            // A needle is verifiable locally only if every shard it spans is local;
+            // when any is remote, skip the reassembly buffer entirely.
+            let has_remote_chunks = locations.iter().any(|iv| {
+                let (sid, _) = iv.to_shard_id_and_offset(self.data_shards);
+                self.shards.get(sid as usize).and_then(|s| s.as_ref()).is_none()
+            });
+            let mut read: i64 = 0;
+            let mut data: Vec<u8> = if has_remote_chunks {
+                Vec::new()
+            } else {
+                Vec::with_capacity(get_actual_size(size, self.version) as usize)
+            };
+            let mut local_shard_ids: Vec<ShardId> = Vec::new();
+
+            for (i, iv) in locations.iter().enumerate() {
+                let (sid, soffset) = iv.to_shard_id_and_offset(self.data_shards);
+                let ssize = iv.size;
+                let shard = match self.shards.get(sid as usize).and_then(|s| s.as_ref()) {
+                    Some(s) => s,
+                    None => {
+                        // Shard is not local; we can't verify it without decoding.
+                        read += ssize;
+                        continue;
+                    }
+                };
+                local_shard_ids.push(sid);
+
+                if soffset + ssize > shard.file_size() {
+                    broken_shards.insert(sid);
+                    errs.push(format!(
+                        "local shard {} for needle {} is too short ({}), cannot read chunk {}/{}",
+                        sid,
+                        id.0,
+                        shard.file_size(),
+                        i + 1,
+                        locations.len()
+                    ));
                     continue;
                 }
+
+                chunk_buf.resize(ssize as usize, 0);
+                match shard.read_at(&mut chunk_buf, soffset as u64) {
+                    Err(e) => {
+                        broken_shards.insert(sid);
+                        errs.push(format!(
+                            "failed to read chunk {}/{} for needle {} from local shard {} at offset {}: {}",
+                            i + 1,
+                            locations.len(),
+                            id.0,
+                            sid,
+                            soffset,
+                            e
+                        ));
+                        continue;
+                    }
+                    Ok(got) if got as i64 != ssize => {
+                        broken_shards.insert(sid);
+                        errs.push(format!(
+                            "expected {} bytes for chunk {}/{} for needle {} from local shard {}, got {}",
+                            ssize,
+                            i + 1,
+                            locations.len(),
+                            id.0,
+                            sid,
+                            got
+                        ));
+                        continue;
+                    }
+                    Ok(_) => {}
+                }
+
+                if !has_remote_chunks {
+                    data.extend_from_slice(&chunk_buf);
+                }
+                read += ssize;
             }
-            let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
-            entries.push((i, key, offset.to_actual_offset(), size));
-        }
 
-        // Sort by offset, then size
-        entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3 .0.cmp(&b.3 .0)));
+            local_shard_ids.sort_unstable();
 
-        // Check for overlapping needles
-        for i in 1..entries.len() {
-            let (idx, id, offset, size) = entries[i];
-            let (_, last_id, last_offset, last_size) = entries[i - 1];
-
-            let actual_size =
-                crate::storage::needle::needle::get_actual_size(size, self.version);
-            let end = if actual_size != 0 {
-                offset + actual_size - 1
-            } else {
-                offset
-            };
-
-            let last_actual_size =
-                crate::storage::needle::needle::get_actual_size(last_size, self.version);
-            let last_end = if last_actual_size != 0 {
-                last_offset + last_actual_size - 1
-            } else {
-                last_offset
-            };
-
-            if offset <= last_end {
-                errs.push(format!(
-                    "needle {} (#{}) at [{}-{}] overlaps needle {} at [{}-{}]",
-                    id.0,
-                    idx + 1,
-                    offset,
-                    end,
-                    last_id.0,
-                    last_offset,
-                    last_end
+            let want = get_actual_size(size, self.version);
+            if read != want {
+                // Like Go, returning from the walk callback aborts the scan.
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "expected {} bytes for needle {} on volume {}, got {}",
+                        want, id.0, self.volume_id.0, read
+                    ),
                 ));
             }
+
+            // Only a fully-local needle can be reassembled and CRC-checked.
+            if !has_remote_chunks {
+                let mut n = Needle::default();
+                if let Err(e) = n.read_bytes(&data, 0, size, self.version) {
+                    // A delete-state disagreement between the .ecx index and the reassembled
+                    // on-disk header (live index vs zero header size) is not corruption.
+                    let delete_state_disagrees = matches!(
+                        &e,
+                        NeedleError::SizeMismatch { found, .. } if size.is_deleted() != (found.0 == 0)
+                    );
+                    if !delete_state_disagrees {
+                        errs.push(format!(
+                            "needle {} on volume {}, shards {:?}: {}",
+                            id.0, self.volume_id.0, local_shard_ids, e
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        });
+        if let Err(e) = walk {
+            // Go appends the walk/callback error verbatim.
+            errs.push(e.to_string());
         }
 
-        // Verify file size matches entry count
-        let expected_size = entry_count as i64 * NEEDLE_MAP_ENTRY_SIZE as i64;
-        if expected_size != self.ecx_file_size {
-            errs.push(format!(
-                "expected an index file of size {}, got {}",
-                expected_size, self.ecx_file_size
-            ));
-        }
+        let mut broken: Vec<crate::pb::volume_server_pb::EcShardInfo> = broken_shards
+            .iter()
+            .filter_map(|sid| self.shards.get(*sid as usize).and_then(|s| s.as_ref()))
+            .map(|s| s.to_ec_shard_info())
+            .collect();
+        broken.sort_by(|a, b| a.shard_id.cmp(&b.shard_id));
 
-        (entries.len() as u64, errs)
+        (count, broken, errs)
     }
 
     // ---- Deletion ----
@@ -1292,10 +1406,11 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         write_ecx_file(dir, "pics", VolumeId(1), &[]);
 
+        // data + parity exceeds MAX_SHARD_COUNT, so the config is rejected.
         let vif = crate::storage::volume::VifVolumeInfo {
             ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
-                data_shards: 10,
-                parity_shards: 10,
+                data_shards: 20,
+                parity_shards: 20,
                 ..Default::default()
             }),
             ..Default::default()
@@ -1310,5 +1425,151 @@ mod tests {
         let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
         assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
+    }
+
+    #[test]
+    fn test_ec_volume_wide_ratio_vif_config() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+
+        // A wider-than-default ratio within MAX_SHARD_COUNT must load as-is.
+        let vif = crate::storage::volume::VifVolumeInfo {
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 16,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.data_shards, 16);
+        assert_eq!(vol.parity_shards, 4);
+    }
+
+    #[test]
+    fn test_scrub_local_skips_tombstones() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(-1))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (count, broken, errs) = vol.scrub_local();
+        assert_eq!(count, 1);
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(errs.is_empty(), "{:?}", errs);
+    }
+
+    #[test]
+    fn test_scrub_local_clean_when_no_local_shards() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        // dat_file_size makes the shard-size math well-defined.
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // No shard files present: nothing to verify locally, so no errors.
+        let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (count, broken, errs) = vol.scrub_local();
+        assert_eq!(count, 1);
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(errs.is_empty(), "{:?}", errs);
+    }
+
+    #[test]
+    fn test_scrub_local_suppresses_delete_state_disagreement() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // Live index entry (size > 0) whose reassembled on-disk header reports size 0
+        // (deleted-on-shards but live-in-index) — a delete-state disagreement, not corruption.
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // Shard 0 holds the needle's bytes; all-zero so the parsed header size is 0.
+        let mut shard0 = EcVolumeShard::new(dir, "", VolumeId(1), 0);
+        shard0.create().unwrap();
+        shard0.write_all(&[0u8; 256]).unwrap();
+        shard0.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 0))
+            .unwrap();
+
+        let (count, broken, errs) = vol.scrub_local();
+        assert_eq!(count, 1);
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(
+            errs.is_empty(),
+            "delete-state disagreement must be suppressed, got {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn test_scrub_local_reports_genuine_size_corruption() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // On-disk header reports a non-zero size (50) that disagrees with the live
+        // index size (100): genuine corruption, not a delete-state race — must report.
+        let mut bytes = vec![0u8; 256];
+        bytes[15] = 50; // header size field (big-endian u32) = 50
+        let mut shard0 = EcVolumeShard::new(dir, "", VolumeId(1), 0);
+        shard0.create().unwrap();
+        shard0.write_all(&bytes).unwrap();
+        shard0.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 0))
+            .unwrap();
+
+        let (_count, _broken, errs) = vol.scrub_local();
+        assert!(
+            !errs.is_empty(),
+            "a non-zero size mismatch is genuine corruption and must be reported"
+        );
     }
 }

@@ -14,9 +14,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
+type CacheInvalidator interface {
+	InvalidateCache(fileId string)
+}
+
+type fetchChunkDataFnType func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (n int, err error)
+
 type ReaderCache struct {
-	chunkCache     chunk_cache.ChunkCache
-	lookupFileIdFn wdclient.LookupFileIdFunctionType
+	chunkCache       chunk_cache.ChunkCache
+	lookupFileIdFn   wdclient.LookupFileIdFunctionType
+	cacheInvalidator CacheInvalidator
+	fetchChunkDataFn fetchChunkDataFnType
 	sync.Mutex
 	downloaders map[string]*SingleChunkCacher
 	limit       int
@@ -38,12 +46,14 @@ type SingleChunkCacher struct {
 	done           chan struct{} // signals when download is complete
 }
 
-func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
+func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator) *ReaderCache {
 	return &ReaderCache{
-		limit:          limit,
-		chunkCache:     chunkCache,
-		lookupFileIdFn: lookupFileIdFn,
-		downloaders:    make(map[string]*SingleChunkCacher),
+		limit:            limit,
+		chunkCache:       chunkCache,
+		lookupFileIdFn:   lookupFileIdFn,
+		cacheInvalidator: cacheInvalidator,
+		fetchChunkDataFn: util_http.RetriedFetchChunkData,
+		downloaders:      make(map[string]*SingleChunkCacher),
 	}
 }
 
@@ -97,15 +107,25 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
 	rc.Lock()
 
-	if cacher, found := rc.downloaders[fileId]; found {
-		rc.Unlock()
-		n, err := cacher.readChunkAt(ctx, buffer, offset)
-		if n > 0 || err != nil {
-			return n, err
+	for {
+		if cacher, found := rc.downloaders[fileId]; found {
+			if cacher.hasCompletedError() {
+				delete(rc.downloaders, fileId)
+				rc.Unlock()
+				cacher.destroy()
+				rc.Lock()
+				continue
+			}
+			rc.Unlock()
+			n, err := cacher.readChunkAt(ctx, buffer, offset)
+			if n > 0 || err != nil {
+				return n, err
+			}
+			// If n=0 and err=nil, the cacher couldn't provide data for this offset.
+			// Fall through to try chunkCache.
+			rc.Lock()
 		}
-		// If n=0 and err=nil, the cacher couldn't provide data for this offset.
-		// Fall through to try chunkCache.
-		rc.Lock()
+		break
 	}
 	if shouldCache || rc.lookupFileIdFn == nil {
 		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
@@ -198,30 +218,72 @@ func (s *SingleChunkCacher) startCaching() {
 	// Lookup file ID without holding the lock
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
-		s.Lock()
-		s.err = fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err)
-		s.Unlock()
+		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err))
+		return
+	}
+	if len(urlStrings) == 0 {
+		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: urls not found", s.chunkFileId))
 		return
 	}
 
-	// Allocate buffer and download without holding the lock
-	// This allows multiple downloads to proceed in parallel
-	data := mem.Allocate(s.chunkSize)
-	_, fetchErr := util_http.RetriedFetchChunkData(context.Background(), data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
+	data, fetchErr := s.fetchChunkData(context.Background(), urlStrings)
+	if fetchErr != nil {
+		data, fetchErr = s.retryFetchAfterCacheInvalidation(context.Background(), urlStrings, fetchErr)
+	}
 
 	// Now acquire lock to update state
 	s.Lock()
+	atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
 	if fetchErr != nil {
-		mem.Free(data)
 		s.err = fetchErr
 	} else {
 		s.data = data
 		if s.shouldCache {
 			s.parent.chunkCache.SetChunk(s.chunkFileId, s.data)
 		}
-		atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
 	}
 	s.Unlock()
+}
+
+func (s *SingleChunkCacher) setError(err error) {
+	s.Lock()
+	defer s.Unlock()
+	s.err = err
+	atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
+}
+
+func (s *SingleChunkCacher) hasCompletedError() bool {
+	if atomic.LoadInt64(&s.completedTimeNew) == 0 {
+		return false
+	}
+	s.Lock()
+	defer s.Unlock()
+	return s.err != nil
+}
+
+func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []string) ([]byte, error) {
+	// Allocate buffer and download without holding the lock.
+	// This allows multiple downloads to proceed in parallel.
+	data := mem.Allocate(s.chunkSize)
+	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
+	if fetchErr != nil {
+		mem.Free(data)
+		return nil, fetchErr
+	}
+	return data, nil
+}
+
+func (s *SingleChunkCacher) retryFetchAfterCacheInvalidation(ctx context.Context, oldUrlStrings []string, originalErr error) ([]byte, error) {
+	var data []byte
+	err := retryFetchWithFreshLocations(ctx, s.parent.cacheInvalidator, s.parent.lookupFileIdFn, s.chunkFileId, oldUrlStrings, originalErr, func(newUrls []string) error {
+		var fetchErr error
+		data, fetchErr = s.fetchChunkData(ctx, newUrls)
+		return fetchErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (s *SingleChunkCacher) destroy() {

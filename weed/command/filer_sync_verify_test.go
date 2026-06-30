@@ -18,10 +18,14 @@ import (
 type verifyTestStream struct {
 	entries []*filer_pb.Entry
 	idx     int
+	recvErr error // returned after all entries instead of io.EOF, if set
 }
 
 func (s *verifyTestStream) Recv() (*filer_pb.ListEntriesResponse, error) {
 	if s.idx >= len(s.entries) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
 		return nil, io.EOF
 	}
 	resp := &filer_pb.ListEntriesResponse{Entry: s.entries[s.idx]}
@@ -39,11 +43,12 @@ func (s *verifyTestStream) RecvMsg(_ any) error          { return nil }
 // verifyTestInnerClient is the SeaweedFilerClient passed to fn inside WithFilerClient.
 type verifyTestInnerClient struct {
 	filer_pb.SeaweedFilerClient // embed for unimplemented RPCs
-	entriesByDir map[string][]*filer_pb.Entry
+	entriesByDir                map[string][]*filer_pb.Entry
+	recvErr                     error // injected listing error, if set
 }
 
 func (c *verifyTestInnerClient) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
-	return &verifyTestStream{entries: c.entriesByDir[in.Directory]}, nil
+	return &verifyTestStream{entries: c.entriesByDir[in.Directory], recvErr: c.recvErr}, nil
 }
 
 // verifyTestFilerClient implements filer_pb.FilerClient and tracks concurrent
@@ -57,6 +62,8 @@ type verifyTestFilerClient struct {
 	inFlight     atomic.Int64
 	peakFlight   atomic.Int64
 	delay        time.Duration
+	onList       func() // called at the start of each listing, if set
+	recvErr      error  // injected listing error, surfaced after entries
 }
 
 func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -69,10 +76,13 @@ func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.Seaweed
 			break
 		}
 	}
+	if c.onList != nil {
+		c.onList()
+	}
 	if c.delay > 0 {
 		time.Sleep(c.delay)
 	}
-	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir})
+	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir, recvErr: c.recvErr})
 }
 
 func (c *verifyTestFilerClient) AdjustedUrl(_ *filer_pb.Location) string { return "" }
@@ -422,8 +432,8 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 
 	clientA := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":        {recentDir},
-			"/subdir":  {oldChild},
+			"/":       {recentDir},
+			"/subdir": {oldChild},
 		},
 	}
 	clientB := &verifyTestFilerClient{
@@ -454,14 +464,14 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 func TestVerifySyncRootPath(t *testing.T) {
 	clientA := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":      {verifyDirEntry("data")},
-			"/data":  {verifyFileEntry("file.txt", 42)},
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
 		},
 	}
 	clientB := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":      {verifyDirEntry("data")},
-			"/data":  {verifyFileEntry("file.txt", 42)},
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
 		},
 	}
 
@@ -529,5 +539,135 @@ func TestVerifySyncNoDeadlockDeepTree(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("compareDirectory did not complete within 10s — possible deadlock")
+	}
+}
+
+// TestVerifySyncByteOrderSkew covers a collation skew between two filer
+// versions: both return the SAME name set in DIFFERENT order. Filer A (older,
+// pre-4.32) lists in locale collation (case-insensitive: lowercase mixes in
+// among uppercase); filer B (4.32+, with PR #9824) lists in byte order
+// (uppercase before lowercase). The mock returns each side's slice verbatim.
+//
+// Because compareDirectory sorts both sides client-side before merging, the two
+// orders converge and no spurious diffs are reported. Were the sort removed, the
+// streaming merge would desync and count 3 false MISSING + 3 false ONLY_IN_B.
+func TestVerifySyncByteOrderSkew(t *testing.T) {
+	// locale order (case-insensitive): lowercase mixes in among uppercase.
+	localeOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+	}
+	// byte order: uppercase (R,X,Z) sort before lowercase (m,n).
+	byteOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+	}
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": localeOrder},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": byteOrder},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncSourcesListConcurrently guards against re-serializing the two
+// directory listings: both sides buffer + sort, and their loads must run
+// concurrently — not A fully then B. A shared gate releases only once both
+// listings are in-flight at the same time; if they were sequential the first
+// would block on the gate and time out.
+func TestVerifySyncSourcesListConcurrently(t *testing.T) {
+	var started atomic.Int32
+	var timedOut atomic.Bool
+	release := make(chan struct{})
+	gate := func() {
+		if started.Add(1) == 2 {
+			close(release) // both listings reached the gate → proceed
+		}
+		select {
+		case <-release:
+		case <-time.After(3 * time.Second):
+			timedOut.Store(true) // only one listing ever in-flight → serialized
+		}
+	}
+
+	entries := []*filer_pb.Entry{verifyFileEntry("a", 1), verifyFileEntry("b", 1)}
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if timedOut.Load() {
+		t.Fatal("sources listed sequentially: both listings were not in-flight at once")
+	}
+}
+
+// TestVerifySyncListErrorNoBogusDiffs verifies that a listing failure aborts
+// with the error and reports no differences. A side whose listing errors keeps
+// only a partial, unsorted buffer; the error must be surfaced before the merge
+// so those partial entries never produce spurious MISSING / ONLY_IN_B.
+func TestVerifySyncListErrorNoBogusDiffs(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		verifyFileEntry("a", 1),
+		verifyFileEntry("b", 1),
+		verifyFileEntry("c", 1),
+	}
+	// A errors mid-listing (partial buffer); B lists cleanly.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		recvErr:      fmt.Errorf("injected list failure"),
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result)
+	if err == nil {
+		t.Fatal("expected a listing error, got nil")
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.fileCount.Load(); got != 0 {
+		t.Errorf("fileCount = %d, want 0 (merge must not run on failed listing)", got)
 	}
 }

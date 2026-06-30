@@ -242,14 +242,6 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                         title="View EC volume details">
                                     <i class="fas fa-info-circle"></i>
                                 </button>
-                                if !shard.IsComplete {
-                                    <button type="button" class="btn btn-sm btn-outline-warning" 
-                                            onclick="repairVolume(event)" 
-                                            data-volume-id={ fmt.Sprintf("%d", shard.VolumeID) }
-                                            title="Repair missing shards">
-                                        <i class="fas fa-wrench"></i>
-                                    </button>
-                                }
                             </div>
                         </td>
                     </tr>
@@ -386,32 +378,6 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             
             // Navigate to the EC volume details page
             window.location.href = (window.__BASE_PATH__ || '') + `/storage/ec-volumes/${volumeId}`;
-        }
-
-        function repairVolume(event) {
-            // Get data from the button element (not the icon inside it)
-            const button = event.target.closest('button');
-            const volumeId = button.getAttribute('data-volume-id');
-            showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {
-                fetch((window.__BASE_PATH__ || '') + `/api/storage/volumes/${volumeId}/repair`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        showAlert('Repair initiated successfully', 'success');
-                        location.reload();
-                    } else {
-                        showAlert('Failed to initiate repair: ' + data.error, 'error');
-                    }
-                })
-                .catch(error => {
-                    showAlert('Error: ' + error.message, 'error');
-                });
-            });
         }
 
     </script>

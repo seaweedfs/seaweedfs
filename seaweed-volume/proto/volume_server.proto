@@ -462,6 +462,7 @@ message VolumeEcShardsMountRequest {
     string collection = 2;
     repeated uint32 shard_ids = 3;
     string source_disk_type = 4; // disk type of the source volume, applied to the in-memory EC volume so heartbeats report under it (#9423)
+    bool recover_missing_index = 5; // first fetch a missing .ecx index from a peer so on-disk shards without a local index become mountable (#10104)
 }
 message VolumeEcShardsMountResponse {
 }

@@ -72,7 +72,7 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	}
 	gen := &SqlGenMysql{
 		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate:   "DROP TABLE `%s`",
+		DropTableSqlTemplate:   "DROP TABLE IF EXISTS `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
 	store.SqlGenerator = gen

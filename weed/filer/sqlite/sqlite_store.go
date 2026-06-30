@@ -54,7 +54,7 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 	store.SupportBucketTable = true
 	store.SqlGenerator = &mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   "drop table `%s`",
+		DropTableSqlTemplate:   "drop table if exists `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
 

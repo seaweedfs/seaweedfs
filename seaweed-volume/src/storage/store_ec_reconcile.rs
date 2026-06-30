@@ -15,15 +15,27 @@
 //! sibling disk's index files so it can serve reads and route deletes
 //! through a real `.ecx` / `.ecj`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::storage::disk_location::{is_ec_shard_extension, parse_collection_volume_id_pub};
 use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::store::Store;
 use crate::storage::types::VolumeId;
+
+/// An EC volume with shard files on a local disk but no usable `.ecx` on any
+/// local disk, so the shards cannot mount. The same-server reconcile/mirror
+/// handle a `.ecx` on a sibling disk; this is the cross-server case whose index
+/// must be fetched from a peer (issue #10104). Mirrors Go's `EcVolumeMissingIndex`.
+#[derive(Clone, Debug)]
+pub(crate) struct EcVolumeMissingIndex {
+    pub collection: String,
+    pub vid: VolumeId,
+    pub idx_dir: String,
+    pub data_dir: String,
+}
 
 pub(crate) fn ec_local_ecx_path(dir: &str, collection: &str, vid: VolumeId) -> String {
     if collection.is_empty() {
@@ -419,6 +431,71 @@ impl Store {
             }
         }
         owners
+    }
+
+    /// Cross-server orphans: EC volumes that have shard files on a local disk but
+    /// no usable `.ecx` on any local disk. A `.ecx` merely on a sibling disk is
+    /// excluded (the same-server reconcile/mirror handles it). Scans on-disk shard
+    /// files, so it surfaces volumes the master never learned about — including
+    /// those whose every holder is missing its index.
+    ///
+    /// Mirrors `Store.CollectEcVolumesMissingIndex` in Go.
+    pub(crate) fn collect_ec_volumes_missing_index(&self) -> Vec<EcVolumeMissingIndex> {
+        let owners = self.index_ecx_owners();
+        let mut seen: HashSet<EcKey> = HashSet::new();
+        let mut missing = Vec::new();
+        for (loc_idx, loc) in self.locations.iter().enumerate() {
+            for (key, _shards) in collect_orphan_ec_shards(loc, loc_idx) {
+                if owners.contains_key(&key) || !seen.insert(key.clone()) {
+                    continue;
+                }
+                missing.push(EcVolumeMissingIndex {
+                    collection: key.collection,
+                    vid: key.vid,
+                    idx_dir: loc.idx_directory.clone(),
+                    data_dir: loc.directory.clone(),
+                });
+            }
+        }
+        missing
+    }
+
+    /// Mount EC shards that became loadable after a missing `.ecx` was fetched
+    /// onto a local disk: mirror the index onto every shard-bearing disk, mount
+    /// the disks that now have a local index, then fall back to the cross-disk
+    /// virtual mount. Mirrors `Store.MountRecoveredEcShards` in Go.
+    pub(crate) fn mount_recovered_ec_shards(&mut self) {
+        self.mirror_ec_metadata_to_shard_disks();
+        self.load_orphan_ec_shards_with_local_index();
+        self.reconcile_ec_shards_across_disks();
+    }
+
+    /// Mount on-disk EC shards whose `.ecx` index is now present on the same disk.
+    /// Unlike `reconcile_ec_shards_across_disks` it needs no sibling disk, so a
+    /// single-disk store recovers once its index has been fetched from a peer.
+    fn load_orphan_ec_shards_with_local_index(&mut self) {
+        let mut work: Vec<(usize, EcKey, Vec<u32>)> = Vec::new();
+        for (loc_idx, loc) in self.locations.iter().enumerate() {
+            for (key, shards) in collect_orphan_ec_shards(loc, loc_idx) {
+                if !loc.has_ecx_file_on_disk(&key.collection, key.vid) {
+                    continue;
+                }
+                let ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
+                work.push((loc_idx, key, ids));
+            }
+        }
+        for (loc_idx, key, ids) in work {
+            let loc_dir = self.locations[loc_idx].directory.clone();
+            let loc = &mut self.locations[loc_idx];
+            if let Err(e) = loc.mount_ec_shards(key.vid, &key.collection, &ids, "") {
+                error!(
+                    volume_id = key.vid.0,
+                    directory = %loc_dir,
+                    "load after index recovery failed: {}",
+                    e,
+                );
+            }
+        }
     }
 }
 
@@ -942,6 +1019,103 @@ mod tests {
                 p,
             );
         }
+    }
+
+    #[test]
+    fn test_collect_missing_index_recovers_cross_server_orphan() {
+        // Reproduces issue #10104: shards spread across this server's disks with
+        // no .ecx anywhere local. collect_ec_volumes_missing_index must surface
+        // the volume; after the index lands on the orphan disk (as a peer fetch
+        // would deliver it), mount_recovered_ec_shards mounts all shards.
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "video-recordings";
+        let vid = 6190u32;
+        write_shard(dir0.to_str().unwrap(), collection, vid, 0);
+        write_shard(dir0.to_str().unwrap(), collection, vid, 5);
+        write_shard(dir1.to_str().unwrap(), collection, vid, 6);
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        // Bug state: nothing mounted.
+        assert!(store.locations[0].find_ec_volume(VolumeId(vid)).is_none());
+
+        let missing = store.collect_ec_volumes_missing_index();
+        let m = missing
+            .iter()
+            .find(|m| m.vid == VolumeId(vid) && m.collection == collection)
+            .expect("cross-server orphan not reported");
+
+        // Simulate the peer fetch dropping the index onto the orphan disk.
+        write_index_files(&m.idx_dir, collection, vid, 10, 4);
+
+        store.mount_recovered_ec_shards();
+
+        let ev0 = store.locations[0]
+            .find_ec_volume(VolumeId(vid))
+            .expect("dir0 not mounted after recovery");
+        assert!(ev0.has_shard(0) && ev0.has_shard(5), "dir0 shards missing");
+        let ev1 = store.locations[1]
+            .find_ec_volume(VolumeId(vid))
+            .expect("dir1 not mounted after recovery");
+        assert!(ev1.has_shard(6), "dir1 shard missing");
+
+        // Nothing left to recover.
+        assert!(store
+            .collect_ec_volumes_missing_index()
+            .iter()
+            .all(|m| m.vid != VolumeId(vid)));
+    }
+
+    #[test]
+    fn test_collect_missing_index_excludes_cross_disk_orphan() {
+        // A .ecx merely on a sibling disk is the same-server case the reconcile
+        // already handles; it must not be reported as a cross-server orphan.
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "mybucket";
+        let vid = 42u32;
+        write_shard(dir0.to_str().unwrap(), collection, vid, 3);
+        write_index_files(dir1.to_str().unwrap(), collection, vid, 10, 4);
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        assert!(store
+            .collect_ec_volumes_missing_index()
+            .iter()
+            .all(|m| m.vid != VolumeId(vid)));
     }
 
     /// Helper: build a 2-disk store where reconcile produces the
