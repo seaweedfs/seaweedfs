@@ -3962,22 +3962,75 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
                 2 => {
-                    // FULL: verify every needle across local AND remote shards.
-                    {
-                        // Match Go: a missing requested volume is a hard error.
+                    // FULL: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
+                    // local Reed-Solomon parity check. The needle walk only reads
+                    // DATA-shard intervals of LIVE needles, so on its own it can't
+                    // catch silent bitrot in a PARITY shard or an unwalked cold
+                    // region. Go closes that gap with a separate CHECKSUM mode over
+                    // .ecsum, which Rust does not have yet; running both here is a
+                    // deliberate divergence from Go FULL to preserve coverage. Drop
+                    // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
+                    //
+                    // The RS recompute needs every shard co-located, so only run it
+                    // when this node holds all data+parity shards (single-node EC);
+                    // on a distributed layout it would report every non-local shard
+                    // as missing. Snapshot under a brief lock; release before await.
+                    let (dir, collection, data_shards, parity_shards, all_local) = {
                         let store = self.state.store.read().unwrap();
-                        if store.find_ec_volume(vid).is_none() {
-                            return Err(Status::not_found(format!(
-                                "EC volume id {} not found",
-                                vid.0
-                            )));
-                        }
-                    }
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        let total = (ecv.data_shards + ecv.parity_shards) as usize;
+                        let local = ecv.shards.iter().filter(|s| s.is_some()).count();
+                        (
+                            ecv.dir.clone(),
+                            ecv.collection.clone(),
+                            ecv.data_shards as usize,
+                            ecv.parity_shards as usize,
+                            local == total,
+                        )
+                    };
                     total_volumes += 1;
-                    let (files, shard_infos, errs) =
+
+                    // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
+                    let (files, mut shard_infos, mut errs) =
                         crate::server::store_ec::scrub_ec_volume_distributed(&self.state, vid, false)
                             .await;
-                    total_files += files as u64;
+                    total_files += files as u64; // count comes from the needle walk only
+
+                    // (2) Local parity check, gated on all-shards-local. Blocking RS
+                    // verify -> spawn_blocking; inputs are owned, no lock held.
+                    if all_local && !dir.is_empty() {
+                        let collection_pc = collection.clone();
+                        let (parity_broken, parity_details) = tokio::task::spawn_blocking(move || {
+                            crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
+                                &dir,
+                                &collection_pc,
+                                vid,
+                                data_shards,
+                                parity_shards,
+                            )
+                        })
+                        .await
+                        .map_err(|e| Status::internal(format!("verify_ec_shards join: {}", e)))?
+                        .unwrap_or_else(|e| (Vec::new(), vec![format!("verify_ec_shards: {}", e)]));
+
+                        let mut seen: std::collections::HashSet<u32> =
+                            shard_infos.iter().map(|s| s.shard_id).collect();
+                        for sid in parity_broken {
+                            if seen.insert(sid) {
+                                shard_infos.push(volume_server_pb::EcShardInfo {
+                                    shard_id: sid,
+                                    collection: collection.clone(),
+                                    volume_id: vid.0,
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                        shard_infos.sort_by_key(|s| s.shard_id);
+                        errs.extend(parity_details);
+                    }
+
                     if !errs.is_empty() || !shard_infos.is_empty() {
                         broken_volume_ids.push(vid.0);
                         broken_shard_infos.extend(shard_infos);
