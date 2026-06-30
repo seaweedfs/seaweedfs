@@ -1,4 +1,4 @@
-//! EcVolume: an erasure-coded volume with up to 14 shards.
+//! EcVolume: an erasure-coded volume with up to MAX_SHARD_COUNT shards.
 //!
 //! Each EcVolume has a sorted index (.ecx) and a deletion journal (.ecj).
 //! Shards (.ec00-.ec13) may be distributed across multiple servers.
@@ -22,7 +22,7 @@ pub struct EcVolume {
     pub dir: String,
     pub dir_idx: String,
     pub version: Version,
-    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..14)
+    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..MAX_SHARD_COUNT)
     pub dat_file_size: i64,
     pub data_shards: u32,
     pub parity_shards: u32,
@@ -106,7 +106,7 @@ pub fn read_ec_shard_config(
             if let Some(ec) = vif_info.ec_shard_config {
                 if ec.data_shards > 0
                     && ec.parity_shards > 0
-                    && (ec.data_shards + ec.parity_shards) <= TOTAL_SHARDS_COUNT as u32
+                    && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
                 {
                     data_shards = ec.data_shards;
                     parity_shards = ec.parity_shards;
@@ -1292,10 +1292,11 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         write_ecx_file(dir, "pics", VolumeId(1), &[]);
 
+        // data + parity exceeds MAX_SHARD_COUNT, so the config is rejected.
         let vif = crate::storage::volume::VifVolumeInfo {
             ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
-                data_shards: 10,
-                parity_shards: 10,
+                data_shards: 20,
+                parity_shards: 20,
                 ..Default::default()
             }),
             ..Default::default()
@@ -1310,5 +1311,32 @@ mod tests {
         let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
         assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
+    }
+
+    #[test]
+    fn test_ec_volume_wide_ratio_vif_config() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+
+        // A wider-than-default ratio within MAX_SHARD_COUNT must load as-is.
+        let vif = crate::storage::volume::VifVolumeInfo {
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 16,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.data_shards, 16);
+        assert_eq!(vol.parity_shards, 4);
     }
 }
