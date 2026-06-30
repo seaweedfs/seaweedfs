@@ -35,12 +35,8 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			PairMap:           nil,
 			WantMd5:           true,
 		}
-		genFileUrlFn := func(host, fileId string) string {
-			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-			if wfs.option.VolumeServerAccess == "filerProxy" {
-				fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
-			}
-			return fileUrl
+		if wfs.option.VolumeServerAccess == "filerProxy" {
+			uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(string(wfs.getCurrentFiler()))
 		}
 
 		fileId, uploadResult, err, data := uploader.UploadWithRetry(
@@ -54,7 +50,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 				DataCenter:  wfs.option.DataCenter,
 				Path:        assignPath,
 			},
-			uploadOption, genFileUrlFn, reader,
+			uploadOption, reader,
 		)
 
 		if err != nil {
