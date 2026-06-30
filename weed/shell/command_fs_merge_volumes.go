@@ -357,6 +357,14 @@ func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterC
 }
 
 func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId needle.VolumeId, fromVolumeId needle.VolumeId) (map[needle.VolumeId]needle.VolumeId, error) {
+	// When the user names both endpoints, honor that exact direction. The
+	// heuristic below only ever merges a smaller volume into a larger one, so
+	// an explicit "merge larger into smaller" request would otherwise yield an
+	// empty plan and silently do nothing.
+	if fromVolumeId != 0 && toVolumeId != 0 {
+		return c.createDirectedMergePlan(collection, fromVolumeId, toVolumeId)
+	}
+
 	plan := make(map[needle.VolumeId]needle.VolumeId)
 	volumeIds := maps.Keys(c.volumes)
 	sort.Slice(volumeIds, func(a, b int) bool {
@@ -416,6 +424,30 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 	}
 
 	return plan, nil
+}
+
+// createDirectedMergePlan builds the single-pair plan {from: to} exactly as the
+// user requested, skipping the smaller-into-larger ordering the heuristic
+// planner uses. Compatibility and the combined size limit are already checked
+// by Do before this runs; here we only reject endpoints that cannot
+// participate (read-only, empty, or outside the requested collection).
+func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from, to needle.VolumeId) (map[needle.VolumeId]needle.VolumeId, error) {
+	for _, vid := range []needle.VolumeId{from, to} {
+		volume, err := c.getVolumeInfoById(vid)
+		if err != nil {
+			return nil, err
+		}
+		if volume.GetReadOnly() {
+			return nil, fmt.Errorf("volume %d is readonly", vid)
+		}
+		if collection != "*" && collection != volume.GetCollection() {
+			return nil, fmt.Errorf("volume %d is not in collection %q", vid, collection)
+		}
+		if c.getVolumeSize(volume) == 0 {
+			return nil, fmt.Errorf("volume %d is empty", vid)
+		}
+	}
+	return map[needle.VolumeId]needle.VolumeId{from: to}, nil
 }
 
 func (c *commandFsMergeVolumes) getVolumeSizeBasedOnPlan(plan map[needle.VolumeId]needle.VolumeId, vid needle.VolumeId) uint64 {
