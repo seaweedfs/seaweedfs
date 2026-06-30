@@ -802,6 +802,8 @@ fn build_heartbeat_with_ec_status(
     let mut volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
+    let mut disk_total_bytes: HashMap<String, u64> = HashMap::new();
+    let mut disk_free_bytes: HashMap<String, u64> = HashMap::new();
 
     // Collect per-collection disk size and read-only counts for metrics
     let mut disk_sizes: HashMap<String, (u64, u64)> = HashMap::new(); // (normal, deleted)
@@ -827,8 +829,12 @@ fn build_heartbeat_with_ec_status(
         if effective_max_count < 0 {
             effective_max_count = 0;
         }
-        *max_volume_counts.entry(disk_type_str).or_insert(0) += effective_max_count as u32;
+        *max_volume_counts.entry(disk_type_str.clone()).or_insert(0) += effective_max_count as u32;
         disk_max_by_id[disk_id] = effective_max_count;
+        *disk_total_bytes.entry(disk_type_str.clone()).or_insert(0) +=
+            loc.disk_total_bytes.load(Ordering::Relaxed);
+        *disk_free_bytes.entry(disk_type_str).or_insert(0) +=
+            loc.disk_free_bytes.load(Ordering::Relaxed);
 
         let mut delete_vids = Vec::new();
         for (_, vol) in loc.iter_volumes() {
@@ -962,6 +968,8 @@ fn build_heartbeat_with_ec_status(
         has_no_volumes,
         has_no_ec_shards,
         max_volume_counts,
+        disk_total_bytes,
+        disk_free_bytes,
         grpc_port: config.grpc_port as u32,
         location_uuids,
         disk_tags,
@@ -1315,6 +1323,43 @@ mod tests {
                 .with_label_values(&[collection, DISK_SIZE_LABEL_DELETED_BYTES])
                 .get(),
             0.0
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_reports_disk_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        // Populate the cached physical-capacity fields from a real statvfs probe.
+        store.locations[0].check_disk_space();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        let disk_type = store.locations[0].disk_type.to_string();
+
+        assert!(
+            heartbeat
+                .disk_total_bytes
+                .get(&disk_type)
+                .copied()
+                .unwrap_or(0)
+                > 0,
+            "expected nonzero disk_total_bytes for the temp filesystem"
+        );
+        assert!(
+            heartbeat.disk_free_bytes.contains_key(&disk_type),
+            "expected a disk_free_bytes entry for the disk type"
         );
     }
 

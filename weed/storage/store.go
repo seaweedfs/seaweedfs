@@ -410,6 +410,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
+	diskTotalBytes := make(map[string]uint64)
+	diskFreeBytes := make(map[string]uint64)
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
@@ -431,6 +433,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 		maxVolumeCounts[string(location.DiskType)] += uint32(effectiveMaxCount)
 		diskMaxByID[diskID] = effectiveMaxCount
+		diskTotalBytes[string(location.DiskType)] += location.diskTotalBytes.Load()
+		diskFreeBytes[string(location.DiskType)] += location.diskFreeBytes.Load()
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
@@ -571,6 +575,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		PublicUrl:       s.PublicUrl,
 		Id:              s.Id,
 		MaxVolumeCounts: maxVolumeCounts,
+		DiskTotalBytes:  diskTotalBytes,
+		DiskFreeBytes:   diskFreeBytes,
 		MaxFileKey:      NeedleIdToUint64(maxFileKey),
 		DataCenter:      s.dataCenter,
 		Rack:            s.rack,

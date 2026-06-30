@@ -116,10 +116,13 @@ type Heartbeat struct {
 	LocationUuids   []string                           `protobuf:"bytes,21,rep,name=location_uuids,json=locationUuids,proto3" json:"location_uuids,omitempty"`
 	Id              string                             `protobuf:"bytes,22,opt,name=id,proto3" json:"id,omitempty"` // volume server id, independent of ip:port for stable identification
 	// state flags
-	State         *volume_server_pb.VolumeServerState `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
-	DiskTags      []*DiskTag                          `protobuf:"bytes,24,rep,name=disk_tags,json=diskTags,proto3" json:"disk_tags,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	State    *volume_server_pb.VolumeServerState `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
+	DiskTags []*DiskTag                          `protobuf:"bytes,24,rep,name=disk_tags,json=diskTags,proto3" json:"disk_tags,omitempty"`
+	// physical disk capacity per disk type, in bytes, from the underlying filesystem
+	DiskTotalBytes map[string]uint64 `protobuf:"bytes,25,rep,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	DiskFreeBytes  map[string]uint64 `protobuf:"bytes,26,rep,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -295,6 +298,20 @@ func (x *Heartbeat) GetState() *volume_server_pb.VolumeServerState {
 func (x *Heartbeat) GetDiskTags() []*DiskTag {
 	if x != nil {
 		return x.DiskTags
+	}
+	return nil
+}
+
+func (x *Heartbeat) GetDiskTotalBytes() map[string]uint64 {
+	if x != nil {
+		return x.DiskTotalBytes
+	}
+	return nil
+}
+
+func (x *Heartbeat) GetDiskFreeBytes() map[string]uint64 {
+	if x != nil {
+		return x.DiskFreeBytes
 	}
 	return nil
 }
@@ -2147,8 +2164,11 @@ type DiskInfo struct {
 	// including disks with no volumes or EC shards; recovers empty disks that
 	// carry no per-volume/per-shard records.
 	MaxVolumeCountByDisk map[uint32]int64 `protobuf:"bytes,11,rep,name=max_volume_count_by_disk,json=maxVolumeCountByDisk,proto3" json:"max_volume_count_by_disk,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// physical disk capacity in bytes, from the underlying filesystem (0 if unknown)
+	DiskTotalBytes uint64 `protobuf:"varint,12,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
+	DiskFreeBytes  uint64 `protobuf:"varint,13,opt,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *DiskInfo) Reset() {
@@ -2256,6 +2276,20 @@ func (x *DiskInfo) GetMaxVolumeCountByDisk() map[uint32]int64 {
 		return x.MaxVolumeCountByDisk
 	}
 	return nil
+}
+
+func (x *DiskInfo) GetDiskTotalBytes() uint64 {
+	if x != nil {
+		return x.DiskTotalBytes
+	}
+	return 0
+}
+
+func (x *DiskInfo) GetDiskFreeBytes() uint64 {
+	if x != nil {
+		return x.DiskFreeBytes
+	}
+	return 0
 }
 
 type DataNodeInfo struct {
@@ -4090,7 +4124,7 @@ type SuperBlockExtra_ErasureCoding struct {
 
 func (x *SuperBlockExtra_ErasureCoding) Reset() {
 	*x = SuperBlockExtra_ErasureCoding{}
-	mi := &file_master_proto_msgTypes[65]
+	mi := &file_master_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4102,7 +4136,7 @@ func (x *SuperBlockExtra_ErasureCoding) String() string {
 func (*SuperBlockExtra_ErasureCoding) ProtoMessage() {}
 
 func (x *SuperBlockExtra_ErasureCoding) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[65]
+	mi := &file_master_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4151,7 +4185,7 @@ type LookupVolumeResponse_VolumeIdLocation struct {
 
 func (x *LookupVolumeResponse_VolumeIdLocation) Reset() {
 	*x = LookupVolumeResponse_VolumeIdLocation{}
-	mi := &file_master_proto_msgTypes[66]
+	mi := &file_master_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4163,7 +4197,7 @@ func (x *LookupVolumeResponse_VolumeIdLocation) String() string {
 func (*LookupVolumeResponse_VolumeIdLocation) ProtoMessage() {}
 
 func (x *LookupVolumeResponse_VolumeIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[66]
+	mi := &file_master_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4217,7 +4251,7 @@ type LookupEcVolumeResponse_EcShardIdLocation struct {
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) Reset() {
 	*x = LookupEcVolumeResponse_EcShardIdLocation{}
-	mi := &file_master_proto_msgTypes[72]
+	mi := &file_master_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4229,7 +4263,7 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) String() string {
 func (*LookupEcVolumeResponse_EcShardIdLocation) ProtoMessage() {}
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[72]
+	mi := &file_master_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4272,7 +4306,7 @@ type ListClusterNodesResponse_ClusterNode struct {
 
 func (x *ListClusterNodesResponse_ClusterNode) Reset() {
 	*x = ListClusterNodesResponse_ClusterNode{}
-	mi := &file_master_proto_msgTypes[73]
+	mi := &file_master_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4284,7 +4318,7 @@ func (x *ListClusterNodesResponse_ClusterNode) String() string {
 func (*ListClusterNodesResponse_ClusterNode) ProtoMessage() {}
 
 func (x *ListClusterNodesResponse_ClusterNode) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[73]
+	mi := &file_master_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4347,7 +4381,7 @@ type RaftListClusterServersResponse_ClusterServers struct {
 
 func (x *RaftListClusterServersResponse_ClusterServers) Reset() {
 	*x = RaftListClusterServersResponse_ClusterServers{}
-	mi := &file_master_proto_msgTypes[74]
+	mi := &file_master_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4359,7 +4393,7 @@ func (x *RaftListClusterServersResponse_ClusterServers) String() string {
 func (*RaftListClusterServersResponse_ClusterServers) ProtoMessage() {}
 
 func (x *RaftListClusterServersResponse_ClusterServers) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[74]
+	mi := &file_master_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4412,7 +4446,8 @@ const file_master_proto_rawDesc = "" +
 	"\adisk_id\x18\x01 \x01(\rR\x06diskId\x12\x12\n" +
 	"\x04tags\x18\x02 \x03(\tR\x04tags\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12(\n" +
-	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xbc\b\n" +
+	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xe6\n" +
+	"\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -4440,10 +4475,18 @@ const file_master_proto_rawDesc = "" +
 	"\x0elocation_uuids\x18\x15 \x03(\tR\rlocationUuids\x12\x0e\n" +
 	"\x02id\x18\x16 \x01(\tR\x02id\x129\n" +
 	"\x05state\x18\x17 \x01(\v2#.volume_server_pb.VolumeServerStateR\x05state\x12/\n" +
-	"\tdisk_tags\x18\x18 \x03(\v2\x12.master_pb.DiskTagR\bdiskTags\x1aB\n" +
+	"\tdisk_tags\x18\x18 \x03(\v2\x12.master_pb.DiskTagR\bdiskTags\x12R\n" +
+	"\x10disk_total_bytes\x18\x19 \x03(\v2(.master_pb.Heartbeat.DiskTotalBytesEntryR\x0ediskTotalBytes\x12O\n" +
+	"\x0fdisk_free_bytes\x18\x1a \x03(\v2'.master_pb.Heartbeat.DiskFreeBytesEntryR\rdiskFreeBytes\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\xcd\x02\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\x1aA\n" +
+	"\x13DiskTotalBytesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\x1a@\n" +
+	"\x12DiskFreeBytesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\xcd\x02\n" +
 	"\x11HeartbeatResponse\x12*\n" +
 	"\x11volume_size_limit\x18\x01 \x01(\x04R\x0fvolumeSizeLimit\x12\x16\n" +
 	"\x06leader\x18\x02 \x01(\tR\x06leader\x12'\n" +
@@ -4633,7 +4676,7 @@ const file_master_proto_rawDesc = "" +
 	"\vcollections\x18\x01 \x03(\v2\x15.master_pb.CollectionR\vcollections\"-\n" +
 	"\x17CollectionDeleteRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x1a\n" +
-	"\x18CollectionDeleteResponse\"\xee\x04\n" +
+	"\x18CollectionDeleteResponse\"\xc0\x05\n" +
 	"\bDiskInfo\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
 	"\fvolume_count\x18\x02 \x01(\x03R\vvolumeCount\x12(\n" +
@@ -4646,7 +4689,9 @@ const file_master_proto_rawDesc = "" +
 	"\adisk_id\x18\t \x01(\rR\x06diskId\x12\x12\n" +
 	"\x04tags\x18\n" +
 	" \x03(\tR\x04tags\x12e\n" +
-	"\x18max_volume_count_by_disk\x18\v \x03(\v2-.master_pb.DiskInfo.MaxVolumeCountByDiskEntryR\x14maxVolumeCountByDisk\x1aG\n" +
+	"\x18max_volume_count_by_disk\x18\v \x03(\v2-.master_pb.DiskInfo.MaxVolumeCountByDiskEntryR\x14maxVolumeCountByDisk\x12(\n" +
+	"\x10disk_total_bytes\x18\f \x01(\x04R\x0ediskTotalBytes\x12&\n" +
+	"\x0fdisk_free_bytes\x18\r \x01(\x04R\rdiskFreeBytes\x1aG\n" +
 	"\x19MaxVolumeCountByDiskEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xee\x01\n" +
@@ -4837,7 +4882,7 @@ func file_master_proto_rawDescGZIP() []byte {
 	return file_master_proto_rawDescData
 }
 
-var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 75)
+var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 77)
 var file_master_proto_goTypes = []any{
 	(*DiskTag)(nil),                               // 0: master_pb.DiskTag
 	(*Heartbeat)(nil),                             // 1: master_pb.Heartbeat
@@ -4903,18 +4948,20 @@ var file_master_proto_goTypes = []any{
 	(*RaftLeadershipTransferResponse)(nil),        // 61: master_pb.RaftLeadershipTransferResponse
 	(*VolumeGrowResponse)(nil),                    // 62: master_pb.VolumeGrowResponse
 	nil,                                           // 63: master_pb.Heartbeat.MaxVolumeCountsEntry
-	nil,                                           // 64: master_pb.StorageBackend.PropertiesEntry
-	(*SuperBlockExtra_ErasureCoding)(nil),         // 65: master_pb.SuperBlockExtra.ErasureCoding
-	(*LookupVolumeResponse_VolumeIdLocation)(nil), // 66: master_pb.LookupVolumeResponse.VolumeIdLocation
-	nil, // 67: master_pb.DiskInfo.MaxVolumeCountByDiskEntry
-	nil, // 68: master_pb.DataNodeInfo.DiskInfosEntry
-	nil, // 69: master_pb.RackInfo.DiskInfosEntry
-	nil, // 70: master_pb.DataCenterInfo.DiskInfosEntry
-	nil, // 71: master_pb.TopologyInfo.DiskInfosEntry
-	(*LookupEcVolumeResponse_EcShardIdLocation)(nil),      // 72: master_pb.LookupEcVolumeResponse.EcShardIdLocation
-	(*ListClusterNodesResponse_ClusterNode)(nil),          // 73: master_pb.ListClusterNodesResponse.ClusterNode
-	(*RaftListClusterServersResponse_ClusterServers)(nil), // 74: master_pb.RaftListClusterServersResponse.ClusterServers
-	(*volume_server_pb.VolumeServerState)(nil),            // 75: volume_server_pb.VolumeServerState
+	nil,                                           // 64: master_pb.Heartbeat.DiskTotalBytesEntry
+	nil,                                           // 65: master_pb.Heartbeat.DiskFreeBytesEntry
+	nil,                                           // 66: master_pb.StorageBackend.PropertiesEntry
+	(*SuperBlockExtra_ErasureCoding)(nil),         // 67: master_pb.SuperBlockExtra.ErasureCoding
+	(*LookupVolumeResponse_VolumeIdLocation)(nil), // 68: master_pb.LookupVolumeResponse.VolumeIdLocation
+	nil, // 69: master_pb.DiskInfo.MaxVolumeCountByDiskEntry
+	nil, // 70: master_pb.DataNodeInfo.DiskInfosEntry
+	nil, // 71: master_pb.RackInfo.DiskInfosEntry
+	nil, // 72: master_pb.DataCenterInfo.DiskInfosEntry
+	nil, // 73: master_pb.TopologyInfo.DiskInfosEntry
+	(*LookupEcVolumeResponse_EcShardIdLocation)(nil),      // 74: master_pb.LookupEcVolumeResponse.EcShardIdLocation
+	(*ListClusterNodesResponse_ClusterNode)(nil),          // 75: master_pb.ListClusterNodesResponse.ClusterNode
+	(*RaftListClusterServersResponse_ClusterServers)(nil), // 76: master_pb.RaftListClusterServersResponse.ClusterServers
+	(*volume_server_pb.VolumeServerState)(nil),            // 77: volume_server_pb.VolumeServerState
 }
 var file_master_proto_depIdxs = []int32{
 	3,  // 0: master_pb.Heartbeat.volumes:type_name -> master_pb.VolumeInformationMessage
@@ -4924,92 +4971,94 @@ var file_master_proto_depIdxs = []int32{
 	5,  // 4: master_pb.Heartbeat.new_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
 	5,  // 5: master_pb.Heartbeat.deleted_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
 	63, // 6: master_pb.Heartbeat.max_volume_counts:type_name -> master_pb.Heartbeat.MaxVolumeCountsEntry
-	75, // 7: master_pb.Heartbeat.state:type_name -> volume_server_pb.VolumeServerState
+	77, // 7: master_pb.Heartbeat.state:type_name -> volume_server_pb.VolumeServerState
 	0,  // 8: master_pb.Heartbeat.disk_tags:type_name -> master_pb.DiskTag
-	6,  // 9: master_pb.HeartbeatResponse.storage_backends:type_name -> master_pb.StorageBackend
-	64, // 10: master_pb.StorageBackend.properties:type_name -> master_pb.StorageBackend.PropertiesEntry
-	65, // 11: master_pb.SuperBlockExtra.erasure_coding:type_name -> master_pb.SuperBlockExtra.ErasureCoding
-	10, // 12: master_pb.KeepConnectedResponse.volume_location:type_name -> master_pb.VolumeLocation
-	11, // 13: master_pb.KeepConnectedResponse.cluster_node_update:type_name -> master_pb.ClusterNodeUpdate
-	13, // 14: master_pb.KeepConnectedResponse.lock_ring_update:type_name -> master_pb.LockRingUpdate
-	66, // 15: master_pb.LookupVolumeResponse.volume_id_locations:type_name -> master_pb.LookupVolumeResponse.VolumeIdLocation
-	16, // 16: master_pb.AssignResponse.replicas:type_name -> master_pb.Location
-	16, // 17: master_pb.AssignResponse.location:type_name -> master_pb.Location
-	22, // 18: master_pb.CollectionListResponse.collections:type_name -> master_pb.Collection
-	3,  // 19: master_pb.DiskInfo.volume_infos:type_name -> master_pb.VolumeInformationMessage
-	5,  // 20: master_pb.DiskInfo.ec_shard_infos:type_name -> master_pb.VolumeEcShardInformationMessage
-	67, // 21: master_pb.DiskInfo.max_volume_count_by_disk:type_name -> master_pb.DiskInfo.MaxVolumeCountByDiskEntry
-	68, // 22: master_pb.DataNodeInfo.diskInfos:type_name -> master_pb.DataNodeInfo.DiskInfosEntry
-	28, // 23: master_pb.RackInfo.data_node_infos:type_name -> master_pb.DataNodeInfo
-	69, // 24: master_pb.RackInfo.diskInfos:type_name -> master_pb.RackInfo.DiskInfosEntry
-	29, // 25: master_pb.DataCenterInfo.rack_infos:type_name -> master_pb.RackInfo
-	70, // 26: master_pb.DataCenterInfo.diskInfos:type_name -> master_pb.DataCenterInfo.DiskInfosEntry
-	30, // 27: master_pb.TopologyInfo.data_center_infos:type_name -> master_pb.DataCenterInfo
-	71, // 28: master_pb.TopologyInfo.diskInfos:type_name -> master_pb.TopologyInfo.DiskInfosEntry
-	31, // 29: master_pb.VolumeListResponse.topology_info:type_name -> master_pb.TopologyInfo
-	72, // 30: master_pb.LookupEcVolumeResponse.shard_id_locations:type_name -> master_pb.LookupEcVolumeResponse.EcShardIdLocation
-	6,  // 31: master_pb.GetMasterConfigurationResponse.storage_backends:type_name -> master_pb.StorageBackend
-	73, // 32: master_pb.ListClusterNodesResponse.cluster_nodes:type_name -> master_pb.ListClusterNodesResponse.ClusterNode
-	74, // 33: master_pb.RaftListClusterServersResponse.cluster_servers:type_name -> master_pb.RaftListClusterServersResponse.ClusterServers
-	16, // 34: master_pb.LookupVolumeResponse.VolumeIdLocation.locations:type_name -> master_pb.Location
-	27, // 35: master_pb.DataNodeInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	27, // 36: master_pb.RackInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	27, // 37: master_pb.DataCenterInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	27, // 38: master_pb.TopologyInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	16, // 39: master_pb.LookupEcVolumeResponse.EcShardIdLocation.locations:type_name -> master_pb.Location
-	1,  // 40: master_pb.Seaweed.SendHeartbeat:input_type -> master_pb.Heartbeat
-	9,  // 41: master_pb.Seaweed.KeepConnected:input_type -> master_pb.KeepConnectedRequest
-	14, // 42: master_pb.Seaweed.LookupVolume:input_type -> master_pb.LookupVolumeRequest
-	17, // 43: master_pb.Seaweed.Assign:input_type -> master_pb.AssignRequest
-	17, // 44: master_pb.Seaweed.StreamAssign:input_type -> master_pb.AssignRequest
-	20, // 45: master_pb.Seaweed.Statistics:input_type -> master_pb.StatisticsRequest
-	23, // 46: master_pb.Seaweed.CollectionList:input_type -> master_pb.CollectionListRequest
-	25, // 47: master_pb.Seaweed.CollectionDelete:input_type -> master_pb.CollectionDeleteRequest
-	32, // 48: master_pb.Seaweed.VolumeList:input_type -> master_pb.VolumeListRequest
-	34, // 49: master_pb.Seaweed.LookupEcVolume:input_type -> master_pb.LookupEcVolumeRequest
-	36, // 50: master_pb.Seaweed.VacuumVolume:input_type -> master_pb.VacuumVolumeRequest
-	38, // 51: master_pb.Seaweed.DisableVacuum:input_type -> master_pb.DisableVacuumRequest
-	40, // 52: master_pb.Seaweed.EnableVacuum:input_type -> master_pb.EnableVacuumRequest
-	42, // 53: master_pb.Seaweed.VolumeMarkReadonly:input_type -> master_pb.VolumeMarkReadonlyRequest
-	44, // 54: master_pb.Seaweed.GetMasterConfiguration:input_type -> master_pb.GetMasterConfigurationRequest
-	46, // 55: master_pb.Seaweed.ListClusterNodes:input_type -> master_pb.ListClusterNodesRequest
-	48, // 56: master_pb.Seaweed.LeaseAdminToken:input_type -> master_pb.LeaseAdminTokenRequest
-	50, // 57: master_pb.Seaweed.ReleaseAdminToken:input_type -> master_pb.ReleaseAdminTokenRequest
-	52, // 58: master_pb.Seaweed.Ping:input_type -> master_pb.PingRequest
-	58, // 59: master_pb.Seaweed.RaftListClusterServers:input_type -> master_pb.RaftListClusterServersRequest
-	54, // 60: master_pb.Seaweed.RaftAddServer:input_type -> master_pb.RaftAddServerRequest
-	56, // 61: master_pb.Seaweed.RaftRemoveServer:input_type -> master_pb.RaftRemoveServerRequest
-	60, // 62: master_pb.Seaweed.RaftLeadershipTransfer:input_type -> master_pb.RaftLeadershipTransferRequest
-	18, // 63: master_pb.Seaweed.VolumeGrow:input_type -> master_pb.VolumeGrowRequest
-	2,  // 64: master_pb.Seaweed.SendHeartbeat:output_type -> master_pb.HeartbeatResponse
-	12, // 65: master_pb.Seaweed.KeepConnected:output_type -> master_pb.KeepConnectedResponse
-	15, // 66: master_pb.Seaweed.LookupVolume:output_type -> master_pb.LookupVolumeResponse
-	19, // 67: master_pb.Seaweed.Assign:output_type -> master_pb.AssignResponse
-	19, // 68: master_pb.Seaweed.StreamAssign:output_type -> master_pb.AssignResponse
-	21, // 69: master_pb.Seaweed.Statistics:output_type -> master_pb.StatisticsResponse
-	24, // 70: master_pb.Seaweed.CollectionList:output_type -> master_pb.CollectionListResponse
-	26, // 71: master_pb.Seaweed.CollectionDelete:output_type -> master_pb.CollectionDeleteResponse
-	33, // 72: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
-	35, // 73: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
-	37, // 74: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
-	39, // 75: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
-	41, // 76: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
-	43, // 77: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
-	45, // 78: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
-	47, // 79: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
-	49, // 80: master_pb.Seaweed.LeaseAdminToken:output_type -> master_pb.LeaseAdminTokenResponse
-	51, // 81: master_pb.Seaweed.ReleaseAdminToken:output_type -> master_pb.ReleaseAdminTokenResponse
-	53, // 82: master_pb.Seaweed.Ping:output_type -> master_pb.PingResponse
-	59, // 83: master_pb.Seaweed.RaftListClusterServers:output_type -> master_pb.RaftListClusterServersResponse
-	55, // 84: master_pb.Seaweed.RaftAddServer:output_type -> master_pb.RaftAddServerResponse
-	57, // 85: master_pb.Seaweed.RaftRemoveServer:output_type -> master_pb.RaftRemoveServerResponse
-	61, // 86: master_pb.Seaweed.RaftLeadershipTransfer:output_type -> master_pb.RaftLeadershipTransferResponse
-	62, // 87: master_pb.Seaweed.VolumeGrow:output_type -> master_pb.VolumeGrowResponse
-	64, // [64:88] is the sub-list for method output_type
-	40, // [40:64] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	64, // 9: master_pb.Heartbeat.disk_total_bytes:type_name -> master_pb.Heartbeat.DiskTotalBytesEntry
+	65, // 10: master_pb.Heartbeat.disk_free_bytes:type_name -> master_pb.Heartbeat.DiskFreeBytesEntry
+	6,  // 11: master_pb.HeartbeatResponse.storage_backends:type_name -> master_pb.StorageBackend
+	66, // 12: master_pb.StorageBackend.properties:type_name -> master_pb.StorageBackend.PropertiesEntry
+	67, // 13: master_pb.SuperBlockExtra.erasure_coding:type_name -> master_pb.SuperBlockExtra.ErasureCoding
+	10, // 14: master_pb.KeepConnectedResponse.volume_location:type_name -> master_pb.VolumeLocation
+	11, // 15: master_pb.KeepConnectedResponse.cluster_node_update:type_name -> master_pb.ClusterNodeUpdate
+	13, // 16: master_pb.KeepConnectedResponse.lock_ring_update:type_name -> master_pb.LockRingUpdate
+	68, // 17: master_pb.LookupVolumeResponse.volume_id_locations:type_name -> master_pb.LookupVolumeResponse.VolumeIdLocation
+	16, // 18: master_pb.AssignResponse.replicas:type_name -> master_pb.Location
+	16, // 19: master_pb.AssignResponse.location:type_name -> master_pb.Location
+	22, // 20: master_pb.CollectionListResponse.collections:type_name -> master_pb.Collection
+	3,  // 21: master_pb.DiskInfo.volume_infos:type_name -> master_pb.VolumeInformationMessage
+	5,  // 22: master_pb.DiskInfo.ec_shard_infos:type_name -> master_pb.VolumeEcShardInformationMessage
+	69, // 23: master_pb.DiskInfo.max_volume_count_by_disk:type_name -> master_pb.DiskInfo.MaxVolumeCountByDiskEntry
+	70, // 24: master_pb.DataNodeInfo.diskInfos:type_name -> master_pb.DataNodeInfo.DiskInfosEntry
+	28, // 25: master_pb.RackInfo.data_node_infos:type_name -> master_pb.DataNodeInfo
+	71, // 26: master_pb.RackInfo.diskInfos:type_name -> master_pb.RackInfo.DiskInfosEntry
+	29, // 27: master_pb.DataCenterInfo.rack_infos:type_name -> master_pb.RackInfo
+	72, // 28: master_pb.DataCenterInfo.diskInfos:type_name -> master_pb.DataCenterInfo.DiskInfosEntry
+	30, // 29: master_pb.TopologyInfo.data_center_infos:type_name -> master_pb.DataCenterInfo
+	73, // 30: master_pb.TopologyInfo.diskInfos:type_name -> master_pb.TopologyInfo.DiskInfosEntry
+	31, // 31: master_pb.VolumeListResponse.topology_info:type_name -> master_pb.TopologyInfo
+	74, // 32: master_pb.LookupEcVolumeResponse.shard_id_locations:type_name -> master_pb.LookupEcVolumeResponse.EcShardIdLocation
+	6,  // 33: master_pb.GetMasterConfigurationResponse.storage_backends:type_name -> master_pb.StorageBackend
+	75, // 34: master_pb.ListClusterNodesResponse.cluster_nodes:type_name -> master_pb.ListClusterNodesResponse.ClusterNode
+	76, // 35: master_pb.RaftListClusterServersResponse.cluster_servers:type_name -> master_pb.RaftListClusterServersResponse.ClusterServers
+	16, // 36: master_pb.LookupVolumeResponse.VolumeIdLocation.locations:type_name -> master_pb.Location
+	27, // 37: master_pb.DataNodeInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	27, // 38: master_pb.RackInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	27, // 39: master_pb.DataCenterInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	27, // 40: master_pb.TopologyInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	16, // 41: master_pb.LookupEcVolumeResponse.EcShardIdLocation.locations:type_name -> master_pb.Location
+	1,  // 42: master_pb.Seaweed.SendHeartbeat:input_type -> master_pb.Heartbeat
+	9,  // 43: master_pb.Seaweed.KeepConnected:input_type -> master_pb.KeepConnectedRequest
+	14, // 44: master_pb.Seaweed.LookupVolume:input_type -> master_pb.LookupVolumeRequest
+	17, // 45: master_pb.Seaweed.Assign:input_type -> master_pb.AssignRequest
+	17, // 46: master_pb.Seaweed.StreamAssign:input_type -> master_pb.AssignRequest
+	20, // 47: master_pb.Seaweed.Statistics:input_type -> master_pb.StatisticsRequest
+	23, // 48: master_pb.Seaweed.CollectionList:input_type -> master_pb.CollectionListRequest
+	25, // 49: master_pb.Seaweed.CollectionDelete:input_type -> master_pb.CollectionDeleteRequest
+	32, // 50: master_pb.Seaweed.VolumeList:input_type -> master_pb.VolumeListRequest
+	34, // 51: master_pb.Seaweed.LookupEcVolume:input_type -> master_pb.LookupEcVolumeRequest
+	36, // 52: master_pb.Seaweed.VacuumVolume:input_type -> master_pb.VacuumVolumeRequest
+	38, // 53: master_pb.Seaweed.DisableVacuum:input_type -> master_pb.DisableVacuumRequest
+	40, // 54: master_pb.Seaweed.EnableVacuum:input_type -> master_pb.EnableVacuumRequest
+	42, // 55: master_pb.Seaweed.VolumeMarkReadonly:input_type -> master_pb.VolumeMarkReadonlyRequest
+	44, // 56: master_pb.Seaweed.GetMasterConfiguration:input_type -> master_pb.GetMasterConfigurationRequest
+	46, // 57: master_pb.Seaweed.ListClusterNodes:input_type -> master_pb.ListClusterNodesRequest
+	48, // 58: master_pb.Seaweed.LeaseAdminToken:input_type -> master_pb.LeaseAdminTokenRequest
+	50, // 59: master_pb.Seaweed.ReleaseAdminToken:input_type -> master_pb.ReleaseAdminTokenRequest
+	52, // 60: master_pb.Seaweed.Ping:input_type -> master_pb.PingRequest
+	58, // 61: master_pb.Seaweed.RaftListClusterServers:input_type -> master_pb.RaftListClusterServersRequest
+	54, // 62: master_pb.Seaweed.RaftAddServer:input_type -> master_pb.RaftAddServerRequest
+	56, // 63: master_pb.Seaweed.RaftRemoveServer:input_type -> master_pb.RaftRemoveServerRequest
+	60, // 64: master_pb.Seaweed.RaftLeadershipTransfer:input_type -> master_pb.RaftLeadershipTransferRequest
+	18, // 65: master_pb.Seaweed.VolumeGrow:input_type -> master_pb.VolumeGrowRequest
+	2,  // 66: master_pb.Seaweed.SendHeartbeat:output_type -> master_pb.HeartbeatResponse
+	12, // 67: master_pb.Seaweed.KeepConnected:output_type -> master_pb.KeepConnectedResponse
+	15, // 68: master_pb.Seaweed.LookupVolume:output_type -> master_pb.LookupVolumeResponse
+	19, // 69: master_pb.Seaweed.Assign:output_type -> master_pb.AssignResponse
+	19, // 70: master_pb.Seaweed.StreamAssign:output_type -> master_pb.AssignResponse
+	21, // 71: master_pb.Seaweed.Statistics:output_type -> master_pb.StatisticsResponse
+	24, // 72: master_pb.Seaweed.CollectionList:output_type -> master_pb.CollectionListResponse
+	26, // 73: master_pb.Seaweed.CollectionDelete:output_type -> master_pb.CollectionDeleteResponse
+	33, // 74: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
+	35, // 75: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
+	37, // 76: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
+	39, // 77: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
+	41, // 78: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
+	43, // 79: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
+	45, // 80: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
+	47, // 81: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
+	49, // 82: master_pb.Seaweed.LeaseAdminToken:output_type -> master_pb.LeaseAdminTokenResponse
+	51, // 83: master_pb.Seaweed.ReleaseAdminToken:output_type -> master_pb.ReleaseAdminTokenResponse
+	53, // 84: master_pb.Seaweed.Ping:output_type -> master_pb.PingResponse
+	59, // 85: master_pb.Seaweed.RaftListClusterServers:output_type -> master_pb.RaftListClusterServersResponse
+	55, // 86: master_pb.Seaweed.RaftAddServer:output_type -> master_pb.RaftAddServerResponse
+	57, // 87: master_pb.Seaweed.RaftRemoveServer:output_type -> master_pb.RaftRemoveServerResponse
+	61, // 88: master_pb.Seaweed.RaftLeadershipTransfer:output_type -> master_pb.RaftLeadershipTransferResponse
+	62, // 89: master_pb.Seaweed.VolumeGrow:output_type -> master_pb.VolumeGrowResponse
+	66, // [66:90] is the sub-list for method output_type
+	42, // [42:66] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_master_proto_init() }
@@ -5023,7 +5072,7 @@ func file_master_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_master_proto_rawDesc), len(file_master_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   75,
+			NumMessages:   77,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
