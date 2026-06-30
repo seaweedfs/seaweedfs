@@ -177,7 +177,7 @@ func streamChunksPrefetched(
 				consumeErr = err
 				break
 			}
-			retryErr := retryWithCacheInvalidation(localCtx, writer, chunkView, result.urlStrings, jwtFunc, masterClient)
+			retryErr := retryWithCacheInvalidation(localCtx, writer, chunkView, result.urlStrings, result.fetchErr, jwtFunc, masterClient)
 			if retryErr != nil {
 				stats.FilerHandlerCounter.WithLabelValues("chunkDownloadError").Inc()
 				consumeErr = fmt.Errorf("read chunk: %w", retryErr)
@@ -230,45 +230,25 @@ func streamChunksPrefetched(
 	return nil
 }
 
-// retryWithCacheInvalidation attempts to re-fetch a chunk after invalidating the URL cache.
-// This mirrors the retry logic in PrepareStreamContentWithThrottler's sequential path.
+// retryWithCacheInvalidation re-fetches a chunk via the shared location self-heal after the
+// initial fetch failed with originalErr.
 func retryWithCacheInvalidation(
 	ctx context.Context,
 	writer io.Writer,
 	chunkView *ChunkView,
 	oldUrlStrings []string,
+	originalErr error,
 	jwtFunc VolumeServerJwtFunction,
 	masterClient wdclient.HasLookupFileIdFunction,
 ) error {
-	invalidator, ok := masterClient.(CacheInvalidator)
-	if !ok {
-		return fmt.Errorf("read chunk %s failed and no cache invalidator available", chunkView.FileId)
-	}
-
-	glog.V(0).InfofCtx(ctx, "prefetch read chunk %s failed, invalidating cache and retrying", chunkView.FileId)
-	invalidator.InvalidateCache(chunkView.FileId)
-
-	newUrlStrings, lookupErr := masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
-	if lookupErr != nil {
-		glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", chunkView.FileId, lookupErr)
-		return fmt.Errorf("re-lookup chunk %s: %w", chunkView.FileId, lookupErr)
-	}
-	if len(newUrlStrings) == 0 {
-		glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", chunkView.FileId)
-		return fmt.Errorf("re-lookup chunk %s: no locations", chunkView.FileId)
-	}
-
-	if urlSlicesEqual(oldUrlStrings, newUrlStrings) {
-		glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", chunkView.FileId)
-		return fmt.Errorf("read chunk %s failed, same locations after cache invalidation", chunkView.FileId)
-	}
-
-	glog.V(0).InfofCtx(ctx, "retrying read chunk %s with new locations: %v", chunkView.FileId, newUrlStrings)
-	jwt := jwtFunc(chunkView.FileId)
-	_, err := retriedStreamFetchChunkData(
-		ctx, writer, newUrlStrings, jwt,
-		chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(),
-		chunkView.OffsetInChunk, int(chunkView.ViewSize),
-	)
-	return err
+	invalidator, _ := masterClient.(CacheInvalidator)
+	return retryFetchWithFreshLocations(ctx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId, oldUrlStrings, originalErr, func(newUrls []string) error {
+		jwt := jwtFunc(chunkView.FileId)
+		_, err := retriedStreamFetchChunkData(
+			ctx, writer, newUrls, jwt,
+			chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(),
+			chunkView.OffsetInChunk, int(chunkView.ViewSize),
+		)
+		return err
+	})
 }

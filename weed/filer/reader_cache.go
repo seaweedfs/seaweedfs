@@ -279,29 +279,16 @@ func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []str
 }
 
 func (s *SingleChunkCacher) retryFetchAfterCacheInvalidation(ctx context.Context, oldUrlStrings []string, originalErr error) ([]byte, error) {
-	if s.parent.cacheInvalidator == nil {
-		return nil, originalErr
+	var data []byte
+	err := retryFetchWithFreshLocations(ctx, s.parent.cacheInvalidator, s.parent.lookupFileIdFn, s.chunkFileId, oldUrlStrings, originalErr, func(newUrls []string) error {
+		var fetchErr error
+		data, fetchErr = s.fetchChunkData(ctx, newUrls)
+		return fetchErr
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	glog.V(0).InfofCtx(ctx, "reader cache read chunk %s failed, invalidating cache and retrying: %v", s.chunkFileId, originalErr)
-	s.parent.cacheInvalidator.InvalidateCache(s.chunkFileId)
-
-	newUrlStrings, lookupErr := s.parent.lookupFileIdFn(ctx, s.chunkFileId)
-	if lookupErr != nil {
-		glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", s.chunkFileId, lookupErr)
-		return nil, fmt.Errorf("read chunk %s failed: %w; re-lookup after cache invalidation failed: %v", s.chunkFileId, originalErr, lookupErr)
-	}
-	if len(newUrlStrings) == 0 {
-		glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", s.chunkFileId)
-		return nil, fmt.Errorf("read chunk %s failed: %w; re-lookup returned no locations", s.chunkFileId, originalErr)
-	}
-	if urlSlicesEqual(oldUrlStrings, newUrlStrings) {
-		glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", s.chunkFileId)
-		return nil, originalErr
-	}
-
-	glog.V(0).InfofCtx(ctx, "retrying reader cache read chunk %s with new locations: %v", s.chunkFileId, newUrlStrings)
-	return s.fetchChunkData(ctx, newUrlStrings)
+	return data, nil
 }
 
 func (s *SingleChunkCacher) destroy() {
