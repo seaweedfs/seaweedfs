@@ -2041,6 +2041,11 @@ impl Volume {
         let mut total_read: i64 = 0;
         let walk = crate::storage::idx::walk_index_file(&mut idx_file, 0, |needle_id, offset, size| {
             count += 1;
+            // A remote-tier delete records an offset-0 tombstone with no physical
+            // .dat bytes, so it must not contribute to total_read.
+            if offset.is_zero() && size.is_deleted() {
+                return Ok(());
+            }
             // Deleted needles still occupy .dat space: count their size, don't read.
             total_read += get_actual_size(size, version);
             if size.is_deleted() {
@@ -3935,6 +3940,45 @@ mod tests {
             broken
         );
         assert_eq!(count, 3, "scrub must count every .idx row");
+    }
+
+    #[test]
+    fn test_scrub_ignores_offset0_tombstone() {
+        // A remote-tier delete appends an offset-0 tombstone to the .idx with no
+        // physical .dat bytes; it must not flag the volume (neither the size
+        // reconcile nor the structural overlap check).
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let data = b"needle data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+
+        // Append an offset-0 logical tombstone to the on-disk .idx.
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(v.file_name(".idx"))
+            .unwrap();
+        crate::storage::idx::write_index_entry(&mut f, NeedleId(2), Offset::from_actual_offset(0), Size(-1))
+            .unwrap();
+        f.sync_all().unwrap();
+        drop(f);
+
+        let (count, broken) = v.scrub().unwrap();
+        assert!(
+            broken.is_empty(),
+            "offset-0 tombstone must not flag the volume, got {:?}",
+            broken
+        );
+        assert_eq!(count, 2, "both .idx rows are walked");
     }
 
     #[test]

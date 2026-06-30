@@ -59,9 +59,18 @@ pub fn check_index_file<R: Read + Seek>(
 
     entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3 .0.cmp(&b.3 .0)));
 
-    for j in 1..entries.len() {
-        let (index, id, offset, size) = entries[j];
-        let (_, last_id, last_offset, last_size) = entries[j - 1];
+    // Offset-0 logical tombstones (remote-tier deletes) occupy no physical extent,
+    // so they cannot overlap anything — exclude them from the overlap check. They
+    // are still counted below for the index-size check.
+    let physical: Vec<(usize, NeedleId, i64, Size)> = entries
+        .iter()
+        .copied()
+        .filter(|e| !(e.2 == 0 && e.3.is_deleted()))
+        .collect();
+
+    for j in 1..physical.len() {
+        let (index, id, offset, size) = physical[j];
+        let (_, last_id, last_offset, last_size) = physical[j - 1];
 
         let end = match get_actual_size(size, version) {
             0 => offset,
@@ -191,6 +200,20 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(errs.len(), 1, "{:?}", errs);
         assert!(errs[0].contains("overlaps"), "{:?}", errs);
+    }
+
+    #[test]
+    fn test_check_index_file_ignores_offset0_tombstone() {
+        // A live needle near the start plus an offset-0 logical tombstone (remote-tier
+        // delete) must NOT be flagged as overlapping; the tombstone row still counts.
+        let data = idx_bytes(&[
+            (NeedleId(1), Offset::from_actual_offset(8), Size(100)),
+            (NeedleId(2), Offset::from_actual_offset(0), Size(-1)),
+        ]);
+        let size = data.len() as i64;
+        let (count, errs) = check_index_file(&mut Cursor::new(data), size, Version(3));
+        assert_eq!(count, 2, "tombstone row is still counted: {:?}", errs);
+        assert!(errs.is_empty(), "offset-0 tombstone must not overlap: {:?}", errs);
     }
 
     #[test]
