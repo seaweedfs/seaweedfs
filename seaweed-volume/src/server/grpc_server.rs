@@ -2464,7 +2464,10 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
-        // Rebuild missing shards, searching all locations for input shards
+        // Rebuild missing shards, searching all locations for input shards.
+        // Pass other_dirs so shards on sibling disks are found even when the
+        // primary rebuild dir doesn't hold them.
+        let other_dir_refs: Vec<&str> = other_dirs.iter().map(|s| s.as_str()).collect();
         crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
             &rebuild_dir,
             collection,
@@ -2472,6 +2475,7 @@ impl VolumeServer for VolumeGrpcService {
             &missing,
             data_shards as usize,
             parity_shards as usize,
+            &other_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcFiles: {}", e)))?;
 
