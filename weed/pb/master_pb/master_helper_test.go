@@ -5,6 +5,55 @@ import (
 	"testing"
 )
 
+// TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks pins the
+// empty-disk fix: PhysicalDisks lists every physical disk of the type, so a disk
+// holding no volumes still surfaces, and each disk reports its exact max instead
+// of the aggregate split evenly.
+func TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks(t *testing.T) {
+	d := &DiskInfo{
+		Type:           "hdd",
+		MaxVolumeCount: 1000, // per-type aggregate
+		VolumeInfos: []*VolumeInformationMessage{
+			{Id: 10, DiskId: 0},
+			{Id: 11, DiskId: 1},
+		},
+		PhysicalDisks: []*PhysicalDiskInfo{
+			{DiskId: 0, MaxVolumeCount: 350},
+			{DiskId: 1, MaxVolumeCount: 350},
+			{DiskId: 2, MaxVolumeCount: 300}, // empty disk, no volumes/shards
+		},
+	}
+
+	got := d.SplitByPhysicalDisk()
+	if len(got) != 3 {
+		t.Fatalf("want 3 physical disks including the empty one, got %d", len(got))
+	}
+	byID := map[uint32]*DiskInfo{}
+	for _, di := range got {
+		byID[di.DiskId] = di
+	}
+
+	empty, ok := byID[2]
+	if !ok {
+		t.Fatalf("empty disk 2 not surfaced; got %v", byID)
+	}
+	if empty.VolumeCount != 0 {
+		t.Errorf("empty disk: want 0 volumes, got %d", empty.VolumeCount)
+	}
+	if empty.FreeVolumeCount != 300 {
+		t.Errorf("empty disk free: want its full max 300, got %d", empty.FreeVolumeCount)
+	}
+
+	// Exact per-disk max, not the even split (which would give ~334/333/333).
+	if byID[0].MaxVolumeCount != 350 || byID[1].MaxVolumeCount != 350 || byID[2].MaxVolumeCount != 300 {
+		t.Errorf("want exact per-disk max 350/350/300, got %d/%d/%d",
+			byID[0].MaxVolumeCount, byID[1].MaxVolumeCount, byID[2].MaxVolumeCount)
+	}
+	if byID[0].FreeVolumeCount != 349 {
+		t.Errorf("disk 0 free: want 349 (350-1 volume), got %d", byID[0].FreeVolumeCount)
+	}
+}
+
 func TestDiskInfoSplitByPhysicalDisk_collapsesOnSingleDisk(t *testing.T) {
 	d := &DiskInfo{
 		Type:           "hdd",
@@ -138,9 +187,9 @@ func TestDiskInfoSplitByPhysicalDisk_countsActiveAndRemoteExactly(t *testing.T) 
 	}
 
 	cases := []struct {
-		id           uint32
-		wantActive   int64
-		wantRemote   int64
+		id         uint32
+		wantActive int64
+		wantRemote int64
 	}{
 		{0, 1, 0},
 		{1, 1, 1},

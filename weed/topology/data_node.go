@@ -26,6 +26,15 @@ type DataNode struct {
 
 	MaintenanceMode bool
 	diskTags        map[uint32][]string
+	// diskBackends carries each physical disk's type and capacity, reported for
+	// every location (including empty ones) so ToDataNodeInfo can list disks
+	// that hold no volumes or EC shards yet.
+	diskBackends map[uint32]diskBackend
+}
+
+type diskBackend struct {
+	diskType       types.DiskType
+	maxVolumeCount int64
 }
 
 func NewDataNode(id string) *DataNode {
@@ -298,6 +307,10 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	for diskID, tags := range dn.diskTags {
 		diskTags[diskID] = append([]string(nil), tags...)
 	}
+	backends := make(map[uint32]diskBackend, len(dn.diskBackends))
+	for diskID, b := range dn.diskBackends {
+		backends[diskID] = b
+	}
 	dn.RUnlock()
 	for _, diskInfo := range m.DiskInfos {
 		if diskInfo == nil {
@@ -306,6 +319,22 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		if tags, found := diskTags[diskInfo.DiskId]; found {
 			diskInfo.Tags = append([]string(nil), tags...)
 		}
+		// List every physical disk of this type, including disks with no
+		// volumes or EC shards, so per-physical-disk consumers can see them.
+		diskType := types.ToDiskType(diskInfo.Type)
+		var physical []*master_pb.PhysicalDiskInfo
+		for diskID, b := range backends {
+			if b.diskType == diskType && b.maxVolumeCount > 0 {
+				physical = append(physical, &master_pb.PhysicalDiskInfo{
+					DiskId:         diskID,
+					MaxVolumeCount: b.maxVolumeCount,
+				})
+			}
+		}
+		slices.SortFunc(physical, func(a, b *master_pb.PhysicalDiskInfo) int {
+			return int(a.DiskId) - int(b.DiskId)
+		})
+		diskInfo.PhysicalDisks = physical
 	}
 	return m
 }
@@ -318,12 +347,20 @@ func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
 	if dn.diskTags == nil {
 		dn.diskTags = make(map[uint32][]string, len(tags))
 	}
+	// DiskTags is the full per-disk list every heartbeat, so rebuild backends
+	// from scratch to drop disks that were removed.
+	backends := make(map[uint32]diskBackend, len(tags))
 	for _, tagInfo := range tags {
 		if tagInfo == nil {
 			continue
 		}
 		dn.diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
+		backends[tagInfo.DiskId] = diskBackend{
+			diskType:       types.ToDiskType(tagInfo.Type),
+			maxVolumeCount: tagInfo.MaxVolumeCount,
+		}
 	}
+	dn.diskBackends = backends
 	dn.Unlock()
 }
 
