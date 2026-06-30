@@ -102,10 +102,6 @@ func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc
 
 type VolumeServerJwtFunction func(fileId string) string
 
-type CacheInvalidator interface {
-	InvalidateCache(fileId string)
-}
-
 // urlSlicesEqual checks if two URL slices contain the same URLs (order-independent)
 func urlSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
