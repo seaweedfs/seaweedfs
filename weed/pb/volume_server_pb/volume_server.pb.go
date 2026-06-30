@@ -6018,9 +6018,10 @@ type ScrubEcVolumeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Mode  VolumeScrubMode        `protobuf:"varint,1,opt,name=mode,proto3,enum=volume_server_pb.VolumeScrubMode" json:"mode,omitempty"`
 	// optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
-	VolumeIds     []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	VolumeIds                []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
+	ForceDeletedNeedlesCheck bool     `protobuf:"varint,3,opt,name=force_deleted_needles_check,json=forceDeletedNeedlesCheck,proto3" json:"force_deleted_needles_check,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ScrubEcVolumeRequest) Reset() {
@@ -6065,6 +6066,13 @@ func (x *ScrubEcVolumeRequest) GetVolumeIds() []uint32 {
 		return x.VolumeIds
 	}
 	return nil
+}
+
+func (x *ScrubEcVolumeRequest) GetForceDeletedNeedlesCheck() bool {
+	if x != nil {
+		return x.ForceDeletedNeedlesCheck
+	}
+	return false
 }
 
 type ScrubEcVolumeResponse struct {
@@ -7510,11 +7518,12 @@ const file_volume_server_proto_rawDesc = "" +
 	"\vtotal_files\x18\x02 \x01(\x04R\n" +
 	"totalFiles\x12*\n" +
 	"\x11broken_volume_ids\x18\x03 \x03(\rR\x0fbrokenVolumeIds\x12\x18\n" +
-	"\adetails\x18\x04 \x03(\tR\adetails\"l\n" +
+	"\adetails\x18\x04 \x03(\tR\adetails\"\xab\x01\n" +
 	"\x14ScrubEcVolumeRequest\x125\n" +
 	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1d\n" +
 	"\n" +
-	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\"\xf0\x01\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\x12=\n" +
+	"\x1bforce_deleted_needles_check\x18\x03 \x01(\bR\x18forceDeletedNeedlesCheck\"\xf0\x01\n" +
 	"\x15ScrubEcVolumeResponse\x12#\n" +
 	"\rtotal_volumes\x18\x01 \x01(\x04R\ftotalVolumes\x12\x1f\n" +
 	"\vtotal_files\x18\x02 \x01(\x04R\n" +

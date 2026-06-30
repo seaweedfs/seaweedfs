@@ -21,10 +21,15 @@ func init() {
 
 type commandEcVolumeScrub struct {
 	env               *CommandEnv
+	grpcDialOption    grpc.DialOption
+
+	writer io.Writer
 	volumeServerAddrs []pb.ServerAddress
 	volumeIDs         []uint32
 	mode              volume_server_pb.VolumeScrubMode
-	grpcDialOption    grpc.DialOption
+	showDetails bool
+	forceDeletedNeedlesCheck bool
+	maxParallelization int
 }
 
 func (c *commandEcVolumeScrub) Name() string {
@@ -52,6 +57,7 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/full/checksum)")
 	maxParallelization := volScrubCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	showDetails := volScrubCommand.Bool("details", false, "display scrub result details, if available")
+	forceDeletedNeedlesCheck := volScrubCommand.Bool("forceDeletedNeedlesCheck", false, "forces strict verification of deleted needles; can cause false positives for EC volumes not fully matching local indexes")
 
 	if err = volScrubCommand.Parse(args); err != nil {
 		return err
@@ -59,6 +65,12 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
+
+	c.env = commandEnv
+	c.writer = writer
+	c.maxParallelization = *maxParallelization
+	c.showDetails = *showDetails
+	c.forceDeletedNeedlesCheck = *forceDeletedNeedlesCheck
 
 	c.volumeServerAddrs = []pb.ServerAddress{}
 	if *nodesStr != "" {
@@ -103,30 +115,35 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("unsupported scrubbing mode %q", *mode)
 	}
 	fmt.Fprintf(writer, "using %s mode\n", c.mode.String())
-	c.env = commandEnv
 
-	return c.scrubEcVolumes(writer, *maxParallelization, *showDetails)
+	return c.doScrub()
 }
 
-func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelization int, showDetails bool) error {
+
+func (c *commandEcVolumeScrub) write(format string, a ...any) {
+	fmt.Fprintf(c.writer, format, a...)
+}
+
+func (c *commandEcVolumeScrub) doScrub() error {
 	var brokenVolumesStr, brokenShardsStr []string
 	var details []string
 	var totalVolumes, brokenVolumes, brokenShards, totalFiles uint64
 	var mu sync.Mutex
 
-	ewg := NewErrorWaitGroup(maxParallelization)
+	ewg := NewErrorWaitGroup(c.maxParallelization)
 	count := 0
 	for _, addr := range c.volumeServerAddrs {
 		ewg.Add(func() error {
 			mu.Lock()
 			count++
-			fmt.Fprintf(writer, "Scrubbing %s (%d/%d)...\n", addr.String(), count, len(c.volumeServerAddrs))
+			c.write("Scrubbing %s (%d/%d)...\n", addr.String(), count, len(c.volumeServerAddrs))
 			mu.Unlock()
 
 			err := operation.WithVolumeServerClient(false, addr, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				res, err := volumeServerClient.ScrubEcVolume(context.Background(), &volume_server_pb.ScrubEcVolumeRequest{
 					Mode:      c.mode,
 					VolumeIds: c.volumeIDs,
+					ForceDeletedNeedlesCheck: c.forceDeletedNeedlesCheck,
 				})
 				if err != nil {
 					return err
@@ -158,15 +175,15 @@ func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelizati
 		return err
 	}
 
-	fmt.Fprintf(writer, "Scrubbed %d EC files and %d volumes on %d nodes\n", totalFiles, totalVolumes, len(c.volumeServerAddrs))
+	c.write("Scrubbed %d EC files and %d volumes on %d nodes\n", totalFiles, totalVolumes, len(c.volumeServerAddrs))
 	if brokenVolumes != 0 {
-		fmt.Fprintf(writer, "\nGot scrub failures on %d EC volumes and %d EC shards :(\n", brokenVolumes, brokenShards)
-		fmt.Fprintf(writer, "Affected volumes: %s\n", strings.Join(brokenVolumesStr, ", "))
+		c.write("\nGot scrub failures on %d EC volumes and %d EC shards :(\n", brokenVolumes, brokenShards)
+		c.write("Affected volumes: %s\n", strings.Join(brokenVolumesStr, ", "))
 		if len(brokenShardsStr) != 0 {
-			fmt.Fprintf(writer, "Affected shards:  %s\n", strings.Join(brokenShardsStr, ", "))
+			c.write("Affected shards:  %s\n", strings.Join(brokenShardsStr, ", "))
 		}
-		if showDetails && len(details) != 0 {
-			fmt.Fprintf(writer, "Details:\n\t%s\n", strings.Join(details, "\n\t"))
+		if c.showDetails && len(details) != 0 {
+			c.write("Details:\n\t%s\n", strings.Join(details, "\n\t"))
 		}
 	}
 	return nil
