@@ -3,6 +3,7 @@
 //! Encodes a volume's .dat file into 10 data + 4 parity shards using
 //! Reed-Solomon erasure coding. Can reconstruct from any 10 of 14 shards.
 
+pub mod ec_bitrot;
 pub mod ec_decoder;
 pub mod ec_encoder;
 pub mod ec_locate;
