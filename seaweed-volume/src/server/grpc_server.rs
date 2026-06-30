@@ -3826,7 +3826,7 @@ impl VolumeServer for VolumeGrpcService {
                     .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
                 total_volumes += 1;
 
-                // INDEX mode (1) calls scrub_index; LOCAL (2) and FULL (3) call scrub
+                // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
                 let scrub_result = if mode == 1 {
                     v.scrub_index()
                 } else {
@@ -3942,7 +3942,7 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
                 2 | 3 => {
-                    // LOCAL (2) / FULL (3): verify EC shard data
+                    // FULL (2) / LOCAL (3): verify EC shard data
                     let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
 
                     // After cross-disk reconciliation, an EcVolume can
