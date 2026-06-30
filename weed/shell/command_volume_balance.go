@@ -38,6 +38,7 @@ type commandVolumeBalance struct {
 	applyBalancing    bool
 	volumesPerExec    int
 	movedCount        int
+	byDiskUsage       bool
 }
 
 func (c *commandVolumeBalance) Name() string {
@@ -47,7 +48,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5] [-byDiskUsage]
 
 	The -collection parameter supports:
 	  - ALL_COLLECTIONS: balance across all collections
@@ -60,6 +61,12 @@ func (c *commandVolumeBalance) Help() string {
 	The -volumesPerExec parameter limits the maximum number of volume moves in one command execution.
 	If unset - the command will try to balance all volumes at once.
 	It might be beneficial to set, if your cluster has lots of volumes growing and topology changes faster than balancing can occur.
+
+	The -byDiskUsage flag ranks servers by the actual data they hold (sum of volume sizes) instead of the
+	default slot-density metric. The default metric normalizes by maxVolumeCount, so a server whose
+	maxVolumeCount is configured too high for its disk looks nearly empty even when its disk is physically
+	full, and balancing can drain less-full servers onto it. Use -byDiskUsage to balance actual data
+	distribution instead. It assumes comparable disk sizes across servers of the same disk type.
 
 	Algorithm:
 
@@ -113,6 +120,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	// TODO: remove this alias
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 	volumesPerExec := balanceCommand.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)")
+	byDiskUsage := balanceCommand.Bool("byDiskUsage", false, "rank servers by actual data held (sum of volume sizes) instead of slot density; use when maxVolumeCount is set too high for the disk. Assumes comparable disk sizes per disk type.")
 
 	balanceCommand.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
 		if flagValue == "" {
@@ -136,6 +144,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 	c.volumesPerExec = *volumesPerExec
 	c.movedCount = 0
+	c.byDiskUsage = *byDiskUsage
 
 	infoAboutSimulationMode(writer, c.applyBalancing, "-apply")
 
@@ -320,6 +329,33 @@ func capacityByMinVolumeDensity(diskType types.DiskType, volumeSizeLimitMb uint6
 	}
 }
 
+// capacityByActualDataUsage ranks servers purely by how much actual data they
+// hold (sum of volume sizes), ignoring MaxVolumeCount. The slot-density metric
+// divides by MaxVolumeCount, so a server whose MaxVolumeCount was configured too
+// high for its disk looks nearly empty even when its disk is physically full and
+// gets picked as a move target. This function keeps the fullest-by-data server
+// ranked as full so balancing drains it instead of piling onto it. It assumes
+// comparable disk sizes across servers of the same disk type. Capacity is a
+// uniform constant so the density ratio is proportional to actual data; the
+// constant cancels out of every ratio comparison in balanceSelectedVolume.
+func capacityByActualDataUsage(diskType types.DiskType, volumeSizeLimitMb uint64) DensityFunc {
+	return func(info *master_pb.DataNodeInfo) (float64, uint64) {
+		diskInfo, found := info.DiskInfos[string(diskType)]
+		if !found {
+			return 0, 0
+		}
+		var volumeSizes uint64
+		for _, volumeInfo := range diskInfo.VolumeInfos {
+			volumeSizes += volumeInfo.Size
+		}
+		if volumeSizeLimitMb == 0 {
+			volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
+		}
+		usedVolumeCount := volumeSizes / (volumeSizeLimitMb * util.MiByte)
+		return 1, usedVolumeCount
+	}
+}
+
 func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
 	return func(info *master_pb.DataNodeInfo) float64 {
 		diskInfo, found := info.DiskInfos[string(diskType)]
@@ -371,6 +407,14 @@ func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
 	return float64(len(n.selectedVolumes)) / capacityFunc(n.info)
 }
 
+func (n *Node) hasFreeVolumeSlot(diskType types.DiskType) bool {
+	diskInfo, found := n.info.DiskInfos[string(diskType)]
+	if !found {
+		return false
+	}
+	return diskInfo.VolumeCount < diskInfo.MaxVolumeCount
+}
+
 func (n *Node) isOneVolumeOnly() bool {
 	if len(n.selectedVolumes) != 1 {
 		return false
@@ -419,6 +463,9 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 	}
 	capacityFunc := capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
+	if c.byDiskUsage {
+		capacityFunc = capacityByActualDataUsage(diskType, volumeSizeLimitMb)
+	}
 	for _, dn := range nodes {
 		capacity, volumeCount := capacityFunc(dn.info)
 		if capacity > 0 {
@@ -475,6 +522,12 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		}
 		sortCandidatesFn(candidateVolumes)
 		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
+			// In byte-usage mode capacity is a uniform constant, so a target's
+			// free volume slots aren't reflected in its ranking; skip targets that
+			// are already at MaxVolumeCount so balancing never exceeds the slot limit.
+			if c.byDiskUsage && !emptyNode.hasFreeVolumeSlot(diskType) {
+				continue
+			}
 			if !(fullNode.localVolumeDensityNextRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeDensityNextRatio(capacityFunc) <= idealVolumeRatio) {
 				if c.commandEnv != nil && c.commandEnv.verbose {
 					fmt.Printf("no more volume servers with empty slots %s, idealVolumeRatio %f\n", emptyNode.info.Id, idealVolumeRatio)
