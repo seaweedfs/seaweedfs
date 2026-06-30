@@ -203,6 +203,56 @@ func TestDiskInfoSplitByPhysicalDisk_normalizesZeroToOuterDiskId(t *testing.T) {
 	}
 }
 
+// TestDiskInfoSplitByPhysicalDisk_keepsRealDiskZeroWhenMixed reproduces a
+// multi-disk node where physical disk 0 (Locations[0]) holds volumes and the
+// aggregate DiskId is seeded from a non-zero sibling (volumes[0] landed on
+// disk 6). DiskId 0 must stay its own physical disk, not get folded onto disk
+// 6 — folding drops a disk from the count and doubles the sibling's volumes.
+func TestDiskInfoSplitByPhysicalDisk_keepsRealDiskZeroWhenMixed(t *testing.T) {
+	d := &DiskInfo{
+		Type:           "hdd",
+		MaxVolumeCount: 30,
+		DiskId:         6, // seeded from volumes[0].DiskId in ToDiskInfo
+		VolumeInfos: []*VolumeInformationMessage{
+			{Id: 60, DiskId: 6},
+			{Id: 61, DiskId: 6},
+			{Id: 1, DiskId: 0}, // real disk 0, must not be remapped to 6
+			{Id: 2, DiskId: 0},
+			{Id: 30, DiskId: 3},
+		},
+	}
+
+	got := d.SplitByPhysicalDisk()
+	byID := map[uint32]*DiskInfo{}
+	for _, di := range got {
+		byID[di.DiskId] = di
+	}
+
+	if len(got) != 3 {
+		t.Fatalf("want 3 physical disks (0, 3, 6), got %d: %v", len(got), byID)
+	}
+	if _, ok := byID[0]; !ok {
+		t.Fatalf("physical disk 0 was dropped; got disks %v", byID)
+	}
+	if byID[0].VolumeCount != 2 {
+		t.Errorf("disk 0: want 2 volumes, got %d", byID[0].VolumeCount)
+	}
+	if byID[6].VolumeCount != 2 {
+		t.Errorf("disk 6: want 2 volumes (not merged with disk 0), got %d", byID[6].VolumeCount)
+	}
+	if byID[3].VolumeCount != 1 {
+		t.Errorf("disk 3: want 1 volume, got %d", byID[3].VolumeCount)
+	}
+
+	var sumMax int64
+	for _, di := range got {
+		sumMax += di.MaxVolumeCount
+	}
+	if sumMax != 30 {
+		t.Errorf("sum of MaxVolumeCount = %d, want 30 (lossless split)", sumMax)
+	}
+}
+
 func TestDiskInfoSplitByPhysicalDisk_nilSafe(t *testing.T) {
 	var d *DiskInfo
 	if got := d.SplitByPhysicalDisk(); got != nil {

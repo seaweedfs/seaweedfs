@@ -24,8 +24,30 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 		return nil
 	}
 
+	// DiskId 0 is overloaded: it is both the first physical disk (Locations[0])
+	// and the protobuf default for "unset". Only treat 0 as unset when every
+	// record reports 0 (the legacy case where the volume server didn't populate
+	// DiskId). If any record carries a non-zero DiskId, the reporting is real and
+	// a 0 means physical disk 0 — keep it distinct instead of folding it onto
+	// d.DiskId, which would merge two physical disks and drop disk 0 from view.
+	hasNonZero := false
+	for _, vi := range d.VolumeInfos {
+		if vi.DiskId != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		for _, eci := range d.EcShardInfos {
+			if eci.DiskId != 0 {
+				hasNonZero = true
+				break
+			}
+		}
+	}
+
 	normalize := func(id uint32) uint32 {
-		if id == 0 && d.DiskId != 0 {
+		if id == 0 && !hasNonZero && d.DiskId != 0 {
 			return d.DiskId
 		}
 		return id
