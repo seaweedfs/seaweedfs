@@ -2494,6 +2494,7 @@ impl VolumeServer for VolumeGrpcService {
             collection,
             vid,
             data_shards as usize,
+            &other_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
 

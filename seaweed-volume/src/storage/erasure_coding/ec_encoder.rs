@@ -354,11 +354,16 @@ fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
 /// content from the EC data shards, walks through needle headers to extract
 /// (needle_id, offset, size) entries, deduplicates them, and writes a sorted
 /// .ecx index file.
+///
+/// `additional_dirs` lists sibling disk locations to search for data shards when
+/// they are not found in `dir` — mirrors the same fallback used by rebuild_ec_files,
+/// required on multi-disk volume servers where shards may be spread across disks.
 pub fn rebuild_ecx_file(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
     data_shards: usize,
+    additional_dirs: &[&str],
 ) -> io::Result<()> {
     use crate::storage::needle::needle::get_actual_size;
     use crate::storage::super_block::SUPER_BLOCK_SIZE;
@@ -366,21 +371,34 @@ pub fn rebuild_ecx_file(
     let base = volume_file_name(dir, collection, volume_id);
     let ecx_path = format!("{}.ecx", base);
 
-    // Open data shards to read logical .dat content
+    // Open data shards to read logical .dat content. When a shard isn't found
+    // in `dir`, search `additional_dirs` (sibling disks on the same volume
+    // server) before giving up.
     let mut shards: Vec<EcVolumeShard> = (0..data_shards as u8)
         .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
         .collect();
 
-    for shard in &mut shards {
+    for (i, shard) in shards.iter_mut().enumerate() {
         if let Err(_) = shard.open() {
-            // If a data shard is missing, we can't rebuild ecx
-            for s in &mut shards {
-                s.close();
+            let mut found = false;
+            for &other_dir in additional_dirs {
+                let mut alt = EcVolumeShard::new(other_dir, collection, volume_id, i as u8);
+                if alt.open().is_ok() {
+                    *shard = alt;
+                    found = true;
+                    break;
+                }
             }
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("cannot open data shard for ecx rebuild"),
-            ));
+            if !found {
+                // If a data shard is missing, we can't rebuild ecx
+                for s in &mut shards {
+                    s.close();
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("cannot open data shard for ecx rebuild"),
+                ));
+            }
         }
     }
 
@@ -825,6 +843,60 @@ mod tests {
         assert!(
             std::fs::metadata(&missing_path).unwrap().len() > 0,
             "rebuilt shard must be non-empty"
+        );
+    }
+
+    // Multi-disk .ecx rebuild: data shards (0-9) needed to reconstruct the
+    // logical .dat content are split across two directories, as on a
+    // multi-disk volume server. Passing the secondary dir via
+    // `additional_dirs` must allow rebuild_ecx_file to find them and
+    // succeed where it would previously fail with
+    // "cannot open data shard for ecx rebuild".
+    #[test]
+    fn test_rebuild_ecx_file_multi_disk() {
+        let tmp_primary = TempDir::new().unwrap();
+        let tmp_secondary = TempDir::new().unwrap();
+        let primary = tmp_primary.path().to_str().unwrap().to_string();
+        let secondary = tmp_secondary.path().to_str().unwrap().to_string();
+
+        let dir = encode_sample_volume(&tmp_primary);
+        assert_eq!(dir, primary);
+
+        // Move some data shards (0-9) to the secondary dir, simulating a
+        // multi-disk layout where not all data shards landed on the same disk.
+        let moved_shards: &[u8] = &[1, 3, 6];
+        for &shard_id in moved_shards {
+            let src = format!("{}/1.ec{:02}", primary, shard_id);
+            let dst = format!("{}/1.ec{:02}", secondary, shard_id);
+            std::fs::rename(&src, &dst).unwrap();
+        }
+
+        // Delete the existing .ecx to force a rebuild.
+        let ecx_path = format!("{}/1.ecx", primary);
+        std::fs::remove_file(&ecx_path).unwrap();
+
+        // Without additional_dirs, rebuild must fail: shards 1, 3, 6 are not
+        // in primary and the full logical .dat content can't be reconstructed.
+        let res = rebuild_ecx_file(&primary, "", VolumeId(1), 10, &[]);
+        assert!(
+            res.is_err(),
+            "ecx rebuild without additional_dirs must fail when data shards are on another disk"
+        );
+        assert!(
+            !std::path::Path::new(&ecx_path).exists(),
+            "failed ecx rebuild must not leave a partial .ecx file behind"
+        );
+
+        // With additional_dirs pointing at the secondary, the rebuild must succeed.
+        rebuild_ecx_file(&primary, "", VolumeId(1), 10, &[secondary.as_str()]).unwrap();
+
+        assert!(
+            std::path::Path::new(&ecx_path).exists(),
+            "rebuilt .ecx should exist in primary dir"
+        );
+        assert!(
+            std::fs::metadata(&ecx_path).unwrap().len() > 0,
+            "rebuilt .ecx must be non-empty"
         );
     }
 
