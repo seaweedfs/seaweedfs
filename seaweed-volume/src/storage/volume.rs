@@ -1966,46 +1966,47 @@ impl Volume {
         Ok(())
     }
 
+    /// Open the on-disk .idx for scrubbing and apply Go openIndex's zero-size
+    /// guard: a zero-size index is only legal for a pre-allocated volume whose
+    /// .dat is superblock-only; an empty index over a populated .dat is
+    /// corruption. Returns the open file + size, or the messages to report.
+    fn open_index_for_scrub(&self) -> Result<(File, i64), Vec<String>> {
+        let idx_path = self.file_name(".idx");
+        let idx_file =
+            File::open(&idx_path).map_err(|e| vec![format!("open index file {}: {}", idx_path, e)])?;
+        let idx_file_size = idx_file
+            .metadata()
+            .map_err(|e| vec![format!("stat index file {}: {}", idx_path, e)])?
+            .len() as i64;
+        if idx_file_size == 0 {
+            match self.dat_file_size() {
+                Ok(dat_size) if dat_size > SUPER_BLOCK_SIZE as u64 => {
+                    return Err(vec![format!(
+                        "zero-size IDX file for volume {} with store size {}",
+                        self.id.0, dat_size
+                    )]);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(vec![format!(
+                        "stat data file for volume {}: {}",
+                        self.id.0, e
+                    )])
+                }
+            }
+        }
+        Ok((idx_file, idx_file_size))
+    }
+
     /// Scrub the volume index: verify the on-disk .idx for overlapping needles
     /// and a size that is a whole number of entries. Mirrors Go's Volume.ScrubIndex
     /// → idx.CheckIndexFile. Index-only; does not read the .dat.
     pub fn scrub_index(&self) -> Result<(u64, Vec<String>), VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
-
-        let idx_path = self.file_name(".idx");
-        let mut idx_file = match File::open(&idx_path) {
-            Ok(f) => f,
-            Err(e) => return Ok((0, vec![format!("open index file {}: {}", idx_path, e)])),
+        let (mut idx_file, idx_file_size) = match self.open_index_for_scrub() {
+            Ok(v) => v,
+            Err(msgs) => return Ok((0, msgs)),
         };
-        let idx_file_size = match idx_file.metadata() {
-            Ok(m) => m.len() as i64,
-            Err(e) => return Ok((0, vec![format!("stat index file {}: {}", idx_path, e)])),
-        };
-
-        // A zero-size index is only legal for a pre-allocated volume without
-        // data (e.g. after volume.grow); a populated .dat with an empty index
-        // is corruption the scrub must catch.
-        if idx_file_size == 0 {
-            match self.dat_file_size() {
-                Ok(dat_size) if dat_size > SUPER_BLOCK_SIZE as u64 => {
-                    return Ok((
-                        0,
-                        vec![format!(
-                            "zero-size IDX file for volume {} with store size {}",
-                            self.id.0, dat_size
-                        )],
-                    ));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    return Ok((
-                        0,
-                        vec![format!("stat data file for volume {}: {}", self.id.0, e)],
-                    ))
-                }
-            }
-        }
-
         Ok(crate::storage::idx::check_index_file(
             &mut idx_file,
             idx_file_size,
