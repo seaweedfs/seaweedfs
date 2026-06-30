@@ -546,6 +546,26 @@ impl EcVolume {
     }
 
     /// Locate the EC shard intervals needed to read a needle.
+    /// Locate the EC shard intervals covering a needle at `actual_offset` whose
+    /// index size is `size`. Mirrors Go's EcVolume.LocateEcShardNeedleInterval.
+    pub fn locate_ec_shard_needle_interval(
+        &self,
+        actual_offset: i64,
+        size: Size,
+    ) -> Vec<ec_locate::Interval> {
+        // shardSize = datFileSize / DataShards when known, else ecdFileSize - 1
+        // (shards are padded to the small block size; the -1 avoids an
+        // off-by-one in the large-block row count).
+        let shard_size = if self.dat_file_size > 0 {
+            self.dat_file_size / self.data_shards as i64
+        } else {
+            self.shard_file_size() - 1
+        };
+        // locate_data wants the on-disk size (header+body+checksum+timestamp+padding).
+        let actual = get_actual_size(size, self.version);
+        ec_locate::locate_data(actual_offset, Size(actual as i32), shard_size, self.data_shards)
+    }
+
     pub fn locate_needle(
         &self,
         needle_id: NeedleId,
@@ -559,25 +579,7 @@ impl EcVolume {
             return Ok(None);
         }
 
-        // Match Go's LocateEcShardNeedleInterval: shardSize = shard.ecdFileSize - 1
-        // Shards are usually padded to ErasureCodingSmallBlockSize, so subtract 1
-        // to avoid off-by-one in large block row count calculation.
-        // If datFileSize is known, use datFileSize / DataShards instead.
-        let shard_size = if self.dat_file_size > 0 {
-            self.dat_file_size / self.data_shards as i64
-        } else {
-            self.shard_file_size() - 1
-        };
-        // Pass the actual on-disk size (header+body+checksum+timestamp+padding)
-        // to locate_data, matching Go: types.Size(needle.GetActualSize(size, version))
-        let actual = get_actual_size(size, self.version);
-        let intervals = ec_locate::locate_data(
-            offset.to_actual_offset(),
-            Size(actual as i32),
-            shard_size,
-            self.data_shards,
-        );
-
+        let intervals = self.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
         Ok(Some((offset, size, intervals)))
     }
 
