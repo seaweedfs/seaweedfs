@@ -464,10 +464,10 @@ impl EcVolume {
     /// against a half-populated cache and return NotFound for the
     /// not-yet-inserted shards.
     ///
-    /// Callers populating the whole cache atomically should use
-    /// [`Self::replace_shard_locations`] instead — it swaps the
-    /// entire map under the write lock and advances the refresh
-    /// timestamp in one step.
+    /// Callers writing back a whole `LookupEcVolume` reply should use
+    /// [`Self::merge_shard_locations`] instead — it upserts the reply's
+    /// shards under the write lock and advances the refresh timestamp in
+    /// one step, retaining cached shards the reply omits.
     pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
         self.shard_locations
             .write()
@@ -484,6 +484,29 @@ impl EcVolume {
     pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
         *self.shard_locations.write().unwrap() = locations;
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+    }
+
+    /// Merge a fresh `LookupEcVolume` reply into the shard-locations cache and
+    /// stamp the refresh time, returning a clone of the resulting map.
+    ///
+    /// Per-shard upsert (mirrors Go's `cachedLookupEcShardLocations`): each shard
+    /// id present in the reply overwrites its cached entry, while shard ids absent
+    /// from the reply keep their previously-cached locations — so a reply that
+    /// passes the data-shard completeness guard but omits a shard already in cache
+    /// does not drop that shard's known location (unlike a full replace).
+    pub fn merge_shard_locations(
+        &self,
+        locations: HashMap<ShardId, Vec<String>>,
+    ) -> HashMap<ShardId, Vec<String>> {
+        let merged = {
+            let mut guard = self.shard_locations.write().unwrap();
+            for (shard_id, addrs) in locations {
+                guard.insert(shard_id, addrs);
+            }
+            guard.clone()
+        };
+        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+        merged
     }
 
     /// Get a cloned list of server addresses for a given shard ID.
