@@ -343,23 +343,22 @@ func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
 	if len(tags) == 0 {
 		return
 	}
-	dn.Lock()
-	if dn.diskTags == nil {
-		dn.diskTags = make(map[uint32][]string, len(tags))
-	}
-	// DiskTags is the full per-disk list every heartbeat, so rebuild backends
+	// DiskTags is the full per-disk list every heartbeat, so rebuild both maps
 	// from scratch to drop disks that were removed.
+	diskTags := make(map[uint32][]string, len(tags))
 	backends := make(map[uint32]diskBackend, len(tags))
 	for _, tagInfo := range tags {
 		if tagInfo == nil {
 			continue
 		}
-		dn.diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
+		diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
 		backends[tagInfo.DiskId] = diskBackend{
 			diskType:       types.ToDiskType(tagInfo.Type),
 			maxVolumeCount: tagInfo.MaxVolumeCount,
 		}
 	}
+	dn.Lock()
+	dn.diskTags = diskTags
 	dn.diskBackends = backends
 	dn.Unlock()
 }
