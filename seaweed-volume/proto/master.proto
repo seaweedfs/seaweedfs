@@ -64,6 +64,11 @@ service Seaweed {
 message DiskTag {
   uint32 disk_id = 1;
   repeated string tags = 2;
+  // type and max_volume_count describe the physical disk itself, reported for
+  // every location including empty ones, so the master can account for disks
+  // that hold no volumes or EC shards yet.
+  string type = 3;
+  int64 max_volume_count = 4;
 }
 
 message Heartbeat {
@@ -206,6 +211,17 @@ message ClusterNodeUpdate {
 message KeepConnectedResponse {
   VolumeLocation volume_location = 1;
   ClusterNodeUpdate cluster_node_update = 2;
+  LockRingUpdate lock_ring_update = 3;
+}
+
+// LockRingUpdate is sent by the master to all filers when the lock ring
+// membership changes. The master batches rapid changes (e.g., node drop + join)
+// and sends the complete member list atomically, avoiding intermediate ring
+// states that would cause unnecessary lock churn.
+message LockRingUpdate {
+  string filer_group = 1;
+  repeated string servers = 2;
+  int64 version = 3;
 }
 
 message LookupVolumeRequest {
@@ -310,6 +326,15 @@ message DiskInfo {
   int64 remote_volume_count = 8;
   uint32 disk_id = 9;
   repeated string tags = 10;
+  // physical_disks lists every physical disk of this type on the node,
+  // including disks that currently hold no volumes or EC shards. The wire
+  // format keys DiskInfo by disk type, so this is how a per-physical-disk view
+  // recovers empty disks that carry no per-volume/per-shard records.
+  repeated PhysicalDiskInfo physical_disks = 11;
+}
+message PhysicalDiskInfo {
+  uint32 disk_id = 1;
+  int64 max_volume_count = 2;
 }
 message DataNodeInfo {
   string id = 1;
@@ -360,11 +385,13 @@ message VacuumVolumeResponse {
 }
 
 message DisableVacuumRequest {
+    bool by_plugin = 1;
 }
 message DisableVacuumResponse {
 }
 
 message EnableVacuumRequest {
+    bool by_plugin = 1;
 }
 message EnableVacuumResponse {
 }
