@@ -48,9 +48,17 @@ func TestBuildEcVolumeRepairJobUsesAdminScript(t *testing.T) {
 }
 
 func TestValidateEcRepairCollectionRejectsCommandSeparators(t *testing.T) {
-	for _, collection := range []string{"photos;volume.list", "photos other", "'photos'", "\"photos\""} {
-		if err := validateEcRepairCollection(collection); err == nil {
+	for _, collection := range []string{"photos;volume.list", "photos other", "'photos'", "\"photos\"", "photos&rebuild", "photos|rebuild", "photos$rebuild"} {
+		if err := ValidateEcRepairCollection(collection); err == nil {
 			t.Fatalf("expected invalid collection %q to be rejected", collection)
+		}
+	}
+}
+
+func TestValidateEcRepairCollectionAcceptsSafeCharacters(t *testing.T) {
+	for _, collection := range []string{"", "photos", "photos_2026", "photos-archive", "photos.archive"} {
+		if err := ValidateEcRepairCollection(collection); err != nil {
+			t.Fatalf("expected collection %q to be valid: %v", collection, err)
 		}
 	}
 }

@@ -30,7 +30,7 @@ func (s *AdminServer) StartEcVolumeRepair(volumeID uint32, collection string) (s
 		return "", fmt.Errorf("plugin is not enabled")
 	}
 	collection = strings.TrimSpace(collection)
-	if err := validateEcRepairCollection(collection); err != nil {
+	if err := ValidateEcRepairCollection(collection); err != nil {
 		return "", err
 	}
 	if !s.plugin.HasCapableWorker(ecRepairJobType) {
@@ -110,9 +110,16 @@ func buildEcVolumeRepairScript(volumeID uint32, collection string) string {
 	return strings.Join(args, " ")
 }
 
-func validateEcRepairCollection(collection string) error {
-	if strings.ContainsAny(collection, " \t\r\n;'\"") {
-		return fmt.Errorf("collection contains unsupported characters")
+func ValidateEcRepairCollection(collection string) error {
+	for _, r := range collection {
+		if !((r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' ||
+			r == '-' ||
+			r == '.') {
+			return fmt.Errorf("collection contains unsupported characters")
+		}
 	}
 	return nil
 }

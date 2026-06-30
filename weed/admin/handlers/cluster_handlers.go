@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -477,6 +478,12 @@ func (h *ClusterHandlers) RepairEcVolume(w http.ResponseWriter, r *http.Request)
 			writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 			return
 		}
+	}
+
+	req.Collection = strings.TrimSpace(req.Collection)
+	if err := dash.ValidateEcRepairCollection(req.Collection); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid collection: "+err.Error())
+		return
 	}
 
 	jobID, err := h.adminServer.StartEcVolumeRepair(uint32(volumeID), req.Collection)
