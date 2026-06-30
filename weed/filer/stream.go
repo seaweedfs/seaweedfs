@@ -148,7 +148,7 @@ func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalida
 		return originalErr
 	}
 
-	glog.V(0).InfofCtx(ctx, "retrying read chunk %s with new locations: %v", fileId, newUrls)
+	glog.V(0).InfofCtx(ctx, "retrying read chunk %s with %d new locations", fileId, len(newUrls))
 	return refetch(newUrls)
 }
 
