@@ -1,4 +1,4 @@
-//! EcVolume: an erasure-coded volume with up to 14 shards.
+//! EcVolume: an erasure-coded volume with up to MAX_SHARD_COUNT shards.
 //!
 //! Each EcVolume has a sorted index (.ecx) and a deletion journal (.ecj).
 //! Shards (.ec00-.ec13) may be distributed across multiple servers.
@@ -22,7 +22,7 @@ pub struct EcVolume {
     pub dir: String,
     pub dir_idx: String,
     pub version: Version,
-    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..14)
+    pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..MAX_SHARD_COUNT)
     pub dat_file_size: i64,
     pub data_shards: u32,
     pub parity_shards: u32,
