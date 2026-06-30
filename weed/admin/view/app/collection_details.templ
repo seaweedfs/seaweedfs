@@ -250,14 +250,6 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 										title="View EC volume details">
 									<i class="fas fa-info-circle"></i>
 								</button>
-								if !ecVolume.IsComplete {
-									<button type="button" class="btn btn-sm btn-outline-warning" 
-											onclick="repairEcVolume(event)" 
-											data-volume-id={ fmt.Sprintf("%d", ecVolume.VolumeID) }
-											title="Repair missing shards">
-										<i class="fas fa-wrench"></i>
-									</button>
-								}
 							</div>
 						</td>
 					</tr>
@@ -369,13 +361,5 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 			window.location.href = (window.__BASE_PATH__ || '') + `/storage/ec-volumes/${volumeId}`;
 		}
 
-		// Repair EC Volume
-		function repairEcVolume(event) {
-			const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-   showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {
-				// TODO: Implement repair functionality
-				showAlert('Repair functionality will be implemented soon.', 'info');
-			});
-		}
 	</script>
 }
