@@ -1515,9 +1515,16 @@ impl VolumeServer for VolumeGrpcService {
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
-            // Check compaction revision
+            // Check compaction revision. Compare against the volume's live
+            // super_block.compaction_revision (matching Go's v.CompactionRevision,
+            // which is the embedded SuperBlock field). last_compact_revision() is
+            // a separate bookkeeping value recorded just before a compaction starts
+            // (for makeup-diff catch-up) and is intentionally left behind the live
+            // revision afterward — it is not interchangeable with the live value and
+            // must not be used here, or this check spuriously fails on every volume
+            // that has ever been compacted even once.
             if req.compaction_revision != u32::MAX
-                && v.last_compact_revision() != req.compaction_revision as u16
+                && v.super_block.compaction_revision != req.compaction_revision as u16
             {
                 return Err(Status::failed_precondition(format!(
                     "volume {} is compacted",
