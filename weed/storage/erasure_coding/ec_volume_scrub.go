@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -280,7 +281,12 @@ func (ecv *EcVolume) ScrubLocal() (int64, []*volume_server_pb.EcShardInfo, []err
 			// needle was fully recovered from local shards \o/ let's check it
 			n := needle.Needle{}
 			if err := n.ReadBytes(data, 0, size, ecv.Version); err != nil {
-				errs = append(errs, fmt.Errorf("needle %d on volume %d, shards %v: %v", id, ecv.VolumeId, localShardIds, err))
+				// A delete-state disagreement between the .ecx index and the reassembled
+				// on-disk header (live index vs zero header size) is not corruption.
+				deleteStateDisagrees := errors.Is(err, needle.ErrorSizeMismatch) && size.IsDeleted() != (n.Size == 0)
+				if !deleteStateDisagrees {
+					errs = append(errs, fmt.Errorf("needle %d on volume %d, shards %v: %v", id, ecv.VolumeId, localShardIds, err))
+				}
 			}
 		}
 
