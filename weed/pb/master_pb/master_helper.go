@@ -140,7 +140,12 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 			// Free derived from the exact max. EC shard slots are not subtracted
 			// here (that needs the configurable EC ratio, which lives outside
 			// this package); capacity planners subtract them from EcShardInfos.
+			// Clamp at 0 so an over-allocated disk does not report negative free
+			// and drag down the node's summed free capacity.
 			freeVolumeCount = maxVolumeCount - (volumeCount - remoteCount)
+			if freeVolumeCount < 0 {
+				freeVolumeCount = 0
+			}
 		}
 		result = append(result, &DiskInfo{
 			Type:              d.Type,

@@ -54,6 +54,31 @@ func TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks(t *testi
 	}
 }
 
+// TestDiskInfoSplitByPhysicalDisk_clampsNegativeFreeOnOverAllocation pins that
+// an over-allocated disk reports zero free, not negative, so it does not drag
+// down the node's summed free capacity.
+func TestDiskInfoSplitByPhysicalDisk_clampsNegativeFreeOnOverAllocation(t *testing.T) {
+	d := &DiskInfo{
+		Type: "hdd",
+		VolumeInfos: []*VolumeInformationMessage{
+			{Id: 1, DiskId: 0},
+			{Id: 2, DiskId: 0},
+			{Id: 3, DiskId: 0},
+		},
+		PhysicalDisks: []*PhysicalDiskInfo{
+			{DiskId: 0, MaxVolumeCount: 2}, // 3 volumes on a max-2 disk
+		},
+	}
+
+	got := d.SplitByPhysicalDisk()
+	if len(got) != 1 {
+		t.Fatalf("want 1 disk, got %d", len(got))
+	}
+	if got[0].FreeVolumeCount != 0 {
+		t.Errorf("over-allocated disk free: want clamped 0, got %d", got[0].FreeVolumeCount)
+	}
+}
+
 func TestDiskInfoSplitByPhysicalDisk_collapsesOnSingleDisk(t *testing.T) {
 	d := &DiskInfo{
 		Type:           "hdd",
