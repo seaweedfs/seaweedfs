@@ -432,6 +432,9 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 // by Do before this runs; here we only reject endpoints that cannot
 // participate (read-only, empty, or outside the requested collection).
 func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from, to needle.VolumeId) (map[needle.VolumeId]needle.VolumeId, error) {
+	if from == to {
+		return nil, fmt.Errorf("no volume id changes, %d == %d", from, to)
+	}
 	for _, vid := range []needle.VolumeId{from, to} {
 		volume, err := c.getVolumeInfoById(vid)
 		if err != nil {

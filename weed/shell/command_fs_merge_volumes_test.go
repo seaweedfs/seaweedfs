@@ -62,6 +62,18 @@ func TestCreateMergePlan_DirectedAllowsEmptyTarget(t *testing.T) {
 	}
 }
 
+// The directed planner rejects a self-map on its own, not just via Do, since it
+// is exercised directly.
+func TestCreateMergePlan_DirectedRejectsSelfMap(t *testing.T) {
+	v := &master_pb.VolumeInformationMessage{Id: 87, Size: 100}
+	c := newMergeCmd(250000, v)
+
+	_, err := c.createMergePlan("*", needle.VolumeId(87), needle.VolumeId(87))
+	if err == nil || !strings.Contains(err.Error(), "no volume id changes") {
+		t.Fatalf("expected self-map rejection, got %v", err)
+	}
+}
+
 func TestCreateMergePlan_DirectedRejectsIneligible(t *testing.T) {
 	cases := []struct {
 		name     string
