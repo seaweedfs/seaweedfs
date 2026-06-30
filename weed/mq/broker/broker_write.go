@@ -161,27 +161,21 @@ func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fi
 		return
 	}
 
+	uploadOption := &operation.UploadOption{}
+	if b.option.VolumeServerAccess == "filerProxy" {
+		uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(string(b.currentFiler))
+	}
+
 	fileId, uploadResult, err, _ = uploader.UploadWithRetry(
 		b,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,
 			Replication: b.option.DefaultReplication,
 			Collection:  "topics",
-			// TtlSec:      wfs.option.TtlSec,
-			// DiskType:    string(wfs.option.DiskType),
-			DataCenter: b.option.DataCenter,
-			Path:       targetFile,
+			DataCenter:  b.option.DataCenter,
+			Path:        targetFile,
 		},
-		&operation.UploadOption{
-			Cipher: b.option.Cipher,
-		},
-		func(host, fileId string) string {
-			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-			if b.option.VolumeServerAccess == "filerProxy" {
-				fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", b.currentFiler, fileId)
-			}
-			return fileUrl
-		},
+		uploadOption,
 		reader,
 	)
 	return

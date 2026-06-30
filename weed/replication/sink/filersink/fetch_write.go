@@ -187,6 +187,17 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourc
 
 	retryName := fmt.Sprintf("replicate manifest chunk %s", sourceFileId)
 	err = util.RetryUntil(retryName, func() error {
+		uploadOption := &operation.UploadOption{
+			Filename:          "",
+			Cipher:            false,
+			IsInputCompressed: false,
+			MimeType:          "application/octet-stream",
+			PairMap:           nil,
+			RetryForever:      false,
+		}
+		if fs.writeChunkByFiler {
+			uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(fs.address)
+		}
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,
 			&filer_pb.AssignVolumeRequest{
@@ -198,17 +209,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourc
 				DiskType:    fs.diskType,
 				Path:        path,
 			},
-			&operation.UploadOption{
-				Filename:          "",
-				Cipher:            false,
-				IsInputCompressed: false,
-				MimeType:          "application/octet-stream",
-				PairMap:           nil,
-				RetryForever:      false,
-			},
-			func(host, fileId string) string {
-				return fs.buildUploadUrl(host, fileId)
-			},
+			uploadOption,
 			bytes.NewReader(manifestData),
 		)
 		if uploadErr != nil {
@@ -302,6 +303,18 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		transferStatus.Status = "uploading"
 		transferStatus.mu.Unlock()
 
+		uploadOption := &operation.UploadOption{
+			Filename:          savedFilename,
+			Cipher:            false,
+			IsInputCompressed: "gzip" == savedHeader.Get("Content-Encoding"),
+			MimeType:          savedHeader.Get("Content-Type"),
+			PairMap:           nil,
+			RetryForever:      false,
+			SourceUrl:         savedSourceUrl,
+		}
+		if fs.writeChunkByFiler {
+			uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(fs.address)
+		}
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,
 			&filer_pb.AssignVolumeRequest{
@@ -313,20 +326,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 				DiskType:    fs.diskType,
 				Path:        path,
 			},
-			&operation.UploadOption{
-				Filename:          savedFilename,
-				Cipher:            false,
-				IsInputCompressed: "gzip" == savedHeader.Get("Content-Encoding"),
-				MimeType:          savedHeader.Get("Content-Type"),
-				PairMap:           nil,
-				RetryForever:      false,
-				SourceUrl:         savedSourceUrl,
-			},
-			func(host, fileId string) string {
-				fileUrl := fs.buildUploadUrl(host, fileId)
-				glog.V(4).Infof("replicating %s to %s header:%+v", savedFilename, fileUrl, savedHeader)
-				return fileUrl
-			},
+			uploadOption,
 			util.NewBytesReader(fullData),
 		)
 		if uploadErr != nil {
@@ -433,13 +433,6 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 			readSize, sourceChunk.Size)
 	}
 	return nil
-}
-
-func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
-	if fs.writeChunkByFiler {
-		return fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, fileId)
-	}
-	return fmt.Sprintf("http://%s/%s", host, fileId)
 }
 
 // hasSourceNewerVersion reports whether the source's current entry for targetPath

@@ -371,9 +371,6 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				MimeType:          mimeType,
 				PairMap:           nil,
 			},
-			func(host, fileId string) string {
-				return fmt.Sprintf("http://%s/%s", host, fileId)
-			},
 			util.NewBytesReader(data),
 		)
 		if flushErr != nil {
@@ -450,16 +447,13 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Path:        task.destinationUrlPath + fileName,
 				},
 				&operation.UploadOption{
-					Filename:          fileName + "-" + strconv.FormatInt(i+1, 10),
-					Cipher:            worker.options.cipher,
-					IsInputCompressed: false,
-					MimeType:          "",
-					PairMap:           nil,
-				},
-				func(host, fileId string) string {
-					return fmt.Sprintf("http://%s/%s", host, fileId)
-				},
-				io.NewSectionReader(f, i*chunkSize, chunkSize),
+						Filename:          fileName + "-" + strconv.FormatInt(i+1, 10),
+						Cipher:            worker.options.cipher,
+						IsInputCompressed: false,
+						MimeType:          "",
+						PairMap:           nil,
+					},
+					io.NewSectionReader(f, i*chunkSize, chunkSize),
 			)
 
 			if err != nil {
@@ -575,9 +569,6 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 			IsInputCompressed: false,
 			MimeType:          "",
 			PairMap:           nil,
-		},
-		func(host, fileId string) string {
-			return fmt.Sprintf("http://%s/%s", host, fileId)
 		},
 		reader,
 	)
