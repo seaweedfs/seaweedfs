@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
-use crate::storage::needle::needle::{get_actual_size, Needle};
+use crate::storage::needle::needle::{get_actual_size, Needle, NeedleError};
 use crate::storage::types::*;
 
 /// An erasure-coded volume managing its local shards and index.
@@ -861,10 +861,18 @@ impl EcVolume {
             if !has_remote_chunks {
                 let mut n = Needle::default();
                 if let Err(e) = n.read_bytes(&data, 0, size, self.version) {
-                    errs.push(format!(
-                        "needle {} on volume {}, shards {:?}: {}",
-                        id.0, self.volume_id.0, local_shard_ids, e
-                    ));
+                    // A delete-state disagreement between the .ecx index and the reassembled
+                    // on-disk header (live index vs zero header size) is not corruption.
+                    let delete_state_disagrees = matches!(
+                        &e,
+                        NeedleError::SizeMismatch { found, .. } if size.is_deleted() != (found.0 == 0)
+                    );
+                    if !delete_state_disagrees {
+                        errs.push(format!(
+                            "needle {} on volume {}, shards {:?}: {}",
+                            id.0, self.volume_id.0, local_shard_ids, e
+                        ));
+                    }
                 }
             }
             Ok(())
@@ -1462,5 +1470,83 @@ mod tests {
         assert_eq!(count, 1);
         assert!(broken.is_empty(), "{:?}", broken);
         assert!(errs.is_empty(), "{:?}", errs);
+    }
+
+    #[test]
+    fn test_scrub_local_suppresses_delete_state_disagreement() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // Live index entry (size > 0) whose reassembled on-disk header reports size 0
+        // (deleted-on-shards but live-in-index) — a delete-state disagreement, not corruption.
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // Shard 0 holds the needle's bytes; all-zero so the parsed header size is 0.
+        let mut shard0 = EcVolumeShard::new(dir, "", VolumeId(1), 0);
+        shard0.create().unwrap();
+        shard0.write_all(&[0u8; 256]).unwrap();
+        shard0.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 0))
+            .unwrap();
+
+        let (count, broken, errs) = vol.scrub_local();
+        assert_eq!(count, 1);
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(
+            errs.is_empty(),
+            "delete-state disagreement must be suppressed, got {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn test_scrub_local_reports_genuine_size_corruption() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries = vec![(NeedleId(1), Offset::from_actual_offset(0), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // On-disk header reports a non-zero size (50) that disagrees with the live
+        // index size (100): genuine corruption, not a delete-state race — must report.
+        let mut bytes = vec![0u8; 256];
+        bytes[15] = 50; // header size field (big-endian u32) = 50
+        let mut shard0 = EcVolumeShard::new(dir, "", VolumeId(1), 0);
+        shard0.create().unwrap();
+        shard0.write_all(&bytes).unwrap();
+        shard0.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 0))
+            .unwrap();
+
+        let (_count, _broken, errs) = vol.scrub_local();
+        assert!(
+            !errs.is_empty(),
+            "a non-zero size mismatch is genuine corruption and must be reported"
+        );
     }
 }
