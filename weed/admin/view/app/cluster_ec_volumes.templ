@@ -245,6 +245,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                     <button type="button" class="btn btn-sm btn-outline-warning" 
                                             onclick="repairVolume(event)" 
                                             data-volume-id={ fmt.Sprintf("%d", volume.VolumeID) }
+                                            data-collection={ volume.Collection }
                                             title="Repair missing shards">
                                         <i class="fas fa-wrench"></i>
                                     </button>
@@ -377,13 +378,16 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
         }
 
         function repairVolume(event) {
-            const volumeId = event.target.closest('button').getAttribute('data-volume-id');
+            const button = event.target.closest('button');
+            const volumeId = button.getAttribute('data-volume-id');
+            const collection = button.getAttribute('data-collection') || '';
             showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {
                 fetch((window.__BASE_PATH__ || '') + `/api/storage/ec-volumes/${volumeId}/repair`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                    }
+                    },
+                    body: JSON.stringify({ collection })
                 })
                 .then(response => {
                     if (!response.ok) {
@@ -668,4 +672,4 @@ func calculateVolumeDistributionSummary(volume dash.EcVolumeWithShards) string {
     }
     
     return fmt.Sprintf("%d DCs, %d racks, %d servers", len(dataCenters), rackCount, len(servers))
-} 
+}

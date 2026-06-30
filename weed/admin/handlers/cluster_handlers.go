@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"mime"
 	"net/http"
@@ -449,6 +450,47 @@ func (h *ClusterHandlers) VacuumVolume(w http.ResponseWriter, r *http.Request) {
 		"message":   "Volume vacuum started successfully",
 		"volume_id": volumeID,
 		"server":    server,
+	})
+}
+
+// RepairEcVolume handles EC volume repair requests via the admin_script plugin.
+func (h *ClusterHandlers) RepairEcVolume(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	volumeIDStr := vars["id"]
+
+	if volumeIDStr == "" {
+		writeJSONError(w, http.StatusBadRequest, "Volume ID is required")
+		return
+	}
+
+	volumeID, err := strconv.ParseUint(volumeIDStr, 10, 32)
+	if err != nil || volumeID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "Invalid volume ID")
+		return
+	}
+
+	var req struct {
+		Collection string `json:"collection"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+			return
+		}
+	}
+
+	jobID, err := h.adminServer.StartEcVolumeRepair(uint32(volumeID), req.Collection)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Failed to start EC volume repair: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"success":    true,
+		"message":    "EC volume repair job started",
+		"volume_id":  uint32(volumeID),
+		"collection": req.Collection,
+		"job_id":     jobID,
 	})
 }
 

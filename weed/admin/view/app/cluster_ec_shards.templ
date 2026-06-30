@@ -246,6 +246,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                     <button type="button" class="btn btn-sm btn-outline-warning" 
                                             onclick="repairVolume(event)" 
                                             data-volume-id={ fmt.Sprintf("%d", shard.VolumeID) }
+                                            data-collection={ shard.Collection }
                                             title="Repair missing shards">
                                         <i class="fas fa-wrench"></i>
                                     </button>
@@ -392,12 +393,14 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             // Get data from the button element (not the icon inside it)
             const button = event.target.closest('button');
             const volumeId = button.getAttribute('data-volume-id');
+            const collection = button.getAttribute('data-collection') || '';
             showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {
-                fetch((window.__BASE_PATH__ || '') + `/api/storage/volumes/${volumeId}/repair`, {
+                fetch((window.__BASE_PATH__ || '') + `/api/storage/ec-volumes/${volumeId}/repair`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                    }
+                    },
+                    body: JSON.stringify({ collection })
                 })
                 .then(response => response.json())
                 .then(data => {
@@ -458,4 +461,3 @@ func calculateDistributionSummary(volumeID uint32, allShards []dash.EcShardWithI
     
     return fmt.Sprintf("%d DCs, %d racks, %d servers", len(dataCenters), len(racks), len(servers))
 }
-

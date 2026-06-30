@@ -254,6 +254,7 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 									<button type="button" class="btn btn-sm btn-outline-warning" 
 											onclick="repairEcVolume(event)" 
 											data-volume-id={ fmt.Sprintf("%d", ecVolume.VolumeID) }
+											data-collection={ data.CollectionName }
 											title="Repair missing shards">
 										<i class="fas fa-wrench"></i>
 									</button>
@@ -371,10 +372,29 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 
 		// Repair EC Volume
 		function repairEcVolume(event) {
-			const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-   showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {
-				// TODO: Implement repair functionality
-				showAlert('Repair functionality will be implemented soon.', 'info');
+			const button = event.target.closest('button');
+			const volumeId = button.getAttribute('data-volume-id');
+			const collection = button.getAttribute('data-collection') || '';
+			showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {
+				fetch((window.__BASE_PATH__ || '') + `/api/storage/ec-volumes/${volumeId}/repair`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({ collection })
+				})
+				.then(response => response.json())
+				.then(data => {
+					if (data.success) {
+						showAlert('Repair initiated successfully', 'success');
+						location.reload();
+					} else {
+						showAlert('Failed to initiate repair: ' + (data.error || 'Unknown error'), 'error');
+					}
+				})
+				.catch(error => {
+					showAlert('Error: ' + error.message, 'error');
+				});
 			});
 		}
 	</script>

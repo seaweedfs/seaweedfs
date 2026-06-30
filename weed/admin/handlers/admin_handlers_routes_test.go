@@ -42,6 +42,22 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 	}
 }
 
+func TestSetupRoutes_RegistersEcVolumeRepairAPI_NoAuth(t *testing.T) {
+	router := mux.NewRouter()
+
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+
+	assertHasRoute(t, router, http.MethodPost, "/api/storage/ec-volumes/123/repair")
+}
+
+func TestSetupRoutes_RegistersEcVolumeRepairAPI_WithAuth(t *testing.T) {
+	router := mux.NewRouter()
+
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+
+	assertHasRoute(t, router, http.MethodPost, "/api/storage/ec-volumes/123/repair")
+}
+
 func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
