@@ -245,7 +245,6 @@ func (s *SingleChunkCacher) startCaching() {
 		if s.shouldCache {
 			s.parent.chunkCache.SetChunk(s.chunkFileId, s.data)
 		}
-		atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
 	}
 	s.Unlock()
 }
