@@ -208,6 +208,12 @@ pub fn rebuild_ec_files(
 }
 
 /// Verify EC shards by computing parity against the existing data and identifying corrupted shards.
+///
+/// No longer wired to a scrub mode: FULL is now Go's per-needle local+remote walk
+/// (`store_ec::scrub_ec_volume_distributed`). Retained as a standalone Reed-Solomon
+/// parity check — the only parity/cold-region verification available until the
+/// `.ecsum` bitrot CHECKSUM path lands.
+#[allow(dead_code)]
 pub fn verify_ec_shards(
     dir: &str,
     collection: &str,
