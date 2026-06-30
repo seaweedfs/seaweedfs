@@ -102,10 +102,6 @@ func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc
 
 type VolumeServerJwtFunction func(fileId string) string
 
-type CacheInvalidator interface {
-	InvalidateCache(fileId string)
-}
-
 // urlSlicesEqual checks if two URL slices contain the same URLs (order-independent)
 func urlSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
@@ -124,6 +120,36 @@ func urlSlicesEqual(a, b []string) bool {
 		counts[url]--
 	}
 	return true
+}
+
+// retryFetchWithFreshLocations is the shared self-heal for the read paths: when a chunk fetch
+// fails, invalidate the cached volume locations, re-lookup, and call refetch only when the
+// resolved locations actually changed (so we never retry against the same servers). originalErr
+// is returned unchanged when no retry is attempted, so callers surface the real fetch failure.
+func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string, oldUrls []string, originalErr error, refetch func(newUrls []string) error) error {
+	if invalidator == nil {
+		return originalErr
+	}
+
+	glog.V(0).InfofCtx(ctx, "read chunk %s failed, invalidating cache and retrying: %v", fileId, originalErr)
+	invalidator.InvalidateCache(fileId)
+
+	newUrls, lookupErr := lookupFn(ctx, fileId)
+	if lookupErr != nil {
+		glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", fileId, lookupErr)
+		return fmt.Errorf("re-lookup chunk %s after cache invalidation: %w", fileId, lookupErr)
+	}
+	if len(newUrls) == 0 {
+		glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", fileId)
+		return fmt.Errorf("re-lookup chunk %s returned no locations", fileId)
+	}
+	if urlSlicesEqual(oldUrls, newUrls) {
+		glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", fileId)
+		return originalErr
+	}
+
+	glog.V(0).InfofCtx(ctx, "retrying read chunk %s with %d new locations", fileId, len(newUrls))
+	return refetch(newUrls)
 }
 
 func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
@@ -195,32 +221,15 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 
 			// If read failed, try to invalidate cache and re-lookup
 			if err != nil && written == 0 {
-				if invalidator, ok := masterClient.(CacheInvalidator); ok {
-					glog.V(0).InfofCtx(ctx, "read chunk %s failed, invalidating cache and retrying", chunkView.FileId)
-					invalidator.InvalidateCache(chunkView.FileId)
-
-					// Re-lookup
-					newUrlStrings, lookupErr := masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
-					if lookupErr == nil && len(newUrlStrings) > 0 {
-						// Check if new URLs are different from old ones to avoid infinite retry
-						if !urlSlicesEqual(urlStrings, newUrlStrings) {
-							glog.V(0).InfofCtx(ctx, "retrying read chunk %s with new locations: %v", chunkView.FileId, newUrlStrings)
-							_, err = retriedStreamFetchChunkData(ctx, writer, newUrlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
-							// Update the map so subsequent references use fresh URLs
-							if err == nil {
-								fileId2Url[chunkView.FileId] = newUrlStrings
-							}
-						} else {
-							glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", chunkView.FileId)
-						}
-					} else {
-						if lookupErr != nil {
-							glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", chunkView.FileId, lookupErr)
-						} else {
-							glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", chunkView.FileId)
-						}
+				invalidator, _ := masterClient.(CacheInvalidator)
+				err = retryFetchWithFreshLocations(ctx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId, urlStrings, err, func(newUrls []string) error {
+					_, refetchErr := retriedStreamFetchChunkData(ctx, writer, newUrls, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+					if refetchErr == nil {
+						// Update the map so subsequent references use fresh URLs
+						fileId2Url[chunkView.FileId] = newUrls
 					}
-				}
+					return refetchErr
+				})
 			}
 
 			offset += int64(chunkView.ViewSize)
