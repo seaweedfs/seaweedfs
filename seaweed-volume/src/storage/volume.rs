@@ -1966,66 +1966,51 @@ impl Volume {
         Ok(())
     }
 
-    /// Scrub the volume index by verifying each needle map entry against the dat file.
-    /// For each entry, reads only the 16-byte needle header at the given offset to verify:
-    /// correct needle ID, correct cookie (non-zero), and valid size.
-    /// Does NOT read/verify the full needle data or CRC.
-    /// Returns (files_checked, broken_needles) tuple.
+    /// Scrub the volume index: verify the on-disk .idx for overlapping needles
+    /// and a size that is a whole number of entries. Mirrors Go's Volume.ScrubIndex
+    /// → idx.CheckIndexFile. Index-only; does not read the .dat.
     pub fn scrub_index(&self) -> Result<(u64, Vec<String>), VolumeError> {
-        if self.dat_file.is_none() && self.remote_dat_file.is_none() {
-            return Err(VolumeError::NotFound);
-        }
-        let nm = self.nm_or_not_found()?;
-        let dat_size = self.dat_file_size().map_err(VolumeError::Io)?;
+        let _guard = self.data_file_access_control.read_lock();
 
-        let mut files_checked: u64 = 0;
-        let mut broken = Vec::new();
+        let idx_path = self.file_name(".idx");
+        let mut idx_file = match File::open(&idx_path) {
+            Ok(f) => f,
+            Err(e) => return Ok((0, vec![format!("open index file {}: {}", idx_path, e)])),
+        };
+        let idx_file_size = match idx_file.metadata() {
+            Ok(m) => m.len() as i64,
+            Err(e) => return Ok((0, vec![format!("stat index file {}: {}", idx_path, e)])),
+        };
 
-        for (needle_id, nv) in nm.iter_entries() {
-            if nv.offset.is_zero() || nv.size.is_deleted() {
-                continue;
-            }
-
-            let offset = nv.offset.to_actual_offset();
-            if offset < 0 || offset as u64 >= dat_size {
-                broken.push(format!(
-                    "needle {} offset {} out of range (dat_size={})",
-                    needle_id.0, offset, dat_size
-                ));
-                continue;
-            }
-
-            // Read only the 16-byte needle header to verify ID, cookie, and size
-            let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
-            match self.read_exact_at_backend(&mut header_buf, offset as u64) {
-                Ok(()) => {
-                    let (cookie, id, size) = Needle::parse_header(&header_buf);
-                    if id != needle_id {
-                        broken.push(format!(
-                            "needle {} header id mismatch: expected {}, got {}",
-                            needle_id.0, needle_id.0, id.0
-                        ));
-                    } else if cookie.0 == 0 {
-                        broken.push(format!(
-                            "needle {} has zero cookie at offset {}",
-                            needle_id.0, offset
-                        ));
-                    } else if size.0 <= 0 && !nv.size.is_deleted() {
-                        broken.push(format!(
-                            "needle {} has invalid size {} at offset {}",
-                            needle_id.0, size.0, offset
-                        ));
-                    }
+        // A zero-size index is only legal for a pre-allocated volume without
+        // data (e.g. after volume.grow); a populated .dat with an empty index
+        // is corruption the scrub must catch.
+        if idx_file_size == 0 {
+            match self.dat_file_size() {
+                Ok(dat_size) if dat_size > SUPER_BLOCK_SIZE as u64 => {
+                    return Ok((
+                        0,
+                        vec![format!(
+                            "zero-size IDX file for volume {} with store size {}",
+                            self.id.0, dat_size
+                        )],
+                    ));
                 }
+                Ok(_) => {}
                 Err(e) => {
-                    broken.push(format!("needle {} read header error: {}", needle_id.0, e));
+                    return Ok((
+                        0,
+                        vec![format!("stat data file for volume {}: {}", self.id.0, e)],
+                    ))
                 }
             }
-
-            files_checked += 1;
         }
 
-        Ok((files_checked, broken))
+        Ok(crate::storage::idx::check_index_file(
+            &mut idx_file,
+            idx_file_size,
+            self.version(),
+        ))
     }
 
     /// Scrub the volume by reading and verifying all needles.
@@ -3911,6 +3896,38 @@ mod tests {
             idx_broken.is_empty(),
             "empty volume should scrub_index clean, got {:?}",
             idx_broken
+        );
+    }
+
+    #[test]
+    fn test_scrub_index_flags_zero_size_idx_with_data() {
+        // A populated .dat with an empty .idx is corruption — the pre-allocated
+        // exception only covers a superblock-only .dat.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let data = b"needle data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+        assert!(v.dat_file_size().unwrap() > SUPER_BLOCK_SIZE as u64);
+
+        // Truncate the .idx to zero while the .dat keeps its needle.
+        std::fs::File::create(v.file_name(".idx")).unwrap();
+
+        let (count, broken) = v.scrub_index().unwrap();
+        assert_eq!(count, 0);
+        assert!(
+            broken.iter().any(|e| e.contains("zero-size IDX file")),
+            "expected zero-size IDX error, got {:?}",
+            broken
         );
     }
 
