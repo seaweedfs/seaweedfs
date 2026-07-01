@@ -20,11 +20,12 @@ func init() {
 }
 
 type commandEcVolumeScrub struct {
-	env               *CommandEnv
-	volumeServerAddrs []pb.ServerAddress
-	volumeIDs         []uint32
-	mode              volume_server_pb.VolumeScrubMode
-	grpcDialOption    grpc.DialOption
+	env                      *CommandEnv
+	volumeServerAddrs        []pb.ServerAddress
+	volumeIDs                []uint32
+	mode                     volume_server_pb.VolumeScrubMode
+	forceDeletedNeedlesCheck bool
+	grpcDialOption           grpc.DialOption
 }
 
 func (c *commandEcVolumeScrub) Name() string {
@@ -52,6 +53,7 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/full/checksum)")
 	maxParallelization := volScrubCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	showDetails := volScrubCommand.Bool("details", false, "display scrub result details, if available")
+	forceDeletedNeedlesCheck := volScrubCommand.Bool("forceDeletedNeedlesCheck", false, "force strict verification of deleted needles (full mode only); may report false positives when EC indexes disagree")
 
 	if err = volScrubCommand.Parse(args); err != nil {
 		return err
@@ -104,6 +106,7 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 	fmt.Fprintf(writer, "using %s mode\n", c.mode.String())
 	c.env = commandEnv
+	c.forceDeletedNeedlesCheck = *forceDeletedNeedlesCheck
 
 	return c.scrubEcVolumes(writer, *maxParallelization, *showDetails)
 }
@@ -125,8 +128,9 @@ func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelizati
 
 			err := operation.WithVolumeServerClient(false, addr, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				res, err := volumeServerClient.ScrubEcVolume(context.Background(), &volume_server_pb.ScrubEcVolumeRequest{
-					Mode:      c.mode,
-					VolumeIds: c.volumeIDs,
+					Mode:                     c.mode,
+					VolumeIds:                c.volumeIDs,
+					ForceDeletedNeedlesCheck: c.forceDeletedNeedlesCheck,
 				})
 				if err != nil {
 					return err

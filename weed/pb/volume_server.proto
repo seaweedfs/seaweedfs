@@ -711,6 +711,7 @@ message ScrubEcVolumeRequest {
     VolumeScrubMode mode = 1;
     // optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
     repeated uint32 volume_ids = 2;
+    bool force_deleted_needles_check = 3; // FULL mode only; may report false positives when EC indexes disagree
 }
 message ScrubEcVolumeResponse {
     uint64 total_volumes = 1;
