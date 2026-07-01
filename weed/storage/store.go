@@ -433,6 +433,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 		maxVolumeCounts[string(location.DiskType)] += uint32(effectiveMaxCount)
 		diskMaxByID[diskID] = effectiveMaxCount
+		// Sum physical capacity per disk type. This assumes one location per
+		// filesystem; if several -dir on one mount share a disk type, its total and
+		// free are both counted once per location, so the used ratio the balance
+		// gate relies on stays correct, but absolute capacity is over-reported.
+		// Reporting per physical disk (mirroring max_volume_count_by_disk) is the
+		// exact fix.
 		diskTotalBytes[string(location.DiskType)] += location.diskTotalBytes.Load()
 		diskFreeBytes[string(location.DiskType)] += location.diskFreeBytes.Load()
 		location.volumesLock.RLock()

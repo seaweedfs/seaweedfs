@@ -173,9 +173,10 @@ func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 // zero total are treated as "not reported" and skipped.
 func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[string]uint64) {
 	for diskType, totalBytes := range diskTotalBytes {
-		if totalBytes == 0 {
-			continue
-		}
+		// Unlike maxVolumeCount, a 0 here is not "unset" but "not reported": let it
+		// flow through so a later heartbeat that drops physical-capacity reporting
+		// (e.g. statfs starts failing) clears the stale bytes and the gate falls
+		// back to slot-only instead of trusting outdated capacity.
 		dt := types.ToDiskType(diskType)
 		currentDiskUsage := dn.diskUsages.getOrCreateDisk(dt)
 		currentTotal := atomic.LoadInt64(&currentDiskUsage.diskTotalBytes)

@@ -355,7 +355,7 @@ func capacityByMinVolumeDensity(diskType types.DiskType, volumeSizeLimitMb uint6
 func capacityByActualDataUsage(diskType types.DiskType, volumeSizeLimitMb uint64) DensityFunc {
 	return func(info *master_pb.DataNodeInfo) (float64, uint64) {
 		diskInfo, found := info.DiskInfos[string(diskType)]
-		if !found {
+		if !found || diskInfo == nil {
 			return 0, 0
 		}
 		var volumeSizes uint64
@@ -423,7 +423,7 @@ func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
 
 func (n *Node) hasFreeVolumeSlot(diskType types.DiskType) bool {
 	diskInfo, found := n.info.DiskInfos[string(diskType)]
-	if !found {
+	if !found || diskInfo == nil {
 		return false
 	}
 	return diskInfo.VolumeCount < diskInfo.MaxVolumeCount
@@ -434,7 +434,7 @@ func (n *Node) hasFreeVolumeSlot(diskType types.DiskType) bool {
 // which makes callers fall back to slot-only behavior.
 func (n *Node) diskBytes(diskType types.DiskType) (total, free uint64, ok bool) {
 	diskInfo, found := n.info.DiskInfos[string(diskType)]
-	if !found || diskInfo.DiskTotalBytes == 0 {
+	if !found || diskInfo == nil || diskInfo.DiskTotalBytes == 0 {
 		return 0, 0, false
 	}
 	return diskInfo.DiskTotalBytes, diskInfo.DiskFreeBytes, true
