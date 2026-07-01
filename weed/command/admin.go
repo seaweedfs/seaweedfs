@@ -44,6 +44,7 @@ type AdminOptions struct {
 	grpcPort         *int
 	master           *string
 	masters          *string // deprecated, for backward compatibility
+	filerGroup       *string
 	adminUser        *string
 	adminPassword    *string
 	readOnlyUser     *string
@@ -65,6 +66,7 @@ func init() {
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
+	a.filerGroup = cmdAdmin.Flag.String("filerGroup", "", "filerGroup for the filers, brokers, and S3 servers")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", ".", "directory to store admin configuration and data files (default current dir; required for maintenance task state to persist)")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
@@ -82,7 +84,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
+	UsageLine: "admin -port=23646 -master=localhost:9333 [-filerGroup=group] [-port.grpc=33646] [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -99,6 +101,7 @@ var cmdAdmin = &Command{
 
   Example Usage:
     weed admin -port=23646 -master="master1:9333,master2:9333"
+    weed admin -port=23646 -master="localhost:9333" -filerGroup="tenant-a"
     weed admin -port=23646 -master="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
     weed admin -port=23646 -port.grpc=33646 -master="localhost:9333" -dataDir="~/seaweedfs-admin"
     weed admin -port=9900 -port.grpc=19900 -master="localhost:9333"
@@ -383,7 +386,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", admin.StaticHandler()))
 
 	// Create admin server (plugin is always enabled)
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
+	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

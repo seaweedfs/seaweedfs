@@ -85,6 +85,7 @@ type AdminServer struct {
 	masterClient    *wdclient.MasterClient
 	templateFS      http.FileSystem
 	dataDir         string
+	filerGroup      string
 	grpcDialOption  grpc.DialOption
 	cacheExpiration time.Duration
 	lastCacheUpdate time.Time
@@ -134,13 +135,13 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
+func NewAdminServer(masters string, filerGroup string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
 	masterClient := wdclient.NewMasterClient(
 		grpcDialOption,
-		"",      // filerGroup - not needed for admin
+		filerGroup,
 		"admin", // clientType
 		"",      // clientHost - not needed for admin
 		"",      // dataCenter - not needed for admin
@@ -162,6 +163,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		masterClient:                  masterClient,
 		templateFS:                    templateFS,
 		dataDir:                       dataDir,
+		filerGroup:                    filerGroup,
 		grpcDialOption:                grpcDialOption,
 		cacheExpiration:               defaultCacheTimeout,
 		filerCacheExpiration:          defaultFilerCacheTimeout,
@@ -291,6 +293,13 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	go server.publishMaintenanceMetrics(bgCtx)
 
 	return server
+}
+
+func (s *AdminServer) listClusterNodesRequest(clientType string) *master_pb.ListClusterNodesRequest {
+	return &master_pb.ListClusterNodesRequest{
+		ClientType: clientType,
+		FilerGroup: s.filerGroup,
+	}
 }
 
 // vacuumToggler abstracts the master's vacuum enable/disable for testing.
@@ -1112,9 +1121,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 
 	// Get filer information from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.FilerType))
 		if err != nil {
 			return err
 		}
@@ -1159,9 +1166,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 
 	// Get broker information from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.BrokerType))
 		if err != nil {
 			return err
 		}
@@ -1206,9 +1211,7 @@ func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
 
 	// Get S3 server information from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.S3Type,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.S3Type))
 		if err != nil {
 			return err
 		}
@@ -1642,9 +1645,7 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 	// Get broker information from master
 	var brokerAddress string
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.BrokerType))
 		if err != nil {
 			return err
 		}
