@@ -1178,6 +1178,45 @@ mod tests {
     }
 
     #[test]
+    fn test_build_heartbeat_disk_tag_reflects_disk_space_low_override() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                3,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                vec![],
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(7),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+
+        // Low disk space caps the reported per-disk max at the used slots
+        // (1 volume + 0 EC shards), matching the per-type max_volume_counts.
+        store.locations[0]
+            .is_disk_space_low
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.disk_tags[0].max_volume_count, 1);
+        assert_eq!(heartbeat.max_volume_counts[&DiskType::HardDrive.to_string()], 1);
+    }
+
+    #[test]
     fn test_build_heartbeat_marks_empty_store_as_has_no_volumes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir = temp_dir.path().to_str().unwrap();
