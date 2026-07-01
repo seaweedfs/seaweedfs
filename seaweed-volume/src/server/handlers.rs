@@ -3181,7 +3181,6 @@ struct ChunkManifest {
 struct ChunkInfo {
     fid: String,
     offset: i64,
-    #[allow(dead_code)]
     size: i64,
 }
 
@@ -3235,11 +3234,11 @@ async fn try_expand_chunk_manifest(
         // Validate the attacker-controlled chunk offset before indexing: a
         // negative value would wrap to a huge usize, and an out-of-range one has
         // nowhere to land.
-        if chunk.offset < 0 {
+        if chunk.offset < 0 || chunk.size < 0 {
             return Some(
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("invalid negative chunk offset in {}", chunk.fid),
+                    format!("invalid negative chunk offset/size in {}", chunk.fid),
                 )
                     .into_response(),
             );
@@ -3260,8 +3259,10 @@ async fn try_expand_chunk_manifest(
         if offset >= result.len() {
             continue;
         }
-        // Bytes past the window are dropped, matching the prior truncation.
-        let copy_len = data.len().min(result.len() - offset);
+        // Clamp to the chunk's declared size so an over-long chunk can't bleed
+        // into the next chunk's window; also drop bytes past the buffer end.
+        let bound = (chunk.size as usize).min(result.len() - offset);
+        let copy_len = data.len().min(bound);
         result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
     }
 
