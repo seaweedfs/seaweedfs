@@ -560,8 +560,9 @@ func usesChunkETag(entry *filer_pb.Entry) bool {
 
 // sortedSimpleChunks returns chunks sorted by (offset, ETag) if they are a
 // manifest-free, non-overlapping set whose visible bytes are fully determined
-// by the list; otherwise nil. Overlapping ranges would require resolving the
-// visible interval by chunk timestamp, which this fast path does not attempt.
+// by the list and every chunk carries a usable per-chunk ETag; otherwise nil.
+// Overlapping ranges would require resolving the visible interval by chunk
+// timestamp, which this fast path does not attempt.
 func sortedSimpleChunks(chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
 	sorted := make([]*filer_pb.FileChunk, len(chunks))
 	copy(sorted, chunks)
@@ -574,6 +575,12 @@ func sortedSimpleChunks(chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
 	prevEnd := int64(0)
 	for i, c := range sorted {
 		if c.IsChunkManifest {
+			return nil
+		}
+		// An empty or undecodable ETag is not a content fingerprint, so
+		// element-wise (offset, size, ETag) equality cannot prove the bytes
+		// match — decline rather than assert a false content-equality.
+		if len(util.Base64Md5ToBytes(c.ETag)) == 0 {
 			return nil
 		}
 		if i > 0 && c.Offset < prevEnd {

@@ -495,6 +495,42 @@ func TestVerifySyncManifestChunkStaysEtagMismatch(t *testing.T) {
 	}
 }
 
+// TestVerifySyncEmptyChunkETagStaysEtagMismatch confirms that a chunk with an
+// empty per-chunk ETag is never fast-pathed to CHUNK_REORDER: an empty ETag is
+// not a content fingerprint, so (offset, size, ETag) equality cannot prove the
+// bytes match. The two sides reorder their non-empty chunks so the file ETags
+// differ and the reorder check is reached, but the empty-ETag chunk in the
+// middle must keep it ETAG_MISMATCH rather than assert a false content-equality.
+func TestVerifySyncEmptyChunkETagStaysEtagMismatch(t *testing.T) {
+	c0 := verifyChunk(0, 100, "e0")
+	empty := &filer_pb.FileChunk{Offset: 100, Size: 100} // no ETag → not a fingerprint
+	c2 := verifyChunk(200, 100, "e2")
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c0, empty, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c2, c0, empty})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (empty per-chunk ETag is not a content fingerprint)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
 // TestVerifySyncCutoffTime verifies that entries newer than cutoffTime are
 // skipped in both the A-only (MISSING) and B-only (ONLY_IN_B) branches.
 func TestVerifySyncCutoffTime(t *testing.T) {
