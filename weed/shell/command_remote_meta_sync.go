@@ -40,6 +40,9 @@ func (c *commandRemoteMetaSync) Help() string {
 		remote.meta.sync -dir=/xxx
 		remote.meta.sync -dir=/xxx/some/subdir
 
+	Local metadata for files and directories removed from the remote is also
+	removed by default; pass -delete=false to keep it.
+
 	This is designed to run regularly. So you can add it to some cronjob.
 
 	If there are no other operations changing remote files, this operation is not needed.
@@ -56,6 +59,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	remoteMetaSyncCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
 	dir := remoteMetaSyncCommand.String("dir", "", "a directory in filer")
+	deleteStale := remoteMetaSyncCommand.Bool("delete", true, "remove local metadata of files and directories deleted from remote")
 
 	if err = remoteMetaSyncCommand.Parse(args); err != nil {
 		return nil
@@ -68,7 +72,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// pull metadata from remote
-	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf); err != nil {
+	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *deleteStale); err != nil {
 		return fmt.Errorf("cache meta data: %w", err)
 	}
 
@@ -144,7 +148,7 @@ type remoteChild struct {
 	remoteEntry *filer_pb.RemoteEntry
 }
 
-func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
+func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf, deleteStale bool) error {
 
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
 	if err != nil {
@@ -154,7 +158,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 	remote := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dirToCache)
 
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return pullMetadataDirectory(context.Background(), client, writer, remoteStorage, dirToCache, remote)
+		return pullMetadataDirectory(context.Background(), client, writer, remoteStorage, dirToCache, remote, deleteStale)
 	})
 }
 
@@ -163,7 +167,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 // delimiter surfaces subdirectories, including empty ones, as their own
 // entries, so directories are materialized locally even when they hold no
 // files.
-func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation) error {
+func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation, deleteStale bool) error {
 
 	remoteChildren := make(map[string]*remoteChild)
 	if err := remoteStorage.ListDirectory(ctx, remoteLoc, func(dir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
@@ -201,12 +205,47 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 		}
 
 		if child.isDirectory {
-			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name)); err != nil {
+			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name), deleteStale); err != nil {
 				return err
 			}
 		}
 	}
 
+	if deleteStale {
+		if err := deleteMissingLocalEntries(ctx, client, writer, remoteStorage, localDir, remoteLoc, remoteChildren, localChildren); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// deleteMissingLocalEntries removes local entries under localDir that no longer
+// exist on the remote. Files are dropped directly; a directory gone from the
+// remote is descended into so its remote-backed children are cleaned while any
+// local-only entries are left in place. Entries without a RemoteEntry are local
+// changes and are never touched.
+func deleteMissingLocalEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation, remoteChildren map[string]*remoteChild, localChildren map[string]*filer_pb.Entry) error {
+	for name, existingEntry := range localChildren {
+		if _, ok := remoteChildren[name]; ok {
+			continue
+		}
+		localPath := localDir.Child(name)
+		if existingEntry.IsDirectory {
+			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name), true); err != nil {
+				return err
+			}
+		} else if existingEntry.RemoteEntry != nil {
+			fmt.Fprintf(writer, "%s (delete)\n", localPath)
+			if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+				Directory:    string(localDir),
+				Name:         name,
+				IsDeleteData: true,
+			}); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
