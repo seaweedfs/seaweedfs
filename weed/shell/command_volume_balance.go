@@ -23,10 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
-const (
-	thresholdVolumeSize      = 1.01
-	countZeroSelectedVolumes = 0.5
-)
+const thresholdVolumeSize = 1.01
 
 func init() {
 	Commands = append(Commands, &commandVolumeBalance{})
@@ -338,8 +335,7 @@ func capacityByMinVolumeDensity(diskType types.DiskType, volumeSizeLimitMb uint6
 		if volumeSizeLimitMb == 0 {
 			volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 		}
-		usedVolumeCount := volumeSizes / (volumeSizeLimitMb * util.MiByte)
-		return float64(diskInfo.MaxVolumeCount - int64(usedVolumeCount)), usedVolumeCount
+		return balancer.VolumeDensity(diskInfo.MaxVolumeCount, volumeSizes, volumeSizeLimitMb*util.MiByte)
 	}
 }
 
@@ -365,8 +361,7 @@ func capacityByActualDataUsage(diskType types.DiskType, volumeSizeLimitMb uint64
 		if volumeSizeLimitMb == 0 {
 			volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 		}
-		usedVolumeCount := volumeSizes / (volumeSizeLimitMb * util.MiByte)
-		return 1, usedVolumeCount
+		return 1, balancer.UsedVolumeEquivalents(volumeSizes, volumeSizeLimitMb*util.MiByte)
 	}
 }
 
@@ -399,22 +394,11 @@ func capacityByFreeVolumeCount(diskType types.DiskType) CapacityFunc {
 }
 
 func (n *Node) localVolumeDensityRatio(capacityFunc DensityFunc) float64 {
-	capacity, selectedVolumes := capacityFunc(n.info)
-	if capacity == 0 {
-		return 0
-	}
-	if selectedVolumes == 0 {
-		return countZeroSelectedVolumes / capacity
-	}
-	return float64(selectedVolumes) / capacity
+	return balancer.DensityRatio(capacityFunc(n.info))
 }
 
 func (n *Node) localVolumeDensityNextRatio(capacityFunc DensityFunc) float64 {
-	capacity, selectedVolumes := capacityFunc(n.info)
-	if capacity == 0 {
-		return 0
-	}
-	return float64(selectedVolumes+1) / capacity
+	return balancer.DensityNextRatio(capacityFunc(n.info))
 }
 
 func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
