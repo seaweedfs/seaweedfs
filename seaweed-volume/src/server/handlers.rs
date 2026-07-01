@@ -546,6 +546,23 @@ async fn do_replicated_request(
     .await
     .map_err(|e| format!("lookup volume failed: {}", e))?;
 
+    // Mirror Go's GetWritableRemoteReplications: reject when the master reports fewer replicas than
+    // the copy count. lookup_volume is uncached, so recovery is immediate once the replica re-registers.
+    let copy_count = {
+        let store = state.store.read().unwrap();
+        store.find_volume(VolumeId(vid)).map_or(1, |(_, v)| {
+            v.super_block.replica_placement.get_copy_count()
+        })
+    };
+    if locations.len() < copy_count as usize {
+        return Err(format!(
+            "replicating operations [{}] is less than volume {} replication copy count [{}]",
+            locations.len(),
+            vid,
+            copy_count
+        ));
+    }
+
     let self_http = to_http_address(&state.self_url);
     let remote_locations: Vec<_> = locations
         .into_iter()
