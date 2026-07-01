@@ -50,3 +50,47 @@ func TestToDataNodeInfoReportsEmptyPhysicalDisks(t *testing.T) {
 			byID[2].MaxVolumeCount, byID[2].VolumeCount)
 	}
 }
+
+// TestToDataNodeInfoKeepsZeroCapacityDisk verifies a disk reporting max 0 (an
+// unavailable disk) is still listed as long as the node reports real per-disk
+// capacity — max 0 is a valid physical disk state, not a signal to drop it.
+func TestToDataNodeInfoKeepsZeroCapacityDisk(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 700})
+	dn.AdjustMaxVolumeCounts(map[string]uint32{"": 700})
+
+	dn.UpdateDiskTags([]*master_pb.DiskTag{
+		{DiskId: 0, Type: "", MaxVolumeCount: 350},
+		{DiskId: 1, Type: "", MaxVolumeCount: 350},
+		{DiskId: 2, Type: "", MaxVolumeCount: 0}, // unavailable disk
+	})
+
+	di := dn.ToDataNodeInfo().DiskInfos[""]
+	if len(di.PhysicalDisks) != 3 {
+		t.Fatalf("want 3 physical disks (incl the zero-capacity one), got %d", len(di.PhysicalDisks))
+	}
+}
+
+// TestToDataNodeInfoFallsBackWhenNoCapacityReported verifies an older volume
+// server that does not populate DiskTag type/max (all zeros) leaves
+// PhysicalDisks empty, so SplitByPhysicalDisk keeps its record-based fallback.
+func TestToDataNodeInfoFallsBackWhenNoCapacityReported(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 700})
+	dn.AdjustMaxVolumeCounts(map[string]uint32{"": 700})
+
+	// Older server: DiskTags carry disk_id (+tags) but no type/max.
+	dn.UpdateDiskTags([]*master_pb.DiskTag{
+		{DiskId: 0},
+		{DiskId: 1},
+	})
+
+	di := dn.ToDataNodeInfo().DiskInfos[""]
+	if len(di.PhysicalDisks) != 0 {
+		t.Fatalf("want no PhysicalDisks (fallback), got %d", len(di.PhysicalDisks))
+	}
+}

@@ -319,22 +319,33 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		if tags, found := diskTags[diskInfo.DiskId]; found {
 			diskInfo.Tags = append([]string(nil), tags...)
 		}
-		// List every physical disk of this type, including disks with no
-		// volumes or EC shards, so per-physical-disk consumers can see them.
+		// List every physical disk of this type, including disks with no volumes
+		// or EC shards, so per-physical-disk consumers can see them. A max of 0
+		// is a valid state (an unavailable disk), so keep those entries — but
+		// only emit the list when the volume server actually reported per-disk
+		// capacity. An older server that doesn't populate it reports all zeros,
+		// in which case leaving PhysicalDisks nil falls back to the split.
 		diskType := types.ToDiskType(diskInfo.Type)
 		var physical []*master_pb.PhysicalDiskInfo
+		anyCapacity := false
 		for diskID, b := range backends {
-			if b.diskType == diskType && b.maxVolumeCount > 0 {
-				physical = append(physical, &master_pb.PhysicalDiskInfo{
-					DiskId:         diskID,
-					MaxVolumeCount: b.maxVolumeCount,
-				})
+			if b.diskType != diskType {
+				continue
 			}
+			if b.maxVolumeCount > 0 {
+				anyCapacity = true
+			}
+			physical = append(physical, &master_pb.PhysicalDiskInfo{
+				DiskId:         diskID,
+				MaxVolumeCount: b.maxVolumeCount,
+			})
 		}
-		slices.SortFunc(physical, func(a, b *master_pb.PhysicalDiskInfo) int {
-			return int(a.DiskId) - int(b.DiskId)
-		})
-		diskInfo.PhysicalDisks = physical
+		if anyCapacity {
+			slices.SortFunc(physical, func(a, b *master_pb.PhysicalDiskInfo) int {
+				return int(a.DiskId) - int(b.DiskId)
+			})
+			diskInfo.PhysicalDisks = physical
+		}
 	}
 	return m
 }
