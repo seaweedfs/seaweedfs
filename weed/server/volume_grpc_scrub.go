@@ -93,6 +93,9 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 }
 
 func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb.ScrubEcVolumeRequest) (*volume_server_pb.ScrubEcVolumeResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req.GetForceDeletedNeedlesCheck() && req.GetMode() != volume_server_pb.VolumeScrubMode_FULL {
 		return nil, fmt.Errorf("deleted needle checks are only supported for FULL scrubs")
 	}
