@@ -186,15 +186,49 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 		localPath := localDir.Child(name)
 		existingEntry := localChildren[name]
 
+		if existingEntry != nil && existingEntry.IsDirectory != child.isDirectory {
+			if existingEntry.RemoteEntry == nil {
+				// a local change conflicts with a changed remote type; keep local
+				fmt.Fprintf(writer, "%s (skip)\n", localPath)
+				continue
+			}
+			// the remote swapped file for directory (or vice versa); drop the
+			// stale entry so it is recreated with the right type, but keep any
+			// local-only descendants of a directory
+			if existingEntry.IsDirectory {
+				if err := deleteRemoteBackedEntry(ctx, client, writer, localDir, name, existingEntry); err != nil {
+					return err
+				}
+				refreshed, err := listLocalDirectory(ctx, client, localDir)
+				if err != nil {
+					return err
+				}
+				if refreshed[name] != nil {
+					// local-only entries remain, so the directory stays and the
+					// remote file cannot take its place
+					fmt.Fprintf(writer, "%s (skip)\n", localPath)
+					continue
+				}
+			} else {
+				fmt.Fprintf(writer, "%s (delete)\n", localPath)
+				if err := deleteLocalEntry(ctx, client, localDir, name); err != nil {
+					return err
+				}
+			}
+			existingEntry = nil
+		}
+
 		if existingEntry == nil {
-			if err := createRemoteEntry(ctx, client, writer, localDir, name, child); err != nil {
+			if err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name); err != nil {
 				return err
 			}
 		} else if !child.isDirectory {
 			if existingEntry.RemoteEntry == nil {
 				// a local change that should not be overwritten
 				fmt.Fprintf(writer, "%s (skip)\n", localPath)
-			} else if existingEntry.RemoteEntry.RemoteETag != child.remoteEntry.RemoteETag || existingEntry.RemoteEntry.RemoteMtime < child.remoteEntry.RemoteMtime {
+			} else if existingEntry.RemoteEntry.RemoteETag != child.remoteEntry.RemoteETag ||
+				existingEntry.RemoteEntry.RemoteMtime != child.remoteEntry.RemoteMtime ||
+				existingEntry.RemoteEntry.RemoteSize != child.remoteEntry.RemoteSize {
 				fmt.Fprintf(writer, "%s (update)\n", localPath)
 				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
 					return err
@@ -212,53 +246,91 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 	}
 
 	if deleteStale {
-		if err := deleteMissingLocalEntries(ctx, client, writer, remoteStorage, localDir, remoteLoc, remoteChildren, localChildren); err != nil {
+		for name, existingEntry := range localChildren {
+			if _, ok := remoteChildren[name]; ok {
+				continue
+			}
+			if err := deleteRemoteBackedEntry(ctx, client, writer, localDir, name, existingEntry); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// deleteRemoteBackedEntry removes a local entry whose remote source is gone. A
+// file is deleted; a directory is descended into locally so its remote-backed
+// children are cleaned, and the directory itself is removed only when it was
+// remote-backed and holds no remaining local-only entries. Entries without a
+// RemoteEntry are local changes and are never touched.
+func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, existingEntry *filer_pb.Entry) error {
+	localPath := localDir.Child(name)
+
+	if !existingEntry.IsDirectory {
+		if existingEntry.RemoteEntry == nil {
+			return nil
+		}
+		fmt.Fprintf(writer, "%s (delete)\n", localPath)
+		return deleteLocalEntry(ctx, client, localDir, name)
+	}
+
+	children, err := listLocalDirectory(ctx, client, localPath)
+	if err != nil {
+		return err
+	}
+	for childName, childEntry := range children {
+		if err := deleteRemoteBackedEntry(ctx, client, writer, localPath, childName, childEntry); err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
-
-// deleteMissingLocalEntries removes local entries under localDir that no longer
-// exist on the remote. Files are dropped directly; a directory gone from the
-// remote is descended into so its remote-backed children are cleaned while any
-// local-only entries are left in place. Entries without a RemoteEntry are local
-// changes and are never touched.
-func deleteMissingLocalEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation, remoteChildren map[string]*remoteChild, localChildren map[string]*filer_pb.Entry) error {
-	for name, existingEntry := range localChildren {
-		if _, ok := remoteChildren[name]; ok {
-			continue
-		}
-		localPath := localDir.Child(name)
-		if existingEntry.IsDirectory {
-			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name), true); err != nil {
-				return err
-			}
-		} else if existingEntry.RemoteEntry != nil {
-			fmt.Fprintf(writer, "%s (delete)\n", localPath)
-			if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-				Directory:    string(localDir),
-				Name:         name,
-				IsDeleteData: true,
-			}); err != nil {
-				return err
-			}
-		}
+	if existingEntry.RemoteEntry == nil {
+		return nil
+	}
+	empty, err := isLocalDirectoryEmpty(ctx, client, localPath)
+	if err != nil {
+		return err
+	}
+	if empty {
+		fmt.Fprintf(writer, "%s (delete)\n", localPath)
+		return deleteLocalEntry(ctx, client, localDir, name)
 	}
 	return nil
 }
 
-func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild) error {
+func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, name string) error {
+	_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		Directory:    string(localDir),
+		Name:         name,
+		IsDeleteData: true,
+	})
+	return err
+}
+
+func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (bool, error) {
+	empty := true
+	err := filer_pb.SeaweedList(ctx, client, string(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+		empty = false
+		return nil
+	}, "", false, 1)
+	return empty, err
+}
+
+func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild, storageName string) error {
 	attributes := &filer_pb.FuseAttributes{
 		FileMode: remoteEntryFileMode(child.isDirectory),
 		TtlSec:   0, // Remote entries should not have TTL
 	}
+	remoteEntry := child.remoteEntry
 	if child.isDirectory {
 		// remote listings carry no directory timestamp; stamp with sync time
 		now := time.Now().Unix()
 		attributes.Crtime = now
 		attributes.Mtime = now
+		// mark the directory remote-backed so it can be reconciled and removed
+		// once it disappears from the remote
+		remoteEntry = &filer_pb.RemoteEntry{StorageName: storageName}
 	} else {
 		attributes.FileSize = uint64(child.remoteEntry.RemoteSize)
 		attributes.Mtime = child.remoteEntry.RemoteMtime
@@ -269,7 +341,7 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			Name:        name,
 			IsDirectory: child.isDirectory,
 			Attributes:  attributes,
-			RemoteEntry: child.remoteEntry,
+			RemoteEntry: remoteEntry,
 		},
 	})
 	fmt.Fprintf(writer, "%s (create)\n", localDir.Child(name))
