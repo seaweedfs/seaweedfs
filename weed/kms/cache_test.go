@@ -207,6 +207,26 @@ func TestCachedProviderClearsOverwrittenPlaintext(t *testing.T) {
 	}
 }
 
+// TestCachedProviderNoWriteAfterClose verifies a store that lands after Close
+// does not repopulate the scrubbed cache with key material.
+func TestCachedProviderNoWriteAfterClose(t *testing.T) {
+	inner := newCountingKMSProvider()
+	cached := NewCachedKMSProvider(inner, time.Hour, 10)
+
+	if err := cached.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	cached.set("k", &DecryptResponse{KeyID: "k", Plaintext: []byte("0123456789abcdef0123456789abcdef")})
+
+	cached.mu.Lock()
+	n := len(cached.entries)
+	cached.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("cache repopulated after Close: %d entries", n)
+	}
+}
+
 // TestAddKMSProviderWiresCache is the wiring regression test: a provider
 // configured with cache_enabled must actually be handed back wrapped in a
 // caching provider (the bug was that the setting was parsed but never applied).

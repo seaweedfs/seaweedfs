@@ -37,6 +37,7 @@ type CachedKMSProvider struct {
 
 	mu      sync.Mutex
 	entries map[string]*dataKeyCacheEntry
+	closed  bool
 }
 
 type dataKeyCacheEntry struct {
@@ -122,6 +123,13 @@ func (c *CachedKMSProvider) set(cacheKey string, resp *DecryptResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.closed {
+		// A miss can finish its underlying Decrypt after Close scrubbed the
+		// map; don't repopulate it with key material that won't be cleared.
+		ClearSensitiveData(plaintext)
+		return
+	}
+
 	if old, exists := c.entries[cacheKey]; exists {
 		// Two readers can race on the same miss and both store; wipe the
 		// superseded key material instead of leaving it to linger in memory.
@@ -173,6 +181,7 @@ func (c *CachedKMSProvider) evictIfFullLocked() {
 // Close clears cached key material and closes the wrapped provider.
 func (c *CachedKMSProvider) Close() error {
 	c.mu.Lock()
+	c.closed = true
 	for k, entry := range c.entries {
 		ClearSensitiveData(entry.plaintext)
 		delete(c.entries, k)
