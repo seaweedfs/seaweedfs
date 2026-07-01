@@ -61,6 +61,13 @@ pub struct EcVolume {
     /// served from a shard of a different encode run is rejected (server- and
     /// client-side); 0 for a pre-feature volume, which is treated leniently.
     pub encode_ts_ns: i64,
+    /// Active-generation EC bitrot checksum sidecar (`<base>.ecsum`), loaded and
+    /// validated at mount. `None` unless `bitrot_status == On`.
+    pub(crate) bitrot: Option<crate::pb::volume_server_pb::EcBitrotProtection>,
+    /// Resolved protection state of the loaded sidecar. Cached alongside `bitrot`
+    /// so `bitrot_protection()` can return the `Off`/`Invalid` distinction without
+    /// re-reading, mirroring Go's `EcVolume.bitrotStatus`.
+    pub(crate) bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
 }
 
 /// Locate the `.vif` for a (collection, vid) by preferring the data dir
@@ -191,6 +198,8 @@ impl EcVolume {
             shard_locations_refresh_time: std::sync::Mutex::new(None),
             expire_at_sec,
             encode_ts_ns,
+            bitrot: None,
+            bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
         };
 
         // Open .ecx file (sorted index) in read/write mode for in-place deletion marking.
@@ -237,7 +246,164 @@ impl EcVolume {
         // Seed the in-memory deleted set from the journal.
         vol.load_deleted_needles_from_ecj()?;
 
+        // Load the generation-0 EC bitrot checksum sidecar (optional; best-effort).
+        vol.load_active_bitrot_sidecar();
+
         Ok(vol)
+    }
+
+    /// Load the generation-0 checksum sidecar into `self.bitrot`/`self.bitrot_status`.
+    /// OSS only produces generation-0 (fresh-encode) sidecars, mirroring Go's
+    /// `loadActiveBitrotSidecar`.
+    fn load_active_bitrot_sidecar(&mut self) {
+        self.load_bitrot_for_generation(0);
+    }
+
+    /// Load and validate the sidecar describing `generation`, setting
+    /// `self.bitrot`/`self.bitrot_status`. Absent or generation/config-mismatched
+    /// => `Off` (protection off, not corruption); self-integrity or manifest
+    /// failure => `Invalid` with a warning (protection off pending repair); usable
+    /// => `On`. Mirrors Go's `loadBitrotForGeneration`.
+    fn load_bitrot_for_generation(&mut self, generation: u32) {
+        use crate::storage::erasure_coding::ec_bitrot;
+        let base = self.base_name();
+        let path = ec_bitrot::bitrot_sidecar_path(&base, generation);
+        let loaded = ec_bitrot::load_bitrot_sidecar(&path);
+        let status = ec_bitrot::resolve_status(
+            &loaded,
+            generation,
+            self.data_shards as usize,
+            self.parity_shards as usize,
+        );
+        self.bitrot = None;
+        self.bitrot_status = status;
+        match status {
+            ec_bitrot::BitrotStatus::On => self.bitrot = loaded.ok(),
+            ec_bitrot::BitrotStatus::Off => {}
+            ec_bitrot::BitrotStatus::Invalid => {
+                tracing::warn!(
+                    volume_id = self.volume_id.0,
+                    path = %path,
+                    generation,
+                    "ec volume: bitrot sidecar present but invalid; protection off pending repair",
+                );
+            }
+        }
+    }
+
+    /// The active-generation bitrot protection AND its status (cached at mount),
+    /// mirroring Go's `EcVolume.BitrotProtection()`. Preserves the distinction
+    /// `checksum_scrub` needs: an absent/generation-mismatched sidecar is `Off`
+    /// (a clean no-op), a present-but-malformed one is `Invalid` (a real integrity
+    /// error). Returns `Some(prot)` only for `On`.
+    pub(crate) fn bitrot_protection(
+        &self,
+    ) -> (
+        Option<crate::pb::volume_server_pb::EcBitrotProtection>,
+        crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+    ) {
+        (self.bitrot.clone(), self.bitrot_status)
+    }
+
+    /// Verify every locally-held EC shard's raw bytes against the active-generation
+    /// bitrot checksum sidecar. Read-only and purely diagnostic: it detects and
+    /// reports corruption but never mutates or quarantines anything. It is the only
+    /// path that exercises cold parity shards, never read during normal serving.
+    ///
+    /// Returns (blocks scanned, mismatched shard ids, errors). An absent/
+    /// generation-mismatched sidecar is `Off` — a clean, empty no-op — so
+    /// unprotected volumes are never reported broken. If more shards mismatch
+    /// wholesale than parity can mask, the sidecar itself is the likely culprit
+    /// (stale/wrong): the shard-corruption verdict is suppressed and an
+    /// integrity note is added instead. Mirrors Go's `ChecksumScrub`.
+    pub fn checksum_scrub(&self) -> (u64, Vec<u32>, Vec<String>) {
+        use crate::storage::erasure_coding::ec_bitrot;
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+
+        let mut errors: Vec<String> = Vec::new();
+
+        let prot = match self.bitrot_protection() {
+            (_, BitrotStatus::Off) => {
+                // Unprotected generation: nothing to verify. Not an error.
+                return (0, Vec::new(), Vec::new());
+            }
+            (_, BitrotStatus::Invalid) => {
+                return (
+                    0,
+                    Vec::new(),
+                    vec![format!(
+                        "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
+                        self.volume_id.0
+                    )],
+                );
+            }
+            (Some(p), BitrotStatus::On) => p,
+            (None, BitrotStatus::On) => {
+                // Unreachable: BitrotOn always carries a loaded sidecar.
+                return (0, Vec::new(), Vec::new());
+            }
+        };
+
+        let block_size = prot.block_size as i64;
+        let generation = prot.generation;
+        let base = self.base_name();
+
+        let mut blocks_scanned: u64 = 0;
+        let mut mismatched_shards: Vec<u32> = Vec::new();
+        let mut wholesale_mismatch = 0usize;
+
+        for (i, slot) in self.shards.iter().enumerate() {
+            if slot.is_none() {
+                continue; // not local
+            }
+            let shard_id = i as u32;
+            let Some(entry) = ec_bitrot::shard_checksums(&prot, shard_id) else {
+                errors.push(format!(
+                    "EC volume {} shard {} present but missing from sidecar manifest",
+                    self.volume_id.0, shard_id
+                ));
+                continue;
+            };
+
+            let path = if generation == 0 {
+                format!("{}.ec{:02}", base, shard_id)
+            } else {
+                format!("{}.ec{:02}.v{}", base, shard_id, generation)
+            };
+
+            let expected_blocks = entry.block_crc32c.len() / 4;
+            match ec_bitrot::verify_shard_file_blocks(&path, entry, block_size) {
+                Ok(mismatched) => {
+                    blocks_scanned += expected_blocks as u64;
+                    if !mismatched.is_empty() {
+                        mismatched_shards.push(shard_id);
+                        if expected_blocks > 0 && mismatched.len() == expected_blocks {
+                            wholesale_mismatch += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "EC volume {} shard {} scrub read error: {}",
+                        self.volume_id.0, shard_id, e
+                    ));
+                }
+            }
+        }
+
+        // More wholesale mismatches than parity can mask => the sidecar itself is
+        // suspect (stale generation / wrong volume): suppress the shard-corruption
+        // verdict and flag a sidecar-integrity issue instead.
+        if wholesale_mismatch > self.parity_shards as usize {
+            errors.push(format!(
+                "EC volume {}: {} shards mismatch wholesale (> {} parity); suspect stale/wrong sidecar, not shard corruption",
+                self.volume_id.0, wholesale_mismatch, self.parity_shards
+            ));
+            mismatched_shards.clear();
+        }
+
+        mismatched_shards.sort_unstable();
+        (blocks_scanned, mismatched_shards, errors)
     }
 
     /// Walk the .ecj journal and populate `deleted_needles`. Called once
@@ -1250,6 +1416,118 @@ impl EcVolume {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Mounting an EC volume loads and validates its generation-0 `.ecsum`
+    /// sidecar, so `bitrot_protection()` reports `On` with the parsed manifest.
+    #[test]
+    fn test_mount_loads_bitrot_sidecar() {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=5 {
+            let data = format!("test data for needle {}", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
+            .unwrap();
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        assert!(
+            vol.bitrot.is_some(),
+            "mount should load the generation-0 .ecsum sidecar"
+        );
+        let (prot, status) = vol.bitrot_protection();
+        assert_eq!(status, BitrotStatus::On);
+        assert_eq!(prot.unwrap().shards.len(), 14);
+    }
+
+    /// CHECKSUM scrub verifies clean shards against the sidecar and flags a shard
+    /// whose bytes are corrupted after encode.
+    #[test]
+    fn test_checksum_scrub_clean_and_detects_corruption() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
+            .unwrap();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        for id in 0..14u8 {
+            vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), id))
+                .unwrap();
+        }
+
+        // Clean scrub: no mismatches, no errors, blocks scanned > 0.
+        let (scanned, broken, errs) = vol.checksum_scrub();
+        assert!(errs.is_empty(), "unexpected scrub errors: {:?}", errs);
+        assert!(broken.is_empty(), "unexpected mismatches: {:?}", broken);
+        assert!(scanned > 0, "scrub should scan at least one block");
+
+        // Corrupt one byte of shard 3 on disk; re-scrub must report shard 3.
+        let shard3 = format!("{}/1.ec03", dir);
+        let mut bytes = std::fs::read(&shard3).unwrap();
+        assert!(!bytes.is_empty());
+        bytes[0] ^= 0xFF;
+        std::fs::write(&shard3, &bytes).unwrap();
+
+        let (_, broken2, _) = vol.checksum_scrub();
+        assert!(
+            broken2.contains(&3),
+            "corrupted shard 3 should be flagged, got {:?}",
+            broken2
+        );
+    }
 
     fn write_ecx_file(
         dir: &str,
