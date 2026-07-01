@@ -161,9 +161,14 @@ func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fi
 		return
 	}
 
-	uploadOption := &operation.UploadOption{}
+	uploadOption := &operation.UploadOption{
+		Cipher: b.option.Cipher,
+	}
 	if b.option.VolumeServerAccess == "filerProxy" {
-		uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(string(b.currentFiler))
+		// b.currentFiler can change on failover, so read it per attempt.
+		uploadOption.GenUploadUrl = func(host, fileId string) string {
+			return fmt.Sprintf("http://%s/?proxyChunkId=%s", b.currentFiler, fileId)
+		}
 	}
 
 	fileId, uploadResult, err, _ = uploader.UploadWithRetry(

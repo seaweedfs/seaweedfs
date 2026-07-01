@@ -36,7 +36,10 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			WantMd5:           true,
 		}
 		if wfs.option.VolumeServerAccess == "filerProxy" {
-			uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(string(wfs.getCurrentFiler()))
+			// getCurrentFiler() can change on failover, so read it per attempt.
+			uploadOption.GenUploadUrl = func(host, fileId string) string {
+				return fmt.Sprintf("http://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
+			}
 		}
 
 		fileId, uploadResult, err, data := uploader.UploadWithRetry(
