@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -528,6 +530,49 @@ func TestVerifySyncEmptyChunkETagStaysEtagMismatch(t *testing.T) {
 	}
 	if got := result.chunkReorder.Load(); got != 0 {
 		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what it
+// wrote. Tests that assert on emitted diff records use it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = orig
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	return string(data)
+}
+
+// TestVerifySyncChunkReorderJSONEmittedByDefault confirms that in JSON output
+// mode a CHUNK_REORDER record is emitted at default verbosity: the -v=1 gate
+// suppresses only the human text report, so the NDJSON per-record stream stays
+// consistent with the summary count a machine consumer reads.
+func TestVerifySyncChunkReorderJSONEmittedByDefault(t *testing.T) {
+	c0 := verifyChunk(0, 100, "chunk-0")
+	c1 := verifyChunk(100, 100, "chunk-1")
+	entryA := verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c0, c1})
+	entryB := verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c1, c0})
+
+	result := &VerifyResult{jsonOutput: true}
+	out := captureStdout(t, func() {
+		reportDiff(diffChunkReorder, "/root", entryA, entryB, result)
+	})
+
+	if got := result.chunkReorder.Load(); got != 1 {
+		t.Fatalf("chunkReorder = %d, want 1", got)
+	}
+	if !strings.Contains(out, `"type":"CHUNK_REORDER"`) {
+		t.Errorf("JSON output missing CHUNK_REORDER record at default verbosity; got %q", out)
 	}
 }
 

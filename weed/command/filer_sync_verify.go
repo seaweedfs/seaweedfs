@@ -649,16 +649,17 @@ func reportDiff(diffType verifyDiffType, dir string, entryA, entryB *filer_pb.En
 		result.etagMismatch.Add(1)
 	case diffChunkReorder:
 		result.chunkReorder.Add(1)
-		// Content-equal (same chunks, different slice order): not an error, so
-		// keep it out of the default report; list only at -v=1.
-		if !glog.V(1) {
-			return
-		}
 	}
 
 	if result.jsonOutput {
 		writeJSONDiff(result, diffType, dir, entryA, entryB)
 	} else {
+		// A chunk reorder is content-equal, not a real diff: keep it out of the
+		// default text report and list it only at -v=1. JSON always emits it so
+		// the per-record stream matches the summary count.
+		if diffType == diffChunkReorder && !glog.V(1) {
+			return
+		}
 		writeTextDiff(result, diffType, dir, entryA, entryB)
 	}
 }
