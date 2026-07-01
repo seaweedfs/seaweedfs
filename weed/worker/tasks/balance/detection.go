@@ -16,6 +16,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
+// maxDiskUsagePercent skips a balance destination whose physical disk used% is
+// at or above this. It mirrors the shell volume.balance -maxDiskUsagePercent
+// default and is the root-cause guard for an over-configured maxVolumeCount
+// making a physically full server look under-utilized by slot count. Servers
+// that do not report disk bytes are not gated (slot-only fallback).
+const maxDiskUsagePercent = 90
+
 // Detection implements the detection logic for balance tasks.
 // maxResults limits how many balance operations are returned per invocation.
 // A non-positive maxResults means no explicit limit (uses a large default).
@@ -91,6 +98,8 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	// Also collect MaxVolumeCount per server to compute utilization ratios.
 	serverVolumeCounts := make(map[string]int)
 	serverMaxVolumes := make(map[string]int64)
+	serverDiskTotalBytes := make(map[string]uint64)
+	serverDiskFreeBytes := make(map[string]uint64)
 	if clusterInfo.ActiveTopology != nil {
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
@@ -113,6 +122,8 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 							if diskTypeName == diskType {
 								serverVolumeCounts[node.Id] = 0
 								serverMaxVolumes[node.Id] += diskInfo.MaxVolumeCount
+								serverDiskTotalBytes[node.Id] += diskInfo.DiskTotalBytes
+								serverDiskFreeBytes[node.Id] += diskInfo.DiskFreeBytes
 							}
 						}
 					}
@@ -195,6 +206,19 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		}
 	}
 
+	// destinationDiskTooFull reports whether a server's physical disk is already
+	// at/above the high-water mark, making it ineligible as a move destination.
+	// Judged per server against its own disk; servers not reporting disk bytes are
+	// never gated (slot-only fallback).
+	destinationDiskTooFull := func(server string) bool {
+		total := serverDiskTotalBytes[server]
+		if total == 0 {
+			return false
+		}
+		used := total - serverDiskFreeBytes[server]
+		return float64(used)*100 >= float64(total)*float64(maxDiskUsagePercent)
+	}
+
 	for len(results) < maxResults {
 		// Compute effective volume counts with adjustments from planned moves
 		effectiveCounts := make(map[string]int, len(serverVolumeCounts))
@@ -217,8 +241,10 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		for _, server := range sortedServers {
 			count := effectiveCounts[server]
 			util := serverUtilization(server, count)
-			// Min is calculated across all servers for an accurate imbalance ratio
-			if util < minUtilization {
+			// Min is the emptiest server that can actually receive a volume, so a
+			// physically full server (whose over-set maxVolumeCount makes its slot
+			// utilization look low) is never chosen as the destination.
+			if !destinationDiskTooFull(server) && util < minUtilization {
 				minUtilization = util
 				minServer = server
 			}
@@ -235,6 +261,13 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		if maxServer == "" {
 			// All servers exhausted
 			glog.V(1).Infof("BALANCE [%s]: All overloaded servers exhausted after %d task(s)", diskType, len(results))
+			break
+		}
+
+		if minServer == "" {
+			// Every candidate destination is at/above the physical disk high-water
+			// mark, so no move can safely improve balance.
+			glog.V(1).Infof("BALANCE [%s]: No eligible destination - all candidates at/above %d%% disk usage after %d task(s)", diskType, maxDiskUsagePercent, len(results))
 			break
 		}
 
@@ -345,7 +378,17 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		// and the destination selection stay in sync. Without this, the topology's
 		// LoadCount-based scoring can diverge from the adjustment-based effective
 		// counts, causing moves to pile onto one server or oscillate (A→B, B→A).
-		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer, serverVolumeCounts)
+		//
+		// Constrain the destination (including the score-based fallback inside
+		// createBalanceTask) to servers whose physical disk is not near full;
+		// sources are unaffected, so a full server can still be drained.
+		eligibleTargets := make(map[string]int, len(serverVolumeCounts))
+		for s, c := range serverVolumeCounts {
+			if !destinationDiskTooFull(s) {
+				eligibleTargets[s] = c
+			}
+		}
+		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer, eligibleTargets)
 		if task == nil {
 			glog.V(1).Infof("BALANCE [%s]: Cannot plan task for volume %d on server %s, trying next volume", diskType, selectedVolume.VolumeID, maxServer)
 			continue
