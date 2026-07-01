@@ -1,6 +1,10 @@
 package balancer
 
-import "testing"
+import (
+	"math"
+	"sort"
+	"testing"
+)
 
 func TestVolumeDensity(t *testing.T) {
 	const gb = uint64(1) << 30
@@ -29,9 +33,12 @@ func TestDensityRatio(t *testing.T) {
 	if got := DensityRatio(3, 7); got != 7.0/3.0 {
 		t.Errorf("DensityRatio(3,7) = %v, want %v", got, 7.0/3.0)
 	}
-	// Zero capacity -> 0 (no room / unknown).
-	if got := DensityRatio(0, 5); got != 0 {
-		t.Errorf("DensityRatio(0,5) = %v, want 0", got)
+	// No free capacity (full) or over the slot limit (negative capacity) -> fullest.
+	if got := DensityRatio(0, 5); !math.IsInf(got, 1) {
+		t.Errorf("DensityRatio(0,5) = %v, want +Inf", got)
+	}
+	if got := DensityRatio(-4, 20); !math.IsInf(got, 1) {
+		t.Errorf("DensityRatio(-4,20) = %v, want +Inf (overfull ranks fullest, not negative)", got)
 	}
 }
 
@@ -39,7 +46,36 @@ func TestDensityNextRatio(t *testing.T) {
 	if got := DensityNextRatio(3, 7); got != 8.0/3.0 {
 		t.Errorf("DensityNextRatio(3,7) = %v, want %v", got, 8.0/3.0)
 	}
-	if got := DensityNextRatio(0, 7); got != 0 {
-		t.Errorf("DensityNextRatio(0,7) = %v, want 0", got)
+	if got := DensityNextRatio(0, 7); !math.IsInf(got, 1) {
+		t.Errorf("DensityNextRatio(0,7) = %v, want +Inf", got)
+	}
+	if got := DensityNextRatio(-1, 7); !math.IsInf(got, 1) {
+		t.Errorf("DensityNextRatio(-1,7) = %v, want +Inf", got)
+	}
+}
+
+// An overfull server (negative capacity) must sort as the fullest, not the
+// emptiest, when consumers rank ascending by DensityRatio.
+func TestDensityRatio_OverfullSortsFullest(t *testing.T) {
+	// empty (cap 100, used 0), half (cap 5, used 5), overfull (cap -3, used 13).
+	type server struct {
+		name        string
+		capacity    float64
+		usedVolumes uint64
+	}
+	servers := []server{
+		{"overfull", -3, 13},
+		{"empty", 100, 0},
+		{"half", 5, 5},
+	}
+	sort.Slice(servers, func(i, j int) bool {
+		return DensityRatio(servers[i].capacity, servers[i].usedVolumes) <
+			DensityRatio(servers[j].capacity, servers[j].usedVolumes)
+	})
+	if servers[0].name != "empty" {
+		t.Errorf("emptiest (ascending first) = %q, want empty", servers[0].name)
+	}
+	if servers[len(servers)-1].name != "overfull" {
+		t.Errorf("fullest (ascending last) = %q, want overfull", servers[len(servers)-1].name)
 	}
 }

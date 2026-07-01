@@ -1,5 +1,7 @@
 package balancer
 
+import "math"
+
 // zeroVolumeDensityWeight is the ratio given to a server holding no data, so it
 // still ranks below any loaded server (which has ratio >= 1) but is distinguished
 // from a server with unknown capacity.
@@ -26,10 +28,12 @@ func VolumeDensity(maxVolumeCount int64, volumeBytes, volumeSizeLimitBytes uint6
 
 // DensityRatio is a server's load: usedVolumes / capacity, higher = fuller. An
 // empty server gets a small positive ratio so it sorts below loaded servers.
-// Returns 0 when capacity is 0 (no room / unknown).
+// A server with no free capacity (capacity <= 0: full, or over its configured
+// slots so capacity is negative) ranks as the fullest (+Inf), so ascending
+// consumers treat it as a move source and never as the emptiest target.
 func DensityRatio(capacity float64, usedVolumes uint64) float64 {
-	if capacity == 0 {
-		return 0
+	if capacity <= 0 {
+		return math.Inf(1)
 	}
 	if usedVolumes == 0 {
 		return zeroVolumeDensityWeight / capacity
@@ -38,10 +42,11 @@ func DensityRatio(capacity float64, usedVolumes uint64) float64 {
 }
 
 // DensityNextRatio is a server's load after one more volume lands on it:
-// (usedVolumes+1) / capacity. Used to test whether a move would overshoot.
+// (usedVolumes+1) / capacity. Used to test whether a move would overshoot. A
+// server with no free capacity (capacity <= 0) ranks as the fullest (+Inf).
 func DensityNextRatio(capacity float64, usedVolumes uint64) float64 {
-	if capacity == 0 {
-		return 0
+	if capacity <= 0 {
+		return math.Inf(1)
 	}
 	return float64(usedVolumes+1) / capacity
 }
