@@ -465,6 +465,33 @@ func TestDetection_NoDestinationWhenAllDisksFull(t *testing.T) {
 	}
 }
 
+// near-full is at 85% (under the mark) but moving one 100-byte volume onto its
+// 1000-byte disk would reach 95%, so it must not be targeted.
+func TestDetection_ProjectsVolumeOntoNearFullDestination(t *testing.T) {
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10},
+		{id: "near-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000, diskFreeBytes: 150},
+	}
+	metrics := make([]*types.VolumeHealthMetrics, 8)
+	for i := range metrics {
+		metrics[i] = &types.VolumeHealthMetrics{
+			VolumeID: uint32(i + 1), Server: "src", ServerAddress: "src:8080",
+			DiskType: "hdd", Collection: "c1", Size: 100, DataCenter: "dc1", Rack: "rack1",
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no tasks: the projected move would cross 90%% disk usage, got %d", len(tasks))
+	}
+}
+
 func TestDetection_SkipsRemoteTieredVolumes(t *testing.T) {
 	metrics := []*types.VolumeHealthMetrics{}
 
