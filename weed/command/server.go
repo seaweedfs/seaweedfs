@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -130,6 +131,9 @@ func init() {
 	filerOptions.diskType = cmdServer.Flag.String("filer.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	filerOptions.exposeDirectoryData = cmdServer.Flag.Bool("filer.exposeDirectoryData", true, "expose directory data via filer. If false, filer UI will be innaccessible.")
 	filerOptions.tusBasePath = cmdServer.Flag.String("filer.tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
+	filerOptions.atimeMode = cmdServer.Flag.String("filer.atime", string(filer.AtimeModeOff), "filer access-time policy: off | relatime | strict (default off; opt in per deployment)")
+	filerOptions.atimeRelatimeThreshold = cmdServer.Flag.Duration("filer.atime.relatime_threshold", filer.DefaultRelatimeThreshold, "minimum age before relatime persists an atime update")
+	filerOptions.atimePaths = cmdServer.Flag.String("filer.atime.paths", "", "comma-separated path prefixes that atime tracking applies to; empty = every path when atime mode is on")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
