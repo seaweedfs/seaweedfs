@@ -254,5 +254,16 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) string {
-	return string(security.GenJwtForVolumeServer(fs.volumeGuard.ReadSigningKey(), fs.volumeGuard.ReadExpiresAfterSec(), fileId))
+	// Generate a read JWT for volume server access. If the dedicated
+	// read key (jwt.signing.read.key) is not configured, fall back to the
+	// general signing key (jwt.signing.key) so the proxy can still
+	// authenticate to volume servers that require JWT.
+	key := fs.volumeGuard.ReadSigningKey()
+	if len(key) == 0 {
+		key = fs.volumeGuard.SigningKey()
+	}
+	if len(key) == 0 {
+		return ""
+	}
+	return string(security.GenJwtForVolumeServer(key, fs.volumeGuard.ReadExpiresAfterSec(), fileId))
 }
