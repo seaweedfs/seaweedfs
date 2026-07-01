@@ -831,6 +831,9 @@ fn build_heartbeat_with_ec_status(
         }
         *max_volume_counts.entry(disk_type_str.clone()).or_insert(0) += effective_max_count as u32;
         disk_max_by_id[disk_id] = effective_max_count;
+        // Sum capacity per disk type; assumes one location per filesystem. Locations
+        // sharing a mount over-report absolute bytes but not the used ratio the gate
+        // uses. Mirrors weed/storage/store.go.
         *disk_total_bytes.entry(disk_type_str.clone()).or_insert(0) +=
             loc.disk_total_bytes.load(Ordering::Relaxed);
         *disk_free_bytes.entry(disk_type_str).or_insert(0) +=

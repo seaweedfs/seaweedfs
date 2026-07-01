@@ -205,19 +205,20 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	// planned instead of only its heartbeat-time free space (the shell equivalent
 	// is adjustAfterMove decrementing DiskFreeBytes).
 	plannedBytes := make(map[string]uint64)
+	// destinationFull excludes servers a projected move would push over, for the cycle.
+	destinationFull := make(map[string]bool)
 
-	// destinationDiskTooFull reports whether a server's physical disk is already
-	// at/above the high-water mark, making it ineligible as a move destination.
-	// Judged per server against its own disk, discounting data planned onto it so
-	// far this cycle; servers not reporting disk bytes are never gated (slot-only).
-	destinationDiskTooFull := func(server string) bool {
+	// destinationDiskTooFull reports whether landing incomingBytes on server would put
+	// its disk at/over the mark, net of bytes already planned this cycle; unreported
+	// disks are never gated.
+	destinationDiskTooFull := func(server string, incomingBytes uint64) bool {
 		free := serverDiskFreeBytes[server]
 		if planned := plannedBytes[server]; planned < free {
 			free -= planned
 		} else {
 			free = 0
 		}
-		return balancer.DiskTooFullAfter(serverDiskTotalBytes[server], free, 0, balancer.DefaultMaxDiskUsagePercent)
+		return balancer.DiskTooFullAfter(serverDiskTotalBytes[server], free, incomingBytes, balancer.DefaultMaxDiskUsagePercent)
 	}
 
 	for len(results) < maxResults {
@@ -245,7 +246,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			// Min is the emptiest server that can actually receive a volume, so a
 			// physically full server (whose over-set maxVolumeCount makes its slot
 			// utilization look low) is never chosen as the destination.
-			if !destinationDiskTooFull(server) && util < minUtilization {
+			if !destinationFull[server] && !destinationDiskTooFull(server, 0) && util < minUtilization {
 				minUtilization = util
 				minServer = server
 			}
@@ -373,6 +374,16 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			continue
 		}
 
+		// Skip a destination this specific volume would push over the mark, and
+		// re-pick, rather than overshoot.
+		if destinationDiskTooFull(minServer, uint64(selectedVolume.Size)) {
+			glog.V(1).Infof("BALANCE [%s]: skip destination %s: volume %d (%d bytes) would cross %d%% disk usage",
+				diskType, minServer, selectedVolume.VolumeID, selectedVolume.Size, balancer.DefaultMaxDiskUsagePercent)
+			destinationFull[minServer] = true
+			serverCursors[maxServer]-- // retry this volume against another destination
+			continue
+		}
+
 		// Create task targeting minServer — the greedy algorithm's natural choice.
 		// Using minServer instead of letting planBalanceDestination independently
 		// pick a destination ensures that the detection loop's effective counts
@@ -385,7 +396,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		// sources are unaffected, so a full server can still be drained.
 		eligibleTargets := make(map[string]int, len(serverVolumeCounts))
 		for s, c := range serverVolumeCounts {
-			if !destinationDiskTooFull(s) {
+			if !destinationFull[s] && !destinationDiskTooFull(s, 0) {
 				eligibleTargets[s] = c
 			}
 		}
