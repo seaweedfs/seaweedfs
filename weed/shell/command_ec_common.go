@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 	"google.golang.org/grpc"
 )
 
@@ -466,6 +467,13 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (c
 	}
 	diskInfo := dn.DiskInfos[string(diskType)]
 	if diskInfo == nil {
+		return 0
+	}
+
+	// A physically near-full disk has no room for more EC shards regardless of
+	// slot math (an over-set maxVolumeCount hides real fullness; statfs free bytes
+	// already include EC shard files). No-opinion when the server reports no bytes.
+	if balancer.DiskTooFullAfter(diskInfo.DiskTotalBytes, diskInfo.DiskFreeBytes, 0, balancer.DefaultMaxDiskUsagePercent) {
 		return 0
 	}
 
