@@ -3437,7 +3437,7 @@ async fn read_chunk_needle(
             return store
                 .read_volume_needle(vid, &mut n)
                 .map_err(|e| format!("{}", e))
-                .and_then(|_| decompress_chunk(n));
+                .and_then(|_| cookie_checked_chunk(n, cookie));
         } else if store.find_ec_volume(vid).is_some() {
             Placement::Ec
         } else {
@@ -3448,13 +3448,24 @@ async fn read_chunk_needle(
     match placement {
         Placement::Ec => {
             match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, nid).await {
-                Ok(Some(n)) => decompress_chunk(n),
+                Ok(Some(n)) => cookie_checked_chunk(n, cookie),
                 Ok(None) => Err("not found".to_string()),
                 Err(e) => Err(format!("{}", e)),
             }
         }
+        // The peer serves through its own GET handler, which validates the cookie.
         Placement::Remote => read_remote_chunk_needle(state, vid, fid).await,
     }
+}
+
+/// Validate a locally-read chunk's cookie against the one in its fid, then return
+/// its content bytes. The main GET paths check the cookie after a read; a chunk
+/// read must do the same so a stale/guessed id can't serve another needle's data.
+fn cookie_checked_chunk(n: Needle, cookie: Cookie) -> Result<Vec<u8>, String> {
+    if n.cookie != cookie {
+        return Err("not found".to_string());
+    }
+    decompress_chunk(n)
 }
 
 /// Return a needle's content bytes, decompressing gzip payloads the way the read
