@@ -249,6 +249,17 @@ impl ShardChecksumBuilder {
 /// CRC32C over the serialized payload (temp file + rename).
 pub fn save_bitrot_sidecar(path: &str, prot: &EcBitrotProtection) -> io::Result<()> {
     let payload = prot.encode_to_vec();
+    // The header records payload_len as a uint32 and the allocation below adds it
+    // to a constant. Bound the payload well under any overflow (a real manifest is
+    // a few KB) so neither the length field nor the buffer can wrap. Mirrors Go's
+    // SaveBitrotSidecar maxBitrotPayloadSize check.
+    const MAX_BITROT_PAYLOAD_SIZE: usize = 1 << 30; // 1 GiB, vastly above any real sidecar
+    if payload.len() > MAX_BITROT_PAYLOAD_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("bitrot sidecar payload too large: {} bytes", payload.len()),
+        ));
+    }
     let mut buf = Vec::with_capacity(BITROT_HEADER_SIZE + payload.len());
     buf.extend_from_slice(&BITROT_MAGIC.to_be_bytes());
     buf.extend_from_slice(&BITROT_FORMAT_VERSION.to_be_bytes());
