@@ -99,6 +99,10 @@ message Heartbeat {
   volume_server_pb.VolumeServerState state = 23;
 
   repeated DiskTag disk_tags = 24;
+
+  // physical disk capacity per disk type, in bytes, from the underlying filesystem
+  map<string, uint64> disk_total_bytes = 25;
+  map<string, uint64> disk_free_bytes = 26;
 }
 
 message HeartbeatResponse {
@@ -331,6 +335,9 @@ message DiskInfo {
   // including disks with no volumes or EC shards; recovers empty disks that
   // carry no per-volume/per-shard records.
   map<uint32, int64> max_volume_count_by_disk = 11;
+  // physical disk capacity in bytes, from the underlying filesystem (0 if unknown)
+  uint64 disk_total_bytes = 12;
+  uint64 disk_free_bytes = 13;
 }
 message DataNodeInfo {
   string id = 1;

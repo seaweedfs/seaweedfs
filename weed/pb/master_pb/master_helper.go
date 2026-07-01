@@ -143,6 +143,8 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 			EcShardInfos:      perDiskShards[diskID],
 			DiskId:            diskID,
 			Tags:              append([]string(nil), d.Tags...),
+			DiskTotalBytes:    uint64(share(int64(d.DiskTotalBytes), i)),
+			DiskFreeBytes:     uint64(share(int64(d.DiskFreeBytes), i)),
 		})
 	}
 	return result

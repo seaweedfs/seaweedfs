@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -38,6 +39,11 @@ type commandVolumeBalance struct {
 	applyBalancing    bool
 	volumesPerExec    int
 	movedCount        int
+	byDiskUsage       bool
+
+	// diskUsageHighWaterPercent skips a move target whose physical disk used%
+	// is at or above this mark. 0 or >=100 disables the gate.
+	diskUsageHighWaterPercent int
 }
 
 func (c *commandVolumeBalance) Name() string {
@@ -47,7 +53,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5] [-byDiskUsage] [-maxDiskUsagePercent=90]
 
 	The -collection parameter supports:
 	  - ALL_COLLECTIONS: balance across all collections
@@ -60,6 +66,19 @@ func (c *commandVolumeBalance) Help() string {
 	The -volumesPerExec parameter limits the maximum number of volume moves in one command execution.
 	If unset - the command will try to balance all volumes at once.
 	It might be beneficial to set, if your cluster has lots of volumes growing and topology changes faster than balancing can occur.
+
+	The -maxDiskUsagePercent flag (default 90) skips any move target whose physical disk is already used at
+	or above that percentage, using the real filesystem capacity each volume server reports. This is the
+	default guard against an over-configured maxVolumeCount making a physically full disk look empty: such
+	a server is never chosen as a move target, judged per server against its own disk so heterogeneous disk
+	sizes are handled correctly. Set it to 0 (or >=100) to disable. Servers running an older build that does
+	not report disk bytes are not gated, and balancing falls back to slot-only behavior for them.
+
+	The -byDiskUsage flag ranks servers by the actual data they hold (sum of volume sizes) instead of the
+	default slot-density metric. The default metric normalizes by maxVolumeCount, so a server whose
+	maxVolumeCount is configured too high for its disk looks nearly empty even when its disk is physically
+	full, and balancing can drain less-full servers onto it. Use -byDiskUsage to balance actual data
+	distribution instead. It assumes comparable disk sizes across servers of the same disk type.
 
 	Algorithm:
 
@@ -113,6 +132,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	// TODO: remove this alias
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 	volumesPerExec := balanceCommand.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)")
+	byDiskUsage := balanceCommand.Bool("byDiskUsage", false, "rank servers by actual data held (sum of volume sizes) instead of slot density; use when maxVolumeCount is set too high for the disk. Assumes comparable disk sizes per disk type.")
+	maxDiskUsagePercent := balanceCommand.Int("maxDiskUsagePercent", balancer.DefaultMaxDiskUsagePercent, "skip a move target whose physical disk used%% is at/above this; judged per server against its own disk, so heterogeneous disk sizes are fine. 0 or >=100 disables. Auto-skipped for servers that do not report disk bytes.")
 
 	balanceCommand.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
 		if flagValue == "" {
@@ -136,6 +157,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 	c.volumesPerExec = *volumesPerExec
 	c.movedCount = 0
+	c.byDiskUsage = *byDiskUsage
+	c.diskUsageHighWaterPercent = *maxDiskUsagePercent
 
 	infoAboutSimulationMode(writer, c.applyBalancing, "-apply")
 
@@ -320,6 +343,33 @@ func capacityByMinVolumeDensity(diskType types.DiskType, volumeSizeLimitMb uint6
 	}
 }
 
+// capacityByActualDataUsage ranks servers purely by how much actual data they
+// hold (sum of volume sizes), ignoring MaxVolumeCount. The slot-density metric
+// divides by MaxVolumeCount, so a server whose MaxVolumeCount was configured too
+// high for its disk looks nearly empty even when its disk is physically full and
+// gets picked as a move target. This function keeps the fullest-by-data server
+// ranked as full so balancing drains it instead of piling onto it. It assumes
+// comparable disk sizes across servers of the same disk type. Capacity is a
+// uniform constant so the density ratio is proportional to actual data; the
+// constant cancels out of every ratio comparison in balanceSelectedVolume.
+func capacityByActualDataUsage(diskType types.DiskType, volumeSizeLimitMb uint64) DensityFunc {
+	return func(info *master_pb.DataNodeInfo) (float64, uint64) {
+		diskInfo, found := info.DiskInfos[string(diskType)]
+		if !found || diskInfo == nil {
+			return 0, 0
+		}
+		var volumeSizes uint64
+		for _, volumeInfo := range diskInfo.VolumeInfos {
+			volumeSizes += volumeInfo.Size
+		}
+		if volumeSizeLimitMb == 0 {
+			volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
+		}
+		usedVolumeCount := volumeSizes / (volumeSizeLimitMb * util.MiByte)
+		return 1, usedVolumeCount
+	}
+}
+
 func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
 	return func(info *master_pb.DataNodeInfo) float64 {
 		diskInfo, found := info.DiskInfos[string(diskType)]
@@ -371,6 +421,38 @@ func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
 	return float64(len(n.selectedVolumes)) / capacityFunc(n.info)
 }
 
+func (n *Node) hasFreeVolumeSlot(diskType types.DiskType) bool {
+	diskInfo, found := n.info.DiskInfos[string(diskType)]
+	if !found || diskInfo == nil {
+		return false
+	}
+	return diskInfo.VolumeCount < diskInfo.MaxVolumeCount
+}
+
+// diskBytes returns the node's physical disk capacity and free bytes for a disk
+// type. ok is false when the volume server did not report it (DiskTotalBytes==0),
+// which makes callers fall back to slot-only behavior.
+func (n *Node) diskBytes(diskType types.DiskType) (total, free uint64, ok bool) {
+	diskInfo, found := n.info.DiskInfos[string(diskType)]
+	if !found || diskInfo == nil || diskInfo.DiskTotalBytes == 0 {
+		return 0, 0, false
+	}
+	return diskInfo.DiskTotalBytes, diskInfo.DiskFreeBytes, true
+}
+
+// targetDiskTooFull reports whether moving one more volume onto node would push
+// its physical disk used% at/above the high-water mark. It judges each server
+// against its own disk, so a larger disk holding more bytes is not unfairly
+// excluded. Returns false (no opinion) when the gate is disabled or the server
+// does not report disk bytes.
+func (c *commandVolumeBalance) targetDiskTooFull(node *Node, diskType types.DiskType, volumeSizeLimitMb uint64) bool {
+	total, free, ok := node.diskBytes(diskType)
+	if !ok {
+		return false
+	}
+	return balancer.DiskTooFullAfter(total, free, volumeSizeLimitMb*util.MiByte, c.diskUsageHighWaterPercent)
+}
+
 func (n *Node) isOneVolumeOnly() bool {
 	if len(n.selectedVolumes) != 1 {
 		return false
@@ -419,6 +501,9 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 	}
 	capacityFunc := capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
+	if c.byDiskUsage {
+		capacityFunc = capacityByActualDataUsage(diskType, volumeSizeLimitMb)
+	}
 	for _, dn := range nodes {
 		capacity, volumeCount := capacityFunc(dn.info)
 		if capacity > 0 {
@@ -475,6 +560,22 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		}
 		sortCandidatesFn(candidateVolumes)
 		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
+			// In byte-usage mode capacity is a uniform constant, so a target's
+			// free volume slots aren't reflected in its ranking; skip targets that
+			// are already at MaxVolumeCount so balancing never exceeds the slot limit.
+			if c.byDiskUsage && !emptyNode.hasFreeVolumeSlot(diskType) {
+				continue
+			}
+			// Never move onto a server whose physical disk is already near full,
+			// even if the slot-density metric ranks it as the emptiest node. This is
+			// the root-cause guard for an over-configured maxVolumeCount making a
+			// full disk look empty; it is judged per server against its own disk.
+			if c.targetDiskTooFull(emptyNode, diskType, volumeSizeLimitMb) {
+				if c.commandEnv != nil && c.commandEnv.verbose {
+					fmt.Fprintf(os.Stdout, "skip target %s: disk used%% >= %d%%\n", emptyNode.info.Id, c.diskUsageHighWaterPercent)
+				}
+				continue
+			}
 			if !(fullNode.localVolumeDensityNextRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeDensityNextRatio(capacityFunc) <= idealVolumeRatio) {
 				if c.commandEnv != nil && c.commandEnv.verbose {
 					fmt.Printf("no more volume servers with empty slots %s, idealVolumeRatio %f\n", emptyNode.info.Id, idealVolumeRatio)
@@ -597,6 +698,24 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 	return satisfyReplicaPlacement(placement, existingReplicasExceptSourceNode, targetLocation)
 }
 
+// addDiskFreeBytes adjusts a disk's reported free bytes by delta (negative when a
+// volume lands on it), so the physical-fullness gate stays consistent as volumes
+// move within a single balance run. No-op when the disk reports no physical
+// capacity (DiskTotalBytes==0); clamps to [0, DiskTotalBytes].
+func addDiskFreeBytes(diskInfo *master_pb.DiskInfo, delta int64) {
+	if diskInfo.DiskTotalBytes == 0 {
+		return
+	}
+	free := int64(diskInfo.DiskFreeBytes) + delta
+	if free < 0 {
+		free = 0
+	}
+	if uint64(free) > diskInfo.DiskTotalBytes {
+		free = int64(diskInfo.DiskTotalBytes)
+	}
+	diskInfo.DiskFreeBytes = uint64(free)
+}
+
 func removeVolumeInfo(diskInfo *master_pb.DiskInfo, volumeId uint32) {
 	for i, volumeInfo := range diskInfo.VolumeInfos {
 		if volumeInfo.Id == volumeId {
@@ -629,10 +748,12 @@ func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[u
 			if fullDisk, found := fullNode.info.DiskInfos[v.DiskType]; found {
 				removeVolumeInfo(fullDisk, v.Id)
 				addVolumeCount(fullDisk, -1)
+				addDiskFreeBytes(fullDisk, int64(v.Size))
 			}
 			if emptyDisk, found := emptyNode.info.DiskInfos[v.DiskType]; found {
 				emptyDisk.VolumeInfos = append(emptyDisk.VolumeInfos, v)
 				addVolumeCount(emptyDisk, 1)
+				addDiskFreeBytes(emptyDisk, -int64(v.Size))
 			}
 			return
 		}

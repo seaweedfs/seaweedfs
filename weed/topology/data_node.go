@@ -167,6 +167,33 @@ func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 	}
 }
 
+// AdjustDiskUsageBytes records the physical filesystem capacity a volume server
+// reports per disk type, applied as a delta so it flows through the same
+// aggregation as the volume counts. Mirrors AdjustMaxVolumeCounts; entries with a
+// zero total are treated as "not reported" and skipped.
+func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[string]uint64) {
+	for diskType, totalBytes := range diskTotalBytes {
+		// Unlike maxVolumeCount, a 0 here is not "unset" but "not reported": let it
+		// flow through so a later heartbeat that drops physical-capacity reporting
+		// (e.g. statfs starts failing) clears the stale bytes and the gate falls
+		// back to slot-only instead of trusting outdated capacity.
+		dt := types.ToDiskType(diskType)
+		currentDiskUsage := dn.diskUsages.getOrCreateDisk(dt)
+		currentTotal := atomic.LoadInt64(&currentDiskUsage.diskTotalBytes)
+		currentFree := atomic.LoadInt64(&currentDiskUsage.diskFreeBytes)
+		newTotal := int64(totalBytes)
+		newFree := int64(diskFreeBytes[diskType])
+		if currentTotal == newTotal && currentFree == newFree {
+			continue
+		}
+		disk := dn.getOrCreateDisk(dt.String())
+		disk.UpAdjustDiskUsageDelta(dt, &DiskUsageCounts{
+			diskTotalBytes: newTotal - currentTotal,
+			diskFreeBytes:  newFree - currentFree,
+		})
+	}
+}
+
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	dn.RLock()
 	for _, c := range dn.children {
