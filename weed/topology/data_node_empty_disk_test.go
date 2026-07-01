@@ -26,8 +26,8 @@ func TestToDataNodeInfoReportsEmptyPhysicalDisks(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing HDD disk info")
 	}
-	if len(di.PhysicalDisks) != 3 {
-		t.Fatalf("want 3 physical disks reported, got %d", len(di.PhysicalDisks))
+	if len(di.MaxVolumeCountByDisk) != 3 {
+		t.Fatalf("want 3 physical disks reported, got %d", len(di.MaxVolumeCountByDisk))
 	}
 
 	split := di.SplitByPhysicalDisk()
@@ -62,12 +62,12 @@ func TestToDataNodeInfoKeepsZeroCapacityDisk(t *testing.T) {
 	})
 
 	di := dn.ToDataNodeInfo().DiskInfos[""]
-	if len(di.PhysicalDisks) != 3 {
-		t.Fatalf("want 3 physical disks (incl the zero-capacity one), got %d", len(di.PhysicalDisks))
+	if len(di.MaxVolumeCountByDisk) != 3 {
+		t.Fatalf("want 3 physical disks (incl the zero-capacity one), got %d", len(di.MaxVolumeCountByDisk))
 	}
 }
 
-// An older server sending no per-disk capacity leaves PhysicalDisks empty.
+// An older server sending no per-disk capacity leaves the map empty.
 func TestToDataNodeInfoFallsBackWhenNoCapacityReported(t *testing.T) {
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
 	dc := topo.GetOrCreateDataCenter("dc1")
@@ -82,7 +82,7 @@ func TestToDataNodeInfoFallsBackWhenNoCapacityReported(t *testing.T) {
 	})
 
 	di := dn.ToDataNodeInfo().DiskInfos[""]
-	if len(di.PhysicalDisks) != 0 {
-		t.Fatalf("want no PhysicalDisks (fallback), got %d", len(di.PhysicalDisks))
+	if len(di.MaxVolumeCountByDisk) != 0 {
+		t.Fatalf("want no per-disk max (fallback), got %d", len(di.MaxVolumeCountByDisk))
 	}
 }

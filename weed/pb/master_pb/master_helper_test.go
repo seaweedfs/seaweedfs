@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// PhysicalDisks surfaces empty disks and gives each its exact max.
+// MaxVolumeCountByDisk surfaces empty disks and gives each its exact max.
 func TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks(t *testing.T) {
 	d := &DiskInfo{
 		Type:           "hdd",
@@ -14,10 +14,10 @@ func TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks(t *testi
 			{Id: 10, DiskId: 0},
 			{Id: 11, DiskId: 1},
 		},
-		PhysicalDisks: []*PhysicalDiskInfo{
-			{DiskId: 0, MaxVolumeCount: 350},
-			{DiskId: 1, MaxVolumeCount: 350},
-			{DiskId: 2, MaxVolumeCount: 300}, // empty disk, no volumes/shards
+		MaxVolumeCountByDisk: map[uint32]int64{
+			0: 350,
+			1: 350,
+			2: 300, // empty disk, no volumes/shards
 		},
 	}
 
@@ -60,8 +60,8 @@ func TestDiskInfoSplitByPhysicalDisk_clampsNegativeFreeOnOverAllocation(t *testi
 			{Id: 2, DiskId: 0},
 			{Id: 3, DiskId: 0},
 		},
-		PhysicalDisks: []*PhysicalDiskInfo{
-			{DiskId: 0, MaxVolumeCount: 2}, // 3 volumes on a max-2 disk
+		MaxVolumeCountByDisk: map[uint32]int64{
+			0: 2, // 3 volumes on a max-2 disk
 		},
 	}
 

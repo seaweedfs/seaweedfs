@@ -314,11 +314,11 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		if meta, found := metas[diskInfo.DiskId]; found {
 			diskInfo.Tags = append([]string(nil), meta.tags...)
 		}
-		// List every physical disk of this type, empty and unavailable (max 0)
-		// ones included. Emit only when some disk reports capacity, so an older
-		// server sending all zeros leaves PhysicalDisks nil and falls back.
+		// Max per physical disk of this type, empty and unavailable (max 0) ones
+		// included. Emit only when some disk reports capacity, so an older server
+		// sending all zeros leaves the map nil and falls back.
 		diskType := types.ToDiskType(diskInfo.Type)
-		var physical []*master_pb.PhysicalDiskInfo
+		maxByDisk := make(map[uint32]int64)
 		anyCapacity := false
 		for diskID, meta := range metas {
 			if meta.diskType != diskType {
@@ -327,16 +327,10 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 			if meta.maxVolumeCount > 0 {
 				anyCapacity = true
 			}
-			physical = append(physical, &master_pb.PhysicalDiskInfo{
-				DiskId:         diskID,
-				MaxVolumeCount: meta.maxVolumeCount,
-			})
+			maxByDisk[diskID] = meta.maxVolumeCount
 		}
 		if anyCapacity {
-			slices.SortFunc(physical, func(a, b *master_pb.PhysicalDiskInfo) int {
-				return int(a.DiskId) - int(b.DiskId)
-			})
-			diskInfo.PhysicalDisks = physical
+			diskInfo.MaxVolumeCountByDisk = maxByDisk
 		}
 	}
 	return m

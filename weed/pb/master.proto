@@ -324,13 +324,10 @@ message DiskInfo {
   int64 remote_volume_count = 8;
   uint32 disk_id = 9;
   repeated string tags = 10;
-  // Every physical disk of this type, including ones with no volumes or EC
-  // shards; recovers empty disks that carry no per-volume/per-shard records.
-  repeated PhysicalDiskInfo physical_disks = 11;
-}
-message PhysicalDiskInfo {
-  uint32 disk_id = 1;
-  int64 max_volume_count = 2;
+  // Max volume count for every physical disk of this type, keyed by disk id,
+  // including disks with no volumes or EC shards; recovers empty disks that
+  // carry no per-volume/per-shard records.
+  map<uint32, int64> max_volume_count_by_disk = 11;
 }
 message DataNodeInfo {
   string id = 1;
