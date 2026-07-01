@@ -26,9 +26,7 @@ type DataNode struct {
 
 	MaintenanceMode bool
 	diskTags        map[uint32][]string
-	// diskBackends carries each physical disk's type and capacity, reported for
-	// every location (including empty ones) so ToDataNodeInfo can list disks
-	// that hold no volumes or EC shards yet.
+	// diskBackends holds each physical disk's type and capacity, including empty ones.
 	diskBackends map[uint32]diskBackend
 }
 
@@ -319,12 +317,9 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		if tags, found := diskTags[diskInfo.DiskId]; found {
 			diskInfo.Tags = append([]string(nil), tags...)
 		}
-		// List every physical disk of this type, including disks with no volumes
-		// or EC shards, so per-physical-disk consumers can see them. A max of 0
-		// is a valid state (an unavailable disk), so keep those entries — but
-		// only emit the list when the volume server actually reported per-disk
-		// capacity. An older server that doesn't populate it reports all zeros,
-		// in which case leaving PhysicalDisks nil falls back to the split.
+		// List every physical disk of this type, empty and unavailable (max 0)
+		// ones included. Emit only when some disk reports capacity, so an older
+		// server sending all zeros leaves PhysicalDisks nil and falls back.
 		diskType := types.ToDiskType(diskInfo.Type)
 		var physical []*master_pb.PhysicalDiskInfo
 		anyCapacity := false
@@ -354,8 +349,8 @@ func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
 	if len(tags) == 0 {
 		return
 	}
-	// DiskTags is the full per-disk list every heartbeat, so rebuild both maps
-	// from scratch to drop disks that were removed.
+	// DiskTags is the full list on each full heartbeat; rebuild fresh to drop
+	// removed disks.
 	diskTags := make(map[uint32][]string, len(tags))
 	backends := make(map[uint32]diskBackend, len(tags))
 	for _, tagInfo := range tags {

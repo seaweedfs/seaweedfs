@@ -5,10 +5,7 @@ import (
 	"testing"
 )
 
-// TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks pins the
-// empty-disk fix: PhysicalDisks lists every physical disk of the type, so a disk
-// holding no volumes still surfaces, and each disk reports its exact max instead
-// of the aggregate split evenly.
+// PhysicalDisks surfaces empty disks and gives each its exact max.
 func TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks(t *testing.T) {
 	d := &DiskInfo{
 		Type:           "hdd",
@@ -54,9 +51,7 @@ func TestDiskInfoSplitByPhysicalDisk_includesEmptyDiskFromPhysicalDisks(t *testi
 	}
 }
 
-// TestDiskInfoSplitByPhysicalDisk_clampsNegativeFreeOnOverAllocation pins that
-// an over-allocated disk reports zero free, not negative, so it does not drag
-// down the node's summed free capacity.
+// An over-allocated disk reports zero free, not negative.
 func TestDiskInfoSplitByPhysicalDisk_clampsNegativeFreeOnOverAllocation(t *testing.T) {
 	d := &DiskInfo{
 		Type: "hdd",

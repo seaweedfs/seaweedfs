@@ -625,8 +625,7 @@ async fn send_deregister_heartbeat(
 ) {
     let empty = {
         let store = state.store.read().unwrap();
-        // Deregister announces shutdown; per-disk effective max is not computed
-        // here, so fall back to each location's configured max.
+        // Deregister: no effective max computed, fall back to configured max.
         let (location_uuids, disk_tags) = collect_location_metadata(&store, &[]);
         master_pb::Heartbeat {
             id: store.id.clone(),
@@ -810,8 +809,7 @@ fn build_heartbeat_with_ec_status(
 
     let volume_size_limit = store.volume_size_limit.load(Ordering::Relaxed);
 
-    // Per-physical-disk effective max, captured alongside the per-type sum so
-    // DiskTag can report each disk's exact capacity (including empty disks).
+    // Per-disk effective max for DiskTag, captured alongside the per-type sum.
     let mut disk_max_by_id = vec![0i32; store.locations.len()];
 
     for (disk_id, loc) in store.locations.iter_mut().enumerate() {
@@ -1171,8 +1169,6 @@ mod tests {
             heartbeat.disk_tags[0].tags,
             vec!["fast".to_string(), "ssd".to_string()]
         );
-        // Per-disk type and capacity are reported so the master can account for
-        // empty disks.
         assert_eq!(heartbeat.disk_tags[0].r#type, DiskType::HardDrive.to_string());
         assert_eq!(heartbeat.disk_tags[0].max_volume_count, 3);
     }
@@ -1205,8 +1201,7 @@ mod tests {
             )
             .unwrap();
 
-        // Low disk space caps the reported per-disk max at the used slots
-        // (1 volume + 0 EC shards), matching the per-type max_volume_counts.
+        // Low disk space caps the per-disk max at used slots (1 volume, 0 EC).
         store.locations[0]
             .is_disk_space_low
             .store(true, std::sync::atomic::Ordering::Relaxed);

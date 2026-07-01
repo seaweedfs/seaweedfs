@@ -7,15 +7,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 )
 
-// TestToDataNodeInfoReportsEmptyPhysicalDisks verifies the master lists every
-// physical disk a volume server reports via DiskTags — including disks holding
-// no volumes or EC shards — so empty disks are no longer invisible to
-// per-physical-disk consumers (cluster.status, volume.list, the admin topology).
+// A disk with no volumes/shards surfaces via DiskTags.
 func TestToDataNodeInfoReportsEmptyPhysicalDisks(t *testing.T) {
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
-	// HDD ("" type) per-type aggregate; three physical disks share it.
 	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 1000})
 	dn.AdjustMaxVolumeCounts(map[string]uint32{"": 1000})
 
@@ -51,9 +47,7 @@ func TestToDataNodeInfoReportsEmptyPhysicalDisks(t *testing.T) {
 	}
 }
 
-// TestToDataNodeInfoKeepsZeroCapacityDisk verifies a disk reporting max 0 (an
-// unavailable disk) is still listed as long as the node reports real per-disk
-// capacity — max 0 is a valid physical disk state, not a signal to drop it.
+// A max-0 (unavailable) disk stays listed when the node reports capacity.
 func TestToDataNodeInfoKeepsZeroCapacityDisk(t *testing.T) {
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
 	dc := topo.GetOrCreateDataCenter("dc1")
@@ -73,9 +67,7 @@ func TestToDataNodeInfoKeepsZeroCapacityDisk(t *testing.T) {
 	}
 }
 
-// TestToDataNodeInfoFallsBackWhenNoCapacityReported verifies an older volume
-// server that does not populate DiskTag type/max (all zeros) leaves
-// PhysicalDisks empty, so SplitByPhysicalDisk keeps its record-based fallback.
+// An older server sending no per-disk capacity leaves PhysicalDisks empty.
 func TestToDataNodeInfoFallsBackWhenNoCapacityReported(t *testing.T) {
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
 	dc := topo.GetOrCreateDataCenter("dc1")

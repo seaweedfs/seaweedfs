@@ -6,22 +6,12 @@ func (v *VolumeLocation) IsEmptyUrl() bool {
 	return v.Url == "" || v.Url == ":0"
 }
 
-// SplitByPhysicalDisk returns one DiskInfo per physical disk on the node. The
-// wire format keys DataNodeInfo.DiskInfos by disk type, so multiple same-type
-// physical disks collapse into a single DiskInfo entry; this helper rebuilds a
-// per-physical-disk view so consumers (topology indexes, shell output) can
-// target individual disks instead of treating each node as one big disk.
-//
-// The physical disk set comes from PhysicalDisks when the master reports it —
-// it lists every disk of this type, including disks holding no volumes or EC
-// shards, so empty disks are no longer invisible — and each disk then reports
-// its exact MaxVolumeCount. When PhysicalDisks is absent (older masters) the
-// set is the DiskIds observed on VolumeInfos / EcShardInfos and the aggregate
-// Max/Free are split evenly with the remainder on the lowest disk ids so the
-// sums are preserved.
-//
-// ActiveVolumeCount and RemoteVolumeCount are always computed exactly from each
-// disk's VolumeInfos.
+// SplitByPhysicalDisk returns one DiskInfo per physical disk. The wire format
+// keys DataNodeInfo.DiskInfos by disk type, collapsing same-type disks into one
+// entry, so this rebuilds the per-disk view. PhysicalDisks, when present, is the
+// authoritative set (empty disks included) and gives each disk its exact max;
+// otherwise the set is the DiskIds seen on records with aggregate Max/Free split
+// evenly.
 func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 	if d == nil {
 		return nil
@@ -75,8 +65,6 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 		diskIDs[id] = struct{}{}
 	}
 
-	// PhysicalDisks, when reported, is the authoritative full set: it includes
-	// disks with no volumes or EC shards and carries each disk's exact max.
 	exactMax := len(d.PhysicalDisks) > 0
 	maxByID := make(map[uint32]int64, len(d.PhysicalDisks))
 	for _, pd := range d.PhysicalDisks {
@@ -88,9 +76,8 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 		diskIDs[d.DiskId] = struct{}{}
 	}
 
-	// Fast path: a single physical disk identical to the aggregate needs no
-	// reconstruction. Skip it when PhysicalDisks is present so the disk reports
-	// its exact max rather than the aggregate.
+	// A lone disk equal to the aggregate needs no reconstruction; exactMax disks
+	// always reconstruct so they report their own max.
 	if !exactMax && len(diskIDs) == 1 {
 		for diskID := range diskIDs {
 			if diskID == d.DiskId {
@@ -137,11 +124,9 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 		freeVolumeCount := share(d.FreeVolumeCount, i)
 		if exactMax {
 			maxVolumeCount = maxByID[diskID]
-			// Free derived from the exact max. EC shard slots are not subtracted
-			// here (that needs the configurable EC ratio, which lives outside
-			// this package); capacity planners subtract them from EcShardInfos.
-			// Clamp at 0 so an over-allocated disk does not report negative free
-			// and drag down the node's summed free capacity.
+			// EC slots aren't subtracted (needs the configurable ratio, outside
+			// this package); planners subtract them from EcShardInfos. Clamp so an
+			// over-allocated disk can't report negative free.
 			freeVolumeCount = maxVolumeCount - (volumeCount - remoteCount)
 			if freeVolumeCount < 0 {
 				freeVolumeCount = 0

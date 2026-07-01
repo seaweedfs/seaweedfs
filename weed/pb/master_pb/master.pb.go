@@ -26,9 +26,7 @@ type DiskTag struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	DiskId uint32                 `protobuf:"varint,1,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	Tags   []string               `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
-	// type and max_volume_count describe the physical disk itself, reported for
-	// every location including empty ones, so the master can account for disks
-	// that hold no volumes or EC shards yet.
+	// Physical disk descriptor, reported for every location including empty ones.
 	Type           string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	MaxVolumeCount int64  `protobuf:"varint,4,opt,name=max_volume_count,json=maxVolumeCount,proto3" json:"max_volume_count,omitempty"`
 	unknownFields  protoimpl.UnknownFields
@@ -2142,10 +2140,8 @@ type DiskInfo struct {
 	RemoteVolumeCount int64                              `protobuf:"varint,8,opt,name=remote_volume_count,json=remoteVolumeCount,proto3" json:"remote_volume_count,omitempty"`
 	DiskId            uint32                             `protobuf:"varint,9,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	Tags              []string                           `protobuf:"bytes,10,rep,name=tags,proto3" json:"tags,omitempty"`
-	// physical_disks lists every physical disk of this type on the node,
-	// including disks that currently hold no volumes or EC shards. The wire
-	// format keys DiskInfo by disk type, so this is how a per-physical-disk view
-	// recovers empty disks that carry no per-volume/per-shard records.
+	// Every physical disk of this type, including ones with no volumes or EC
+	// shards; recovers empty disks that carry no per-volume/per-shard records.
 	PhysicalDisks []*PhysicalDiskInfo `protobuf:"bytes,11,rep,name=physical_disks,json=physicalDisks,proto3" json:"physical_disks,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

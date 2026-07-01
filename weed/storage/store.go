@@ -408,8 +408,7 @@ func (s *Store) GetRack() string {
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCounts := make(map[string]uint32)
-	// Per-physical-disk effective max, captured alongside the per-type sum so
-	// DiskTag can report each disk's exact capacity (including empty disks).
+	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
