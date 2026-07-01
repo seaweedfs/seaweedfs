@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -136,9 +137,15 @@ func remoteEntryFileMode(isDirectory bool) uint32 {
 	return mode
 }
 
+// remoteChild is one entry of a single remote directory level: a file carries
+// its RemoteEntry, a directory carries none.
+type remoteChild struct {
+	isDirectory bool
+	remoteEntry *filer_pb.RemoteEntry
+}
+
 func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
 
-	// visit remote storage
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
 	if err != nil {
 		return err
@@ -146,63 +153,114 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 
 	remote := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dirToCache)
 
-	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		ctx := context.Background()
-		err = remoteStorage.Traverse(remote, func(remoteDir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
-			localDir := filer.MapRemoteStorageLocationPathToFullPath(localMountedDir, remoteMountedLocation, remoteDir)
-			fmt.Fprint(writer, localDir.Child(name))
-
-			lookupResponse, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-				Directory: string(localDir),
-				Name:      name,
-			})
-			var existingEntry *filer_pb.Entry
-			if lookupErr != nil {
-				if lookupErr != filer_pb.ErrNotFound {
-					return lookupErr
-				}
-			} else {
-				existingEntry = lookupResponse.Entry
-			}
-
-			if existingEntry == nil {
-				_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
-					Directory: string(localDir),
-					Entry: &filer_pb.Entry{
-						Name:        name,
-						IsDirectory: isDirectory,
-						Attributes: &filer_pb.FuseAttributes{
-							FileSize: uint64(remoteEntry.RemoteSize),
-							Mtime:    remoteEntry.RemoteMtime,
-							FileMode: remoteEntryFileMode(isDirectory),
-							TtlSec:   0, // Remote entries should not have TTL
-						},
-						RemoteEntry: remoteEntry,
-					},
-				})
-				fmt.Fprintln(writer, " (create)")
-				return createErr
-			} else {
-				if existingEntry.RemoteEntry == nil {
-					// this is a new local change and should not be overwritten
-					fmt.Fprintln(writer, " (skip)")
-					return nil
-				}
-				if existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag || existingEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime {
-					// the remote version is updated, need to pull meta
-					fmt.Fprintln(writer, " (update)")
-					return doSaveRemoteEntry(client, string(localDir), existingEntry, remoteEntry)
-				}
-			}
-			fmt.Fprintln(writer, " (skip)")
-			return nil
-		})
-		return err
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return pullMetadataDirectory(context.Background(), client, writer, remoteStorage, dirToCache, remote)
 	})
+}
 
+// pullMetadataDirectory reconciles one local directory with its remote
+// counterpart and recurses into every remote subdirectory. Listing with a
+// delimiter surfaces subdirectories, including empty ones, as their own
+// entries, so directories are materialized locally even when they hold no
+// files.
+func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation) error {
+
+	remoteChildren := make(map[string]*remoteChild)
+	if err := remoteStorage.ListDirectory(ctx, remoteLoc, func(dir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
+		remoteChildren[name] = &remoteChild{isDirectory: isDirectory, remoteEntry: remoteEntry}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	localChildren, err := listLocalDirectory(ctx, client, localDir)
 	if err != nil {
 		return err
 	}
 
+	for name, child := range remoteChildren {
+		localPath := localDir.Child(name)
+		existingEntry := localChildren[name]
+
+		if existingEntry == nil {
+			if err := createRemoteEntry(ctx, client, writer, localDir, name, child); err != nil {
+				return err
+			}
+		} else if !child.isDirectory {
+			if existingEntry.RemoteEntry == nil {
+				// a local change that should not be overwritten
+				fmt.Fprintf(writer, "%s (skip)\n", localPath)
+			} else if existingEntry.RemoteEntry.RemoteETag != child.remoteEntry.RemoteETag || existingEntry.RemoteEntry.RemoteMtime < child.remoteEntry.RemoteMtime {
+				fmt.Fprintf(writer, "%s (update)\n", localPath)
+				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprintf(writer, "%s (skip)\n", localPath)
+			}
+		}
+
+		if child.isDirectory {
+			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name)); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
+}
+
+func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild) error {
+	attributes := &filer_pb.FuseAttributes{
+		FileMode: remoteEntryFileMode(child.isDirectory),
+		TtlSec:   0, // Remote entries should not have TTL
+	}
+	if child.isDirectory {
+		// remote listings carry no directory timestamp; stamp with sync time
+		now := time.Now().Unix()
+		attributes.Crtime = now
+		attributes.Mtime = now
+	} else {
+		attributes.FileSize = uint64(child.remoteEntry.RemoteSize)
+		attributes.Mtime = child.remoteEntry.RemoteMtime
+	}
+	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		Directory: string(localDir),
+		Entry: &filer_pb.Entry{
+			Name:        name,
+			IsDirectory: child.isDirectory,
+			Attributes:  attributes,
+			RemoteEntry: child.remoteEntry,
+		},
+	})
+	fmt.Fprintf(writer, "%s (create)\n", localDir.Child(name))
+	return err
+}
+
+func childRemoteLocation(remoteLoc *remote_pb.RemoteStorageLocation, name string) *remote_pb.RemoteStorageLocation {
+	return &remote_pb.RemoteStorageLocation{
+		Name:   remoteLoc.Name,
+		Bucket: remoteLoc.Bucket,
+		Path:   string(util.FullPath(remoteLoc.Path).Child(name)),
+	}
+}
+
+func listLocalDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (map[string]*filer_pb.Entry, error) {
+	const paginationLimit = 10000
+	entries := make(map[string]*filer_pb.Entry)
+	lastFileName := ""
+	for {
+		count := 0
+		if err := filer_pb.SeaweedList(ctx, client, string(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+			entries[entry.Name] = entry
+			lastFileName = entry.Name
+			count++
+			return nil
+		}, lastFileName, false, paginationLimit); err != nil {
+			return nil, err
+		}
+		if count < paginationLimit {
+			return entries, nil
+		}
+	}
 }
