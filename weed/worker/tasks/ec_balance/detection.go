@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	storagetypes "github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -178,6 +179,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				freeSlots := 0
 				diskTypeOf := make(map[uint32]string) // physical disk_id -> disk type
 				diskShardCount := make(map[uint32]int)
+				fullDiskTypes := make(map[string]bool) // physically near-full, ineligible as a target
 				hasMatchingDisk := false
 
 				for diskType, diskInfo := range dn.DiskInfos {
@@ -186,8 +188,15 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 					}
 					hasMatchingDisk = true
 
+					// Don't place EC shards on a physically near-full disk, even if slot
+					// math says it has room (an over-set maxVolumeCount hides real
+					// fullness). Statfs free bytes already include EC shard files.
+					if balancer.DiskTooFullAfter(diskInfo.DiskTotalBytes, diskInfo.DiskFreeBytes, 0, balancer.DefaultMaxDiskUsagePercent) {
+						fullDiskTypes[diskType] = true
+					}
+
 					fs := int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countEcShards(diskInfo.EcShardInfos)
-					if fs > 0 {
+					if fs > 0 && !fullDiskTypes[diskType] {
 						freeSlots += fs
 					}
 					// Discover physical disks from regular volumes too, so an
@@ -216,12 +225,25 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				// machines, not just nodes (servers on one host are one fault domain).
 				node.SetHost(pb.NewServerAddressFromDataNode(dn).ToHost())
 
+				// Spread the node's free slots only over its non-full disks, so a
+				// physically full disk type doesn't dilute the share the usable disks
+				// advertise (its own disks get 0 below). The total is preserved.
+				nonFullDiskCount := 0
+				for _, dt := range diskTypeOf {
+					if !fullDiskTypes[dt] {
+						nonFullDiskCount++
+					}
+				}
 				perDiskFree := 0
-				if diskCount := len(diskTypeOf); diskCount > 0 && freeSlots > 0 {
-					perDiskFree = freeSlots / diskCount
+				if nonFullDiskCount > 0 && freeSlots > 0 {
+					perDiskFree = freeSlots / nonFullDiskCount
 				}
 				for diskID, diskType := range diskTypeOf {
-					node.AddDisk(diskID, diskType, perDiskFree, diskShardCount[diskID])
+					diskFree := perDiskFree
+					if fullDiskTypes[diskType] {
+						diskFree = 0
+					}
+					node.AddDisk(diskID, diskType, diskFree, diskShardCount[diskID])
 				}
 
 				// Add shards only for volumes whose collection passes the filter;
