@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -474,95 +475,16 @@ func satisfyReplicaCurrentLocation(replicaPlacement *super_block.ReplicaPlacemen
 	  return false
 	}
 */
+// satisfyReplicaPlacement reports whether placing a replica at possibleLocation
+// is consistent with the replication policy given the existing replicas. Thin
+// adapter over weed/topology/balancer so the shell and the maintenance worker
+// share one placement implementation.
 func satisfyReplicaPlacement(replicaPlacement *super_block.ReplicaPlacement, replicas []*VolumeReplica, possibleLocation location) bool {
-
-	existingDataCenters, _, existingDataNodes := countReplicas(replicas)
-
-	if _, found := existingDataNodes[possibleLocation.String()]; found {
-		// avoid duplicated volume on the same data node
-		return false
+	locs := make([]balancer.Location, len(replicas))
+	for i, r := range replicas {
+		locs[i] = toBalancerLocation(r.location)
 	}
-
-	primaryDataCenters, _ := findTopKeys(existingDataCenters)
-
-	// ensure data center count is within limit
-	if _, found := existingDataCenters[possibleLocation.DataCenter()]; !found {
-		// different from existing dcs
-		if len(existingDataCenters) < replicaPlacement.DiffDataCenterCount+1 {
-			// lack on different dcs
-			return true
-		} else {
-			// adding this would go over the different dcs limit
-			return false
-		}
-	}
-	// now this is same as one of the existing data center
-	if !isAmong(possibleLocation.DataCenter(), primaryDataCenters) {
-		// not on one of the primary dcs
-		return false
-	}
-
-	// now this is one of the primary dcs
-	primaryDcRacks := make(map[string]int)
-	for _, replica := range replicas {
-		if replica.location.DataCenter() != possibleLocation.DataCenter() {
-			continue
-		}
-		primaryDcRacks[replica.location.Rack()] += 1
-	}
-	primaryRacks, _ := findTopKeys(primaryDcRacks)
-	sameRackCount := primaryDcRacks[possibleLocation.Rack()]
-
-	// ensure rack count is within limit
-	if _, found := primaryDcRacks[possibleLocation.Rack()]; !found {
-		// different from existing racks
-		if len(primaryDcRacks) < replicaPlacement.DiffRackCount+1 {
-			// lack on different racks
-			return true
-		} else {
-			// adding this would go over the different racks limit
-			return false
-		}
-	}
-	// now this is same as one of the existing racks
-	if !isAmong(possibleLocation.Rack(), primaryRacks) {
-		// not on the primary rack
-		return false
-	}
-
-	// now this is on the primary rack
-
-	// different from existing data nodes
-	if sameRackCount < replicaPlacement.SameRackCount+1 {
-		// lack on same rack
-		return true
-	} else {
-		// adding this would go over the same data node limit
-		return false
-	}
-
-}
-
-func findTopKeys(m map[string]int) (topKeys []string, max int) {
-	for k, c := range m {
-		if max < c {
-			topKeys = topKeys[:0]
-			topKeys = append(topKeys, k)
-			max = c
-		} else if max == c {
-			topKeys = append(topKeys, k)
-		}
-	}
-	return
-}
-
-func isAmong(key string, keys []string) bool {
-	for _, k := range keys {
-		if k == key {
-			return true
-		}
-	}
-	return false
+	return balancer.SatisfyReplicaPlacement(replicaPlacement, locs, toBalancerLocation(&possibleLocation))
 }
 
 type VolumeReplica struct {
