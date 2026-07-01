@@ -494,9 +494,7 @@ func (s *AdminServer) findBrokerLeader() (string, error) {
 	// First, try to find any broker from the cluster
 	var brokers []string
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.BrokerType))
 		if err != nil {
 			return err
 		}
@@ -524,7 +522,7 @@ func (s *AdminServer) findBrokerLeader() (string, error) {
 
 			// Try to find broker leader
 			_, err := client.FindBrokerLeader(ctx, &mq_pb.FindBrokerLeaderRequest{
-				FilerGroup: "",
+				FilerGroup: s.filerGroup,
 			})
 			if err == nil {
 				return nil // This broker is the leader
