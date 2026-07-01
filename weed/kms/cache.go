@@ -122,7 +122,11 @@ func (c *CachedKMSProvider) set(cacheKey string, resp *DecryptResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, exists := c.entries[cacheKey]; !exists {
+	if old, exists := c.entries[cacheKey]; exists {
+		// Two readers can race on the same miss and both store; wipe the
+		// superseded key material instead of leaving it to linger in memory.
+		ClearSensitiveData(old.plaintext)
+	} else {
 		c.evictIfFullLocked()
 	}
 	c.entries[cacheKey] = &dataKeyCacheEntry{
@@ -177,12 +181,18 @@ func (c *CachedKMSProvider) Close() error {
 	return c.KMSProvider.Close()
 }
 
+// sha256Pool reuses hash states across cache-key computations so the read hot
+// path doesn't allocate a fresh one on every Decrypt.
+var sha256Pool = sync.Pool{
+	New: func() interface{} { return sha256.New() },
+}
+
 // dataKeyCacheKey derives a stable cache key from the ciphertext blob and the
 // encryption context. The context is part of the key because the same
 // ciphertext decrypted under a different context is a different request, and
 // caching by ciphertext alone would bypass the provider's context check.
 func dataKeyCacheKey(req *DecryptRequest) string {
-	h := sha256.New()
+	h := sha256Pool.Get().(hash.Hash)
 
 	// Length-prefix each field so distinct inputs cannot collide by concatenation.
 	writeLengthPrefixed(h, req.CiphertextBlob)
@@ -197,7 +207,10 @@ func dataKeyCacheKey(req *DecryptRequest) string {
 		writeLengthPrefixed(h, []byte(req.EncryptionContext[k]))
 	}
 
-	return string(h.Sum(nil))
+	key := string(h.Sum(nil))
+	h.Reset()
+	sha256Pool.Put(h)
+	return key
 }
 
 func writeLengthPrefixed(h hash.Hash, b []byte) {

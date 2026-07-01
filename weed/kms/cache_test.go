@@ -187,6 +187,26 @@ func TestCachedProviderMaxEntries(t *testing.T) {
 	}
 }
 
+// TestCachedProviderClearsOverwrittenPlaintext verifies that when an entry is
+// replaced (two readers racing on the same miss), the superseded key material
+// is zeroed rather than left lingering in memory.
+func TestCachedProviderClearsOverwrittenPlaintext(t *testing.T) {
+	inner := newCountingKMSProvider()
+	cached := NewCachedKMSProvider(inner, time.Hour, 10)
+
+	cached.set("dupkey", &DecryptResponse{KeyID: "k", Plaintext: []byte("0123456789abcdef0123456789abcdef")})
+
+	cached.mu.Lock()
+	oldBuf := cached.entries["dupkey"].plaintext
+	cached.mu.Unlock()
+
+	cached.set("dupkey", &DecryptResponse{KeyID: "k", Plaintext: []byte("ffffffffffffffffffffffffffffffff")})
+
+	if !bytes.Equal(oldBuf, make([]byte, len(oldBuf))) {
+		t.Fatalf("superseded cache plaintext was not zeroed: %v", oldBuf)
+	}
+}
+
 // TestAddKMSProviderWiresCache is the wiring regression test: a provider
 // configured with cache_enabled must actually be handed back wrapped in a
 // caching provider (the bug was that the setting was parsed but never applied).
