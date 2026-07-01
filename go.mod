@@ -93,11 +93,11 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.46.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/image v0.41.0
+	golang.org/x/image v0.43.0
 	golang.org/x/net v0.55.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.46.0
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.278.0
@@ -513,10 +513,12 @@ require (
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
 
-// apache/thrift v0.23.0 uses math.MaxUint32 as an untyped int constant in
-// lib/go/thrift/framed_transport.go, which overflows int on 32-bit GOARCHes
-// (e.g. openbsd/arm, linux/arm). Pin to v0.22.0 until upstream fixes it.
-replace github.com/apache/thrift => github.com/apache/thrift v0.22.0
+// apache/thrift v0.23.0 fixes CVE-2026-41602 but compares int against the
+// untyped math.MaxUint32 in lib/go/thrift/framed_transport.go, which overflows
+// int on 32-bit GOARCHes (e.g. openbsd/arm, linux/arm) and fails to compile.
+// Upstream fixed the range check post-release; pin to that commit until the
+// next tagged release carries both the CVE fix and the 32-bit fix.
+replace github.com/apache/thrift => github.com/apache/thrift v0.23.1-0.20260429145742-d2acd3c49e58
 
 // tyler-smith/go-bip39 was deleted from GitHub, so `go mod download` fails for
 // anyone resolving it directly (GOPROXY=direct). It only reaches us transitively
